@@ -33,13 +33,3 @@ export const SCROLL_BUFF_LABELS = {
     '/buff_types/processing': 'Scroll of Processing (+20%)',
     '/buff_types/gourmet': 'Scroll of Gourmet (+16%)',
 };
-
-/**
- * The scroll buff types that actually change a combat simulation. Wisdom raises
- * combat experience and Rare Find raises the rare-drop multiplier — both consumed
- * by the combat engine. The rest (efficiency, gathering, action_speed, processing,
- * gourmet) are skilling-only and are inert in combat, so the combat sim neither
- * offers them nor applies them.
- * @type {string[]}
- */
-export const COMBAT_SCROLL_BUFF_TYPES = ['/buff_types/wisdom', '/buff_types/rare_find'];

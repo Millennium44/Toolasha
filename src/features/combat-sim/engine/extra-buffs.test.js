@@ -9,7 +9,6 @@
 
 import { describe, test, expect } from 'vitest';
 import { buildPlayerExtraBuffs, buildScrollBuffs } from './extra-buffs.js';
-import { SCROLL_BUFF_VALUES } from '../../../utils/scroll-buff-values.js';
 
 const shared = [{ uniqueHrid: '/buff_uniques/experience_moo_pass_buff' }];
 const guild = [{ uniqueHrid: '/buff_uniques/guild_combat' }];
@@ -59,36 +58,51 @@ describe('buildPlayerExtraBuffs', () => {
         const result = buildPlayerExtraBuffs(shared, {
             guildCombatBuffs: guild,
             achievementCombatBuffs: achievement,
-            scrollBuffs: ['/buff_types/wisdom'],
+            scrollBuffs: ['/buff_types/damage'],
         });
 
         expect(result.slice(0, 3)).toEqual([...shared, ...guild, ...achievement]);
         expect(result).toHaveLength(4);
         expect(result[3]).toMatchObject({
-            typeHrid: '/buff_types/wisdom',
-            flatBoost: SCROLL_BUFF_VALUES['/buff_types/wisdom'],
+            typeHrid: '/buff_types/damage',
+            ratioBoost: 0.08,
+            flatBoost: 0,
         });
     });
 });
 
 describe('buildScrollBuffs', () => {
-    test('a combat scroll becomes a flat-boost buff at its documented value', () => {
-        const [buff] = buildScrollBuffs(['/buff_types/rare_find']);
+    test('a ratio-boost scroll (damage) lands its value on ratioBoost', () => {
+        const [buff] = buildScrollBuffs(['/buff_types/damage']);
 
         expect(buff).toMatchObject({
-            uniqueHrid: '/buff_uniques/toolasha_scroll_rare_find',
-            typeHrid: '/buff_types/rare_find',
-            ratioBoost: 0,
-            flatBoost: SCROLL_BUFF_VALUES['/buff_types/rare_find'],
+            uniqueHrid: '/buff_uniques/toolasha_scroll_damage',
+            typeHrid: '/buff_types/damage',
+            ratioBoost: 0.08,
+            flatBoost: 0,
         });
     });
 
-    test('both combat scrolls resolve; order follows the input', () => {
-        const buffs = buildScrollBuffs(['/buff_types/wisdom', '/buff_types/rare_find']);
-        expect(buffs.map((b) => b.typeHrid)).toEqual(['/buff_types/wisdom', '/buff_types/rare_find']);
+    test('a flat-boost scroll (crit rate) lands its value on flatBoost', () => {
+        const [buff] = buildScrollBuffs(['/buff_types/critical_rate']);
+
+        expect(buff).toMatchObject({
+            typeHrid: '/buff_types/critical_rate',
+            ratioBoost: 0,
+            flatBoost: 0.1,
+        });
     });
 
-    test('a skilling-only scroll is dropped rather than added as a combat no-op', () => {
+    test('every chosen scroll resolves; order follows the input', () => {
+        const buffs = buildScrollBuffs(['/buff_types/wisdom', '/buff_types/attack_speed', '/buff_types/rare_find']);
+        expect(buffs.map((b) => b.typeHrid)).toEqual([
+            '/buff_types/wisdom',
+            '/buff_types/attack_speed',
+            '/buff_types/rare_find',
+        ]);
+    });
+
+    test('a non-combat-scroll buff type is dropped rather than added as a no-op', () => {
         expect(buildScrollBuffs(['/buff_types/gourmet', '/buff_types/efficiency'])).toEqual([]);
     });
 

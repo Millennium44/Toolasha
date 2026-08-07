@@ -1386,11 +1386,11 @@ const UPGRADE_MODES = [
         label: 'Scrolls',
         defaultOn: false,
         title:
-            'What each Labyrinth scroll is worth in this fight: turning on one you are not carrying, or — for ' +
-            'one already on — what you would lose by dropping it.\n\n' +
-            'Only Wisdom (combat EXP) and Rare Find move a combat number; the other scrolls are skilling-only ' +
-            'and are not offered. The per-run seal cost is not priced, so these land in the "measured, but not ' +
-            'priced" box next to Community — read them on their deltas.',
+            'What each Labyrinth combat scroll is worth in this fight: turning on one you are not carrying, ' +
+            'or — for one already on — what you would lose by dropping it.\n\n' +
+            'Damage, attack and cast speed, crit rate, combat drop, wisdom and rare find are all offered. The ' +
+            'per-run seal cost is not priced, so these land in the "measured, but not priced" box next to ' +
+            'Community — read them on their deltas.',
     },
     {
         key: 'food',

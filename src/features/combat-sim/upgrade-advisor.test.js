@@ -4294,29 +4294,34 @@ describe('scroll candidates', () => {
     test('a scroll the player is not carrying is offered as one to add', () => {
         const candidates = generateScrollCandidates({ scrollBuffs: [] });
 
-        expect(candidates.map((c) => [c.buffTypeHrid, c.enable, c.measuresLoss])).toEqual([
-            ['/buff_types/wisdom', true, false],
-            ['/buff_types/rare_find', true, false],
-        ]);
+        expect(candidates.every((c) => c.enable && !c.measuresLoss)).toBe(true);
         expect(candidates[0].description).toContain('Add');
     });
 
     test('a scroll already active is measured by turning it off, not read as a gain', () => {
-        const candidates = generateScrollCandidates({ scrollBuffs: ['/buff_types/wisdom'] });
-        const wisdom = candidates.find((c) => c.buffTypeHrid === '/buff_types/wisdom');
+        const candidates = generateScrollCandidates({ scrollBuffs: ['/buff_types/damage'] });
+        const damage = candidates.find((c) => c.buffTypeHrid === '/buff_types/damage');
 
-        expect(wisdom.enable).toBe(false);
-        expect(wisdom.measuresLoss).toBe(true);
-        expect(wisdom.description).toContain('what the scroll is worth');
+        expect(damage.enable).toBe(false);
+        expect(damage.measuresLoss).toBe(true);
+        expect(damage.description).toContain('what the scroll is worth');
     });
 
-    test('only the two combat scrolls are offered — the skilling ones do nothing here', () => {
+    test('every combat scroll is offered — DPS, loot and the two dual-purpose ones', () => {
         const candidates = generateScrollCandidates({ scrollBuffs: [] });
-        expect(candidates.map((c) => c.buffTypeHrid)).toEqual(['/buff_types/wisdom', '/buff_types/rare_find']);
+        expect(candidates.map((c) => c.buffTypeHrid)).toEqual([
+            '/buff_types/damage',
+            '/buff_types/attack_speed',
+            '/buff_types/cast_speed',
+            '/buff_types/critical_rate',
+            '/buff_types/combat_drop_quantity',
+            '/buff_types/wisdom',
+            '/buff_types/rare_find',
+        ]);
     });
 
     test('a scroll carries no price, so it lands in the unpriced group', () => {
-        expect(calculateUpgradeCost({ type: 'scroll', buffTypeHrid: '/buff_types/wisdom' }, buildGameData())).toBe(
+        expect(calculateUpgradeCost({ type: 'scroll', buffTypeHrid: '/buff_types/damage' }, buildGameData())).toBe(
             null
         );
     });
