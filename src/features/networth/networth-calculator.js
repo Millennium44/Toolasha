@@ -25,7 +25,8 @@ import { calculateItemValueBatch } from '../../utils/networth-worker-manager.js'
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
 import { isExcluded, getExclusions } from './networth-exclusions.js';
-import loadoutSnapshot from '../combat/loadout-snapshot.js';
+import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
+import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { buildGoldPerCredit, priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 
 /**
@@ -683,7 +684,7 @@ export async function calculateNetworth() {
     const loadoutExcludedHridToName = new Map();
     const loadoutExclusions = getExclusions().filter((e) => e.type === 'loadout');
     if (loadoutExclusions.length > 0) {
-        const allSnapshots = loadoutSnapshot.getAllSnapshots();
+        const allSnapshots = (loadoutSnapshot() || bundledLoadoutSnapshot).getAllSnapshots();
         for (const exc of loadoutExclusions) {
             const snapshot = allSnapshots.find((s) => s.name === exc.value);
             if (snapshot) {
