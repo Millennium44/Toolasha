@@ -178,11 +178,7 @@ export function encounterOf(name) {
 function monsterKey(name) {
     const raw = String(name || '');
     const tail = raw.includes('/') ? raw.split('/').pop() : raw;
-    return tail
-        .toLowerCase()
-        .replace(/[_-]+/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+    return tail.toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 let componentEncounterCache = { source: null, map: null };
