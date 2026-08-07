@@ -6,9 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
-### Loadout gear now counts in net worth, profit, and bulk-sell (packaged build)
+### Loadout-driven features (net-worth exclusions, bulk-sell protection, profit label) work again in the packaged build
 
-- **Net worth, gathering/production profit, the net-worth exclusion picker, and the bulk-sell "keep equipped gear" guard now see your loadouts in the multi-bundle build**: each direct-imported the loadout store and, outside the combat bundle, got its own empty copy (only the combat bundle's copy is fed by the `loadouts_updated` websocket). So net worth under-counted loadout gear, gathering/production profit ignored loadout bonuses, the exclusion picker listed no loadouts, and bulk-sell could suggest selling equipped items. All four now read the shared loadout store through the bundle bridge (the pattern the sim already uses since 2.92.0). The dev-standalone build was never affected.
+- **Features that read saved loadout snapshots now work in the multi-bundle build.** Outside the combat bundle each consumer had its own empty copy of the loadout store (only the combat bundle's copy is fed by the `loadouts_updated` websocket), so anything reading loadouts elsewhere saw nothing. Loadouts don't hold items — their gear is already counted as equipped or inventory — so this is not about adding loadout value; it's the features built _on_ loadouts:
+    - **Net-worth loadout _exclusions_ silently did nothing.** If you excluded a loadout, its items were still counted (net worth over-stated), and the exclusion popup listed no loadouts to pick.
+    - **Bulk-sell no longer protected loadout gear** — items saved in a loadout could appear in sell suggestions.
+    - **The profit panel's "Loadout: …" label** showed "Equipped" instead of the active loadout's name (display only — profit numbers were never affected).
+    - All now read the shared loadout store through the bundle bridge (the pattern the sim adopted in 2.92.0). The dev-standalone build was never affected.
 - **New regression test** (`cross-bundle-globals`) fails the build if any bridge-backed stateful singleton is default-imported across a bundle boundary without also reading it through the bridge — the class of bug behind this, the treasure tracker, and the 2.92.0 combat-sim fix.
 
 ### Treasure tracker button in Settings opens the real ledger (packaged build)
