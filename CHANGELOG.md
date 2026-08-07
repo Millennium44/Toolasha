@@ -13,6 +13,7 @@ A triage of the 62 modules the bundle-sharing checker flags found several more s
 - **Combat Simulator container values.** The sim bundle's copy of the expected-value calculator was never initialized, so `calculateExpectedValue()` returned null and openable containers (chests/caches) showed no expected value in the Combat Simulator. Now reads the market bundle's live calculator.
 - **Scroll/buff simulation in gathering & production profit.** The actions bundle's copy of the scroll simulator was empty, so the profit displays and quick-input buttons ignored your configured scroll buffs. Now reads the combat bundle's live simulator.
 - **Task Profit "best alternative /hr" + alchemy pin protection.** The action-panel sort/pin singleton was read from empty copies outside the actions bundle: the Task Profit "you could earn X/hr instead" figure never appeared, and toggling an alchemy pin ran against an empty set — which could overwrite the saved pinned-action list. It's now published to the actions namespace and read through the bridge.
+- **Custom price overrides apply without a reload.** Setting or editing a custom item price in Settings didn't affect any profit/price calculation until the page was reloaded — Settings (ui bundle) wrote to one copy of the override cache while price math (utils bundle) read a separate copy. The module is now a single shared `Toolasha.Utils` global, so writes and reads hit the same cache.
 
 ### Loadout-driven features (net-worth exclusions, bulk-sell protection, profit label) work again in the packaged build
 

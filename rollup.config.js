@@ -73,6 +73,12 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/cleanup-registry.js')), 'Toolasha.Utils.cleanupRegistry'],
     [normalize(join(__dirname, 'src/utils/house-cost-calculator.js')), 'Toolasha.Utils.houseCostCalculator'],
     [normalize(join(__dirname, 'src/utils/enhancement-calculator.js')), 'Toolasha.Utils.enhancementCalculator'],
+    // Not under src/utils, but shared here so Settings' writes (ui bundle) and
+    // price reads (market-data/profit-helpers, utils bundle) hit one cache
+    [
+        normalize(join(__dirname, 'src/features/settings/custom-price-overrides.js')),
+        'Toolasha.Utils.customPriceOverrides',
+    ],
     // Shared or the overlay's row list is duplicated per bundle and the panel renders nothing
     // Every src/utils module used by more than one bundle is declared here.
     // Anything omitted is silently copied into each bundle that imports it,
