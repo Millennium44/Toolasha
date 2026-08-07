@@ -36,6 +36,9 @@ import * as materialCalculator from '../utils/material-calculator.js';
 import * as tokenValuation from '../utils/token-valuation.js';
 import * as pricingHelper from '../utils/pricing-helper.js';
 import * as cleanupRegistry from '../utils/cleanup-registry.js';
+// Owned here so the ui bundle's Settings writes and the utils bundle's price
+// reads share one overridesCache (otherwise overrides don't apply until reload)
+import * as customPriceOverrides from '../features/settings/custom-price-overrides.js';
 import * as houseCostCalculator from '../utils/house-cost-calculator.js';
 import * as enhancementCalculator from '../utils/enhancement-calculator.js';
 import * as overlayRows from '../utils/overlay-rows.js';
@@ -151,6 +154,7 @@ toolashaRoot.Utils = {
     tokenValuation,
     pricingHelper,
     cleanupRegistry,
+    customPriceOverrides,
     houseCostCalculator,
     enhancementCalculator,
     overlayRows,
