@@ -39,9 +39,6 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 /** Master switch; nothing below it is consulted while this is off */
 export const MASTER_SETTING = 'notifications_marketListingUndercut';
 
-/** How often, in minutes, to actively re-fetch the market snapshot while alerts are on */
-export const REFRESH_SETTING = 'notifications_marketListingUndercut_refreshMinutes';
-
 /** The status HRID the server puts on a listing that is still on the board */
 const ACTIVE_STATUS = '/market_listing_status/active';
 
@@ -95,64 +92,37 @@ class MarketUndercutAlerts {
     }
 
     /**
-     * Actively re-fetch the market snapshot on a timer while alerts are on.
+     * Keep the market snapshot from going stale on a timer while alerts are on.
      *
      * Without this, nothing calls `marketAPI.fetch()` after startup, so the bulk
      * snapshot goes stale and the only fresh per-item price is the order-book
      * patch that lands when the player opens an item's view. An undercut that
      * happened hours ago against an item never opened would then read as "still
-     * best" against the stale snapshot. Forcing a periodic refresh is the same
-     * fetch the lazy 15-minute cache would eventually do, just sooner — and
-     * `marketAPI.fetch()` notifies its listeners on success, so the undercut
-     * `check()` (subscribed above) re-runs against the fresh figures with no
-     * extra wiring, as does every other feature that reads `getPrice()`.
+     * best" against the stale snapshot.
      *
-     * `marketplace.json` is the game's own published file and one fetch covers
-     * every listing, so this stays a courteous cadence: the 1-minute floor is
-     * deliberate and a value at or above the cache means no extra fetch at all.
+     * The cadence is the market cache's own 15-minute window, and the tick calls
+     * the *cache-respecting* `marketAPI.fetch()` — not the forcing `fetch(true)`.
+     * That is the crucial politeness: `marketplace.json` is rate-limited by the
+     * game (a burst of requests, often several userscripts at once, trips a
+     * temporary CloudFront 403), so this must never pull faster than the cache
+     * would on its own. A tick whose cache is still valid returns the cached copy
+     * with no network hit and simply re-notifies listeners; only a tick that
+     * finds the cache expired makes a real request — at most one per 15 minutes.
+     * There is deliberately no shorter, configurable interval.
      */
     startActiveRefresh() {
-        const minutes = this.resolveRefreshMinutes();
-        if (minutes === null) {
-            // Off, or at/above the cache window — the normal cache stands
-            return;
-        }
-
-        const intervalMs = minutes * 60 * 1000;
         const intervalId = setInterval(() => {
             this.refreshSnapshot();
-        }, intervalMs);
+        }, marketAPI.CACHE_DURATION);
         this.timers.registerInterval(intervalId);
     }
 
     /**
-     * The refresh interval in whole minutes, or null when active refresh is off.
+     * Refresh the snapshot through the cache, skipping the tick if one is in flight.
      *
-     * Off means: 0 or blank, a value that does not resolve to a positive number,
-     * or a value at or above the 15-minute cache window (where a forced fetch
-     * buys nothing the lazy cache would not already do). The 1-minute floor is
-     * never crossed — a sub-minute cadence would be impolite to the game's own
-     * static file, which one fetch reads in full.
-     *
-     * @returns {number|null} Whole minutes to wait between fetches, or null if off
-     */
-    resolveRefreshMinutes() {
-        const raw = config.getSetting(REFRESH_SETTING, 0);
-        const minutes = Math.floor(Number(raw));
-        if (!Number.isFinite(minutes) || minutes < 1) {
-            return null;
-        }
-
-        const cacheMinutes = marketAPI.CACHE_DURATION / (60 * 1000);
-        if (minutes >= cacheMinutes) {
-            return null;
-        }
-
-        return minutes;
-    }
-
-    /**
-     * Force one whole-snapshot refresh, skipping the tick if one is still in flight.
+     * Uses the cache-respecting `fetch()`: it only touches the network when the
+     * 15-minute cache has expired, so it can never contribute to rate-limiting
+     * beyond what the cache already permits.
      */
     async refreshSnapshot() {
         if (this.refreshInFlight) {
@@ -162,9 +132,9 @@ class MarketUndercutAlerts {
 
         this.refreshInFlight = true;
         try {
-            await marketAPI.fetch(true);
+            await marketAPI.fetch();
         } catch (error) {
-            console.error('[MarketUndercutAlerts] Active market refresh failed:', error);
+            console.error('[MarketUndercutAlerts] Market snapshot refresh failed:', error);
         } finally {
             this.refreshInFlight = false;
         }

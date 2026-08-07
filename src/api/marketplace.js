@@ -76,6 +76,7 @@ class MarketAPI {
         }
 
         // Try to fetch fresh data
+        let rateLimited = false;
         try {
             const response = await this.fetchFromAPI();
 
@@ -94,7 +95,20 @@ class MarketAPI {
                 return this.marketData;
             }
         } catch (error) {
-            this.logError('Fetch failed', error);
+            // marketplace.json is rate-limited by the game: a burst of requests —
+            // often several userscripts hitting it at once — trips a temporary
+            // CloudFront 403 (429 is the explicit rate-limit status). Call that out
+            // plainly instead of as a generic fetch failure, so a player seeing the
+            // block knows what it is and that Toolasha is not the cause on its own.
+            rateLimited = error?.status === 403 || error?.status === 429;
+            if (rateLimited) {
+                console.warn(
+                    `[MarketAPI] marketplace.json returned ${error.status} — the game rate-limits this file and a burst ` +
+                        'of fetches (often several userscripts at once) trips a temporary block. Falling back to cached ' +
+                        'prices; it retries on the normal 15-minute cache cadence.'
+                );
+            }
+            this.logError(rateLimited ? `Rate limited (${error.status})` : 'Fetch failed', error);
         }
 
         // Fallback: Try to use expired cache
@@ -107,13 +121,15 @@ class MarketAPI {
             // Load patches from storage
             await this.loadPatches();
             // Show alert when using expired cache
-            networkAlert.show('⚠️ Using outdated market data');
+            networkAlert.show(
+                rateLimited ? '⚠️ Market API rate-limited — using cached prices' : '⚠️ Using outdated market data'
+            );
             return this.marketData;
         }
 
         // Total failure - show alert
         console.error('[MarketAPI] ❌ No market data available');
-        networkAlert.show('⚠️ Market data unavailable');
+        networkAlert.show(rateLimited ? '⚠️ Market API rate-limited — no market data' : '⚠️ Market data unavailable');
         return null;
     }
 
@@ -126,7 +142,11 @@ class MarketAPI {
             const response = await fetch(this.API_URL);
 
             if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                // Carry the status so fetch() can tell a rate-limit (403/429) from
+                // any other failure and message the player accordingly.
+                const error = new Error(`HTTP ${response.status}: ${response.statusText}`);
+                error.status = response.status;
+                throw error;
             }
 
             const data = await response.json();

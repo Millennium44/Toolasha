@@ -15,14 +15,15 @@ const createMocks = (isConnected) => {
         },
     }));
 
+    const show = vi.fn();
     vi.doMock('../features/market/network-alert.js', () => ({
         default: {
             hide: vi.fn(),
-            show: vi.fn(),
+            show,
         },
     }));
 
-    return { getJSON };
+    return { getJSON, show };
 };
 
 describe('MarketAPI fetch', () => {
@@ -68,5 +69,30 @@ describe('MarketAPI fetch', () => {
         // Assert
         expect(result).toBeNull();
         expect(fetch).not.toHaveBeenCalled();
+    });
+
+    test('surfaces a 403 rate-limit plainly and falls back instead of throwing', async () => {
+        // Arrange: connected, the API returns a CloudFront rate-limit block, and
+        // there is no cache to fall back to.
+        const { getJSON, show } = createMocks(true);
+        getJSON.mockResolvedValue(null);
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        fetch.mockResolvedValue({ ok: false, status: 403, statusText: 'Forbidden' });
+
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        // Act
+        const result = await marketAPI.fetch(true);
+
+        // Assert: it does not throw, it names the rate-limit in the console, and
+        // it shows a rate-limit-specific network alert rather than a generic one.
+        expect(result).toBeNull();
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('403'));
+        expect(show).toHaveBeenCalledWith(expect.stringMatching(/rate-limited/i));
+
+        warn.mockRestore();
+        error.mockRestore();
     });
 });
