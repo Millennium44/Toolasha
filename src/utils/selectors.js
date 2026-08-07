@@ -103,6 +103,19 @@ export const GAME = {
     BATTLE_PANEL: '[class*="BattlePanel_battlePanel"]',
     BATTLE_MONSTERS_AREA: '[class*="BattlePanel_monstersArea"]',
 
+    // Marketplace
+    // Prefix-matched on purpose: the game ships these with a CSS-module hash
+    // suffix (e.g. MarketplacePanel_currentItem__3ercC) that changes on every
+    // rebuild, so a marketplace UI rework rehashes them. Match the stable base.
+    MARKETPLACE_PANEL: '[class*="MarketplacePanel_marketplacePanel"]',
+    MARKETPLACE_ITEMS: '[class*="MarketplacePanel_marketItems"]',
+    MARKETPLACE_CURRENT_ITEM: '[class*="MarketplacePanel_currentItem"]',
+    MARKETPLACE_ORDER_BOOKS: '[class*="MarketplacePanel_orderBooksContainer"]',
+    MARKETPLACE_MY_LISTINGS: '[class*="MarketplacePanel_myListingsTableContainer"]',
+    MARKETPLACE_NEW_LISTING_BUTTONS: '[class*="MarketplacePanel_newListingButtonsContainer"]',
+    // The generic sub-panel wrapper the marketplace (and other panels) sit inside
+    SUBPANEL_CONTAINER: '[class*="MainPanel_subPanelContainer"]',
+
     // Enhancement
     PROTECTION_ITEM_INPUT: '[class*="protectionItemInputContainer"]',
 

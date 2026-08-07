@@ -14,6 +14,7 @@ import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import { formatRelativeTime, formatDateTime } from '../../utils/formatters.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { GAME } from '../../utils/selectors.js';
 
 /** Store both halves of the old shared key live in */
 const LISTINGS_STORE = 'marketListings';
@@ -706,7 +707,9 @@ class EstimatedListingAge {
         // Watch for the My Listings table container
         this.unregisterMyListingsObserver = domObserver.onClass(
             'EstimatedListingAge_MyListings',
-            'MarketplacePanel_myListingsTableContainer__2s6pm',
+            // Base class only — onClass matches on a substring, and the game's
+            // hash suffix rehashes on every UI rebuild.
+            'MarketplacePanel_myListingsTableContainer',
             (container) => {
                 this.checkForExpiredListings(container);
             }
@@ -809,8 +812,11 @@ class EstimatedListingAge {
     parsePrice(priceText) {
         if (!priceText) return null;
 
-        const normalized = priceText.trim().toUpperCase();
-        const match = normalized.match(/^([\d,.]+)([KMB])?$/);
+        // Strip a trailing "*" marker: post-rework, My Listings flags any listing
+        // whose original limit price differs from its resting boundary price with
+        // a "*". The $-anchored regex below would otherwise reject the whole cell.
+        const normalized = priceText.trim().toUpperCase().replace(/\*+$/, '').trim();
+        const match = normalized.match(/^([\d,.]+)([KMBT])?$/);
 
         if (!match) return null;
 
@@ -827,6 +833,8 @@ class EstimatedListingAge {
                 return Math.round(value * 1000000);
             case 'B':
                 return Math.round(value * 1000000000);
+            case 'T':
+                return Math.round(value * 1000000000000);
             default:
                 return Math.round(value);
         }
@@ -1015,7 +1023,7 @@ class EstimatedListingAge {
      */
     getCurrentItemHrid() {
         // PRIMARY: Check for current item element (same as RWI approach)
-        const currentItemElement = document.querySelector('.MarketplacePanel_currentItem__3ercC');
+        const currentItemElement = document.querySelector(GAME.MARKETPLACE_CURRENT_ITEM);
         if (currentItemElement) {
             const useElement = currentItemElement.querySelector('use');
             if (useElement && useElement.href && useElement.href.baseVal) {
@@ -1070,7 +1078,7 @@ class EstimatedListingAge {
      */
     getCurrentEnhancementLevel() {
         // Check for enhancement level indicator in the current item display
-        const currentItemElement = document.querySelector('.MarketplacePanel_currentItem__3ercC');
+        const currentItemElement = document.querySelector(GAME.MARKETPLACE_CURRENT_ITEM);
         if (currentItemElement) {
             const enhancementElement = currentItemElement.querySelector('[class*="Item_enhancementLevel"]');
             if (enhancementElement) {

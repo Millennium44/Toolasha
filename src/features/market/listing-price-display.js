@@ -820,9 +820,14 @@ class ListingPriceDisplay {
                     : priceNode.textContent;
             text = String(text).trim();
 
-            // Handle K/M/B suffixes (e.g., "340K" = 340000, "1.5M" = 1500000, "24B" = 24000000000)
+            // Handle K/M/B/T suffixes (e.g., "340K" = 340000, "1.5M" = 1500000, "24B" = 24000000000,
+            // "1.2T" = 1200000000000). T is checked first so it isn't missed — post-rework the max
+            // listing price is 1T (was 100B), and without this "1.2T" fell through to multiplier 1.
             let multiplier = 1;
-            if (text.toUpperCase().includes('B')) {
+            if (text.toUpperCase().includes('T')) {
+                multiplier = 1000000000000;
+                text = text.replace(/T/gi, '');
+            } else if (text.toUpperCase().includes('B')) {
                 multiplier = 1000000000;
                 text = text.replace(/B/gi, '');
             } else if (text.toUpperCase().includes('M')) {

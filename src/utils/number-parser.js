@@ -74,14 +74,17 @@ export function parseItemCount(text, defaultValue = 1) {
     // Remove remaining whitespace separators
     text = text.replace(/\s/g, '');
 
-    // Handle K/M/B suffixes (must end with the suffix letter)
-    if (/\d[kmb]$/.test(text)) {
+    // Handle K/M/B/T suffixes (must end with the suffix letter). T support is
+    // for the post-rework max listing price of 1T (was 100B).
+    if (/\d[kmbt]$/.test(text)) {
         if (text.endsWith('k')) {
             return parseFloat(text) * 1000;
         } else if (text.endsWith('m')) {
             return parseFloat(text) * 1000000;
         } else if (text.endsWith('b')) {
             return parseFloat(text) * 1000000000;
+        } else if (text.endsWith('t')) {
+            return parseFloat(text) * 1000000000000;
         }
     }
 
