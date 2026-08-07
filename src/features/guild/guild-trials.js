@@ -448,6 +448,8 @@ export function analyseTrial(
             bankedTiers: tiersClearedSoFar,
             pointsByTier,
             buildersHallBonus,
+            // Test server only: a card may state whole tiers plus a partial one.
+            allowPartialTier: isTestServer(),
         }),
         pointsByTier,
         // Set below for a combat trial whose readings straddle a tier clear
@@ -2672,6 +2674,21 @@ class GuildTrials {
                     `mixture of the two. The card is used exactly as stated${
                         Number.isFinite(derived) ? `; the ladder’s own base is ${formatWithSeparator(derived)}` : ''
                     }.</div>`
+            );
+        }
+
+        // Test server: a card that reads above the whole-tier total by up to half
+        // the next tier's step is the partial-tier rule, not a disagreement. Say
+        // so, so the extra points on the banked line are explained rather than
+        // left to look like a ladder error.
+        const partialTrial = trials.find((trial) => trial.points?.interpretation === 'partial-tier');
+        if (partialTrial?.points?.quoted) {
+            const { tier, statedPoints } = partialTrial.points.quoted;
+            rows.push(
+                `<div style="color:${DIM}; margin-top:4px;">` +
+                    `${partialTrial.name} states ${formatWithSeparator(statedPoints)} pts at T${tier} — the ` +
+                    'whole-tier total plus partial credit for the tier it ended part-way through (test-server ' +
+                    'rule: 0.5% of a tier per 1% of progress, capped at 50%). Used as stated.</div>'
             );
         }
 

@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Partial-tier card figures no longer trigger a false "tier ladder needs checking" warning (test server)
+
+On the test server, a trial that ends part-way into a tier now states its whole-tier points **plus** the partial credit for that last tier — e.g. a 6-tier enhancing trial that ended 37% into tier 7 states 862 pts, not 840. The banked figure was already correct (the card is used as stated), but Toolasha flagged it as "neither the running total nor the per-tier step… the tier ladder here needs checking," because the reconciliation only knew whole-tier totals.
+
+- **Card reconciliation now recognises the partial-tier shape.** A figure sitting just above the whole-tier total by up to half the next tier's step reads as `partial-tier` (the ladder plus a partial tier), not a disagreement — so the false warning is gone. A short note explains the higher figure instead.
+- **Gated to the test server**, like the pace credit: on live the same figure is still reported as a genuine disagreement (no partial rule exists there), so nothing changes on the live server.
+
 ### Trial pace credits partial-tier progress (test server only)
 
 The test-server trial rework grants partial rewards for an unfinished tier when a trial ends — 0.5% of that tier's points per 1% of progress, capped at 50%. The "Guild Points on pace" projection now folds that in, so on the test server it matches what the game will actually pay instead of only counting whole tiers.
