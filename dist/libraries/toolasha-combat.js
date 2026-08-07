@@ -1,11 +1,11 @@
 /**
  * Toolasha Combat Library
  * Combat, abilities, and combat stats features
- * Version: 2.92.1
+ * Version: 2.93.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, dataManager, domObserver, webSocketHook, storage, bundleBridge_js, battlePanelMonsters_js, panelZIndex_js, scrollBuffValues_js, gameText_js, timerRegistry_js, characterKey_js, dom, profileCommand_js, domObserverHelpers_js, csvExport_js, formatters_js, choiceDialog_js, marketAPI, marketData_js, dropLuck_js, combatDropModel_js, overlayRows_js, overlayFormat_js, keyLedger_js, dungeonLevelGap_js, marketplaceTabs_js, simplePanel_js, damageAttribution_js, abilityCostCalculator_js, houseCostCalculator_js, enhancementConfig_js, enhancementWorkerManager_js, enhancementCalculator_js, profitConstants_js, teaParser_js, numberParser_js, gameLookups_js, guildCreditPricing_js, combatSimAdapter_js, combatSimRunner_js, equipmentParser_js, wilson_js, Monster, gameData_js, mobile_js, combatLevel_js, reactInput_js, combatSim, labSim, expectedValueCalculator, dungeonKeys_js, actionCalculator_js, efficiency_js, consumableForecast_js, consumableTarget_js, marketplaceAutofill_js, abilityBooks_js, itemNavigation_js, combatSimUI, performanceMonitor, backgroundWork_js, tableColumns_js, selectors_js, progressEta_js, toast_js) {
+(function (config, dataManager, domObserver, webSocketHook, storage, bundleBridge_js, battlePanelMonsters_js, panelZIndex_js, scrollBuffValues_js, gameText_js, timerRegistry_js, characterKey_js, dom, profileCommand_js, domObserverHelpers_js, csvExport_js, formatters_js, choiceDialog_js, marketAPI, marketData_js, dropLuck_js, combatDropModel_js, overlayRows_js, overlayFormat_js, keyLedger_js, dungeonLevelGap_js, marketplaceTabs_js, simplePanel_js, damageAttribution_js, abilityCostCalculator_js, houseCostCalculator_js, enhancementConfig_js, enhancementWorkerManager_js, enhancementCalculator_js, profitConstants_js, teaParser_js, numberParser_js, gameLookups_js, guildCreditPricing_js, combatSimAdapter_js, combatSimRunner_js, equipmentParser_js, wilson_js, Monster, gameData_js, mobile_js, combatLevel_js, reactInput_js, combatSim, labSim, expectedValueCalculator, dungeonKeys_js, actionCalculator_js, efficiency_js, consumableForecast_js, consumableTarget_js, marketplaceAutofill_js, abilityBooks_js, itemNavigation_js, combatSimUI, performanceMonitor, backgroundWork_js, tableColumns_js, selectors_js, progressEta_js, gameServer_js, toast_js) {
     'use strict';
 
     /**
@@ -39739,6 +39739,25 @@
     }
 
     /**
+     * The fraction of a tier's points an *incomplete* tier is worth, under the test
+     * server's partial-tier rule: 0.5% credit per 1% of progress, capped at 50%
+     * (reached at 99.99%). A fully cleared tier is worth its whole self and is not
+     * this — this is only the leftover progress a trial carries when it ends.
+     *
+     * Returns a multiplier in [0, 0.5] to apply to {@link tierMarginalPoints}. The
+     * caller decides whether the rule is in force (it is a test-server mechanic);
+     * this is only the arithmetic.
+     *
+     * @param {number} progressFraction - Progress into the tier, 0..1 (current/max)
+     * @returns {number} Credit as a fraction of the tier's points, 0..0.5
+     */
+    function partialTierCredit(progressFraction) {
+        const fraction = Number(progressFraction);
+        if (!Number.isFinite(fraction) || fraction <= 0) return 0;
+        return Math.min(0.5, 0.5 * fraction);
+    }
+
+    /**
      * How close two points figures have to be to be the same claim.
      *
      * Recovering a base figure from a bonused one is a division, and a bonus of
@@ -39788,7 +39807,13 @@
      *   bonusKnown: boolean, ladderCumulative: number, ladderMarginal: number|null}|null} The reading,
      *   or null on unusable input
      */
-    function interpretCardPoints({ type, tier, statedPoints, buildersHallBonus = null } = {}) {
+    function interpretCardPoints({
+        type,
+        tier,
+        statedPoints,
+        buildersHallBonus = null,
+        allowPartialTier = false,
+    } = {}) {
         if (!Number.isFinite(statedPoints) || !Number.isFinite(tier) || tier < 1) return null;
         if (FIRST_TIER_POINTS[type] === undefined) return null;
 
@@ -39820,6 +39845,12 @@
             // is a mixture of two bonuses by construction — see
             // {@link MAX_MID_TRIAL_UPGRADE_LEVELS}
             interpretation = 'mid-trial-upgrade';
+        } else if (allowPartialTier && withinPartialTier(basePoints, type, tier)) {
+            // Test server: a trial that ends part-way into the next tier banks that
+            // fraction of it (0.5% per 1% of progress, capped at 50%), so the card
+            // sits just *above* the whole-tier total by up to half the next tier's
+            // marginal points. Not a disagreement — the ladder plus a partial tier.
+            interpretation = 'partial-tier';
         }
 
         return {
@@ -39831,6 +39862,27 @@
             ladderCumulative,
             ladderMarginal,
         };
+    }
+
+    /**
+     * Whether a base figure is the whole-tier total plus a partial next tier.
+     *
+     * The test-server partial rule pays at most half of the next tier's marginal
+     * points ({@link partialTierCredit} caps at 0.5), so a legitimate partial-tier
+     * card lands in `(cumulative, cumulative + 0.5 × nextMarginal]`. Below that band
+     * is a genuine disagreement; above it is more than one unfinished tier can add.
+     *
+     * @param {number} basePoints - The card's figure divided back down to base
+     * @param {'skilling'|'combat'} type - Trial type
+     * @param {number} tier - The whole tier the card is stated at
+     * @returns {boolean} True when a partial next tier explains the excess
+     */
+    function withinPartialTier(basePoints, type, tier) {
+        const cumulative = trialBasePoints(type, tier);
+        const nextMarginal = tierMarginalPoints(type, tier + 1);
+        if (!Number.isFinite(basePoints) || !Number.isFinite(nextMarginal)) return false;
+        const ceiling = cumulative + partialTierCredit(1) * nextMarginal;
+        return basePoints > cumulative + POINTS_EPSILON && basePoints <= ceiling + POINTS_EPSILON;
     }
 
     /**
@@ -39930,7 +39982,13 @@
      *   interpretation: string|null, bonusKnown: boolean, needsBuildersHall: boolean, cardTier: number|null,
      *   ladder: number, quoted: {tier: number, statedPoints: number}|null}} What was banked and where it came from
      */
-    function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {}, buildersHallBonus = null } = {}) {
+    function trialBankedBasePoints({
+        type,
+        bankedTiers,
+        pointsByTier = {},
+        buildersHallBonus = null,
+        allowPartialTier = false,
+    } = {}) {
         const banked = Math.max(0, Math.floor(Number(bankedTiers) || 0));
         const ladder = trialBasePoints(type, banked);
         const bonusKnown = Number.isFinite(buildersHallBonus) && buildersHallBonus > -1;
@@ -39954,7 +40012,13 @@
             .sort((a, b) => b - a);
 
         const reading = quoted.length
-            ? interpretCardPoints({ type, tier: quoted[0], statedPoints: stated(quoted[0]), buildersHallBonus })
+            ? interpretCardPoints({
+                  type,
+                  tier: quoted[0],
+                  statedPoints: stated(quoted[0]),
+                  buildersHallBonus,
+                  allowPartialTier,
+              })
             : null;
         const interpretation = reading?.interpretation ?? null;
         const quotedAt = reading ? { tier: quoted[0], statedPoints: reading.statedPoints } : null;
@@ -40450,14 +40514,21 @@
         const perTrial = trials.map((trial) => {
             const override = Number(trial?.basePointsOverride);
             const statedGuildPoints = Number(trial?.guildPointsOverride);
-            const base = Number.isFinite(override) ? override : trialBasePoints(trial?.type, trial?.tiersCleared);
+            const rawBase = Number.isFinite(override) ? override : trialBasePoints(trial?.type, trial?.tiersCleared);
+            // Test-server partial-tier credit: base points the caller has already
+            // sized (via partialTierCredit × the tier's marginal points) for the
+            // incomplete tier a trial ends on. Zero everywhere the rule is off, so
+            // the whole-tier ladder is unchanged on the live server.
+            const partial = Math.max(0, Number(trial?.partialBasePoints) || 0);
+            const base = rawBase + partial;
+            const bonusedBase = Number.isFinite(statedGuildPoints) ? statedGuildPoints : guildPoints(rawBase, hall);
             return {
                 name: trial?.name ?? null,
                 type: trial?.type ?? null,
                 tiersCleared: Math.max(0, Math.floor(Number(trial?.tiersCleared) || 0)),
                 basePoints: base,
                 basePointsSource: Number.isFinite(override) ? 'game' : 'ladder',
-                guildPoints: Number.isFinite(statedGuildPoints) ? statedGuildPoints : guildPoints(base, hall),
+                guildPoints: bonusedBase + guildPoints(partial, hall),
             };
         });
 
@@ -49303,6 +49374,77 @@
     }
 
     /**
+     * A monster name or hrid reduced to comparable letters.
+     *
+     * The hrid's last segment with separators flattened, so `/monsters/trial_dragonfly`
+     * and "Trial Dragonfly" both become "trial dragonfly".
+     *
+     * @param {string} name - A monster name or hrid
+     * @returns {string} The comparison key
+     */
+    function monsterKey(name) {
+        const raw = String(name || '');
+        const tail = raw.includes('/') ? raw.split('/').pop() : raw;
+        return tail.toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
+    let componentEncounterCache = { source: null, map: null };
+
+    /**
+     * A monster → encounter map for composite trials, from the game's own data.
+     *
+     * Most trials are a single monster whose name carries the encounter — Trial
+     * Jellyfish is 'jellyfish'. Trial Swarm fights four *differently* named monsters
+     * (Beetle, Dragonfly, Wasp, Firefly), none of which reduces to 'swarm', so its
+     * pool would attach to no card. The game's `guildTrialDetailMap` lists each
+     * trial's monsters; this reverses that, mapping every component monster whose own
+     * name does not already resolve to its trial's encounter. Read live, never pinned.
+     *
+     * @param {Object} [clientData] - `initClientData`; defaults to the live copy
+     * @returns {Map<string, string>} monster key → encounter
+     */
+    function encounterComponentMap(clientData = dataManager.getInitClientData?.()) {
+        const trials = clientData?.guildTrialDetailMap;
+        if (componentEncounterCache.source === trials && componentEncounterCache.map) {
+            return componentEncounterCache.map;
+        }
+
+        const monsterMap = clientData?.combatMonsterDetailMap;
+        const map = new Map();
+        for (const [hrid, detail] of Object.entries(trials || {})) {
+            const encounter = encounterOf(detail?.name || hrid);
+            if (!encounter) continue;
+            const hrids = detail?.monsterHrids || detail?.combatMonsterHrids || detail?.spawns || [];
+            for (const entry of Array.isArray(hrids) ? hrids : []) {
+                const id = typeof entry === 'string' ? entry : entry?.combatMonsterHrid;
+                if (!id || encounterOf(id)) continue; // already resolvable by its own name
+                map.set(monsterKey(id), encounter);
+                const displayName = monsterMap?.[id]?.name;
+                if (displayName) map.set(monsterKey(displayName), encounter);
+            }
+        }
+
+        componentEncounterCache = { source: trials, map };
+        return map;
+    }
+
+    /**
+     * The encounter a monster belongs to, composite trials included.
+     *
+     * `encounterOf` alone cannot name Trial Swarm from "Trial Dragonfly"; this falls
+     * back to the game's trial→monster listing so a Swarm fight files under 'swarm'
+     * rather than under no trial at all — which left its pool off every card and its
+     * tile without a single sample.
+     *
+     * @param {string} name - A monster name or hrid
+     * @param {Object} [clientData] - `initClientData`; defaults to the live copy
+     * @returns {string|null} The encounter, or null
+     */
+    function encounterOfMonster(name, clientData = dataManager.getInitClientData?.()) {
+        return encounterOf(name) || encounterComponentMap(clientData).get(monsterKey(name)) || null;
+    }
+
+    /**
      * Whether the fight that just started is a guild combat trial.
      *
      * Pure, and the single decision the whole module hangs off — see the module note
@@ -49316,7 +49458,7 @@
     function isTrialBattle({ monsterNames = [], trialNames = [] } = {}) {
         for (const name of monsterNames) {
             if (/trial/i.test(String(name || ''))) {
-                return { isTrial: true, encounter: encounterOf(name), reason: 'the monster says it is a trial' };
+                return { isTrial: true, encounter: encounterOfMonster(name), reason: 'the monster says it is a trial' };
             }
         }
 
@@ -49330,7 +49472,7 @@
         }
 
         for (const name of monsterNames) {
-            const encounter = encounterOf(name);
+            const encounter = encounterOfMonster(name);
             if (encounter && wanted.has(encounter)) {
                 return { isTrial: true, encounter, reason: 'the boss is this week’s trial encounter' };
             }
@@ -49874,7 +50016,7 @@
         _noteBattleMonsters(monsters, tier, at) {
             for (const monster of Array.isArray(monsters) ? monsters : []) {
                 const name = String(monster?.name || '');
-                const encounter = encounterOf(monster?.hrid || name);
+                const encounter = encounterOfMonster(monster?.hrid || name);
                 if (!encounter) continue;
 
                 if (!this.encounter) {
@@ -50042,7 +50184,7 @@
                 const name = String(unit.character?.name || unit.name || '');
                 // Only a trial's boss. An ordinary zone monster clicked during the
                 // hour is not a trial sheet and would sit here pretending to be one
-                if (!encounterOf(name)) return;
+                if (!encounterOfMonster(name)) return;
 
                 const details = unit.combatDetails && typeof unit.combatDetails === 'object' ? unit.combatDetails : {};
                 const level = Number(details.combatLevel ?? unit.character?.combatLevel);
@@ -50054,7 +50196,7 @@
                 // One click on the boss is enough to say which trial this is, and it
                 // outlives the fight view being closed
                 if (!this.encounter) {
-                    this.encounter = encounterOf(name);
+                    this.encounter = encounterOfMonster(name);
                     this.spectatedBossName = name;
                 }
 
@@ -50197,7 +50339,7 @@
             if (this.encounter) return;
 
             for (const name of fightViewBossNames()) {
-                const encounter = encounterOf(name);
+                const encounter = encounterOfMonster(name);
                 if (!encounter) continue;
 
                 this.spectatedBossName = name;
@@ -50209,7 +50351,7 @@
             // click on the boss identifies the fight even after the view is shut
             const sheets = Object.values(this.bossSheets);
             const preferred = sheets.find((sheet) => sheet.tier === this.tier) || sheets[sheets.length - 1];
-            const fromSheet = encounterOf(preferred?.name || '');
+            const fromSheet = encounterOfMonster(preferred?.name || '');
             if (!fromSheet) return;
 
             this.spectatedBossName = preferred.name;
@@ -50806,6 +50948,200 @@
     const guildTrialSkilling = new GuildTrialSkilling();
 
     /**
+     * Post-trial Combat Trial Stats modal — the game's own per-member totals.
+     *
+     * A test-server feature: when a combat trial ends the game offers a "Combat
+     * Trial - Stats" modal listing each member's Damage, Healing and Damage Taken.
+     * It is authoritative where the live damage stream is not — the stream reads
+     * damage taken from health falling per tick and sees only a fraction of the real
+     * total (healing masks it, stream gaps drop it), and it splits shared ticks by
+     * actor, which under-credits the local player. This captures the modal so the
+     * panel can show it beside the measured figures and prefer it where it settles.
+     *
+     * The modal is scraped, never depended on: on the live server (where the feature
+     * does not yet exist) the observer simply never fires, and the panel falls back
+     * to the streamed figures exactly as before.
+     */
+
+
+    /** The stats table the game draws inside the modal — the tab-switch also redraws it */
+    const TABLE_CLASS = 'GuildPanel_trialStatsTable';
+    /** The draggable modal wrapper, reached from the table via closest() */
+    const MODAL_SELECTOR = '[class*="GuildPanel_trialStatsModal"]';
+    /** The selected tab's own label carries the trial name */
+    const ACTIVE_TAB_SELECTOR = '[role="tab"][aria-selected="true"] [class*="TabsComponent_badge"]';
+    const TABLE_SELECTOR = `table[class*="${TABLE_CLASS}"]`;
+
+    /**
+     * Normalise a column header to a stable key.
+     *
+     * The combat modal draws Damage / Healing / Damage Taken; the skilling modal
+     * draws its own (a contribution column), so the scraper reads whatever headers
+     * are there rather than assuming the combat layout — otherwise a skilling
+     * trial's single column would be mislabelled "damage".
+     *
+     * @param {string} label - The header cell's text
+     * @returns {string} A camelCase key: 'damageTaken', 'healing', 'damage', or a slug
+     */
+    function headerKey(label) {
+        const text = String(label || '')
+            .trim()
+            .toLowerCase();
+        if (text.includes('damage taken')) return 'damageTaken';
+        if (text.includes('healing')) return 'healing';
+        if (text === 'damage') return 'damage';
+        const words = text
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim()
+            .split(' ')
+            .filter(Boolean);
+        if (!words.length) return '';
+        return words.map((word, i) => (i === 0 ? word : word[0].toUpperCase() + word.slice(1))).join('');
+    }
+
+    /**
+     * Read a Trial Stats modal into per-member values for its active tab.
+     *
+     * Header-driven: the value columns are keyed by their own headers, so the combat
+     * modal yields `damage`/`healing`/`damageTaken` and the skilling modal yields its
+     * own column, each correct. The figures are abbreviated ("1213K"), parsed the
+     * same way the rest of the script reads the game's numbers. The member name is
+     * taken from `data-name`, which is exact where the visible text can be truncated.
+     *
+     * @param {Element} modal - The `[class*="GuildPanel_trialStatsModal"]` element
+     * @returns {{trialName: string|null, kind: 'combat'|'skilling', columns: string[],
+     *   members: Array<{name: string, values: Object<string, number|null>}>}|null} The active tab's
+     *   stats, or null
+     */
+    function parseTrialStatsModal(modal) {
+        if (!modal || typeof modal.querySelector !== 'function') return null;
+
+        const tab = modal.querySelector(ACTIVE_TAB_SELECTOR);
+        const trialName = tab ? tab.textContent.trim() : null;
+
+        // The active tab's panel is the one not marked hidden; the whole modal is a
+        // safe fallback when the panel markup is not where it is expected.
+        const panels = [...modal.querySelectorAll('[class*="TabPanel_tabPanel"]')];
+        const visible = panels.find((panel) => !String(panel.className).includes('TabPanel_hidden')) || modal;
+        const table = visible.querySelector(TABLE_SELECTOR);
+        if (!table) return null;
+
+        // The header row minus the leading Member column gives the value columns.
+        const headers = [...table.querySelectorAll('thead th')].map((th) => headerKey(th.textContent));
+        const columns = headers.slice(1).filter(Boolean);
+        if (!columns.length) return null;
+
+        const members = [];
+        for (const row of table.querySelectorAll('tbody tr')) {
+            const nameEl = row.querySelector('[class*="CharacterName_name"]');
+            const name = (nameEl?.getAttribute('data-name') || nameEl?.textContent || '').trim();
+            if (!name) continue;
+
+            // Cell 0 is the member; the value cells follow, one per header column.
+            const cells = [...row.querySelectorAll('td')].slice(1);
+            const values = {};
+            columns.forEach((key, i) => {
+                values[key] = cells[i] ? numberParser_js.parseItemCount(String(cells[i].textContent).trim(), null) : null;
+            });
+            members.push({ name, values });
+        }
+
+        if (!members.length) return null;
+        const kind = columns.includes('damageTaken') ? 'combat' : 'skilling';
+        return { trialName, kind, columns, members };
+    }
+
+    class GuildTrialStatsModal {
+        constructor() {
+            this.initialized = false;
+            this.unregister = null;
+            /** trialName → { members, at } — the last reading of each trial's stats */
+            this.statsByTrial = new Map();
+        }
+
+        initialize() {
+            if (this.initialized) return;
+            this.initialized = true;
+            // Watch the table rather than the modal wrapper: the wrapper is inserted
+            // once, but the table is redrawn on every tab switch, so watching it
+            // captures Trial Swarm's stats when the player switches to that tab too.
+            this.unregister = domObserver.onClass('GuildTrialStatsModal', TABLE_CLASS, (table) => {
+                const modal = table.closest?.(MODAL_SELECTOR) || table.parentElement;
+                this.capture(modal || table);
+            });
+        }
+
+        /**
+         * Parse a modal element and store the active tab's stats under its trial name.
+         * @param {Element} modal - The stats modal (or a node it can be reached from)
+         */
+        capture(modal) {
+            try {
+                const parsed = parseTrialStatsModal(modal);
+                if (!parsed?.trialName || !parsed.members.length) return;
+                this.statsByTrial.set(parsed.trialName, {
+                    kind: parsed.kind,
+                    columns: parsed.columns,
+                    members: parsed.members,
+                    at: Date.now(),
+                });
+            } catch (error) {
+                console.error('[GuildTrialStatsModal] Failed to read the stats modal:', error);
+            }
+        }
+
+        /**
+         * The captured stats for a trial, if the modal has been opened this session.
+         * @param {string} trialName - e.g. "Trial Jellyfish"
+         * @returns {{members: Array, at: number}|null} The reading, or null
+         */
+        getStats(trialName) {
+            return this.statsByTrial.get(trialName) || null;
+        }
+
+        /**
+         * A combat trial's per-member totals, flattened for reconciliation.
+         *
+         * Returns null unless the captured modal was a combat one (the skilling modal
+         * carries no damage/healing/taken columns), so callers can fall back to the
+         * streamed figures unchanged.
+         *
+         * @param {string} trialName - e.g. "Trial Jellyfish"
+         * @returns {Array<{name: string, damage: number|null, healing: number|null,
+         *   damageTaken: number|null}>|null} Per-member totals, or null
+         */
+        getCombatStats(trialName) {
+            const stats = this.statsByTrial.get(trialName);
+            if (!stats || stats.kind !== 'combat') return null;
+            return stats.members.map((member) => ({
+                name: member.name,
+                damage: member.values.damage ?? null,
+                healing: member.values.healing ?? null,
+                damageTaken: member.values.damageTaken ?? null,
+            }));
+        }
+
+        /**
+         * Everything captured this session, keyed by trial name — for the export.
+         * @returns {Object<string, {members: Array, at: number}>}
+         */
+        snapshot() {
+            const out = {};
+            for (const [name, value] of this.statsByTrial) out[name] = value;
+            return out;
+        }
+
+        cleanup() {
+            this.unregister?.();
+            this.unregister = null;
+            this.statsByTrial.clear();
+            this.initialized = false;
+        }
+    }
+
+    const guildTrialStatsModal = new GuildTrialStatsModal();
+
+    /**
      * Recording a trial while it happens, without being asked twice.
      *
      * Everything the trials feature knows is already captured as it goes — samples
@@ -51254,6 +51590,9 @@
             // participants and the per-tier personal figures, none of which needed a
             // tab to be open
             trialSkilling: guildTrialSkilling.snapshot?.() ?? null,
+            // The game's own post-trial Stats modal, per combat trial, where it has
+            // been opened — the authoritative per-member damage/healing/damage-taken
+            trialStatsModal: guildTrialStatsModal.snapshot?.() ?? {},
         };
     }
 
@@ -51820,14 +52159,46 @@
      * @param {'damage'|'healing'} tab - Which figures
      * @returns {{rows: Array<Object>, total: number, perSecond: number|null, seconds: number}} The tab
      */
-    function scoreboardRows(breakdown, tab = 'damage') {
+    function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
         const seconds = breakdown?.seconds || 0;
-        const support = breakdown?.support?.players || [];
 
+        // The game's own post-trial stats, when they have been captured, are the
+        // authoritative full-trial totals — preferred over the stream, which only
+        // ever saw the stretch the fight view was open (here, a mid-fight restart
+        // left it at ~5%) and barely sees damage taken at all (health falling per
+        // tick, most of it masked by healing). No per-second: the modal states
+        // whole-trial totals, not a rate.
+        const modalField = { damage: 'damage', healing: 'healing', taken: 'damageTaken' }[tab] || 'damage';
+        if (Array.isArray(modalStats) && modalStats.length) {
+            const raw = modalStats.map((member) => ({
+                index: member.name,
+                name: member.name,
+                value: Number(member[modalField]) || 0,
+            }));
+            const rows = raw.filter((row) => row.value > 0).sort((a, b) => b.value - a.value);
+            const total = rows.reduce((sum, row) => sum + row.value, 0);
+            return {
+                rows: rows.map((row, position) => ({
+                    ...row,
+                    measured: true,
+                    rank: position + 1,
+                    perSecond: null,
+                    share: total > 0 ? (row.value / total) * 100 : null,
+                })),
+                total,
+                perSecond: null,
+                seconds,
+                source: 'game',
+            };
+        }
+
+        const support = breakdown?.support?.players || [];
         const raw =
             tab === 'healing'
                 ? support.map((row) => ({ index: row.index, name: row.name, value: row.healingDone || 0 }))
-                : (breakdown?.players || []).map((row) => ({ index: row.index, name: row.name, value: row.damage || 0 }));
+                : tab === 'taken'
+                  ? support.map((row) => ({ index: row.index, name: row.name, value: row.damageTaken || 0 }))
+                  : (breakdown?.players || []).map((row) => ({ index: row.index, name: row.name, value: row.damage || 0 }));
 
         const measuredBy = new Map((breakdown?.players || []).map((row) => [row.index, row.measured]));
         const rows = raw.filter((row) => row.value > 0).sort((a, b) => b.value - a.value);
@@ -51846,7 +52217,26 @@
             total,
             perSecond: seconds > 0 ? total / seconds : null,
             seconds,
+            source: breakdown?.source === 'spectated' ? 'stream' : null,
         };
+    }
+
+    /**
+     * The game's post-trial Stats modal for the trial a breakdown is watching.
+     *
+     * The modal is keyed by trial name ("Trial Swarm"); the breakdown carries the
+     * encounter and this week's trial names, so the two are joined here. Returns
+     * null unless a combat modal has been captured for that trial.
+     *
+     * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+     * @param {Object} [modal] - The stats-modal store, injectable for tests
+     * @returns {Array<{name: string, damage: number|null, healing: number|null,
+     *   damageTaken: number|null}>|null} Per-member totals, or null
+     */
+    function modalStatsForBreakdown(breakdown, modal = guildTrialStatsModal) {
+        if (!breakdown?.encounter) return null;
+        const trialName = (breakdown.trialNames || []).find((name) => encounterOf(name) === breakdown.encounter);
+        return trialName ? modal.getCombatStats?.(trialName) || null : null;
     }
 
     /**
@@ -51855,9 +52245,20 @@
      * @param {'damage'|'healing'} tab - Which figures
      * @returns {string} One line per player
      */
-    function scoreboardText(breakdown, tab = 'damage', estimate = null) {
-        const { rows, total, perSecond } = scoreboardRows(breakdown, tab);
-        const label = tab === 'healing' ? 'healing' : 'damage';
+    function scoreboardText(breakdown, tab = 'damage', estimate = null, modalStats = null) {
+        const { rows, total, perSecond, source } = scoreboardRows(breakdown, tab, modalStats);
+        const label = tab === 'healing' ? 'healing' : tab === 'taken' ? 'damage taken' : 'damage';
+
+        if (source === 'game') {
+            if (!rows.length) return `Trial ${label}: the game's stats modal lists none.`;
+            const head = `Trial ${label} — ${formatters_js.formatWithSeparator(Math.round(total))} total, from the game's post-trial stats`;
+            const lines = rows.map(
+                (row) =>
+                    `${row.rank}. ${row.name} — ${formatters_js.formatWithSeparator(Math.round(row.value))}` +
+                    (row.share === null ? '' : ` (${row.share.toFixed(1)}%)`)
+            );
+            return [head, ...lines].join('\n');
+        }
 
         if (!rows.length && tab === 'damage' && estimate?.players?.length) {
             const head =
@@ -52066,7 +52467,7 @@
                 });
             });
             body.querySelector('[data-action="copy"]')?.addEventListener('click', () => {
-                this._copy(scoreboardText(breakdown, this.tab, this._estimate()));
+                this._copy(scoreboardText(breakdown, this.tab, this._estimate(), modalStatsForBreakdown(breakdown)));
             });
             body.querySelector('[data-action="report"]')?.addEventListener('click', () => {
                 this._copy(this.reportText(breakdown));
@@ -52196,13 +52597,17 @@
          * @returns {string} HTML
          */
         _bodyHTML(breakdown) {
-            const { rows, total, perSecond } = scoreboardRows(breakdown, this.tab);
+            const modalStats = modalStatsForBreakdown(breakdown);
+            const { rows, total, perSecond, source } = scoreboardRows(breakdown, this.tab, modalStats);
+            const fromGame = source === 'game';
             const healing = this.tab === 'healing';
+            const taken = this.tab === 'taken';
             const unit = healing ? 'hps' : 'dps';
 
             // Measurement is impossible for a trial (see the module note), so the
-            // damage tab falls through to the estimate rather than to an apology
-            const estimate = !rows.length && !healing ? this._estimate() : null;
+            // damage tab falls through to the estimate rather than to an apology —
+            // but never over the game's own stats or the damage-taken tab.
+            const estimate = !rows.length && !healing && !taken && !fromGame ? this._estimate() : null;
             const estimated = Boolean(estimate?.players?.length);
 
             const head = estimated
@@ -52213,19 +52618,25 @@
                   `<span style="margin-left:auto; color:${DIM$1}; font-weight:600;">` +
                   `${estimate.covered}/${estimate.of} builds</span>` +
                   `</div>`
-                : `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
-                  `<span style="font-size:20px; font-weight:700; color:${ACCENT$1};">` +
-                  `${perSecond === null ? '—' : formatters_js.formatKMB(Math.round(perSecond))}</span>` +
-                  `<span style="color:${DIM$1};">party ${unit}</span>` +
-                  `<span style="margin-left:auto; color:${GOOD$1}; font-weight:600;">` +
-                  `${formatters_js.formatKMB(Math.round(total))}</span>` +
-                  `</div>`;
+                : fromGame
+                  ? `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
+                    `<span style="font-size:20px; font-weight:700; color:${GOOD$1};">${formatters_js.formatKMB(Math.round(total))}</span>` +
+                    `<span style="color:${DIM$1};">trial ${taken ? 'damage taken' : healing ? 'healing' : 'damage'} · game stats</span>` +
+                    `</div>`
+                  : `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
+                    `<span style="font-size:20px; font-weight:700; color:${ACCENT$1};">` +
+                    `${perSecond === null ? '—' : formatters_js.formatKMB(Math.round(perSecond))}</span>` +
+                    `<span style="color:${DIM$1};">party ${unit}</span>` +
+                    `<span style="margin-left:auto; color:${GOOD$1}; font-weight:600;">` +
+                    `${formatters_js.formatKMB(Math.round(total))}</span>` +
+                    `</div>`;
 
             const tabs =
                 `<div style="display:flex; gap:6px; margin:6px 0;">` +
                 [
                     { key: 'damage', label: 'Damage' },
                     { key: 'healing', label: 'Healing' },
+                    { key: 'taken', label: 'Taken' },
                 ]
                     .map(
                         (entry) =>
@@ -52241,27 +52652,35 @@
             // an estimate for the game's own figures has been misled by the panel,
             // and one who takes a measurement for a guess distrusts a real number
             const spectated = breakdown?.source === 'spectated';
-            const disclaimer = estimated
-                ? `<div style="color:${WARN$1}; font-size:11px; font-weight:600; line-height:1.5;">` +
-                  'Estimated from builds — nothing has been watched yet.</div>' +
+            const disclaimer = fromGame
+                ? `<div style="color:${GOOD$1}; font-size:11px; font-weight:600; line-height:1.5;">` +
+                  'From the game’s post-trial stats — the authoritative full-trial totals.</div>' +
                   `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
-                  'A trial fight runs on the game’s own server and streams here only while the In Progress ' +
-                  'fight view is open — open it and these become measured. Until then this is each captured ' +
-                  'sheet’s auto-attack worth per second, shared out: abilities are not modelled, and a build is ' +
-                  'only as current as the last time it was seen.</div>'
-                : spectated
-                  ? `<div style="color:${GOOD$1}; font-size:11px; font-weight:600; line-height:1.5;">` +
-                    `Measured from the trial fight — ${Math.round(breakdown?.seconds || 0)}s watched.</div>` +
+                  'Read off the Combat Trial Stats modal, so these are the whole trial rather than the stretch the ' +
+                  'fight view happened to be open for. Damage taken and healing are only reliable here — the live ' +
+                  'stream reads them from health falling and rising per tick and captures a fraction of the real ' +
+                  'totals.</div>'
+                : estimated
+                  ? `<div style="color:${WARN$1}; font-size:11px; font-weight:600; line-height:1.5;">` +
+                    'Estimated from builds — nothing has been watched yet.</div>' +
                     `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
-                    'Folded from the stream the In Progress fight view subscribes to. Once started, the stream ' +
-                    'often keeps flowing while other tabs are open — every tick received is counted, and a gap ' +
-                    'in the stream pauses these rather than ending them.' +
-                    this._ownRowNote(breakdown) +
-                    this._namingNote(breakdown) +
-                    this._coverageNote(breakdown) +
-                    '</div>'
-                  : `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
-                    'Attributed off this client’s own battle feed.</div>';
+                    'A trial fight runs on the game’s own server and streams here only while the In Progress ' +
+                    'fight view is open — open it and these become measured. Until then this is each captured ' +
+                    'sheet’s auto-attack worth per second, shared out: abilities are not modelled, and a build is ' +
+                    'only as current as the last time it was seen.</div>'
+                  : spectated
+                    ? `<div style="color:${GOOD$1}; font-size:11px; font-weight:600; line-height:1.5;">` +
+                      `Measured from the trial fight — ${Math.round(breakdown?.seconds || 0)}s watched.</div>` +
+                      `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
+                      'Folded from the stream the In Progress fight view subscribes to. Once started, the stream ' +
+                      'often keeps flowing while other tabs are open — every tick received is counted, and a gap ' +
+                      'in the stream pauses these rather than ending them.' +
+                      this._ownRowNote(breakdown) +
+                      this._namingNote(breakdown) +
+                      this._coverageNote(breakdown) +
+                      '</div>'
+                    : `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
+                      'Attributed off this client’s own battle feed.</div>';
 
             const unestimated =
                 estimated && estimate.unestimated.length
@@ -53365,6 +53784,8 @@
                 bankedTiers: tiersClearedSoFar,
                 pointsByTier,
                 buildersHallBonus,
+                // Test server only: a card may state whole tiers plus a partial one.
+                allowPartialTier: gameServer_js.isTestServer(),
             }),
             pointsByTier,
             // Set below for a combat trial whose readings straddle a tier clear
@@ -54582,6 +55003,7 @@
             // recognised without the tab having been opened this session.
             guildTrialDamage.initialize();
             guildTrialSkilling.initialize();
+            guildTrialStatsModal.initialize();
             guildTrialAlerts.initialize?.();
             guildTrialRecorder.initialize(this.guildName);
             guildMemberSkills.initialize(this.guildName).catch(() => {});
@@ -54866,6 +55288,33 @@
                 // is about — and is asked once per card rather than once per render
                 this.watchedPool = watched;
                 this.contextRank = 0;
+                // A composite trial (Trial Swarm) draws the In Progress fight view
+                // four separately named monster cards — Beetle, Dragonfly, Wasp,
+                // Firefly — none of which is a trial name, so `readTrialTiles` finds
+                // no card to draw on and the tab stays blank. When a combat fight is
+                // being watched and its encounter has no card of its own, stand a
+                // tile in, anchored to the monsters area so its panel sits below the
+                // fight, and let the watched pool graft onto it as on the Trials tab.
+                if (watched?.encounter && !tiles.some((tile) => encounterOfMonster(tile.name) === watched.encounter)) {
+                    const monstersArea = root.querySelector('[class*="BattlePanel_monstersArea"]');
+                    const trialName = (guildTrialDamage.breakdown()?.trialNames || []).find(
+                        (candidate) => encounterOf(candidate) === watched.encounter
+                    );
+                    if (monstersArea && trialName) {
+                        tiles.push({
+                            element: monstersArea,
+                            name: trialName,
+                            level: null,
+                            tier: null,
+                            kind: 'combat',
+                            completed: false,
+                            readings: [],
+                            signups: null,
+                            points: null,
+                        });
+                    }
+                }
+
                 // Needed inside the sampling loop as well as the drawing one: the
                 // work-ladder tier filing wants a participant count
                 const counts = participantCounts();
@@ -55106,6 +55555,10 @@
                     type: record.kind,
                     banked: analysis.tiersClearedSoFar,
                     projected: analysis.pace?.tiersCleared ?? analysis.tiersClearedSoFar,
+                    // How far into the tier beyond `projected` the pace reaches by the
+                    // hour's end, 0..1. Only meaningful under the test-server
+                    // partial-tier rule, where that leftover progress pays out.
+                    partialFraction: analysis.pace?.partialFraction ?? 0,
                     tierKnown: analysis.tierKnown,
                     points: analysis.points,
                     pointsByTier: analysis.pointsByTier,
@@ -55489,9 +55942,16 @@
                     const fromCards = trial.points?.source !== 'ladder';
                     const base = trial.points?.basePoints;
                     const stated = trial.points?.guildPoints;
+                    // Test-server only: the pace ends part-way into the tier after
+                    // `projected`, and that leftover progress now pays out (0.5% per
+                    // 1%, capped at 50%). Size it off that tier's marginal points.
+                    // Off the test server this is 0, so nothing moves on live.
+                    const marginal = tierMarginalPoints(trial.type, (trial.projected ?? 0) + 1) ?? 0;
+                    const partialBasePoints = gameServer_js.isTestServer() ? partialTierCredit(trial.partialFraction) * marginal : 0;
                     return {
                         ...trial,
                         tiersCleared: trial.projected,
+                        partialBasePoints,
                         basePointsOverride: fromCards && Number.isFinite(base) ? base + extraTiers * step : undefined,
                         guildPointsOverride:
                             fromCards && Number.isFinite(stated)
@@ -55549,6 +56009,17 @@
                 line('Tokens, if you took part', participant.value, GOOD, participant.title),
             ];
 
+            // Test server only: the pace now folds in the partial-tier rule, so say
+            // so — the on-pace figure is higher than a whole-tier walk and the reason
+            // should be on screen rather than a silent discrepancy against the game.
+            if (gameServer_js.isTestServer() && trials.some((trial) => (trial.partialFraction ?? 0) > 0)) {
+                rows.push(
+                    `<div style="color:${DIM}; margin-top:4px;">` +
+                        'On pace includes partial-tier credit: on the test server an unfinished tier pays 0.5% of its ' +
+                        'points per 1% of progress (up to 50%), so the pace counts the tier it ends part-way through.</div>'
+                );
+            }
+
             // Not a mismatch at all: a total banked across a Builder's Hall upgrade.
             // Points bank live, tier by tier, at the bonus in force when each tier
             // clears — so a guild that levels its Hall mid-trial has a card that is a
@@ -55567,6 +56038,21 @@
                         `mixture of the two. The card is used exactly as stated${
                         Number.isFinite(derived) ? `; the ladder’s own base is ${formatters_js.formatWithSeparator(derived)}` : ''
                     }.</div>`
+                );
+            }
+
+            // Test server: a card that reads above the whole-tier total by up to half
+            // the next tier's step is the partial-tier rule, not a disagreement. Say
+            // so, so the extra points on the banked line are explained rather than
+            // left to look like a ladder error.
+            const partialTrial = trials.find((trial) => trial.points?.interpretation === 'partial-tier');
+            if (partialTrial?.points?.quoted) {
+                const { tier, statedPoints } = partialTrial.points.quoted;
+                rows.push(
+                    `<div style="color:${DIM}; margin-top:4px;">` +
+                        `${partialTrial.name} states ${formatters_js.formatWithSeparator(statedPoints)} pts at T${tier} — the ` +
+                        'whole-tier total plus partial credit for the tier it ended part-way through (test-server ' +
+                        'rule: 0.5% of a tier per 1% of progress, capped at 50%). Used as stated.</div>'
                 );
             }
 
@@ -56136,6 +56622,7 @@
             this.lastTickAt = 0;
             guildTrialDamage.cleanup();
             guildTrialSkilling.cleanup();
+            guildTrialStatsModal.cleanup();
             guildTrialRecorder.cleanup();
             guildTrialScoreboard.close();
             guildLoadoutCapture.cleanup();
@@ -56380,4 +56867,4 @@
 
     console.log('[Toolasha] Combat library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.webSocketHook, Toolasha.Core.storage, Toolasha.Utils.bundleBridge, Toolasha.Utils.battlePanelMonsters, Toolasha.Utils.panelZIndex, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.gameText, Toolasha.Utils.timerRegistry, Toolasha.Utils.characterKey, Toolasha.Utils.dom, Toolasha.Utils.profileCommand, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.csvExport, Toolasha.Utils.formatters, Toolasha.Utils.choiceDialog, Toolasha.Core.marketAPI, Toolasha.Utils.marketData, Toolasha.Utils.dropLuck, Toolasha.Utils.combatDropModel, Toolasha.Utils.overlayRows, Toolasha.Utils.overlayFormat, Toolasha.Utils.keyLedger, Toolasha.Utils.dungeonLevelGap, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.simplePanel, Toolasha.Utils.damageAttribution, Toolasha.Utils.abilityCalc, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.enhancementWorkerManager, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.profitConstants, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.gameLookups, Toolasha.Utils.guildCreditPricing, Toolasha.Sim.combatSimAdapter, Toolasha.Sim.combatSimRunner, Toolasha.Utils.equipmentParser, Toolasha.Sim.wilson, Toolasha.Sim.monster, Toolasha.Sim.gameData, Toolasha.Utils.mobile, Toolasha.Utils.combatLevel, Toolasha.Utils.reactInput, Toolasha.Sim.combatSim, Toolasha.Sim.labSim, Toolasha.Market.expectedValueCalculator, Toolasha.Utils.dungeonKeys, Toolasha.Utils.actionCalculator, Toolasha.Utils.efficiency, Toolasha.Utils.consumableForecast, Toolasha.Utils.consumableTarget, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.abilityBooks, Toolasha.Utils.itemNavigation, Toolasha.Sim.combatSimUI, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.tableColumns, Toolasha.Utils.selectors, Toolasha.Utils.progressEta, Toolasha.Utils.toast);
+})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.webSocketHook, Toolasha.Core.storage, Toolasha.Utils.bundleBridge, Toolasha.Utils.battlePanelMonsters, Toolasha.Utils.panelZIndex, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.gameText, Toolasha.Utils.timerRegistry, Toolasha.Utils.characterKey, Toolasha.Utils.dom, Toolasha.Utils.profileCommand, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.csvExport, Toolasha.Utils.formatters, Toolasha.Utils.choiceDialog, Toolasha.Core.marketAPI, Toolasha.Utils.marketData, Toolasha.Utils.dropLuck, Toolasha.Utils.combatDropModel, Toolasha.Utils.overlayRows, Toolasha.Utils.overlayFormat, Toolasha.Utils.keyLedger, Toolasha.Utils.dungeonLevelGap, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.simplePanel, Toolasha.Utils.damageAttribution, Toolasha.Utils.abilityCalc, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.enhancementWorkerManager, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.profitConstants, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.gameLookups, Toolasha.Utils.guildCreditPricing, Toolasha.Sim.combatSimAdapter, Toolasha.Sim.combatSimRunner, Toolasha.Utils.equipmentParser, Toolasha.Sim.wilson, Toolasha.Sim.monster, Toolasha.Sim.gameData, Toolasha.Utils.mobile, Toolasha.Utils.combatLevel, Toolasha.Utils.reactInput, Toolasha.Sim.combatSim, Toolasha.Sim.labSim, Toolasha.Market.expectedValueCalculator, Toolasha.Utils.dungeonKeys, Toolasha.Utils.actionCalculator, Toolasha.Utils.efficiency, Toolasha.Utils.consumableForecast, Toolasha.Utils.consumableTarget, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.abilityBooks, Toolasha.Utils.itemNavigation, Toolasha.Sim.combatSimUI, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.tableColumns, Toolasha.Utils.selectors, Toolasha.Utils.progressEta, Toolasha.Utils.gameServer, Toolasha.Utils.toast);

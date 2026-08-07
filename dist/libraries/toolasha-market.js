@@ -1,11 +1,11 @@
 /**
  * Toolasha Market Library
  * Market, inventory, and economy features
- * Version: 2.92.1
+ * Version: 2.93.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, dataManager, domObserver, marketAPI, houseEfficiency_js, efficiency_js, bonusRevenueCalculator_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, formatters_js, marketData_js, teaParser_js, numberParser_js, profitHelpers_js, buffParser_js, alchemyFees_js, equipmentParser_js, actionCalculator_js, tokenValuation_js, evWorkerManager_js, abilityCostCalculator_js, dom, dungeonKeys_js, materialCalculator_js, gameLookups_js, timerRegistry_js, storage, characterKey_js, cleanupRegistry_js, domObserverHelpers_js, marketplaceTabs_js, reactInput_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, overlayFormat_js, watchlist_js, dropSources_js, overlayRows_js, backgroundWork_js, webSocketHook, bundleBridge_js, toast_js, mobile_js, gameServer_js, enhancementMultipliers_js, performanceMonitor, houseCostCalculator_js, networthWorkerManager_js, guildCreditPricing_js, chunkedHistory_js, marketplaceAutofill_js, skillHistory_js, abilityBooks_js, deferredLoad_js, simplePanel_js, settingsStorage, chestTally_js, choiceDialog_js, chestImport_js, csvExport_js, roomSkills_js, equipmentSavings_js) {
+(function (config, dataManager, domObserver, marketAPI, houseEfficiency_js, efficiency_js, bonusRevenueCalculator_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, formatters_js, marketData_js, teaParser_js, numberParser_js, profitHelpers_js, buffParser_js, alchemyFees_js, equipmentParser_js, actionCalculator_js, tokenValuation_js, evWorkerManager_js, abilityCostCalculator_js, dom, dungeonKeys_js, materialCalculator_js, gameLookups_js, timerRegistry_js, storage, characterKey_js, selectors_js, cleanupRegistry_js, domObserverHelpers_js, marketplaceTabs_js, reactInput_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, overlayFormat_js, watchlist_js, dropSources_js, overlayRows_js, backgroundWork_js, webSocketHook, bundleBridge_js, toast_js, mobile_js, gameServer_js, enhancementMultipliers_js, performanceMonitor, houseCostCalculator_js, networthWorkerManager_js, guildCreditPricing_js, chunkedHistory_js, marketplaceAutofill_js, skillHistory_js, abilityBooks_js, deferredLoad_js, simplePanel_js, settingsStorage, chestTally_js, choiceDialog_js, chestImport_js, csvExport_js, roomSkills_js, equipmentSavings_js) {
     'use strict';
 
     function _interopNamespaceDefault(e) {
@@ -8502,7 +8502,9 @@
             // Watch for the My Listings table container
             this.unregisterMyListingsObserver = domObserver.onClass(
                 'EstimatedListingAge_MyListings',
-                'MarketplacePanel_myListingsTableContainer__2s6pm',
+                // Base class only — onClass matches on a substring, and the game's
+                // hash suffix rehashes on every UI rebuild.
+                'MarketplacePanel_myListingsTableContainer',
                 (container) => {
                     this.checkForExpiredListings(container);
                 }
@@ -8605,8 +8607,11 @@
         parsePrice(priceText) {
             if (!priceText) return null;
 
-            const normalized = priceText.trim().toUpperCase();
-            const match = normalized.match(/^([\d,.]+)([KMB])?$/);
+            // Strip a trailing "*" marker: post-rework, My Listings flags any listing
+            // whose original limit price differs from its resting boundary price with
+            // a "*". The $-anchored regex below would otherwise reject the whole cell.
+            const normalized = priceText.trim().toUpperCase().replace(/\*+$/, '').trim();
+            const match = normalized.match(/^([\d,.]+)([KMBT])?$/);
 
             if (!match) return null;
 
@@ -8623,6 +8628,8 @@
                     return Math.round(value * 1000000);
                 case 'B':
                     return Math.round(value * 1000000000);
+                case 'T':
+                    return Math.round(value * 1000000000000);
                 default:
                     return Math.round(value);
             }
@@ -8811,7 +8818,7 @@
          */
         getCurrentItemHrid() {
             // PRIMARY: Check for current item element (same as RWI approach)
-            const currentItemElement = document.querySelector('.MarketplacePanel_currentItem__3ercC');
+            const currentItemElement = document.querySelector(selectors_js.GAME.MARKETPLACE_CURRENT_ITEM);
             if (currentItemElement) {
                 const useElement = currentItemElement.querySelector('use');
                 if (useElement && useElement.href && useElement.href.baseVal) {
@@ -8866,7 +8873,7 @@
          */
         getCurrentEnhancementLevel() {
             // Check for enhancement level indicator in the current item display
-            const currentItemElement = document.querySelector('.MarketplacePanel_currentItem__3ercC');
+            const currentItemElement = document.querySelector(selectors_js.GAME.MARKETPLACE_CURRENT_ITEM);
             if (currentItemElement) {
                 const enhancementElement = currentItemElement.querySelector('[class*="Item_enhancementLevel"]');
                 if (enhancementElement) {
@@ -10056,9 +10063,14 @@
                         : priceNode.textContent;
                 text = String(text).trim();
 
-                // Handle K/M/B suffixes (e.g., "340K" = 340000, "1.5M" = 1500000, "24B" = 24000000000)
+                // Handle K/M/B/T suffixes (e.g., "340K" = 340000, "1.5M" = 1500000, "24B" = 24000000000,
+                // "1.2T" = 1200000000000). T is checked first so it isn't missed — post-rework the max
+                // listing price is 1T (was 100B), and without this "1.2T" fell through to multiplier 1.
                 let multiplier = 1;
-                if (text.toUpperCase().includes('B')) {
+                if (text.toUpperCase().includes('T')) {
+                    multiplier = 1000000000000;
+                    text = text.replace(/T/gi, '');
+                } else if (text.toUpperCase().includes('B')) {
                     multiplier = 1000000000;
                     text = text.replace(/B/gi, '');
                 } else if (text.toUpperCase().includes('M')) {
@@ -10714,7 +10726,7 @@
          */
         processOrderBook(_container) {
             // Find the button container where we'll inject the queue lengths
-            const buttonContainer = document.querySelector('.MarketplacePanel_newListingButtonsContainer__1MhKJ');
+            const buttonContainer = document.querySelector(selectors_js.GAME.MARKETPLACE_NEW_LISTING_BUTTONS);
             if (!buttonContainer) {
                 return;
             }
@@ -10840,7 +10852,7 @@
          * @returns {string|null} Item HRID or null
          */
         getCurrentItemHrid() {
-            const currentItemElement = document.querySelector('.MarketplacePanel_currentItem__3ercC');
+            const currentItemElement = document.querySelector(selectors_js.GAME.MARKETPLACE_CURRENT_ITEM);
             if (currentItemElement) {
                 const useElement = currentItemElement.querySelector('use');
                 if (useElement && useElement.href && useElement.href.baseVal) {
@@ -10856,7 +10868,7 @@
          * @returns {number} Enhancement level (0 for non-equipment)
          */
         getCurrentEnhancementLevel() {
-            const currentItemElement = document.querySelector('.MarketplacePanel_currentItem__3ercC');
+            const currentItemElement = document.querySelector(selectors_js.GAME.MARKETPLACE_CURRENT_ITEM);
             if (currentItemElement) {
                 const enhancementElement = currentItemElement.querySelector('[class*="Item_enhancementLevel"]');
                 if (enhancementElement) {
@@ -43155,4 +43167,4 @@
 
     console.log('[Toolasha] Market library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.marketAPI, Toolasha.Utils.houseEfficiency, Toolasha.Utils.efficiency, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.formatters, Toolasha.Utils.marketData, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.profitHelpers, Toolasha.Utils.buffParser, Toolasha.Utils.alchemyFees, Toolasha.Utils.equipmentParser, Toolasha.Utils.actionCalculator, Toolasha.Utils.tokenValuation, Toolasha.Utils.evWorkerManager, Toolasha.Utils.abilityCalc, Toolasha.Utils.dom, Toolasha.Utils.dungeonKeys, Toolasha.Utils.materialCalculator, Toolasha.Utils.gameLookups, Toolasha.Utils.timerRegistry, Toolasha.Core.storage, Toolasha.Utils.characterKey, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.reactInput, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.overlayFormat, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.overlayRows, Toolasha.Utils.backgroundWork, Toolasha.Core.webSocketHook, Toolasha.Utils.bundleBridge, Toolasha.Utils.toast, Toolasha.Utils.mobile, Toolasha.Utils.gameServer, Toolasha.Utils.enhancementMultipliers, Toolasha.Core.performanceMonitor, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.networthWorkerManager, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.chunkedHistory, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.skillHistory, Toolasha.Utils.abilityBooks, Toolasha.Utils.deferredLoad, Toolasha.Utils.simplePanel, Toolasha.Core.settingsStorage, Toolasha.Utils.chestTally, Toolasha.Utils.choiceDialog, Toolasha.Utils.chestImport, Toolasha.Utils.csvExport, Toolasha.Utils.roomSkills, Toolasha.Utils.equipmentSavings);
+})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.marketAPI, Toolasha.Utils.houseEfficiency, Toolasha.Utils.efficiency, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.formatters, Toolasha.Utils.marketData, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.profitHelpers, Toolasha.Utils.buffParser, Toolasha.Utils.alchemyFees, Toolasha.Utils.equipmentParser, Toolasha.Utils.actionCalculator, Toolasha.Utils.tokenValuation, Toolasha.Utils.evWorkerManager, Toolasha.Utils.abilityCalc, Toolasha.Utils.dom, Toolasha.Utils.dungeonKeys, Toolasha.Utils.materialCalculator, Toolasha.Utils.gameLookups, Toolasha.Utils.timerRegistry, Toolasha.Core.storage, Toolasha.Utils.characterKey, Toolasha.Utils.selectors, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.reactInput, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.overlayFormat, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.overlayRows, Toolasha.Utils.backgroundWork, Toolasha.Core.webSocketHook, Toolasha.Utils.bundleBridge, Toolasha.Utils.toast, Toolasha.Utils.mobile, Toolasha.Utils.gameServer, Toolasha.Utils.enhancementMultipliers, Toolasha.Core.performanceMonitor, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.networthWorkerManager, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.chunkedHistory, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.skillHistory, Toolasha.Utils.abilityBooks, Toolasha.Utils.deferredLoad, Toolasha.Utils.simplePanel, Toolasha.Core.settingsStorage, Toolasha.Utils.chestTally, Toolasha.Utils.choiceDialog, Toolasha.Utils.chestImport, Toolasha.Utils.csvExport, Toolasha.Utils.roomSkills, Toolasha.Utils.equipmentSavings);

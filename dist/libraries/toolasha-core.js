@@ -1,7 +1,7 @@
 /**
  * Toolasha Core Library
  * Core infrastructure and API clients
- * Version: 2.92.1
+ * Version: 2.93.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -3883,15 +3883,6 @@
                     type: 'checkbox',
                     default: false,
                     help: 'Compares each active sell listing of yours against the current best ask for that item and enhancement level, and each buy order against the best bid — a strictly better price than yours means you have been beaten; matching the best price is still competitive and says nothing. The figures come from the market data this script already holds, which can be up to 15 minutes old: the message carries the age of the figure it used, and data older than that — or an item with no cached price at all — is treated as unknown rather than as an undercut. Once per listing per undercut, re-arming when you reprice the listing or your price is the best again.',
-                },
-                notifications_marketListingUndercut_refreshMinutes: {
-                    id: 'notifications_marketListingUndercut_refreshMinutes',
-                    label: 'Undercut alerts: re-fetch market snapshot every (minutes)',
-                    type: 'number',
-                    default: 5,
-                    min: 1,
-                    max: 15,
-                    help: 'While undercut alerts are on, re-fetch the market snapshot this often (minutes). One fetch covers every listing and refreshes prices everywhere in the script. The game publishes this file periodically, so very short intervals mostly re-fetch unchanged data. A value at or above the 15-minute cache means no extra refresh — the normal cache stands. Only has an effect while "Notify when a market listing of yours is undercut" is on.',
                 },
                 notifications_otherCharacterIdle: {
                     id: 'notifications_otherCharacterIdle',
@@ -9465,6 +9456,7 @@
             }
 
             // Try to fetch fresh data
+            let rateLimited = false;
             try {
                 const response = await this.fetchFromAPI();
 
@@ -9483,7 +9475,20 @@
                     return this.marketData;
                 }
             } catch (error) {
-                this.logError('Fetch failed', error);
+                // marketplace.json is rate-limited by the game: a burst of requests —
+                // often several userscripts hitting it at once — trips a temporary
+                // CloudFront 403 (429 is the explicit rate-limit status). Call that out
+                // plainly instead of as a generic fetch failure, so a player seeing the
+                // block knows what it is and that Toolasha is not the cause on its own.
+                rateLimited = error?.status === 403 || error?.status === 429;
+                if (rateLimited) {
+                    console.warn(
+                        `[MarketAPI] marketplace.json returned ${error.status} — the game rate-limits this file and a burst ` +
+                            'of fetches (often several userscripts at once) trips a temporary block. Falling back to cached ' +
+                            'prices; it retries on the normal 15-minute cache cadence.'
+                    );
+                }
+                this.logError(rateLimited ? `Rate limited (${error.status})` : 'Fetch failed', error);
             }
 
             // Fallback: Try to use expired cache
@@ -9496,13 +9501,15 @@
                 // Load patches from storage
                 await this.loadPatches();
                 // Show alert when using expired cache
-                networkAlert.show('⚠️ Using outdated market data');
+                networkAlert.show(
+                    rateLimited ? '⚠️ Market API rate-limited — using cached prices' : '⚠️ Using outdated market data'
+                );
                 return this.marketData;
             }
 
             // Total failure - show alert
             console.error('[MarketAPI] ❌ No market data available');
-            networkAlert.show('⚠️ Market data unavailable');
+            networkAlert.show(rateLimited ? '⚠️ Market API rate-limited — no market data' : '⚠️ Market data unavailable');
             return null;
         }
 
@@ -9515,7 +9522,11 @@
                 const response = await fetch(this.API_URL);
 
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    // Carry the status so fetch() can tell a rate-limit (403/429) from
+                    // any other failure and message the player accordingly.
+                    const error = new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    error.status = response.status;
+                    throw error;
                 }
 
                 const data = await response.json();

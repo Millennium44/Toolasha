@@ -1,7 +1,7 @@
 /**
  * Toolasha Utils Library
  * All utility modules
- * Version: 2.92.1
+ * Version: 2.93.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -5304,14 +5304,17 @@
         // Remove remaining whitespace separators
         text = text.replace(/\s/g, '');
 
-        // Handle K/M/B suffixes (must end with the suffix letter)
-        if (/\d[kmb]$/.test(text)) {
+        // Handle K/M/B/T suffixes (must end with the suffix letter). T support is
+        // for the post-rework max listing price of 1T (was 100B).
+        if (/\d[kmbt]$/.test(text)) {
             if (text.endsWith('k')) {
                 return parseFloat(text) * 1000;
             } else if (text.endsWith('m')) {
                 return parseFloat(text) * 1000000;
             } else if (text.endsWith('b')) {
                 return parseFloat(text) * 1000000000;
+            } else if (text.endsWith('t')) {
+                return parseFloat(text) * 1000000000000;
             }
         }
 
@@ -8746,6 +8749,19 @@ self.onmessage = function (e) {
         MINI_UNIT_NAME: '[class*="MiniUnit_name"]',
         BATTLE_PANEL: '[class*="BattlePanel_battlePanel"]',
         BATTLE_MONSTERS_AREA: '[class*="BattlePanel_monstersArea"]',
+
+        // Marketplace
+        // Prefix-matched on purpose: the game ships these with a CSS-module hash
+        // suffix (e.g. MarketplacePanel_currentItem__3ercC) that changes on every
+        // rebuild, so a marketplace UI rework rehashes them. Match the stable base.
+        MARKETPLACE_PANEL: '[class*="MarketplacePanel_marketplacePanel"]',
+        MARKETPLACE_ITEMS: '[class*="MarketplacePanel_marketItems"]',
+        MARKETPLACE_CURRENT_ITEM: '[class*="MarketplacePanel_currentItem"]',
+        MARKETPLACE_ORDER_BOOKS: '[class*="MarketplacePanel_orderBooksContainer"]',
+        MARKETPLACE_MY_LISTINGS: '[class*="MarketplacePanel_myListingsTableContainer"]',
+        MARKETPLACE_NEW_LISTING_BUTTONS: '[class*="MarketplacePanel_newListingButtonsContainer"]',
+        // The generic sub-panel wrapper the marketplace (and other panels) sit inside
+        SUBPANEL_CONTAINER: '[class*="MainPanel_subPanelContainer"]',
 
         // Enhancement
         PROTECTION_ITEM_INPUT: '[class*="protectionItemInputContainer"]',
@@ -18165,8 +18181,8 @@ self.onmessage = function (e) {
             }
 
             // If marketplace panel is hidden (navigated away), clean up
-            const marketplacePanel = document.querySelector('.MarketplacePanel_marketplacePanel__21b7o');
-            const subPanelContainer = marketplacePanel?.closest('.MainPanel_subPanelContainer__1i-H9');
+            const marketplacePanel = document.querySelector(GAME.MARKETPLACE_PANEL);
+            const subPanelContainer = marketplacePanel?.closest(GAME.SUBPANEL_CONTAINER);
             if (subPanelContainer && getComputedStyle(subPanelContainer).display === 'none') {
                 if (onCleanup) onCleanup();
             }

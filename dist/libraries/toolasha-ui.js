@@ -1,11 +1,11 @@
 /**
  * Toolasha UI Library
  * UI enhancements, tasks, skills, and misc features
- * Version: 2.92.1
+ * Version: 2.93.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, dataManager, domObserver, formatters_js, timerRegistry_js, domObserverHelpers_js, dom_js, storage, panelZIndex_js, floatingPanel_js, panelGeometry_js, characterKey_js, overlayRows_js, opanelConfig_js, choiceDialog_js, mobile_js, overlayLayout_js, settingsSchema_js, toast_js, bundleBridge_js, houseCostCalculator, overlayFormat_js, marketplaceTabs_js, marketData_js, roomSkills_js, marketAPI, numberParser_js, pricingHelper_js, webSocketHook, simplePanel_js, damageAttribution_js, combatDPS, combatStatsDataCollector, combatStatsCalculator_js, damageTracker_js, damageTakenTracker_js, battlePanelMonsters_js, spawnExpectation_js, combatDropModel_js, allZonesSnapshot_js, partyLint_js, csvExport_js, itemNavigation_js, efficiency_js, guildCreditPricing_js, adoptionConsent_js, gameText_js, performanceMonitor, backgroundWork_js, profileCommand_js, selectors_js, progressEta_js, reactInput_js, actionPanelHelper_js, expectedValueCalculator, gatheringProfit_js, productionProfit_js, profitHelpers_js, actionCalculator_js, equipmentParser_js, profitConstants_js, combatSimRunner_js, combatSimAdapter_js, assetManifest, gameLookups_js, chunkedHistory_js, skillProgress_js, skillHistory_js, deferredLoad_js, combatLevel_js, experienceParser_js, dropLuck_js, marketplaceAutofill_js, cleanupRegistry_js, settingsStorage, scrollBuffValues_js, enhancementConfig_js, chestTally_js, chestImport_js, tokenValuation_js, customPriceOverrides_js, materialCalculator_js, alchemyFees_js, enhancementCalculator_js, teaParser_js, combatSimUI, tableColumns_js, consumableTarget_js, consumableForecast_js, keyLedger_js, orderBook_js, shoppingList_js, alchemyProfitCalculator, buffParser_js) {
+(function (config, dataManager, domObserver, formatters_js, timerRegistry_js, domObserverHelpers_js, dom_js, storage, panelZIndex_js, floatingPanel_js, panelGeometry_js, characterKey_js, overlayRows_js, opanelConfig_js, choiceDialog_js, mobile_js, overlayLayout_js, settingsSchema_js, toast_js, bundleBridge_js, houseCostCalculator, overlayFormat_js, marketplaceTabs_js, marketData_js, roomSkills_js, marketAPI, numberParser_js, pricingHelper_js, webSocketHook, simplePanel_js, damageAttribution_js, combatDPS, combatStatsDataCollector, combatStatsCalculator_js, damageTracker_js, damageTakenTracker_js, battlePanelMonsters_js, spawnExpectation_js, combatDropModel_js, allZonesSnapshot_js, partyLint_js, csvExport_js, itemNavigation_js, efficiency_js, guildCreditPricing_js, adoptionConsent_js, gameText_js, performanceMonitor, backgroundWork_js, profileCommand_js, selectors_js, progressEta_js, gameServer_js, reactInput_js, actionPanelHelper_js, expectedValueCalculator, gatheringProfit_js, productionProfit_js, profitHelpers_js, actionCalculator_js, equipmentParser_js, profitConstants_js, combatSimRunner_js, combatSimAdapter_js, assetManifest, gameLookups_js, chunkedHistory_js, skillProgress_js, skillHistory_js, deferredLoad_js, combatLevel_js, experienceParser_js, dropLuck_js, marketplaceAutofill_js, cleanupRegistry_js, settingsStorage, scrollBuffValues_js, enhancementConfig_js, chestTally_js, chestImport_js, tokenValuation_js, customPriceOverrides_js, materialCalculator_js, alchemyFees_js, enhancementCalculator_js, teaParser_js, combatSimUI, tableColumns_js, consumableTarget_js, consumableForecast_js, keyLedger_js, orderBook_js, shoppingList_js, alchemyProfitCalculator, buffParser_js) {
     'use strict';
 
     function _interopNamespaceDefault(e) {
@@ -14834,6 +14834,25 @@ ${starCSS}
     }
 
     /**
+     * The fraction of a tier's points an *incomplete* tier is worth, under the test
+     * server's partial-tier rule: 0.5% credit per 1% of progress, capped at 50%
+     * (reached at 99.99%). A fully cleared tier is worth its whole self and is not
+     * this — this is only the leftover progress a trial carries when it ends.
+     *
+     * Returns a multiplier in [0, 0.5] to apply to {@link tierMarginalPoints}. The
+     * caller decides whether the rule is in force (it is a test-server mechanic);
+     * this is only the arithmetic.
+     *
+     * @param {number} progressFraction - Progress into the tier, 0..1 (current/max)
+     * @returns {number} Credit as a fraction of the tier's points, 0..0.5
+     */
+    function partialTierCredit(progressFraction) {
+        const fraction = Number(progressFraction);
+        if (!Number.isFinite(fraction) || fraction <= 0) return 0;
+        return Math.min(0.5, 0.5 * fraction);
+    }
+
+    /**
      * How close two points figures have to be to be the same claim.
      *
      * Recovering a base figure from a bonused one is a division, and a bonus of
@@ -14883,7 +14902,13 @@ ${starCSS}
      *   bonusKnown: boolean, ladderCumulative: number, ladderMarginal: number|null}|null} The reading,
      *   or null on unusable input
      */
-    function interpretCardPoints({ type, tier, statedPoints, buildersHallBonus = null } = {}) {
+    function interpretCardPoints({
+        type,
+        tier,
+        statedPoints,
+        buildersHallBonus = null,
+        allowPartialTier = false,
+    } = {}) {
         if (!Number.isFinite(statedPoints) || !Number.isFinite(tier) || tier < 1) return null;
         if (FIRST_TIER_POINTS[type] === undefined) return null;
 
@@ -14915,6 +14940,12 @@ ${starCSS}
             // is a mixture of two bonuses by construction — see
             // {@link MAX_MID_TRIAL_UPGRADE_LEVELS}
             interpretation = 'mid-trial-upgrade';
+        } else if (allowPartialTier && withinPartialTier(basePoints, type, tier)) {
+            // Test server: a trial that ends part-way into the next tier banks that
+            // fraction of it (0.5% per 1% of progress, capped at 50%), so the card
+            // sits just *above* the whole-tier total by up to half the next tier's
+            // marginal points. Not a disagreement — the ladder plus a partial tier.
+            interpretation = 'partial-tier';
         }
 
         return {
@@ -14926,6 +14957,27 @@ ${starCSS}
             ladderCumulative,
             ladderMarginal,
         };
+    }
+
+    /**
+     * Whether a base figure is the whole-tier total plus a partial next tier.
+     *
+     * The test-server partial rule pays at most half of the next tier's marginal
+     * points ({@link partialTierCredit} caps at 0.5), so a legitimate partial-tier
+     * card lands in `(cumulative, cumulative + 0.5 × nextMarginal]`. Below that band
+     * is a genuine disagreement; above it is more than one unfinished tier can add.
+     *
+     * @param {number} basePoints - The card's figure divided back down to base
+     * @param {'skilling'|'combat'} type - Trial type
+     * @param {number} tier - The whole tier the card is stated at
+     * @returns {boolean} True when a partial next tier explains the excess
+     */
+    function withinPartialTier(basePoints, type, tier) {
+        const cumulative = trialBasePoints(type, tier);
+        const nextMarginal = tierMarginalPoints(type, tier + 1);
+        if (!Number.isFinite(basePoints) || !Number.isFinite(nextMarginal)) return false;
+        const ceiling = cumulative + partialTierCredit(1) * nextMarginal;
+        return basePoints > cumulative + POINTS_EPSILON && basePoints <= ceiling + POINTS_EPSILON;
     }
 
     /**
@@ -15025,7 +15077,13 @@ ${starCSS}
      *   interpretation: string|null, bonusKnown: boolean, needsBuildersHall: boolean, cardTier: number|null,
      *   ladder: number, quoted: {tier: number, statedPoints: number}|null}} What was banked and where it came from
      */
-    function trialBankedBasePoints({ type, bankedTiers, pointsByTier = {}, buildersHallBonus = null } = {}) {
+    function trialBankedBasePoints({
+        type,
+        bankedTiers,
+        pointsByTier = {},
+        buildersHallBonus = null,
+        allowPartialTier = false,
+    } = {}) {
         const banked = Math.max(0, Math.floor(Number(bankedTiers) || 0));
         const ladder = trialBasePoints(type, banked);
         const bonusKnown = Number.isFinite(buildersHallBonus) && buildersHallBonus > -1;
@@ -15049,7 +15107,13 @@ ${starCSS}
             .sort((a, b) => b - a);
 
         const reading = quoted.length
-            ? interpretCardPoints({ type, tier: quoted[0], statedPoints: stated(quoted[0]), buildersHallBonus })
+            ? interpretCardPoints({
+                  type,
+                  tier: quoted[0],
+                  statedPoints: stated(quoted[0]),
+                  buildersHallBonus,
+                  allowPartialTier,
+              })
             : null;
         const interpretation = reading?.interpretation ?? null;
         const quotedAt = reading ? { tier: quoted[0], statedPoints: reading.statedPoints } : null;
@@ -15545,14 +15609,21 @@ ${starCSS}
         const perTrial = trials.map((trial) => {
             const override = Number(trial?.basePointsOverride);
             const statedGuildPoints = Number(trial?.guildPointsOverride);
-            const base = Number.isFinite(override) ? override : trialBasePoints(trial?.type, trial?.tiersCleared);
+            const rawBase = Number.isFinite(override) ? override : trialBasePoints(trial?.type, trial?.tiersCleared);
+            // Test-server partial-tier credit: base points the caller has already
+            // sized (via partialTierCredit × the tier's marginal points) for the
+            // incomplete tier a trial ends on. Zero everywhere the rule is off, so
+            // the whole-tier ladder is unchanged on the live server.
+            const partial = Math.max(0, Number(trial?.partialBasePoints) || 0);
+            const base = rawBase + partial;
+            const bonusedBase = Number.isFinite(statedGuildPoints) ? statedGuildPoints : guildPoints(rawBase, hall);
             return {
                 name: trial?.name ?? null,
                 type: trial?.type ?? null,
                 tiersCleared: Math.max(0, Math.floor(Number(trial?.tiersCleared) || 0)),
                 basePoints: base,
                 basePointsSource: Number.isFinite(override) ? 'game' : 'ladder',
-                guildPoints: Number.isFinite(statedGuildPoints) ? statedGuildPoints : guildPoints(base, hall),
+                guildPoints: bonusedBase + guildPoints(partial, hall),
             };
         });
 
@@ -20301,6 +20372,77 @@ ${starCSS}
     }
 
     /**
+     * A monster name or hrid reduced to comparable letters.
+     *
+     * The hrid's last segment with separators flattened, so `/monsters/trial_dragonfly`
+     * and "Trial Dragonfly" both become "trial dragonfly".
+     *
+     * @param {string} name - A monster name or hrid
+     * @returns {string} The comparison key
+     */
+    function monsterKey(name) {
+        const raw = String(name || '');
+        const tail = raw.includes('/') ? raw.split('/').pop() : raw;
+        return tail.toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
+    let componentEncounterCache = { source: null, map: null };
+
+    /**
+     * A monster → encounter map for composite trials, from the game's own data.
+     *
+     * Most trials are a single monster whose name carries the encounter — Trial
+     * Jellyfish is 'jellyfish'. Trial Swarm fights four *differently* named monsters
+     * (Beetle, Dragonfly, Wasp, Firefly), none of which reduces to 'swarm', so its
+     * pool would attach to no card. The game's `guildTrialDetailMap` lists each
+     * trial's monsters; this reverses that, mapping every component monster whose own
+     * name does not already resolve to its trial's encounter. Read live, never pinned.
+     *
+     * @param {Object} [clientData] - `initClientData`; defaults to the live copy
+     * @returns {Map<string, string>} monster key → encounter
+     */
+    function encounterComponentMap(clientData = dataManager.getInitClientData?.()) {
+        const trials = clientData?.guildTrialDetailMap;
+        if (componentEncounterCache.source === trials && componentEncounterCache.map) {
+            return componentEncounterCache.map;
+        }
+
+        const monsterMap = clientData?.combatMonsterDetailMap;
+        const map = new Map();
+        for (const [hrid, detail] of Object.entries(trials || {})) {
+            const encounter = encounterOf(detail?.name || hrid);
+            if (!encounter) continue;
+            const hrids = detail?.monsterHrids || detail?.combatMonsterHrids || detail?.spawns || [];
+            for (const entry of Array.isArray(hrids) ? hrids : []) {
+                const id = typeof entry === 'string' ? entry : entry?.combatMonsterHrid;
+                if (!id || encounterOf(id)) continue; // already resolvable by its own name
+                map.set(monsterKey(id), encounter);
+                const displayName = monsterMap?.[id]?.name;
+                if (displayName) map.set(monsterKey(displayName), encounter);
+            }
+        }
+
+        componentEncounterCache = { source: trials, map };
+        return map;
+    }
+
+    /**
+     * The encounter a monster belongs to, composite trials included.
+     *
+     * `encounterOf` alone cannot name Trial Swarm from "Trial Dragonfly"; this falls
+     * back to the game's trial→monster listing so a Swarm fight files under 'swarm'
+     * rather than under no trial at all — which left its pool off every card and its
+     * tile without a single sample.
+     *
+     * @param {string} name - A monster name or hrid
+     * @param {Object} [clientData] - `initClientData`; defaults to the live copy
+     * @returns {string|null} The encounter, or null
+     */
+    function encounterOfMonster(name, clientData = dataManager.getInitClientData?.()) {
+        return encounterOf(name) || encounterComponentMap(clientData).get(monsterKey(name)) || null;
+    }
+
+    /**
      * Whether the fight that just started is a guild combat trial.
      *
      * Pure, and the single decision the whole module hangs off — see the module note
@@ -20314,7 +20456,7 @@ ${starCSS}
     function isTrialBattle({ monsterNames = [], trialNames = [] } = {}) {
         for (const name of monsterNames) {
             if (/trial/i.test(String(name || ''))) {
-                return { isTrial: true, encounter: encounterOf(name), reason: 'the monster says it is a trial' };
+                return { isTrial: true, encounter: encounterOfMonster(name), reason: 'the monster says it is a trial' };
             }
         }
 
@@ -20328,7 +20470,7 @@ ${starCSS}
         }
 
         for (const name of monsterNames) {
-            const encounter = encounterOf(name);
+            const encounter = encounterOfMonster(name);
             if (encounter && wanted.has(encounter)) {
                 return { isTrial: true, encounter, reason: 'the boss is this week’s trial encounter' };
             }
@@ -20872,7 +21014,7 @@ ${starCSS}
         _noteBattleMonsters(monsters, tier, at) {
             for (const monster of Array.isArray(monsters) ? monsters : []) {
                 const name = String(monster?.name || '');
-                const encounter = encounterOf(monster?.hrid || name);
+                const encounter = encounterOfMonster(monster?.hrid || name);
                 if (!encounter) continue;
 
                 if (!this.encounter) {
@@ -21040,7 +21182,7 @@ ${starCSS}
                 const name = String(unit.character?.name || unit.name || '');
                 // Only a trial's boss. An ordinary zone monster clicked during the
                 // hour is not a trial sheet and would sit here pretending to be one
-                if (!encounterOf(name)) return;
+                if (!encounterOfMonster(name)) return;
 
                 const details = unit.combatDetails && typeof unit.combatDetails === 'object' ? unit.combatDetails : {};
                 const level = Number(details.combatLevel ?? unit.character?.combatLevel);
@@ -21052,7 +21194,7 @@ ${starCSS}
                 // One click on the boss is enough to say which trial this is, and it
                 // outlives the fight view being closed
                 if (!this.encounter) {
-                    this.encounter = encounterOf(name);
+                    this.encounter = encounterOfMonster(name);
                     this.spectatedBossName = name;
                 }
 
@@ -21195,7 +21337,7 @@ ${starCSS}
             if (this.encounter) return;
 
             for (const name of fightViewBossNames()) {
-                const encounter = encounterOf(name);
+                const encounter = encounterOfMonster(name);
                 if (!encounter) continue;
 
                 this.spectatedBossName = name;
@@ -21207,7 +21349,7 @@ ${starCSS}
             // click on the boss identifies the fight even after the view is shut
             const sheets = Object.values(this.bossSheets);
             const preferred = sheets.find((sheet) => sheet.tier === this.tier) || sheets[sheets.length - 1];
-            const fromSheet = encounterOf(preferred?.name || '');
+            const fromSheet = encounterOfMonster(preferred?.name || '');
             if (!fromSheet) return;
 
             this.spectatedBossName = preferred.name;
@@ -21802,6 +21944,200 @@ ${starCSS}
     }
 
     const guildTrialSkilling = new GuildTrialSkilling();
+
+    /**
+     * Post-trial Combat Trial Stats modal — the game's own per-member totals.
+     *
+     * A test-server feature: when a combat trial ends the game offers a "Combat
+     * Trial - Stats" modal listing each member's Damage, Healing and Damage Taken.
+     * It is authoritative where the live damage stream is not — the stream reads
+     * damage taken from health falling per tick and sees only a fraction of the real
+     * total (healing masks it, stream gaps drop it), and it splits shared ticks by
+     * actor, which under-credits the local player. This captures the modal so the
+     * panel can show it beside the measured figures and prefer it where it settles.
+     *
+     * The modal is scraped, never depended on: on the live server (where the feature
+     * does not yet exist) the observer simply never fires, and the panel falls back
+     * to the streamed figures exactly as before.
+     */
+
+
+    /** The stats table the game draws inside the modal — the tab-switch also redraws it */
+    const TABLE_CLASS = 'GuildPanel_trialStatsTable';
+    /** The draggable modal wrapper, reached from the table via closest() */
+    const MODAL_SELECTOR = '[class*="GuildPanel_trialStatsModal"]';
+    /** The selected tab's own label carries the trial name */
+    const ACTIVE_TAB_SELECTOR = '[role="tab"][aria-selected="true"] [class*="TabsComponent_badge"]';
+    const TABLE_SELECTOR = `table[class*="${TABLE_CLASS}"]`;
+
+    /**
+     * Normalise a column header to a stable key.
+     *
+     * The combat modal draws Damage / Healing / Damage Taken; the skilling modal
+     * draws its own (a contribution column), so the scraper reads whatever headers
+     * are there rather than assuming the combat layout — otherwise a skilling
+     * trial's single column would be mislabelled "damage".
+     *
+     * @param {string} label - The header cell's text
+     * @returns {string} A camelCase key: 'damageTaken', 'healing', 'damage', or a slug
+     */
+    function headerKey(label) {
+        const text = String(label || '')
+            .trim()
+            .toLowerCase();
+        if (text.includes('damage taken')) return 'damageTaken';
+        if (text.includes('healing')) return 'healing';
+        if (text === 'damage') return 'damage';
+        const words = text
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim()
+            .split(' ')
+            .filter(Boolean);
+        if (!words.length) return '';
+        return words.map((word, i) => (i === 0 ? word : word[0].toUpperCase() + word.slice(1))).join('');
+    }
+
+    /**
+     * Read a Trial Stats modal into per-member values for its active tab.
+     *
+     * Header-driven: the value columns are keyed by their own headers, so the combat
+     * modal yields `damage`/`healing`/`damageTaken` and the skilling modal yields its
+     * own column, each correct. The figures are abbreviated ("1213K"), parsed the
+     * same way the rest of the script reads the game's numbers. The member name is
+     * taken from `data-name`, which is exact where the visible text can be truncated.
+     *
+     * @param {Element} modal - The `[class*="GuildPanel_trialStatsModal"]` element
+     * @returns {{trialName: string|null, kind: 'combat'|'skilling', columns: string[],
+     *   members: Array<{name: string, values: Object<string, number|null>}>}|null} The active tab's
+     *   stats, or null
+     */
+    function parseTrialStatsModal(modal) {
+        if (!modal || typeof modal.querySelector !== 'function') return null;
+
+        const tab = modal.querySelector(ACTIVE_TAB_SELECTOR);
+        const trialName = tab ? tab.textContent.trim() : null;
+
+        // The active tab's panel is the one not marked hidden; the whole modal is a
+        // safe fallback when the panel markup is not where it is expected.
+        const panels = [...modal.querySelectorAll('[class*="TabPanel_tabPanel"]')];
+        const visible = panels.find((panel) => !String(panel.className).includes('TabPanel_hidden')) || modal;
+        const table = visible.querySelector(TABLE_SELECTOR);
+        if (!table) return null;
+
+        // The header row minus the leading Member column gives the value columns.
+        const headers = [...table.querySelectorAll('thead th')].map((th) => headerKey(th.textContent));
+        const columns = headers.slice(1).filter(Boolean);
+        if (!columns.length) return null;
+
+        const members = [];
+        for (const row of table.querySelectorAll('tbody tr')) {
+            const nameEl = row.querySelector('[class*="CharacterName_name"]');
+            const name = (nameEl?.getAttribute('data-name') || nameEl?.textContent || '').trim();
+            if (!name) continue;
+
+            // Cell 0 is the member; the value cells follow, one per header column.
+            const cells = [...row.querySelectorAll('td')].slice(1);
+            const values = {};
+            columns.forEach((key, i) => {
+                values[key] = cells[i] ? numberParser_js.parseItemCount(String(cells[i].textContent).trim(), null) : null;
+            });
+            members.push({ name, values });
+        }
+
+        if (!members.length) return null;
+        const kind = columns.includes('damageTaken') ? 'combat' : 'skilling';
+        return { trialName, kind, columns, members };
+    }
+
+    class GuildTrialStatsModal {
+        constructor() {
+            this.initialized = false;
+            this.unregister = null;
+            /** trialName → { members, at } — the last reading of each trial's stats */
+            this.statsByTrial = new Map();
+        }
+
+        initialize() {
+            if (this.initialized) return;
+            this.initialized = true;
+            // Watch the table rather than the modal wrapper: the wrapper is inserted
+            // once, but the table is redrawn on every tab switch, so watching it
+            // captures Trial Swarm's stats when the player switches to that tab too.
+            this.unregister = domObserver.onClass('GuildTrialStatsModal', TABLE_CLASS, (table) => {
+                const modal = table.closest?.(MODAL_SELECTOR) || table.parentElement;
+                this.capture(modal || table);
+            });
+        }
+
+        /**
+         * Parse a modal element and store the active tab's stats under its trial name.
+         * @param {Element} modal - The stats modal (or a node it can be reached from)
+         */
+        capture(modal) {
+            try {
+                const parsed = parseTrialStatsModal(modal);
+                if (!parsed?.trialName || !parsed.members.length) return;
+                this.statsByTrial.set(parsed.trialName, {
+                    kind: parsed.kind,
+                    columns: parsed.columns,
+                    members: parsed.members,
+                    at: Date.now(),
+                });
+            } catch (error) {
+                console.error('[GuildTrialStatsModal] Failed to read the stats modal:', error);
+            }
+        }
+
+        /**
+         * The captured stats for a trial, if the modal has been opened this session.
+         * @param {string} trialName - e.g. "Trial Jellyfish"
+         * @returns {{members: Array, at: number}|null} The reading, or null
+         */
+        getStats(trialName) {
+            return this.statsByTrial.get(trialName) || null;
+        }
+
+        /**
+         * A combat trial's per-member totals, flattened for reconciliation.
+         *
+         * Returns null unless the captured modal was a combat one (the skilling modal
+         * carries no damage/healing/taken columns), so callers can fall back to the
+         * streamed figures unchanged.
+         *
+         * @param {string} trialName - e.g. "Trial Jellyfish"
+         * @returns {Array<{name: string, damage: number|null, healing: number|null,
+         *   damageTaken: number|null}>|null} Per-member totals, or null
+         */
+        getCombatStats(trialName) {
+            const stats = this.statsByTrial.get(trialName);
+            if (!stats || stats.kind !== 'combat') return null;
+            return stats.members.map((member) => ({
+                name: member.name,
+                damage: member.values.damage ?? null,
+                healing: member.values.healing ?? null,
+                damageTaken: member.values.damageTaken ?? null,
+            }));
+        }
+
+        /**
+         * Everything captured this session, keyed by trial name — for the export.
+         * @returns {Object<string, {members: Array, at: number}>}
+         */
+        snapshot() {
+            const out = {};
+            for (const [name, value] of this.statsByTrial) out[name] = value;
+            return out;
+        }
+
+        cleanup() {
+            this.unregister?.();
+            this.unregister = null;
+            this.statsByTrial.clear();
+            this.initialized = false;
+        }
+    }
+
+    const guildTrialStatsModal = new GuildTrialStatsModal();
 
     /**
      * Guild XP Tracker
@@ -23690,6 +24026,9 @@ ${starCSS}
             // participants and the per-tier personal figures, none of which needed a
             // tab to be open
             trialSkilling: guildTrialSkilling.snapshot?.() ?? null,
+            // The game's own post-trial Stats modal, per combat trial, where it has
+            // been opened — the authoritative per-member damage/healing/damage-taken
+            trialStatsModal: guildTrialStatsModal.snapshot?.() ?? {},
         };
     }
 
@@ -24256,14 +24595,46 @@ ${starCSS}
      * @param {'damage'|'healing'} tab - Which figures
      * @returns {{rows: Array<Object>, total: number, perSecond: number|null, seconds: number}} The tab
      */
-    function scoreboardRows(breakdown, tab = 'damage') {
+    function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
         const seconds = breakdown?.seconds || 0;
-        const support = breakdown?.support?.players || [];
 
+        // The game's own post-trial stats, when they have been captured, are the
+        // authoritative full-trial totals — preferred over the stream, which only
+        // ever saw the stretch the fight view was open (here, a mid-fight restart
+        // left it at ~5%) and barely sees damage taken at all (health falling per
+        // tick, most of it masked by healing). No per-second: the modal states
+        // whole-trial totals, not a rate.
+        const modalField = { damage: 'damage', healing: 'healing', taken: 'damageTaken' }[tab] || 'damage';
+        if (Array.isArray(modalStats) && modalStats.length) {
+            const raw = modalStats.map((member) => ({
+                index: member.name,
+                name: member.name,
+                value: Number(member[modalField]) || 0,
+            }));
+            const rows = raw.filter((row) => row.value > 0).sort((a, b) => b.value - a.value);
+            const total = rows.reduce((sum, row) => sum + row.value, 0);
+            return {
+                rows: rows.map((row, position) => ({
+                    ...row,
+                    measured: true,
+                    rank: position + 1,
+                    perSecond: null,
+                    share: total > 0 ? (row.value / total) * 100 : null,
+                })),
+                total,
+                perSecond: null,
+                seconds,
+                source: 'game',
+            };
+        }
+
+        const support = breakdown?.support?.players || [];
         const raw =
             tab === 'healing'
                 ? support.map((row) => ({ index: row.index, name: row.name, value: row.healingDone || 0 }))
-                : (breakdown?.players || []).map((row) => ({ index: row.index, name: row.name, value: row.damage || 0 }));
+                : tab === 'taken'
+                  ? support.map((row) => ({ index: row.index, name: row.name, value: row.damageTaken || 0 }))
+                  : (breakdown?.players || []).map((row) => ({ index: row.index, name: row.name, value: row.damage || 0 }));
 
         const measuredBy = new Map((breakdown?.players || []).map((row) => [row.index, row.measured]));
         const rows = raw.filter((row) => row.value > 0).sort((a, b) => b.value - a.value);
@@ -24282,7 +24653,26 @@ ${starCSS}
             total,
             perSecond: seconds > 0 ? total / seconds : null,
             seconds,
+            source: breakdown?.source === 'spectated' ? 'stream' : null,
         };
+    }
+
+    /**
+     * The game's post-trial Stats modal for the trial a breakdown is watching.
+     *
+     * The modal is keyed by trial name ("Trial Swarm"); the breakdown carries the
+     * encounter and this week's trial names, so the two are joined here. Returns
+     * null unless a combat modal has been captured for that trial.
+     *
+     * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+     * @param {Object} [modal] - The stats-modal store, injectable for tests
+     * @returns {Array<{name: string, damage: number|null, healing: number|null,
+     *   damageTaken: number|null}>|null} Per-member totals, or null
+     */
+    function modalStatsForBreakdown(breakdown, modal = guildTrialStatsModal) {
+        if (!breakdown?.encounter) return null;
+        const trialName = (breakdown.trialNames || []).find((name) => encounterOf(name) === breakdown.encounter);
+        return trialName ? modal.getCombatStats?.(trialName) || null : null;
     }
 
     /**
@@ -24291,9 +24681,20 @@ ${starCSS}
      * @param {'damage'|'healing'} tab - Which figures
      * @returns {string} One line per player
      */
-    function scoreboardText(breakdown, tab = 'damage', estimate = null) {
-        const { rows, total, perSecond } = scoreboardRows(breakdown, tab);
-        const label = tab === 'healing' ? 'healing' : 'damage';
+    function scoreboardText(breakdown, tab = 'damage', estimate = null, modalStats = null) {
+        const { rows, total, perSecond, source } = scoreboardRows(breakdown, tab, modalStats);
+        const label = tab === 'healing' ? 'healing' : tab === 'taken' ? 'damage taken' : 'damage';
+
+        if (source === 'game') {
+            if (!rows.length) return `Trial ${label}: the game's stats modal lists none.`;
+            const head = `Trial ${label} — ${formatters_js.formatWithSeparator(Math.round(total))} total, from the game's post-trial stats`;
+            const lines = rows.map(
+                (row) =>
+                    `${row.rank}. ${row.name} — ${formatters_js.formatWithSeparator(Math.round(row.value))}` +
+                    (row.share === null ? '' : ` (${row.share.toFixed(1)}%)`)
+            );
+            return [head, ...lines].join('\n');
+        }
 
         if (!rows.length && tab === 'damage' && estimate?.players?.length) {
             const head =
@@ -24502,7 +24903,7 @@ ${starCSS}
                 });
             });
             body.querySelector('[data-action="copy"]')?.addEventListener('click', () => {
-                this._copy(scoreboardText(breakdown, this.tab, this._estimate()));
+                this._copy(scoreboardText(breakdown, this.tab, this._estimate(), modalStatsForBreakdown(breakdown)));
             });
             body.querySelector('[data-action="report"]')?.addEventListener('click', () => {
                 this._copy(this.reportText(breakdown));
@@ -24632,13 +25033,17 @@ ${starCSS}
          * @returns {string} HTML
          */
         _bodyHTML(breakdown) {
-            const { rows, total, perSecond } = scoreboardRows(breakdown, this.tab);
+            const modalStats = modalStatsForBreakdown(breakdown);
+            const { rows, total, perSecond, source } = scoreboardRows(breakdown, this.tab, modalStats);
+            const fromGame = source === 'game';
             const healing = this.tab === 'healing';
+            const taken = this.tab === 'taken';
             const unit = healing ? 'hps' : 'dps';
 
             // Measurement is impossible for a trial (see the module note), so the
-            // damage tab falls through to the estimate rather than to an apology
-            const estimate = !rows.length && !healing ? this._estimate() : null;
+            // damage tab falls through to the estimate rather than to an apology —
+            // but never over the game's own stats or the damage-taken tab.
+            const estimate = !rows.length && !healing && !taken && !fromGame ? this._estimate() : null;
             const estimated = Boolean(estimate?.players?.length);
 
             const head = estimated
@@ -24649,19 +25054,25 @@ ${starCSS}
                   `<span style="margin-left:auto; color:${DIM$1}; font-weight:600;">` +
                   `${estimate.covered}/${estimate.of} builds</span>` +
                   `</div>`
-                : `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
-                  `<span style="font-size:20px; font-weight:700; color:${ACCENT$4};">` +
-                  `${perSecond === null ? '—' : formatters_js.formatKMB(Math.round(perSecond))}</span>` +
-                  `<span style="color:${DIM$1};">party ${unit}</span>` +
-                  `<span style="margin-left:auto; color:${GOOD$1}; font-weight:600;">` +
-                  `${formatters_js.formatKMB(Math.round(total))}</span>` +
-                  `</div>`;
+                : fromGame
+                  ? `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
+                    `<span style="font-size:20px; font-weight:700; color:${GOOD$1};">${formatters_js.formatKMB(Math.round(total))}</span>` +
+                    `<span style="color:${DIM$1};">trial ${taken ? 'damage taken' : healing ? 'healing' : 'damage'} · game stats</span>` +
+                    `</div>`
+                  : `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
+                    `<span style="font-size:20px; font-weight:700; color:${ACCENT$4};">` +
+                    `${perSecond === null ? '—' : formatters_js.formatKMB(Math.round(perSecond))}</span>` +
+                    `<span style="color:${DIM$1};">party ${unit}</span>` +
+                    `<span style="margin-left:auto; color:${GOOD$1}; font-weight:600;">` +
+                    `${formatters_js.formatKMB(Math.round(total))}</span>` +
+                    `</div>`;
 
             const tabs =
                 `<div style="display:flex; gap:6px; margin:6px 0;">` +
                 [
                     { key: 'damage', label: 'Damage' },
                     { key: 'healing', label: 'Healing' },
+                    { key: 'taken', label: 'Taken' },
                 ]
                     .map(
                         (entry) =>
@@ -24677,27 +25088,35 @@ ${starCSS}
             // an estimate for the game's own figures has been misled by the panel,
             // and one who takes a measurement for a guess distrusts a real number
             const spectated = breakdown?.source === 'spectated';
-            const disclaimer = estimated
-                ? `<div style="color:${WARN$1}; font-size:11px; font-weight:600; line-height:1.5;">` +
-                  'Estimated from builds — nothing has been watched yet.</div>' +
+            const disclaimer = fromGame
+                ? `<div style="color:${GOOD$1}; font-size:11px; font-weight:600; line-height:1.5;">` +
+                  'From the game’s post-trial stats — the authoritative full-trial totals.</div>' +
                   `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
-                  'A trial fight runs on the game’s own server and streams here only while the In Progress ' +
-                  'fight view is open — open it and these become measured. Until then this is each captured ' +
-                  'sheet’s auto-attack worth per second, shared out: abilities are not modelled, and a build is ' +
-                  'only as current as the last time it was seen.</div>'
-                : spectated
-                  ? `<div style="color:${GOOD$1}; font-size:11px; font-weight:600; line-height:1.5;">` +
-                    `Measured from the trial fight — ${Math.round(breakdown?.seconds || 0)}s watched.</div>` +
+                  'Read off the Combat Trial Stats modal, so these are the whole trial rather than the stretch the ' +
+                  'fight view happened to be open for. Damage taken and healing are only reliable here — the live ' +
+                  'stream reads them from health falling and rising per tick and captures a fraction of the real ' +
+                  'totals.</div>'
+                : estimated
+                  ? `<div style="color:${WARN$1}; font-size:11px; font-weight:600; line-height:1.5;">` +
+                    'Estimated from builds — nothing has been watched yet.</div>' +
                     `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
-                    'Folded from the stream the In Progress fight view subscribes to. Once started, the stream ' +
-                    'often keeps flowing while other tabs are open — every tick received is counted, and a gap ' +
-                    'in the stream pauses these rather than ending them.' +
-                    this._ownRowNote(breakdown) +
-                    this._namingNote(breakdown) +
-                    this._coverageNote(breakdown) +
-                    '</div>'
-                  : `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
-                    'Attributed off this client’s own battle feed.</div>';
+                    'A trial fight runs on the game’s own server and streams here only while the In Progress ' +
+                    'fight view is open — open it and these become measured. Until then this is each captured ' +
+                    'sheet’s auto-attack worth per second, shared out: abilities are not modelled, and a build is ' +
+                    'only as current as the last time it was seen.</div>'
+                  : spectated
+                    ? `<div style="color:${GOOD$1}; font-size:11px; font-weight:600; line-height:1.5;">` +
+                      `Measured from the trial fight — ${Math.round(breakdown?.seconds || 0)}s watched.</div>` +
+                      `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
+                      'Folded from the stream the In Progress fight view subscribes to. Once started, the stream ' +
+                      'often keeps flowing while other tabs are open — every tick received is counted, and a gap ' +
+                      'in the stream pauses these rather than ending them.' +
+                      this._ownRowNote(breakdown) +
+                      this._namingNote(breakdown) +
+                      this._coverageNote(breakdown) +
+                      '</div>'
+                    : `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
+                      'Attributed off this client’s own battle feed.</div>';
 
             const unestimated =
                 estimated && estimate.unestimated.length
@@ -25801,6 +26220,8 @@ ${starCSS}
                 bankedTiers: tiersClearedSoFar,
                 pointsByTier,
                 buildersHallBonus,
+                // Test server only: a card may state whole tiers plus a partial one.
+                allowPartialTier: gameServer_js.isTestServer(),
             }),
             pointsByTier,
             // Set below for a combat trial whose readings straddle a tier clear
@@ -27018,6 +27439,7 @@ ${starCSS}
             // recognised without the tab having been opened this session.
             guildTrialDamage.initialize();
             guildTrialSkilling.initialize();
+            guildTrialStatsModal.initialize();
             guildTrialAlerts.initialize?.();
             guildTrialRecorder.initialize(this.guildName);
             guildMemberSkills.initialize(this.guildName).catch(() => {});
@@ -27302,6 +27724,33 @@ ${starCSS}
                 // is about — and is asked once per card rather than once per render
                 this.watchedPool = watched;
                 this.contextRank = 0;
+                // A composite trial (Trial Swarm) draws the In Progress fight view
+                // four separately named monster cards — Beetle, Dragonfly, Wasp,
+                // Firefly — none of which is a trial name, so `readTrialTiles` finds
+                // no card to draw on and the tab stays blank. When a combat fight is
+                // being watched and its encounter has no card of its own, stand a
+                // tile in, anchored to the monsters area so its panel sits below the
+                // fight, and let the watched pool graft onto it as on the Trials tab.
+                if (watched?.encounter && !tiles.some((tile) => encounterOfMonster(tile.name) === watched.encounter)) {
+                    const monstersArea = root.querySelector('[class*="BattlePanel_monstersArea"]');
+                    const trialName = (guildTrialDamage.breakdown()?.trialNames || []).find(
+                        (candidate) => encounterOf(candidate) === watched.encounter
+                    );
+                    if (monstersArea && trialName) {
+                        tiles.push({
+                            element: monstersArea,
+                            name: trialName,
+                            level: null,
+                            tier: null,
+                            kind: 'combat',
+                            completed: false,
+                            readings: [],
+                            signups: null,
+                            points: null,
+                        });
+                    }
+                }
+
                 // Needed inside the sampling loop as well as the drawing one: the
                 // work-ladder tier filing wants a participant count
                 const counts = participantCounts();
@@ -27542,6 +27991,10 @@ ${starCSS}
                     type: record.kind,
                     banked: analysis.tiersClearedSoFar,
                     projected: analysis.pace?.tiersCleared ?? analysis.tiersClearedSoFar,
+                    // How far into the tier beyond `projected` the pace reaches by the
+                    // hour's end, 0..1. Only meaningful under the test-server
+                    // partial-tier rule, where that leftover progress pays out.
+                    partialFraction: analysis.pace?.partialFraction ?? 0,
                     tierKnown: analysis.tierKnown,
                     points: analysis.points,
                     pointsByTier: analysis.pointsByTier,
@@ -27925,9 +28378,16 @@ ${starCSS}
                     const fromCards = trial.points?.source !== 'ladder';
                     const base = trial.points?.basePoints;
                     const stated = trial.points?.guildPoints;
+                    // Test-server only: the pace ends part-way into the tier after
+                    // `projected`, and that leftover progress now pays out (0.5% per
+                    // 1%, capped at 50%). Size it off that tier's marginal points.
+                    // Off the test server this is 0, so nothing moves on live.
+                    const marginal = tierMarginalPoints(trial.type, (trial.projected ?? 0) + 1) ?? 0;
+                    const partialBasePoints = gameServer_js.isTestServer() ? partialTierCredit(trial.partialFraction) * marginal : 0;
                     return {
                         ...trial,
                         tiersCleared: trial.projected,
+                        partialBasePoints,
                         basePointsOverride: fromCards && Number.isFinite(base) ? base + extraTiers * step : undefined,
                         guildPointsOverride:
                             fromCards && Number.isFinite(stated)
@@ -27985,6 +28445,17 @@ ${starCSS}
                 line$1('Tokens, if you took part', participant.value, GOOD, participant.title),
             ];
 
+            // Test server only: the pace now folds in the partial-tier rule, so say
+            // so — the on-pace figure is higher than a whole-tier walk and the reason
+            // should be on screen rather than a silent discrepancy against the game.
+            if (gameServer_js.isTestServer() && trials.some((trial) => (trial.partialFraction ?? 0) > 0)) {
+                rows.push(
+                    `<div style="color:${DIM}; margin-top:4px;">` +
+                        'On pace includes partial-tier credit: on the test server an unfinished tier pays 0.5% of its ' +
+                        'points per 1% of progress (up to 50%), so the pace counts the tier it ends part-way through.</div>'
+                );
+            }
+
             // Not a mismatch at all: a total banked across a Builder's Hall upgrade.
             // Points bank live, tier by tier, at the bonus in force when each tier
             // clears — so a guild that levels its Hall mid-trial has a card that is a
@@ -28003,6 +28474,21 @@ ${starCSS}
                         `mixture of the two. The card is used exactly as stated${
                         Number.isFinite(derived) ? `; the ladder’s own base is ${formatters_js.formatWithSeparator(derived)}` : ''
                     }.</div>`
+                );
+            }
+
+            // Test server: a card that reads above the whole-tier total by up to half
+            // the next tier's step is the partial-tier rule, not a disagreement. Say
+            // so, so the extra points on the banked line are explained rather than
+            // left to look like a ladder error.
+            const partialTrial = trials.find((trial) => trial.points?.interpretation === 'partial-tier');
+            if (partialTrial?.points?.quoted) {
+                const { tier, statedPoints } = partialTrial.points.quoted;
+                rows.push(
+                    `<div style="color:${DIM}; margin-top:4px;">` +
+                        `${partialTrial.name} states ${formatters_js.formatWithSeparator(statedPoints)} pts at T${tier} — the ` +
+                        'whole-tier total plus partial credit for the tier it ended part-way through (test-server ' +
+                        'rule: 0.5% of a tier per 1% of progress, capped at 50%). Used as stated.</div>'
                 );
             }
 
@@ -28572,6 +29058,7 @@ ${starCSS}
             this.lastTickAt = 0;
             guildTrialDamage.cleanup();
             guildTrialSkilling.cleanup();
+            guildTrialStatsModal.cleanup();
             guildTrialRecorder.cleanup();
             guildTrialScoreboard.close();
             guildLoadoutCapture.cleanup();
@@ -57790,7 +58277,7 @@ ${starCSS}
         return overrides;
     }
 
-    var forkChangelog = "## Unreleased — branch `claude/mcs-ingest`\n\n### More cross-bundle singleton reads fixed in the packaged build\n\nA triage of the 62 modules the bundle-sharing checker flags found several more stateful singletons read from an empty duplicate outside their owning bundle (same class as the loadout/treasure fixes). Fixed so far — all now read the live copy through the bundle bridge, dev-standalone unaffected:\n\n- **Combat Simulator container values.** The sim bundle's copy of the expected-value calculator was never initialized, so `calculateExpectedValue()` returned null and openable containers (chests/caches) showed no expected value in the Combat Simulator. Now reads the market bundle's live calculator.\n- **Scroll/buff simulation in gathering & production profit.** The actions bundle's copy of the scroll simulator was empty, so the profit displays and quick-input buttons ignored your configured scroll buffs. Now reads the combat bundle's live simulator.\n- **Task Profit \"best alternative /hr\" + alchemy pin protection.** The action-panel sort/pin singleton was read from empty copies outside the actions bundle: the Task Profit \"you could earn X/hr instead\" figure never appeared, and toggling an alchemy pin ran against an empty set — which could overwrite the saved pinned-action list. It's now published to the actions namespace and read through the bridge.\n- **Custom price overrides apply without a reload.** Setting or editing a custom item price in Settings didn't affect any profit/price calculation until the page was reloaded — Settings (ui bundle) wrote to one copy of the override cache while price math (utils bundle) read a separate copy. The module is now a single shared `Toolasha.Utils` global, so writes and reads hit the same cache.\n- **Guild token valuations use the captured Guild Shop rate.** The shrine upgrade advisor and the chat token-value summary read the token-exchange capture from empty copies, so they fell back to the configured token/credit rate instead of the rate scraped from the Guild Shop dialog. Now read the combat bundle's captured rate.\n- **`Toolasha.debug.exportTrialData()` exports real data.** The console export command gathered the guild name and trial damage/session/skilling/member-skill data from empty ui-bundle copies (the trial panels themselves were unaffected). It now gathers from the live combat copies.\n- **Lab Sim room level during a live run.** The Lab Sim panel read the labyrinth clear-rate singleton from an empty sim-bundle copy, so mid-run it used a skip-derived room level and no live recommendation. Now reads the combat bundle's live copy.\n\n### Loadout-driven features (net-worth exclusions, bulk-sell protection, profit label) work again in the packaged build\n\n- **Features that read saved loadout snapshots now work in the multi-bundle build.** Outside the combat bundle each consumer had its own empty copy of the loadout store (only the combat bundle's copy is fed by the `loadouts_updated` websocket), so anything reading loadouts elsewhere saw nothing. Loadouts don't hold items — their gear is already counted as equipped or inventory — so this is not about adding loadout value; it's the features built _on_ loadouts:\n    - **Net-worth loadout _exclusions_ silently did nothing.** If you excluded a loadout, its items were still counted (net worth over-stated), and the exclusion popup listed no loadouts to pick.\n    - **Bulk-sell no longer protected loadout gear** — items saved in a loadout could appear in sell suggestions.\n    - **The profit panel's \"Loadout: …\" label** showed \"Equipped\" instead of the active loadout's name (display only — profit numbers were never affected).\n    - All now read the shared loadout store through the bundle bridge (the pattern the sim adopted in 2.92.0). The dev-standalone build was never affected.\n- **New regression test** (`cross-bundle-globals`) fails the build if any bridge-backed stateful singleton is default-imported across a bundle boundary without also reading it through the bridge — the class of bug behind this, the treasure tracker, and the 2.92.0 combat-sim fix.\n\n### Treasure tracker button in Settings opens the real ledger (packaged build)\n\n- **The \"Treasure\" button in the Settings utility bar now opens the populated chest ledger instead of an empty one**: in the multi-bundle build, Settings direct-imported the treasure tracker and got its own empty copy (never subscribed to `loot_opened`), so that button showed \"nothing opened yet\" while the command-palette button showed the real history — and using the empty panel's reset/import could overwrite the real saved ledger. Settings now reads the shared, websocket-fed tracker through the bundle bridge (the same pattern the command palette and combat-stats calculator already use). The command-palette route and the dev-standalone build were never affected.\n\n### Combat labyrinth clears fixed in the packaged (release) build\n\n- **Combat rooms no longer sim at 0% — and skip-level recommendations no longer go negative — in the multi-bundle build**: the sim bundle carried its own empty copy of the loadout store, so applying a loadout to the combat DTO found nothing, the fight was simmed on a naked character, every combat room read 0% clear, and the Recommend search drove the threshold negative. The adapter now reads the shared, websocket-fed loadout store through the bundle bridge (the pattern the other cross-bundle consumers already use), so the real gear is applied. Skilling rooms and the dev-standalone build were never affected.\n\n### On-demand health report\n\n- **`Toolasha.debug.health()` and a Ctrl+K \"Health report\" command** now open (and copy/console-log) the diagnostic report anytime, instead of only when an error toast appears.\n\n### What's-new popup reads cleanly, with a newcomer overview\n\n- **The update popup now renders the changelog as formatted text** (no raw `##`/`**`/backticks), entries are condensed to one line each, and fresh installs or arrivals from upstream Toolasha get a \"Toolasha — at a glance\" overview above it.\n\n### Labyrinth pathing reveals more of the floor on ties\n\n- **Equal-cost routes now prefer the one that uncovers the most unknown rooms**.\n\n### \"Guild\" is no longer turned into a /profile link\n\n- **The guild-wide broadcast \"Guild has reached level N!\" stays plain text**.\n\n### Selector canary stops false-alarming on alchemy and enhancing panels\n\n- **The \"Skill action panel (name)\" canary no longer cries \"game update?\" on alchemy/enhancing screens**.\n\n### First run: returning users can keep their settings\n\n- **The welcome dialog for returning users now leads with \"Keep my current settings\"**.\n\n### Preset renamed: \"Everything on\" → \"Defaults\"\n\n- **The preset bar's \"Everything on\" button is now \"Defaults\"**.\n\n### Portrait DPS extras are now opt-in\n\n- **The seven Portrait DPS sub-readouts default OFF**.\n\n### Undercut alerts stop missing undercuts you didn't watch happen\n\n- **A configurable market refresh, on while undercut alerts are**.\n\n### The combat profit panel leads with the live rate again\n\n- **The sim's forecast moves out of the headline**.\n\n### The combat sim's Guild Shrine gets per-shrine targets\n\n- **A \"Targets\" grid on the Combat Simulator's Guild Shrine upgrade, matching the Lab Sim's**.\n\n### The trial DPS split says how much of the party it actually covers\n\n- **\"Per player · 3 of 7 · watched\" instead of implying three people did everything**.\n\n### The per-player readout stays on its own tile, its panels stop drifting, and the panel does less work\n\n- **A watched fight's per-player DPS no longer dresses every tile**.\n\n### The startup freeze on an enhanced inventory is gone\n\n- **Pricing a +20 inventory no longer stalls the main thread for a second**.\n\n### Startup traces stop blaming the wrong feature\n\n- **A feature that only parked in `await` is no longer named the slow one**.\n\n### Damage totals stop swapping bodies at tier rollovers\n\n- **Per-player totals are banked by name at every wave boundary**.\n\n### The In Progress tab stops trusting stale answers — and combat trials learn their tier\n\n- **A stated tier is only believed for the pool it was stated with**.\n\n### The pace projection stops dying after one tier\n\n- **\"On pace for 13 tiers → T13\" with twenty-six minutes left is gone**.\n\n### The damage tracker keeps its names, heals honestly, and a fresh character knows the tier cold\n\n- **A refresh no longer forgets who is fighting**.\n\n### The battle-info button finds the real units — and becomes its own tool\n\n- **The profile cycler matches the game's own unit boxes now**.\n\n### The trials panel knows its tier immediately, and the pace projection stops lowballing\n\n- **The In Progress tab now identifies the tier on its own**.\n\n### Release housekeeping\n\n- **GreasyFork's version history will show real release notes**.\n\n### The silent failure modes get their alarms, and two calculators become one\n\n- **The bundle-sharing rule is now executable**.\n\n### Thin markets stop lying in the rankings\n\n- **The liquidity cap the goal planner already obeyed now governs every profit surface**.\n\n### The panels compare, lint, and remember\n\n- **The profit panel quotes the sim on the zone you're in**.\n\n### A ledger for flips, luck for foragers, and spreadsheets for everyone\n\n- **A trading ledger measures what flipping actually earns**.\n\n### The trial record remembers, the sim gets audited, and silence gets alarms\n\n- **Past weeks return to the trials panel and guild report**.\n\n### Live combat learns seven more things, each its own switch\n\n- **Enemy tiles answer the questions a fight actually asks**.\n\n### The portrait meters stop jostling the party\n\n- **Every player's DPS meter is two lines, always**.\n\n### Every player name opens a profile, and the dungeon knows its worth\n\n- **Player names are clickable wherever a dungeon shows them**.\n\n### A canceled battle start is not a run\n\n- **The dungeon tracker no longer records phantom runs from failed ready-checks**.\n\n### Hybrid attribution: thorns and DoT damage go to their owners\n\n- **The damage attribution learned what the party recording proved**.\n\n### Party lint ignores tools, and ability books answer three more questions\n\n- **Tool slots are exempt from the skilling-gear warning**.\n\n### The sim summary reads in the units a player plans in\n\n- **XP/day → XP/hr**.\n\n### Entry keys are consumables, and chests point at their keys\n\n- **The consumables tracker now carries the dungeon's entry key**.\n\n### Ability book counts respect the experience already earned\n\n- **The Upgrade tab priced every ability level-up from the floor of its current level**.\n\n### An attribution referee, ahead of any verdict on the presence method\n\n- **`npm run compare <recording.json>` replays a combat recording through two attribution methods side by side**.\n\n### Departed members stop haunting the roster\n\n- **A member who left the guild no longer sits in \"Gone quiet\" forever**.\n\n### The wire speaks: five trial message types the game was sending all along\n\n- **`new_guild_battle` fires at every tier and states everything**.\n\n### Mixed-bonus cards contribute their true base to the token sum\n\n- A card banked across a Builder's Hall upgrade divides cleanly by neither bonus, so its base points now come from the exact ladder (1,100 at T10) instead of the slightly-low division (1,091)…\n\n### The notice board is not a trial, and the ladders are theorems now\n\n- **A guild notice board can no longer become a trial tile**.\n\n### The watched fight knows its own name, and a wipe is an outcome\n\n- **The spectated stream attaches to the encounter being watched, and only that one**.\n\n### Spectating measures: the trial fight is on the wire after all\n\n- **Per-player trial measurement is real**.\n\n### The cycler clicks the people fighting beside you\n\n- **A fight on screen outranks the roster walk**.\n\n### Beacons cover the way out before they chase dark corners\n\n- **A set beacon count is planned against the same objective the automatic one uses**.\n\n### The arrow points at the count, completed means completed, and estimates say so\n\n- **\"On pace for 4 tiers → T5\" is impossible output now**.\n\n### Neither ladder has a wall, and a click is not a capture\n\n- **The profile cycler counts replies, not clicks**.\n\n### The badge means banked, and the skilling ladder is a rule now\n\n- **Mid-trial, the stated tier badge counts tiers banked and the fight is on badge + 1**.\n\n### The recorder survives its first real trial day\n\n- **Auto-record actually arms now**.\n\n### Release plumbing\n\n- **Guild features moved from the ui library to the combat library**.\n\n### A trial report your guild can actually read\n\n- **Copy guild report**.\n\n### A warning before the task board fills, and trials that predict themselves\n\n- **Task-slot alert**.\n\n### Path shows the way to the plan, not just the plan\n\n- **The rooms between you and the first planned room are lit too**.\n\n### Path stops planning a floor that has already moved on\n\n- **Rooms you have already shrouded are no longer marked \"Shroud\" again**.\n\n### Trial cards say what their phase can know, and stay off the notice board\n\n- **No more trial card built out of the Overview tab**.\n\n### Poisoned trial records heal themselves, and trials announce their own schedule\n\n- **The stale record from before the switch fix cleans itself up**.\n\n### Trials stop following you to your next guild, and the tab stops yanking you around\n\n- **A character switch drops everything**.\n\n### The bulk reroller now closes the door behind itself, and takes the free reroll on faith\n\n- **Protected tasks get their green outline back after a bulk reroll**.\n\n### The trial recorder grew hands, eyes, and a scoreboard\n\n- **Auto-record**.\n\n### The overlay's ⚙ popover no longer traps you, and keeps up with what it shows\n\n- **It can never cover the panel's header again**.\n\n### Trials round three: exact digits, honest captions, and a block that finally sits still\n\n- **Payout figures in full digits**.\n\n### The trial payout math is now exact, verified against four real payouts\n\n- **Combat trial cards finally produce a rate**.\n\n### The trial export was read, and it proved six defects — all fixed\n\n- **Per-player DPS now arms during real trial fights**.\n\n### Trials know who hit what, and why the payout was blank\n\n- **Per-player DPS on combat trials**.\n\n### Trials read the game as it actually is\n\n- **The real structure, from live screenshots**.\n\n### The trials feature existed on a guess\n\n- **Why nothing trials-related ever rendered**.\n\n### The lab sims the run you choose\n\n- **Token buffs are settable from Configure**.\n\n### Rates bounded by the market and your wallet\n\n- **A rate is capped by how fast its output actually sells**.\n\n### The reroll chooser is finally read as it is\n\n- **The MooPass reroll failure's real cause**.\n\n### The goal planner shares, navigates, and answers instantly\n\n- **Goals share one resource ledger**.\n\n### The sims finish their own homework\n\n- **Skilling gear rows expand like combat rows**.\n\n### Nine small debts paid\n\n- **The lab supplies planner believes the server**.\n\n### The goal planner stops promising billions\n\n- **A rate is only a rate while its inputs last**.\n\n### The lab sims what can actually win\n\n- **Skilling rooms leave the lab combat list**.\n\n### Task cards catch up after a reroll\n\n- **The stale picture and the stuck free reroll were one bug**.\n\n### eWatch learns houses too\n\n- **House room levels are savings goals**.\n\n### Ability swaps follow the guide\n\n- **Swap candidates come from the community build guide now**.\n\n### The lab reads the same buffs as the sim\n\n- **The live clear-rate readout was scoring against buff levels frozen at page load**.\n\n### The budget planner spends the money\n\n- **The empty 500M plan is fixed**.\n\n### Three more reasons to look up\n\n- **Labyrinth run finished**.\n\n### The listing says who built what\n\n- **`docs/GREASYFORK.md`**.\n\n### The session starts when combat does\n\n- **The Combat Level session no longer waits for its panel**.\n\n### Tokens per hour, finally measured\n\n- **Task completions are now recorded**.\n\n### Zones compared on even footing\n\n- **\"Max-tier Food\" option for all-zones sims**.\n\n### The skilling sim sims your skill\n\n- **Tool candidates are scoped to the skill being simmed**.\n\n### The buff tells you before it leaves\n\n- **Community buff expiry alerts**.\n\n### The sim comes home\n\n- **The community buff cap is 20 after all**.\n\n### The combat sim answers back\n\n- **Community upgrades work**.\n\n### The lab sim grows up\n\n- **Task Fight is gone from the lab sim**.\n\n### eWatch learns abilities\n\n- **Ability levels are savings goals now**.\n\n### The overlay fits the screen it's on\n\n- **A floating launcher on mobile**.\n\n### Panels behave on a phone\n\n- **Floating panels stay on screen**.\n\n### Sync works from a phone, and can't eat itself\n\n- **`@connect gist.githubusercontent.com` added to the userscript header**.\n\n### The manifest error says what it means\n\n- **\"Manifest is corrupt\" now tells the truth**.\n\n### Everything fits now\n\n- **The sync payload is gzipped before upload**.\n\n### The gist can keep a secret\n\n- **Optional sync passphrase**.\n\n### Console-dump fixes\n\n- **The Shrine Upgrade Planner stays in its box**.\n\n### The token knows its own price\n\n- **Guild token value now uses real exchange rates**.\n\n### The goal planner learns two more trades\n\n- **Alchemy ranks without a DOM**.\n\n### Housekeeping\n\n- **The WebSocket prototype wrapper is gone**.\n\n### The books balance: first swings were invisible\n\n- **The Sim Accuracy undercount is fixed**.\n\n### Iron Cow re-forces instantly, and one more clickable name\n\n- **Applying a preset (or All Off / Restore) while Iron Cow Mode is on now re-forces the locked settings immediately**.\n\n### Settings you can actually get to\n\n- **Picking a setting in Ctrl+K now opens settings itself**.\n\n### The recorder answers back\n\n- **Record for a target**.\n\n### The black box was ours\n\n- **The black band at the foot of action panels is gone**.\n\n### The recorder grows up\n\n- **Recordings snapshot your loadout at record time**.\n\n### Idle members are clickable\n\n- **Names in the guild Overview's \"Idle members\" list fill `/profile Name` on click**.\n\n### Mid-run restock honesty, and the tooltip that would not die\n\n- **The lab planner stops suggesting purchases that cannot help**.\n\n### Five new tiles and layouts that follow what you're doing\n\n- **New overlay tiles**.\n\n### Companion privacy, a Record button where it belongs, and mooket hygiene\n\n- **Toolasha no longer names the companion script anywhere**.\n\n### Build Score opens something now\n\n- **New Build Score breakdown panel**.\n\n### The watch card stops overcharging, and laddering becomes a mode\n\n- **Real pricing bug fixed**.\n\n### Iron Bell Farming\n\n- **\"Iron Cow Farm\" is now \"Iron Bell Farming\"**.\n\n### The overlay earns its screen space\n\n- **Empty tiles stop shouting**.\n\n### Overlay tiles open their panels\n\n- **The Net Worth, Coins, Market Listings, and Inventory Value tiles now open the networth history chart**.\n\n### Iron Cow Farm\n\n- **New \"Iron Cow Farm\" panel**.\n\n### Multi-target lab analysis gets the big swaps\n\n- **Combined forced-armor swaps now appear under All targets / Chosen targets**.\n\n### Dungeon keys cost whichever way is cheaper\n\n- **Dungeon profit charges each entry/chest key at the cheaper of buying or crafting it**.\n\n### Building levels cap at 20, trial tiers at 21 — and never each other\n\n- **Guild building bonuses clamp at the real level-20 cap**.\n\n### The task board stops fighting the game\n\n- **The zone-index badge stops churning**.\n\n### The lab planner reads the right bag\n\n- **During a run, supply counts come from the run itself**.\n\n### Dungeon run history stops lying\n\n- **A run-start key count can no longer end a fresh run at wave 0**.\n\n### Backups say whose they are, and adoption asks first\n\n- **`Toolasha.debug.claimLegacyData(charId)`**.\n\n### Labyrinth: split apart, supply-aware, and honest mid-fight\n\n- **The 5,300-line labyrinth module splits into six**.\n\n### Adoption accident: fixed, and repairable";
+    var forkChangelog = "## Unreleased — branch `claude/mcs-ingest`\n\n### Trial Swarm now shows a panel on the In Progress tab (test server)\n\nThe Trials tab already anchored Trial Swarm once its encounter resolved, but the In Progress fight view stayed blank: the game draws it four separately named monster cards (Beetle, Dragonfly, Wasp, Firefly), none of which is a trial name, so the tile scraper found no card to draw on (a single-monster trial like Jellyfish has one \"Trial Jellyfish\" card and never hit this).\n\n- **A stand-in tile is drawn when a composite fight is watched.** If a combat fight is streaming and its encounter has no card of its own, Toolasha now stands a tile in — named from the trial, anchored to the fight's monsters area so the panel sits below the fight — and the watched pool grafts onto it exactly as it does on the Trials tab, filling in the tier, pace and banked count. Single-monster trials are unaffected (they already have a card). Only triggers while a fight of that encounter is actually being watched.\n\n### Per-player scoreboard prefers the game's post-trial stats (test server)\n\nWhen the game's Combat Trial Stats modal has been captured for a trial, the per-player scoreboard now uses it as the authoritative source instead of the streamed estimate — and gains a **Taken** tab. This matters because the live stream only sees the stretch the fight view was open (a mid-fight plugin restart left one measured at ~5% of the trial) and can barely measure damage taken at all (it reads it from health falling per tick, most of it masked by healing).\n\n- **Damage and healing** prefer the modal's whole-trial totals when captured, labelled \"from the game's post-trial stats\" so a real figure is never mistaken for the estimate. They fall back to the stream, then to the build estimate, exactly as before when no modal has been opened.\n- **New Taken tab** shows per-member damage taken — modal-authoritative, with the stream's partial tally as the fallback.\n- Purely additive and test-server-gated in practice: the modal only exists on the test server, so nothing changes on live until the feature ships there.\n\n### Trial Swarm's tier, pace and banked count now show (test server)\n\nTrial Swarm fights four differently named monsters at once — Beetle, Dragonfly, Wasp, Firefly — none of which reduces to the \"swarm\" encounter. So the watched pool from a Swarm fight was filed under no trial, never attached to the Swarm card, and the In Progress tab showed \"needs one tier's total to anchor the ladder\" and \"Banked nothing yet — tier 1 in progress\" for the whole hour. (The per-player DPS still showed, because that comes from the damage stream, which recognises the fight a different way.)\n\n- **The encounter of a monster now resolves through the game's own trial→monster listing** (`guildTrialDetailMap`), so any of Swarm's four monsters names the Swarm encounter. The pool is then tagged `swarm` and attaches to the Swarm card, which anchors its tier and fills in the pace and banked lines. Single-monster trials are unchanged — they still resolve from their own name with no data needed. Read live, never pinned, so it follows the game's roster.\n\n### Capture the post-trial Combat Trial Stats modal (test server)\n\nThe test-server trials rework adds a post-trial \"Combat Trial - Stats\" modal with the game's own per-member Damage, Healing and Damage Taken. Those are authoritative where the live damage stream is not: the stream reads damage taken from health falling per tick and captures only a fraction of the real total, and it splits shared ticks by actor, which under-credits the local player. This is the groundwork for showing the game's figures beside the measured ones.\n\n- **New scraper** reads the modal's active tab (per trial) into per-member totals, expanding the abbreviated figures (\"1213K\" → 1,213,000). It watches the stats table, so switching to another trial's tab captures that trial too. It is header-driven — the combat modal's Damage / Healing / Damage Taken and the skilling modal's Work column are each read by their own header, so neither is mislabelled.\n- **Included in the trial export** (`Toolasha.debug.exportTrialData()`) as `trialStatsModal`, so a captured trial can be checked against the measured attribution.\n- **Test-server only in practice**: the modal does not exist on the live server, so the observer never fires there and nothing changes — it activates on its own when the feature reaches live.\n\n### Partial-tier card figures no longer trigger a false \"tier ladder needs checking\" warning (test server)\n\nOn the test server, a trial that ends part-way into a tier now states its whole-tier points **plus** the partial credit for that last tier — e.g. a 6-tier enhancing trial that ended 37% into tier 7 states 862 pts, not 840. The banked figure was already correct (the card is used as stated), but Toolasha flagged it as \"neither the running total nor the per-tier step… the tier ladder here needs checking,\" because the reconciliation only knew whole-tier totals.\n\n- **Card reconciliation now recognises the partial-tier shape.** A figure sitting just above the whole-tier total by up to half the next tier's step reads as `partial-tier` (the ladder plus a partial tier), not a disagreement — so the false warning is gone. A short note explains the higher figure instead.\n- **Gated to the test server**, like the pace credit: on live the same figure is still reported as a genuine disagreement (no partial rule exists there), so nothing changes on the live server.\n\n### Trial pace credits partial-tier progress (test server only)\n\nThe test-server trial rework grants partial rewards for an unfinished tier when a trial ends — 0.5% of that tier's points per 1% of progress, capped at 50%. The \"Guild Points on pace\" projection now folds that in, so on the test server it matches what the game will actually pay instead of only counting whole tiers.\n\n- **Gated to the test server.** The credit is applied only when the client is on `test.milkywayidle.com` (via the existing `isTestServer()` check). On the live server the projection is byte-for-byte unchanged — no partial credit exists there yet, so live users see no phantom points. When the rule reaches live, this activates on its own with no further change.\n- **Only the pace, not \"banked\".** Partial credit settles when a trial ends, so \"Guild Points banked\" still counts whole completed tiers; the projection is where the leftover tier is counted. A short note appears under the payout on the test server explaining the higher pace figure.\n- The tokens lines (eligible / participant) follow the pace's base points, so they include the partial credit too.\n\n### Undercut alerts stop adding market-API load; rate-limit failures are now visible\n\nThe game rate-limits its `marketplace.json` file — a burst of requests (often several userscripts hitting it at once) trips a temporary CloudFront 403 block. The undercut-alert feature had a configurable \"re-fetch market snapshot every 1–15 minutes\" setting (default 5) that _forced_ a fresh fetch on that timer, which could contribute to that load.\n\n- **Removed the \"re-fetch market snapshot every (minutes)\" setting.** The snapshot refresh is now fixed at the market cache's own 15-minute cadence and uses the cache-respecting fetch, so it never pulls faster than the cache would on its own — it only touches the network when the 15-minute cache has actually expired. Undercut alerts still work; they just no longer add fetches beyond the normal cache. Nothing to reconfigure — the old setting simply disappears.\n- **Rate-limit failures are now called out.** When a market fetch fails with a 403 (or 429), the console explains it's a rate-limit — not a Toolasha bug on its own — and the on-screen network alert says \"Market API rate-limited — using cached prices\" instead of a generic \"outdated data\" message. Toolasha keeps serving cached prices and retries on the normal cadence.\n\n### Marketplace resilience ahead of the test-server market rework\n\nBackward-compatible hardening so the marketplace features survive the upcoming (test-server) Marketplace rework without waiting for it to break on the live server. None of this changes behavior on the current live market — it only adds tolerance for the new formats and turns future selector breakage into a visible health warning.\n\n- **Trillion-value prices parse correctly.** The rework raises the max listing price from 100B to 1T, but the price parsers stopped at the \"B\" suffix, so a \"1.2T\" price would have been read as 1.2. Added \"T\" (1e12) handling to the shared number parser and to the order-book / My-Listings price readers.\n- **The \"\\*\" boundary marker on My Listings no longer breaks price reads.** The rework marks any listing whose original limit price differs from its resting boundary price with a trailing \"\\*\". The expired-listing price parser is `$`-anchored and would have rejected the whole cell; it now strips the marker before parsing.\n- **Marketplace selectors centralized and hardened.** The current-item, order-book, My-Listings, new-listing-buttons and panel selectors were hardcoded with the game's CSS-module hash suffix (e.g. `__3ercC`), which any UI rebuild rehashes. Moved them into the shared selectors file as stable prefix matches, so the market rework doesn't silently sever them.\n- **Marketplace health canaries.** Added the marketplace item grid, current item, order books and new-listing buttons to the startup selector-canary check. Marketplace selectors were previously uncovered, so a market update that renamed them failed silently; now it surfaces in the health report.\n\n### More cross-bundle singleton reads fixed in the packaged build\n\nA triage of the 62 modules the bundle-sharing checker flags found several more stateful singletons read from an empty duplicate outside their owning bundle (same class as the loadout/treasure fixes). Fixed so far — all now read the live copy through the bundle bridge, dev-standalone unaffected:\n\n- **Combat Simulator container values.** The sim bundle's copy of the expected-value calculator was never initialized, so `calculateExpectedValue()` returned null and openable containers (chests/caches) showed no expected value in the Combat Simulator. Now reads the market bundle's live calculator.\n- **Scroll/buff simulation in gathering & production profit.** The actions bundle's copy of the scroll simulator was empty, so the profit displays and quick-input buttons ignored your configured scroll buffs. Now reads the combat bundle's live simulator.\n- **Task Profit \"best alternative /hr\" + alchemy pin protection.** The action-panel sort/pin singleton was read from empty copies outside the actions bundle: the Task Profit \"you could earn X/hr instead\" figure never appeared, and toggling an alchemy pin ran against an empty set — which could overwrite the saved pinned-action list. It's now published to the actions namespace and read through the bridge.\n- **Custom price overrides apply without a reload.** Setting or editing a custom item price in Settings didn't affect any profit/price calculation until the page was reloaded — Settings (ui bundle) wrote to one copy of the override cache while price math (utils bundle) read a separate copy. The module is now a single shared `Toolasha.Utils` global, so writes and reads hit the same cache.\n- **Guild token valuations use the captured Guild Shop rate.** The shrine upgrade advisor and the chat token-value summary read the token-exchange capture from empty copies, so they fell back to the configured token/credit rate instead of the rate scraped from the Guild Shop dialog. Now read the combat bundle's captured rate.\n- **`Toolasha.debug.exportTrialData()` exports real data.** The console export command gathered the guild name and trial damage/session/skilling/member-skill data from empty ui-bundle copies (the trial panels themselves were unaffected). It now gathers from the live combat copies.\n- **Lab Sim room level during a live run.** The Lab Sim panel read the labyrinth clear-rate singleton from an empty sim-bundle copy, so mid-run it used a skip-derived room level and no live recommendation. Now reads the combat bundle's live copy.\n\n### Loadout-driven features (net-worth exclusions, bulk-sell protection, profit label) work again in the packaged build\n\n- **Features that read saved loadout snapshots now work in the multi-bundle build.** Outside the combat bundle each consumer had its own empty copy of the loadout store (only the combat bundle's copy is fed by the `loadouts_updated` websocket), so anything reading loadouts elsewhere saw nothing. Loadouts don't hold items — their gear is already counted as equipped or inventory — so this is not about adding loadout value; it's the features built _on_ loadouts:\n    - **Net-worth loadout _exclusions_ silently did nothing.** If you excluded a loadout, its items were still counted (net worth over-stated), and the exclusion popup listed no loadouts to pick.\n    - **Bulk-sell no longer protected loadout gear** — items saved in a loadout could appear in sell suggestions.\n    - **The profit panel's \"Loadout: …\" label** showed \"Equipped\" instead of the active loadout's name (display only — profit numbers were never affected).\n    - All now read the shared loadout store through the bundle bridge (the pattern the sim adopted in 2.92.0). The dev-standalone build was never affected.\n- **New regression test** (`cross-bundle-globals`) fails the build if any bridge-backed stateful singleton is default-imported across a bundle boundary without also reading it through the bridge — the class of bug behind this, the treasure tracker, and the 2.92.0 combat-sim fix.\n\n### Treasure tracker button in Settings opens the real ledger (packaged build)\n\n- **The \"Treasure\" button in the Settings utility bar now opens the populated chest ledger instead of an empty one**: in the multi-bundle build, Settings direct-imported the treasure tracker and got its own empty copy (never subscribed to `loot_opened`), so that button showed \"nothing opened yet\" while the command-palette button showed the real history — and using the empty panel's reset/import could overwrite the real saved ledger. Settings now reads the shared, websocket-fed tracker through the bundle bridge (the same pattern the command palette and combat-stats calculator already use). The command-palette route and the dev-standalone build were never affected.\n\n### Combat labyrinth clears fixed in the packaged (release) build\n\n- **Combat rooms no longer sim at 0% — and skip-level recommendations no longer go negative — in the multi-bundle build**: the sim bundle carried its own empty copy of the loadout store, so applying a loadout to the combat DTO found nothing, the fight was simmed on a naked character, every combat room read 0% clear, and the Recommend search drove the threshold negative. The adapter now reads the shared, websocket-fed loadout store through the bundle bridge (the pattern the other cross-bundle consumers already use), so the real gear is applied. Skilling rooms and the dev-standalone build were never affected.\n\n### On-demand health report\n\n- **`Toolasha.debug.health()` and a Ctrl+K \"Health report\" command** now open (and copy/console-log) the diagnostic report anytime, instead of only when an error toast appears.\n\n### What's-new popup reads cleanly, with a newcomer overview\n\n- **The update popup now renders the changelog as formatted text** (no raw `##`/`**`/backticks), entries are condensed to one line each, and fresh installs or arrivals from upstream Toolasha get a \"Toolasha — at a glance\" overview above it.\n\n### Labyrinth pathing reveals more of the floor on ties\n\n- **Equal-cost routes now prefer the one that uncovers the most unknown rooms**.\n\n### \"Guild\" is no longer turned into a /profile link\n\n- **The guild-wide broadcast \"Guild has reached level N!\" stays plain text**.\n\n### Selector canary stops false-alarming on alchemy and enhancing panels\n\n- **The \"Skill action panel (name)\" canary no longer cries \"game update?\" on alchemy/enhancing screens**.\n\n### First run: returning users can keep their settings\n\n- **The welcome dialog for returning users now leads with \"Keep my current settings\"**.\n\n### Preset renamed: \"Everything on\" → \"Defaults\"\n\n- **The preset bar's \"Everything on\" button is now \"Defaults\"**.\n\n### Portrait DPS extras are now opt-in\n\n- **The seven Portrait DPS sub-readouts default OFF**.\n\n### Undercut alerts stop missing undercuts you didn't watch happen\n\n- **A configurable market refresh, on while undercut alerts are**.\n\n### The combat profit panel leads with the live rate again\n\n- **The sim's forecast moves out of the headline**.\n\n### The combat sim's Guild Shrine gets per-shrine targets\n\n- **A \"Targets\" grid on the Combat Simulator's Guild Shrine upgrade, matching the Lab Sim's**.\n\n### The trial DPS split says how much of the party it actually covers\n\n- **\"Per player · 3 of 7 · watched\" instead of implying three people did everything**.\n\n### The per-player readout stays on its own tile, its panels stop drifting, and the panel does less work\n\n- **A watched fight's per-player DPS no longer dresses every tile**.\n\n### The startup freeze on an enhanced inventory is gone\n\n- **Pricing a +20 inventory no longer stalls the main thread for a second**.\n\n### Startup traces stop blaming the wrong feature\n\n- **A feature that only parked in `await` is no longer named the slow one**.\n\n### Damage totals stop swapping bodies at tier rollovers\n\n- **Per-player totals are banked by name at every wave boundary**.\n\n### The In Progress tab stops trusting stale answers — and combat trials learn their tier\n\n- **A stated tier is only believed for the pool it was stated with**.\n\n### The pace projection stops dying after one tier\n\n- **\"On pace for 13 tiers → T13\" with twenty-six minutes left is gone**.\n\n### The damage tracker keeps its names, heals honestly, and a fresh character knows the tier cold\n\n- **A refresh no longer forgets who is fighting**.\n\n### The battle-info button finds the real units — and becomes its own tool\n\n- **The profile cycler matches the game's own unit boxes now**.\n\n### The trials panel knows its tier immediately, and the pace projection stops lowballing\n\n- **The In Progress tab now identifies the tier on its own**.\n\n### Release housekeeping\n\n- **GreasyFork's version history will show real release notes**.\n\n### The silent failure modes get their alarms, and two calculators become one\n\n- **The bundle-sharing rule is now executable**.\n\n### Thin markets stop lying in the rankings\n\n- **The liquidity cap the goal planner already obeyed now governs every profit surface**.\n\n### The panels compare, lint, and remember\n\n- **The profit panel quotes the sim on the zone you're in**.\n\n### A ledger for flips, luck for foragers, and spreadsheets for everyone\n\n- **A trading ledger measures what flipping actually earns**.\n\n### The trial record remembers, the sim gets audited, and silence gets alarms\n\n- **Past weeks return to the trials panel and guild report**.\n\n### Live combat learns seven more things, each its own switch\n\n- **Enemy tiles answer the questions a fight actually asks**.\n\n### The portrait meters stop jostling the party\n\n- **Every player's DPS meter is two lines, always**.\n\n### Every player name opens a profile, and the dungeon knows its worth\n\n- **Player names are clickable wherever a dungeon shows them**.\n\n### A canceled battle start is not a run\n\n- **The dungeon tracker no longer records phantom runs from failed ready-checks**.\n\n### Hybrid attribution: thorns and DoT damage go to their owners\n\n- **The damage attribution learned what the party recording proved**.\n\n### Party lint ignores tools, and ability books answer three more questions\n\n- **Tool slots are exempt from the skilling-gear warning**.\n\n### The sim summary reads in the units a player plans in\n\n- **XP/day → XP/hr**.\n\n### Entry keys are consumables, and chests point at their keys\n\n- **The consumables tracker now carries the d";
 
     var forkOverview = "This is the **Millennium44 fork of Toolasha**. It folds MWI Combat Suite into Toolasha — live DPS tracking, loot and drop tracking, drop-luck analysis, and a full labyrinth simulator — so one script gives you both halves of the game instead of two userscripts.\n\n### Combat & simulators\n\n- Live DPS, hit/crit rate, damage-taken and net-sustain read off your own fights.\n- Loot and drop tracking with drop-luck analysis that judges combat, gathering and production.\n- A combat recorder: record real fights, replay them against the simulator, get a verdict with honest noise bands.\n- A combat simulator whose upgrade picks are costed and ranked on real market and credit costs.\n- Per-character combat stats, sim state and histories — no character reads another's books.\n\n### Market & profit\n\n- One market price API prices almost everything: upgrades, net worth, drop income, guild tokens, every action.\n- Prices capped by the volume the market has actually absorbed, so thin markets stop inflating rankings.\n- Profit lines on the action bar, pinned pages, alchemy rankings and the combat profit panel.\n- Market-history viewer with a live undercut alert that re-checks against a refreshed snapshot.\n- An upgrade advisor that costs and ranks gear and ability candidates against live prices.\n\n### Labyrinth\n\n- A labyrinth simulator with auto-pathing and auto-beaconing planned from the actual run.\n- Multi-target analysis with combined armour swaps and supply-aware torch/shroud/beacon planning.\n- Skilling-sim candidates scoped to the skill you are simming, with the skip level set for you.\n- Upgrade, All-Fights and Skilling analyses, each exportable to CSV.\n\n### Guild\n\n- Live trial measurement: per-player DPS and damage/healing attribution from the fight you watch.\n- Tier read straight off the boss bar, with pace, ETA and payout maths.\n- A trial report your guild can actually read, with honest coverage caveats.\n\n### Quality of life\n\n- A curated overlay of tiles with bundled presets, activity auto-switching, and tiles that open their panels.\n- A Ctrl+K (Cmd+K) command palette over every panel, overlay row, saved layout and setting.\n- Mobile-friendly panels: viewport clamping, reachable close buttons, finger-sized targets, a floating launcher.\n- Notifications for empty queues, community-buff expiry, and finished labyrinth runs.\n- Task tools: measured tokens/hour, net task income, and reroll handling that takes the free MooPass reroll.\n- Equipment Savings (\"eWatch\"): savings goals for gear and ability levels, fed from the simulators.\n- A goal planner that turns \"get me X gold / level N\" into a ranked plan from your real measured rates.\n\n### Data & sync\n\n- Cross-device sync of your whole database through one private GitHub gist you own.\n- Gzip-compressed, optionally AES-256 encrypted, conflict-aware, guarded against overwriting a year of data.\n- Chunked per-period history that survives months, with honest quota handling and per-character backups.\n- Hundreds of bug fixes and a test suite grown from ~2,300 to over 8,500 tests.\n";
 
@@ -72003,9 +72490,6 @@ ${starCSS}
     /** Master switch; nothing below it is consulted while this is off */
     const MASTER_SETTING = 'notifications_marketListingUndercut';
 
-    /** How often, in minutes, to actively re-fetch the market snapshot while alerts are on */
-    const REFRESH_SETTING = 'notifications_marketListingUndercut_refreshMinutes';
-
     /** The status HRID the server puts on a listing that is still on the board */
     const ACTIVE_STATUS = '/market_listing_status/active';
 
@@ -72059,64 +72543,37 @@ ${starCSS}
         }
 
         /**
-         * Actively re-fetch the market snapshot on a timer while alerts are on.
+         * Keep the market snapshot from going stale on a timer while alerts are on.
          *
          * Without this, nothing calls `marketAPI.fetch()` after startup, so the bulk
          * snapshot goes stale and the only fresh per-item price is the order-book
          * patch that lands when the player opens an item's view. An undercut that
          * happened hours ago against an item never opened would then read as "still
-         * best" against the stale snapshot. Forcing a periodic refresh is the same
-         * fetch the lazy 15-minute cache would eventually do, just sooner — and
-         * `marketAPI.fetch()` notifies its listeners on success, so the undercut
-         * `check()` (subscribed above) re-runs against the fresh figures with no
-         * extra wiring, as does every other feature that reads `getPrice()`.
+         * best" against the stale snapshot.
          *
-         * `marketplace.json` is the game's own published file and one fetch covers
-         * every listing, so this stays a courteous cadence: the 1-minute floor is
-         * deliberate and a value at or above the cache means no extra fetch at all.
+         * The cadence is the market cache's own 15-minute window, and the tick calls
+         * the *cache-respecting* `marketAPI.fetch()` — not the forcing `fetch(true)`.
+         * That is the crucial politeness: `marketplace.json` is rate-limited by the
+         * game (a burst of requests, often several userscripts at once, trips a
+         * temporary CloudFront 403), so this must never pull faster than the cache
+         * would on its own. A tick whose cache is still valid returns the cached copy
+         * with no network hit and simply re-notifies listeners; only a tick that
+         * finds the cache expired makes a real request — at most one per 15 minutes.
+         * There is deliberately no shorter, configurable interval.
          */
         startActiveRefresh() {
-            const minutes = this.resolveRefreshMinutes();
-            if (minutes === null) {
-                // Off, or at/above the cache window — the normal cache stands
-                return;
-            }
-
-            const intervalMs = minutes * 60 * 1000;
             const intervalId = setInterval(() => {
                 this.refreshSnapshot();
-            }, intervalMs);
+            }, marketAPI.CACHE_DURATION);
             this.timers.registerInterval(intervalId);
         }
 
         /**
-         * The refresh interval in whole minutes, or null when active refresh is off.
+         * Refresh the snapshot through the cache, skipping the tick if one is in flight.
          *
-         * Off means: 0 or blank, a value that does not resolve to a positive number,
-         * or a value at or above the 15-minute cache window (where a forced fetch
-         * buys nothing the lazy cache would not already do). The 1-minute floor is
-         * never crossed — a sub-minute cadence would be impolite to the game's own
-         * static file, which one fetch reads in full.
-         *
-         * @returns {number|null} Whole minutes to wait between fetches, or null if off
-         */
-        resolveRefreshMinutes() {
-            const raw = config.getSetting(REFRESH_SETTING, 0);
-            const minutes = Math.floor(Number(raw));
-            if (!Number.isFinite(minutes) || minutes < 1) {
-                return null;
-            }
-
-            const cacheMinutes = marketAPI.CACHE_DURATION / (60 * 1000);
-            if (minutes >= cacheMinutes) {
-                return null;
-            }
-
-            return minutes;
-        }
-
-        /**
-         * Force one whole-snapshot refresh, skipping the tick if one is still in flight.
+         * Uses the cache-respecting `fetch()`: it only touches the network when the
+         * 15-minute cache has expired, so it can never contribute to rate-limiting
+         * beyond what the cache already permits.
          */
         async refreshSnapshot() {
             if (this.refreshInFlight) {
@@ -72126,9 +72583,9 @@ ${starCSS}
 
             this.refreshInFlight = true;
             try {
-                await marketAPI.fetch(true);
+                await marketAPI.fetch();
             } catch (error) {
-                console.error('[MarketUndercutAlerts] Active market refresh failed:', error);
+                console.error('[MarketUndercutAlerts] Market snapshot refresh failed:', error);
             } finally {
                 this.refreshInFlight = false;
             }
@@ -77209,4 +77666,4 @@ ${starCSS}
 
     console.log('[Toolasha] UI library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Utils.formatters, Toolasha.Utils.timerRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.dom, Toolasha.Core.storage, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.characterKey, Toolasha.Utils.overlayRows, Toolasha.Utils.opanelConfig, Toolasha.Utils.choiceDialog, Toolasha.Utils.mobile, Toolasha.Utils.overlayLayout, Toolasha.Core, Toolasha.Utils.toast, Toolasha.Utils.bundleBridge, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.marketData, Toolasha.Utils.roomSkills, Toolasha.Core.marketAPI, Toolasha.Utils.numberParser, Toolasha.Utils.pricingHelper, Toolasha.Core.webSocketHook, Toolasha.Utils.simplePanel, Toolasha.Utils.damageAttribution, Toolasha.Combat.combatDPS, Toolasha.Combat.combatStatsDataCollector, Toolasha.Combat.combatStatsCalculator, Toolasha.Combat.damageTracker, Toolasha.Combat.damageTakenTracker, Toolasha.Utils.battlePanelMonsters, Toolasha.Utils.spawnExpectation, Toolasha.Utils.combatDropModel, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.partyLint, Toolasha.Utils.csvExport, Toolasha.Utils.itemNavigation, Toolasha.Utils.efficiency, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.adoptionConsent, Toolasha.Utils.gameText, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.profileCommand, Toolasha.Utils.selectors, Toolasha.Utils.progressEta, Toolasha.Utils.reactInput, Toolasha.Utils.actionPanelHelper, Toolasha.Market.expectedValueCalculator, Toolasha.Market.gatheringProfit, Toolasha.Market.productionProfit, Toolasha.Utils.profitHelpers, Toolasha.Utils.actionCalculator, Toolasha.Utils.equipmentParser, Toolasha.Utils.profitConstants, Toolasha.Sim.combatSimRunner, Toolasha.Sim.combatSimAdapter, Toolasha.Utils.assetManifest, Toolasha.Utils.gameLookups, Toolasha.Utils.chunkedHistory, Toolasha.Utils.skillProgress, Toolasha.Utils.skillHistory, Toolasha.Utils.deferredLoad, Toolasha.Utils.combatLevel, Toolasha.Utils.experienceParser, Toolasha.Utils.dropLuck, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.cleanupRegistry, Toolasha.Core.settingsStorage, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.enhancementConfig, Toolasha.Utils.chestTally, Toolasha.Utils.chestImport, Toolasha.Utils.tokenValuation, Toolasha.Utils.customPriceOverrides, Toolasha.Utils.materialCalculator, Toolasha.Utils.alchemyFees, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.teaParser, Toolasha.Sim.combatSimUI, Toolasha.Utils.tableColumns, Toolasha.Utils.consumableTarget, Toolasha.Utils.consumableForecast, Toolasha.Utils.keyLedger, Toolasha.Utils.orderBook, Toolasha.Utils.shoppingList, Toolasha.Market.alchemyProfitCalculator, Toolasha.Utils.buffParser);
+})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Utils.formatters, Toolasha.Utils.timerRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.dom, Toolasha.Core.storage, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.characterKey, Toolasha.Utils.overlayRows, Toolasha.Utils.opanelConfig, Toolasha.Utils.choiceDialog, Toolasha.Utils.mobile, Toolasha.Utils.overlayLayout, Toolasha.Core, Toolasha.Utils.toast, Toolasha.Utils.bundleBridge, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.marketData, Toolasha.Utils.roomSkills, Toolasha.Core.marketAPI, Toolasha.Utils.numberParser, Toolasha.Utils.pricingHelper, Toolasha.Core.webSocketHook, Toolasha.Utils.simplePanel, Toolasha.Utils.damageAttribution, Toolasha.Combat.combatDPS, Toolasha.Combat.combatStatsDataCollector, Toolasha.Combat.combatStatsCalculator, Toolasha.Combat.damageTracker, Toolasha.Combat.damageTakenTracker, Toolasha.Utils.battlePanelMonsters, Toolasha.Utils.spawnExpectation, Toolasha.Utils.combatDropModel, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.partyLint, Toolasha.Utils.csvExport, Toolasha.Utils.itemNavigation, Toolasha.Utils.efficiency, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.adoptionConsent, Toolasha.Utils.gameText, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.profileCommand, Toolasha.Utils.selectors, Toolasha.Utils.progressEta, Toolasha.Utils.gameServer, Toolasha.Utils.reactInput, Toolasha.Utils.actionPanelHelper, Toolasha.Market.expectedValueCalculator, Toolasha.Market.gatheringProfit, Toolasha.Market.productionProfit, Toolasha.Utils.profitHelpers, Toolasha.Utils.actionCalculator, Toolasha.Utils.equipmentParser, Toolasha.Utils.profitConstants, Toolasha.Sim.combatSimRunner, Toolasha.Sim.combatSimAdapter, Toolasha.Utils.assetManifest, Toolasha.Utils.gameLookups, Toolasha.Utils.chunkedHistory, Toolasha.Utils.skillProgress, Toolasha.Utils.skillHistory, Toolasha.Utils.deferredLoad, Toolasha.Utils.combatLevel, Toolasha.Utils.experienceParser, Toolasha.Utils.dropLuck, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.cleanupRegistry, Toolasha.Core.settingsStorage, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.enhancementConfig, Toolasha.Utils.chestTally, Toolasha.Utils.chestImport, Toolasha.Utils.tokenValuation, Toolasha.Utils.customPriceOverrides, Toolasha.Utils.materialCalculator, Toolasha.Utils.alchemyFees, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.teaParser, Toolasha.Sim.combatSimUI, Toolasha.Utils.tableColumns, Toolasha.Utils.consumableTarget, Toolasha.Utils.consumableForecast, Toolasha.Utils.keyLedger, Toolasha.Utils.orderBook, Toolasha.Utils.shoppingList, Toolasha.Market.alchemyProfitCalculator, Toolasha.Utils.buffParser);
