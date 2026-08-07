@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Trial Swarm's tier, pace and banked count now show (test server)
+
+Trial Swarm fights four differently named monsters at once — Beetle, Dragonfly, Wasp, Firefly — none of which reduces to the "swarm" encounter. So the watched pool from a Swarm fight was filed under no trial, never attached to the Swarm card, and the In Progress tab showed "needs one tier's total to anchor the ladder" and "Banked nothing yet — tier 1 in progress" for the whole hour. (The per-player DPS still showed, because that comes from the damage stream, which recognises the fight a different way.)
+
+- **The encounter of a monster now resolves through the game's own trial→monster listing** (`guildTrialDetailMap`), so any of Swarm's four monsters names the Swarm encounter. The pool is then tagged `swarm` and attaches to the Swarm card, which anchors its tier and fills in the pace and banked lines. Single-monster trials are unchanged — they still resolve from their own name with no data needed. Read live, never pinned, so it follows the game's roster.
+
 ### Capture the post-trial Combat Trial Stats modal (test server)
 
 The test-server trials rework adds a post-trial "Combat Trial - Stats" modal with the game's own per-member Damage, Healing and Damage Taken. Those are authoritative where the live damage stream is not: the stream reads damage taken from health falling per tick and captures only a fraction of the real total, and it splits shared ticks by actor, which under-credits the local player. This is the groundwork for showing the game's figures beside the measured ones.

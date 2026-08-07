@@ -167,6 +167,81 @@ export function encounterOf(name) {
 }
 
 /**
+ * A monster name or hrid reduced to comparable letters.
+ *
+ * The hrid's last segment with separators flattened, so `/monsters/trial_dragonfly`
+ * and "Trial Dragonfly" both become "trial dragonfly".
+ *
+ * @param {string} name - A monster name or hrid
+ * @returns {string} The comparison key
+ */
+function monsterKey(name) {
+    const raw = String(name || '');
+    const tail = raw.includes('/') ? raw.split('/').pop() : raw;
+    return tail
+        .toLowerCase()
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+let componentEncounterCache = { source: null, map: null };
+
+/**
+ * A monster → encounter map for composite trials, from the game's own data.
+ *
+ * Most trials are a single monster whose name carries the encounter — Trial
+ * Jellyfish is 'jellyfish'. Trial Swarm fights four *differently* named monsters
+ * (Beetle, Dragonfly, Wasp, Firefly), none of which reduces to 'swarm', so its
+ * pool would attach to no card. The game's `guildTrialDetailMap` lists each
+ * trial's monsters; this reverses that, mapping every component monster whose own
+ * name does not already resolve to its trial's encounter. Read live, never pinned.
+ *
+ * @param {Object} [clientData] - `initClientData`; defaults to the live copy
+ * @returns {Map<string, string>} monster key → encounter
+ */
+export function encounterComponentMap(clientData = dataManager.getInitClientData?.()) {
+    const trials = clientData?.guildTrialDetailMap;
+    if (componentEncounterCache.source === trials && componentEncounterCache.map) {
+        return componentEncounterCache.map;
+    }
+
+    const monsterMap = clientData?.combatMonsterDetailMap;
+    const map = new Map();
+    for (const [hrid, detail] of Object.entries(trials || {})) {
+        const encounter = encounterOf(detail?.name || hrid);
+        if (!encounter) continue;
+        const hrids = detail?.monsterHrids || detail?.combatMonsterHrids || detail?.spawns || [];
+        for (const entry of Array.isArray(hrids) ? hrids : []) {
+            const id = typeof entry === 'string' ? entry : entry?.combatMonsterHrid;
+            if (!id || encounterOf(id)) continue; // already resolvable by its own name
+            map.set(monsterKey(id), encounter);
+            const displayName = monsterMap?.[id]?.name;
+            if (displayName) map.set(monsterKey(displayName), encounter);
+        }
+    }
+
+    componentEncounterCache = { source: trials, map };
+    return map;
+}
+
+/**
+ * The encounter a monster belongs to, composite trials included.
+ *
+ * `encounterOf` alone cannot name Trial Swarm from "Trial Dragonfly"; this falls
+ * back to the game's trial→monster listing so a Swarm fight files under 'swarm'
+ * rather than under no trial at all — which left its pool off every card and its
+ * tile without a single sample.
+ *
+ * @param {string} name - A monster name or hrid
+ * @param {Object} [clientData] - `initClientData`; defaults to the live copy
+ * @returns {string|null} The encounter, or null
+ */
+export function encounterOfMonster(name, clientData = dataManager.getInitClientData?.()) {
+    return encounterOf(name) || encounterComponentMap(clientData).get(monsterKey(name)) || null;
+}
+
+/**
  * Whether the fight that just started is a guild combat trial.
  *
  * Pure, and the single decision the whole module hangs off — see the module note
@@ -180,7 +255,7 @@ export function encounterOf(name) {
 export function isTrialBattle({ monsterNames = [], trialNames = [] } = {}) {
     for (const name of monsterNames) {
         if (/trial/i.test(String(name || ''))) {
-            return { isTrial: true, encounter: encounterOf(name), reason: 'the monster says it is a trial' };
+            return { isTrial: true, encounter: encounterOfMonster(name), reason: 'the monster says it is a trial' };
         }
     }
 
@@ -194,7 +269,7 @@ export function isTrialBattle({ monsterNames = [], trialNames = [] } = {}) {
     }
 
     for (const name of monsterNames) {
-        const encounter = encounterOf(name);
+        const encounter = encounterOfMonster(name);
         if (encounter && wanted.has(encounter)) {
             return { isTrial: true, encounter, reason: 'the boss is this week’s trial encounter' };
         }
@@ -738,7 +813,7 @@ class GuildTrialDamage {
     _noteBattleMonsters(monsters, tier, at) {
         for (const monster of Array.isArray(monsters) ? monsters : []) {
             const name = String(monster?.name || '');
-            const encounter = encounterOf(monster?.hrid || name);
+            const encounter = encounterOfMonster(monster?.hrid || name);
             if (!encounter) continue;
 
             if (!this.encounter) {
@@ -906,7 +981,7 @@ class GuildTrialDamage {
             const name = String(unit.character?.name || unit.name || '');
             // Only a trial's boss. An ordinary zone monster clicked during the
             // hour is not a trial sheet and would sit here pretending to be one
-            if (!encounterOf(name)) return;
+            if (!encounterOfMonster(name)) return;
 
             const details = unit.combatDetails && typeof unit.combatDetails === 'object' ? unit.combatDetails : {};
             const level = Number(details.combatLevel ?? unit.character?.combatLevel);
@@ -918,7 +993,7 @@ class GuildTrialDamage {
             // One click on the boss is enough to say which trial this is, and it
             // outlives the fight view being closed
             if (!this.encounter) {
-                this.encounter = encounterOf(name);
+                this.encounter = encounterOfMonster(name);
                 this.spectatedBossName = name;
             }
 
@@ -1061,7 +1136,7 @@ class GuildTrialDamage {
         if (this.encounter) return;
 
         for (const name of fightViewBossNames()) {
-            const encounter = encounterOf(name);
+            const encounter = encounterOfMonster(name);
             if (!encounter) continue;
 
             this.spectatedBossName = name;
@@ -1073,7 +1148,7 @@ class GuildTrialDamage {
         // click on the boss identifies the fight even after the view is shut
         const sheets = Object.values(this.bossSheets);
         const preferred = sheets.find((sheet) => sheet.tier === this.tier) || sheets[sheets.length - 1];
-        const fromSheet = encounterOf(preferred?.name || '');
+        const fromSheet = encounterOfMonster(preferred?.name || '');
         if (!fromSheet) return;
 
         this.spectatedBossName = preferred.name;
