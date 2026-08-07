@@ -2693,6 +2693,23 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## Upstream Changelog
 
+## [2.92.1](https://github.com/Millennium44/Toolasha/compare/v2.92.0...v2.92.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* **bundles:** read expected-value calc and scroll sim through the bridge ([aa679dc](https://github.com/Millennium44/Toolasha/commit/aa679dcfa15d3cce06eab8cdf413a2733b89a8c1))
+* **bundles:** route remaining cross-bundle singleton reads via the bridge ([f874955](https://github.com/Millennium44/Toolasha/commit/f8749555e553e98ebd7b8d632b230efd479bf17f))
+* **bundles:** share action-panel sort/pin singleton via the bridge ([382a1b1](https://github.com/Millennium44/Toolasha/commit/382a1b1161e74bdd2f15064ab7ec9cf2b052ef17))
+* **bundles:** share custom-price-overrides as one Toolasha.Utils global ([435c06d](https://github.com/Millennium44/Toolasha/commit/435c06d3c7648fd02cec7e286bf6a72390894b1e))
+* **loadout:** read the shared loadout store via the bridge in net worth, profit, and bulk-sell ([71f6891](https://github.com/Millennium44/Toolasha/commit/71f6891ff9058152904e8fd5fe416f40c9042097))
+* **settings:** open the real treasure ledger via the bundle bridge in packaged builds ([4071fce](https://github.com/Millennium44/Toolasha/commit/4071fceb54b74aeae6674a717604ecef8a5806d4))
+
+
+### Documentation
+
+* **changelog:** correct the loadout fix description ([8bf8cea](https://github.com/Millennium44/Toolasha/commit/8bf8cea5e7a92b19e2f3559be92d93b4cb9a8b23))
+
 ## [2.92.0](https://github.com/Millennium44/Toolasha/compare/v2.91.0...v2.92.0) (2026-08-07)
 
 ### Features
