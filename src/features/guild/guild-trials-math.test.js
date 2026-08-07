@@ -29,6 +29,7 @@ import {
     msUntilWeekReset,
     nextTierPreview,
     participantScale,
+    partialTierCredit,
     payoutProjection,
     projectPace,
     projectTierTotal,
@@ -213,6 +214,44 @@ describe('payouts', () => {
 
     test('no input at all is a zero payout rather than a throw', () => {
         expect(payoutProjection()).toMatchObject({ basePoints: 0, participantTokens: 0 });
+    });
+
+    test('partialBasePoints adds to base, guild points and tokens without moving the tier count', () => {
+        // 2 combat tiers = 600 base; a tier 40% into the next is worth
+        // partialTierCredit(0.4)=0.2 of a 200-pt step = 40 extra base.
+        const partial = partialTierCredit(0.4) * tierMarginalPoints('combat', 3); // 0.2 × 200 = 40
+        const payout = payoutProjection({
+            trials: [{ type: 'combat', tiersCleared: 2, partialBasePoints: partial }],
+            buildersHallBonus: 0.2,
+            treasuryBonus: 0,
+        });
+        expect(payout.basePoints).toBe(640); // 600 + 40
+        expect(payout.guildPoints).toBeCloseTo(768, 9); // 640 × 1.2
+        expect(payout.eligibleTokens).toBe(320); // 0.5 × 640
+        expect(payout.perTrial[0].tiersCleared).toBe(2); // partial does not add a whole tier
+    });
+
+    test('a partialBasePoints of 0 leaves the whole-tier ladder exactly as it was', () => {
+        const withZero = payoutProjection({ trials: [{ type: 'combat', tiersCleared: 2, partialBasePoints: 0 }] });
+        const without = payoutProjection({ trials: [{ type: 'combat', tiersCleared: 2 }] });
+        expect(withZero.basePoints).toBe(without.basePoints);
+        expect(withZero.guildPoints).toBe(without.guildPoints);
+    });
+});
+
+describe('partialTierCredit', () => {
+    test('is 0.5% of a tier per 1% of progress', () => {
+        expect(partialTierCredit(0)).toBe(0);
+        expect(partialTierCredit(0.4)).toBeCloseTo(0.2, 9); // 40% in → 20% credit
+        expect(partialTierCredit(0.5)).toBeCloseTo(0.25, 9);
+    });
+
+    test('is capped at half a tier and never negative or NaN', () => {
+        expect(partialTierCredit(1)).toBe(0.5); // 99.99% in → cap
+        expect(partialTierCredit(2)).toBe(0.5); // clamped
+        expect(partialTierCredit(-0.3)).toBe(0);
+        expect(partialTierCredit(NaN)).toBe(0);
+        expect(partialTierCredit(undefined)).toBe(0);
     });
 });
 

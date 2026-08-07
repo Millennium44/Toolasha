@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Trial pace credits partial-tier progress (test server only)
+
+The test-server trial rework grants partial rewards for an unfinished tier when a trial ends — 0.5% of that tier's points per 1% of progress, capped at 50%. The "Guild Points on pace" projection now folds that in, so on the test server it matches what the game will actually pay instead of only counting whole tiers.
+
+- **Gated to the test server.** The credit is applied only when the client is on `test.milkywayidle.com` (via the existing `isTestServer()` check). On the live server the projection is byte-for-byte unchanged — no partial credit exists there yet, so live users see no phantom points. When the rule reaches live, this activates on its own with no further change.
+- **Only the pace, not "banked".** Partial credit settles when a trial ends, so "Guild Points banked" still counts whole completed tiers; the projection is where the leftover tier is counted. A short note appears under the payout on the test server explaining the higher pace figure.
+- The tokens lines (eligible / participant) follow the pace's base points, so they include the partial credit too.
+
 ### Undercut alerts stop adding market-API load; rate-limit failures are now visible
 
 The game rate-limits its `marketplace.json` file — a burst of requests (often several userscripts hitting it at once) trips a temporary CloudFront 403 block. The undercut-alert feature had a configurable "re-fetch market snapshot every 1–15 minutes" setting (default 5) that _forced_ a fresh fetch on that timer, which could contribute to that load.
