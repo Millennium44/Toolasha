@@ -9,7 +9,8 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
-import actionPanelSort from '../actions/action-panel-sort.js';
+import bundledActionPanelSort from '../actions/action-panel-sort.js';
+import { actionPanelSort } from '../../utils/bundle-bridge.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
@@ -201,7 +202,7 @@ class AlchemyActionProtection {
             }
             pinIcon.style.display = 'block';
             const compositeKey = `/actions/alchemy/${alchemyType}|${itemHrid}`;
-            const isPinned = actionPanelSort.isPinned(compositeKey);
+            const isPinned = (actionPanelSort() || bundledActionPanelSort).isPinned(compositeKey);
             if (isPinned) {
                 pinIcon.style.filter = 'grayscale(0%) brightness(1.2) drop-shadow(0 0 3px rgba(255, 100, 0, 0.8))';
                 pinIcon.style.transform = 'scale(1.1)';
@@ -218,7 +219,7 @@ class AlchemyActionProtection {
             const itemHrid = this._getSelectedItemHrid();
             if (alchemyType && itemHrid) {
                 const compositeKey = `/actions/alchemy/${alchemyType}|${itemHrid}`;
-                if (!actionPanelSort.isPinned(compositeKey)) {
+                if (!(actionPanelSort() || bundledActionPanelSort).isPinned(compositeKey)) {
                     pinIcon.style.filter = 'grayscale(50%) brightness(1)';
                 }
             }
@@ -229,7 +230,7 @@ class AlchemyActionProtection {
             const itemHrid = this._getSelectedItemHrid();
             if (!alchemyType || !itemHrid) return;
             const compositeKey = `/actions/alchemy/${alchemyType}|${itemHrid}`;
-            await actionPanelSort.togglePin(compositeKey);
+            await (actionPanelSort() || bundledActionPanelSort).togglePin(compositeKey);
             updatePinIcon();
         });
 
