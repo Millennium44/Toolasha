@@ -1,7 +1,7 @@
 /**
  * Toolasha UI Library
  * UI enhancements, tasks, skills, and misc features
- * Version: 2.91.0
+ * Version: 2.92.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -5737,6 +5737,16 @@
                 target: bundleBridge_js.guildTrialScoreboard(),
             },
             { name: 'Settings', hint: "Toolasha's settings tab", run: () => openSettings() },
+            {
+                name: 'Health report',
+                // Reached through the page, like every other cross-bundle target
+                // here: `window.Toolasha.debug.health` is set by the entrypoint, and
+                // importing the entrypoint to call it would be a cycle. Always
+                // offered — a diagnostic is most wanted when something is wrong,
+                // which is exactly when a feature-gated entry would be missing.
+                hint: 'What did not start, and the storage and startup facts',
+                run: () => openHealthReport(),
+            },
         ];
 
         const commands = [];
@@ -5890,6 +5900,34 @@
             return true;
         } catch (error) {
             console.error('[CommandPalette] Opening the guild trials failed:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Build the health report and open its panel, from wherever the palette runs.
+     *
+     * The report assembler lives in the entrypoint, published as
+     * `window.Toolasha.debug.health` — reached through the page like every other
+     * cross-bundle target here, because importing the entrypoint to call it would
+     * be a cycle. It logs the report and opens the panel itself; this only invokes
+     * it, and says so when the global is not there rather than throwing.
+     *
+     * @returns {Promise<boolean>} Whether the report was built
+     */
+    async function openHealthReport() {
+        try {
+            const health = window.Toolasha?.debug?.health;
+            if (typeof health !== 'function') {
+                toast_js.showToast('The health report is not available yet — try again once Toolasha has finished loading.', {
+                    kind: 'warning',
+                });
+                return false;
+            }
+            await health();
+            return true;
+        } catch (error) {
+            console.error('[CommandPalette] Opening the health report failed:', error);
             return false;
         }
     }
@@ -57819,7 +57857,9 @@ ${starCSS}
         return overrides;
     }
 
-    var forkChangelog = "## Unreleased — branch `claude/mcs-ingest`\n\n### Labyrinth pathing reveals more of the floor on ties\n\n- **Equal-cost routes now prefer the one that uncovers the most unknown rooms**: the path planner minimises shrouds, then grafts every chest reachable without an extra shroud, then minimises torches — but when several routes tied on all of that, it fell back to Dijkstra's arbitrary wall-hugging pick. It now breaks that tie toward the route that reveals the most currently-unknown rooms, via a bonus scaled below a single torch so it can never trade a torch or a shroud for a reveal — the shroud/chest/length result is unchanged, only the choice between otherwise-equal routes.\n\n### \"Guild\" is no longer turned into a /profile link\n\n- **The guild-wide broadcast \"Guild has reached level N!\" stays plain text**: it matched the \"&lt;name&gt; has …\" announcement shape, so \"Guild\" was being made a clickable `/profile Guild` link even though it is the guild, not a player. That exact token is now excluded from announcement linking, in both the main chat and the pop-out chat window. Real names are untouched — a player called \"GuildMaster\" still links.\n\n### Selector canary stops false-alarming on alchemy and enhancing panels\n\n- **The \"Skill action panel (name)\" canary no longer cries \"game update?\" on alchemy/enhancing screens**: it reported the action-name selector missing whenever an alchemy or enhancing detail panel was open, because those panels reuse the shared `SkillActionDetail` wrapper but draw no name heading. The name check now gates on the regular (gathering/production/crafting) component, which always carries the name — so those screens are sat out, while a genuine rename of the name class on a standard panel still trips it. The name selector itself was never broken; the ~13 features that read the action name were unaffected.\n\n### First run: returning users can keep their settings\n\n- **The welcome dialog for returning users now leads with \"Keep my current settings\"**: someone opening a build that added settings their previous version never had used to get a two-button \"Keep everything as it was / Turn the new things on\" prompt. It now offers \"Keep my current settings\" (the primary, default choice) alongside the Essentials, Combat, Market & trading and Defaults presets. Keeping — or dismissing the dialog — changes nothing and holds new on-by-default features off, so \"no change\" really means no change; picking a preset replaces the current settings and is undoable with Restore in the Toolasha tab. Fresh installs are unchanged.\n\n### Preset renamed: \"Everything on\" → \"Defaults\"\n\n- **The preset bar's \"Everything on\" button is now \"Defaults\"**: its tooltip already said \"every feature at its shipped default,\" which contradicted a label that read as \"turn everything on.\" It applies the schema defaults (several hides and warnings ship off on purpose), so \"Defaults\" is what it actually does. Behaviour is unchanged — only the label, its description, and the internal comments were reworded.\n\n### Portrait DPS extras are now opt-in\n\n- **The seven Portrait DPS sub-readouts default OFF**: time-to-kill, wave-clear countdown, mana runway, damage-taken/net-sustain, hit & crit rate, enemy outgoing damage, and the enrage countdown now start unchecked. They were defaulting on while their own parent toggle (\"Show each character's damage on their battle portrait\") defaults off, so switching the parent on flooded the portraits with every extra at once — the very clutter the parent's help text warns about. Turning Portrait DPS on now shows just the DPS and total-damage figure; each extra is opt-in.\n\n### Undercut alerts stop missing undercuts you didn't watch happen\n\n- **A configurable market refresh, on while undercut alerts are**: the alert compared your listings against a snapshot that went stale after startup — nothing re-fetched it, and the only fresh per-item price arrived when you opened the item yourself, so a competitor who undercut you hours ago kept showing you as \"still best.\" A new \"re-fetch market snapshot every (minutes)\" setting under the undercut toggle (default 5, 1–15) forces the bulk snapshot to refresh on a timer; each refresh re-runs the undercut check against current prices, so a snapshot-only undercut on an item you never opened is finally caught. One fetch covers every listing, and because the whole script reads the same snapshot, every price surface — profit panels, net worth, the advisor — gets fresher numbers for free while it runs. An in-flight guard skips overlapping ticks, a one-minute floor keeps the cadence courteous, and the timer stops when the alert is off.\n\n### The combat profit panel leads with the live rate again\n\n- **The sim's forecast moves out of the headline**: the top card is back to the live measured profit rate alone; the last all-zones sim's figure for the zone (\"sim said here — …/day · simulated\") now sits in its own dim card at the foot of the panel, present for the comparison but no longer competing with the number the panel is for.\n\n### The combat sim's Guild Shrine gets per-shrine targets\n\n- **A \"Targets\" grid on the Combat Simulator's Guild Shrine upgrade, matching the Lab Sim's**: instead of one uniform level for every combat shrine, you can now set a target level per shrine — each priced from its current level up to its target and capped at its own max, shrines already maxed shown disabled. It reuses the analyzer's existing per-shrine input (the uniform level still governs when the grid is closed), and mirrors the sim's own House-targets control so it behaves identically.\n\n### The trial DPS split says how much of the party it actually covers\n\n- **\"Per player · 3 of 7 · watched\" instead of implying three people did everything**: on a spectated stream with no player attack counters, a member's damage is only attributable when they had a solo moment aligned with a boss-damage tick, so a short watch can credit only some of the party — and the panel used to present those rows as the whole story, shares summing to 100%, with nothing said about the four members who never got a cleanly-split hit. The under-card list, the scoreboard panel, the \"Copy stats\" text, and the guild report now state the coverage: shares are of the attributed damage, the total is a lower bound, and the missing members didn't do nothing. A fully-covered party shows no caveat. This also explains the shifting percentages a viewer sees early in a tier — the split fills in as hits land; no one's banked total ever decreases.\n\n### The per-player readout stays on its own tile, its panels stop drifting, and the panel does less work\n\n- **A watched fight's per-player DPS no longer dresses every tile**: the Chameleon's rows were being drawn under the Hedgehog card (and cross-checked against skilling pools), because one measurement was handed to every tile. Each tile now shows only the encounter it was measured from; the others say \"no fights watched for this encounter\" rather than borrowing someone else's numbers.\n- **The trial panels re-anchor instead of drifting**: React re-parenting the boss card — on first mount and again when a tier clears — used to strand the DPS block below the payout panel or flip the panel order. Each block now re-places itself against the game's own nodes whenever it comes loose, with scroll kept, so the first render and every tier rollover hold the intended layout.\n- **The panel recomputes and writes less**: the trial analysis ran twice per tile each pass and is now memoized per pass; the full-record IndexedDB write is throttled to the sampling window instead of firing on every observer burst; and the three storage reads at startup now run together instead of one after another.\n\n### The startup freeze on an enhanced inventory is gone\n\n- **Pricing a +20 inventory no longer stalls the main thread for a second**: with the inventory panel on screen at load, the badge manager priced every item in one uninterrupted pass, and each high-enhancement piece runs the enhancement-cost path (100+ ms apiece cold) — a dozen of them froze the page for ~1.2s and, because the work was fired without `await`, the startup trace pinned the blame on whatever unrelated feature happened to be mid-`await` at the time. The pricing loop now yields to the browser every 8ms, turning one long freeze into short slices; every item is still priced with the same values, just spread so the page stays responsive and the rest of startup proceeds behind it.\n\n### Startup traces stop blaming the wrong feature\n\n- **A feature that only parked in `await` is no longer named the slow one**: the startup trace timed each feature as wall-clock around its initializer, so a trivial synchronous feature that happened to `await` at the moment a heavy storage read resolved absorbed that read's cost and topped the \"slowest features\" list. The trace now splits each feature's own synchronous work from time spent waiting, and labels the latter \"waiting on other work\" — so the next trace points at the real cost instead of the messenger.\n\n### Damage totals stop swapping bodies at tier rollovers\n\n- **Per-player totals are banked by name at every wave boundary**: the trial-long tallies were keyed by actor slot, and the game re-deals the slots at every tier — so at a rollover, NPD's 156K could land under whoever inherited their index while they showed 24K (observed live). Each wave's damage, deaths, and support figures now fold into an immutable by-name bank before anything re-deals; live maps are per-wave only, attribution baselines reset with them, and the own-unit binding re-confirms by counters every wave. A never-named slot banks under its placeholder — an unknown then is an unknown forever, never someone else's credit. Regression test pins two waves with reversed slot orderings to exact, monotonically non-decreasing per-name totals.\n- **Loadout sightings are guild-scoped**: switching a character's guild no longer haunts the new roster with the old guild's people — each guild's sightings live under their own key (nothing is deleted on a switch), and the \"Seen loadouts\" panel filters to the current roster with an honest count of hidden outsiders.\n- **Levels stop printing floating-point tails**: \"Lv.151.60000000000002\" renders as \"Lv.151.6\".\n- **Narrow DPS rows keep a readable name**: the per-player value drops its unit (the header carries it), and the name is guaranteed at least five characters even in the 108-pixel cell.\n\n### The In Progress tab stops trusting stale answers — and combat trials learn their tier\n\n- **A stated tier is only believed for the pool it was stated with**: the live view once showed \"Banked 8 tiers / Next tier T10\" against a bar only T15 produces, because a socket-stated tier from hours earlier was persisted and never invalidated. Stated tiers now carry the bar target they were stated for and die the moment the bar moves on; among the surviving rungs the largest wins, since tiers only climb — the badge and socket can lag but never lead the bar in front of the player.\n- **Combat trials identify their tier from the boss card's own bars**: the second bar is the tier's pool, scaling purely with the tier level (observed live: 550,000 → 600,000 is exactly 110 → 120 at 5,000 per point, no participant factor), and the spectated fight's stated tier is persisted under the same staleness contract. \"Tier not known yet\" on a combat card should now be rare and short-lived.\n- **Banked points top up along the ladder**: a card-quoted total from tier 8 no longer masquerades as the trial's total after six more tiers banked — the ladder's marginal steps are added (1,080 + 6×120 = 1,800, matching the live view exactly).\n- **The pace clock stops reading \"Thu 09:00 AM\" as nine minutes**: the status row's schedule text slipped past the clock parser's guards, inflating time-left by ~50% and making one more tier \"fit\" — the off-by-one between the two tabs' pace lines. The same refusals now guard every clock source.\n- **A tier clearing under an open tab keeps continuity**: the pool bar's reset onto the next tier's larger target was being misread as a boss bar and dropped; one bar on a skilling card is now the pool by construction, so the observation files under the new tier and the analysis rolls forward without a visit anywhere.\n- **The per-player DPS rows survive narrow columns**: name and figures always share one row (ellipsized name, full name in the tooltip), and the header's label/value pairs no longer wrap mid-label.\n- **The spectate caption tells the truth**: ticks keep arriving and counting while other game tabs are browsed — the note now says so, instead of claiming only on-view stretches count.\n\n### The pace projection stops dying after one tier\n\n- **\"On pace for 13 tiers → T13\" with twenty-six minutes left is gone**: the figure both tabs show is the _forecast_ row, and the forecast had been starving since it was written — it read two fields the analysis never returned, so its ladder broke after exactly one tier and quietly printed the current tier as the ceiling (the missing fields also silently starved the success-decline model). The analysis now hands them over, and the forecast anchors its ladder on the live bar — the one label-verified anchor — the same discipline the pace walk uses, with stored observations as fallback only. The screenshot case now projects 17 tiers → T17, limited by time, on both tabs.\n- **A misfiled observation can no longer outprice the bar in hand**: exact-ladder pricing prefers the live bar's anchor outright, so a stale observation filed at the wrong tier can't drag the next tier's total below the current one.\n- **The card's level is the tier's ground truth, verified**: the game prints only \"Lv.N\" and points on a trial card (the T-chip is Toolasha's own rendering, excluded from scraping), and level → tiers banked is pinned by the card's own points arithmetic in a test.\n\n### The damage tracker keeps its names, heals honestly, and a fresh character knows the tier cold\n\n- **A refresh no longer forgets who is fighting**: the party roster arrives once per tier on `new_guild_battle`, so a mid-fight refresh used to fall back to \"Player 2 / Player 3\" placeholders until the next tier. The roster is now persisted keyed to its battle id and re-adopted on the first tick after a reload — and only for the same battle, never borrowed from another.\n- **One name, one unit**: the spectate view draws only the watcher as a full combat card, and the positional name list handed the watcher's name to a second slot — the leaderboard showed MillenniumTest twice with SarinTest missing (reproduced verbatim from the user's export). Names are now claimed by rank (roster > own-counter-confirmed > portrait > vitals > elimination), duplicates demote to placeholders, stored slots heal mid-fight, and when exactly one slot and one name remain the pairing is forced.\n- **Regeneration stops masquerading as failed attribution**: a multi-unit HP rise at one uniform fraction of each unit's own maximum classifies itself as regen (and teaches the fraction for lone risers), shown as its own \"regeneration\" figure credited to nobody; and a lone ability caster now owns their tick's non-regen heals — which is exactly how a Blooming Trident's Bloom proc attributes, since it fires on ability cast and never labels itself.\n- **A brand-new character mid-joining a trial knows the tier from the bar alone**: the work-target arithmetic now solves tier and participant count jointly as an integer problem (51,360 factors uniquely as T3 × 7 participants) — needed because the In Progress tab states no sign-up count — and known first-tier bases ship as seeded defaults (crafting/foraging/alchemy 40,000; combat per encounter: Chameleon 550,000, Badger 330,000), with learned values overriding. Ambiguous targets stay honestly unknown.\n\n### The battle-info button finds the real units — and becomes its own tool\n\n- **The profile cycler matches the game's own unit boxes now**: it used to walk bare text and climb to \"the smallest ancestor with a health reading\", which sailed up to the whole battle grid and matched names this script's own damage panel had drawn there — clicks that could never open anything. Mapped live against the real DOM (script disabled): the boss is a `CombatUnit` in the monsters grid, the watcher's own character is a full `CombatUnit` card in the players area, and the rest of the party are small clickable `MiniUnit` boxes beside it. Units are now matched by those classes inside the boss's battle panel, with a text-truncated name line (\"SarinTe…\") still resolving by unique roster prefix.\n- **Battle info and profiles are separate buttons now**: a profile carries skills but no combat stat sheet, so the one button that silently degraded from \"battle info\" into \"profile\" was collecting the wrong thing while looking done. The battle-info button appears only while a fight on screen offers a clickable unit; the profile button walks the roster for skill levels, and each says plainly what it is asking for.\n- **The `/profile` chat fill survives a renamed input container**: the chat-input lookup now falls back to the chat panel itself when the inner container's class stops matching, keeping every clickable player name working.\n- **A fight where everyone is fresh says so**: when every fighter's combat sheet was captured within the last fifteen minutes, the battle-info button used to vanish without explanation — it now leaves a note saying everyone is fresh and the button returns when a sheet goes stale.\n\n### The trials panel knows its tier immediately, and the pace projection stops lowballing\n\n- **The In Progress tab now identifies the tier on its own**: the live tab draws no status header, so the panel used to sit on \"tier not known yet\" until you visited the Trials tab. The tier now comes from a four-rung ladder — the card's badge, the socket's stated tier (now actually persisted instead of dropped on the floor), the work-target arithmetic (a skilling bar's target uniquely identifies its tier once the skill's base work is known — the crafting base of 40,000 is confirmed exact across two guilds), and the first-tier rule last. Each rung labels itself in the panel caption.\n- **Pace projections walk the exact ladder instead of a fitted curve**: both trial kinds scale by known ratios — skilling pools by `1 + 0.1×(tier−1)`, combat boss health by `100 + 10×tier` — so a single observed tier anchors every other tier's total exactly. The old geometric fit needed two observed tiers before it would say anything (mid-join with one tier seen, it stopped the walk and printed \"3 tiers → T3\" when the true pace was ~T18) and drifted even with two. When the next tier genuinely can't be priced, the caption now says \"at least N tiers\" instead of presenting the floor as the estimate.\n- **Live pool observations file under the tier being fought, not the stale badge**: a pool sampled mid-tier used to be recorded against the last banked tier, poisoning the learned base (the \"59.0K next tier\" figure reproduced exactly from that misfiling). Skill work bases are learned once from a stated-tier reading and shared across guilds, since the base is the game's constant, not the guild's.\n\n### Release housekeeping\n\n- **GreasyFork's version history will show real release notes**: the release workflow now writes the version's actual changelog section into the userscript commit on the `releases` branch — titled with the version, no attribution trailers, and the libraries commit no longer touches the userscript — so GreasyFork's changelog stops reading \"chore(main): release X\" and lists what changed instead.\n- **The userscript header catches up to 2.90.0**: the release PR merged before the version-sync automation could stamp it, so the 2.90.0 build shipped labelled `@version 2.89.0` and update checkers never saw a new version. Headers, README, and the runtime version string now say 2.90.0, and a corrected build replaces the mislabell";
+    var forkChangelog = "## Unreleased — branch `claude/mcs-ingest`\n\n### Combat labyrinth clears fixed in the packaged (release) build\n\n- **Combat rooms no longer sim at 0% — and skip-level recommendations no longer go negative — in the multi-bundle build**: the sim bundle carried its own empty copy of the loadout store, so applying a loadout to the combat DTO found nothing, the fight was simmed on a naked character, every combat room read 0% clear, and the Recommend search drove the threshold negative. The adapter now reads the shared, websocket-fed loadout store through the bundle bridge (the pattern the other cross-bundle consumers already use), so the real gear is applied. Skilling rooms and the dev-standalone build were never affected.\n\n### On-demand health report\n\n- **`Toolasha.debug.health()` and a Ctrl+K \"Health report\" command** now open (and copy/console-log) the diagnostic report anytime, instead of only when an error toast appears.\n\n### What's-new popup reads cleanly, with a newcomer overview\n\n- **The update popup now renders the changelog as formatted text** (no raw `##`/`**`/backticks), entries are condensed to one line each, and fresh installs or arrivals from upstream Toolasha get a \"Toolasha — at a glance\" overview above it.\n\n### Labyrinth pathing reveals more of the floor on ties\n\n- **Equal-cost routes now prefer the one that uncovers the most unknown rooms**.\n\n### \"Guild\" is no longer turned into a /profile link\n\n- **The guild-wide broadcast \"Guild has reached level N!\" stays plain text**.\n\n### Selector canary stops false-alarming on alchemy and enhancing panels\n\n- **The \"Skill action panel (name)\" canary no longer cries \"game update?\" on alchemy/enhancing screens**.\n\n### First run: returning users can keep their settings\n\n- **The welcome dialog for returning users now leads with \"Keep my current settings\"**.\n\n### Preset renamed: \"Everything on\" → \"Defaults\"\n\n- **The preset bar's \"Everything on\" button is now \"Defaults\"**.\n\n### Portrait DPS extras are now opt-in\n\n- **The seven Portrait DPS sub-readouts default OFF**.\n\n### Undercut alerts stop missing undercuts you didn't watch happen\n\n- **A configurable market refresh, on while undercut alerts are**.\n\n### The combat profit panel leads with the live rate again\n\n- **The sim's forecast moves out of the headline**.\n\n### The combat sim's Guild Shrine gets per-shrine targets\n\n- **A \"Targets\" grid on the Combat Simulator's Guild Shrine upgrade, matching the Lab Sim's**.\n\n### The trial DPS split says how much of the party it actually covers\n\n- **\"Per player · 3 of 7 · watched\" instead of implying three people did everything**.\n\n### The per-player readout stays on its own tile, its panels stop drifting, and the panel does less work\n\n- **A watched fight's per-player DPS no longer dresses every tile**.\n\n### The startup freeze on an enhanced inventory is gone\n\n- **Pricing a +20 inventory no longer stalls the main thread for a second**.\n\n### Startup traces stop blaming the wrong feature\n\n- **A feature that only parked in `await` is no longer named the slow one**.\n\n### Damage totals stop swapping bodies at tier rollovers\n\n- **Per-player totals are banked by name at every wave boundary**.\n\n### The In Progress tab stops trusting stale answers — and combat trials learn their tier\n\n- **A stated tier is only believed for the pool it was stated with**.\n\n### The pace projection stops dying after one tier\n\n- **\"On pace for 13 tiers → T13\" with twenty-six minutes left is gone**.\n\n### The damage tracker keeps its names, heals honestly, and a fresh character knows the tier cold\n\n- **A refresh no longer forgets who is fighting**.\n\n### The battle-info button finds the real units — and becomes its own tool\n\n- **The profile cycler matches the game's own unit boxes now**.\n\n### The trials panel knows its tier immediately, and the pace projection stops lowballing\n\n- **The In Progress tab now identifies the tier on its own**.\n\n### Release housekeeping\n\n- **GreasyFork's version history will show real release notes**.\n\n### The silent failure modes get their alarms, and two calculators become one\n\n- **The bundle-sharing rule is now executable**.\n\n### Thin markets stop lying in the rankings\n\n- **The liquidity cap the goal planner already obeyed now governs every profit surface**.\n\n### The panels compare, lint, and remember\n\n- **The profit panel quotes the sim on the zone you're in**.\n\n### A ledger for flips, luck for foragers, and spreadsheets for everyone\n\n- **A trading ledger measures what flipping actually earns**.\n\n### The trial record remembers, the sim gets audited, and silence gets alarms\n\n- **Past weeks return to the trials panel and guild report**.\n\n### Live combat learns seven more things, each its own switch\n\n- **Enemy tiles answer the questions a fight actually asks**.\n\n### The portrait meters stop jostling the party\n\n- **Every player's DPS meter is two lines, always**.\n\n### Every player name opens a profile, and the dungeon knows its worth\n\n- **Player names are clickable wherever a dungeon shows them**.\n\n### A canceled battle start is not a run\n\n- **The dungeon tracker no longer records phantom runs from failed ready-checks**.\n\n### Hybrid attribution: thorns and DoT damage go to their owners\n\n- **The damage attribution learned what the party recording proved**.\n\n### Party lint ignores tools, and ability books answer three more questions\n\n- **Tool slots are exempt from the skilling-gear warning**.\n\n### The sim summary reads in the units a player plans in\n\n- **XP/day → XP/hr**.\n\n### Entry keys are consumables, and chests point at their keys\n\n- **The consumables tracker now carries the dungeon's entry key**.\n\n### Ability book counts respect the experience already earned\n\n- **The Upgrade tab priced every ability level-up from the floor of its current level**.\n\n### An attribution referee, ahead of any verdict on the presence method\n\n- **`npm run compare <recording.json>` replays a combat recording through two attribution methods side by side**.\n\n### Departed members stop haunting the roster\n\n- **A member who left the guild no longer sits in \"Gone quiet\" forever**.\n\n### The wire speaks: five trial message types the game was sending all along\n\n- **`new_guild_battle` fires at every tier and states everything**.\n\n### Mixed-bonus cards contribute their true base to the token sum\n\n- A card banked across a Builder's Hall upgrade divides cleanly by neither bonus, so its base points now come from the exact ladder (1,100 at T10) instead of the slightly-low division (1,091)…\n\n### The notice board is not a trial, and the ladders are theorems now\n\n- **A guild notice board can no longer become a trial tile**.\n\n### The watched fight knows its own name, and a wipe is an outcome\n\n- **The spectated stream attaches to the encounter being watched, and only that one**.\n\n### Spectating measures: the trial fight is on the wire after all\n\n- **Per-player trial measurement is real**.\n\n### The cycler clicks the people fighting beside you\n\n- **A fight on screen outranks the roster walk**.\n\n### Beacons cover the way out before they chase dark corners\n\n- **A set beacon count is planned against the same objective the automatic one uses**.\n\n### The arrow points at the count, completed means completed, and estimates say so\n\n- **\"On pace for 4 tiers → T5\" is impossible output now**.\n\n### Neither ladder has a wall, and a click is not a capture\n\n- **The profile cycler counts replies, not clicks**.\n\n### The badge means banked, and the skilling ladder is a rule now\n\n- **Mid-trial, the stated tier badge counts tiers banked and the fight is on badge + 1**.\n\n### The recorder survives its first real trial day\n\n- **Auto-record actually arms now**.\n\n### Release plumbing\n\n- **Guild features moved from the ui library to the combat library**.\n\n### A trial report your guild can actually read\n\n- **Copy guild report**.\n\n### A warning before the task board fills, and trials that predict themselves\n\n- **Task-slot alert**.\n\n### Path shows the way to the plan, not just the plan\n\n- **The rooms between you and the first planned room are lit too**.\n\n### Path stops planning a floor that has already moved on\n\n- **Rooms you have already shrouded are no longer marked \"Shroud\" again**.\n\n### Trial cards say what their phase can know, and stay off the notice board\n\n- **No more trial card built out of the Overview tab**.\n\n### Poisoned trial records heal themselves, and trials announce their own schedule\n\n- **The stale record from before the switch fix cleans itself up**.\n\n### Trials stop following you to your next guild, and the tab stops yanking you around\n\n- **A character switch drops everything**.\n\n### The bulk reroller now closes the door behind itself, and takes the free reroll on faith\n\n- **Protected tasks get their green outline back after a bulk reroll**.\n\n### The trial recorder grew hands, eyes, and a scoreboard\n\n- **Auto-record**.\n\n### The overlay's ⚙ popover no longer traps you, and keeps up with what it shows\n\n- **It can never cover the panel's header again**.\n\n### Trials round three: exact digits, honest captions, and a block that finally sits still\n\n- **Payout figures in full digits**.\n\n### The trial payout math is now exact, verified against four real payouts\n\n- **Combat trial cards finally produce a rate**.\n\n### The trial export was read, and it proved six defects — all fixed\n\n- **Per-player DPS now arms during real trial fights**.\n\n### Trials know who hit what, and why the payout was blank\n\n- **Per-player DPS on combat trials**.\n\n### Trials read the game as it actually is\n\n- **The real structure, from live screenshots**.\n\n### The trials feature existed on a guess\n\n- **Why nothing trials-related ever rendered**.\n\n### The lab sims the run you choose\n\n- **Token buffs are settable from Configure**.\n\n### Rates bounded by the market and your wallet\n\n- **A rate is capped by how fast its output actually sells**.\n\n### The reroll chooser is finally read as it is\n\n- **The MooPass reroll failure's real cause**.\n\n### The goal planner shares, navigates, and answers instantly\n\n- **Goals share one resource ledger**.\n\n### The sims finish their own homework\n\n- **Skilling gear rows expand like combat rows**.\n\n### Nine small debts paid\n\n- **The lab supplies planner believes the server**.\n\n### The goal planner stops promising billions\n\n- **A rate is only a rate while its inputs last**.\n\n### The lab sims what can actually win\n\n- **Skilling rooms leave the lab combat list**.\n\n### Task cards catch up after a reroll\n\n- **The stale picture and the stuck free reroll were one bug**.\n\n### eWatch learns houses too\n\n- **House room levels are savings goals**.\n\n### Ability swaps follow the guide\n\n- **Swap candidates come from the community build guide now**.\n\n### The lab reads the same buffs as the sim\n\n- **The live clear-rate readout was scoring against buff levels frozen at page load**.\n\n### The budget planner spends the money\n\n- **The empty 500M plan is fixed**.\n\n### Three more reasons to look up\n\n- **Labyrinth run finished**.\n\n### The listing says who built what\n\n- **`docs/GREASYFORK.md`**.\n\n### The session starts when combat does\n\n- **The Combat Level session no longer waits for its panel**.\n\n### Tokens per hour, finally measured\n\n- **Task completions are now recorded**.\n\n### Zones compared on even footing\n\n- **\"Max-tier Food\" option for all-zones sims**.\n\n### The skilling sim sims your skill\n\n- **Tool candidates are scoped to the skill being simmed**.\n\n### The buff tells you before it leaves\n\n- **Community buff expiry alerts**.\n\n### The sim comes home\n\n- **The community buff cap is 20 after all**.\n\n### The combat sim answers back\n\n- **Community upgrades work**.\n\n### The lab sim grows up\n\n- **Task Fight is gone from the lab sim**.\n\n### eWatch learns abilities\n\n- **Ability levels are savings goals now**.\n\n### The overlay fits the screen it's on\n\n- **A floating launcher on mobile**.\n\n### Panels behave on a phone\n\n- **Floating panels stay on screen**.\n\n### Sync works from a phone, and can't eat itself\n\n- **`@connect gist.githubusercontent.com` added to the userscript header**.\n\n### The manifest error says what it means\n\n- **\"Manifest is corrupt\" now tells the truth**.\n\n### Everything fits now\n\n- **The sync payload is gzipped before upload**.\n\n### The gist can keep a secret\n\n- **Optional sync passphrase**.\n\n### Console-dump fixes\n\n- **The Shrine Upgrade Planner stays in its box**.\n\n### The token knows its own price\n\n- **Guild token value now uses real exchange rates**.\n\n### The goal planner learns two more trades\n\n- **Alchemy ranks without a DOM**.\n\n### Housekeeping\n\n- **The WebSocket prototype wrapper is gone**.\n\n### The books balance: first swings were invisible\n\n- **The Sim Accuracy undercount is fixed**.\n\n### Iron Cow re-forces instantly, and one more clickable name\n\n- **Applying a preset (or All Off / Restore) while Iron Cow Mode is on now re-forces the locked settings immediately**.\n\n### Settings you can actually get to\n\n- **Picking a setting in Ctrl+K now opens settings itself**.\n\n### The recorder answers back\n\n- **Record for a target**.\n\n### The black box was ours\n\n- **The black band at the foot of action panels is gone**.\n\n### The recorder grows up\n\n- **Recordings snapshot your loadout at record time**.\n\n### Idle members are clickable\n\n- **Names in the guild Overview's \"Idle members\" list fill `/profile Name` on click**.\n\n### Mid-run restock honesty, and the tooltip that would not die\n\n- **The lab planner stops suggesting purchases that cannot help**.\n\n### Five new tiles and layouts that follow what you're doing\n\n- **New overlay tiles**.\n\n### Companion privacy, a Record button where it belongs, and mooket hygiene\n\n- **Toolasha no longer names the companion script anywhere**.\n\n### Build Score opens something now\n\n- **New Build Score breakdown panel**.\n\n### The watch card stops overcharging, and laddering becomes a mode\n\n- **Real pricing bug fixed**.\n\n### Iron Bell Farming\n\n- **\"Iron Cow Farm\" is now \"Iron Bell Farming\"**.\n\n### The overlay earns its screen space\n\n- **Empty tiles stop shouting**.\n\n### Overlay tiles open their panels\n\n- **The Net Worth, Coins, Market Listings, and Inventory Value tiles now open the networth history chart**.\n\n### Iron Cow Farm\n\n- **New \"Iron Cow Farm\" panel**.\n\n### Multi-target lab analysis gets the big swaps\n\n- **Combined forced-armor swaps now appear under All targets / Chosen targets**.\n\n### Dungeon keys cost whichever way is cheaper\n\n- **Dungeon profit charges each entry/chest key at the cheaper of buying or crafting it**.\n\n### Building levels cap at 20, trial tiers at 21 — and never each other\n\n- **Guild building bonuses clamp at the real level-20 cap**.\n\n### The task board stops fighting the game\n\n- **The zone-index badge stops churning**.\n\n### The lab planner reads the right bag\n\n- **During a run, supply counts come from the run itself**.\n\n### Dungeon run history stops lying\n\n- **A run-start key count can no longer end a fresh run at wave 0**.\n\n### Backups say whose they are, and adoption asks first\n\n- **`Toolasha.debug.claimLegacyData(charId)`**.\n\n### Labyrinth: split apart, supply-aware, and honest mid-fight\n\n- **The 5,300-line labyrinth module splits into six**.\n\n### Adoption accident: fixed, and repairable\n\n- **The wrong character can no longer inherit your data**.\n\n### The dungeon tracker earns its tests\n\n- **252 new tests**.\n\n### History stops rewriting itself on every event\n\n- **The append-heavy history stores split into per-period records**.\n\n### Tokens get a price, shrines get a debug command\n\n- **Guild tokens are now priced through the guild shop's token→credit exchange**.\n\n### Cross-tab sim exports can't lie about whose gear they are\n\n- **The combat-sim export bridge stamps every payload with the writing character**.\n\n### The variance math earns its tests\n\n- **180 new tests**.\n\n### Listing-age estimates get sharper over time\n\n- **The anonymous id→time anchor pool now grows**.\n\n### Missing-material tabs retire themselves\n\n- **Pinned marketplace tabs now watch your inventory**.\n\n### Guild Shrines series in the networth chart\n\n- **The networth history chart gains a Guild Shrines line**.\n\n### Guild trials get pace, ETA, and payout math\n\n- **Trial cards on the In Progress tab now carry live info**.\n\n### Guild shrines in your score and your net worth\n\n- **The profile score panel gains \"+ Guild Shrine\" lines**.\n\n### Goal Planner\n\n- **New Goal Planner panel**.\n\n### Sim state scoped, and honest enhancement numbers in the tooltip\n\n- **The last cross-character leaks in the sims are closed**.\n\n### Doubled profit line fixed, stuck marketplace tabs cleared\n\n- **The action bar could show two \"Profit: …/hr · remaining …\" lines**.\n\n### Market and inventory state stops leaking between characters\n\n- **Ten market/inventory stores scoped per character**.\n\n### Combat and labyrinth records stop leaking between characters\n\n- **Eleven combat-side stores scoped per character**.\n\n### Panels and task prefs stop leaking between characters\n\n- **Panel open-state is per character now**.\n\n### Lab sim catches up to combat sim\n\n- **Comparison runs for single-target lab fights**.\n\n### The sim sees your real abilities, and shrine levels finally arrive\n\n- **Ability desync fixed**.\n\n### Combat sim results that lead with the answer\n\n- **Headline tiles at the top of the Results tab**.\n\n### Clickable names everywhere chat shows one\n\n- **The /profile click trick now covers every name Toolasha renders**.\n\n### Per-character storage helper\n\n- **New `characterKey` helper**.\n\n### Official formulas, ladder costs, and the sim graded against reality\n\n- **Lab math now follows the official formulas you supplied**.\n\n### Upstream ports (verdict-gated) and honest task damage\n\n- **Task damage only counts on task fights**.\n\n### Advisors sharpened, your own rates guaranteed, and 1,200 new tests\n\n- **Upgrade advisor fixes**.\n\n### Sync, account view, honest philo math, and lab fixes\n\n- **Cross-device sync**.\n\n### Guild shrines, forecast calibration, roster intelligence, and storage that survives months\n\n- **Guild shrines everywhere they matter**.\n\n### The simulator models more, and breaks less\n\n- **taskDamage now raises damage**.\n\n### Ctrl+K, named layouts, and the features finally talk to each other\n\n- **A command palette**.\n\n### Notifications, provenance, and selectors that survive game updates\n\n- **Opt-in notifications**.\n\n### Panels remember where you put them, and stacking becomes predictable\n\n- **Both simulator panels persist their geometry**.\n\n### The product-review batch, wave one\n\n- **Back Up Everything / Restore Backup**.\n\n### The Combat Simulator panel catches up to the Lab Simulator\n\n- **Stop no longer throws away finished work**.\n\n### Sim accuracy: house rooms, guild buffs, and the Experience token\n\n- **REVERTED (player-verified): house wisdom does apply to combat in the live game — the filter below was removed again**.\n\n### Panels stay reachable and dialogs stay on top\n\n- **Confirmation dialogs can no longer hide behind panels**.\n\n### Every setting now does what it says — a full audit of all 346\n\n- **Five checkboxes did nothing at all**.\n\n### The Sell Queue is back\n\n- Removed one commit ago on the belief it was dead; restored unchanged — module, feature registration, and the `sellQueue` setting.\n\n### The mobile sweep, part three: gestures that had no touch equivalent\n\n- **The Sell Queue feature is removed**.\n\n### Panels can be dragged with a finger\n\n- Every drag and resize in the script listened for mouse events, and `mousedown` never fires on a touchscreen — every panel was simply immovable on a phone, the dungeon tracker included.\n\n### A mobile mode, auto-detected and overridable\n\n- **Mobile mode**.\n\n### Arriving from another build of Toolasha asks before anything new runs\n\n- Someone switching to this fork for the first time — usually from upstream, whose settings live under the same storage keys…\n\n### A what's-new popup, once per update — with the new settings live in it\n\n- After an update, a popup shows what changed and lists every setting that did not exist in t";
+
+    var forkOverview = "This is the **Millennium44 fork of Toolasha**. It folds MWI Combat Suite into Toolasha — live DPS tracking, loot and drop tracking, drop-luck analysis, and a full labyrinth simulator — so one script gives you both halves of the game instead of two userscripts.\n\n### Combat & simulators\n\n- Live DPS, hit/crit rate, damage-taken and net-sustain read off your own fights.\n- Loot and drop tracking with drop-luck analysis that judges combat, gathering and production.\n- A combat recorder: record real fights, replay them against the simulator, get a verdict with honest noise bands.\n- A combat simulator whose upgrade picks are costed and ranked on real market and credit costs.\n- Per-character combat stats, sim state and histories — no character reads another's books.\n\n### Market & profit\n\n- One market price API prices almost everything: upgrades, net worth, drop income, guild tokens, every action.\n- Prices capped by the volume the market has actually absorbed, so thin markets stop inflating rankings.\n- Profit lines on the action bar, pinned pages, alchemy rankings and the combat profit panel.\n- Market-history viewer with a live undercut alert that re-checks against a refreshed snapshot.\n- An upgrade advisor that costs and ranks gear and ability candidates against live prices.\n\n### Labyrinth\n\n- A labyrinth simulator with auto-pathing and auto-beaconing planned from the actual run.\n- Multi-target analysis with combined armour swaps and supply-aware torch/shroud/beacon planning.\n- Skilling-sim candidates scoped to the skill you are simming, with the skip level set for you.\n- Upgrade, All-Fights and Skilling analyses, each exportable to CSV.\n\n### Guild\n\n- Live trial measurement: per-player DPS and damage/healing attribution from the fight you watch.\n- Tier read straight off the boss bar, with pace, ETA and payout maths.\n- A trial report your guild can actually read, with honest coverage caveats.\n\n### Quality of life\n\n- A curated overlay of tiles with bundled presets, activity auto-switching, and tiles that open their panels.\n- A Ctrl+K (Cmd+K) command palette over every panel, overlay row, saved layout and setting.\n- Mobile-friendly panels: viewport clamping, reachable close buttons, finger-sized targets, a floating launcher.\n- Notifications for empty queues, community-buff expiry, and finished labyrinth runs.\n- Task tools: measured tokens/hour, net task income, and reroll handling that takes the free MooPass reroll.\n- Equipment Savings (\"eWatch\"): savings goals for gear and ability levels, fed from the simulators.\n- A goal planner that turns \"get me X gold / level N\" into a ranked plan from your real measured rates.\n\n### Data & sync\n\n- Cross-device sync of your whole database through one private GitHub gist you own.\n- Gzip-compressed, optionally AES-256 encrypted, conflict-aware, guarded against overwriting a year of data.\n- Chunked per-period history that survives months, with honest quota handling and per-character backups.\n- Hundreds of bug fixes and a test suite grown from ~2,300 to over 8,500 tests.\n";
 
     /**
      * What's New — the once-per-update popup, and the conservative-defaults policy.
@@ -57854,6 +57894,105 @@ ${starCSS}
         text: '#e0e0e0',
         dim: '#888',
     };
+
+    /**
+     * Decode the handful of HTML entities the changelog carries. The source is
+     * markdown that occasionally escapes angle brackets and quotes (e.g. the
+     * "&lt;name&gt; has …" announcement shape), and this popup shows it as plain
+     * text, so the escapes have to come back to the characters they stand for.
+     * `&amp;` is decoded last so an escaped entity like `&amp;lt;` does not become
+     * `<`.
+     * @param {string} text
+     * @returns {string}
+     */
+    function decodeEntities(text) {
+        return String(text)
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&#34;/g, '"')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/&amp;/g, '&');
+    }
+
+    /**
+     * Append one line's worth of inline-formatted content to a parent node, built
+     * as real DOM nodes rather than injected HTML. `**bold**` becomes a bold span,
+     * `` `code` `` is shown as its inner text with the backticks stripped, and HTML
+     * entities are decoded. The changelog is build-embedded and therefore trusted,
+     * but nodes are constructed anyway so no markdown is ever parsed as HTML.
+     * @param {Node} parent
+     * @param {string} text
+     * @private
+     */
+    function appendInline(parent, text) {
+        const pattern = /\*\*([^*]+?)\*\*|`([^`]+?)`/g;
+        let lastIndex = 0;
+        let match;
+        while ((match = pattern.exec(text)) !== null) {
+            if (match.index > lastIndex) {
+                parent.appendChild(document.createTextNode(decodeEntities(text.slice(lastIndex, match.index))));
+            }
+            if (match[1] !== undefined) {
+                const strong = document.createElement('span');
+                strong.style.fontWeight = '700';
+                strong.textContent = decodeEntities(match[1]);
+                parent.appendChild(strong);
+            } else {
+                parent.appendChild(document.createTextNode(decodeEntities(match[2])));
+            }
+            lastIndex = pattern.lastIndex;
+        }
+        if (lastIndex < text.length) {
+            parent.appendChild(document.createTextNode(decodeEntities(text.slice(lastIndex))));
+        }
+    }
+
+    /**
+     * Render a slice of the embedded fork markdown into `root` as readable DOM.
+     *
+     * A tiny, dependency-free markdown-to-DOM pass: `##` section headings are
+     * skipped (the "Unreleased — branch …" line is not for the reader), `###`
+     * becomes an accented heading, `-` becomes a bullet, anything else non-blank is
+     * a paragraph, and every text run is inline-formatted through `appendInline`.
+     * Shared by the changelog and the newcomer overview.
+     * @param {Node} root - Container to append rendered nodes to
+     * @param {string} markdown - The embedded markdown to render
+     */
+    function renderForkMarkdown(root, markdown) {
+        const lines = String(markdown).split('\n');
+        for (const raw of lines) {
+            const line = raw.replace(/\s+$/, '');
+            if (!line.trim()) continue; // spacing comes from element margins
+            if (/^##\s/.test(line)) continue; // the "Unreleased — branch …" heading is not shown
+            const heading = line.match(/^###\s+(.+)/);
+            if (heading) {
+                const el = document.createElement('div');
+                Object.assign(el.style, {
+                    fontWeight: '700',
+                    color: COLORS$3.accent,
+                    margin: '10px 0 4px',
+                    fontSize: '12.5px',
+                });
+                appendInline(el, heading[1]);
+                root.appendChild(el);
+                continue;
+            }
+            const bullet = line.match(/^-\s+(.+)/);
+            if (bullet) {
+                const el = document.createElement('div');
+                Object.assign(el.style, { margin: '2px 0', color: '#bbb', lineHeight: '1.4' });
+                el.appendChild(document.createTextNode('• '));
+                appendInline(el, bullet[1]);
+                root.appendChild(el);
+                continue;
+            }
+            const paragraph = document.createElement('div');
+            Object.assign(paragraph.style, { margin: '4px 0', color: '#bbb', lineHeight: '1.4' });
+            appendInline(paragraph, line);
+            root.appendChild(paragraph);
+        }
+    }
 
     class WhatsNew {
         constructor() {
@@ -57922,6 +58061,7 @@ ${starCSS}
                     forkChanged: Boolean(stored.fork && stored.fork !== current.fork),
                     newIds: fresh,
                     turnedOff: new Set(turnedOff),
+                    isNewcomer: false,
                 };
 
                 // Recorded now rather than after the popup, so a closed tab cannot
@@ -57994,6 +58134,7 @@ ${starCSS}
                     forkChanged: true,
                     newIds: [],
                     turnedOff: new Set(),
+                    isNewcomer: true,
                 };
                 return;
             }
@@ -58012,6 +58153,7 @@ ${starCSS}
                 forkChanged: true,
                 newIds: inherited,
                 turnedOff: new Set(conservative),
+                isNewcomer: true,
             };
         }
 
@@ -58058,6 +58200,7 @@ ${starCSS}
                     forkChanged: false,
                     newIds: [],
                     turnedOff: new Set(),
+                    isNewcomer: true,
                 };
             } catch (error) {
                 console.error('[WhatsNew] Offering the first-run preset failed:', error);
@@ -58082,7 +58225,7 @@ ${starCSS}
         }
 
         /** @private */
-        _buildPanel({ headline, forkChanged, newIds, turnedOff }) {
+        _buildPanel({ headline, forkChanged, newIds, turnedOff, isNewcomer }) {
             this.close();
 
             const panel = document.createElement('div');
@@ -58154,23 +58297,57 @@ ${starCSS}
                 body.appendChild(section);
             }
 
+            // A fresh install, or someone arriving from another build (upstream
+            // Toolasha included), gets the at-a-glance tour before the changelog —
+            // the changelog answers "what changed", which means nothing to someone
+            // who has not seen the thing it changed.
+            if ((isNewcomer || forkChanged) && forkOverview?.trim()) {
+                const overview = document.createElement('div');
+                const heading = document.createElement('div');
+                Object.assign(heading.style, {
+                    fontWeight: '700',
+                    color: COLORS$3.accent,
+                    margin: '4px 0 6px',
+                    fontSize: '14px',
+                });
+                heading.textContent = 'Toolasha — at a glance';
+                overview.appendChild(heading);
+                const box = document.createElement('div');
+                Object.assign(box.style, {
+                    fontSize: '12px',
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid #222',
+                    borderRadius: '6px',
+                    padding: '8px 10px',
+                    marginBottom: '12px',
+                });
+                renderForkMarkdown(box, forkOverview.trim());
+                overview.appendChild(box);
+                body.appendChild(overview);
+            }
+
             if (forkChangelog?.trim()) {
                 const log = document.createElement('div');
-                log.innerHTML = `<div style="font-weight:700; color:${COLORS$3.accent}; margin:10px 0 6px;">Changelog</div>`;
-                const text = document.createElement('pre');
-                text.textContent = forkChangelog.trim();
-                Object.assign(text.style, {
-                    whiteSpace: 'pre-wrap',
-                    fontFamily: 'inherit',
+                const heading = document.createElement('div');
+                Object.assign(heading.style, {
+                    fontWeight: '700',
+                    color: COLORS$3.accent,
+                    margin: '10px 0 6px',
+                    fontSize: '14px',
+                });
+                heading.textContent = 'Changelog';
+                log.appendChild(heading);
+                const box = document.createElement('div');
+                Object.assign(box.style, {
                     fontSize: '12px',
                     color: '#bbb',
                     background: 'rgba(255,255,255,0.03)',
                     border: '1px solid #222',
                     borderRadius: '6px',
                     padding: '8px 10px',
-                    margin: '0',
                 });
-                log.appendChild(text);
+                renderForkMarkdown(box, forkChangelog.trim());
+                log.appendChild(box);
                 body.appendChild(log);
             }
 

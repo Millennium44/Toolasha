@@ -1,7 +1,7 @@
 /**
  * Toolasha Combat Simulator Library
  * The battle engine, shared by every feature that simulates a fight
- * Version: 2.91.0
+ * Version: 2.92.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -8190,7 +8190,14 @@
      * @returns {boolean} True if snapshot was found and applied, false otherwise
      */
     function applyLoadoutSnapshotToDTO(dto, snapshotName, gameData) {
-        const snapshots = loadoutSnapshot.getAllSnapshots();
+        // Multi-bundle build: the sim bundle loads before combat, and the loadout
+        // store is a stateful singleton fed by the websocket in the combat bundle.
+        // Reach that shared copy through the bridge at call time; the bundled import
+        // is only the dev-standalone fallback. Using the sim bundle's own (unfed)
+        // copy here left every loadout unresolved — a naked DTO, and every combat
+        // room simmed at 0%.
+        const store = bundleBridge_js.loadoutSnapshot() || loadoutSnapshot;
+        const snapshots = store.getAllSnapshots();
         const snapshot = snapshots.find((s) => s.name === snapshotName);
         if (!snapshot) return false;
 
@@ -8203,7 +8210,7 @@
         // loadout in "highest owned" mode wears whatever the best copy is now, and
         // the stored level is only a reading from when it was last saved.
         const newEquipment = {};
-        for (const equip of loadoutSnapshot.resolveEquipment(snapshot)) {
+        for (const equip of store.resolveEquipment(snapshot)) {
             const itemDetail = itemDetailMap[equip.itemHrid];
             const equipType = itemDetail?.equipmentDetail?.type;
             if (equipType) {
