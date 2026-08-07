@@ -4,6 +4,16 @@
 
 All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.84.0, commit `77e9ddb`). Newest first. Every pushed change must be recorded here in the same commit that makes it. Upstream release history is preserved below.
 
+## Unreleased — branch `claude/new-session-s8abcv`
+
+### Scrolls in the Combat Simulator
+
+The Combat Simulator can now carry Labyrinth scrolls, so a sim reflects the buffs you actually run and the Upgrade advisor can say which scroll is worth carrying. Only the two scrolls that touch combat are offered — **Wisdom** (combat EXP) and **Rare Find** (rare-drop multiplier); the others (efficiency, action speed, gathering, processing, gourmet) are skilling-only and do nothing in a fight, so they are neither shown nor applied.
+
+- **New "Scrolls" section on the Configure tab** (combat mode), next to Guild Shrines. It starts checked at the scrolls you currently have active, and each one you tick is folded into the sim as a flat buff — Wisdom raises the EXP the run reports, Rare Find raises its rare-drop rate. A one-line note spells out that only Wisdom and Rare Find matter here.
+- **New "Scrolls" mode on the Upgrade tab**, alongside Community. It measures what each scroll is worth: turning on one you are not carrying, or — for one already on — what you would lose by dropping it. Scrolls carry a per-run seal cost the advisor does not price, so like community buffs they land in the "measured, but not priced" box and are read on their deltas.
+- **Engine plumbing:** a player's chosen scrolls ride the DTO (`scrollBuffs`) and resolve to combat buffs at the single point every per-player sim passes through, so parties, all-zones runs and upgrade candidates all pick them up. Values come from the fork's hardcoded scroll table (the game JSON has no `consumableDetail` for scrolls).
+
 ## Unreleased — branch `claude/mcs-ingest`
 
 ### Trial Swarm now shows a panel on the In Progress tab (test server)

@@ -231,3 +231,46 @@ describe('community buff levels stop where the game does', () => {
         expect(input.value).toBe('20');
     });
 });
+
+describe('scrolls section', () => {
+    test('offers the two combat scrolls and pre-checks the ones the player carries', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+
+        const html = editor._renderScrollsSection({ scrollBuffs: ['/buff_types/wisdom'] });
+
+        expect(html).toContain('data-scroll-buff="/buff_types/wisdom"');
+        expect(html).toContain('data-scroll-buff="/buff_types/rare_find"');
+        // wisdom is carried, rare find is not
+        expect(html).toMatch(/data-scroll-buff="\/buff_types\/wisdom" checked/);
+        expect(html).not.toMatch(/data-scroll-buff="\/buff_types\/rare_find" checked/);
+        expect(html).toContain('1 active');
+    });
+
+    test('the skilling tab hides it — its scroll picker lives elsewhere', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div'), skillingMode: true });
+        expect(editor._renderScrollsSection({ scrollBuffs: [] })).toBe('');
+    });
+
+    test('ticking a scroll adds it to the DTO; unticking removes it', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        el.innerHTML =
+            '<input type="checkbox" data-scroll-buff="/buff_types/rare_find">' +
+            '<input type="checkbox" data-scroll-buff="/buff_types/wisdom" checked>';
+        const dto = { scrollBuffs: ['/buff_types/wisdom'] };
+
+        editor._wireEditorEvents(el, dto);
+        const rareFind = el.querySelector('[data-scroll-buff="/buff_types/rare_find"]');
+        rareFind.checked = true;
+        rareFind.dispatchEvent(new Event('change'));
+
+        expect(dto.scrollBuffs).toContain('/buff_types/rare_find');
+        expect(dto.scrollBuffs).toContain('/buff_types/wisdom');
+
+        const wisdom = el.querySelector('[data-scroll-buff="/buff_types/wisdom"]');
+        wisdom.checked = false;
+        wisdom.dispatchEvent(new Event('change'));
+
+        expect(dto.scrollBuffs).toEqual(['/buff_types/rare_find']);
+    });
+});

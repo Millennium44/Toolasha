@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
     equipment: new Map(),
     shrineCapturedAt: null,
     shrineHydrated: false,
+    personalActionTypeBuffsMap: null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -34,6 +35,9 @@ vi.mock('../../core/data-manager.js', () => ({
         },
         get characterEquipment() {
             return mocks.equipment;
+        },
+        get personalActionTypeBuffsMap() {
+            return mocks.personalActionTypeBuffsMap;
         },
     },
 }));
@@ -106,6 +110,7 @@ beforeEach(() => {
     mocks.equipment = new Map();
     mocks.shrineCapturedAt = null;
     mocks.shrineHydrated = false;
+    mocks.personalActionTypeBuffsMap = null;
 });
 
 describe('guild shrine buff synthesis', () => {
@@ -226,5 +231,34 @@ describe('the abilities a player DTO carries', () => {
         expect(dto.abilities).toHaveLength(5);
         expect(dto.abilities[0]).toBeNull();
         expect(dto.abilities[1].hrid).toBe('/abilities/cleave');
+    });
+});
+
+describe('the scrolls a player DTO starts from', () => {
+    beforeEach(() => {
+        mocks.characterData = { characterSkills: [] };
+    });
+
+    test('are the combat-effective scrolls the player has active', () => {
+        mocks.personalActionTypeBuffsMap = {
+            '/action_types/combat': [
+                { typeHrid: '/buff_types/wisdom', flatBoost: 0.2 },
+                // A skilling-only scroll that happens to sit on the combat map is
+                // not carried into the combat sim
+                { typeHrid: '/buff_types/gourmet', flatBoost: 0.16 },
+            ],
+        };
+
+        expect(buildPlayerDTO().scrollBuffs).toEqual(['/buff_types/wisdom']);
+    });
+
+    test('are empty when the player carries none', () => {
+        mocks.personalActionTypeBuffsMap = { '/action_types/combat': [] };
+        expect(buildPlayerDTO().scrollBuffs).toEqual([]);
+    });
+
+    test('are empty when the game never sent a scroll map', () => {
+        mocks.personalActionTypeBuffsMap = null;
+        expect(buildPlayerDTO().scrollBuffs).toEqual([]);
     });
 });

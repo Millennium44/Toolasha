@@ -31,6 +31,7 @@ import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.j
 import { buildOverridesForSkill } from './skilling-sim-helpers.js';
 import { priceGuildCreditCosts } from '../../utils/guild-credit-pricing.js';
 import { describeGuildTokenGold, explainGuildTokenValue } from '../guild/guild-token-value.js';
+import { SCROLL_BUFF_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/scroll-buff-values.js';
 
 /** Enhancement breakpoints by slot type */
 const BREAKPOINTS_DEFAULT = [7, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20];
@@ -1571,6 +1572,10 @@ export function generateCandidates(
         candidates.push(...generateCommunityBuffCandidates(communityBuffs, options?.communityBuffTargetLevel));
     }
 
+    if (mode === 'scroll') {
+        candidates.push(...generateScrollCandidates(playerDTO));
+    }
+
     // taskDamage pays only while the monster in front of you is your combat
     // task, and an advisor ranking is a generic zone fight — so every sim below
     // runs with isTaskFight off and the ranked delta on a task badge is its
@@ -1755,6 +1760,7 @@ export function candidateAssignmentKey(candidate) {
         candidate.type === 'house' ||
         candidate.type === 'guild_shrine' ||
         candidate.type === 'community_buff' ||
+        candidate.type === 'scroll' ||
         candidate.type === 'drink' ||
         candidate.slot?.startsWith('ability_')
     ) {
@@ -2214,6 +2220,56 @@ function applyCommunityBuffCandidate(communityBuffs, candidate) {
 }
 
 /**
+ * What each combat scroll is worth: turning on one the player is not carrying,
+ * or — for one already active — the loss of turning it off, so the set never
+ * produces an empty analysis. Only the two combat-effective scrolls (wisdom,
+ * rare find) are offered; the rest do nothing in a fight.
+ *
+ * Like a community buff, a scroll is not priced as a purchase here: the ongoing
+ * seal cost is a per-run figure the advisor does not model, so it lands in the
+ * unpriced group where the measured value is visible without pretending to rank
+ * on gold. The value still answers the question the player asks — "which scroll
+ * is worth carrying" — at one sim per scroll.
+ * @param {Object} playerDTO - The player's DTO, carrying `scrollBuffs`
+ * @returns {Array<Object>} Candidates of type 'scroll', one per combat scroll
+ */
+export function generateScrollCandidates(playerDTO) {
+    const active = new Set(Array.isArray(playerDTO?.scrollBuffs) ? playerDTO.scrollBuffs : []);
+    const candidates = [];
+    for (const buffTypeHrid of COMBAT_SCROLL_BUFF_TYPES) {
+        const on = active.has(buffTypeHrid);
+        const label = SCROLL_BUFF_LABELS[buffTypeHrid] || buffTypeHrid;
+        candidates.push({
+            type: 'scroll',
+            slot: `scroll|${buffTypeHrid}`,
+            buffTypeHrid,
+            // An inactive scroll is measured by turning it on; an active one by
+            // turning it off, which reads as what the scroll is already worth.
+            enable: !on,
+            measuresLoss: on,
+            description: on ? `${label} → off (what the scroll is worth)` : `Add ${label}`,
+        });
+    }
+    return candidates;
+}
+
+/**
+ * Put a scroll candidate's on/off state onto a DTO, in place. The combat engine
+ * resolves `scrollBuffs` into buff objects, so writing the list is all it takes.
+ * @param {Object} dto - Player DTO (mutated)
+ * @param {Object} candidate - Candidate of type 'scroll'
+ */
+function applyScrollToDTO(dto, candidate) {
+    const set = new Set(Array.isArray(dto.scrollBuffs) ? dto.scrollBuffs : []);
+    if (candidate.enable) {
+        set.add(candidate.buffTypeHrid);
+    } else {
+        set.delete(candidate.buffTypeHrid);
+    }
+    dto.scrollBuffs = [...set];
+}
+
+/**
  * Put a shrine candidate's level onto a DTO, in place.
  *
  * Both the level map and the resolved combat buff array are written: the map is
@@ -2476,6 +2532,13 @@ export function calculateUpgradeCost(candidate, gameData) {
     // have running. Unknown rather than free, so it lands in the unpriced group
     // instead of topping a value ladder it does not belong on.
     if (candidate.type === 'community_buff') {
+        return null;
+    }
+
+    // A scroll is a per-run seal cost the advisor does not model, so like a
+    // community buff it is priced at unknown and shown for its measured value
+    // rather than ranked on gold.
+    if (candidate.type === 'scroll') {
         return null;
     }
 
@@ -3067,6 +3130,9 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             applyDrinkToDTO(modifiedDTOs[playerIndex], candidate);
         } else if (candidate.type === 'community_buff') {
             // Nothing on the DTO: community buffs are an argument to the sim
+        } else if (candidate.type === 'scroll') {
+            // Flip a scroll on or off; the engine resolves scrollBuffs to buffs
+            applyScrollToDTO(modifiedDTOs[playerIndex], candidate);
         } else if (candidate.type === 'cross_slot') {
             // Weapon-configuration swap (two_hand ↔ main_hand + off_hand):
             // clear the replaced slots and equip every added item
@@ -4334,6 +4400,9 @@ export function conflictKeys(candidate) {
     if (candidate.type === 'house') return [`house:${candidate.slot}`];
     if (candidate.type === 'guild_shrine') return [`guild:${candidate.buffHrid}`];
     if (candidate.type === 'community_buff') return [`community:${candidate.buffKey}`];
+    // A scroll's on and off rows are two answers about one buff; they can never
+    // both be taken
+    if (candidate.type === 'scroll') return [`scroll:${candidate.buffTypeHrid}`];
     // Two coffees of one buff family cannot both be up, whichever slots they
     // would sit in — the game's own conflict rule, keyed the same way
     if (candidate.type === 'drink') return [`drink:${candidate.buffFamily}`];
@@ -4387,6 +4456,7 @@ function isExclusive(candidate) {
         candidate.type === 'house' ||
         candidate.type === 'guild_shrine' ||
         candidate.type === 'community_buff' ||
+        candidate.type === 'scroll' ||
         candidate.type === 'drink' ||
         Boolean(candidate.slot?.startsWith('ability_'))
     );
@@ -5774,6 +5844,7 @@ export function candidateAppliesToDTO(candidate, dto, gameData = null) {
         candidate.type === 'house' ||
         candidate.type === 'guild_shrine' ||
         candidate.type === 'community_buff' ||
+        candidate.type === 'scroll' ||
         candidate.type === 'drink'
     ) {
         return true;
@@ -6003,6 +6074,11 @@ export function applyCandidateToDTO(playerDTO, candidate) {
     // A community buff is not on the character at all — it is an argument to
     // the simulation — so there is nothing here to change
     if (candidate.type === 'community_buff') {
+        return dto;
+    }
+
+    if (candidate.type === 'scroll') {
+        applyScrollToDTO(dto, candidate);
         return dto;
     }
 
