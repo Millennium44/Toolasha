@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/mcs-ingest`
 
+### Combat labyrinth clears fixed in the packaged (release) build
+
+- **Combat rooms no longer sim at 0% — and skip-level recommendations no longer go negative — in the multi-bundle build**: the sim bundle carried its own empty copy of the loadout store, so applying a loadout to the combat DTO found nothing, the fight was simmed on a naked character, every combat room read 0% clear, and the Recommend search drove the threshold negative. The adapter now reads the shared, websocket-fed loadout store through the bundle bridge (the pattern the other cross-bundle consumers already use), so the real gear is applied. Skilling rooms and the dev-standalone build were never affected.
+
 ### On-demand health report
 
 - **`Toolasha.debug.health()` and a Ctrl+K "Health report" command** now open (and copy/console-log) the diagnostic report anytime, instead of only when an error toast appears.
