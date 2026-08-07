@@ -13,6 +13,7 @@ import quickInputButtons from '../features/actions/quick-input-buttons.js';
 import outputTotals from '../features/actions/output-totals.js';
 import maxProduceable from '../features/actions/max-produceable.js';
 import gatheringStats from '../features/actions/gathering-stats.js';
+import actionPanelSort from '../features/actions/action-panel-sort.js';
 import requiredMaterials from '../features/actions/required-materials.js';
 import missingMaterialsButton from '../features/actions/missing-materials-button.js';
 import budgetCalculator from '../features/actions/budget-calculator.js';
@@ -81,6 +82,9 @@ toolashaRoot.Actions = {
     teaRecommendation,
     inventoryCountDisplay,
     pinnedActionsPage,
+    // Shared so cross-bundle readers (task profit in ui/market, alchemy pin
+    // protection in ui) see the live cachedStats/pinnedActions this bundle fills
+    actionPanelSort,
     drinkTimer,
     skillingOptimizer,
     goalPlanner,

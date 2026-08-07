@@ -8,7 +8,8 @@ import dataManager from '../../core/data-manager.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import { calculateProductionProfit } from '../actions/production-profit.js';
-import actionPanelSort from '../actions/action-panel-sort.js';
+import bundledActionPanelSort from '../actions/action-panel-sort.js';
+import { actionPanelSort } from '../../utils/bundle-bridge.js';
 import {
     calculateProductionActionTotalsFromBase,
     calculateGatheringActionTotalsFromBase,
@@ -221,7 +222,7 @@ export function getCowbellValue() {
  * @returns {number|null} Best alternative profit per hour, or null
  */
 export function getBestAlternativeProfitPerHour(excludeActionHrid) {
-    const cached = actionPanelSort?.cachedStats;
+    const cached = (actionPanelSort() || bundledActionPanelSort)?.cachedStats;
     if (!cached) {
         return null;
     }

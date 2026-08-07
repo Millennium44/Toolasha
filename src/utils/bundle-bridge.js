@@ -131,6 +131,16 @@ export function marketLiquidity() {
 }
 
 /**
+ * The action-panel sort/pin singleton — the one copy the actions bundle fills
+ * with per-action cachedStats and the persisted pinned-action set. Other
+ * bundles' copies stay empty, and writing to them can clobber the shared store.
+ * @returns {Object|null} The module, or null when the actions bundle is absent
+ */
+export function actionPanelSort() {
+    return toolashaRoot()?.Actions?.actionPanelSort || null;
+}
+
+/**
  * The buy-versus-craft planner (namespace with `computeBestCraftingPlan`).
  * @returns {Object|null} The module, or null when the actions bundle is absent
  */
