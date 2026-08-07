@@ -6,7 +6,8 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
-import expectedValueCalculator from '../market/expected-value-calculator.js';
+import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
+import { expectedValueCalculator } from '../../utils/bundle-bridge.js';
 import { watchTarget } from '../inventory/equipment-savings-row.js';
 import { watchItem } from '../inventory/watchlist.js';
 import { addAbilityGoal, addHouseGoal } from '../../utils/equipment-savings.js';
@@ -3877,9 +3878,8 @@ class CombatSimUI {
                     }
                     if (unitValue === 0) {
                         // Use cached EV or calculate directly (matches combat stats approach)
-                        const ev =
-                            expectedValueCalculator.getCachedValue(itemHrid) ||
-                            expectedValueCalculator.calculateSingleContainer(itemHrid);
+                        const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
+                        const ev = evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
                         if (ev !== null && ev > 0) unitValue = ev;
                     }
                     return { itemHrid, total, unitValue, totalGold: total * unitValue };
@@ -4708,7 +4708,9 @@ class CombatSimUI {
                 let unitValue = this._getSellPrice(price);
                 if (unitValue === 0 && itemHrid === '/items/coin') unitValue = 1;
                 if (unitValue === 0) {
-                    const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
+                    const evData = (expectedValueCalculator() || bundledExpectedValueCalculator).calculateExpectedValue(
+                        itemHrid
+                    );
                     if (evData?.expectedValue > 0) unitValue = evData.expectedValue;
                 }
                 revenuePerHr += (total / hours) * unitValue;
