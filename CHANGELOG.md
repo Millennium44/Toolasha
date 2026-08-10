@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Skilling trials: the flat projection is gone once slowing is known, and readings are timestamped
+
+- **The "On pace (flat)" tier projection is no longer shown beside the real one.** A skilling trial's success rate falls with every tier, so the flat projection — the current fill rate held for the whole hour — reads far too high (it was printing "21 tiers → T21 (Lv.300)" in green next to the honest "~T11"). Once a slowdown has been measured, only the **Expected** row is shown; the flat number survives in that row's tooltip, where it explains itself instead of competing with the estimate. With no slowdown measured yet, the single "On pace for" row is unchanged.
+- **Skilling readings are now kept as a timestamped series** (`trialSkilling.series` in the export), downsampled to the start, every tier boundary, and once per 15 s otherwise, capped so a long session cannot grow it without bound. This is what lets the tier forecast be replayed at points across a trial and checked against the tier actually banked — the recorder previously kept only the last reading, so there was nothing to test the estimate against.
+
 ### Trial scoreboard: damage-taken is labelled honestly, and a runaway split is flagged
 
 Two clarity fixes to the trial scoreboard, from comparing a real recording against the game's post-trial stats modal.
