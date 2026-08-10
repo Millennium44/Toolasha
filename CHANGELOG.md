@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### In Progress payout: leaner, plus a Roster button
+
+- **The token gold valuation is dropped on the In Progress tab.** "2,100 (≈23,672,727g via credit exchange)" is now just "2,100" there — the In Progress tab is a glance at a running trial, and the gold conversion belongs on the Trials tab, where it still shows in full.
+- **The "No Treasury level seen" nag is gone from the In Progress tab.** Treasury only prices tokens, which the In Progress tab no longer does, so the reminder is kept for the Trials tab. Builder's Hall (which moves the Guild Points themselves) is unaffected.
+- **A Roster button** in the payout controls opens Toolasha's guild roster panel — each member's share of the week's XP and who has gone quiet.
+
 ### Skilling In Progress panel no longer squashes the game's card off-screen
 
 The skilling In Progress panel nests the trial card two non-wrapping flex rows deep — a column holds a `battleArea` row (the roster beside a `challengeArea` row) which holds the card. Toolasha's payout and analysis blocks anchor to that card, so they were landing inside the narrow 722px `challengeArea` beside it, squashing the game's own skilling card to 44px and cutting it off. The block placer only escaped one row (into the still-non-wrapping `battleArea`), and the payout block did not escape at all.

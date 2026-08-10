@@ -139,6 +139,7 @@ import guildTrialStatsModal from './guild-trial-stats-modal.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildTrialRecorder, { buildTrialExport, downloadTrialExport } from './guild-trial-recorder.js';
 import guildTrialScoreboard from './guild-trial-scoreboard.js';
+import { guildRosterPanel } from './guild-roster-view.js';
 import guildMemberSkills from './guild-member-skills.js';
 import { forecastTrial } from './guild-trial-forecast.js';
 import guildTrialAlerts from '../notifications/guild-trial-alerts.js';
@@ -799,11 +800,11 @@ function line(label, value, color = '#e8ecf5', title = '') {
  * @param {string} baseTitle - The tooltip the row already had
  * @returns {{value: string, title: string}} Row value and tooltip
  */
-export function tokenPayoutLine(tokens, baseTitle) {
+export function tokenPayoutLine(tokens, baseTitle, { showGold = true } = {}) {
     // Exact, on both halves. This block's arithmetic reproduces the guild's own
     // announcement to the token — "1,320 tokens each" — and printing it as
     // "1.3K" throws away the only thing that makes it worth checking.
-    const gold = describeGuildTokenGold(tokens, 'ask', { exact: true });
+    const gold = showGold ? describeGuildTokenGold(tokens, 'ask', { exact: true }) : null;
     const count = exact(tokens);
     return {
         value: gold ? `${count} (${gold.text})` : count,
@@ -1594,12 +1595,26 @@ function trialBlockHeading(name) {
  * because the remounted card arrived *after* the block that was placed beside
  * its predecessor.
  *
+ * When the card is nested in a non-wrapping flex row, the placement escapes that
+ * row (see {@link escapeSquashingRows}), so the only correct position is right
+ * after the outermost such row — not beside the card, which would squash it. A
+ * block that lands beside the card on first paint, before the game's flex styles
+ * have computed, must therefore read as displaced so it is re-placed once they
+ * have; treating "beside the card" as anchored is what left the skilling card
+ * squashed to 44px even after the layout settled.
+ *
  * @param {Element} block - The injected block
  * @param {Element} anchor - The card it belongs beside
+ * @param {Element} [root] - The trials root, for the escape test; omitted keeps the plain adjacency check
  * @returns {boolean} True while the placement still holds
  */
-function blockNearAnchor(block, anchor) {
+function blockNearAnchor(block, anchor, root = null) {
     if (!anchor?.isConnected) return true; // nothing to re-anchor against
+    if (root) {
+        const escaped = escapeSquashingRows(root, anchor);
+        // Nested in a squashing row: the block belongs after that row, full width
+        if (escaped !== anchor) return escaped.nextElementSibling === block;
+    }
     return (
         anchor.nextElementSibling === block ||
         anchor.parentElement?.nextElementSibling === block ||
@@ -2198,7 +2213,7 @@ class GuildTrials {
                     // The card the block belongs beside, for the re-anchoring
                     // check below — the game tears cards down and remounts
                     // them at wave boundaries
-                    anchored: (block) => blockNearAnchor(block, tile.element),
+                    anchored: (block) => blockNearAnchor(block, tile.element, root),
                     // Scoped to this tile's encounter: one measurement must
                     // not dress every combat card
                     html: renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
@@ -2623,6 +2638,11 @@ class GuildTrials {
     _renderPayout(root, trials, firstTile = null, payoutBonuses = null) {
         if (!trials.length) return false;
 
+        // The In Progress tab is a glance at a running trial, so the token gold
+        // valuation and the missing-Treasury nag — both about pricing tokens, not
+        // about the run — are held back there and kept for the Trials tab.
+        const inProgress = /inProgress/i.test(root?.className || '');
+
         const bonuses = payoutBonuses || this._payoutBonuses();
         const buildersHallBonus = bonuses.buildersHall.bonus;
         const treasuryBonus = bonuses.treasury.bonus;
@@ -2688,11 +2708,13 @@ class GuildTrials {
 
         const eligible = tokenPayoutLine(
             projected.eligibleTokens,
-            'Half the total base points, paid to every member who joined before the week started.'
+            'Half the total base points, paid to every member who joined before the week started.',
+            { showGold: !inProgress }
         );
         const participant = tokenPayoutLine(
             projected.participantTokens,
-            'The eligible payout plus a further 50% of it for participating.'
+            'The eligible payout plus a further 50% of it for participating.',
+            { showGold: !inProgress }
         );
 
         const bankedRow = !anyTierKnown
@@ -2787,10 +2809,14 @@ class GuildTrials {
             );
         }
 
-        if (!Number.isFinite(buildersHallBonus) || !Number.isFinite(treasuryBonus)) {
+        // Treasury only prices tokens, and the In Progress tab does not price them,
+        // so its "no Treasury level seen" nag belongs on the Trials tab only.
+        // Builder's Hall moves the Guild Points themselves, so that one stays.
+        const treasuryMissing = !Number.isFinite(treasuryBonus) && !inProgress;
+        if (!Number.isFinite(buildersHallBonus) || treasuryMissing) {
             const missing = [];
             if (!Number.isFinite(buildersHallBonus)) missing.push('Builder’s Hall');
-            if (!Number.isFinite(treasuryBonus)) missing.push('Treasury');
+            if (treasuryMissing) missing.push('Treasury');
             rows.push(
                 `<div style="color:${WARN}; margin-top:4px;">` +
                     `No ${missing.join(' or ')} level seen, so the token figures leave ` +
@@ -2959,6 +2985,12 @@ class GuildTrials {
             ) +
             button('export', '⤓ Export', ACCENT, 'Download everything captured this week as one JSON file.') +
             button('scoreboard', 'Per-player', ACCENT, 'Damage and healing per player, ranked.') +
+            button(
+                'roster',
+                'Roster',
+                ACCENT,
+                'Open the guild roster — each member’s share of the week’s XP and who has gone quiet.'
+            ) +
             '</div>'
         );
     }
@@ -2991,6 +3023,7 @@ class GuildTrials {
             downloadTrialExport(bundle);
         });
         on('scoreboard', () => guildTrialScoreboard.toggle());
+        on('roster', () => guildRosterPanel.toggle());
     }
 
     /**

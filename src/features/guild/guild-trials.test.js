@@ -497,6 +497,28 @@ describe('tokenPayoutLine', () => {
         expect(row.value).toContain('via credit exchange');
         expect(row.title).toContain('Half the base points.');
     });
+
+    test('showGold:false keeps the count and drops the gold, even when priceable', () => {
+        game.clientData = {
+            itemDetailMap: {
+                '/items/guild_token': {
+                    guildCreditConversions: [{ creditItemHrid: '/items/guild_credit_1', itemCount: 1, creditCount: 2 }],
+                },
+                '/items/bronze_bar': {
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/guild_credit_1', itemCount: 10, creditCount: 1 },
+                    ],
+                },
+            },
+        };
+        game.prices = { '/items/bronze_bar': { ask: 100 } };
+
+        const row = tokenPayoutLine(500, 'Half the base points.', { showGold: false });
+
+        expect(row.value).toBe('500');
+        expect(row.value).not.toContain('via credit exchange');
+        expect(row.title).toBe('Half the base points.');
+    });
 });
 
 describe('ownParticipation', () => {
@@ -963,6 +985,33 @@ describe('the panel, end to end', () => {
 
         expect(text()).toContain('Tokens, every eligible member600 (≈1,200,000g');
         expect(text()).toContain('via credit exchange');
+    });
+
+    test('the In Progress tab drops the token gold value and the Treasury nag, keeps the count', () => {
+        game.clientData = {
+            itemDetailMap: {
+                '/items/guild_token': {
+                    guildCreditConversions: [{ creditItemHrid: '/items/guild_credit_1', itemCount: 1, creditCount: 2 }],
+                },
+                '/items/bronze_bar': {
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/guild_credit_1', itemCount: 10, creditCount: 1 },
+                    ],
+                },
+            },
+        };
+        game.prices = { '/items/bronze_bar': { ask: 100 } };
+
+        const root = buildTab([{ name: 'Trial Chameleon', level: 140, points: 1200, bar: '618,000 / 618,000' }]);
+        root.className = 'GuildPanel_inProgressTab__a';
+        fire();
+
+        // The token count still shows; its gold valuation and the Treasury nag do not
+        expect(text()).toContain('Tokens, every eligible member600');
+        expect(text()).not.toContain('via credit exchange');
+        expect(text()).not.toContain('Treasury');
+        // And the roster button is offered
+        expect([...document.querySelectorAll('button')].some((b) => b.textContent.includes('Roster'))).toBe(true);
     });
 
     test('with nothing to price the token payout against, the bare count is all that shows', () => {
