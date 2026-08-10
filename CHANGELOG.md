@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Trial scoreboard: damage-taken is labelled honestly, and a runaway split is flagged
+
+Two clarity fixes to the trial scoreboard, from comparing a real recording against the game's post-trial stats modal.
+
+- **Damage taken is two different quantities, and the panel now says which.** The game's modal reports **pre-mitigation** gross incoming; the live stream can only read **post-mitigation** health actually lost and healed back (and even that is a floor — damage healed on the same tick is invisible). A recording confirmed the stream's damage-taken equals healing-received almost exactly per player, i.e. it measures HP oscillation, not incoming damage. The Taken tab now carries a note spelling out pre- vs post-mitigation on both sources, and the export's `supportCoverage.damageTaken` says the same, so the two are never compared as if they should match.
+- **A measured damage split that exceeds the bosses' health is flagged.** The summed health of every boss seen is a hard ceiling on total party damage (`bossHpCeiling`, exposed as `damageCeiling` on the breakdown). When the live damage tab's per-player total runs past that ceiling, a note warns the split is over-attributing — the usual cause being a fast damage-over-time build collecting shared ticks — and points at the game's post-trial stats as the tiebreak. One-sided: a total under the ceiling is not thereby confirmed.
+
 ### Dev builds install over a same-numbered release
 
 The dev userscript and the published one share a `@name` and a `@version`, so once a release shipped a number (2.93.0), a dev build of that number read as "already installed" — Tampermonkey would not replace 2.93.0 with 2.93.0, and a fresh dev file silently kept the old code (a new feature simply never appeared). The standalone dev build now appends the build stamp as a fourth version segment (e.g. `2.93.0.20260810213045`), so every dev build sorts newer than the release and newer than the last dev build and a reinstall always takes. A later real release still supersedes it (higher minor), and the published header is untouched.
