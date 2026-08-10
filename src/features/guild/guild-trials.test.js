@@ -664,6 +664,35 @@ describe('placeTrialBlock', () => {
         expect(container.contains(block)).toBe(false);
     });
 
+    test('a card two non-wrapping rows deep escapes both, not just one', () => {
+        // The skilling In Progress panel: a column holds a battleArea row, which
+        // holds the roster and a challengeArea row, which holds the card. Escaping
+        // one row leaves the block in the battleArea, still squashing the roster and
+        // card to 44px — it has to climb out of both to the column.
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__r">' +
+            '<div id="col" style="display:flex; flex-direction:column">' +
+            '<div id="battle" style="display:flex; flex-direction:row">' +
+            '<div id="roster">roster</div>' +
+            '<div id="challenge" style="display:flex; flex-direction:row">' +
+            '<div id="card" class="GuildPanel_tile__a">Cheesesmithing</div>' +
+            '</div></div>' +
+            '<div id="info">info</div>' +
+            '</div></div>';
+        const root = document.querySelector('[class*="GuildPanel_guildPanel"]');
+        const card = document.getElementById('card');
+        const block = newBlock();
+
+        expect(placeTrialBlock(root, card, block, 'Cheesesmithing')).toBe('after-container');
+        // Out of both rows
+        expect(document.getElementById('challenge').contains(block)).toBe(false);
+        expect(document.getElementById('battle').contains(block)).toBe(false);
+        // Landed in the column, right after the battle row, on its own full line
+        expect(block.parentElement).toBe(document.getElementById('col'));
+        expect(block.previousElementSibling).toBe(document.getElementById('battle'));
+        expect(block.style.flexBasis).toBe('100%');
+    });
+
     test('ordinary flow needs nothing but being a block', () => {
         const { root, card } = layout('');
         const block = newBlock();
