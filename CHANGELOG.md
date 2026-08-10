@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Skilling In Progress panel no longer squashes the game's card off-screen
+
+The skilling In Progress panel nests the trial card two non-wrapping flex rows deep — a column holds a `battleArea` row (the roster beside a `challengeArea` row) which holds the card. Toolasha's payout and analysis blocks anchor to that card, so they were landing inside the narrow 722px `challengeArea` beside it, squashing the game's own skilling card to 44px and cutting it off. The block placer only escaped one row (into the still-non-wrapping `battleArea`), and the payout block did not escape at all.
+
+- **Injected blocks now climb out of every nested non-wrapping flex row** to the first column/grid/block ancestor, so they take a full-width line above and below the roster+card row instead of stealing its width. The payout block uses the same escape. Grids, wrapping rows and ordinary flow are unchanged, so the Trials tab and combat In Progress placement are untouched.
+
 ### Skilling trials: the flat projection is gone once slowing is known, and readings are timestamped
 
 - **The "On pace (flat)" tier projection is no longer shown beside the real one.** A skilling trial's success rate falls with every tier, so the flat projection — the current fill rate held for the whole hour — reads far too high (it was printing "21 tiers → T21 (Lv.300)" in green next to the honest "~T11"). Once a slowdown has been measured, only the **Expected** row is shown; the flat number survives in that row's tooltip, where it explains itself instead of competing with the estimate. With no slowdown measured yet, the single "On pace for" row is unchanged.

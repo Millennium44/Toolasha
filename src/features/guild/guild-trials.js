@@ -1466,6 +1466,43 @@ export function withScrollKept(node, change) {
  * @param {string} [name] - The trial's name, for when the block lands away from its card
  * @returns {string} How it was placed: `spanned`, `after-card`, `after-container`, or `refused`
  */
+/**
+ * Whether a container is a non-wrapping flex row — one that squashes a block
+ * added to it rather than letting it fall to its own line.
+ * @param {Element} el - The container
+ * @returns {boolean}
+ */
+function isSquashingRow(el) {
+    if (!el || typeof getComputedStyle !== 'function') return false;
+    const style = getComputedStyle(el);
+    if (!(style?.display || '').includes('flex')) return false;
+    if ((style?.flexWrap || '').includes('wrap')) return false;
+    const direction = style?.flexDirection || 'row';
+    return direction === 'row' || direction === 'row-reverse';
+}
+
+/**
+ * Climb out of every nested non-wrapping flex row above an element.
+ *
+ * A block placed as a sibling of a card inside such a row steals the row's width
+ * and squashes the card — the skilling In Progress panel nests two (`battleArea`
+ * holds the roster and a `challengeArea`, both non-wrapping rows), so escaping one
+ * level still lands the block in a row. This returns the highest element whose
+ * parent is still a squashing row, so a block placed against it sits on its own
+ * line in the first column, grid, or block ancestor. The element itself when it is
+ * already in ordinary flow.
+ * @param {Element} root - Nothing is escaped past this
+ * @param {Element} start - Where to climb from
+ * @returns {Element} The element to place a block against
+ */
+function escapeSquashingRows(root, start) {
+    let anchor = start;
+    while (anchor?.parentElement && anchor.parentElement !== root && isSquashingRow(anchor.parentElement)) {
+        anchor = anchor.parentElement;
+    }
+    return anchor;
+}
+
 export function placeTrialBlock(root, card, block, name = '') {
     // Belt and braces over the anchor filter in `readTrialTiles`. The reported
     // failure drew this whole block inside the boss's stat popup, which is
@@ -1484,7 +1521,11 @@ export function placeTrialBlock(root, card, block, name = '') {
     const display = style?.display || '';
 
     const afterContainer = () => {
-        const outer = container.parentElement;
+        // Escape every nested non-wrapping row, not just this one: the skilling
+        // panel puts the card two rows deep, so landing after the immediate
+        // container still leaves the block in a row squashing the roster and card.
+        const anchor = escapeSquashingRows(root, container);
+        const outer = anchor.parentElement;
         if (!outer || !root.contains(outer)) {
             card.insertAdjacentElement('afterend', block);
             return 'after-card';
@@ -1496,7 +1537,7 @@ export function placeTrialBlock(root, card, block, name = '') {
         if (name && !block.querySelector('.mwi-trial-block-heading')) {
             block.insertAdjacentHTML('afterbegin', trialBlockHeading(name));
         }
-        container.insertAdjacentElement('afterend', block);
+        anchor.insertAdjacentElement('afterend', block);
         return 'after-container';
     };
 
@@ -2785,7 +2826,7 @@ class GuildTrials {
             anchored: (block) => {
                 const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
                 if (statusRow) return statusRow.nextElementSibling === block;
-                if (firstTile?.isConnected) return block.nextElementSibling === firstTile;
+                if (firstTile?.isConnected) return block.nextElementSibling === escapeSquashingRows(root, firstTile);
                 return root.firstElementChild === block;
             },
             html: rows.join('') + this._controlsHTML(),
@@ -2794,13 +2835,19 @@ class GuildTrials {
                 'border-radius:6px; font-size:12px; line-height:1.7;',
             place: (block) => {
                 // Under the game's own status row when there is one. Otherwise
-                // directly above the first card, which is where it belongs and —
-                // unlike the panel's own top edge — is somewhere the reader is
-                // already looking when the root is a whole guild panel.
+                // above the first card — but escaping any non-wrapping row it sits
+                // in first, so the block takes its own full-width line above the
+                // roster instead of squeezing in beside the card (the skilling
+                // panel nests the card two rows deep).
                 const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
-                if (statusRow) statusRow.insertAdjacentElement('afterend', block);
-                else if (firstTile?.isConnected) firstTile.insertAdjacentElement('beforebegin', block);
-                else root.insertAdjacentElement('afterbegin', block);
+                if (statusRow) {
+                    statusRow.insertAdjacentElement('afterend', block);
+                } else if (firstTile?.isConnected) {
+                    block.style.width = '100%';
+                    escapeSquashingRows(root, firstTile).insertAdjacentElement('beforebegin', block);
+                } else {
+                    root.insertAdjacentElement('afterbegin', block);
+                }
             },
             onBuild: (block) => this._bindControls(block),
         });
