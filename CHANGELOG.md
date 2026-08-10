@@ -2792,24 +2792,21 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## [2.94.0](https://github.com/Millennium44/Toolasha/compare/v2.93.0...v2.94.0) (2026-08-10)
 
-
 ### Features
 
-* **combat-sim:** carry Labyrinth scrolls in the sim and upgrade advisor ([ae12aba](https://github.com/Millennium44/Toolasha/commit/ae12aba7d92a5fd69d80675757a886845c29bf98))
-* **trials:** drop the flat tier projection once slowing is known; timestamp skilling readings ([1e005a3](https://github.com/Millennium44/Toolasha/commit/1e005a34a7b95b5a12507e1d8bb964b6405bc9ed))
-* **trials:** trim the In Progress payout, add a Roster button, and finish the layout escape ([0b761e8](https://github.com/Millennium44/Toolasha/commit/0b761e83cd8a168fcbae26132ef5cf36b9806d75))
-
+- **combat-sim:** carry Labyrinth scrolls in the sim and upgrade advisor ([ae12aba](https://github.com/Millennium44/Toolasha/commit/ae12aba7d92a5fd69d80675757a886845c29bf98))
+- **trials:** drop the flat tier projection once slowing is known; timestamp skilling readings ([1e005a3](https://github.com/Millennium44/Toolasha/commit/1e005a34a7b95b5a12507e1d8bb964b6405bc9ed))
+- **trials:** trim the In Progress payout, add a Roster button, and finish the layout escape ([0b761e8](https://github.com/Millennium44/Toolasha/commit/0b761e83cd8a168fcbae26132ef5cf36b9806d75))
 
 ### Bug Fixes
 
-* **combat-sim:** use the real combat scroll set, read from tooltips not the seal table ([e94f1bc](https://github.com/Millennium44/Toolasha/commit/e94f1bcfb775577e7de9d38c54ae6bedc67c19c9))
-* **trials:** label damage-taken pre/post-mitigation and flag over-attributed splits ([c080a62](https://github.com/Millennium44/Toolasha/commit/c080a622b698fcd26edca59af3fc0d155e77f0b6))
-* **trials:** stop injected blocks squashing the skilling In Progress card ([ee2bf2d](https://github.com/Millennium44/Toolasha/commit/ee2bf2d3ab939bc81472bbece5644b3495b89ec4))
-
+- **combat-sim:** use the real combat scroll set, read from tooltips not the seal table ([e94f1bc](https://github.com/Millennium44/Toolasha/commit/e94f1bcfb775577e7de9d38c54ae6bedc67c19c9))
+- **trials:** label damage-taken pre/post-mitigation and flag over-attributed splits ([c080a62](https://github.com/Millennium44/Toolasha/commit/c080a622b698fcd26edca59af3fc0d155e77f0b6))
+- **trials:** stop injected blocks squashing the skilling In Progress card ([ee2bf2d](https://github.com/Millennium44/Toolasha/commit/ee2bf2d3ab939bc81472bbece5644b3495b89ec4))
 
 ### Build System
 
-* **dev:** stamp the dev userscript version so a reinstall always takes ([eadad1a](https://github.com/Millennium44/Toolasha/commit/eadad1abf4fb09bca97bf93496e898c776ee23f4))
+- **dev:** stamp the dev userscript version so a reinstall always takes ([eadad1a](https://github.com/Millennium44/Toolasha/commit/eadad1abf4fb09bca97bf93496e898c776ee23f4))
 
 ## [2.93.0](https://github.com/Millennium44/Toolasha/compare/v2.92.1...v2.93.0) (2026-08-07)
 
