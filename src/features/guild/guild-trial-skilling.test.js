@@ -30,6 +30,7 @@ const {
     readSkillingUpdate,
     SKILLING_FRESH_MS,
     SKILLING_MESSAGE,
+    SKILLING_SAMPLE_MS,
 } = await import('./guild-trial-skilling.js');
 
 const { END_GUILD_SKILLING, GUILD_SKILLING_TICKS } = await import('./guild-trial-messages.fixture.js');
@@ -128,6 +129,33 @@ describe('the live skilling tracker', () => {
         expect(guildTrialSkilling.participating('Crafting', 999999)).toBe(false);
         // Not knowable is not "not in it": no update, no answer
         expect(guildTrialSkilling.participating('Milking', 609787)).toBeNull();
+    });
+
+    test('a downsampled, timestamped series is kept for the export', () => {
+        const tick = GUILD_SKILLING_TICKS[0]; // Crafting, tier 10
+        // Three ticks inside one sample window keep only the first
+        game.wsHandlers[SKILLING_MESSAGE](tick);
+        vi.setSystemTime(now + 2000);
+        game.wsHandlers[SKILLING_MESSAGE](tick);
+        vi.setSystemTime(now + 5000);
+        game.wsHandlers[SKILLING_MESSAGE](tick);
+        // One past the window earns a second point
+        vi.setSystemTime(now + SKILLING_SAMPLE_MS + 1);
+        game.wsHandlers[SKILLING_MESSAGE](tick);
+
+        const series = guildTrialSkilling.snapshot().series.crafting;
+        expect(series).toHaveLength(2);
+        expect(series[0]).toMatchObject({ at: now, tier: 10 });
+        expect(series[0].max).toBeGreaterThan(0);
+        expect(series[1].at).toBe(now + SKILLING_SAMPLE_MS + 1);
+    });
+
+    test('a tier change is kept even inside the sample window', () => {
+        game.wsHandlers[SKILLING_MESSAGE](GUILD_SKILLING_TICKS[0]); // tier 10
+        vi.setSystemTime(now + 1000);
+        game.wsHandlers[SKILLING_MESSAGE]({ ...GUILD_SKILLING_TICKS[0], tier: 11 });
+
+        expect(guildTrialSkilling.snapshot().series.crafting.map((p) => p.tier)).toEqual([10, 11]);
     });
 
     test('the end message states the tier banked, not the tier running', () => {

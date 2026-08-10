@@ -3539,7 +3539,7 @@ describe('the expected-tier row', () => {
         expect(html).toContain('derived from the game');
     });
 
-    test('a measured slowdown is what makes two rows worth having', () => {
+    test('a measured slowdown shows only the Expected row, flat number in its tooltip', () => {
         const html = renderTrialBlock(
             analyseTrial(
                 record({
@@ -3570,10 +3570,13 @@ describe('the expected-tier row', () => {
             }
         );
 
-        // Both, and each says what it assumes
-        expect(html).toContain('On pace (flat)');
-        expect(html).toContain('Expected (slowing)');
+        // Only the realistic row is shown; the flat projection is not printed as a
+        // second figure, but its number survives in the Expected row's tooltip
+        expect(html).not.toContain('On pace (flat)');
+        expect(html).not.toContain('Expected (slowing)');
+        expect(html).toContain('Expected');
         expect(html).toContain('8.0 points a tier');
+        expect(html).toContain('held flat, ignoring the slowdown');
     });
 
     test('an estimated one says how many loadouts it rests on', () => {

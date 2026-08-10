@@ -1110,10 +1110,16 @@ export function renderTrialBlock(
         return `${tiers}${target}`;
     };
 
-    if (analysis.pace && (!forecast || forecast.tier === null || slowdown)) {
+    // The flat projection is the current rate held for the whole hour. Once a
+    // slowdown has been measured, that flat number is a fiction the panel used to
+    // print in green beside the real one — "21 tiers → T21" next to "~T11" — and a
+    // reader cannot tell it is the one to ignore. So it is shown only when there is
+    // no measured slowdown to replace it; when there is, the Expected row stands
+    // alone and the flat walk lives on in its tooltip.
+    if (analysis.pace && !slowdown && (!forecast || forecast.tier === null)) {
         rows.push(
             line(
-                slowdown ? 'On pace (flat)' : 'On pace for',
+                'On pace for',
                 paceCaption(),
                 analysis.pace.limitedBy === 'ladder' ? GOOD : WARN,
                 'The rate measured now, held flat for the rest of the hour. A tier only counts when it fits ' +
@@ -1121,8 +1127,7 @@ export function renderTrialBlock(
                     (analysis.pace.limitedBy === 'unknown-next-tier'
                         ? '\nThe ladder past that tier is not known yet, so the walk stopped there — “at ' +
                           'least”, because the real pace may be higher.'
-                        : '') +
-                    (slowdown ? '\nThis one ignores the slowdown below, which is why it is the higher of the two.' : '')
+                        : '')
             )
         );
     }
@@ -1136,7 +1141,7 @@ export function renderTrialBlock(
         const cleared = forecast.tiersCleared;
         rows.push(
             line(
-                slowdown ? 'Expected (slowing)' : 'On pace for',
+                slowdown ? 'Expected' : 'On pace for',
                 slowdown
                     ? `~T${cleared}${margin}`
                     : `${cleared} tier${cleared === 1 ? '' : 's'}${cleared ? ` → T${cleared}` : ''}${margin}`,
@@ -1149,7 +1154,8 @@ export function renderTrialBlock(
                                     slowdown.perTier * 100
                                 ).toFixed(1)} points a tier to its 5% floor, as measured across ` +
                                 `${slowdown.observations} tiers. Past that point a tier is slow rather than ` +
-                                'impossible.'
+                                `impossible.\nThe same rate held flat, ignoring the slowdown, would reach ` +
+                                `T${analysis.pace.tiersCleared} — which is why that flatter number is not shown as the estimate.`
                               : '') +
                           (Number.isFinite(forecast.enragedFrom)
                               ? `\nA fight this long reaches full enrage from T${forecast.enragedFrom}: the boss ` +

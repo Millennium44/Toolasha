@@ -72,6 +72,20 @@ export const END_SKILLING_MESSAGE = 'end_guild_skilling';
 export const SKILLING_FRESH_MS = 15_000;
 
 /**
+ * How often a reading is kept for the time-series the export carries.
+ *
+ * The stream ticks every second or two, which over an hour is thousands of
+ * near-identical rows — too many to keep and more than a tier forecast needs. A
+ * point is kept at the start, at every tier boundary, and otherwise no more than
+ * once per this interval, which is enough to replay the forecast at points across
+ * the trial and check where it lands against the tier actually banked.
+ */
+export const SKILLING_SAMPLE_MS = 15_000;
+
+/** A backstop on the series length, so a long session cannot grow it without bound */
+export const SKILLING_SERIES_CAP = 500;
+
+/**
  * The per-tier personal figures a payload carries, and nothing else.
  *
  * Pure, and the list is explicit rather than "everything numeric": these four
@@ -150,6 +164,8 @@ class GuildTrialSkilling {
         this.updates = {};
         /** Trial key → `{tier, at}` from `end_guild_skilling` */
         this.ended = {};
+        /** Trial key → a sampled `[{at, tier, current, max, actionCounter, successRate}]` series */
+        this.series = {};
     }
 
     initialize() {
@@ -191,9 +207,39 @@ class GuildTrialSkilling {
             // A trial that reports again has not ended, whatever was said before
             delete this.ended[update.trial.key];
             this.updates[update.trial.key] = update;
+            this._pushSeries(update);
         } catch (error) {
             console.error('[GuildTrialSkilling] Reading a skilling trial update failed:', error);
         }
+    }
+
+    /**
+     * Keep a downsampled reading in the trial's time-series.
+     *
+     * A point is kept when it is the first, when the tier changed, or when a
+     * sample interval has passed since the last kept point — the rest are the same
+     * bar a second later and not worth the room. Capped, oldest dropped first, so
+     * a long session cannot grow it without bound.
+     * @param {Object} update - From {@link readSkillingUpdate}
+     * @private
+     */
+    _pushSeries(update) {
+        const key = update.trial.key;
+        const series = (this.series[key] = this.series[key] || []);
+        const last = series[series.length - 1];
+        const tierChanged = last && last.tier !== update.tier;
+        const elapsed = !last || update.at - last.at >= SKILLING_SAMPLE_MS;
+        if (last && !tierChanged && !elapsed) return;
+
+        series.push({
+            at: update.at,
+            tier: update.tier,
+            current: update.reading?.current ?? null,
+            max: update.reading?.max ?? null,
+            actionCounter: update.actionCounter,
+            successRate: update.personal?.['Success Rate'] ?? null,
+        });
+        if (series.length > SKILLING_SERIES_CAP) series.shift();
     }
 
     /**
@@ -269,6 +315,11 @@ class GuildTrialSkilling {
         return {
             updates: { ...this.updates },
             ended: { ...this.ended },
+            // A per-trial timestamped reading series, so the tier forecast can be
+            // replayed at points across the trial and checked against the banked tier
+            series: Object.fromEntries(
+                Object.entries(this.series).map(([key, points]) => [key, points.map((p) => ({ ...p }))])
+            ),
         };
     }
 }
