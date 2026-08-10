@@ -39,6 +39,7 @@ vi.mock('../../utils/panel-z-index.js', () => ({
 }));
 
 const {
+    damageOverCeiling,
     damageTypeOf,
     guildTrialScoreboard,
     modalStatsForBreakdown,
@@ -97,6 +98,28 @@ afterEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
     document.body.innerHTML = '';
+});
+
+describe('damageOverCeiling', () => {
+    const withCeiling = (hp, fights = 5) => ({ damageCeiling: { hp, fights } });
+
+    test('flags a total that runs past the bosses’ combined health', () => {
+        const over = damageOverCeiling(withCeiling(3_000_000), 3_600_000);
+        expect(over).toMatchObject({ ceiling: 3_000_000, fights: 5 });
+        expect(over.overBy).toBeCloseTo(0.2, 5);
+    });
+
+    test('a total within the ceiling (and its margin) is not flagged', () => {
+        expect(damageOverCeiling(withCeiling(3_924_375), 3_691_499)).toBeNull();
+        // just over the raw ceiling but inside the 2% rounding margin
+        expect(damageOverCeiling(withCeiling(1_000_000), 1_010_000)).toBeNull();
+    });
+
+    test('no ceiling to check means no verdict', () => {
+        expect(damageOverCeiling({ damageCeiling: { hp: 0 } }, 5_000_000)).toBeNull();
+        expect(damageOverCeiling({}, 5_000_000)).toBeNull();
+        expect(damageOverCeiling(null, 5_000_000)).toBeNull();
+    });
 });
 
 describe('scoreboardRows', () => {

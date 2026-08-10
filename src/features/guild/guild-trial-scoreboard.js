@@ -173,6 +173,28 @@ export function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
     };
 }
 
+/** How far a measured total may sit over the boss-HP ceiling before it is flagged. */
+const CEILING_MARGIN = 0.02;
+
+/**
+ * Whether a measured damage total has run past what the bosses could have lost.
+ *
+ * The summed health of every boss seen is a hard ceiling on the party's damage
+ * (see `bossHpCeiling`): a split above it is over-attributing, or — less often —
+ * the boss healed itself. One-sided, so a total below the ceiling is not thereby
+ * confirmed; an unkilled last boss always leaves real headroom. Returns null when
+ * there is no ceiling to check or the total sits within it.
+ * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+ * @param {number} total - The measured per-player damage total
+ * @returns {{overBy: number, ceiling: number, fights: number}|null}
+ */
+export function damageOverCeiling(breakdown, total) {
+    const ceiling = breakdown?.damageCeiling?.hp;
+    if (!Number.isFinite(ceiling) || ceiling <= 0) return null;
+    if (!Number.isFinite(total) || total <= ceiling * (1 + CEILING_MARGIN)) return null;
+    return { overBy: total / ceiling - 1, ceiling, fights: breakdown?.damageCeiling?.fights || 0 };
+}
+
 /**
  * The game's post-trial Stats modal for the trial a breakdown is watching.
  *
@@ -634,6 +656,33 @@ class GuildTrialScoreboard {
                 : `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
                   'Attributed off this client’s own battle feed.</div>';
 
+        // The two "damage taken" figures are different quantities and must not be
+        // read as one: the game modal reports gross incoming *before* mitigation,
+        // while the stream only ever sees the health actually lost then restored —
+        // post-mitigation, and a floor at that. Say which is which so nobody
+        // compares them.
+        const takenNote = !taken
+            ? ''
+            : fromGame
+              ? `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin:-2px 0 6px;">` +
+                'The game counts damage taken <b>before</b> your mitigation — gross incoming — so it reads higher ' +
+                'than the health you actually lost.</div>'
+              : `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin:-2px 0 6px;">` +
+                'This is health actually lost and then healed back — <b>after</b> mitigation, and a floor at that ' +
+                '(damage healed on the same tick is invisible). Not the game’s pre-mitigation figure; the two do ' +
+                'not match by design.</div>';
+
+        // A measured split that exceeds every boss's health bar is over-attributing
+        // — the guardrail is one-sided and only fires on the live damage tab, where
+        // the number is ours to trust or not (the game modal is authoritative).
+        const over = !fromGame && !healing && !taken && !estimated ? damageOverCeiling(breakdown, total) : null;
+        const ceilingNote = over
+            ? `<div style="color:${WARN}; font-size:10px; line-height:1.5; margin:-2px 0 6px;">` +
+              `Measured damage runs ${Math.round(over.overBy * 100)}% over the bosses’ combined health, so the ` +
+              'per-player split is over-attributing (a fast damage-over-time build collecting shared ticks is the ' +
+              'usual cause). Trust the shares less than the total, and the game’s post-trial stats over both.</div>'
+            : '';
+
         const unestimated =
             estimated && estimate.unestimated.length
                 ? `<div style="color:${DIM}; font-size:10px; margin-top:4px;">No build captured, so not ` +
@@ -736,7 +785,7 @@ class GuildTrialScoreboard {
             `border:1px solid rgba(240,168,48,0.5); background:transparent; color:${WARN}; font-size:11px;">` +
             'End &amp; start new</button></div>';
 
-        return head + tabs + disclaimer + list + footnote + manaLine + expected + buttons;
+        return head + tabs + disclaimer + takenNote + ceilingNote + list + footnote + manaLine + expected + buttons;
     }
 
     /**

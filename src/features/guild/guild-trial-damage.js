@@ -1431,6 +1431,9 @@ class GuildTrialDamage {
             // The boss's tier-scaled sheet, per tier, for the export. Not a
             // loadout and never stored as one — see `isMonsterUnit`
             bossSheets: { ...this.bossSheets },
+            // A sanity ceiling on the whole party's damage: the summed health of
+            // every boss seen. A measured total above it is over-attributing.
+            damageCeiling: bossHpCeiling(this.bossSheets),
             // Whether any player's own attack counters have been seen. The
             // split no longer depends on them — the presence rung measures
             // every actor — but a row they confirm directly is worth naming,
@@ -1461,6 +1464,31 @@ class GuildTrialDamage {
             ...summary,
         };
     }
+}
+
+/**
+ * The most damage the party can have dealt across the fights this client saw:
+ * every boss's full health bar, summed.
+ *
+ * A killed boss took exactly its bar; one still standing took less — so the sum
+ * is a ceiling, not a total. A measured split that runs past it is over-attributing
+ * or the boss healed itself, and either way the number is worth distrusting. It is
+ * a one-sided check: a split *below* the ceiling is not thereby confirmed, since an
+ * unkilled last boss leaves real headroom.
+ * @param {Object} bossSheets - tier → sheet, from a breakdown
+ * @returns {{hp: number, fights: number}} The summed bar and how many bosses it covers
+ */
+export function bossHpCeiling(bossSheets) {
+    let hp = 0;
+    let fights = 0;
+    for (const sheet of Object.values(bossSheets || {})) {
+        const max = Number(sheet?.maxHitpoints);
+        if (Number.isFinite(max) && max > 0) {
+            hp += max;
+            fights += 1;
+        }
+    }
+    return { hp, fights };
 }
 
 const guildTrialDamage = new GuildTrialDamage();

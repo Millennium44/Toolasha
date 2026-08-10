@@ -57,6 +57,7 @@ vi.mock('./guild-loadout-capture.js', () => ({
 const {
     attributionCoverage,
     battleMonsterNames,
+    bossHpCeiling,
     encounterOf,
     encounterOfMonster,
     encounterComponentMap,
@@ -238,6 +239,27 @@ describe('battleMonsterNames', () => {
             isTrial: true,
             encounter: 'chameleon',
         });
+    });
+});
+
+describe('bossHpCeiling', () => {
+    test('sums every boss’s health bar and counts them', () => {
+        const sheets = {
+            1: { maxHitpoints: 664125 },
+            2: { maxHitpoints: 724500 },
+            3: { maxHitpoints: 784875 },
+        };
+        expect(bossHpCeiling(sheets)).toEqual({ hp: 2173500, fights: 3 });
+    });
+
+    test('skips sheets with no usable health', () => {
+        const sheets = { 1: { maxHitpoints: 664125 }, 2: { maxHitpoints: null }, 3: {} };
+        expect(bossHpCeiling(sheets)).toEqual({ hp: 664125, fights: 1 });
+    });
+
+    test('an empty or missing map is a zero ceiling, not a throw', () => {
+        expect(bossHpCeiling({})).toEqual({ hp: 0, fights: 0 });
+        expect(bossHpCeiling(null)).toEqual({ hp: 0, fights: 0 });
     });
 });
 

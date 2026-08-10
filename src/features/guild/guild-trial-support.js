@@ -479,7 +479,10 @@ export function summariseSupport(state, names = {}, deaths = {}) {
  */
 export function supportCoverage() {
     return {
-        damageTaken: 'measured — health falling, per player, per tick',
+        damageTaken:
+            'measured — health falling, per player, per tick. Post-mitigation and a floor: it is the health ' +
+            'actually lost then healed back, not the game’s pre-mitigation Damage Taken, and damage healed on ' +
+            'the same tick is invisible',
         healingReceived: 'measured — health rising, per player, per tick',
         healingDone:
             'attributed when exactly one player cast a heal on the tick, or when a lone ability cast ' +
