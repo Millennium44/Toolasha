@@ -1,7 +1,7 @@
 /**
  * Toolasha Combat Library
  * Combat, abilities, and combat stats features
- * Version: 2.93.0
+ * Version: 2.94.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -48759,7 +48759,10 @@
      */
     function supportCoverage() {
         return {
-            damageTaken: 'measured — health falling, per player, per tick',
+            damageTaken:
+                'measured — health falling, per player, per tick. Post-mitigation and a floor: it is the health ' +
+                'actually lost then healed back, not the game’s pre-mitigation Damage Taken, and damage healed on ' +
+                'the same tick is invisible',
             healingReceived: 'measured — health rising, per player, per tick',
             healingDone:
                 'attributed when exactly one player cast a heal on the tick, or when a lone ability cast ' +
@@ -50638,6 +50641,9 @@
                 // The boss's tier-scaled sheet, per tier, for the export. Not a
                 // loadout and never stored as one — see `isMonsterUnit`
                 bossSheets: { ...this.bossSheets },
+                // A sanity ceiling on the whole party's damage: the summed health of
+                // every boss seen. A measured total above it is over-attributing.
+                damageCeiling: bossHpCeiling(this.bossSheets),
                 // Whether any player's own attack counters have been seen. The
                 // split no longer depends on them — the presence rung measures
                 // every actor — but a row they confirm directly is worth naming,
@@ -50668,6 +50674,31 @@
                 ...summary,
             };
         }
+    }
+
+    /**
+     * The most damage the party can have dealt across the fights this client saw:
+     * every boss's full health bar, summed.
+     *
+     * A killed boss took exactly its bar; one still standing took less — so the sum
+     * is a ceiling, not a total. A measured split that runs past it is over-attributing
+     * or the boss healed itself, and either way the number is worth distrusting. It is
+     * a one-sided check: a split *below* the ceiling is not thereby confirmed, since an
+     * unkilled last boss leaves real headroom.
+     * @param {Object} bossSheets - tier → sheet, from a breakdown
+     * @returns {{hp: number, fights: number}} The summed bar and how many bosses it covers
+     */
+    function bossHpCeiling(bossSheets) {
+        let hp = 0;
+        let fights = 0;
+        for (const sheet of Object.values(bossSheets || {})) {
+            const max = Number(sheet?.maxHitpoints);
+            if (Number.isFinite(max) && max > 0) {
+                hp += max;
+                fights += 1;
+            }
+        }
+        return { hp, fights };
     }
 
     const guildTrialDamage = new GuildTrialDamage();
@@ -50742,6 +50773,20 @@
      * stopped sending stops feeding the card a pool that is no longer moving.
      */
     const SKILLING_FRESH_MS = 15_000;
+
+    /**
+     * How often a reading is kept for the time-series the export carries.
+     *
+     * The stream ticks every second or two, which over an hour is thousands of
+     * near-identical rows — too many to keep and more than a tier forecast needs. A
+     * point is kept at the start, at every tier boundary, and otherwise no more than
+     * once per this interval, which is enough to replay the forecast at points across
+     * the trial and check where it lands against the tier actually banked.
+     */
+    const SKILLING_SAMPLE_MS = 15_000;
+
+    /** A backstop on the series length, so a long session cannot grow it without bound */
+    const SKILLING_SERIES_CAP = 500;
 
     /**
      * The per-tier personal figures a payload carries, and nothing else.
@@ -50822,6 +50867,8 @@
             this.updates = {};
             /** Trial key → `{tier, at}` from `end_guild_skilling` */
             this.ended = {};
+            /** Trial key → a sampled `[{at, tier, current, max, actionCounter, successRate}]` series */
+            this.series = {};
         }
 
         initialize() {
@@ -50863,9 +50910,39 @@
                 // A trial that reports again has not ended, whatever was said before
                 delete this.ended[update.trial.key];
                 this.updates[update.trial.key] = update;
+                this._pushSeries(update);
             } catch (error) {
                 console.error('[GuildTrialSkilling] Reading a skilling trial update failed:', error);
             }
+        }
+
+        /**
+         * Keep a downsampled reading in the trial's time-series.
+         *
+         * A point is kept when it is the first, when the tier changed, or when a
+         * sample interval has passed since the last kept point — the rest are the same
+         * bar a second later and not worth the room. Capped, oldest dropped first, so
+         * a long session cannot grow it without bound.
+         * @param {Object} update - From {@link readSkillingUpdate}
+         * @private
+         */
+        _pushSeries(update) {
+            const key = update.trial.key;
+            const series = (this.series[key] = this.series[key] || []);
+            const last = series[series.length - 1];
+            const tierChanged = last && last.tier !== update.tier;
+            const elapsed = !last || update.at - last.at >= SKILLING_SAMPLE_MS;
+            if (last && !tierChanged && !elapsed) return;
+
+            series.push({
+                at: update.at,
+                tier: update.tier,
+                current: update.reading?.current ?? null,
+                max: update.reading?.max ?? null,
+                actionCounter: update.actionCounter,
+                successRate: update.personal?.['Success Rate'] ?? null,
+            });
+            if (series.length > SKILLING_SERIES_CAP) series.shift();
         }
 
         /**
@@ -50941,6 +51018,11 @@
             return {
                 updates: { ...this.updates },
                 ended: { ...this.ended },
+                // A per-trial timestamped reading series, so the tier forecast can be
+                // replayed at points across the trial and checked against the banked tier
+                series: Object.fromEntries(
+                    Object.entries(this.series).map(([key, points]) => [key, points.map((p) => ({ ...p }))])
+                ),
             };
         }
     }
@@ -52221,6 +52303,28 @@
         };
     }
 
+    /** How far a measured total may sit over the boss-HP ceiling before it is flagged. */
+    const CEILING_MARGIN = 0.02;
+
+    /**
+     * Whether a measured damage total has run past what the bosses could have lost.
+     *
+     * The summed health of every boss seen is a hard ceiling on the party's damage
+     * (see `bossHpCeiling`): a split above it is over-attributing, or — less often —
+     * the boss healed itself. One-sided, so a total below the ceiling is not thereby
+     * confirmed; an unkilled last boss always leaves real headroom. Returns null when
+     * there is no ceiling to check or the total sits within it.
+     * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+     * @param {number} total - The measured per-player damage total
+     * @returns {{overBy: number, ceiling: number, fights: number}|null}
+     */
+    function damageOverCeiling(breakdown, total) {
+        const ceiling = breakdown?.damageCeiling?.hp;
+        if (!Number.isFinite(ceiling) || ceiling <= 0) return null;
+        if (!Number.isFinite(total) || total <= ceiling * (1 + CEILING_MARGIN)) return null;
+        return { overBy: total / ceiling - 1, ceiling, fights: breakdown?.damageCeiling?.fights || 0 };
+    }
+
     /**
      * The game's post-trial Stats modal for the trial a breakdown is watching.
      *
@@ -52682,6 +52786,33 @@
                     : `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
                       'Attributed off this client’s own battle feed.</div>';
 
+            // The two "damage taken" figures are different quantities and must not be
+            // read as one: the game modal reports gross incoming *before* mitigation,
+            // while the stream only ever sees the health actually lost then restored —
+            // post-mitigation, and a floor at that. Say which is which so nobody
+            // compares them.
+            const takenNote = !taken
+                ? ''
+                : fromGame
+                  ? `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin:-2px 0 6px;">` +
+                    'The game counts damage taken <b>before</b> your mitigation — gross incoming — so it reads higher ' +
+                    'than the health you actually lost.</div>'
+                  : `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin:-2px 0 6px;">` +
+                    'This is health actually lost and then healed back — <b>after</b> mitigation, and a floor at that ' +
+                    '(damage healed on the same tick is invisible). Not the game’s pre-mitigation figure; the two do ' +
+                    'not match by design.</div>';
+
+            // A measured split that exceeds every boss's health bar is over-attributing
+            // — the guardrail is one-sided and only fires on the live damage tab, where
+            // the number is ours to trust or not (the game modal is authoritative).
+            const over = !fromGame && !healing && !taken && !estimated ? damageOverCeiling(breakdown, total) : null;
+            const ceilingNote = over
+                ? `<div style="color:${WARN$1}; font-size:10px; line-height:1.5; margin:-2px 0 6px;">` +
+                  `Measured damage runs ${Math.round(over.overBy * 100)}% over the bosses’ combined health, so the ` +
+                  'per-player split is over-attributing (a fast damage-over-time build collecting shared ticks is the ' +
+                  'usual cause). Trust the shares less than the total, and the game’s post-trial stats over both.</div>'
+                : '';
+
             const unestimated =
                 estimated && estimate.unestimated.length
                     ? `<div style="color:${DIM$1}; font-size:10px; margin-top:4px;">No build captured, so not ` +
@@ -52784,7 +52915,7 @@
                 `border:1px solid rgba(240,168,48,0.5); background:transparent; color:${WARN$1}; font-size:11px;">` +
                 'End &amp; start new</button></div>';
 
-            return head + tabs + disclaimer + list + footnote + manaLine + expected + buttons;
+            return head + tabs + disclaimer + takenNote + ceilingNote + list + footnote + manaLine + expected + buttons;
         }
 
         /**
@@ -54134,11 +54265,11 @@
      * @param {string} baseTitle - The tooltip the row already had
      * @returns {{value: string, title: string}} Row value and tooltip
      */
-    function tokenPayoutLine(tokens, baseTitle) {
+    function tokenPayoutLine(tokens, baseTitle, { showGold = true } = {}) {
         // Exact, on both halves. This block's arithmetic reproduces the guild's own
         // announcement to the token — "1,320 tokens each" — and printing it as
         // "1.3K" throws away the only thing that makes it worth checking.
-        const gold = describeGuildTokenGold(tokens, 'ask', { exact: true });
+        const gold = showGold ? describeGuildTokenGold(tokens, 'ask', { exact: true }) : null;
         const count = exact(tokens);
         return {
             value: gold ? `${count} (${gold.text})` : count,
@@ -54445,10 +54576,16 @@
             return `${tiers}${target}`;
         };
 
-        if (analysis.pace && (!forecast || forecast.tier === null || slowdown)) {
+        // The flat projection is the current rate held for the whole hour. Once a
+        // slowdown has been measured, that flat number is a fiction the panel used to
+        // print in green beside the real one — "21 tiers → T21" next to "~T11" — and a
+        // reader cannot tell it is the one to ignore. So it is shown only when there is
+        // no measured slowdown to replace it; when there is, the Expected row stands
+        // alone and the flat walk lives on in its tooltip.
+        if (analysis.pace && !slowdown && (!forecast || forecast.tier === null)) {
             rows.push(
                 line(
-                    slowdown ? 'On pace (flat)' : 'On pace for',
+                    'On pace for',
                     paceCaption(),
                     analysis.pace.limitedBy === 'ladder' ? GOOD : WARN,
                     'The rate measured now, held flat for the rest of the hour. A tier only counts when it fits ' +
@@ -54456,8 +54593,7 @@
                         (analysis.pace.limitedBy === 'unknown-next-tier'
                             ? '\nThe ladder past that tier is not known yet, so the walk stopped there — “at ' +
                               'least”, because the real pace may be higher.'
-                            : '') +
-                        (slowdown ? '\nThis one ignores the slowdown below, which is why it is the higher of the two.' : '')
+                            : '')
                 )
             );
         }
@@ -54471,7 +54607,7 @@
             const cleared = forecast.tiersCleared;
             rows.push(
                 line(
-                    slowdown ? 'Expected (slowing)' : 'On pace for',
+                    slowdown ? 'Expected' : 'On pace for',
                     slowdown
                         ? `~T${cleared}${margin}`
                         : `${cleared} tier${cleared === 1 ? '' : 's'}${cleared ? ` → T${cleared}` : ''}${margin}`,
@@ -54484,7 +54620,8 @@
                                     slowdown.perTier * 100
                                 ).toFixed(1)} points a tier to its 5% floor, as measured across ` +
                                     `${slowdown.observations} tiers. Past that point a tier is slow rather than ` +
-                                    'impossible.'
+                                    `impossible.\nThe same rate held flat, ignoring the slowdown, would reach ` +
+                                    `T${analysis.pace.tiersCleared} — which is why that flatter number is not shown as the estimate.`
                                   : '') +
                               (Number.isFinite(forecast.enragedFrom)
                                   ? `\nA fight this long reaches full enrage from T${forecast.enragedFrom}: the boss ` +
@@ -54795,6 +54932,43 @@
      * @param {string} [name] - The trial's name, for when the block lands away from its card
      * @returns {string} How it was placed: `spanned`, `after-card`, `after-container`, or `refused`
      */
+    /**
+     * Whether a container is a non-wrapping flex row — one that squashes a block
+     * added to it rather than letting it fall to its own line.
+     * @param {Element} el - The container
+     * @returns {boolean}
+     */
+    function isSquashingRow(el) {
+        if (!el || typeof getComputedStyle !== 'function') return false;
+        const style = getComputedStyle(el);
+        if (!(style?.display || '').includes('flex')) return false;
+        if ((style?.flexWrap || '').includes('wrap')) return false;
+        const direction = style?.flexDirection || 'row';
+        return direction === 'row' || direction === 'row-reverse';
+    }
+
+    /**
+     * Climb out of every nested non-wrapping flex row above an element.
+     *
+     * A block placed as a sibling of a card inside such a row steals the row's width
+     * and squashes the card — the skilling In Progress panel nests two (`battleArea`
+     * holds the roster and a `challengeArea`, both non-wrapping rows), so escaping one
+     * level still lands the block in a row. This returns the highest element whose
+     * parent is still a squashing row, so a block placed against it sits on its own
+     * line in the first column, grid, or block ancestor. The element itself when it is
+     * already in ordinary flow.
+     * @param {Element} root - Nothing is escaped past this
+     * @param {Element} start - Where to climb from
+     * @returns {Element} The element to place a block against
+     */
+    function escapeSquashingRows(root, start) {
+        let anchor = start;
+        while (anchor?.parentElement && anchor.parentElement !== root && isSquashingRow(anchor.parentElement)) {
+            anchor = anchor.parentElement;
+        }
+        return anchor;
+    }
+
     function placeTrialBlock(root, card, block, name = '') {
         // Belt and braces over the anchor filter in `readTrialTiles`. The reported
         // failure drew this whole block inside the boss's stat popup, which is
@@ -54813,7 +54987,11 @@
         const display = style?.display || '';
 
         const afterContainer = () => {
-            const outer = container.parentElement;
+            // Escape every nested non-wrapping row, not just this one: the skilling
+            // panel puts the card two rows deep, so landing after the immediate
+            // container still leaves the block in a row squashing the roster and card.
+            const anchor = escapeSquashingRows(root, container);
+            const outer = anchor.parentElement;
             if (!outer || !root.contains(outer)) {
                 card.insertAdjacentElement('afterend', block);
                 return 'after-card';
@@ -54825,7 +55003,7 @@
             if (name && !block.querySelector('.mwi-trial-block-heading')) {
                 block.insertAdjacentHTML('afterbegin', trialBlockHeading(name));
             }
-            container.insertAdjacentElement('afterend', block);
+            anchor.insertAdjacentElement('afterend', block);
             return 'after-container';
         };
 
@@ -54882,12 +55060,26 @@
      * because the remounted card arrived *after* the block that was placed beside
      * its predecessor.
      *
+     * When the card is nested in a non-wrapping flex row, the placement escapes that
+     * row (see {@link escapeSquashingRows}), so the only correct position is right
+     * after the outermost such row — not beside the card, which would squash it. A
+     * block that lands beside the card on first paint, before the game's flex styles
+     * have computed, must therefore read as displaced so it is re-placed once they
+     * have; treating "beside the card" as anchored is what left the skilling card
+     * squashed to 44px even after the layout settled.
+     *
      * @param {Element} block - The injected block
      * @param {Element} anchor - The card it belongs beside
+     * @param {Element} [root] - The trials root, for the escape test; omitted keeps the plain adjacency check
      * @returns {boolean} True while the placement still holds
      */
-    function blockNearAnchor(block, anchor) {
+    function blockNearAnchor(block, anchor, root = null) {
         if (!anchor?.isConnected) return true; // nothing to re-anchor against
+        if (root) {
+            const escaped = escapeSquashingRows(root, anchor);
+            // Nested in a squashing row: the block belongs after that row, full width
+            if (escaped !== anchor) return escaped.nextElementSibling === block;
+        }
         return (
             anchor.nextElementSibling === block ||
             anchor.parentElement?.nextElementSibling === block ||
@@ -55486,7 +55678,7 @@
                         // The card the block belongs beside, for the re-anchoring
                         // check below — the game tears cards down and remounts
                         // them at wave boundaries
-                        anchored: (block) => blockNearAnchor(block, tile.element),
+                        anchored: (block) => blockNearAnchor(block, tile.element, root),
                         // Scoped to this tile's encounter: one measurement must
                         // not dress every combat card
                         html: renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
@@ -55911,6 +56103,11 @@
         _renderPayout(root, trials, firstTile = null, payoutBonuses = null) {
             if (!trials.length) return false;
 
+            // The In Progress tab is a glance at a running trial, so the token gold
+            // valuation and the missing-Treasury nag — both about pricing tokens, not
+            // about the run — are held back there and kept for the Trials tab.
+            const inProgress = /inProgress/i.test(root?.className || '');
+
             const bonuses = payoutBonuses || this._payoutBonuses();
             const buildersHallBonus = bonuses.buildersHall.bonus;
             const treasuryBonus = bonuses.treasury.bonus;
@@ -55976,11 +56173,13 @@
 
             const eligible = tokenPayoutLine(
                 projected.eligibleTokens,
-                'Half the total base points, paid to every member who joined before the week started.'
+                'Half the total base points, paid to every member who joined before the week started.',
+                { showGold: !inProgress }
             );
             const participant = tokenPayoutLine(
                 projected.participantTokens,
-                'The eligible payout plus a further 50% of it for participating.'
+                'The eligible payout plus a further 50% of it for participating.',
+                { showGold: !inProgress }
             );
 
             const bankedRow = !anyTierKnown
@@ -56075,10 +56274,14 @@
                 );
             }
 
-            if (!Number.isFinite(buildersHallBonus) || !Number.isFinite(treasuryBonus)) {
+            // Treasury only prices tokens, and the In Progress tab does not price them,
+            // so its "no Treasury level seen" nag belongs on the Trials tab only.
+            // Builder's Hall moves the Guild Points themselves, so that one stays.
+            const treasuryMissing = !Number.isFinite(treasuryBonus) && !inProgress;
+            if (!Number.isFinite(buildersHallBonus) || treasuryMissing) {
                 const missing = [];
                 if (!Number.isFinite(buildersHallBonus)) missing.push('Builder’s Hall');
-                if (!Number.isFinite(treasuryBonus)) missing.push('Treasury');
+                if (treasuryMissing) missing.push('Treasury');
                 rows.push(
                     `<div style="color:${WARN}; margin-top:4px;">` +
                         `No ${missing.join(' or ')} level seen, so the token figures leave ` +
@@ -56114,7 +56317,7 @@
                 anchored: (block) => {
                     const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
                     if (statusRow) return statusRow.nextElementSibling === block;
-                    if (firstTile?.isConnected) return block.nextElementSibling === firstTile;
+                    if (firstTile?.isConnected) return block.nextElementSibling === escapeSquashingRows(root, firstTile);
                     return root.firstElementChild === block;
                 },
                 html: rows.join('') + this._controlsHTML(),
@@ -56123,13 +56326,19 @@
                     'border-radius:6px; font-size:12px; line-height:1.7;',
                 place: (block) => {
                     // Under the game's own status row when there is one. Otherwise
-                    // directly above the first card, which is where it belongs and —
-                    // unlike the panel's own top edge — is somewhere the reader is
-                    // already looking when the root is a whole guild panel.
+                    // above the first card — but escaping any non-wrapping row it sits
+                    // in first, so the block takes its own full-width line above the
+                    // roster instead of squeezing in beside the card (the skilling
+                    // panel nests the card two rows deep).
                     const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
-                    if (statusRow) statusRow.insertAdjacentElement('afterend', block);
-                    else if (firstTile?.isConnected) firstTile.insertAdjacentElement('beforebegin', block);
-                    else root.insertAdjacentElement('afterbegin', block);
+                    if (statusRow) {
+                        statusRow.insertAdjacentElement('afterend', block);
+                    } else if (firstTile?.isConnected) {
+                        block.style.width = '100%';
+                        escapeSquashingRows(root, firstTile).insertAdjacentElement('beforebegin', block);
+                    } else {
+                        root.insertAdjacentElement('afterbegin', block);
+                    }
                 },
                 onBuild: (block) => this._bindControls(block),
             });
@@ -56241,6 +56450,12 @@
                 ) +
                 button('export', '⤓ Export', ACCENT, 'Download everything captured this week as one JSON file.') +
                 button('scoreboard', 'Per-player', ACCENT, 'Damage and healing per player, ranked.') +
+                button(
+                    'roster',
+                    'Roster',
+                    ACCENT,
+                    'Open the guild roster — each member’s share of the week’s XP and who has gone quiet.'
+                ) +
                 '</div>'
             );
         }
@@ -56273,6 +56488,7 @@
                 downloadTrialExport(bundle);
             });
             on('scoreboard', () => guildTrialScoreboard.toggle());
+            on('roster', () => guildRosterPanel.toggle());
         }
 
         /**

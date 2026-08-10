@@ -1,7 +1,7 @@
 /**
  * Toolasha UI Library
  * UI enhancements, tasks, skills, and misc features
- * Version: 2.93.0
+ * Version: 2.94.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -11573,7 +11573,7 @@
      */
 
 
-    const ACCENT$5 = '#e0b978';
+    const ACCENT$6 = '#e0b978';
 
     /** Past this a drop list is a scrollbar rather than an answer */
     const MAX_ITEMS = 14;
@@ -11752,7 +11752,7 @@
      * @param {Object} stats - From `calculatePlayerStats`
      */
     function drawPlayer(body, stats) {
-        const card = simplePanel_js.panelCard(body, stats.name || 'You', stats.isCurrentPlayer ? overlayFormat_js.ROW_COLORS.gold : ACCENT$5);
+        const card = simplePanel_js.panelCard(body, stats.name || 'You', stats.isCurrentPlayer ? overlayFormat_js.ROW_COLORS.gold : ACCENT$6);
 
         // Both cost figures are `{ask, bid}` rather than numbers; subtracting the
         // objects gives NaN, which is how this last went wrong on the tile
@@ -11913,7 +11913,7 @@
         id: 'partyLoot',
         title: 'Party Loot',
         size: { width: 420, height: 520 },
-        accent: ACCENT$5,
+        accent: ACCENT$6,
         refreshMs: 5000,
         draw: (body) => {
             refreshSessions();
@@ -11943,7 +11943,7 @@
                 );
                 const perDay = party.reduce((sum, stats) => sum + stats.dailyProfit.bid, 0);
 
-                const card = simplePanel_js.panelCard(body, `Party of ${party.length}`, ACCENT$5);
+                const card = simplePanel_js.panelCard(body, `Party of ${party.length}`, ACCENT$6);
                 const line = document.createElement('div');
                 Object.assign(line.style, { display: 'flex', justifyContent: 'space-between', gap: '8px' });
 
@@ -17387,6 +17387,17 @@ ${starCSS}
     }
 
     /**
+     * How old a snapshot is, in words.
+     * @param {number} at - When it was taken
+     * @param {number} [now] - Clock
+     * @returns {string} e.g. `seen 2h ago`
+     */
+    function describeLoadoutAge(at, now = Date.now()) {
+        if (!Number.isFinite(at) || at <= 0) return 'seen at an unknown time';
+        return `seen ${formatters_js.formatRelativeTime(Math.max(0, now - at))}`;
+    }
+
+    /**
      * Read a character's record of the loadouts it has seen.
      * @param {string|number|null} characterId - Viewing character id
      * @param {string|null} [guildName] - The character's guild, when known
@@ -18836,7 +18847,10 @@ ${starCSS}
      */
     function supportCoverage() {
         return {
-            damageTaken: 'measured — health falling, per player, per tick',
+            damageTaken:
+                'measured — health falling, per player, per tick. Post-mitigation and a floor: it is the health ' +
+                'actually lost then healed back, not the game’s pre-mitigation Damage Taken, and damage healed on ' +
+                'the same tick is invisible',
             healingReceived: 'measured — health rising, per player, per tick',
             healingDone:
                 'attributed when exactly one player cast a heal on the tick, or when a lone ability cast ' +
@@ -21636,6 +21650,9 @@ ${starCSS}
                 // The boss's tier-scaled sheet, per tier, for the export. Not a
                 // loadout and never stored as one — see `isMonsterUnit`
                 bossSheets: { ...this.bossSheets },
+                // A sanity ceiling on the whole party's damage: the summed health of
+                // every boss seen. A measured total above it is over-attributing.
+                damageCeiling: bossHpCeiling(this.bossSheets),
                 // Whether any player's own attack counters have been seen. The
                 // split no longer depends on them — the presence rung measures
                 // every actor — but a row they confirm directly is worth naming,
@@ -21666,6 +21683,31 @@ ${starCSS}
                 ...summary,
             };
         }
+    }
+
+    /**
+     * The most damage the party can have dealt across the fights this client saw:
+     * every boss's full health bar, summed.
+     *
+     * A killed boss took exactly its bar; one still standing took less — so the sum
+     * is a ceiling, not a total. A measured split that runs past it is over-attributing
+     * or the boss healed itself, and either way the number is worth distrusting. It is
+     * a one-sided check: a split *below* the ceiling is not thereby confirmed, since an
+     * unkilled last boss leaves real headroom.
+     * @param {Object} bossSheets - tier → sheet, from a breakdown
+     * @returns {{hp: number, fights: number}} The summed bar and how many bosses it covers
+     */
+    function bossHpCeiling(bossSheets) {
+        let hp = 0;
+        let fights = 0;
+        for (const sheet of Object.values(bossSheets || {})) {
+            const max = Number(sheet?.maxHitpoints);
+            if (Number.isFinite(max) && max > 0) {
+                hp += max;
+                fights += 1;
+            }
+        }
+        return { hp, fights };
     }
 
     const guildTrialDamage = new GuildTrialDamage();
@@ -21740,6 +21782,20 @@ ${starCSS}
      * stopped sending stops feeding the card a pool that is no longer moving.
      */
     const SKILLING_FRESH_MS = 15_000;
+
+    /**
+     * How often a reading is kept for the time-series the export carries.
+     *
+     * The stream ticks every second or two, which over an hour is thousands of
+     * near-identical rows — too many to keep and more than a tier forecast needs. A
+     * point is kept at the start, at every tier boundary, and otherwise no more than
+     * once per this interval, which is enough to replay the forecast at points across
+     * the trial and check where it lands against the tier actually banked.
+     */
+    const SKILLING_SAMPLE_MS = 15_000;
+
+    /** A backstop on the series length, so a long session cannot grow it without bound */
+    const SKILLING_SERIES_CAP = 500;
 
     /**
      * The per-tier personal figures a payload carries, and nothing else.
@@ -21820,6 +21876,8 @@ ${starCSS}
             this.updates = {};
             /** Trial key → `{tier, at}` from `end_guild_skilling` */
             this.ended = {};
+            /** Trial key → a sampled `[{at, tier, current, max, actionCounter, successRate}]` series */
+            this.series = {};
         }
 
         initialize() {
@@ -21861,9 +21919,39 @@ ${starCSS}
                 // A trial that reports again has not ended, whatever was said before
                 delete this.ended[update.trial.key];
                 this.updates[update.trial.key] = update;
+                this._pushSeries(update);
             } catch (error) {
                 console.error('[GuildTrialSkilling] Reading a skilling trial update failed:', error);
             }
+        }
+
+        /**
+         * Keep a downsampled reading in the trial's time-series.
+         *
+         * A point is kept when it is the first, when the tier changed, or when a
+         * sample interval has passed since the last kept point — the rest are the same
+         * bar a second later and not worth the room. Capped, oldest dropped first, so
+         * a long session cannot grow it without bound.
+         * @param {Object} update - From {@link readSkillingUpdate}
+         * @private
+         */
+        _pushSeries(update) {
+            const key = update.trial.key;
+            const series = (this.series[key] = this.series[key] || []);
+            const last = series[series.length - 1];
+            const tierChanged = last && last.tier !== update.tier;
+            const elapsed = !last || update.at - last.at >= SKILLING_SAMPLE_MS;
+            if (last && !tierChanged && !elapsed) return;
+
+            series.push({
+                at: update.at,
+                tier: update.tier,
+                current: update.reading?.current ?? null,
+                max: update.reading?.max ?? null,
+                actionCounter: update.actionCounter,
+                successRate: update.personal?.['Success Rate'] ?? null,
+            });
+            if (series.length > SKILLING_SERIES_CAP) series.shift();
         }
 
         /**
@@ -21939,6 +22027,11 @@ ${starCSS}
             return {
                 updates: { ...this.updates },
                 ended: { ...this.ended },
+                // A per-trial timestamped reading series, so the tier forecast can be
+                // replayed at points across the trial and checked against the banked tier
+                series: Object.fromEntries(
+                    Object.entries(this.series).map(([key, points]) => [key, points.map((p) => ({ ...p }))])
+                ),
             };
         }
     }
@@ -24539,7 +24632,7 @@ ${starCSS}
     /** Class every part of this panel carries, so teardown is one query */
     const PANEL_CLASS = 'mwi-trial-scoreboard';
 
-    const ACCENT$4 = '#8fd3ff';
+    const ACCENT$5 = '#8fd3ff';
     const DIM$1 = '#9ca3af';
     const GOOD$1 = '#4ade80';
     const WARN$1 = '#f0a830';
@@ -24655,6 +24748,28 @@ ${starCSS}
             seconds,
             source: breakdown?.source === 'spectated' ? 'stream' : null,
         };
+    }
+
+    /** How far a measured total may sit over the boss-HP ceiling before it is flagged. */
+    const CEILING_MARGIN = 0.02;
+
+    /**
+     * Whether a measured damage total has run past what the bosses could have lost.
+     *
+     * The summed health of every boss seen is a hard ceiling on the party's damage
+     * (see `bossHpCeiling`): a split above it is over-attributing, or — less often —
+     * the boss healed itself. One-sided, so a total below the ceiling is not thereby
+     * confirmed; an unkilled last boss always leaves real headroom. Returns null when
+     * there is no ceiling to check or the total sits within it.
+     * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+     * @param {number} total - The measured per-player damage total
+     * @returns {{overBy: number, ceiling: number, fights: number}|null}
+     */
+    function damageOverCeiling(breakdown, total) {
+        const ceiling = breakdown?.damageCeiling?.hp;
+        if (!Number.isFinite(ceiling) || ceiling <= 0) return null;
+        if (!Number.isFinite(total) || total <= ceiling * (1 + CEILING_MARGIN)) return null;
+        return { overBy: total / ceiling - 1, ceiling, fights: breakdown?.damageCeiling?.fights || 0 };
     }
 
     /**
@@ -24831,7 +24946,7 @@ ${starCSS}
             header.style.cssText =
                 'display:flex; align-items:center; justify-content:space-between; gap:8px;' +
                 'padding:8px 10px; border-bottom:1px solid rgba(255,255,255,0.08); cursor:move;';
-            header.innerHTML = `<span style="font-weight:700; color:${ACCENT$4};">Trial damage</span>`;
+            header.innerHTML = `<span style="font-weight:700; color:${ACCENT$5};">Trial damage</span>`;
 
             const close = document.createElement('button');
             close.textContent = '×';
@@ -25060,7 +25175,7 @@ ${starCSS}
                     `<span style="color:${DIM$1};">trial ${taken ? 'damage taken' : healing ? 'healing' : 'damage'} · game stats</span>` +
                     `</div>`
                   : `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
-                    `<span style="font-size:20px; font-weight:700; color:${ACCENT$4};">` +
+                    `<span style="font-size:20px; font-weight:700; color:${ACCENT$5};">` +
                     `${perSecond === null ? '—' : formatters_js.formatKMB(Math.round(perSecond))}</span>` +
                     `<span style="color:${DIM$1};">party ${unit}</span>` +
                     `<span style="margin-left:auto; color:${GOOD$1}; font-weight:600;">` +
@@ -25077,9 +25192,9 @@ ${starCSS}
                     .map(
                         (entry) =>
                             `<button data-tab="${entry.key}" style="flex:1; cursor:pointer; padding:3px 0;` +
-                            `border:1px solid ${this.tab === entry.key ? ACCENT$4 : 'rgba(255,255,255,0.15)'};` +
+                            `border:1px solid ${this.tab === entry.key ? ACCENT$5 : 'rgba(255,255,255,0.15)'};` +
                             `border-radius:4px; background:${this.tab === entry.key ? 'rgba(143,211,255,0.15)' : 'transparent'};` +
-                            `color:${this.tab === entry.key ? ACCENT$4 : DIM$1}; font-size:11px;">${entry.label}</button>`
+                            `color:${this.tab === entry.key ? ACCENT$5 : DIM$1}; font-size:11px;">${entry.label}</button>`
                     )
                     .join('') +
                 `</div>`;
@@ -25117,6 +25232,33 @@ ${starCSS}
                       '</div>'
                     : `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
                       'Attributed off this client’s own battle feed.</div>';
+
+            // The two "damage taken" figures are different quantities and must not be
+            // read as one: the game modal reports gross incoming *before* mitigation,
+            // while the stream only ever sees the health actually lost then restored —
+            // post-mitigation, and a floor at that. Say which is which so nobody
+            // compares them.
+            const takenNote = !taken
+                ? ''
+                : fromGame
+                  ? `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin:-2px 0 6px;">` +
+                    'The game counts damage taken <b>before</b> your mitigation — gross incoming — so it reads higher ' +
+                    'than the health you actually lost.</div>'
+                  : `<div style="color:${DIM$1}; font-size:10px; line-height:1.5; margin:-2px 0 6px;">` +
+                    'This is health actually lost and then healed back — <b>after</b> mitigation, and a floor at that ' +
+                    '(damage healed on the same tick is invisible). Not the game’s pre-mitigation figure; the two do ' +
+                    'not match by design.</div>';
+
+            // A measured split that exceeds every boss's health bar is over-attributing
+            // — the guardrail is one-sided and only fires on the live damage tab, where
+            // the number is ours to trust or not (the game modal is authoritative).
+            const over = !fromGame && !healing && !taken && !estimated ? damageOverCeiling(breakdown, total) : null;
+            const ceilingNote = over
+                ? `<div style="color:${WARN$1}; font-size:10px; line-height:1.5; margin:-2px 0 6px;">` +
+                  `Measured damage runs ${Math.round(over.overBy * 100)}% over the bosses’ combined health, so the ` +
+                  'per-player split is over-attributing (a fast damage-over-time build collecting shared ticks is the ' +
+                  'usual cause). Trust the shares less than the total, and the game’s post-trial stats over both.</div>'
+                : '';
 
             const unestimated =
                 estimated && estimate.unestimated.length
@@ -25214,13 +25356,13 @@ ${starCSS}
                 `border:1px solid rgba(255,255,255,0.15); background:transparent; color:${DIM$1}; font-size:11px;">` +
                 'Copy stats</button>' +
                 `<button data-action="report" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
-                `border:1px solid ${ACCENT$4}66; background:transparent; color:${ACCENT$4}; font-size:11px;">` +
+                `border:1px solid ${ACCENT$5}66; background:transparent; color:${ACCENT$5}; font-size:11px;">` +
                 'Copy guild report</button>' +
                 `<button data-action="restart" style="flex:1; cursor:pointer; padding:4px 0; border-radius:4px;` +
                 `border:1px solid rgba(240,168,48,0.5); background:transparent; color:${WARN$1}; font-size:11px;">` +
                 'End &amp; start new</button></div>';
 
-            return head + tabs + disclaimer + list + footnote + manaLine + expected + buttons;
+            return head + tabs + disclaimer + takenNote + ceilingNote + list + footnote + manaLine + expected + buttons;
         }
 
         /**
@@ -25230,7 +25372,7 @@ ${starCSS}
          */
         _rowHTML(row) {
             const type = damageTypeOf(row.name);
-            const color = type ? TYPE_COLORS[type] : ACCENT$4;
+            const color = type ? TYPE_COLORS[type] : ACCENT$5;
             const width = Math.max(2, Math.min(100, row.share ?? 0));
             const rate = row.perSecond === null || row.perSecond === undefined ? '—' : formatters_js.formatKMB(Math.round(row.perSecond));
 
@@ -25260,6 +25402,550 @@ ${starCSS}
     }
 
     const guildTrialScoreboard = new GuildTrialScoreboard();
+
+    /**
+     * Guild roster
+     *
+     * Who is actually carrying the guild, and who has stopped.
+     *
+     * The game shows each member's total guild XP, which is a career figure: it
+     * ranks whoever joined first, not whoever contributed this week, and a member
+     * who quit a month ago still sits near the top of it. The tracker has been
+     * recording per-member XP over time for its XP/h columns, and that same series
+     * answers the questions the total cannot — what share of the last week's XP each
+     * member produced, and whose rate has collapsed since yesterday.
+     *
+     * ## Shares are of what was actually observed
+     *
+     * A share is one member's XP gain over a window divided by the whole roster's
+     * gain over the same window. Members with fewer than two samples in the window
+     * contribute nothing to either side rather than counting as zero — the
+     * difference between "earned nothing" and "was not being watched" is the whole
+     * point of the gone-quiet flag below, and folding the second into the first
+     * would make every newly tracked member look idle.
+     *
+     * ## Gone quiet is a comparison, not a threshold
+     *
+     * "Idle" cannot be a fixed XP/h, because a strong member coasting still outpaces
+     * a weak one going flat out. The flag is each member against *themselves*: a
+     * day rate that has collapsed against their own week rate. That catches the
+     * member who stopped playing on Tuesday and leaves the steady one alone.
+     *
+     * The arithmetic below is pure and exported for tests; the tracker is asked for
+     * its samples through its read API rather than reaching into storage.
+     */
+
+
+    /** How many stat rows of a snapshot the roster panel shows before it stops */
+    const LOADOUT_PREVIEW_ROWS = 6;
+
+    const HOUR = 60 * 60 * 1000;
+    const DAY = 24 * HOUR;
+    const WINDOW_7D = 7 * DAY;
+    const WINDOW_30D = 30 * DAY;
+
+    /** A day rate this far below the week rate reads as having stopped */
+    const QUIET_RATIO = 0.25;
+
+    /** Below this the week rate is too small for its collapse to mean anything */
+    const QUIET_MIN_WEEK_RATE = 1;
+
+    const ACCENT$4 = '#c0b0ff';
+
+    /**
+     * XP gained inside a window, and how much of the window the samples cover.
+     *
+     * Both matter: a delta over twenty minutes and a delta over six days are not
+     * comparable, and a caller that only sees the delta cannot tell them apart.
+     *
+     * @param {Array<{t: number, xp: number}>} series - Samples, oldest first
+     * @param {number} windowMs - How far back to look
+     * @param {number} [now] - Clock
+     * @returns {{delta: number, spanMs: number}|null} Null when fewer than two samples land in the window
+     */
+    function seriesDelta(series, windowMs, now = Date.now()) {
+        if (!Array.isArray(series) || series.length < 2) return null;
+        const cutoff = now - windowMs;
+        const inWindow = series.filter((sample) => sample && sample.t >= cutoff);
+        if (inWindow.length < 2) return null;
+
+        const first = inWindow[0];
+        const last = inWindow[inWindow.length - 1];
+        const spanMs = last.t - first.t;
+        if (spanMs <= 0) return null;
+
+        return { delta: Math.max(0, last.xp - first.xp), spanMs };
+    }
+
+    /**
+     * XP per hour across a window.
+     * @param {Array<{t: number, xp: number}>} series - Samples, oldest first
+     * @param {number} windowMs - How far back to look
+     * @param {number} [now] - Clock
+     * @returns {number|null} XP/hr, or null when the window holds no measurable span
+     */
+    function ratePerHour(series, windowMs, now = Date.now()) {
+        const measured = seriesDelta(series, windowMs, now);
+        if (!measured) return null;
+        return (measured.delta / measured.spanMs) * HOUR;
+    }
+
+    /**
+     * Has this member stopped?
+     * @param {number|null} dayRate - Their XP/hr over the last day
+     * @param {number|null} weekRate - Their XP/hr over the last week
+     * @returns {boolean} True when the day rate has collapsed against their own week
+     */
+    function isGoneQuiet(dayRate, weekRate) {
+        if (!Number.isFinite(weekRate) || weekRate < QUIET_MIN_WEEK_RATE) return false;
+        // No day measurement at all is the loudest version of this signal
+        const day = Number.isFinite(dayRate) ? dayRate : 0;
+        return day < weekRate * QUIET_RATIO;
+    }
+
+    /**
+     * Turn deltas into percentage shares of the roster's total.
+     * @param {Array<{delta: number|null}>} entries - Anything with a delta
+     * @returns {number[]} Share per entry, 0-100; all zero when nothing was earned
+     */
+    function contributionShares(entries) {
+        const total = (entries || []).reduce((sum, entry) => sum + (Number.isFinite(entry?.delta) ? entry.delta : 0), 0);
+        if (total <= 0) return (entries || []).map(() => 0);
+        return (entries || []).map((entry) => ((Number.isFinite(entry?.delta) ? entry.delta : 0) / total) * 100);
+    }
+
+    /**
+     * Where a guild's XP lands after a stretch at its current rate.
+     * @param {number} currentXP - XP now
+     * @param {number|null} xpPerHour - Current rate
+     * @param {number} hours - How far ahead
+     * @returns {number|null} Projected XP, or null without a rate
+     */
+    function projectGuildXP(currentXP, xpPerHour, hours) {
+        if (!Number.isFinite(currentXP) || !Number.isFinite(xpPerHour) || xpPerHour <= 0) return null;
+        return currentXP + xpPerHour * hours;
+    }
+
+    /**
+     * The roster, ranked by what each member did this week.
+     *
+     * ## Who is on it
+     *
+     * The **current** roster, and that is a correction. This walked the *history*
+     * map — every character ever sampled — which never forgets, so a member who left
+     * the guild kept their weekly rate, did nothing all day because they were gone,
+     * and sat in "Gone quiet" permanently. They had no metadata either, having been
+     * dropped from the member list when they left, so the row was headed with the
+     * only thing left to head it with: `#9349`.
+     *
+     * Both defects are one defect. The member list the tracker rebuilds on every
+     * roster message *is* the statement of who is in the guild, so it decides who
+     * gets a row and the history is only consulted for the people on it.
+     *
+     * Before any roster message has arrived the list is empty, and an empty list is
+     * "not known yet" rather than "nobody is in this guild" — so the history stands
+     * in, exactly as it did, until the game says otherwise.
+     *
+     * @param {Object} input - Everything this needs, so it can be tested without the tracker
+     * @param {Object<string, Array<{t: number, xp: number}>>} input.series - characterID → samples
+     * @param {Object<string, {name: string}>} input.meta - characterID → metadata, and the roster
+     * @param {number} [input.now] - Clock
+     * @returns {Array<Object>} One row per current member, best 7-day share first
+     */
+    function buildRoster({ series, meta = {}, now = Date.now() }) {
+        const current = Object.keys(meta || {});
+        const ids = current.length ? current : Object.keys(series || {});
+
+        const rows = ids.map((characterID) => {
+            const samples = series[characterID] || [];
+            const week = seriesDelta(samples, WINDOW_7D, now);
+            const month = seriesDelta(samples, WINDOW_30D, now);
+            const dayRate = ratePerHour(samples, DAY, now);
+            const weekRate = ratePerHour(samples, WINDOW_7D, now);
+
+            return {
+                characterID,
+                // Never a `#id`. A numeric tag where a name belongs reads as a
+                // member whose name is a number, and every row that ever showed one
+                // was a member who should not have been on the list at all
+                name: meta[characterID]?.name || null,
+                samples: samples.length,
+                delta: week ? week.delta : null,
+                delta7d: week ? week.delta : null,
+                delta30d: month ? month.delta : null,
+                spanMs: week ? week.spanMs : 0,
+                dayRate,
+                weekRate,
+                quiet: isGoneQuiet(dayRate, weekRate),
+                totalXP: samples.length ? samples[samples.length - 1].xp : null,
+            };
+        });
+
+        const shares7d = contributionShares(rows);
+        const shares30d = contributionShares(rows.map((r) => ({ delta: r.delta30d })));
+        rows.forEach((memberRow, index) => {
+            memberRow.share7d = shares7d[index];
+            memberRow.share30d = shares30d[index];
+        });
+
+        return rows.sort((a, b) => (b.share7d ?? 0) - (a.share7d ?? 0) || (b.totalXP ?? 0) - (a.totalXP ?? 0));
+    }
+
+    /**
+     * What to head a member's row with when their name was never captured.
+     *
+     * Withheld rather than faked. The tracker learns a name from the same message
+     * that says somebody is in the guild, so a member on the list with no name is a
+     * message this script could not read — which is worth saying, and is not worth
+     * printing an internal id for. `#9349` is not a name and nobody can act on it.
+     *
+     * @param {Object} member - A row from {@link buildRoster}
+     * @returns {string} Something a person can read
+     */
+    function memberLabel(member) {
+        return member?.name || 'Unnamed member';
+    }
+
+    /**
+     * The roster as the panel and the tile both need it, read from the tracker.
+     * @returns {{guildName: string|null, rows: Array<Object>, level: Object|null, guildRate: number|null}|null}
+     */
+    function rosterSnapshot() {
+        const guildName = guildXPTracker.getOwnGuildName();
+        const series = guildXPTracker.getAllMemberSeries();
+        const meta = {};
+        for (const member of guildXPTracker.getMemberList()) meta[member.characterID] = member;
+
+        const guildSeries = guildName ? guildXPTracker.getGuildSeries(guildName) : [];
+
+        return {
+            guildName,
+            rows: buildRoster({ series, meta }),
+            level: guildName ? guildXPTracker.getGuildLevelProgress(guildName) : null,
+            guildRate: ratePerHour(guildSeries, WINDOW_7D),
+            guildDayRate: ratePerHour(guildSeries, DAY),
+        };
+    }
+
+    /**
+     * A percentage, or a dash.
+     * @param {number|null} value - 0-100
+     * @returns {string}
+     */
+    function percent(value) {
+        return Number.isFinite(value) ? `${value.toFixed(1)}%` : '—';
+    }
+
+    /**
+     * XP, or a dash.
+     * @param {number|null} value - XP
+     * @returns {string}
+     */
+    function xp(value) {
+        return Number.isFinite(value) ? formatters_js.formatKMB(Math.round(value)) : '—';
+    }
+
+    /**
+     * The profile cycler: one click, one guildmate's skills.
+     *
+     * A skilling trial's forecast needs the party's skill levels, and the only place
+     * those appear is a member's own profile — `profile_shared` is sent when a
+     * profile is opened and at no other time. So they have to be collected, and the
+     * collecting is a person clicking a button, once per member, which is both what
+     * was asked for and the only version worth building: nothing here opens profiles
+     * on its own.
+     *
+     * @param {HTMLElement} body - The panel body
+     * @param {Object} [capture] - The skills store, injectable for tests
+     * @returns {HTMLElement} The card
+     */
+    function drawProfileCycler(body, capture = guildMemberSkills) {
+        const state = capture.progress?.() || { logged: 0, total: 0, next: null, stale: 0 };
+        const card = simplePanel_js.panelCard(body, `Member skills (logged ${state.logged}/${state.total})`, ACCENT$4);
+
+        if (!state.total) {
+            card.appendChild(simplePanel_js.panelNote('No roster yet — open the guild page once.'));
+            return card;
+        }
+
+        const status = simplePanel_js.panelNote('');
+        status.style.display = 'none';
+
+        // The battle-info collection is its own tool, not a fallback of the
+        // profile walk: a unit's popup is the only source of a combat stat sheet,
+        // a profile carries skills but no sheet, and letting one button silently
+        // degrade into the other collected the wrong thing while looking done.
+        // Only drawn while a fight on screen actually offers a clickable unit.
+        const unit = capture.nextBattleUnit?.();
+        if (unit?.el) {
+            const battleButton = document.createElement('button');
+            battleButton.className = 'mwi-battleinfo-cycler';
+            battleButton.textContent = `Open ${unit.name}\u2019s battle info`;
+            battleButton.style.cssText =
+                'width:100%; margin:4px 0 0; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer;' +
+                `background:transparent; border:1px solid ${ACCENT$4}; color:${ACCENT$4};`;
+            battleButton.title =
+                'Opens one fighting member\u2019s Battle Info popup per click, so the game sends their combat ' +
+                'stat sheet. Only on offer while a fight is on screen \u2014 a profile cannot carry a combat sheet.';
+            battleButton.addEventListener('click', () => {
+                const result = capture.openNextUnit?.();
+                status.style.display = '';
+                status.style.color = overlayFormat_js.ROW_COLORS.dim;
+                if (result?.how === 'unit') {
+                    status.textContent = `Waiting for ${result.opened}\u2019s battle info\u2026`;
+                    battleButton.textContent = `Asked for ${result.opened}\u2026`;
+                } else {
+                    status.textContent = 'No fighting member is due right now.';
+                }
+            });
+            card.appendChild(battleButton);
+        } else if (capture.anyBattleUnits?.()) {
+            // A fight is on screen but nobody is due — an absent button reads as
+            // broken, so the freshness that hid it is said out loud instead
+            card.appendChild(
+                simplePanel_js.panelNote(
+                    'Everyone in the fight has a fresh combat sheet — the battle-info button returns when one goes stale.'
+                )
+            );
+        }
+
+        const button = document.createElement('button');
+        button.className = 'mwi-profile-cycler';
+        button.textContent = state.next ? `Open ${state.next.name}\u2019s profile` : 'Every member logged';
+        button.disabled = !state.next;
+        button.style.cssText =
+            'width:100%; margin:4px 0; padding:4px 8px; border-radius:4px; font-size:11px;' +
+            `cursor:${state.next ? 'pointer' : 'default'}; background:transparent;` +
+            `border:1px solid ${state.next ? ACCENT$4 : 'rgba(255,255,255,0.2)'};` +
+            `color:${state.next ? ACCENT$4 : overlayFormat_js.ROW_COLORS.dim};`;
+        button.title =
+            'Opens one member\u2019s profile per click, so the game sends their skill levels and this can keep ' +
+            'them. Nothing is opened automatically.\n' +
+            'A profile carries every skill level, which is what the skilling forecast needs; combat stat sheets ' +
+            'come only from the battle-info button during a fight.';
+
+        button.addEventListener('click', () => {
+            const result = capture.openNextProfile?.();
+            status.style.display = '';
+
+            if (result?.how === 'no-chat') {
+                // The only route to a skilling participant's profile is the chat
+                // command, and a hidden chat swallows it silently — which is how a
+                // roster came to read "every member logged" with one missing
+                status.textContent = 'Open the chat panel first — that is how a profile is asked for.';
+                status.style.color = overlayFormat_js.ROW_COLORS.bad;
+                button.textContent = `Open ${result.opened}’s profile`;
+                return;
+            }
+
+            status.style.color = overlayFormat_js.ROW_COLORS.dim;
+            if (result?.how === 'chat') {
+                status.textContent = `Press Enter in chat to open ${result.opened}.`;
+                button.textContent = `Asked for ${result.opened}…`;
+            } else if (result?.opened) {
+                status.textContent = `Waiting for ${result.opened}’s profile…`;
+                button.textContent = `Asked for ${result.opened}…`;
+            }
+        });
+
+        card.appendChild(button);
+
+        // Redo: a capture goes stale on its own after a week, which is too slow for
+        // a player who has just watched half the guild level up. It only changes who
+        // is considered due — it never asks for a profile itself
+        if (state.logged > 0) {
+            const redo = document.createElement('button');
+            redo.className = 'mwi-profile-redo';
+            redo.textContent = `⟲ Redo all ${state.logged}`;
+            redo.style.cssText =
+                'width:100%; margin:0 0 4px; padding:3px 8px; border-radius:4px; font-size:11px; cursor:pointer;' +
+                `background:transparent; border:1px solid rgba(255,255,255,0.2); color:${overlayFormat_js.ROW_COLORS.dim};`;
+            redo.title =
+                'Marks every capture as due again, so the button above walks the roster once more. Nothing is ' +
+                'thrown away — the levels already stored stand until a fresh profile replaces them.';
+            redo.addEventListener('click', () => {
+                capture.redoAll?.();
+                redo.textContent = 'Every member due again';
+                button.textContent = 'Open the next profile';
+            });
+            card.appendChild(redo);
+        }
+
+        card.appendChild(status);
+        if (state.pending) {
+            card.appendChild(simplePanel_js.panelNote(`Waiting for ${state.pending.name}’s profile to open.`));
+        }
+        if (state.stale) {
+            card.appendChild(simplePanel_js.panelNote(`${state.stale} capture${state.stale === 1 ? '' : 's'} older than a week.`));
+        }
+        return card;
+    }
+
+    /**
+     * Only the snapshots naming somebody on the roster, when a roster is known.
+     *
+     * The storage is guild-keyed now, but a record written before that shipped —
+     * or adopted from the character-only key — can still carry another guild's
+     * people: reported live, "Seen loadouts" listing Cream and ICMeow eighteen
+     * hours after the character left their guild. The roster is the test of who
+     * belongs; with no roster to test against, everything is kept rather than
+     * everything hidden.
+     *
+     * @param {Array<Object>} seen - Snapshots
+     * @param {string[]} memberNames - The current guild's members
+     * @returns {{kept: Array<Object>, hidden: number}} What the panel may show
+     */
+    function filterSeenToRoster(seen, memberNames) {
+        const roster = new Set((memberNames || []).map((name) => String(name || '').toLowerCase()).filter(Boolean));
+        if (!roster.size) return { kept: seen || [], hidden: 0 };
+
+        const kept = (seen || []).filter((player) => roster.has(String(player?.name || '').toLowerCase()));
+        return { kept, hidden: (seen || []).length - kept.length };
+    }
+
+    /**
+     * The stat sheets that have been seen, with the date on every one of them.
+     *
+     * The only place a guild member's build is visible is the unit popup, and it is
+     * gone when the popup closes — so what this shows is a history of glances, not a
+     * roster. Every line therefore leads with when it was taken: a build seen last
+     * month is not what that member is wearing now, and the numbers being correct is
+     * exactly what makes an undated sheet misleading.
+     *
+     * @param {HTMLElement} body - The panel body
+     * @param {Array<Object>} [allSeen] - Snapshots, newest first; the capture's own by default
+     * @param {number} [now] - Clock
+     * @param {string[]} [memberNames] - The current roster, for the guild filter
+     */
+    function drawSeenLoadouts(
+        body,
+        allSeen = guildLoadoutCapture.seen(),
+        now = Date.now(),
+        memberNames = guildXPTracker.getMemberList().map((member) => member?.name || '')
+    ) {
+        const { kept: seen, hidden } = filterSeenToRoster(allSeen, memberNames);
+        const card = simplePanel_js.panelCard(body, `Seen loadouts (${seen.length})`, ACCENT$4);
+
+        if (!seen.length) {
+            card.appendChild(simplePanel_js.panelNote('No stat sheets seen yet.'));
+            card.appendChild(
+                simplePanel_js.panelNote('Click a member’s icon in the guild In Progress view, or fight a trial beside them.')
+            );
+            if (hidden) card.appendChild(simplePanel_js.panelNote(`${hidden} from outside this guild’s roster, not shown.`));
+            return;
+        }
+
+        for (const player of seen) {
+            const headline = player.rows
+                .slice(0, LOADOUT_PREVIEW_ROWS)
+                .map((entry) => `${entry.label} ${entry.value}`)
+                .join(' · ');
+
+            const abilities = player.abilities?.length
+                ? `\nAbilities: ${player.abilities
+                  .map((ability) => `${ability.label}${ability.level ? ` ${ability.level}` : ''}`)
+                  .join(', ')}`
+                : '\nAbilities: not carried by this reading.';
+
+            card.appendChild(
+                simplePanel_js.panelLine(
+                    // A captured combat level is a weighted average and arrives as
+                    // floating point — "Lv.151.60000000000002" reached the screen —
+                    // so one decimal is as much as it means
+                    `${player.name}${player.level ? ` Lv.${Math.round(player.level * 10) / 10}` : ''}`,
+                    describeLoadoutAge(player.at, now),
+                    overlayFormat_js.ROW_COLORS.gold,
+                    `${headline || 'No stat rows in this reading.'}${abilities}\n` +
+                        `A snapshot from when it was read (${player.source}) — not a live figure.`
+                )
+            );
+        }
+
+        if (hidden) {
+            card.appendChild(
+                simplePanel_js.panelNote(
+                    `${hidden} sighting${hidden === 1 ? '' : 's'} from outside this guild’s roster, not shown — ` +
+                        'they stay stored under the guild they were seen in.'
+                )
+            );
+        }
+    }
+
+    const guildRosterPanel = simplePanel_js.createPanel({
+        id: 'guildRoster',
+        title: 'Guild Roster',
+        size: { width: 430, height: 470 },
+        accent: ACCENT$4,
+        draw: (body) => {
+            const snapshot = rosterSnapshot();
+            if (!snapshot?.guildName) {
+                body.appendChild(simplePanel_js.panelNote('No guild data yet.'));
+                body.appendChild(simplePanel_js.panelNote('Open the Guild tab once so the tracker has something to record.'));
+                return;
+            }
+
+            const { guildName, rows, level, guildRate, guildDayRate } = snapshot;
+
+            const guild = simplePanel_js.panelCard(body, guildName, ACCENT$4);
+            if (level) {
+                guild.appendChild(simplePanel_js.panelLine('Level', String(level.level), overlayFormat_js.ROW_COLORS.gold));
+                guild.appendChild(simplePanel_js.panelLine('Guild XP', xp(level.currentXP), overlayFormat_js.ROW_COLORS.dim));
+                if (level.xpToNext !== null) {
+                    guild.appendChild(simplePanel_js.panelLine('To next level', xp(level.xpToNext), overlayFormat_js.ROW_COLORS.dim));
+                }
+            }
+            guild.appendChild(simplePanel_js.panelLine('XP/h (week)', xp(guildRate), overlayFormat_js.ROW_COLORS.dim));
+            guild.appendChild(simplePanel_js.panelLine('XP/h (day)', xp(guildDayRate), overlayFormat_js.ROW_COLORS.dim));
+
+            const rate = Number.isFinite(guildRate) && guildRate > 0 ? guildRate : guildDayRate;
+            const in7d = projectGuildXP(level?.currentXP ?? NaN, rate, 7 * 24);
+            const in30d = projectGuildXP(level?.currentXP ?? NaN, rate, 30 * 24);
+            if (in7d !== null) {
+                guild.appendChild(
+                    simplePanel_js.panelLine(
+                        'Projected in 7d',
+                        xp(in7d),
+                        overlayFormat_js.ROW_COLORS.good,
+                        'Current rate held flat — a projection, not a promise.'
+                    )
+                );
+                guild.appendChild(simplePanel_js.panelLine('Projected in 30d', xp(in30d), overlayFormat_js.ROW_COLORS.good));
+            }
+
+            const quiet = rows.filter((member) => member.quiet);
+            if (quiet.length) {
+                const card = simplePanel_js.panelCard(body, `Gone quiet (${quiet.length})`, overlayFormat_js.ROW_COLORS.bad);
+                for (const member of quiet) {
+                    card.appendChild(
+                        simplePanel_js.panelLine(
+                            memberLabel(member),
+                            `${xp(member.dayRate)}/h today vs ${xp(member.weekRate)}/h this week`,
+                            overlayFormat_js.ROW_COLORS.bad
+                        )
+                    );
+                }
+            }
+
+            drawProfileCycler(body);
+            drawSeenLoadouts(body);
+
+            const contributing = rows.filter((member) => Number.isFinite(member.delta7d) && member.delta7d > 0);
+            const card = simplePanel_js.panelCard(body, `Contribution (${contributing.length} of ${rows.length} measured)`, ACCENT$4);
+            if (!contributing.length) {
+                card.appendChild(simplePanel_js.panelNote('No member has two samples in the last week yet.'));
+            }
+            for (const member of contributing) {
+                card.appendChild(
+                    simplePanel_js.panelLine(
+                        `${memberLabel(member)}${member.quiet ? ' ·' : ''}`,
+                        `${percent(member.share7d)} 7d · ${percent(member.share30d)} 30d · ${xp(member.delta7d)} XP`,
+                        member.quiet ? overlayFormat_js.ROW_COLORS.bad : overlayFormat_js.ROW_COLORS.gold,
+                        `${member.samples} samples recorded.\nShares are of the XP actually observed, not of career totals.`
+                    )
+                );
+            }
+        },
+    });
 
     /**
      * Notification Service
@@ -26570,11 +27256,11 @@ ${starCSS}
      * @param {string} baseTitle - The tooltip the row already had
      * @returns {{value: string, title: string}} Row value and tooltip
      */
-    function tokenPayoutLine(tokens, baseTitle) {
+    function tokenPayoutLine(tokens, baseTitle, { showGold = true } = {}) {
         // Exact, on both halves. This block's arithmetic reproduces the guild's own
         // announcement to the token — "1,320 tokens each" — and printing it as
         // "1.3K" throws away the only thing that makes it worth checking.
-        const gold = describeGuildTokenGold(tokens, 'ask', { exact: true });
+        const gold = showGold ? describeGuildTokenGold(tokens, 'ask', { exact: true }) : null;
         const count = exact(tokens);
         return {
             value: gold ? `${count} (${gold.text})` : count,
@@ -26881,10 +27567,16 @@ ${starCSS}
             return `${tiers}${target}`;
         };
 
-        if (analysis.pace && (!forecast || forecast.tier === null || slowdown)) {
+        // The flat projection is the current rate held for the whole hour. Once a
+        // slowdown has been measured, that flat number is a fiction the panel used to
+        // print in green beside the real one — "21 tiers → T21" next to "~T11" — and a
+        // reader cannot tell it is the one to ignore. So it is shown only when there is
+        // no measured slowdown to replace it; when there is, the Expected row stands
+        // alone and the flat walk lives on in its tooltip.
+        if (analysis.pace && !slowdown && (!forecast || forecast.tier === null)) {
             rows.push(
                 line$1(
-                    slowdown ? 'On pace (flat)' : 'On pace for',
+                    'On pace for',
                     paceCaption(),
                     analysis.pace.limitedBy === 'ladder' ? GOOD : WARN,
                     'The rate measured now, held flat for the rest of the hour. A tier only counts when it fits ' +
@@ -26892,8 +27584,7 @@ ${starCSS}
                         (analysis.pace.limitedBy === 'unknown-next-tier'
                             ? '\nThe ladder past that tier is not known yet, so the walk stopped there — “at ' +
                               'least”, because the real pace may be higher.'
-                            : '') +
-                        (slowdown ? '\nThis one ignores the slowdown below, which is why it is the higher of the two.' : '')
+                            : '')
                 )
             );
         }
@@ -26907,7 +27598,7 @@ ${starCSS}
             const cleared = forecast.tiersCleared;
             rows.push(
                 line$1(
-                    slowdown ? 'Expected (slowing)' : 'On pace for',
+                    slowdown ? 'Expected' : 'On pace for',
                     slowdown
                         ? `~T${cleared}${margin}`
                         : `${cleared} tier${cleared === 1 ? '' : 's'}${cleared ? ` → T${cleared}` : ''}${margin}`,
@@ -26920,7 +27611,8 @@ ${starCSS}
                                     slowdown.perTier * 100
                                 ).toFixed(1)} points a tier to its 5% floor, as measured across ` +
                                     `${slowdown.observations} tiers. Past that point a tier is slow rather than ` +
-                                    'impossible.'
+                                    `impossible.\nThe same rate held flat, ignoring the slowdown, would reach ` +
+                                    `T${analysis.pace.tiersCleared} — which is why that flatter number is not shown as the estimate.`
                                   : '') +
                               (Number.isFinite(forecast.enragedFrom)
                                   ? `\nA fight this long reaches full enrage from T${forecast.enragedFrom}: the boss ` +
@@ -27231,6 +27923,43 @@ ${starCSS}
      * @param {string} [name] - The trial's name, for when the block lands away from its card
      * @returns {string} How it was placed: `spanned`, `after-card`, `after-container`, or `refused`
      */
+    /**
+     * Whether a container is a non-wrapping flex row — one that squashes a block
+     * added to it rather than letting it fall to its own line.
+     * @param {Element} el - The container
+     * @returns {boolean}
+     */
+    function isSquashingRow(el) {
+        if (!el || typeof getComputedStyle !== 'function') return false;
+        const style = getComputedStyle(el);
+        if (!(style?.display || '').includes('flex')) return false;
+        if ((style?.flexWrap || '').includes('wrap')) return false;
+        const direction = style?.flexDirection || 'row';
+        return direction === 'row' || direction === 'row-reverse';
+    }
+
+    /**
+     * Climb out of every nested non-wrapping flex row above an element.
+     *
+     * A block placed as a sibling of a card inside such a row steals the row's width
+     * and squashes the card — the skilling In Progress panel nests two (`battleArea`
+     * holds the roster and a `challengeArea`, both non-wrapping rows), so escaping one
+     * level still lands the block in a row. This returns the highest element whose
+     * parent is still a squashing row, so a block placed against it sits on its own
+     * line in the first column, grid, or block ancestor. The element itself when it is
+     * already in ordinary flow.
+     * @param {Element} root - Nothing is escaped past this
+     * @param {Element} start - Where to climb from
+     * @returns {Element} The element to place a block against
+     */
+    function escapeSquashingRows(root, start) {
+        let anchor = start;
+        while (anchor?.parentElement && anchor.parentElement !== root && isSquashingRow(anchor.parentElement)) {
+            anchor = anchor.parentElement;
+        }
+        return anchor;
+    }
+
     function placeTrialBlock(root, card, block, name = '') {
         // Belt and braces over the anchor filter in `readTrialTiles`. The reported
         // failure drew this whole block inside the boss's stat popup, which is
@@ -27249,7 +27978,11 @@ ${starCSS}
         const display = style?.display || '';
 
         const afterContainer = () => {
-            const outer = container.parentElement;
+            // Escape every nested non-wrapping row, not just this one: the skilling
+            // panel puts the card two rows deep, so landing after the immediate
+            // container still leaves the block in a row squashing the roster and card.
+            const anchor = escapeSquashingRows(root, container);
+            const outer = anchor.parentElement;
             if (!outer || !root.contains(outer)) {
                 card.insertAdjacentElement('afterend', block);
                 return 'after-card';
@@ -27261,7 +27994,7 @@ ${starCSS}
             if (name && !block.querySelector('.mwi-trial-block-heading')) {
                 block.insertAdjacentHTML('afterbegin', trialBlockHeading(name));
             }
-            container.insertAdjacentElement('afterend', block);
+            anchor.insertAdjacentElement('afterend', block);
             return 'after-container';
         };
 
@@ -27318,12 +28051,26 @@ ${starCSS}
      * because the remounted card arrived *after* the block that was placed beside
      * its predecessor.
      *
+     * When the card is nested in a non-wrapping flex row, the placement escapes that
+     * row (see {@link escapeSquashingRows}), so the only correct position is right
+     * after the outermost such row — not beside the card, which would squash it. A
+     * block that lands beside the card on first paint, before the game's flex styles
+     * have computed, must therefore read as displaced so it is re-placed once they
+     * have; treating "beside the card" as anchored is what left the skilling card
+     * squashed to 44px even after the layout settled.
+     *
      * @param {Element} block - The injected block
      * @param {Element} anchor - The card it belongs beside
+     * @param {Element} [root] - The trials root, for the escape test; omitted keeps the plain adjacency check
      * @returns {boolean} True while the placement still holds
      */
-    function blockNearAnchor(block, anchor) {
+    function blockNearAnchor(block, anchor, root = null) {
         if (!anchor?.isConnected) return true; // nothing to re-anchor against
+        if (root) {
+            const escaped = escapeSquashingRows(root, anchor);
+            // Nested in a squashing row: the block belongs after that row, full width
+            if (escaped !== anchor) return escaped.nextElementSibling === block;
+        }
         return (
             anchor.nextElementSibling === block ||
             anchor.parentElement?.nextElementSibling === block ||
@@ -27922,7 +28669,7 @@ ${starCSS}
                         // The card the block belongs beside, for the re-anchoring
                         // check below — the game tears cards down and remounts
                         // them at wave boundaries
-                        anchored: (block) => blockNearAnchor(block, tile.element),
+                        anchored: (block) => blockNearAnchor(block, tile.element, root),
                         // Scoped to this tile's encounter: one measurement must
                         // not dress every combat card
                         html: renderTrialBlock(analysis, participants, breakdownFor(tile.name), {
@@ -28347,6 +29094,11 @@ ${starCSS}
         _renderPayout(root, trials, firstTile = null, payoutBonuses = null) {
             if (!trials.length) return false;
 
+            // The In Progress tab is a glance at a running trial, so the token gold
+            // valuation and the missing-Treasury nag — both about pricing tokens, not
+            // about the run — are held back there and kept for the Trials tab.
+            const inProgress = /inProgress/i.test(root?.className || '');
+
             const bonuses = payoutBonuses || this._payoutBonuses();
             const buildersHallBonus = bonuses.buildersHall.bonus;
             const treasuryBonus = bonuses.treasury.bonus;
@@ -28412,11 +29164,13 @@ ${starCSS}
 
             const eligible = tokenPayoutLine(
                 projected.eligibleTokens,
-                'Half the total base points, paid to every member who joined before the week started.'
+                'Half the total base points, paid to every member who joined before the week started.',
+                { showGold: !inProgress }
             );
             const participant = tokenPayoutLine(
                 projected.participantTokens,
-                'The eligible payout plus a further 50% of it for participating.'
+                'The eligible payout plus a further 50% of it for participating.',
+                { showGold: !inProgress }
             );
 
             const bankedRow = !anyTierKnown
@@ -28511,10 +29265,14 @@ ${starCSS}
                 );
             }
 
-            if (!Number.isFinite(buildersHallBonus) || !Number.isFinite(treasuryBonus)) {
+            // Treasury only prices tokens, and the In Progress tab does not price them,
+            // so its "no Treasury level seen" nag belongs on the Trials tab only.
+            // Builder's Hall moves the Guild Points themselves, so that one stays.
+            const treasuryMissing = !Number.isFinite(treasuryBonus) && !inProgress;
+            if (!Number.isFinite(buildersHallBonus) || treasuryMissing) {
                 const missing = [];
                 if (!Number.isFinite(buildersHallBonus)) missing.push('Builder’s Hall');
-                if (!Number.isFinite(treasuryBonus)) missing.push('Treasury');
+                if (treasuryMissing) missing.push('Treasury');
                 rows.push(
                     `<div style="color:${WARN}; margin-top:4px;">` +
                         `No ${missing.join(' or ')} level seen, so the token figures leave ` +
@@ -28550,7 +29308,7 @@ ${starCSS}
                 anchored: (block) => {
                     const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
                     if (statusRow) return statusRow.nextElementSibling === block;
-                    if (firstTile?.isConnected) return block.nextElementSibling === firstTile;
+                    if (firstTile?.isConnected) return block.nextElementSibling === escapeSquashingRows(root, firstTile);
                     return root.firstElementChild === block;
                 },
                 html: rows.join('') + this._controlsHTML(),
@@ -28559,13 +29317,19 @@ ${starCSS}
                     'border-radius:6px; font-size:12px; line-height:1.7;',
                 place: (block) => {
                     // Under the game's own status row when there is one. Otherwise
-                    // directly above the first card, which is where it belongs and —
-                    // unlike the panel's own top edge — is somewhere the reader is
-                    // already looking when the root is a whole guild panel.
+                    // above the first card — but escaping any non-wrapping row it sits
+                    // in first, so the block takes its own full-width line above the
+                    // roster instead of squeezing in beside the card (the skilling
+                    // panel nests the card two rows deep).
                     const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
-                    if (statusRow) statusRow.insertAdjacentElement('afterend', block);
-                    else if (firstTile?.isConnected) firstTile.insertAdjacentElement('beforebegin', block);
-                    else root.insertAdjacentElement('afterbegin', block);
+                    if (statusRow) {
+                        statusRow.insertAdjacentElement('afterend', block);
+                    } else if (firstTile?.isConnected) {
+                        block.style.width = '100%';
+                        escapeSquashingRows(root, firstTile).insertAdjacentElement('beforebegin', block);
+                    } else {
+                        root.insertAdjacentElement('afterbegin', block);
+                    }
                 },
                 onBuild: (block) => this._bindControls(block),
             });
@@ -28677,6 +29441,12 @@ ${starCSS}
                 ) +
                 button('export', '⤓ Export', ACCENT$3, 'Download everything captured this week as one JSON file.') +
                 button('scoreboard', 'Per-player', ACCENT$3, 'Damage and healing per player, ranked.') +
+                button(
+                    'roster',
+                    'Roster',
+                    ACCENT$3,
+                    'Open the guild roster — each member’s share of the week’s XP and who has gone quiet.'
+                ) +
                 '</div>'
             );
         }
@@ -28709,6 +29479,7 @@ ${starCSS}
                 downloadTrialExport(bundle);
             });
             on('scoreboard', () => guildTrialScoreboard.toggle());
+            on('roster', () => guildRosterPanel.toggle());
         }
 
         /**
@@ -58277,7 +59048,7 @@ ${starCSS}
         return overrides;
     }
 
-    var forkChangelog = "## Unreleased — branch `claude/mcs-ingest`\n\n### Trial Swarm now shows a panel on the In Progress tab (test server)\n\nThe Trials tab already anchored Trial Swarm once its encounter resolved, but the In Progress fight view stayed blank: the game draws it four separately named monster cards (Beetle, Dragonfly, Wasp, Firefly), none of which is a trial name, so the tile scraper found no card to draw on (a single-monster trial like Jellyfish has one \"Trial Jellyfish\" card and never hit this).\n\n- **A stand-in tile is drawn when a composite fight is watched.** If a combat fight is streaming and its encounter has no card of its own, Toolasha now stands a tile in — named from the trial, anchored to the fight's monsters area so the panel sits below the fight — and the watched pool grafts onto it exactly as it does on the Trials tab, filling in the tier, pace and banked count. Single-monster trials are unaffected (they already have a card). Only triggers while a fight of that encounter is actually being watched.\n\n### Per-player scoreboard prefers the game's post-trial stats (test server)\n\nWhen the game's Combat Trial Stats modal has been captured for a trial, the per-player scoreboard now uses it as the authoritative source instead of the streamed estimate — and gains a **Taken** tab. This matters because the live stream only sees the stretch the fight view was open (a mid-fight plugin restart left one measured at ~5% of the trial) and can barely measure damage taken at all (it reads it from health falling per tick, most of it masked by healing).\n\n- **Damage and healing** prefer the modal's whole-trial totals when captured, labelled \"from the game's post-trial stats\" so a real figure is never mistaken for the estimate. They fall back to the stream, then to the build estimate, exactly as before when no modal has been opened.\n- **New Taken tab** shows per-member damage taken — modal-authoritative, with the stream's partial tally as the fallback.\n- Purely additive and test-server-gated in practice: the modal only exists on the test server, so nothing changes on live until the feature ships there.\n\n### Trial Swarm's tier, pace and banked count now show (test server)\n\nTrial Swarm fights four differently named monsters at once — Beetle, Dragonfly, Wasp, Firefly — none of which reduces to the \"swarm\" encounter. So the watched pool from a Swarm fight was filed under no trial, never attached to the Swarm card, and the In Progress tab showed \"needs one tier's total to anchor the ladder\" and \"Banked nothing yet — tier 1 in progress\" for the whole hour. (The per-player DPS still showed, because that comes from the damage stream, which recognises the fight a different way.)\n\n- **The encounter of a monster now resolves through the game's own trial→monster listing** (`guildTrialDetailMap`), so any of Swarm's four monsters names the Swarm encounter. The pool is then tagged `swarm` and attaches to the Swarm card, which anchors its tier and fills in the pace and banked lines. Single-monster trials are unchanged — they still resolve from their own name with no data needed. Read live, never pinned, so it follows the game's roster.\n\n### Capture the post-trial Combat Trial Stats modal (test server)\n\nThe test-server trials rework adds a post-trial \"Combat Trial - Stats\" modal with the game's own per-member Damage, Healing and Damage Taken. Those are authoritative where the live damage stream is not: the stream reads damage taken from health falling per tick and captures only a fraction of the real total, and it splits shared ticks by actor, which under-credits the local player. This is the groundwork for showing the game's figures beside the measured ones.\n\n- **New scraper** reads the modal's active tab (per trial) into per-member totals, expanding the abbreviated figures (\"1213K\" → 1,213,000). It watches the stats table, so switching to another trial's tab captures that trial too. It is header-driven — the combat modal's Damage / Healing / Damage Taken and the skilling modal's Work column are each read by their own header, so neither is mislabelled.\n- **Included in the trial export** (`Toolasha.debug.exportTrialData()`) as `trialStatsModal`, so a captured trial can be checked against the measured attribution.\n- **Test-server only in practice**: the modal does not exist on the live server, so the observer never fires there and nothing changes — it activates on its own when the feature reaches live.\n\n### Partial-tier card figures no longer trigger a false \"tier ladder needs checking\" warning (test server)\n\nOn the test server, a trial that ends part-way into a tier now states its whole-tier points **plus** the partial credit for that last tier — e.g. a 6-tier enhancing trial that ended 37% into tier 7 states 862 pts, not 840. The banked figure was already correct (the card is used as stated), but Toolasha flagged it as \"neither the running total nor the per-tier step… the tier ladder here needs checking,\" because the reconciliation only knew whole-tier totals.\n\n- **Card reconciliation now recognises the partial-tier shape.** A figure sitting just above the whole-tier total by up to half the next tier's step reads as `partial-tier` (the ladder plus a partial tier), not a disagreement — so the false warning is gone. A short note explains the higher figure instead.\n- **Gated to the test server**, like the pace credit: on live the same figure is still reported as a genuine disagreement (no partial rule exists there), so nothing changes on the live server.\n\n### Trial pace credits partial-tier progress (test server only)\n\nThe test-server trial rework grants partial rewards for an unfinished tier when a trial ends — 0.5% of that tier's points per 1% of progress, capped at 50%. The \"Guild Points on pace\" projection now folds that in, so on the test server it matches what the game will actually pay instead of only counting whole tiers.\n\n- **Gated to the test server.** The credit is applied only when the client is on `test.milkywayidle.com` (via the existing `isTestServer()` check). On the live server the projection is byte-for-byte unchanged — no partial credit exists there yet, so live users see no phantom points. When the rule reaches live, this activates on its own with no further change.\n- **Only the pace, not \"banked\".** Partial credit settles when a trial ends, so \"Guild Points banked\" still counts whole completed tiers; the projection is where the leftover tier is counted. A short note appears under the payout on the test server explaining the higher pace figure.\n- The tokens lines (eligible / participant) follow the pace's base points, so they include the partial credit too.\n\n### Undercut alerts stop adding market-API load; rate-limit failures are now visible\n\nThe game rate-limits its `marketplace.json` file — a burst of requests (often several userscripts hitting it at once) trips a temporary CloudFront 403 block. The undercut-alert feature had a configurable \"re-fetch market snapshot every 1–15 minutes\" setting (default 5) that _forced_ a fresh fetch on that timer, which could contribute to that load.\n\n- **Removed the \"re-fetch market snapshot every (minutes)\" setting.** The snapshot refresh is now fixed at the market cache's own 15-minute cadence and uses the cache-respecting fetch, so it never pulls faster than the cache would on its own — it only touches the network when the 15-minute cache has actually expired. Undercut alerts still work; they just no longer add fetches beyond the normal cache. Nothing to reconfigure — the old setting simply disappears.\n- **Rate-limit failures are now called out.** When a market fetch fails with a 403 (or 429), the console explains it's a rate-limit — not a Toolasha bug on its own — and the on-screen network alert says \"Market API rate-limited — using cached prices\" instead of a generic \"outdated data\" message. Toolasha keeps serving cached prices and retries on the normal cadence.\n\n### Marketplace resilience ahead of the test-server market rework\n\nBackward-compatible hardening so the marketplace features survive the upcoming (test-server) Marketplace rework without waiting for it to break on the live server. None of this changes behavior on the current live market — it only adds tolerance for the new formats and turns future selector breakage into a visible health warning.\n\n- **Trillion-value prices parse correctly.** The rework raises the max listing price from 100B to 1T, but the price parsers stopped at the \"B\" suffix, so a \"1.2T\" price would have been read as 1.2. Added \"T\" (1e12) handling to the shared number parser and to the order-book / My-Listings price readers.\n- **The \"\\*\" boundary marker on My Listings no longer breaks price reads.** The rework marks any listing whose original limit price differs from its resting boundary price with a trailing \"\\*\". The expired-listing price parser is `$`-anchored and would have rejected the whole cell; it now strips the marker before parsing.\n- **Marketplace selectors centralized and hardened.** The current-item, order-book, My-Listings, new-listing-buttons and panel selectors were hardcoded with the game's CSS-module hash suffix (e.g. `__3ercC`), which any UI rebuild rehashes. Moved them into the shared selectors file as stable prefix matches, so the market rework doesn't silently sever them.\n- **Marketplace health canaries.** Added the marketplace item grid, current item, order books and new-listing buttons to the startup selector-canary check. Marketplace selectors were previously uncovered, so a market update that renamed them failed silently; now it surfaces in the health report.\n\n### More cross-bundle singleton reads fixed in the packaged build\n\nA triage of the 62 modules the bundle-sharing checker flags found several more stateful singletons read from an empty duplicate outside their owning bundle (same class as the loadout/treasure fixes). Fixed so far — all now read the live copy through the bundle bridge, dev-standalone unaffected:\n\n- **Combat Simulator container values.** The sim bundle's copy of the expected-value calculator was never initialized, so `calculateExpectedValue()` returned null and openable containers (chests/caches) showed no expected value in the Combat Simulator. Now reads the market bundle's live calculator.\n- **Scroll/buff simulation in gathering & production profit.** The actions bundle's copy of the scroll simulator was empty, so the profit displays and quick-input buttons ignored your configured scroll buffs. Now reads the combat bundle's live simulator.\n- **Task Profit \"best alternative /hr\" + alchemy pin protection.** The action-panel sort/pin singleton was read from empty copies outside the actions bundle: the Task Profit \"you could earn X/hr instead\" figure never appeared, and toggling an alchemy pin ran against an empty set — which could overwrite the saved pinned-action list. It's now published to the actions namespace and read through the bridge.\n- **Custom price overrides apply without a reload.** Setting or editing a custom item price in Settings didn't affect any profit/price calculation until the page was reloaded — Settings (ui bundle) wrote to one copy of the override cache while price math (utils bundle) read a separate copy. The module is now a single shared `Toolasha.Utils` global, so writes and reads hit the same cache.\n- **Guild token valuations use the captured Guild Shop rate.** The shrine upgrade advisor and the chat token-value summary read the token-exchange capture from empty copies, so they fell back to the configured token/credit rate instead of the rate scraped from the Guild Shop dialog. Now read the combat bundle's captured rate.\n- **`Toolasha.debug.exportTrialData()` exports real data.** The console export command gathered the guild name and trial damage/session/skilling/member-skill data from empty ui-bundle copies (the trial panels themselves were unaffected). It now gathers from the live combat copies.\n- **Lab Sim room level during a live run.** The Lab Sim panel read the labyrinth clear-rate singleton from an empty sim-bundle copy, so mid-run it used a skip-derived room level and no live recommendation. Now reads the combat bundle's live copy.\n\n### Loadout-driven features (net-worth exclusions, bulk-sell protection, profit label) work again in the packaged build\n\n- **Features that read saved loadout snapshots now work in the multi-bundle build.** Outside the combat bundle each consumer had its own empty copy of the loadout store (only the combat bundle's copy is fed by the `loadouts_updated` websocket), so anything reading loadouts elsewhere saw nothing. Loadouts don't hold items — their gear is already counted as equipped or inventory — so this is not about adding loadout value; it's the features built _on_ loadouts:\n    - **Net-worth loadout _exclusions_ silently did nothing.** If you excluded a loadout, its items were still counted (net worth over-stated), and the exclusion popup listed no loadouts to pick.\n    - **Bulk-sell no longer protected loadout gear** — items saved in a loadout could appear in sell suggestions.\n    - **The profit panel's \"Loadout: …\" label** showed \"Equipped\" instead of the active loadout's name (display only — profit numbers were never affected).\n    - All now read the shared loadout store through the bundle bridge (the pattern the sim adopted in 2.92.0). The dev-standalone build was never affected.\n- **New regression test** (`cross-bundle-globals`) fails the build if any bridge-backed stateful singleton is default-imported across a bundle boundary without also reading it through the bridge — the class of bug behind this, the treasure tracker, and the 2.92.0 combat-sim fix.\n\n### Treasure tracker button in Settings opens the real ledger (packaged build)\n\n- **The \"Treasure\" button in the Settings utility bar now opens the populated chest ledger instead of an empty one**: in the multi-bundle build, Settings direct-imported the treasure tracker and got its own empty copy (never subscribed to `loot_opened`), so that button showed \"nothing opened yet\" while the command-palette button showed the real history — and using the empty panel's reset/import could overwrite the real saved ledger. Settings now reads the shared, websocket-fed tracker through the bundle bridge (the same pattern the command palette and combat-stats calculator already use). The command-palette route and the dev-standalone build were never affected.\n\n### Combat labyrinth clears fixed in the packaged (release) build\n\n- **Combat rooms no longer sim at 0% — and skip-level recommendations no longer go negative — in the multi-bundle build**: the sim bundle carried its own empty copy of the loadout store, so applying a loadout to the combat DTO found nothing, the fight was simmed on a naked character, every combat room read 0% clear, and the Recommend search drove the threshold negative. The adapter now reads the shared, websocket-fed loadout store through the bundle bridge (the pattern the other cross-bundle consumers already use), so the real gear is applied. Skilling rooms and the dev-standalone build were never affected.\n\n### On-demand health report\n\n- **`Toolasha.debug.health()` and a Ctrl+K \"Health report\" command** now open (and copy/console-log) the diagnostic report anytime, instead of only when an error toast appears.\n\n### What's-new popup reads cleanly, with a newcomer overview\n\n- **The update popup now renders the changelog as formatted text** (no raw `##`/`**`/backticks), entries are condensed to one line each, and fresh installs or arrivals from upstream Toolasha get a \"Toolasha — at a glance\" overview above it.\n\n### Labyrinth pathing reveals more of the floor on ties\n\n- **Equal-cost routes now prefer the one that uncovers the most unknown rooms**.\n\n### \"Guild\" is no longer turned into a /profile link\n\n- **The guild-wide broadcast \"Guild has reached level N!\" stays plain text**.\n\n### Selector canary stops false-alarming on alchemy and enhancing panels\n\n- **The \"Skill action panel (name)\" canary no longer cries \"game update?\" on alchemy/enhancing screens**.\n\n### First run: returning users can keep their settings\n\n- **The welcome dialog for returning users now leads with \"Keep my current settings\"**.\n\n### Preset renamed: \"Everything on\" → \"Defaults\"\n\n- **The preset bar's \"Everything on\" button is now \"Defaults\"**.\n\n### Portrait DPS extras are now opt-in\n\n- **The seven Portrait DPS sub-readouts default OFF**.\n\n### Undercut alerts stop missing undercuts you didn't watch happen\n\n- **A configurable market refresh, on while undercut alerts are**.\n\n### The combat profit panel leads with the live rate again\n\n- **The sim's forecast moves out of the headline**.\n\n### The combat sim's Guild Shrine gets per-shrine targets\n\n- **A \"Targets\" grid on the Combat Simulator's Guild Shrine upgrade, matching the Lab Sim's**.\n\n### The trial DPS split says how much of the party it actually covers\n\n- **\"Per player · 3 of 7 · watched\" instead of implying three people did everything**.\n\n### The per-player readout stays on its own tile, its panels stop drifting, and the panel does less work\n\n- **A watched fight's per-player DPS no longer dresses every tile**.\n\n### The startup freeze on an enhanced inventory is gone\n\n- **Pricing a +20 inventory no longer stalls the main thread for a second**.\n\n### Startup traces stop blaming the wrong feature\n\n- **A feature that only parked in `await` is no longer named the slow one**.\n\n### Damage totals stop swapping bodies at tier rollovers\n\n- **Per-player totals are banked by name at every wave boundary**.\n\n### The In Progress tab stops trusting stale answers — and combat trials learn their tier\n\n- **A stated tier is only believed for the pool it was stated with**.\n\n### The pace projection stops dying after one tier\n\n- **\"On pace for 13 tiers → T13\" with twenty-six minutes left is gone**.\n\n### The damage tracker keeps its names, heals honestly, and a fresh character knows the tier cold\n\n- **A refresh no longer forgets who is fighting**.\n\n### The battle-info button finds the real units — and becomes its own tool\n\n- **The profile cycler matches the game's own unit boxes now**.\n\n### The trials panel knows its tier immediately, and the pace projection stops lowballing\n\n- **The In Progress tab now identifies the tier on its own**.\n\n### Release housekeeping\n\n- **GreasyFork's version history will show real release notes**.\n\n### The silent failure modes get their alarms, and two calculators become one\n\n- **The bundle-sharing rule is now executable**.\n\n### Thin markets stop lying in the rankings\n\n- **The liquidity cap the goal planner already obeyed now governs every profit surface**.\n\n### The panels compare, lint, and remember\n\n- **The profit panel quotes the sim on the zone you're in**.\n\n### A ledger for flips, luck for foragers, and spreadsheets for everyone\n\n- **A trading ledger measures what flipping actually earns**.\n\n### The trial record remembers, the sim gets audited, and silence gets alarms\n\n- **Past weeks return to the trials panel and guild report**.\n\n### Live combat learns seven more things, each its own switch\n\n- **Enemy tiles answer the questions a fight actually asks**.\n\n### The portrait meters stop jostling the party\n\n- **Every player's DPS meter is two lines, always**.\n\n### Every player name opens a profile, and the dungeon knows its worth\n\n- **Player names are clickable wherever a dungeon shows them**.\n\n### A canceled battle start is not a run\n\n- **The dungeon tracker no longer records phantom runs from failed ready-checks**.\n\n### Hybrid attribution: thorns and DoT damage go to their owners\n\n- **The damage attribution learned what the party recording proved**.\n\n### Party lint ignores tools, and ability books answer three more questions\n\n- **Tool slots are exempt from the skilling-gear warning**.\n\n### The sim summary reads in the units a player plans in\n\n- **XP/day → XP/hr**.\n\n### Entry keys are consumables, and chests point at their keys\n\n- **The consumables tracker now carries the d";
+    var forkChangelog = "## Unreleased — branch `claude/new-session-s8abcv`\n\n### In Progress payout: leaner, plus a Roster button\n\n- **The token gold valuation is dropped on the In Progress tab.** \"2,100 (≈23,672,727g via credit exchange)\" is now just \"2,100\" there — the In Progress tab is a glance at a running trial, and the gold conversion belongs on the Trials tab, where it still shows in full.\n- **The \"No Treasury level seen\" nag is gone from the In Progress tab.** Treasury only prices tokens, which the In Progress tab no longer does, so the reminder is kept for the Trials tab. Builder's Hall (which moves the Guild Points themselves) is unaffected.\n- **A Roster button** in the payout controls opens Toolasha's guild roster panel — each member's share of the week's XP and who has gone quiet.\n\n### Skilling In Progress panel no longer squashes the game's card off-screen\n\nThe skilling In Progress panel nests the trial card two non-wrapping flex rows deep — a column holds a `battleArea` row (the roster beside a `challengeArea` row) which holds the card. Toolasha's payout and analysis blocks anchor to that card, so they were landing inside the narrow 722px `challengeArea` beside it, squashing the game's own skilling card to 44px and cutting it off. The block placer only escaped one row (into the still-non-wrapping `battleArea`), and the payout block did not escape at all.\n\n- **Injected blocks now climb out of every nested non-wrapping flex row** to the first column/grid/block ancestor, so they take a full-width line above and below the roster+card row instead of stealing its width. The payout block uses the same escape. Grids, wrapping rows and ordinary flow are unchanged, so the Trials tab and combat In Progress placement are untouched.\n\n### Skilling trials: the flat projection is gone once slowing is known, and readings are timestamped\n\n- **The \"On pace (flat)\" tier projection is no longer shown beside the real one.** A skilling trial's success rate falls with every tier, so the flat projection — the current fill rate held for the whole hour — reads far too high (it was printing \"21 tiers → T21 (Lv.300)\" in green next to the honest \"~T11\"). Once a slowdown has been measured, only the **Expected** row is shown; the flat number survives in that row's tooltip, where it explains itself instead of competing with the estimate. With no slowdown measured yet, the single \"On pace for\" row is unchanged.\n- **Skilling readings are now kept as a timestamped series** (`trialSkilling.series` in the export), downsampled to the start, every tier boundary, and once per 15 s otherwise, capped so a long session cannot grow it without bound. This is what lets the tier forecast be replayed at points across a trial and checked against the tier actually banked — the recorder previously kept only the last reading, so there was nothing to test the estimate against.\n\n### Trial scoreboard: damage-taken is labelled honestly, and a runaway split is flagged\n\nTwo clarity fixes to the trial scoreboard, from comparing a real recording against the game's post-trial stats modal.\n\n- **Damage taken is two different quantities, and the panel now says which.** The game's modal reports **pre-mitigation** gross incoming; the live stream can only read **post-mitigation** health actually lost and healed back (and even that is a floor — damage healed on the same tick is invisible). A recording confirmed the stream's damage-taken equals healing-received almost exactly per player, i.e. it measures HP oscillation, not incoming damage. The Taken tab now carries a note spelling out pre- vs post-mitigation on both sources, and the export's `supportCoverage.damageTaken` says the same, so the two are never compared as if they should match.\n- **A measured damage split that exceeds the bosses' health is flagged.** The summed health of every boss seen is a hard ceiling on total party damage (`bossHpCeiling`, exposed as `damageCeiling` on the breakdown). When the live damage tab's per-player total runs past that ceiling, a note warns the split is over-attributing — the usual cause being a fast damage-over-time build collecting shared ticks — and points at the game's post-trial stats as the tiebreak. One-sided: a total under the ceiling is not thereby confirmed.\n\n### Dev builds install over a same-numbered release\n\nThe dev userscript and the published one share a `@name` and a `@version`, so once a release shipped a number (2.93.0), a dev build of that number read as \"already installed\" — Tampermonkey would not replace 2.93.0 with 2.93.0, and a fresh dev file silently kept the old code (a new feature simply never appeared). The standalone dev build now appends the build stamp as a fourth version segment (e.g. `2.93.0.20260810213045`), so every dev build sorts newer than the release and newer than the last dev build and a reinstall always takes. A later real release still supersedes it (higher minor), and the published header is untouched.\n\n### Scrolls in the Combat Simulator\n\nThe Combat Simulator can now carry Labyrinth combat scrolls, so a sim reflects the buffs you actually run and the Upgrade advisor can say which scroll is worth carrying. All seven combat scrolls are offered: **Damage** (+8%), **Attack Speed** (+15%), **Cast Speed** (+15%), **Critical Rate** (+10%), **Combat Drop** (+15%), **Wisdom** (+20% combat EXP) and **Rare Find** (+60%). Each is opened for a 30-minute buff effective in normal combat (not the Labyrinth or Guild Trials), and each one moves a combat number the engine reads — damage and attack speed as ratio boosts, the rest as flat.\n\n- **New \"Scrolls\" section on the Configure tab** (combat mode), next to Guild Shrines. It starts checked at the scrolls you currently have active, and each one you tick is folded into the sim.\n- **New \"Scrolls\" mode on the Upgrade tab**, alongside Community. It measures what each scroll is worth: turning on one you are not carrying, or — for one already on — what you would lose by dropping it. Scrolls carry a per-run seal cost the advisor does not price, so like community buffs they land in the \"measured, but not priced\" box and are read on their deltas.\n- **Engine plumbing:** a player's chosen scrolls ride the DTO (`scrollBuffs`) and resolve to combat buffs at the single point every per-player sim passes through, so parties, all-zones runs and upgrade candidates all pick them up. Magnitudes come from a dedicated combat-scroll table with the values off the game's own item tooltips, each mapped to the ratio- or flat-boost slot its buff type uses.\n\n";
 
     var forkOverview = "This is the **Millennium44 fork of Toolasha**. It folds MWI Combat Suite into Toolasha — live DPS tracking, loot and drop tracking, drop-luck analysis, and a full labyrinth simulator — so one script gives you both halves of the game instead of two userscripts.\n\n### Combat & simulators\n\n- Live DPS, hit/crit rate, damage-taken and net-sustain read off your own fights.\n- Loot and drop tracking with drop-luck analysis that judges combat, gathering and production.\n- A combat recorder: record real fights, replay them against the simulator, get a verdict with honest noise bands.\n- A combat simulator whose upgrade picks are costed and ranked on real market and credit costs.\n- Per-character combat stats, sim state and histories — no character reads another's books.\n\n### Market & profit\n\n- One market price API prices almost everything: upgrades, net worth, drop income, guild tokens, every action.\n- Prices capped by the volume the market has actually absorbed, so thin markets stop inflating rankings.\n- Profit lines on the action bar, pinned pages, alchemy rankings and the combat profit panel.\n- Market-history viewer with a live undercut alert that re-checks against a refreshed snapshot.\n- An upgrade advisor that costs and ranks gear and ability candidates against live prices.\n\n### Labyrinth\n\n- A labyrinth simulator with auto-pathing and auto-beaconing planned from the actual run.\n- Multi-target analysis with combined armour swaps and supply-aware torch/shroud/beacon planning.\n- Skilling-sim candidates scoped to the skill you are simming, with the skip level set for you.\n- Upgrade, All-Fights and Skilling analyses, each exportable to CSV.\n\n### Guild\n\n- Live trial measurement: per-player DPS and damage/healing attribution from the fight you watch.\n- Tier read straight off the boss bar, with pace, ETA and payout maths.\n- A trial report your guild can actually read, with honest coverage caveats.\n\n### Quality of life\n\n- A curated overlay of tiles with bundled presets, activity auto-switching, and tiles that open their panels.\n- A Ctrl+K (Cmd+K) command palette over every panel, overlay row, saved layout and setting.\n- Mobile-friendly panels: viewport clamping, reachable close buttons, finger-sized targets, a floating launcher.\n- Notifications for empty queues, community-buff expiry, and finished labyrinth runs.\n- Task tools: measured tokens/hour, net task income, and reroll handling that takes the free MooPass reroll.\n- Equipment Savings (\"eWatch\"): savings goals for gear and ability levels, fed from the simulators.\n- A goal planner that turns \"get me X gold / level N\" into a ranked plan from your real measured rates.\n\n### Data & sync\n\n- Cross-device sync of your whole database through one private GitHub gist you own.\n- Gzip-compressed, optionally AES-256 encrypted, conflict-aware, guarded against overwriting a year of data.\n- Chunked per-period history that survives months, with honest quota handling and per-character backups.\n- Hundreds of bug fixes and a test suite grown from ~2,300 to over 8,500 tests.\n";
 
