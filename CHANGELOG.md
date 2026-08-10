@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Dev builds install over a same-numbered release
+
+The dev userscript and the published one share a `@name` and a `@version`, so once a release shipped a number (2.93.0), a dev build of that number read as "already installed" — Tampermonkey would not replace 2.93.0 with 2.93.0, and a fresh dev file silently kept the old code (a new feature simply never appeared). The standalone dev build now appends the build stamp as a fourth version segment (e.g. `2.93.0.20260810213045`), so every dev build sorts newer than the release and newer than the last dev build and a reinstall always takes. A later real release still supersedes it (higher minor), and the published header is untouched.
+
 ### Scrolls in the Combat Simulator
 
 The Combat Simulator can now carry Labyrinth combat scrolls, so a sim reflects the buffs you actually run and the Upgrade advisor can say which scroll is worth carrying. All seven combat scrolls are offered: **Damage** (+8%), **Attack Speed** (+15%), **Cast Speed** (+15%), **Critical Rate** (+10%), **Combat Drop** (+15%), **Wisdom** (+20% combat EXP) and **Rare Find** (+60%). Each is opened for a 30-minute buff effective in normal combat (not the Labyrinth or Guild Trials), and each one moves a combat number the engine reads — damage and attack speed as ratio boosts, the rest as flat.
