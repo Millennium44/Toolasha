@@ -408,6 +408,24 @@ const devOutputFile = buildTarget === 'dev-standalone' ? 'dist/Toolasha-dev.user
  */
 const buildStamp = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
 
+/**
+ * The @version the dev bundle installs under.
+ *
+ * The dev script and the published one share a @name and a @version, so once a
+ * release ships its number (say 2.93.0) a dev build of the same number reads as
+ * "already installed" — Tampermonkey will not replace 2.93.0 with 2.93.0, and a
+ * fresh dev file silently keeps the old code. Appending the build stamp as a
+ * fourth version segment (2.93.0.20260810213045) makes every dev build sort
+ * newer than the release and newer than the last dev build, so a reinstall always
+ * takes. A later real release (2.94.0) still supersedes it, comparing higher at
+ * the minor segment. Only the standalone dev file is stamped; the published
+ * header is left exactly as release-please wrote it.
+ */
+const devHeader =
+    buildTarget === 'dev-standalone'
+        ? userscriptHeader.replace(/(@version\s+)(\S+)/, `$1$2.${buildStamp.replace(/\D/g, '').slice(0, 14)}`)
+        : userscriptHeader;
+
 // Development build configuration (single bundle for local testing)
 const devConfig = {
     input: 'src/dev-entrypoint.js',
@@ -415,7 +433,7 @@ const devConfig = {
         file: devOutputFile,
         format: 'iife',
         name: 'Toolasha',
-        banner: userscriptHeader,
+        banner: devHeader,
         outro: `console.log('[Toolasha] dev build ${buildStamp}');`,
     },
     plugins: [
