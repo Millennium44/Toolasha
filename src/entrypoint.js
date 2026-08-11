@@ -1178,13 +1178,6 @@ function registerFeatures() {
             async: false,
         },
         {
-            key: 'taskBulkReroll',
-            name: 'Task Bulk Reroll',
-            category: 'Tasks',
-            module: UI.taskBulkReroll,
-            async: false,
-        },
-        {
             key: 'taskRerollProtection',
             name: 'Task Reroll Protection',
             category: 'Tasks',

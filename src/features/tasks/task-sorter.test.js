@@ -243,6 +243,17 @@ describe('a board the player asked to keep sorted', () => {
         expect(order(list)).toEqual(['Defeat - Slashy', 'Cooking - Stew', 'Milking - Cow']);
     });
 
+    test('a direct Sort press is honoured at once, reroll chooser open and all', () => {
+        // The automatic passes defer while a card is mid-flow, but pressing the
+        // button is the player asking for order right now — force sorts through.
+        restart(false);
+        const { list } = boardMidReroll();
+
+        taskSorter.sortTasks(true);
+
+        expect(order(list)).toEqual(['Milking - Cow', 'Cooking - Stew', 'Defeat - Slashy']);
+    });
+
     test('cleanup takes the subscription with it', () => {
         restart(true);
         const { list, chooser } = boardMidReroll();

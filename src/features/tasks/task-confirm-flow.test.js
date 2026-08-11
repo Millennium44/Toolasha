@@ -24,6 +24,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const settings = vi.hoisted(() => ({ values: {} }));
 const stored = vi.hoisted(() => ({ values: {} }));
+const observer = vi.hoisted(() => ({ callbacks: {} }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -57,11 +58,18 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 // onSocketEvent is reached through the profit display's marketplace import,
-// which the bulk reroller pulls in to read the board's task ratings
+// pulled in transitively to read the board's task ratings
 vi.mock('../../core/websocket.js', () => ({
     default: { on: () => {}, off: () => {}, onSocketEvent: () => {}, offSocketEvent: () => {} },
 }));
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: (name, _classes, cb) => {
+            observer.callbacks[name] = cb;
+            return () => {};
+        },
+    },
+}));
 vi.mock('../../utils/character-key.js', () => ({
     characterKey: (key) => `${key}_7`,
     readScoped: async (_key, _store, fallback) => fallback,
@@ -70,7 +78,6 @@ vi.mock('../../utils/character-key.js', () => ({
 
 const { default: taskRerollProtection } = await import('./task-reroll-protection.js');
 const { default: taskRerollTracker } = await import('./task-reroll-tracker.js');
-const { TaskBulkReroll } = await import('./task-bulk-reroll.js');
 const { stopConfirmSettleWatch } = await import('./task-card-state.js');
 
 const MILKING = '/actions/milking/cow';
@@ -406,68 +413,59 @@ describe('a card mid-flow is left alone', () => {
         expect(card.querySelector('.mwi-reroll-cost-display')).not.toBe(null);
     });
 
-    test('the cap highlight is painted when the chooser closes, not left on the old task', async () => {
+    test('the cap edge shows while the chooser is still open', async () => {
+        // A card mid-flow (its reroll chooser open) whose task has spent its
+        // rerolls to the cap gets the orange edge now, not only once Back is
+        // pressed — the edge is an inset shadow that cannot disturb the click the
+        // player is in the middle of.
         vi.useFakeTimers();
         const card = await guardedCard(['Back', 'Pay 320K', 'MooPass Free Reroll (2)']);
-        expect(card.style.boxShadow).toBe('');
 
-        closeChooser(card);
-        reactTreeOver(card, { actionHrid: MILKING, coinRerollCount: 5, cowbellRerollCount: 5 });
-        vi.advanceTimersByTime(300);
-
-        // Orange: this card has spent its coin rerolls up to the configured cap
         expect(card.style.boxShadow).toContain('251, 146, 60');
     });
 
-    test('a bulk reroll that lands on a protected task still paints its green edge', async () => {
-        // The report: the outline is missing, and only after a bulk reroll.
-        // Rerolling by hand ends with the player pressing Back, which settles
-        // the board and lets every pass run again. The bulk reroller pressed
-        // nothing — it left the chooser it had opened standing on the card it
-        // had just rerolled — so that card stayed mid-flow, every pass went on
-        // declining to touch it, and the protected task it had landed on kept
-        // no highlight at all
+    test('the protected edge shows the instant a reroll lands, before the chooser is closed', async () => {
+        // The request: the green edge should move to the task the reroll landed
+        // on right away rather than waiting for the menu to be closed. The card
+        // is mid-flow here and the task on it is one the player asked to keep, so
+        // its edge is already green.
         vi.useFakeTimers();
         const card = await protectedCard(['Back', '10,000', 'MooPass Free Reroll']);
-        expect(card.style.boxShadow).toBe('');
 
-        buttonNamed(card, 'Back').addEventListener('click', () => {
-            closeChooser(card);
-            reactTreeOver(card, { actionHrid: MILKING, coinRerollCount: 1, cowbellRerollCount: 0 });
-        });
-
-        const reroller = new TaskBulkReroll();
-        const settling = reroller._settleCard(card);
-        await vi.advanceTimersByTimeAsync(300);
-        await settling;
-        await vi.advanceTimersByTimeAsync(300);
-
-        // Green: the task on this card is one the player asked to keep
         expect(card.style.boxShadow).toContain('76, 175, 80');
     });
 
-    test('and left to itself that board never settles, so the edge never arrives', async () => {
+    test('a card that appears is bordered at once, not a beat after the board opens', async () => {
+        // The report: the protected green edge only turned up a moment after the
+        // Task Board opened. The card-appeared observer now paints the card
+        // synchronously; the 150 ms pass is a fallback. With fake timers never
+        // advanced, the edge must already be there off the observer's own call.
         vi.useFakeTimers();
-        const card = await protectedCard(['Back', '10,000', 'MooPass Free Reroll']);
+        stored.values.taskProtectedHrids_7 = [MILKING];
+        await taskRerollProtection.initialize();
 
-        await vi.advanceTimersByTimeAsync(60 * 1000);
+        const card = cardOnBoard(['Reroll', 'Go', '']);
+        reactTreeOver(card, { actionHrid: MILKING, coinRerollCount: 0, cowbellRerollCount: 0 });
 
-        expect(card.style.boxShadow).toBe('');
+        observer.callbacks.TaskRerollProtection(card);
+
+        expect(card.style.boxShadow).toContain('76, 175, 80');
     });
 
-    test('the protection pass does not repaint a card mid-flow', async () => {
+    test('the outline reset is held back on a card mid-flow', async () => {
+        // The border edge is redrawn mid-flow now, but the legacy outline reset
+        // is not: task-auto-reroll draws its "worth rerolling" outline the same
+        // way, and two features stripping and redrawing it on a card the player
+        // is mid-click on is the flicker this defers. The outline and its badge
+        // survive the pass.
         const card = cardOnBoard(['Back', 'Pay 10K']);
-        // The red border task-auto-reroll draws on a card worth rerolling
         card.style.setProperty('outline', '2px solid rgba(239, 68, 68, 0.7)', 'important');
         const badge = document.createElement('div');
         badge.className = 'mwi-autoreroll-badge';
         card.appendChild(badge);
 
-        // The pass that runs off every card mutation and every quest update
         await taskRerollProtection.initialize();
 
-        // Two features stripping and redrawing the same card's border on every
-        // pass is what the player sees as the card flickering mid-reroll
         expect(card.style.outline).toContain('239, 68, 68');
         expect(card.querySelector('.mwi-autoreroll-badge')).toBe(badge);
     });

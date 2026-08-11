@@ -105,6 +105,47 @@ describe('what the chooser is offering', () => {
         expect(kinds).toEqual(['coin', 'cowbell', 'free']);
     });
 
+    test('the paid options are found even when the free reroll sits in its own container', () => {
+        // The live DOM the player captured: the MooPass free reroll is inside a
+        // RandomTask_rerollOptionsContainer, and the paid coin/cowbell buttons are
+        // a level up beside it in the buttonsContainer. Narrowing the scan to the
+        // rerollOption-named container found only the free button — so once the
+        // free reroll was demoted for going nowhere, there was no paid option to
+        // fall back to and the card was skipped with "No usable reroll option".
+        const card = document.createElement('div');
+        card.className = 'RandomTask_randomTask__1abc';
+
+        const buttonsContainer = document.createElement('div');
+        buttonsContainer.className = 'RandomTask_buttonsContainer__xyz';
+
+        const paid = (label, icon) => {
+            const button = document.createElement('button');
+            button.className = 'Button_button__1Fe9z';
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+            use.setAttribute('href', `/static/media/misc_sprite.svg#${icon}`);
+            svg.appendChild(use);
+            button.appendChild(svg);
+            button.appendChild(document.createTextNode(label));
+            buttonsContainer.appendChild(button);
+        };
+        paid('10,000', 'coin');
+        paid('1', 'cowbell');
+
+        const rerollOptionsContainer = document.createElement('div');
+        rerollOptionsContainer.className = 'RandomTask_rerollOptionsContainer__abc';
+        const free = document.createElement('button');
+        free.className = 'Button_button__1Fe9z Button_fullWidth__17pVU';
+        free.textContent = 'MooPass Free Reroll';
+        rerollOptionsContainer.appendChild(free);
+        buttonsContainer.appendChild(rerollOptionsContainer);
+
+        card.appendChild(buttonsContainer);
+        document.body.appendChild(card);
+
+        expect(findRerollOptions(card).map((option) => option.kind)).toEqual(['coin', 'cowbell', 'free']);
+    });
+
     test('"Pay 10K" is still read the same way, for the builds that word it so', () => {
         const card = chooserCard([{ label: 'Back' }, { label: 'Pay 10K' }, { label: 'Pay 1' }]);
 
