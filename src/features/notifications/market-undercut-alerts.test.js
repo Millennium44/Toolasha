@@ -25,6 +25,8 @@ const game = vi.hoisted(() => ({
     dmHandlers: {},
     priceListeners: [],
     notified: [],
+    // `itemHrid:level` → history rows the mocked Mooket client returns
+    mooketRows: {},
     // How a forced refresh behaves; default just re-notifies subscribers, as the
     // real fetch() does on success. Tests override this to reshape the snapshot.
     fetchImpl: null,
@@ -74,6 +76,12 @@ vi.mock('./notification-service.js', () => ({
         },
     },
 }));
+vi.mock('../market/mooket/market-history-api.js', () => ({
+    default: {
+        fetchHistory: async (itemHrid, enhancementLevel) => game.mooketRows[`${itemHrid}:${enhancementLevel}`] ?? null,
+        currentSource: () => ({ key: 'mooket2', hasVolume: true }),
+    },
+}));
 
 const { default: marketUndercutAlerts, MASTER_SETTING } = await import('./market-undercut-alerts.js');
 
@@ -111,6 +119,7 @@ describe('market undercut alerts', () => {
         game.dmHandlers = {};
         game.priceListeners = [];
         game.notified = [];
+        game.mooketRows = {};
         // A forced refresh, by default, just re-notifies subscribers — the real
         // fetch() calls notifyListeners() on success. Runs synchronously so a
         // faked-timer tick fully re-runs the undercut check before returning.
@@ -330,6 +339,88 @@ describe('market undercut alerts', () => {
         expect(game.dmHandlers.market_listings_updated).toBeUndefined();
         expect(game.priceListeners).toHaveLength(0);
         expect(marketUndercutAlerts.listingStates.size).toBe(0);
+    });
+
+    // The Mooket sighting is the other fresh source: the game snapshot is hourly
+    // and usually too old to prove anything, so a minutes-old pooled sighting is
+    // what lets the alert fire passively for an item the player never opened.
+    describe('Mooket-backed freshness', () => {
+        const POOLED = 'market_pooledHistory';
+
+        /** A single history row the mocked pool returns, `ageMs` old */
+        function mooketSighting(itemHrid, level, ask, bid, ageMs) {
+            game.mooketRows[`${itemHrid}:${level}`] = [{ a: ask, b: bid, time: Math.floor((NOW - ageMs) / 1000) }];
+        }
+
+        test('an undercut the snapshot is too stale to prove is caught from a fresh sighting', async () => {
+            game.settings[POOLED] = true;
+            game.listings = [listing()]; // sell at 280K
+            // The only snapshot figure is 20m old — older than the 15m window
+            setPrice('/items/cheese', 0, 274000, 270000, 20 * 60 * 1000);
+            check();
+            expect(game.notified).toHaveLength(0);
+
+            // The pool saw the same undercut three minutes ago
+            mooketSighting('/items/cheese', 0, 274000, 270000, 3 * 60 * 1000);
+            await marketUndercutAlerts.refreshMooketObservations();
+
+            expect(game.notified).toHaveLength(1);
+            expect(game.notified[0].message).toContain('(as of ~3m ago)');
+        });
+
+        test('the pooled-history switch gates the lookups entirely', async () => {
+            game.settings[POOLED] = false;
+            game.listings = [listing()];
+            setPrice('/items/cheese', 0, 274000, 270000, 20 * 60 * 1000);
+            mooketSighting('/items/cheese', 0, 274000, 270000, 1 * 60 * 1000); // fresh, but off-limits
+
+            await marketUndercutAlerts.refreshMooketObservations();
+            check();
+
+            expect(game.notified).toHaveLength(0);
+            expect(marketUndercutAlerts.mooketObservations.size).toBe(0);
+        });
+
+        test('a sighting older than the window is no more evidence than a stale snapshot', async () => {
+            game.settings[POOLED] = true;
+            game.listings = [listing()];
+            // No usable snapshot at all; the only figure is a 20m-old sighting
+            mooketSighting('/items/cheese', 0, 274000, 270000, 20 * 60 * 1000);
+
+            await marketUndercutAlerts.refreshMooketObservations();
+
+            expect(game.notified).toHaveLength(0);
+        });
+
+        test('the fresher source wins and dates the message, even with both present', async () => {
+            game.settings[POOLED] = true;
+            game.listings = [listing()];
+            // A snapshot that would itself fire, at 12m...
+            setPrice('/items/cheese', 0, 276000, 270000, 12 * 60 * 1000);
+            // ...and a fresher sighting at 2m with a different undercut price
+            mooketSighting('/items/cheese', 0, 274000, 270000, 2 * 60 * 1000);
+
+            await marketUndercutAlerts.refreshMooketObservations();
+
+            expect(game.notified).toHaveLength(1);
+            expect(game.notified[0].message).toContain('ask now 274K');
+            expect(game.notified[0].message).toContain('(as of ~2m ago)');
+        });
+
+        test('a sighting missing the defended side falls back to the snapshot', async () => {
+            game.settings[POOLED] = true;
+            game.listings = [listing({ isSell: false, price: 280000 })]; // buy order, defended by the bid
+            // Snapshot bid outbids the order, 5m old
+            setPrice('/items/cheese', 0, 320000, 300000, 5 * 60 * 1000);
+            // A fresher sighting quotes only an ask — it must not erase the usable bid
+            mooketSighting('/items/cheese', 0, 320000, -1, 1 * 60 * 1000);
+
+            await marketUndercutAlerts.refreshMooketObservations();
+
+            expect(game.notified).toHaveLength(1);
+            expect(game.notified[0].message).toContain('bid now 300K');
+            expect(game.notified[0].message).toContain('(as of ~5m ago)');
+        });
     });
 
     // The snapshot refresh is the whole point of this feature's newer half:

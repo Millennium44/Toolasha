@@ -7,7 +7,7 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { median, splitVolume, buildHistorySeries, historyLabels } from './market-history-data.js';
+import { median, splitVolume, buildHistorySeries, historyLabels, freshestSighting } from './market-history-data.js';
 
 const row = (over = {}) => ({ time: 1_700_000_000, a: 120, b: 100, p: 110, v: 100, ...over });
 
@@ -110,5 +110,38 @@ describe('historyLabels', () => {
         const series = [{ time: 1_700_000_000 }];
         expect(historyLabels(series, 1)[0]).toMatch(/^\d{2}:\d{2}$/);
         expect(historyLabels(series, 30)[0]).toMatch(/^\d{2}\/\d{2}$/);
+    });
+});
+
+describe('freshestSighting', () => {
+    test('returns null for empty or non-array input', () => {
+        expect(freshestSighting(null)).toBeNull();
+        expect(freshestSighting([])).toBeNull();
+        expect(freshestSighting(undefined)).toBeNull();
+    });
+
+    test('picks the row with the latest time and converts seconds to ms', () => {
+        const rows = [
+            { a: 100, b: 90, p: 95, v: 10, time: 1000 },
+            { a: 110, b: 95, p: 100, v: 12, time: 3000 },
+            { a: 105, b: 92, p: 98, v: 11, time: 2000 },
+        ];
+        expect(freshestSighting(rows)).toEqual({ time: 3000 * 1000, ask: 110, bid: 95 });
+    });
+
+    test('treats a non-positive side as no order (null), not a price of zero', () => {
+        expect(freshestSighting([{ a: -1, b: 0, p: 0, v: 0, time: 5000 }])).toEqual({
+            time: 5000 * 1000,
+            ask: null,
+            bid: null,
+        });
+    });
+
+    test('skips rows whose time is unreadable', () => {
+        const rows = [
+            { a: 100, b: 90, time: 'not-a-date' },
+            { a: 120, b: 110, time: 4000 },
+        ];
+        expect(freshestSighting(rows)).toEqual({ time: 4000 * 1000, ask: 120, bid: 110 });
     });
 });

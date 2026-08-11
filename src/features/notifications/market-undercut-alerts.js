@@ -10,12 +10,19 @@
  * Your side is the game's own `myMarketListings`, kept current by the data
  * manager on every `market_listings_updated`; only listings the server calls
  * active are compared, because a filled or cancelled listing has no price to
- * defend. The market's side is the marketplace API cache — the API snapshot
- * patched by any order book you have opened since — which is honest about one
- * thing this feature must be honest about too: it can be up to fifteen minutes
- * old. So every message carries the age of the figure it used, a figure older
- * than the cache's own validity window proves nothing and fires nothing, and an
- * item with no cached price at all is unknown rather than undercut.
+ * defend. The market's side is the freshest of two figures: the marketplace API
+ * cache — the API snapshot patched by any order book you have opened since — and,
+ * when the price history panel is on, the newest sighting of the item in the
+ * pooled Mooket dataset. That second source is what makes the alert work
+ * passively: the game's `marketplace.json` refreshes only about once an hour, so
+ * for an item you have not opened its snapshot is usually older than the fifteen
+ * minutes a figure is allowed to be and still count — the undercut is real but
+ * unprovable, and the alert stays silent. A Mooket sighting is typically minutes
+ * old, so it clears that bar.
+ *
+ * Every message carries the true age of whichever figure it used, a figure older
+ * than the fifteen-minute window proves nothing and fires nothing, and an item
+ * neither source can price is unknown rather than undercut.
  *
  * ## Repeats
  *
@@ -31,6 +38,8 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
+import marketHistoryAPI from '../market/mooket/market-history-api.js';
+import { freshestSighting } from '../market/mooket/market-history-data.js';
 import notificationService from './notification-service.js';
 import { listingBeaten } from './notification-predicates.js';
 import { formatKMB3Digits, formatRelativeTime } from '../../utils/formatters.js';
@@ -39,19 +48,46 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 /** Master switch; nothing below it is consulted while this is off */
 export const MASTER_SETTING = 'notifications_marketListingUndercut';
 
+/** Reading the pooled dataset is what authorises the fresher Mooket lookups */
+const POOLED_HISTORY_SETTING = 'market_pooledHistory';
+
 /** The status HRID the server puts on a listing that is still on the board */
 const ACTIVE_STATUS = '/market_listing_status/active';
+
+/** Kept low so refreshing a long listing list does not burst the third-party server */
+const MOOKET_CONCURRENCY = 4;
+
+/**
+ * Run an async worker over items with a bounded number in flight at once.
+ * @param {Array<any>} items - Work items
+ * @param {number} limit - Maximum concurrent workers
+ * @param {(item: any) => Promise<void>} worker - Per-item work
+ * @returns {Promise<void>}
+ */
+async function runPool(items, limit, worker) {
+    const queue = [...items];
+    const runners = Array.from({ length: Math.min(limit, queue.length) }, async () => {
+        while (queue.length) {
+            await worker(queue.shift());
+        }
+    });
+    await Promise.all(runners);
+}
 
 class MarketUndercutAlerts {
     constructor() {
         /** listingId → {armed, price}; price so an edit is seen as a fresh start */
         this.listingStates = new Map();
+        /** `itemHrid:level` → {ask, bid, timestamp}; the newest Mooket sighting held */
+        this.mooketObservations = new Map();
         this.unregisterHandlers = [];
         this.characterSwitchingHandler = null;
         /** Holds the active-refresh interval so cleanup can clear it */
         this.timers = createTimerRegistry();
         /** True while a forced refresh is in flight, so an overlapping tick is skipped */
         this.refreshInFlight = false;
+        /** True while a Mooket refresh is in flight, so an overlapping tick is skipped */
+        this.mooketRefreshInFlight = false;
     }
 
     /**
@@ -89,6 +125,9 @@ class MarketUndercutAlerts {
         dataManager.on('character_switching', this.characterSwitchingHandler);
 
         this.startActiveRefresh();
+        // Seed the Mooket figures now rather than waiting a whole cache window,
+        // so an item already undercut at login can be caught on the first look
+        this.refreshMooketObservations();
     }
 
     /**
@@ -113,8 +152,69 @@ class MarketUndercutAlerts {
     startActiveRefresh() {
         const intervalId = setInterval(() => {
             this.refreshSnapshot();
+            this.refreshMooketObservations();
         }, marketAPI.CACHE_DURATION);
         this.timers.registerInterval(intervalId);
+    }
+
+    /**
+     * Pull each active listing's newest Mooket sighting into the local cache.
+     *
+     * Only when the price history panel is on — that switch is what authorises
+     * talking to the third-party pool at all. The lookups are the same cache in
+     * front of the same server the history chart uses (a five-minute TTL), so a
+     * fifteen-minute tick mostly reuses what is already held; the point is a price
+     * fresh enough to clear the fifteen-minute evidence bar the game's hourly
+     * snapshot cannot. Skips its own overlapping ticks, and re-runs the check once
+     * with whatever it learned.
+     *
+     * @returns {Promise<void>}
+     */
+    async refreshMooketObservations() {
+        if (!config.getSetting(POOLED_HISTORY_SETTING)) return;
+        if (this.mooketRefreshInFlight) return;
+
+        const items = this.distinctActiveItems();
+        if (!items.length) return;
+
+        this.mooketRefreshInFlight = true;
+        let learned = false;
+        try {
+            await runPool(items, MOOKET_CONCURRENCY, async (item) => {
+                try {
+                    const rows = await marketHistoryAPI.fetchHistory(item.itemHrid, item.enhancementLevel, 1);
+                    const sighting = freshestSighting(rows);
+                    if (!sighting || (sighting.ask === null && sighting.bid === null)) return;
+                    this.mooketObservations.set(`${item.itemHrid}:${item.enhancementLevel}`, {
+                        ask: sighting.ask,
+                        bid: sighting.bid,
+                        timestamp: sighting.time,
+                    });
+                    learned = true;
+                } catch (error) {
+                    console.error('[MarketUndercutAlerts] Mooket lookup failed:', item.itemHrid, error);
+                }
+            });
+        } finally {
+            this.mooketRefreshInFlight = false;
+        }
+
+        if (learned) this.check();
+    }
+
+    /**
+     * The distinct items behind your active listings.
+     * @returns {Array<{itemHrid: string, enhancementLevel: number}>}
+     */
+    distinctActiveItems() {
+        const byKey = new Map();
+        for (const listing of dataManager.getMarketListings()) {
+            if (listing?.status !== ACTIVE_STATUS || !listing.itemHrid) continue;
+            const enhancementLevel = listing.enhancementLevel || 0;
+            const key = `${listing.itemHrid}:${enhancementLevel}`;
+            if (!byKey.has(key)) byKey.set(key, { itemHrid: listing.itemHrid, enhancementLevel });
+        }
+        return [...byKey.values()];
     }
 
     /**
@@ -141,33 +241,51 @@ class MarketUndercutAlerts {
     }
 
     /**
-     * The cached market figure for an item, dated.
+     * The freshest dated figure for the one side of an item that matters, across
+     * both sources.
      *
-     * `getPrice` prefers an order-book patch over the API snapshot when the
-     * patch is fresher, but returns only the prices — so the same choice is
-     * mirrored here to recover the timestamp of whichever source it used. An
-     * observation that cannot be dated is returned as no observation at all:
-     * a figure of unknown age cannot honestly be called evidence.
+     * A sell listing is defended against the best ask, a buy order against the
+     * best bid, so only that side is considered — and a source that does not quote
+     * it (an empty book, a Mooket sighting with no bids) contributes nothing even
+     * when it is the newest. Of the sources that do quote the side, the newest
+     * wins, carrying its own true timestamp so the message's age stays honest.
+     *
+     * The game figure mirrors `getPrice`'s own choice between the API snapshot and
+     * a fresher order-book patch, to recover the right timestamp for it. The
+     * Mooket figure is the last sighting {@link refreshMooketObservations} pulled.
      *
      * @param {string} itemHrid - Item HRID
      * @param {number} enhancementLevel - Enhancement level
-     * @returns {{ask: number|null, bid: number|null, timestamp: number}|null} Prices and when they were true
+     * @param {boolean} isSell - Sell listing (best ask) rather than buy order (best bid)
+     * @returns {{price: number, timestamp: number}|null} The figure and when it was true
      */
-    priceObservation(itemHrid, enhancementLevel) {
+    sideObservation(itemHrid, enhancementLevel, isSell) {
+        const candidates = [];
+
         const price = marketAPI.getPrice(itemHrid, enhancementLevel);
-        if (!price) {
-            return null;
+        if (price) {
+            const patch = marketAPI.pricePatchs?.[`${itemHrid}:${enhancementLevel}`];
+            const usedPatch =
+                !!patch && typeof patch.timestamp === 'number' && patch.timestamp > marketAPI.lastFetchTimestamp;
+            const timestamp = usedPatch ? patch.timestamp : marketAPI.lastFetchTimestamp;
+            const sidePrice = isSell ? price.ask : price.bid;
+            if (Number.isFinite(timestamp) && Number.isFinite(sidePrice)) {
+                candidates.push({ price: sidePrice, timestamp });
+            }
         }
 
-        const patch = marketAPI.pricePatchs?.[`${itemHrid}:${enhancementLevel}`];
-        const usedPatch =
-            !!patch && typeof patch.timestamp === 'number' && patch.timestamp > marketAPI.lastFetchTimestamp;
-        const timestamp = usedPatch ? patch.timestamp : marketAPI.lastFetchTimestamp;
-        if (!Number.isFinite(timestamp)) {
-            return null;
+        const mooket = this.mooketObservations.get(`${itemHrid}:${enhancementLevel}`);
+        if (mooket) {
+            const sidePrice = isSell ? mooket.ask : mooket.bid;
+            if (Number.isFinite(mooket.timestamp) && Number.isFinite(sidePrice)) {
+                candidates.push({ price: sidePrice, timestamp: mooket.timestamp });
+            }
         }
 
-        return { ask: price.ask, bid: price.bid, timestamp };
+        if (!candidates.length) return null;
+        return candidates.reduce((freshest, candidate) =>
+            candidate.timestamp > freshest.timestamp ? candidate : freshest
+        );
     }
 
     /**
@@ -205,8 +323,12 @@ class MarketUndercutAlerts {
             this.listingStates.set(listing.id, state);
         }
 
-        const observation = this.priceObservation(listing.itemHrid, listing.enhancementLevel || 0);
-        const bestPrice = observation ? (listing.isSell ? observation.ask : observation.bid) : null;
+        const observation = this.sideObservation(
+            listing.itemHrid,
+            listing.enhancementLevel || 0,
+            listing.isSell === true
+        );
+        const bestPrice = observation ? observation.price : null;
         const priceAgeMs = observation ? Date.now() - observation.timestamp : null;
 
         const { fire, armed } = listingBeaten({
@@ -263,8 +385,10 @@ class MarketUndercutAlerts {
         this.unregisterHandlers.forEach((unregister) => unregister());
         this.unregisterHandlers = [];
         this.listingStates.clear();
+        this.mooketObservations.clear();
         this.timers.clearAll();
         this.refreshInFlight = false;
+        this.mooketRefreshInFlight = false;
     }
 }
 
