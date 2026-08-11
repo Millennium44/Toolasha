@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Labyrinth: full-ability sim calibration (testing), tooltip clear-time, tidier panel bar
+
+- **Full monster abilities in the combat sim (testing setting).** The labyrinth builds every monster at difficulty tier 0, and the engine drops any ability gated above tier 0 — so a monster like the Cyclops is simulated as a bare auto-attacker with none of its stun, defence shred or self-buffs, and the sim over-predicts your clear chance (the fights then fail in reality as roughly equal deaths and timeouts, worsening as the room level climbs). A new **Labyrinth: Model full monster abilities in combat sim (testing)** setting builds the monster with its full kit instead, keeping tier 0 only for stat scaling. Off by default while it's verified: turn it on, press Recompute, and compare the new clear chances against the Sim accuracy record — combat rooms, especially high-level ones, should read lower and closer to what actually happens. The setting is part of the sim cache key, so toggling it re-sims rather than serving a stale result.
+- **Expected clear time on hover, uncapped.** The room tile badge caps its time at "999+", which hides how long a slow room really takes. The combat and skilling room hover previews now carry an **Est. clear time** line with the real figure (e.g. "18m 15s", "1h 5m"), or "—" for a room that never clears.
+- **Tidier Room Logs top bar.** The header wraps gracefully instead of squashing, button labels no longer break mid-word, and the "Sim accuracy" tab is shortened to "Accuracy" so the tabs and the Uncapped/Recompute/Export/Clear controls fit.
+
 ### Labyrinth: stop counting un-fought rooms as clears, and an uncapped sim option
 
 - **Phantom clears removed from the accuracy record.** A revealed tile can be cleared without a fight — a shroud, a beacon, a floor skip — and the server marks it `isCleared` with `entryCount` still zero. The accuracy fold counted that as a win, booking phantom `1/1` clears at levels far above anything you could actually clear (e.g. a level-231 milking room on a level-116 skill) and dragging the whole record toward "sim too low". A clear now only counts for a room you actually entered — the same guard the best-level tracker already applies. (Tradeoff: a genuine first-try win whose entry update was never separately seen no longer counts, which the best-level tracker already accepted; it removes far more noise than it costs.)

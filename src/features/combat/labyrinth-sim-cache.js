@@ -72,7 +72,22 @@ export const simCacheMethods = {
         // one is deliberately coarse — forty fights can leave ±12 points — and
         // a tile badge reading it would present that as a measurement.
         const mode = decideAgainst === null ? `${this.getSimPrecisionPct()}pp` : `dec${decideAgainst}`;
-        return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}`;
+        // The full-ability toggle changes the fight entirely, so its two states
+        // must not share a cache slot — flipping it re-sims rather than serving a
+        // result computed under the other rule.
+        const abilities = this.labyrinthFullAbilities() ? ':fullabil' : '';
+        return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}${abilities}`;
+    },
+
+    /**
+     * Whether combat sims build the monster with its full ability kit rather
+     * than only the tier-0 subset. Off by default; a testing lever for the
+     * labyrinth calibration fix (a tier-0 monster drops its stun/debuff kit and
+     * the sim over-predicts clears — see Monster).
+     * @returns {boolean}
+     */
+    labyrinthFullAbilities() {
+        return config.getSetting('combatSim_labyrinthFullAbilities') === true;
     },
 
     /**
@@ -339,6 +354,9 @@ export const simCacheMethods = {
                 // as one.
                 communityBuffs: getCommunityBuffs(),
                 labyrinthCombatBuffs,
+                // Testing lever: build the monster with its full ability kit
+                // instead of only the tier-0 subset the labyrinth would drop
+                fullAbilities: this.labyrinthFullAbilities(),
             });
 
             const attempts = simResult.labyAttemptCount || 1;

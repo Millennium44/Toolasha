@@ -507,6 +507,7 @@ export async function runLabyrinthSimulation(params, onProgress) {
         labyrinthCombatBuffs,
         seed,
         isTaskFight,
+        fullAbilities,
     } = params;
 
     // Guild buffs are not folded in here: the worker reads each player DTO's
@@ -537,6 +538,9 @@ export async function runLabyrinthSimulation(params, onProgress) {
             // Replays a fight in progress instead of starting each encounter
             // clean, for a conditional "will I clear from here" estimate
             liveState: liveState || null,
+            // Build the monster with its full ability kit rather than only the
+            // tier-0 subset (see Monster) — the labyrinth calibration fix
+            fullAbilities: fullAbilities === true,
         },
         // Time is the ceiling; precision is what usually ends the run
         precision: precision || null,

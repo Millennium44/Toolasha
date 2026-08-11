@@ -51,7 +51,8 @@ onmessage = function (event) {
                 labyrinthData.monsterHrid,
                 labyrinthData.roomLevel,
                 labyrinthData.crates || [],
-                labyrinthData.liveState || null
+                labyrinthData.liveState || null,
+                labyrinthData.fullAbilities === true
             );
         }
 

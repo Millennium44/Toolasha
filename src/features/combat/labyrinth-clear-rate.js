@@ -3825,6 +3825,10 @@ class LabyrinthClearRate {
         addRow('Double Progress', pct(result.doubleChance));
         addRow('Actions in 2m', `${result.attempts}`);
         addRow('Action Duration', `${result.actionSeconds.toFixed(2)}s`);
+        // The full expected time to clear, uncapped (the tile badge caps at "999+")
+        if (Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0) {
+            addRow('Est. clear time', this.fullClearTime(result.expectedSeconds));
+        }
         if (result.xpPerRoom) {
             addRow('EXP / Room', `${result.xpPerRoom.toFixed(1)}`);
         }
@@ -3898,6 +3902,12 @@ class LabyrinthClearRate {
                 `${(result.clearChance * 100).toFixed(1)}% ±${band}${result.hitTarget ? '' : ' (capped)'}`
             );
             addRow('Fights Simulated', `${result.trials.toLocaleString()}`);
+        }
+
+        // The full expected time to clear, uncapped — the tile badge caps at
+        // "999+", which hides how long a slow room really takes
+        if (Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0) {
+            addRow('Est. clear time', this.fullClearTime(result.expectedSeconds));
         }
 
         // Per entry rather than per clear. A fight earns experience by landing
@@ -4270,6 +4280,23 @@ class LabyrinthClearRate {
         const m = Math.floor(s / 60);
         const rem = s % 60;
         return `~${m}:${rem.toString().padStart(2, '0')}`;
+    }
+
+    /**
+     * Expected time to clear a room, in full — not capped at "999+" or "∞" the
+     * way the tile badge is. The badge has to stay short, but on hover the real
+     * figure is what tells you a room "clears" in twenty minutes, not two.
+     * @param {number} seconds - Expected seconds per clear (losing attempts included)
+     * @returns {string} e.g. "48s", "10m 55s", "1h 5m", or "—" when it never clears
+     */
+    fullClearTime(seconds) {
+        if (!Number.isFinite(seconds) || seconds <= 0) return '—';
+        const s = Math.round(seconds);
+        if (s < 60) return `${s}s`;
+        const m = Math.floor(s / 60);
+        if (m < 60) return `${m}m ${s % 60}s`;
+        const h = Math.floor(m / 60);
+        return `${h}h ${m % 60}m`;
     }
 }
 
