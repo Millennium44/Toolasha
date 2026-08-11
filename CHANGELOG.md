@@ -6,7 +6,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
-### The protected border updates the instant a reroll lands, and shows instantly on open
+### The Sort Tasks button sorts even with a reroll menu open
+
+Pressing Sort Tasks did nothing while any card had its reroll chooser (or discard confirmation) open — the sort held back so it would not re-append the mid-flow card and pull the pending click out from under it. That guard is right for the _automatic_ passes (auto-sort, sort-after-read), but a direct button press is the player asking for order right now, so it is now honoured immediately: the board sorts through, reroll menu and all. The automatic triggers still defer and sort once the board settles.
 
 Two fixes to when the protected/cap edge appears.
 
