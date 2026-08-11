@@ -92,6 +92,31 @@ class WebSocketHook {
      * @param {WebSocket} socket - WebSocket instance
      * @returns {boolean} True if game socket
      */
+    /**
+     * Send a raw message over the live game socket.
+     *
+     * Used to replay an action the game itself would send — chiefly a task
+     * reroll, which cannot be driven from the DOM because the game gates it on a
+     * trusted gesture. Returns false when no game socket has been seen yet or the
+     * socket is not open.
+     *
+     * @param {string|Object} data - A JSON string, or an object to stringify
+     * @returns {boolean} Whether the message was handed to the socket
+     */
+    send(data) {
+        const socket = this.gameSocket;
+        if (!this._rawSend || !socket || socket.readyState !== 1) {
+            return false;
+        }
+        try {
+            this._rawSend(typeof data === 'string' ? data : JSON.stringify(data));
+            return true;
+        } catch (error) {
+            console.error('[WebSocket Hook] Failed to send message:', error);
+            return false;
+        }
+    }
+
     isGameSocket(socket) {
         if (!socket || !socket.url) {
             return false;
@@ -176,6 +201,30 @@ class WebSocketHook {
         }
 
         this.attachedSockets.add(socket);
+
+        // Capture the live game socket and wrap its send, for two reasons:
+        //  - a reroll cannot be driven from the DOM (the game gates the reroll on
+        //    a trusted click that opens the chooser, and a userscript's synthetic
+        //    open leaves it inert), so bulk reroll needs to send the game's own
+        //    reroll message directly over this socket; and
+        //  - TEMP: logging outgoing frames is how the exact reroll message is
+        //    learned so it can be replayed. Remove the WS-OUT log once captured.
+        if (!socket.__toolashaSendWrapped) {
+            socket.__toolashaSendWrapped = true;
+            this.gameSocket = socket;
+            const originalSend = socket.send.bind(socket);
+            this._rawSend = originalSend;
+            socket.send = (data) => {
+                try {
+                    if (typeof data === 'string' && data.length < 2000) {
+                        console.log('[Toolasha WS-OUT]', data);
+                    }
+                } catch {
+                    /* logging must never break the send */
+                }
+                return originalSend(data);
+            };
+        }
 
         const events = ['open', 'close', 'error'];
         for (const eventName of events) {
