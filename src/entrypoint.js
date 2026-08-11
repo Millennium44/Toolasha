@@ -405,10 +405,10 @@ function registerFeatures() {
             async: true,
         },
         {
-            key: 'mooketLivePriceCheck',
-            name: 'Mooket Live Price Check',
+            key: 'myListingsPriceRefresh',
+            name: 'My Listings Mooket Price Refresh',
             category: 'Market',
-            module: Market.mooketLivePriceCheck,
+            module: Market.myListingsPriceRefresh,
             async: false,
         },
         {
