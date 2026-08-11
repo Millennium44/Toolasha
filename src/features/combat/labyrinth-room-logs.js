@@ -1529,12 +1529,16 @@ class LabyrinthRoomLogs {
         }
 
         const save = document.createElement('button');
-        save.textContent = 'Save recording';
+        save.textContent = 'Save comparison';
         save.style.cssText =
             'margin-top:6px; height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); ' +
             'color:#9ec4ff; font-size:10px; cursor:pointer; padding:0 6px;';
-        save.title = 'Download the recorded attempts as a file, so the raw fights can be handed over or kept';
-        save.addEventListener('click', () => labFightRecorder.downloadRecording());
+        save.title =
+            'Download the recorded attempts together with this replay comparison — observed vs sim per rate, ' +
+            'and the verdict — so the whole accuracy check can be handed over or kept';
+        // Embed the comparison beside the raw attempts, so one file is the whole
+        // check rather than only the half a bare recording carries
+        save.addEventListener('click', () => labFightRecorder.downloadRecording({ replay: result }));
         box.appendChild(save);
 
         return box;

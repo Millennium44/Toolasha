@@ -86,6 +86,18 @@ describe('labyrinth fight recorder', () => {
         expect(file.attempts[0].monsterHrid).toBe('/monsters/cyclops');
     });
 
+    test('a replay comparison embeds beside the attempts without clobbering the format', () => {
+        recorder.startRecording();
+        recorder.noteAttempt(attempt());
+        const replay = { groups: [{ monsterHrid: '/monsters/cyclops', diagnosis: 'x' }], recordedAt: 1 };
+        const file = recorder.recordingFile({ replay, format: 'sneaky' });
+        // The fixed identity fields win over anything the caller passed
+        expect(file.format).toBe('toolasha-labyrinth-recording');
+        expect(file.attempts).toHaveLength(1);
+        expect(file.replay.groups).toHaveLength(1);
+        expect(file.replay.groups[0].monsterHrid).toBe('/monsters/cyclops');
+    });
+
     test('the buffer is bounded and says when it overflowed', () => {
         recorder.startRecording();
         for (let i = 0; i < 450; i++) recorder.noteAttempt(attempt());
