@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Custom Tabs: an enhanced item is no longer double-counted in Unorganized
+
+An enhanced item is tracked under both its base and its `+level` key, so an unassigned one was collected through both — inflating the "Unorganized (N)" count and placing the tile twice. A shared, deduped collector (each physical tile once) now backs both the header count and the lightweight visibility pass (ported from upstream Celasha/Toolasha#627).
+
 ### Custom Tabs action buttons heal when the sort-controls row is removed
 
 The +Tab/Export/Import/Expand group is merged into the game's inventory sort-controls row and isn't tracked with the other injected elements, so when the InventorySort feature removed that row the buttons vanished and didn't return. A direct connectivity check now forces a rebuild when they disconnect (ported from upstream Celasha/Toolasha#632).
