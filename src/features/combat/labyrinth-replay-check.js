@@ -231,21 +231,37 @@ function compareMetric(key, label, observed, predicted, samples, fights) {
  * @returns {string}
  */
 function diagnose(dps, taken, clear) {
-    const dpsLow = dps.verdict === 'below';
-    const takenHigh = taken.verdict === 'above';
-    const clearLow = clear.verdict === 'below';
+    // Both damage metrics err in either direction, and each direction is a
+    // different finding. `below` on your damage means the sim credited you more
+    // than you delivered; `below` on the monster's means it credited the monster
+    // more than it dealt — the sim over-modelled the monster, which is why the
+    // observed rate came in under.
+    const yourDamage = dps.verdict === 'below' ? 'over' : dps.verdict === 'above' ? 'under' : null;
+    const monsterDamage = taken.verdict === 'above' ? 'under' : taken.verdict === 'below' ? 'over' : null;
 
-    if (dpsLow && takenHigh) {
+    if (yourDamage === 'over' && monsterDamage === 'under') {
         return 'Sim over-credits your damage and under-models the monster’s — both push the clear chance too high.';
     }
-    if (dpsLow) {
+    if (yourDamage === 'over') {
         return 'Sim over-credits your damage: real fights kill the monster slower, so more of them time out.';
     }
-    if (takenHigh) {
+    if (monsterDamage === 'under') {
         return 'Sim under-models the monster’s damage: you take more than predicted, so more attempts end in death.';
     }
-    if (clearLow) {
+    if (monsterDamage === 'over') {
+        return (
+            'Sim over-models the monster’s damage: it hits softer than predicted, so you survive longer than it ' +
+            'expects — the clear rate can still match if you are outmatched either way.'
+        );
+    }
+    if (yourDamage === 'under') {
+        return 'Sim under-credits your damage: you kill the monster faster than predicted.';
+    }
+    if (clear.verdict === 'below') {
         return 'Clear rate runs below prediction but the damage rates line up — the gap is likely CC uptime or variance, not raw damage.';
+    }
+    if (clear.verdict === 'above') {
+        return 'Clear rate runs above prediction but the damage rates line up — likely CC uptime or variance, not raw damage.';
     }
     if (dps.verdict === 'insufficient' || taken.verdict === 'insufficient') {
         return `Not enough fights yet — record at least ${MIN_LAB_FIGHTS} clean attempts for a rate worth reading.`;
