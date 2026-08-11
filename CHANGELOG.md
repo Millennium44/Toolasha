@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Bulk reroll: the reroll menu is pressed, not just opened
+
+The bulk reroll button opened a task's reroll menu and then never pressed anything — the chooser was pulled up and left sitting there, no reroll happened, and the card's protection and reroll-count indicators froze because a card mid-flow is one every Toolasha pass declines to repaint. The cause: the reroll option is read while the chooser is still drawing, React re-renders the row and swaps the button node, and the deferred `element.click()` landed on the detached original — an event that never reaches React's delegated handler, so the press did nothing.
+
+- **The reroll option is now re-read off the card immediately before it is pressed**, so the click lands on the node actually on screen rather than one React has since replaced. The press also goes out as a bubbling `MouseEvent` (the same real-event path the discard flow already uses), which reaches React's handler whichever node it is. This fixes both reported symptoms at once: the reroll now happens, and the protection/reroll indicators refresh again as soon as the server confirms and the chooser closes.
+
 ### In Progress payout: leaner, plus a Roster button
 
 - **The token gold valuation is dropped on the In Progress tab.** "2,100 (≈23,672,727g via credit exchange)" is now just "2,100" there — the In Progress tab is a glance at a running trial, and the gold conversion belongs on the Trials tab, where it still shows in full.
