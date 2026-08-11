@@ -1,7 +1,7 @@
 /**
  * Toolasha Core Library
  * Core infrastructure and API clients
- * Version: 2.94.0
+ * Version: 2.95.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -3360,17 +3360,6 @@
                     type: 'checkbox',
                     default: true,
                     help: 'Highlights tasks you want to reroll with a red border and reminder badge. Configure per-character via the target icon in the task panel.',
-                },
-                taskBulkReroll: {
-                    id: 'taskBulkReroll',
-                    label: 'Task bulk reroll stepper',
-                    type: 'checkbox',
-                    default: false,
-                    help:
-                        'Adds a stepper button to the task panel header that performs one reroll (or one discard, once a ' +
-                        'task is at its reroll limit) per click, always previewing the next action on its label. It spends ' +
-                        'real rerolls — coins first, then cowbells — and respects reroll protection and your configured ' +
-                        'cost limits. Protected and completed tasks are left alone.',
                 },
             },
         },

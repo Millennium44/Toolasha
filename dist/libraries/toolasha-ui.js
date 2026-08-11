@@ -1,7 +1,7 @@
 /**
  * Toolasha UI Library
  * UI enhancements, tasks, skills, and misc features
- * Version: 2.94.0
+ * Version: 2.95.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -33851,8 +33851,8 @@ ${starCSS}
      * re-render — redraw it.
      *
      * Except that there is no such pass. The game leaves the reroll chooser open
-     * after a reroll (task-bulk-reroll has always had to click Back to get the
-     * trash can again, for exactly that reason), so the card sits mid-flow with the
+     * after a reroll (the player has to click Back to get the trash can again), so
+     * the card sits mid-flow with the
      * *new* task in it for as long as the player keeps rerolling — and every
      * injector's quest-update pass, which runs 250-400 ms after the reroll, skips
      * it. Nothing re-runs when the chooser finally closes either: the injectors are
@@ -39279,117 +39279,31 @@ ${starCSS}
     /**
      * Every reroll option the card is currently offering.
      *
-     * Scoped to the chooser's own container when the build still names it
-     * recognisably, and to the whole card otherwise — a card at rest offers no
-     * options either way, since Go, Reroll and the trash can are all controls.
+     * Read off the whole card, because narrowing to a `*rerollOption*` container
+     * first was the bug behind "the menu opens but nothing rerolls". The live
+     * chooser puts the MooPass free reroll in its own `RandomTask_rerollOptionsContainer`
+     * and leaves the paid coin and cowbell buttons a level up in the
+     * `buttonsContainer` beside it — so scoping to the first `rerollOption`-named
+     * element found exactly one button, the free one, and the moment that free
+     * reroll was unavailable or demoted the reader had no paid option to fall back
+     * to and gave up on the card. The per-button filter below is what does the real
+     * work: a card at rest carries only controls (Go, Reroll, Claim, the icon-only
+     * trash can) and Toolasha's own injected furniture, and every one of those is
+     * rejected, so the whole-card scan offers nothing until a chooser is actually
+     * open.
      *
      * @param {Element|null|undefined} card - A task card
      * @returns {Array<Object>} The options, in the order the card draws them
      */
     function findRerollOptions(card) {
         if (!card || typeof card.querySelectorAll !== 'function') return [];
-        const scope = card.querySelector('[class*="rerollOption" i]') || card;
 
         const options = [];
-        for (const button of scope.querySelectorAll('button')) {
+        for (const button of card.querySelectorAll('button')) {
             const option = readRerollOption(button);
             if (option) options.push(option);
         }
         return options;
-    }
-
-    /**
-     * What the board can currently prove about the free MooPass reroll.
-     *
-     * The free reroll's availability is not in character data anywhere Toolasha can
-     * read it — the one honest source is the chooser itself, which only exists
-     * while a card is mid-flow. So this reports three states rather than two, and
-     * the callers are expected to say "may be free" rather than "free" for the
-     * third.
-     *
-     * @param {ParentNode} [root=document] - Where the board is
-     * @returns {{known: boolean, available: boolean, remaining: number|null}}
-     */
-    function readFreeRerollOffer(root = document) {
-        const unknown = { known: false, available: false, remaining: null };
-        if (!root || typeof root.querySelectorAll !== 'function') return unknown;
-
-        let sawChooser = false;
-        for (const card of root.querySelectorAll('[class*="RandomTask_randomTask"]')) {
-            const options = findRerollOptions(card);
-            if (!options.length) continue;
-            sawChooser = true;
-            const free = options.find((option) => option.kind === 'free' && option.available);
-            if (free) return { known: true, available: true, remaining: free.remaining };
-        }
-
-        // A chooser was open and had no free option in it: the pass is spent, or
-        // there is no pass. Either way the next reroll is paid for.
-        if (sawChooser) return { known: true, available: false, remaining: 0 };
-        return unknown;
-    }
-
-    /**
-     * Does this character have a MooPass?
-     *
-     * Read the same way the combat sim reads it: the pass is what puts buffs in
-     * `mooPassBuffs`, and an empty list is a character without one.
-     *
-     * @returns {boolean}
-     */
-    function hasMooPass() {
-        try {
-            const buffs = dataManager.getMooPassBuffs?.();
-            return Array.isArray(buffs) && buffs.length > 0;
-        } catch (error) {
-            console.error('[TaskRerollOptions] Failed to read MooPass status:', error);
-            return false;
-        }
-    }
-
-    /**
-     * The bulk reroller's button label.
-     *
-     * Kept here, next to the reading of the chooser, because the label is a claim
-     * about what the next click will cost and the chooser is the only thing that
-     * knows. The three cases it has to keep apart:
-     *
-     *  - a free reroll is visibly on offer, so the next click costs nothing;
-     *  - a chooser was open and had no free reroll in it, so it costs coins;
-     *  - no chooser is open, so nothing can be seen. A player with a MooPass gets a
-     *    starred cost rather than a flat one — "10.0K*" and a title that says the
-     *    first one may be free — because promising FREE on a spent pass is worse
-     *    than admitting the script cannot see.
-     *
-     * @param {Object} params - Label inputs
-     * @param {number} params.pendingCount - Cards still needing an action
-     * @param {string} params.mode - 'coin', 'cowbell' or 'delete'
-     * @param {number} params.cost - Cost of the next action in its own units
-     * @param {{known: boolean, available: boolean, remaining: number|null}} [params.free] - What the board shows
-     * @param {boolean} [params.mooPass] - Does the character have a MooPass?
-     * @returns {string} The label
-     */
-    function formatBulkRerollLabel({ pendingCount, mode, cost, free, mooPass }) {
-        if (!pendingCount) return '✓ Tasks settled';
-        if (mode === 'delete') return `🗑 Discard Task (${pendingCount})`;
-
-        const costLabel = mode === 'coin' ? `${formatters_js.formatKMB(cost)}💰` : `${cost}🔔`;
-
-        if (free?.available) {
-            const remaining = free.remaining;
-            if (remaining === null) {
-                // The label carries no count, so all that is known is that this one
-                // is free
-                return pendingCount > 1
-                    ? `🎲 Reroll FREE then ${costLabel} (${pendingCount})`
-                    : `🎲 Reroll FREE (${pendingCount})`;
-            }
-            if (remaining >= pendingCount) return `🎲 Reroll FREE (${pendingCount})`;
-            return `🎲 Reroll (${remaining} free, ${pendingCount - remaining}×${costLabel})`;
-        }
-
-        if (!free?.known && mooPass) return `🎲 Reroll ${costLabel}* (${pendingCount})`;
-        return `🎲 Reroll ${costLabel} (${pendingCount})`;
     }
 
     /**
@@ -39450,8 +39364,14 @@ ${starCSS}
                 (await storage.get(`taskCapCowbellThreshold_${charId}`, 'settings', null)) ??
                 (await storage.get('taskCapCowbellThreshold', 'settings', 32));
 
-            // Watch for task cards appearing
+            // Watch for task cards appearing. Draw at once so the protected border
+            // is there the instant the card is — the observer only ever fires for a
+            // freshly added card node, which carries no border yet, so an immediate
+            // pass can only add one, never flicker an existing one off. The 150 ms
+            // pass stays as a fallback for the rare case the card's React fiber (and
+            // so its quest) is not yet reachable on the first pass.
             const unregister = domObserver.onClass('TaskRerollProtection', 'RandomTask_randomTask', (taskNode) => {
+                this._processTaskCard(taskNode);
                 setTimeout(() => this._processTaskCard(taskNode), 150);
             });
             this.unregisterHandlers.push(unregister);
@@ -39531,14 +39451,15 @@ ${starCSS}
                 this._wireRerollInterception(taskCard);
             }
 
-            // Repainting a card that is showing the reroll chooser or the discard
-            // confirmation changes it under the player's pending click. The chooser
-            // survives the reroll, so the repaint is booked for when it closes —
-            // the highlight otherwise still describes the rerolled-away task.
-            if (isCardInConfirmState(taskCard)) {
-                armConfirmSettleWatch();
-                return;
-            }
+            // A card mid-flow (its reroll chooser or discard confirmation open) still
+            // gets its border redrawn. The edge is an inset box-shadow — it shifts no
+            // layout and cannot disturb the click the player is in the middle of — so
+            // drawing it now is what makes the green move the instant a reroll lands,
+            // rather than waiting for the menu to be closed. The settle watch is still
+            // armed so the one thing that CAN disturb a mid-flow card (the legacy
+            // outline reset, which fights task-auto-reroll) runs only once it settles.
+            const inConfirm = isCardInConfirmState(taskCard);
+            if (inConfirm) armConfirmSettleWatch();
 
             // Get quest data via fiber traversal
             const quest = this._getQuestFromCard(taskCard);
@@ -39573,8 +39494,10 @@ ${starCSS}
             // here so an upgrade does not leave one behind. It is also how
             // task-auto-reroll draws its "worth rerolling" border, so clearing it
             // unconditionally makes the two features fight over the same card every
-            // pass — which the player sees as the card flickering.
-            if (!taskCard.querySelector('.mwi-autoreroll-badge')) {
+            // pass — which the player sees as the card flickering. Kept out of the
+            // mid-flow pass so the two never fight over a card the player is
+            // mid-click on; it runs on the settle pass instead.
+            if (!inConfirm && !taskCard.querySelector('.mwi-autoreroll-badge')) {
                 taskCard.style.removeProperty('outline');
                 taskCard.style.removeProperty('outline-offset');
             }
@@ -40426,7 +40349,8 @@ ${starCSS}
                 this.sortButton.textContent = 'Sort Tasks';
                 this.sortButton.style.marginLeft = '8px';
                 this.sortButton.setAttribute('data-mwi-task-sort', 'true');
-                this.sortButton.addEventListener('click', () => this.sortTasks());
+                // A direct press sorts now, even with a reroll chooser open
+                this.sortButton.addEventListener('click', () => this.sortTasks(true));
                 headerElement.appendChild(this.sortButton);
             }
 
@@ -40607,9 +40531,13 @@ ${starCSS}
         }
 
         /**
-         * Sort all tasks in the task board
+         * Sort all tasks in the task board.
+         *
+         * @param {boolean} [force=false] - Sort even while a card is mid-flow.
+         *   Pressing the Sort Tasks button is a direct instruction to sort now, so it
+         *   is honoured at once; the automatic triggers stay polite and defer.
          */
-        sortTasks() {
+        sortTasks(force = false) {
             const taskList = document.querySelector(selectors_js.GAME.TASK_LIST);
             if (!taskList) {
                 return;
@@ -40624,7 +40552,8 @@ ${starCSS}
             // One of the cards is showing a reroll chooser or a discard
             // confirmation and is waiting on a second click. Re-appending the cards
             // moves that one out of the DOM and back, which is exactly the click
-            // being pulled out from under the player, so the board is left alone.
+            // being pulled out from under the player, so the automatic passes leave
+            // the board alone.
             //
             // What happens next depends on who asked. Auto-sort is a standing
             // instruction that the board be in order, and a reroll is the commonest
@@ -40632,8 +40561,10 @@ ${starCSS}
             // and sorts as soon as no card is mid-flow. Without it, sorting is
             // something the player does, and re-ordering the board some seconds
             // after they closed a chooser is not what they pressed anything for:
-            // the board waits for the button.
-            if (boardHasConfirmingCard(taskList)) {
+            // the board waits for the button. A `force` press of that button is the
+            // player asking for order right now, mid-flow and all, so it does not
+            // defer.
+            if (!force && boardHasConfirmingCard(taskList)) {
                 if (this.unsubscribeSettle) armConfirmSettleWatch();
                 return;
             }
@@ -42988,774 +42919,6 @@ ${starCSS}
     }
 
     const taskClaimCollector = new TaskClaimCollector();
-
-    /**
-     * Task Bulk Reroller
-     * Adds a stepper button to the task panel header (next to the Claim Reward
-     * collector). The game allows one server action per user click, so each click
-     * performs exactly one action on the first task that needs one:
-     * - a reroll (the MooPass free reroll first, then coins, then cowbells) on a
-     *   non-protected task that hasn't hit the per-character reroll limits from the
-     *   reroll-protection popup, or
-     * - a discard (Back if the reroll view is open → trash can icon → "Confirm
-     *   Discard") once a task is at the limit for both categories.
-     * The button label always previews the next action. Tasks that land on a
-     * protected target, tasks rating at or above the visible board's median, and
-     * completed tasks (Claim Reward showing) are all left alone.
-     *
-     * Each click also puts the card it touched back to rest afterwards (see
-     * `_settleCard`). The game leaves the reroll chooser standing open, and a card
-     * mid-flow is one every Toolasha pass declines to redraw — so a chooser this
-     * reroller opened and never closed is a card whose highlights, profit rows and
-     * reroll-spend line never come back.
-     *
-     * Limit semantics match cap protection: a category's rerolls are spent while
-     * the next reroll's cost is below the configured threshold, so the minimum
-     * threshold (10K coins / 1 cowbell) means zero rerolls in that category, and a
-     * card is at cap once EITHER category's limit is hit.
-     */
-
-
-    const BTN_ID = 'mwi-bulk-reroll-btn';
-
-    // Coin progression 10K → 320K, cowbell progression 1 → 32 (both hard-capped)
-    const MIN_COIN_COST = 10000;
-    const MAX_COIN_COST = 320000;
-    const MIN_COWBELL_COST = 1;
-    const MAX_COWBELL_COST = 32;
-
-    /**
-     * How long a free reroll stays demoted after going nowhere twice.
-     *
-     * It used to be forever, which is the whole of the bug the third report is
-     * about: a MooPass allowance refills, and a latch that never lifts means the
-     * one session where two replies were missed is a session — and every session
-     * after it, since nothing but disable() cleared it — where the free reroll is
-     * never chosen again. Ten minutes is longer than any server hiccup and shorter
-     * than a day's allowance.
-     */
-    const FREE_REROLL_STALL_MS = 10 * 60 * 1000;
-
-    /** How often the reroller looks again at a chooser it has just opened */
-    const CHOOSER_POLL_MS = 100;
-
-    /** How long it waits for a chooser it opened to draw anything at all */
-    const CHOOSER_WAIT_MS = 1200;
-
-    /**
-     * The extra beat a freshly opened chooser gets to produce its MooPass row.
-     *
-     * This is the difference the player reported between the first click and every
-     * click after it. A chooser that is already open has long since finished
-     * drawing, so the free reroll is sitting there and gets pressed. A chooser this
-     * click has just opened draws its paid options first, and a pass that read the
-     * card one fixed beat later saw coins and cowbells and nothing else — so the
-     * one click where the free reroll's availability was unknown was also the one
-     * click that paid for it.
-     *
-     * The wait is only taken while a free reroll is still plausible (see
-     * `_mayStillOfferFree`), so a character without a MooPass, or one whose pass is
-     * known to be spent, rerolls at the old speed.
-     */
-    const FREE_ROW_GRACE_MS = 400;
-
-    /**
-     * How long a free-reroll offer read off an open chooser is trusted for.
-     *
-     * The chooser is the only honest source, and the reroller closes it when it is
-     * done (so the board settles and every decorator repaints). Remembering what it
-     * last saw is what keeps the button label from falling back to a starred guess
-     * one moment after it had the answer in front of it.
-     */
-    const FREE_OFFER_MEMORY_MS = 60 * 1000;
-
-    /** What the header button explains about itself on hover */
-    const BTN_TITLE =
-        'Each click performs one action on the first task that needs one: reroll a non-protected task (the MooPass free reroll first, then coins, then cowbells) until it lands on a protected task or hits the per-character reroll limits from the 🛡️ popup, then discard it once a limit is hit. Tasks rating at or above the board median, and completed tasks, are never touched.';
-
-    /**
-     * The footnote on a starred cost.
-     *
-     * A free reroll can only be seen while some card's chooser is open, so a board
-     * at rest cannot be priced exactly. Saying so is better than a FREE that turns
-     * out to cost 10K.
-     */
-    const MAYBE_FREE_NOTE =
-        '\n\n* Your MooPass may make the first reroll free — Toolasha can only see the free option once a task’s Reroll menu is open. Clicking anyway opens that menu and takes the free reroll if it is there.';
-
-    /**
-     * Is a card at the reroll cap?
-     *
-     * Same rule cap protection paints its orange edge with: a card is done being
-     * rerolled once EITHER category hits its limit, not once both have. A category
-     * whose threshold allows zero rerolls is trivially at cap from the start, so it
-     * is ignored unless it is the only category configured that way.
-     *
-     * @param {number} nextCoinCost - Coins the next coin reroll would cost
-     * @param {number} nextCowbellCost - Cowbells the next cowbell reroll would cost
-     * @param {{coin: number, cowbell: number}} limits - Configured thresholds
-     * @returns {boolean}
-     */
-    function isAtRerollCap(nextCoinCost, nextCowbellCost, limits) {
-        const coinAtCap = nextCoinCost >= limits.coin;
-        const cowbellAtCap = nextCowbellCost >= limits.cowbell;
-        const coinZero = limits.coin <= MIN_COIN_COST;
-        const cowbellZero = limits.cowbell <= MIN_COWBELL_COST;
-        if (coinZero && !cowbellZero) return cowbellAtCap;
-        if (cowbellZero && !coinZero) return coinAtCap;
-        return coinAtCap || cowbellAtCap;
-    }
-
-    function sleep(ms) {
-        return new Promise((resolve) => setTimeout(resolve, ms));
-    }
-
-    /**
-     * What makes one task different from the task that replaced it.
-     *
-     * A reroll keeps the quest id and changes everything else about it; a free
-     * reroll changes the task without moving either reroll counter, so a check that
-     * watched only the counters would call every free reroll silent.
-     *
-     * @param {Object|null|undefined} quest - A character quest
-     * @returns {string} A comparable signature
-     */
-    function questSignature(quest) {
-        return [
-            quest?.actionHrid || '',
-            quest?.monsterHrid || '',
-            quest?.goalCount ?? '',
-            quest?.coinRerollCount ?? 0,
-            quest?.cowbellRerollCount ?? 0,
-        ].join('|');
-    }
-
-    class TaskBulkReroll {
-        constructor() {
-            this.isInitialized = false;
-            this.unregisterHandlers = [];
-            this.button = null;
-            this.busy = false;
-            this.noDeleteIds = new Set(); // questIds whose trash/discard buttons weren't found
-            this.noRerollIds = new Set(); // questIds whose chooser offered nothing pressable
-            // When free rerolls stop being chosen, and until when. See _actOnCard:
-            // preferring a button that does not act is a loop with no way out of it,
-            // and demoting it forever is a loop that never lets the pass back in.
-            this.freeRerollStalledUntil = 0;
-            this.lastClickWasFree = false;
-            this.silentFreeClicks = 0;
-            // What an open chooser last proved about the free reroll, and when. The
-            // chooser is shut again as soon as the action is done, so without this
-            // the answer is thrown away the instant it is learned.
-            this.lastFreeOffer = null;
-            this.lastFreeOfferAt = 0;
-        }
-
-        /**
-         * Is the free reroll currently demoted?
-         *
-         * An accessor rather than a flag so that setting it books a cooldown: every
-         * assignment site wants "stop choosing free for a while", and none of them
-         * wants "stop choosing free until the page is reloaded".
-         *
-         * @returns {boolean}
-         */
-        get freeRerollStalled() {
-            return Date.now() < this.freeRerollStalledUntil;
-        }
-
-        set freeRerollStalled(value) {
-            this.freeRerollStalledUntil = value ? Date.now() + FREE_REROLL_STALL_MS : 0;
-        }
-
-        initialize() {
-            if (this.isInitialized) return;
-            if (!config.getSetting('taskBulkReroll')) return;
-            this.isInitialized = true;
-
-            const unregisterPanel = domObserver.onClass('TaskBulkReroll', 'TasksPanel_taskSlotCount', (headerElement) => {
-                this._ensureButton(headerElement);
-                this._refreshLabel();
-            });
-            this.unregisterHandlers.push(unregisterPanel);
-
-            // Re-evaluate the next action whenever the server confirms task changes
-            const questHandler = () => {
-                this.noDeleteIds.clear();
-                this.noRerollIds.clear();
-                setTimeout(() => this._refreshLabel(), 400);
-            };
-            webSocketHook.on('quests_updated', questHandler);
-            this.unregisterHandlers.push(() => webSocketHook.off('quests_updated', questHandler));
-        }
-
-        _ensureButton(headerElement) {
-            if (document.getElementById(BTN_ID)) return;
-
-            const btn = document.createElement('button');
-            btn.id = BTN_ID;
-            btn.className = 'Button_button__1Fe9z Button_small__3fqC7';
-            btn.style.cssText = 'margin-left: 8px;';
-            btn.textContent = '🎲 Reroll Next';
-            btn.title = BTN_TITLE;
-            btn.addEventListener('click', () => this._onClick());
-
-            const claimBtn = headerElement.querySelector('#mwi-claim-proxy-btn');
-            const highlightBtn = headerElement.querySelector('[data-mwi-task-highlight]');
-            if (claimBtn) {
-                claimBtn.after(btn);
-            } else if (highlightBtn) {
-                highlightBtn.after(btn);
-            } else {
-                headerElement.appendChild(btn);
-            }
-            this.button = btn;
-        }
-
-        /**
-         * Update the button label to preview the next pending action.
-         *
-         * The price it quotes is MooPass-aware: a free reroll visible in an open
-         * chooser is quoted as FREE, and a board with no chooser open is quoted with
-         * a star rather than a promise.
-         */
-        async _refreshLabel() {
-            if (!this.button || this.busy) return;
-            try {
-                const limits = await this._loadLimits();
-                const protectedHrids = await this._loadProtectedHrids();
-                const pending = this._collectPending(protectedHrids, limits);
-                const next = pending[0] || null;
-                const free = this._readFreeOffer();
-                const mooPass = hasMooPass();
-                this.button.textContent = formatBulkRerollLabel({
-                    pendingCount: next ? pending.length : 0,
-                    mode: next?.mode,
-                    cost: next?.cost,
-                    free,
-                    mooPass,
-                });
-                const starred = this.button.textContent.includes('*');
-                this.button.title = starred ? BTN_TITLE + MAYBE_FREE_NOTE : BTN_TITLE;
-            } catch (error) {
-                console.error('[TaskBulkReroll] Failed to refresh label:', error);
-            }
-        }
-
-        /** One click = one server action on the first pending task */
-        async _onClick() {
-            if (this.busy) return;
-            this.busy = true;
-            if (this.button) this.button.textContent = '…';
-            try {
-                const limits = await this._loadLimits();
-                const protectedHrids = await this._loadProtectedHrids();
-                const next = this._collectPending(protectedHrids, limits)[0];
-                if (next) {
-                    const acted = await this._actOnCard(next.card, next.mode);
-                    if (acted) {
-                        // Wait for the server to confirm before previewing the next
-                        // action. The confirmation has to be this task's, not any
-                        // quests_updated: task progress from whatever the character
-                        // is doing produces those constantly, and counting one as
-                        // proof would make the free reroll's health check meaningless
-                        const confirmed = await this._waitForQuestsUpdate(next.questId, next.signature);
-                        if (this.lastClickWasFree) this._noteFreeRerollResult(confirmed);
-                        await sleep(400);
-                    } else if (next.mode === 'delete') {
-                        // Trash/discard buttons not found — skip this card so the
-                        // next click moves on instead of retrying forever
-                        this.noDeleteIds.add(next.questId);
-                        console.warn('[TaskBulkReroll] Discard buttons not found on task card');
-                    } else {
-                        // The chooser offered nothing this reroller could press. It
-                        // used to return here in silence, which is the click the
-                        // player reported as "nothing happens": the label kept
-                        // quoting a cost for a card that was never going to move.
-                        this.noRerollIds.add(next.questId);
-                        console.warn(
-                            '[TaskBulkReroll] No usable reroll option on this task card; skipping it. Offered:',
-                            findRerollOptions(next.card).map((option) => `${option.text} [${option.kind}]`)
-                        );
-                    }
-                    // However that went, the chooser this click opened is still
-                    // open, and a card mid-flow is a card every Toolasha pass
-                    // refuses to touch
-                    await this._settleCard(next.card);
-                }
-            } catch (error) {
-                console.error('[TaskBulkReroll] Action failed:', error);
-            }
-            this.busy = false;
-            this._refreshLabel();
-        }
-
-        /**
-         * Load reroll limits: per-character cap thresholds shared with the
-         * reroll-protection popup, falling back to the legacy global values.
-         */
-        async _loadLimits() {
-            const charId = dataManager.getCurrentCharacterId() || 'default';
-            const coin =
-                (await storage.get(`taskCapCoinThreshold_${charId}`, 'settings', null)) ??
-                (await storage.get('taskCapCoinThreshold', 'settings', 320000));
-            const cowbell =
-                (await storage.get(`taskCapCowbellThreshold_${charId}`, 'settings', null)) ??
-                (await storage.get('taskCapCowbellThreshold', 'settings', 32));
-            return { coin, cowbell };
-        }
-
-        /** Load the per-character protected task list (same storage as the 🛡️ popup) */
-        async _loadProtectedHrids() {
-            const charId = dataManager.getCurrentCharacterId() || 'default';
-            const saved = await storage.getJSON(`taskProtectedHrids_${charId}`, 'settings', []);
-            return new Set(saved);
-        }
-
-        /**
-         * Collect every card that still needs an action, in task-list order.
-         *
-         * Cards rating at or above the visible board's median are left alone — a
-         * bulk reroll that chews through the good tasks along with the bad is worse
-         * than not running it. Below that, coin rerolls are spent before cowbell
-         * ones, and a card at the cap is discarded.
-         *
-         * @returns {Array<{card: HTMLElement, questId: number, signature: string, mode: string, cost: number}>}
-         */
-        _collectPending(protectedHrids, limits) {
-            const pending = [];
-            const cards = Array.from(document.querySelectorAll('[class*="RandomTask_randomTask"]'));
-            const board = readVisibleTaskRatings(cards);
-
-            for (const card of cards) {
-                // Completed task — claimable, leave it alone
-                if (card.querySelector('button[class*="Button_buy"]')) continue;
-
-                const quest = this._getQuestFromCard(card);
-                if (!quest) continue;
-                const hrid = quest.actionHrid || quest.monsterHrid || '';
-                if (hrid && protectedHrids.has(hrid)) continue;
-
-                // Good task by the board's own numbers — never reroll or discard it
-                const rating = board.entries.get(card);
-                if (board.median !== null && rating && rating.value >= board.median) continue;
-
-                const nextCoinCost = Math.min(MIN_COIN_COST * Math.pow(2, quest.coinRerollCount || 0), MAX_COIN_COST);
-                const nextCowbellCost = Math.min(Math.pow(2, quest.cowbellRerollCount || 0), MAX_COWBELL_COST);
-
-                const signature = questSignature(quest);
-
-                if (isAtRerollCap(nextCoinCost, nextCowbellCost, limits)) {
-                    if (!this.noDeleteIds.has(quest.id)) {
-                        pending.push({ card, questId: quest.id, signature, mode: 'delete', cost: 0 });
-                    }
-                } else if (this.noRerollIds.has(quest.id)) {
-                    continue;
-                } else if (nextCoinCost < limits.coin) {
-                    pending.push({ card, questId: quest.id, signature, mode: 'coin', cost: nextCoinCost });
-                } else {
-                    pending.push({ card, questId: quest.id, signature, mode: 'cowbell', cost: nextCowbellCost });
-                }
-            }
-            return pending;
-        }
-
-        /**
-         * Perform one server action on a card: a coin/cowbell reroll (free reroll
-         * preferred when offered) or a discard. Expanding menus and confirm
-         * dialogs are UI-only clicks — exactly one click reaches the server.
-         * Returns false if the needed button couldn't be found.
-         */
-        async _actOnCard(card, mode) {
-            this.lastClickWasFree = false;
-            if (mode === 'delete') return this._discardCard(card);
-
-            let options = findRerollOptions(card);
-            if (!options.length) {
-                options = await this._openChooser(card);
-            }
-            if (!options.length) return false;
-
-            const usable = options.filter((option) => option.available);
-
-            // The free reroll is preferred while it works, and only while it works.
-            // A MooPass whose rerolls are spent can leave the button on the card
-            // looking exactly as it did — same label, not disabled — and clicking
-            // it reaches no server, so every later click chose it again and the
-            // bulk reroller never moved off that card. The demotion is a cooldown,
-            // not a life sentence: the allowance refills.
-            const freeOption = this.freeRerollStalled ? null : usable.find((option) => option.kind === 'free');
-            if (freeOption) {
-                this.lastClickWasFree = true;
-                freeOption.button.click();
-                return true;
-            }
-
-            const wantKind = mode === 'coin' ? 'coin' : 'cowbell';
-            const target = usable.find((option) => option.kind === wantKind);
-            if (!target) return false;
-            target.button.click();
-            return true;
-        }
-
-        /**
-         * Open a card's reroll chooser and wait for it to finish drawing.
-         *
-         * The waiting is the point. The reroller used to press Reroll, sleep for a
-         * fixed 300 ms and read whatever was there, which is why the click that had
-         * to open the chooser behaved differently from every click that found one
-         * already open: the paid options are drawn first, and a card read a beat too
-         * early offers coins and cowbells and no MooPass row at all. So this polls,
-         * stops the moment a free reroll appears, and — only while a free reroll is
-         * still plausible — gives the row a short grace period to turn up before
-         * settling for a paid option.
-         *
-         * @param {HTMLElement} card - The card to open
-         * @returns {Promise<Array<Object>>} The options on offer, or [] if none appeared
-         * @private
-         */
-        async _openChooser(card) {
-            const expandBtn = Array.from(card.querySelectorAll('button')).find(
-                (b) => b.textContent.trim().toLowerCase() === 'reroll'
-            );
-            if (!expandBtn) return [];
-            expandBtn.click();
-
-            const wantFree = this._mayStillOfferFree();
-            const optionsDeadline = Date.now() + CHOOSER_WAIT_MS;
-            let freeDeadline = null;
-            let options = [];
-
-            for (;;) {
-                await sleep(CHOOSER_POLL_MS);
-                options = findRerollOptions(card);
-
-                if (options.some((option) => option.kind === 'free')) break;
-                if (!options.length) {
-                    if (Date.now() >= optionsDeadline) break;
-                    continue;
-                }
-                if (!wantFree) break;
-
-                // Paid options are drawn; the MooPass row can be a beat behind them
-                if (freeDeadline === null) freeDeadline = Date.now() + FREE_ROW_GRACE_MS;
-                if (Date.now() >= freeDeadline) break;
-            }
-
-            return options;
-        }
-
-        /**
-         * Is it still worth waiting to see whether this reroll could be free?
-         *
-         * Unknown counts as yes — that is the whole of the request behind this: a
-         * player whose label says "10.0K*" is a player Toolasha has not looked for a
-         * free reroll for yet, and the click that opens the chooser is exactly the
-         * moment to look. What it will not do is wait for a row it has already
-         * watched fail to appear, so the answer converges after one reroll.
-         *
-         * @returns {boolean}
-         * @private
-         */
-        _mayStillOfferFree() {
-            if (this.freeRerollStalled) return false;
-            const remembered = this._rememberedFreeOffer();
-            if (remembered) return remembered.available;
-            return hasMooPass();
-        }
-
-        /**
-         * What an open chooser last proved about the free reroll, while it lasts.
-         *
-         * @returns {{known: boolean, available: boolean, remaining: number|null}|null}
-         * @private
-         */
-        _rememberedFreeOffer() {
-            if (!this.lastFreeOffer?.known) return null;
-            if (Date.now() - this.lastFreeOfferAt >= FREE_OFFER_MEMORY_MS) return null;
-            return this.lastFreeOffer;
-        }
-
-        /**
-         * What the button label should say about the free reroll.
-         *
-         * An open chooser anywhere on the board is the honest answer and always
-         * wins. Otherwise the most recent one this reroller saw stands in, so that
-         * closing a chooser does not immediately downgrade "Reroll FREE" back to a
-         * starred guess.
-         *
-         * @returns {{known: boolean, available: boolean, remaining: number|null}}
-         * @private
-         */
-        _readFreeOffer() {
-            const live = readFreeRerollOffer(document);
-            if (live.known) return live;
-            return this._rememberedFreeOffer() || live;
-        }
-
-        /**
-         * Note what an open chooser is currently offering, for the label to reuse.
-         *
-         * @param {ParentNode} [root=document] - Where the board is
-         * @private
-         */
-        _noteFreeOffer(root = document) {
-            const offer = readFreeRerollOffer(root);
-            if (!offer.known) return;
-            this.lastFreeOffer = offer;
-            this.lastFreeOfferAt = Date.now();
-        }
-
-        /**
-         * Put a card back to rest once this reroller is done with it.
-         *
-         * The game leaves the reroll chooser open after a reroll, and every Toolasha
-         * pass refuses to touch a card that is mid-flow — that rule is what stops an
-         * injector rebuilding a card underneath the player's pending click. A player
-         * rerolling by hand presses Back afterwards and the board settles; this
-         * reroller never did, so the card it last acted on stayed mid-flow
-         * indefinitely and its decorations were never drawn. The reported symptom is
-         * the protected task whose green outline is missing after a bulk reroll and
-         * only after a bulk reroll.
-         *
-         * So the chooser this reroller opened is the chooser this reroller closes,
-         * and the settle watch is armed either way — the repaint must not depend on
-         * some other feature's pass having happened to skip a card first.
-         *
-         * @param {HTMLElement} card - The card last acted on
-         * @private
-         */
-        async _settleCard(card) {
-            try {
-                // Read before closing: the chooser is the only place the free
-                // reroll's availability is visible, and it is about to be gone
-                this._noteFreeOffer(document);
-
-                // Back out of the chooser, Cancel out of a discard confirmation
-                // this reroller opened and then could not finish
-                const escapeBtn =
-                    card && typeof card.querySelectorAll === 'function'
-                        ? Array.from(card.querySelectorAll('button')).find((b) =>
-                              /^(back|cancel)$/i.test(b.textContent.trim())
-                          )
-                        : null;
-                if (escapeBtn) {
-                    escapeBtn.click();
-                    await sleep(300);
-                }
-            } catch (error) {
-                console.error('[TaskBulkReroll] Failed to settle the card after acting on it:', error);
-            }
-            // Armed even when nothing was closed: the watch polls until the board
-            // is clear, so arming it is safe whatever state the board is in, and it
-            // is the only thing that makes every decorator run its pass again
-            armConfirmSettleWatch();
-        }
-
-        /**
-         * Record how a free reroll went, and stop choosing it if it goes nowhere.
-         *
-         * Two silent clicks rather than one, because the difference between a
-         * MooPass with nothing left on it and a slow server is exactly one missed
-         * reply — and treating the slow server as an exhausted pass spends coins
-         * the player did not have to spend.
-         *
-         * @param {boolean} confirmed - Did the server confirm the task changed?
-         * @private
-         */
-        _noteFreeRerollResult(confirmed) {
-            if (confirmed) {
-                this.silentFreeClicks = 0;
-                return;
-            }
-            this.silentFreeClicks += 1;
-            if (this.silentFreeClicks >= 2) {
-                this.freeRerollStalled = true;
-                console.warn('[TaskBulkReroll] Free reroll is not reaching the server; paying from here on');
-            }
-        }
-
-        /**
-         * Discard a task at the limit for both categories. The full flow is
-         * Back (when the card is on the reroll options view, which hides the
-         * trash can) → trash can icon → "Confirm Discard". All three clicks run
-         * off the one button press; only the confirmation is the server action.
-         */
-        async _discardCard(card) {
-            // The trash can is an icon-only red (danger) button in the card's
-            // default view, next to Reroll/Go which always carry text
-            const findTrash = () => {
-                const dangerBtn = Array.from(card.querySelectorAll('button[class*="danger" i]')).find(
-                    (b) => !b.textContent.trim()
-                );
-                if (dangerBtn) return dangerBtn;
-                const iconOnlyBtn = Array.from(card.querySelectorAll('button')).find(
-                    (b) => !b.textContent.trim() && b.querySelector('svg')
-                );
-                if (iconOnlyBtn) return iconOnlyBtn;
-                const trashTarget =
-                    card.querySelector('use[href*="trash" i]') || card.querySelector('svg[class*="trash" i]');
-                return trashTarget?.closest('button, [role="button"], svg') || trashTarget || null;
-            };
-            const findConfirm = () =>
-                Array.from(card.querySelectorAll('button')).find((b) => /discard/i.test(b.textContent));
-
-            let trashBtn = findTrash();
-            if (!trashBtn) {
-                // Reroll options view is open (a prior reroll left it expanded) —
-                // click Back to return to the card view with the trash can
-                const backBtn = Array.from(card.querySelectorAll('button')).find(
-                    (b) => b.textContent.trim().toLowerCase() === 'back'
-                );
-                if (backBtn) {
-                    backBtn.click();
-                    await sleep(300);
-                    trashBtn = findTrash();
-                }
-            }
-            if (!trashBtn) return false;
-            trashBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-
-            await sleep(300);
-            let discardBtn = findConfirm();
-            if (!discardBtn) {
-                await sleep(400);
-                discardBtn = findConfirm();
-            }
-            if (!discardBtn) return false;
-            discardBtn.click();
-            return true;
-        }
-
-        /**
-         * Resolve once the server confirms THIS task changed (or time out).
-         *
-         * Any `quests_updated` used to count, and the game sends one every time a
-         * task's progress ticks — so a character that was mid-action confirmed
-         * every click, including the ones that did nothing, and the free reroll's
-         * health check could never notice a click going nowhere. The other way
-         * round matters more: a card whose task is genuinely replaced comes back
-         * with a different action, goal or reroll count, and that is what is
-         * checked for.
-         *
-         * @param {number} [questId] - The task acted on
-         * @param {string} [before] - Its signature before the click
-         * @param {number} [timeoutMs=3500] - How long to wait
-         * @returns {Promise<boolean>} Did this task change?
-         */
-        _waitForQuestsUpdate(questId, before, timeoutMs = 3500) {
-            return new Promise((resolve) => {
-                let settled = false;
-                const finish = (result) => {
-                    if (settled) return;
-                    settled = true;
-                    webSocketHook.off('quests_updated', handler);
-                    clearTimeout(timer);
-                    resolve(result);
-                };
-                const handler = (data) => {
-                    const quests = data?.endCharacterQuests;
-                    // Nothing to compare against — an older payload shape, or no
-                    // task was identified. Any update is taken as confirmation
-                    // rather than reporting a working reroll as silent.
-                    if (!Array.isArray(quests) || questId === undefined || before === undefined) {
-                        finish(true);
-                        return;
-                    }
-                    const updated = quests.find((quest) => quest?.id === questId);
-                    // The task left the board entirely: discarded, or replaced by
-                    // one the server gave a new id
-                    if (!updated) {
-                        finish(true);
-                        return;
-                    }
-                    if (questSignature(updated) !== before) finish(true);
-                };
-                const timer = setTimeout(() => finish(false), timeoutMs);
-                webSocketHook.on('quests_updated', handler);
-            });
-        }
-
-        /**
-         * Extract quest data from a task card via React fiber traversal
-         * (same approach as task reroll protection).
-         */
-        _getQuestFromCard(taskCard) {
-            const rootEl = document.getElementById('root');
-            const rootFiber = rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
-            if (!rootFiber) return null;
-
-            function walk(fiber, target) {
-                if (!fiber) return null;
-                if (fiber.stateNode === target) return fiber;
-                return walk(fiber.child, target) || walk(fiber.sibling, target);
-            }
-
-            function findQuestInFiber(startFiber) {
-                let f = startFiber?.return;
-                while (f) {
-                    if (f.memoizedProps?.characterQuest) {
-                        return f.memoizedProps.characterQuest;
-                    }
-                    f = f.return;
-                }
-                return null;
-            }
-
-            const anchors = [
-                taskCard.querySelector('button.Button_success__6d6kU'),
-                taskCard.querySelector('button'),
-                taskCard.querySelector('[class*="RandomTask_name"]'),
-                taskCard,
-            ];
-
-            for (const anchor of anchors) {
-                if (!anchor) continue;
-                const fiber = walk(rootFiber, anchor);
-                if (fiber) {
-                    const quest = findQuestInFiber(fiber);
-                    if (quest) return quest;
-                }
-            }
-
-            return null;
-        }
-
-        disable() {
-            for (const unregister of this.unregisterHandlers) {
-                unregister();
-            }
-            this.unregisterHandlers = [];
-            if (this.button) {
-                this.button.remove();
-                this.button = null;
-            }
-            this.busy = false;
-            this.noDeleteIds.clear();
-            this.noRerollIds.clear();
-            this.freeRerollStalled = false;
-            this.lastClickWasFree = false;
-            this.silentFreeClicks = 0;
-            this.lastFreeOffer = null;
-            this.lastFreeOfferAt = 0;
-            this.isInitialized = false;
-        }
-    }
-
-    const taskBulkReroll = new TaskBulkReroll();
-
-    var taskBulkReroll$1 = {
-        name: 'Task Bulk Reroller',
-        initialize: () => {
-            taskBulkReroll.initialize();
-        },
-        cleanup: () => {
-            taskBulkReroll.disable();
-        },
-        disable: () => {
-            taskBulkReroll.disable();
-        },
-    };
 
     /**
      * Task Auto-Reroll Reminder
@@ -59048,7 +58211,7 @@ ${starCSS}
         return overrides;
     }
 
-    var forkChangelog = "## Unreleased — branch `claude/new-session-s8abcv`\n\n### In Progress payout: leaner, plus a Roster button\n\n- **The token gold valuation is dropped on the In Progress tab.** \"2,100 (≈23,672,727g via credit exchange)\" is now just \"2,100\" there — the In Progress tab is a glance at a running trial, and the gold conversion belongs on the Trials tab, where it still shows in full.\n- **The \"No Treasury level seen\" nag is gone from the In Progress tab.** Treasury only prices tokens, which the In Progress tab no longer does, so the reminder is kept for the Trials tab. Builder's Hall (which moves the Guild Points themselves) is unaffected.\n- **A Roster button** in the payout controls opens Toolasha's guild roster panel — each member's share of the week's XP and who has gone quiet.\n\n### Skilling In Progress panel no longer squashes the game's card off-screen\n\nThe skilling In Progress panel nests the trial card two non-wrapping flex rows deep — a column holds a `battleArea` row (the roster beside a `challengeArea` row) which holds the card. Toolasha's payout and analysis blocks anchor to that card, so they were landing inside the narrow 722px `challengeArea` beside it, squashing the game's own skilling card to 44px and cutting it off. The block placer only escaped one row (into the still-non-wrapping `battleArea`), and the payout block did not escape at all.\n\n- **Injected blocks now climb out of every nested non-wrapping flex row** to the first column/grid/block ancestor, so they take a full-width line above and below the roster+card row instead of stealing its width. The payout block uses the same escape. Grids, wrapping rows and ordinary flow are unchanged, so the Trials tab and combat In Progress placement are untouched.\n\n### Skilling trials: the flat projection is gone once slowing is known, and readings are timestamped\n\n- **The \"On pace (flat)\" tier projection is no longer shown beside the real one.** A skilling trial's success rate falls with every tier, so the flat projection — the current fill rate held for the whole hour — reads far too high (it was printing \"21 tiers → T21 (Lv.300)\" in green next to the honest \"~T11\"). Once a slowdown has been measured, only the **Expected** row is shown; the flat number survives in that row's tooltip, where it explains itself instead of competing with the estimate. With no slowdown measured yet, the single \"On pace for\" row is unchanged.\n- **Skilling readings are now kept as a timestamped series** (`trialSkilling.series` in the export), downsampled to the start, every tier boundary, and once per 15 s otherwise, capped so a long session cannot grow it without bound. This is what lets the tier forecast be replayed at points across a trial and checked against the tier actually banked — the recorder previously kept only the last reading, so there was nothing to test the estimate against.\n\n### Trial scoreboard: damage-taken is labelled honestly, and a runaway split is flagged\n\nTwo clarity fixes to the trial scoreboard, from comparing a real recording against the game's post-trial stats modal.\n\n- **Damage taken is two different quantities, and the panel now says which.** The game's modal reports **pre-mitigation** gross incoming; the live stream can only read **post-mitigation** health actually lost and healed back (and even that is a floor — damage healed on the same tick is invisible). A recording confirmed the stream's damage-taken equals healing-received almost exactly per player, i.e. it measures HP oscillation, not incoming damage. The Taken tab now carries a note spelling out pre- vs post-mitigation on both sources, and the export's `supportCoverage.damageTaken` says the same, so the two are never compared as if they should match.\n- **A measured damage split that exceeds the bosses' health is flagged.** The summed health of every boss seen is a hard ceiling on total party damage (`bossHpCeiling`, exposed as `damageCeiling` on the breakdown). When the live damage tab's per-player total runs past that ceiling, a note warns the split is over-attributing — the usual cause being a fast damage-over-time build collecting shared ticks — and points at the game's post-trial stats as the tiebreak. One-sided: a total under the ceiling is not thereby confirmed.\n\n### Dev builds install over a same-numbered release\n\nThe dev userscript and the published one share a `@name` and a `@version`, so once a release shipped a number (2.93.0), a dev build of that number read as \"already installed\" — Tampermonkey would not replace 2.93.0 with 2.93.0, and a fresh dev file silently kept the old code (a new feature simply never appeared). The standalone dev build now appends the build stamp as a fourth version segment (e.g. `2.93.0.20260810213045`), so every dev build sorts newer than the release and newer than the last dev build and a reinstall always takes. A later real release still supersedes it (higher minor), and the published header is untouched.\n\n### Scrolls in the Combat Simulator\n\nThe Combat Simulator can now carry Labyrinth combat scrolls, so a sim reflects the buffs you actually run and the Upgrade advisor can say which scroll is worth carrying. All seven combat scrolls are offered: **Damage** (+8%), **Attack Speed** (+15%), **Cast Speed** (+15%), **Critical Rate** (+10%), **Combat Drop** (+15%), **Wisdom** (+20% combat EXP) and **Rare Find** (+60%). Each is opened for a 30-minute buff effective in normal combat (not the Labyrinth or Guild Trials), and each one moves a combat number the engine reads — damage and attack speed as ratio boosts, the rest as flat.\n\n- **New \"Scrolls\" section on the Configure tab** (combat mode), next to Guild Shrines. It starts checked at the scrolls you currently have active, and each one you tick is folded into the sim.\n- **New \"Scrolls\" mode on the Upgrade tab**, alongside Community. It measures what each scroll is worth: turning on one you are not carrying, or — for one already on — what you would lose by dropping it. Scrolls carry a per-run seal cost the advisor does not price, so like community buffs they land in the \"measured, but not priced\" box and are read on their deltas.\n- **Engine plumbing:** a player's chosen scrolls ride the DTO (`scrollBuffs`) and resolve to combat buffs at the single point every per-player sim passes through, so parties, all-zones runs and upgrade candidates all pick them up. Magnitudes come from a dedicated combat-scroll table with the values off the game's own item tooltips, each mapped to the ratio- or flat-boost slot its buff type uses.\n\n";
+    var forkChangelog = "## Unreleased — branch `claude/new-session-s8abcv`\n\n### The Sort Tasks button sorts even with a reroll menu open\n\nPressing Sort Tasks did nothing while any card had its reroll chooser (or discard confirmation) open — the sort held back so it would not re-append the mid-flow card and pull the pending click out from under it. That guard is right for the _automatic_ passes (auto-sort, sort-after-read), but a direct button press is the player asking for order right now, so it is now honoured immediately: the board sorts through, reroll menu and all. The automatic triggers still defer and sort once the board settles.\n\nTwo fixes to when the protected/cap edge appears.\n\n- **It no longer waits for the reroll menu to close.** After a reroll, the card keeps its chooser open, and the border was being withheld from any card mid-flow — so the green edge only moved to the new task once you pressed Back, and in the meantime seemed \"stuck\" (a tab switch, which re-creates the cards, was the only thing that refreshed it). The edge is an inset box-shadow that shifts no layout and cannot disturb the click you are in the middle of, so it is now redrawn on a mid-flow card too — the border tracks the task the reroll landed on right away. Only the one thing that genuinely should not touch a mid-flow card, the legacy outline reset that fights the auto-reroll border, is still held back until the menu closes.\n- **It shows instantly when the board opens.** The card-appeared watcher only drew the border on a delayed 150 ms pass, so protected cards were briefly borderless every time the board rendered. The border is now painted synchronously the moment a card appears, with the 150 ms pass kept as a fallback for the rare case the card's React fiber is not yet reachable. The watcher only fires for a freshly added card node, which carries no border yet, so the immediate pass can only add an edge, never flicker one off.\n\n### The task bulk-reroll button is removed\n\nThe bulk-reroll stepper is gone — feature, header button, and its setting. It could never work reliably: the game gates a task reroll on a **trusted** click that opens the reroll chooser, and a userscript's synthetic open leaves the reroll inert (a hand-opened menu rerolls; a Toolasha-opened one does not — confirmed by an A/B test). No synthetic DOM event can be trusted, so the only way to drive it was to send the game's own reroll message over its WebSocket, which is not a road this fork wants to go down. Rather than ship a button that only works if you open the menu by hand first, it is removed.\n\n- Removed the `taskBulkReroll` feature and its \"Task bulk reroll stepper\" setting, and reverted the WebSocket groundwork (socket capture, `send()`, and the temporary `[Toolasha WS-OUT]` logging) added while investigating it.\n- **Reroll protection and the reroll-cost reader are untouched** — `findRerollOptions` and the 🛡️ cap/per-task protection stay exactly as they were.\n\n### In Progress payout: leaner, plus a Roster button\n\n- **The token gold valuation is dropped on the In Progress tab.** \"2,100 (≈23,672,727g via credit exchange)\" is now just \"2,100\" there — the In Progress tab is a glance at a running trial, and the gold conversion belongs on the Trials tab, where it still shows in full.\n- **The \"No Treasury level seen\" nag is gone from the In Progress tab.** Treasury only prices tokens, which the In Progress tab no longer does, so the reminder is kept for the Trials tab. Builder's Hall (which moves the Guild Points themselves) is unaffected.\n- **A Roster button** in the payout controls opens Toolasha's guild roster panel — each member's share of the week's XP and who has gone quiet.\n\n### Skilling In Progress panel no longer squashes the game's card off-screen\n\nThe skilling In Progress panel nests the trial card two non-wrapping flex rows deep — a column holds a `battleArea` row (the roster beside a `challengeArea` row) which holds the card. Toolasha's payout and analysis blocks anchor to that card, so they were landing inside the narrow 722px `challengeArea` beside it, squashing the game's own skilling card to 44px and cutting it off. The block placer only escaped one row (into the still-non-wrapping `battleArea`), and the payout block did not escape at all.\n\n- **Injected blocks now climb out of every nested non-wrapping flex row** to the first column/grid/block ancestor, so they take a full-width line above and below the roster+card row instead of stealing its width. The payout block uses the same escape. Grids, wrapping rows and ordinary flow are unchanged, so the Trials tab and combat In Progress placement are untouched.\n\n### Skilling trials: the flat projection is gone once slowing is known, and readings are timestamped\n\n- **The \"On pace (flat)\" tier projection is no longer shown beside the real one.** A skilling trial's success rate falls with every tier, so the flat projection — the current fill rate held for the whole hour — reads far too high (it was printing \"21 tiers → T21 (Lv.300)\" in green next to the honest \"~T11\"). Once a slowdown has been measured, only the **Expected** row is shown; the flat number survives in that row's tooltip, where it explains itself instead of competing with the estimate. With no slowdown measured yet, the single \"On pace for\" row is unchanged.\n- **Skilling readings are now kept as a timestamped series** (`trialSkilling.series` in the export), downsampled to the start, every tier boundary, and once per 15 s otherwise, capped so a long session cannot grow it without bound. This is what lets the tier forecast be replayed at points across a trial and checked against the tier actually banked — the recorder previously kept only the last reading, so there was nothing to test the estimate against.\n\n### Trial scoreboard: damage-taken is labelled honestly, and a runaway split is flagged\n\nTwo clarity fixes to the trial scoreboard, from comparing a real recording against the game's post-trial stats modal.\n\n- **Damage taken is two different quantities, and the panel now says which.** The game's modal reports **pre-mitigation** gross incoming; the live stream can only read **post-mitigation** health actually lost and healed back (and even that is a floor — damage healed on the same tick is invisible). A recording confirmed the stream's damage-taken equals healing-received almost exactly per player, i.e. it measures HP oscillation, not incoming damage. The Taken tab now carries a note spelling out pre- vs post-mitigation on both sources, and the export's `supportCoverage.damageTaken` says the same, so the two are never compared as if they should match.\n- **A measured damage split that exceeds the bosses' health is flagged.** The summed health of every boss seen is a hard ceiling on total party damage (`bossHpCeiling`, exposed as `damageCeiling` on the breakdown). When the live damage tab's per-player total runs past that ceiling, a note warns the split is over-attributing — the usual cause being a fast damage-over-time build collecting shared ticks — and points at the game's post-trial stats as the tiebreak. One-sided: a total under the ceiling is not thereby confirmed.\n\n### Dev builds install over a same-numbered release\n\nThe dev userscript and the published one share a `@name` and a `@version`, so once a release shipped a number (2.93.0), a dev build of that number read as \"already installed\" — Tampermonkey would not replace 2.93.0 with 2.93.0, and a fresh dev file silently kept the old code (a new feature simply never appeared). The standalone dev build now appends the build stamp as a fourth version segment (e.g. `2.93.0.20260810213045`), so every dev build sorts newer than the release and newer than the last dev build and a reinstall always takes. A later real release still supersedes it (higher minor), and the published header is untouched.\n\n### Scrolls in the Combat Simulator\n\nThe Combat Simulator can now carry Labyrinth combat scrolls, so a sim reflects the buffs you actually run and the Upgrade advisor can say which scroll is worth carrying. All seven combat scrolls are offered: **Damage** (+8%), **Attack Speed** (+15%), **Cast Speed** (+15%), **Critical Rate** (+10%), **Combat Drop** (+15%), **Wisdom** (+20% combat EXP) and **Rare Find** (+60%). Each is opened for a 30-minute buff effective in normal combat (not the Labyrinth or Guild Trials), and each one moves a combat number the engine reads — damage and attack speed as ratio boosts, the rest as flat.\n\n- **New \"Scrolls\" section on the Configure tab** (combat mode), next to Guild Shrines. It starts checked at the scrolls you currently have active, and each one you tick is folded into the sim.\n- **New \"Scrolls\" mode on the Upgrade tab**, alongside Community. It measures what each scroll is worth: turning on one you are not carrying, or — for one already on — what you would lose by dropping it. Scrolls carry a per-run seal cost the advisor does not price, so like community buffs they land in the \"measured, but not priced\" box and are read on their deltas.\n- **Engine plumbing:** a player's chosen scrolls ride the DTO (`scrollBuffs`) and resolve to combat buffs at the single point every per-player sim passes through, so parties, all-zones runs and upgrade candidates all pick them up. Magnitudes come from a dedicated combat-scroll table with the values off the game's own item tooltips, each mapped to the ratio- or flat-boost slot its buff type uses.\n\n";
 
     var forkOverview = "This is the **Millennium44 fork of Toolasha**. It folds MWI Combat Suite into Toolasha — live DPS tracking, loot and drop tracking, drop-luck analysis, and a full labyrinth simulator — so one script gives you both halves of the game instead of two userscripts.\n\n### Combat & simulators\n\n- Live DPS, hit/crit rate, damage-taken and net-sustain read off your own fights.\n- Loot and drop tracking with drop-luck analysis that judges combat, gathering and production.\n- A combat recorder: record real fights, replay them against the simulator, get a verdict with honest noise bands.\n- A combat simulator whose upgrade picks are costed and ranked on real market and credit costs.\n- Per-character combat stats, sim state and histories — no character reads another's books.\n\n### Market & profit\n\n- One market price API prices almost everything: upgrades, net worth, drop income, guild tokens, every action.\n- Prices capped by the volume the market has actually absorbed, so thin markets stop inflating rankings.\n- Profit lines on the action bar, pinned pages, alchemy rankings and the combat profit panel.\n- Market-history viewer with a live undercut alert that re-checks against a refreshed snapshot.\n- An upgrade advisor that costs and ranks gear and ability candidates against live prices.\n\n### Labyrinth\n\n- A labyrinth simulator with auto-pathing and auto-beaconing planned from the actual run.\n- Multi-target analysis with combined armour swaps and supply-aware torch/shroud/beacon planning.\n- Skilling-sim candidates scoped to the skill you are simming, with the skip level set for you.\n- Upgrade, All-Fights and Skilling analyses, each exportable to CSV.\n\n### Guild\n\n- Live trial measurement: per-player DPS and damage/healing attribution from the fight you watch.\n- Tier read straight off the boss bar, with pace, ETA and payout maths.\n- A trial report your guild can actually read, with honest coverage caveats.\n\n### Quality of life\n\n- A curated overlay of tiles with bundled presets, activity auto-switching, and tiles that open their panels.\n- A Ctrl+K (Cmd+K) command palette over every panel, overlay row, saved layout and setting.\n- Mobile-friendly panels: viewport clamping, reachable close buttons, finger-sized targets, a floating launcher.\n- Notifications for empty queues, community-buff expiry, and finished labyrinth runs.\n- Task tools: measured tokens/hour, net task income, and reroll handling that takes the free MooPass reroll.\n- Equipment Savings (\"eWatch\"): savings goals for gear and ability levels, fed from the simulators.\n- A goal planner that turns \"get me X gold / level N\" into a ranked plan from your real measured rates.\n\n### Data & sync\n\n- Cross-device sync of your whole database through one private GitHub gist you own.\n- Gzip-compressed, optionally AES-256 encrypted, conflict-aware, guarded against overwriting a year of data.\n- Chunked per-period history that survives months, with honest quota handling and per-character backups.\n- Hundreds of bug fixes and a test suite grown from ~2,300 to over 8,500 tests.\n";
 
@@ -78388,7 +77551,6 @@ ${starCSS}
         taskInventoryHighlighter,
         taskStatistics,
         taskClaimCollector,
-        taskBulkReroll: taskBulkReroll$1,
         taskRerollProtection: taskRerollProtection$1,
         taskAutoReroll: taskAutoReroll$1,
         remainingXP,
