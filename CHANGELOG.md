@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Temporary: protection repaint diagnostics
+
+While tracking down a report that the protected border stops updating in place (and only refreshes on a tab switch), the repaint paths log which trigger fired — `[TaskProt] quests_updated`, `[TaskProt] _processAllCards(source): N cards, M mid-flow/skipped`, `[TaskProt] confirm flow settled`, and `[Settle] watch armed` / `board settled`. These lines are diagnostic and are removed once the broken path is identified and fixed.
+
 ### The protected task border shows instantly again
 
 Opening the Task Board left a visible beat before the green "protected" edge appeared on protected tasks. The card-appeared watcher only ever drew the border on a delayed pass — a 150 ms timer after each card node was added — so every time the board rendered, protected cards were briefly borderless. The border is now painted **synchronously** the moment a card appears, with the 150 ms pass kept only as a fallback for the rare case the card's React fiber (and so its quest) is not yet reachable on the first look. The observer only ever fires for a freshly added card node, which carries no border yet, so the immediate pass can only add an edge, never flicker one off.

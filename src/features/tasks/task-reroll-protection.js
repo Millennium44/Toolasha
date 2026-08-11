@@ -78,7 +78,8 @@ class TaskRerollProtection {
 
         // Re-process on quest updates (task content may change after reroll)
         const questHandler = () => {
-            setTimeout(() => this._processAllCards(), 300);
+            console.log('[TaskProt] quests_updated → repaint in 300ms');
+            setTimeout(() => this._processAllCards('quests_updated'), 300);
         };
         webSocketHook.on('quests_updated', questHandler);
         this.unregisterHandlers.push(() => webSocketHook.off('quests_updated', questHandler));
@@ -96,21 +97,30 @@ class TaskRerollProtection {
         // A closing reroll chooser adds an action row, not a card, so no
         // observer above sees it — this is what repaints the cards the pass
         // above declined to touch
-        this.unregisterHandlers.push(onConfirmFlowSettled(() => this._processAllCards()));
+        this.unregisterHandlers.push(
+            onConfirmFlowSettled(() => {
+                console.log('[TaskProt] confirm flow settled → repaint');
+                this._processAllCards('settle');
+            })
+        );
 
         // Process existing cards
-        this._processAllCards();
+        this._processAllCards('init');
     }
 
     /**
      * Process all visible task cards.
+     * @param {string} [source] - Who triggered this pass (diagnostic)
      * @private
      */
-    _processAllCards() {
+    _processAllCards(source = '?') {
         const cards = document.querySelectorAll('[class*="RandomTask_randomTask"]');
+        let confirming = 0;
         for (const card of cards) {
+            if (isCardInConfirmState(card)) confirming += 1;
             this._processTaskCard(card);
         }
+        console.log(`[TaskProt] _processAllCards(${source}): ${cards.length} cards, ${confirming} mid-flow/skipped`);
     }
 
     /**
