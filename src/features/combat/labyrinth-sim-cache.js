@@ -26,6 +26,14 @@ export const DEFAULT_SIM_PRECISION_PCT = 1;
 const MIN_SIM_TRIALS = 100;
 /** Backstop for a rate near a coin toss, which never converges cheaply */
 const MAX_SIM_TRIALS = 20000;
+/**
+ * Simulated-hours budget for an uncapped run — high enough that time never binds
+ * before the trial cap does, so a slow, timeout-heavy room (a hard combat tile
+ * whose fights each burn the two-minute limit) runs on to its precision target
+ * instead of stopping at a wide "(capped)" band. The `MAX_SIM_TRIALS` backstop
+ * still bounds it, so "uncapped" means "not stopped by the clock", not "forever".
+ */
+const UNCAPPED_SIM_HOURS = 100000;
 /** Persisted mirror of combatCache, in the 'labyrinth' store */
 const COMBAT_CACHE_STORAGE_KEY = 'labyrinthCombatSimCache';
 const COMBAT_CACHE_STORE = 'labyrinth';
@@ -263,11 +271,11 @@ export const simCacheMethods = {
      *
      * @returns {Promise<void>}
      */
-    async recomputeCombatSims() {
+    async recomputeCombatSims(uncapped = false) {
         this.combatCache.clear();
         this._clearPersistedCombatCache();
         this._snapshotFingerprint = this._snapshotContentFingerprint();
-        await this.runTileCalculation({ auto: false });
+        await this.runTileCalculation({ auto: false, uncapped: uncapped === true });
     },
 
     /**
@@ -310,7 +318,9 @@ export const simCacheMethods = {
                 monsterHrid,
                 roomLevel,
                 crates: crateHrids,
-                hours: this.getSimHours(),
+                // An uncapped run lifts the simulated-hours ceiling so a slow
+                // room runs to its precision target rather than stopping wide
+                hours: options.uncapped ? UNCAPPED_SIM_HOURS : this.getSimHours(),
                 precision:
                     bar === null
                         ? this.getSimStopRule()
