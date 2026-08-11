@@ -69,6 +69,14 @@ class Config {
         // Map of setting keys to callback functions
         this.settingChangeCallbacks = {};
 
+        // Callbacks fired whenever loadSettings() repopulates the map, regardless
+        // of whether any individual value changed. A character switch clears the
+        // cache and reloads it with previousMap empty, so the per-key change
+        // callbacks above are all skipped — a persistent feature that never
+        // re-initializes (the Action Filter) has no other signal that fresh
+        // per-character settings have arrived. See onSettingsLoaded().
+        this.settingsLoadedCallbacks = [];
+
         // Feature toggles with metadata for future UI
         this.features = {
             // Market Features
@@ -463,6 +471,18 @@ class Config {
                 for (const cb of this.settingChangeCallbacks[key]) cb(currVal);
             }
         }
+
+        // Fire the settings-loaded channel unconditionally: the map has just been
+        // repopulated, which is the one signal a persistent feature can use to
+        // resync after a character switch (when previousMap was empty and no
+        // per-key change callback fired).
+        for (const cb of this.settingsLoadedCallbacks) {
+            try {
+                cb();
+            } catch (error) {
+                console.error('[Config] settings-loaded callback failed:', error);
+            }
+        }
     }
 
     /**
@@ -651,6 +671,25 @@ class Config {
         if (this.settingChangeCallbacks[key]) {
             this.settingChangeCallbacks[key] = this.settingChangeCallbacks[key].filter((cb) => cb !== callback);
         }
+    }
+
+    /**
+     * Register a callback fired every time loadSettings() repopulates the map —
+     * including a character switch, where per-key change callbacks are skipped
+     * because the previous map was empty. For persistent features that never
+     * re-initialize and so need to resync their UI to the new character's values.
+     * @param {Function} callback - Called with no arguments after settings load
+     */
+    onSettingsLoaded(callback) {
+        this.settingsLoadedCallbacks.push(callback);
+    }
+
+    /**
+     * Unregister a settings-loaded callback.
+     * @param {Function} callback - The exact callback reference to remove
+     */
+    offSettingsLoaded(callback) {
+        this.settingsLoadedCallbacks = this.settingsLoadedCallbacks.filter((cb) => cb !== callback);
     }
 
     /**
