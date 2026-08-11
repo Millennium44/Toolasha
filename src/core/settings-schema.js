@@ -1292,7 +1292,7 @@ export const settingsGroups = {
                     { value: 'mooket2', label: 'mooket II \u2014 Q7 (q7.nainai.eu.org)' },
                     { value: 'mooket1', label: 'mooket I \u2014 IOMisaka (mooket.qi-e.top)' },
                 ],
-                help: 'Which pooled server the price history, the pinned-item prices and the My Listings "Mooket Refresh" read from. mooket II (the default) carries ask, bid, average traded price and volume. mooket I is a separate community pool: it carries only ask and bid, so on it the chart\u2019s third line is a computed midpoint of the quotes (shown as "Mid", not a real traded average), there are no volume bars, and the goal planner\u2019s market-volume limits switch off (it has no volume to measure). Both are third parties and both are governed by the switch above; order books you contribute always go to mooket II regardless of this choice.',
+                help: 'Which pooled server the price history, the pinned-item prices and the My Listings "Mooket Refresh" read from \u2014 and, since you feed the pool you read, the one your opened order books are contributed back to. mooket II (the default) carries ask, bid, average traded price and volume. mooket I is a separate community pool: it carries only ask and bid, so on it the chart\u2019s third line is a computed midpoint of the quotes (shown as "Mid", not a real traded average), there are no volume bars, and the goal planner\u2019s market-volume limits switch off (it has no volume to measure). Both are third parties and both are governed by the switch above.',
             },
             market_showTopOrderAge: {
                 id: 'market_showTopOrderAge',
