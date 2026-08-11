@@ -1039,6 +1039,16 @@ class LabyrinthRoomLogs {
             'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px;';
         this.exportButton.addEventListener('click', () => this.exportAccuracy());
 
+        this.recomputeButton = document.createElement('button');
+        this.recomputeButton.textContent = 'Recompute';
+        this.recomputeButton.title =
+            'Throw away every cached clear-chance sim and simulate the rooms again. Use this after changing ' +
+            'gear or a loadout — a plain equip does not always refresh a sim, so a cached result can be stale.';
+        this.recomputeButton.style.cssText =
+            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px;';
+        this.recomputeButton.addEventListener('click', () => this.onRecomputeClicked());
+
+        actions.appendChild(this.recomputeButton);
         actions.appendChild(this.exportButton);
         actions.appendChild(this.clearButton);
         actions.appendChild(closeBtn);
@@ -1068,7 +1078,7 @@ class LabyrinthRoomLogs {
             this.view = view;
             this.resetArmed = false;
             this.paintChrome();
-            this.render();
+            this.render(false);
         });
         return button;
     }
@@ -1094,6 +1104,34 @@ class LabyrinthRoomLogs {
             ? 'Throw away every recorded fight and start the accuracy record over'
             : 'Clear the room log';
         this.clearButton.style.background = this.resetArmed ? 'rgba(255,100,100,0.55)' : 'rgba(255,255,255,0.12)';
+    }
+
+    /**
+     * Clear every cached clear-chance sim and simulate the rooms again.
+     *
+     * The heavy lifting lives in the clear-rate feature, reached through the sim
+     * source; this only drives the button so a run in progress cannot be started
+     * twice and says what it is doing while it runs.
+     */
+    async onRecomputeClicked() {
+        const button = this.recomputeButton;
+        if (!button || button.disabled) return;
+        if (!this.simSource?.recompute) return;
+
+        const label = button.textContent;
+        button.disabled = true;
+        button.textContent = 'Recomputing…';
+        button.style.opacity = '0.6';
+        try {
+            await this.simSource.recompute();
+        } catch (error) {
+            console.error('[LabyrinthRoomLogs] Recomputing sims failed:', error);
+        } finally {
+            button.disabled = false;
+            button.textContent = label;
+            button.style.opacity = '';
+            this.render();
+        }
     }
 
     /**
@@ -1155,11 +1193,32 @@ class LabyrinthRoomLogs {
         }
     }
 
-    render() {
+    /**
+     * Redraw the open view, keeping the scroll position where it was.
+     *
+     * Both renderers empty the list and rebuild it, which resets the browser's
+     * scroll to the top — and they run on every experience/labyrinth update, so
+     * a panel left open while a fight ticks was yanked back to the top several
+     * times a second and could not be read. The offset is saved before the wipe
+     * and restored after (after the await, for the async accuracy view). A tab
+     * switch is the one redraw that *should* start at the top, so it opts out.
+     *
+     * @param {boolean} [preserveScroll=true] - Keep the current scroll offset
+     */
+    render(preserveScroll = true) {
+        const list = this.panel?.querySelector('.mwi-lab-logs-list');
+        const top = preserveScroll && list ? list.scrollTop : 0;
+        const restore = () => {
+            if (!preserveScroll) return;
+            const current = this.panel?.querySelector('.mwi-lab-logs-list');
+            if (current) current.scrollTop = top;
+        };
+
         if (this.view === 'accuracy') {
-            this.renderAccuracy();
+            this.renderAccuracy().then(restore).catch(restore);
         } else {
             this.renderPanel();
+            restore();
         }
     }
 
@@ -1402,9 +1461,22 @@ class LabyrinthRoomLogs {
         const tally = fightTally(session.actions);
         const parts = [session.predicted === null ? 'Sim —' : `Sim ${(session.predicted * 100).toFixed(0)}%`];
 
-        parts.push(
-            tally.total ? `Won ${tally.clears}/${tally.total} (${Math.round(tally.rate * 100)}%)` : 'No result yet'
-        );
+        // Only fights watched on the combat view are classified (win/death/
+        // timeout); the server's entryCount counts every attempt, including those
+        // that ran while you were on another tab. Show the server total so a run
+        // spent mostly off-screen does not read as if those attempts never
+        // happened — with the watched subset named, since that is all the
+        // died/timed-out breakdown can speak for.
+        const serverAttempts = Math.floor(Number(session.entryCount) || 0);
+        if (tally.total) {
+            let result = `Won ${tally.clears}/${tally.total} (${Math.round(tally.rate * 100)}%)`;
+            if (serverAttempts > tally.total) result += ` · ${serverAttempts} total`;
+            parts.push(result);
+        } else if (serverAttempts > 0) {
+            parts.push(`${serverAttempts} attempt${serverAttempts === 1 ? '' : 's'}, none watched`);
+        } else {
+            parts.push('No result yet');
+        }
         const shape = failureShape(tally);
         if (shape) parts.push(shape);
 

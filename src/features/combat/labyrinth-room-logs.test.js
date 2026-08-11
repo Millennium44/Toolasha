@@ -88,6 +88,42 @@ describe('floorSummary', () => {
     });
 });
 
+describe('combatMeta reconciles the watched tally against the server count', () => {
+    const session = (over = {}) => ({
+        predicted: 0.458,
+        actions: [],
+        entryCount: 0,
+        startedAt: 1_000,
+        endedAt: 2_000,
+        xp: 0,
+        ...over,
+    });
+
+    test('shows the server total when it counted more attempts than were watched', () => {
+        const meta = labyrinthRoomLogs.combatMeta(
+            session({ actions: [{ outcome: 'death' }, { outcome: 'death' }, { outcome: 'timeout' }], entryCount: 26 })
+        );
+        expect(meta).toContain('Won 0/3');
+        expect(meta).toContain('· 26 total');
+    });
+
+    test('says none were watched when the server counted attempts but no battle data arrived', () => {
+        expect(labyrinthRoomLogs.combatMeta(session({ actions: [], entryCount: 26 }))).toContain(
+            '26 attempts, none watched'
+        );
+    });
+
+    test('adds no server clause when the watched count already matches the server', () => {
+        const meta = labyrinthRoomLogs.combatMeta(session({ actions: [{ outcome: 'clear' }], entryCount: 1 }));
+        expect(meta).toContain('Won 1/1');
+        expect(meta).not.toContain('total');
+    });
+
+    test('falls back to "No result yet" when nothing is known from either side', () => {
+        expect(labyrinthRoomLogs.combatMeta(session({ actions: [], entryCount: 0 }))).toContain('No result yet');
+    });
+});
+
 describe('the sim accuracy list opens a room type at a time', () => {
     const row = (level, over = {}) => ({
         subjectHrid: '/skills/milking',
