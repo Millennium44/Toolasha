@@ -25,7 +25,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
-import { classifyFight, fightTally, failureShape } from './labyrinth-fight-log.js';
+import { classifyFight, fightTally, failureShape, isFreshLabyrinthFight } from './labyrinth-fight-log.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
 import labTickCapture from './labyrinth-tick-capture.js';
 import { accuracyReport } from './labyrinth-outcome-log.js';
@@ -608,19 +608,21 @@ class LabyrinthRoomLogs {
         const playerHpFraction = player.cHP / player.mHP;
         const atkCounter = Number(player.atkCounter) || 0;
 
-        // battleId stays put across labyrinth attempts and a retry of the same
-        // room brings back a monster with the same maximum, so neither says a
-        // new fight started. Two things do: health that went up, which only a
-        // fresh monster can do, and an attack counter that went down, which only
-        // a fresh battle can do.
+        // A new session is always a new fight; otherwise defer to the shared
+        // boundary test, which counts a monster-health jump only when it is the
+        // leap to full a spawn makes — not the bump a self-healing monster (the
+        // Dryad's life drain, a guardian aura) gives itself mid-fight, which used
+        // to split one attempt into several at whatever low health it landed on.
         const fight = this.fight;
         const isNewFight =
             !fight ||
             fight.session !== session ||
-            fight.battleId !== data.battleId ||
-            fight.monsterMaxHp !== monster.mHP ||
-            monster.cHP > fight.lastMonsterHp ||
-            atkCounter < fight.lastAtkCounter;
+            isFreshLabyrinthFight(fight, {
+                battleId: data.battleId,
+                monsterMaxHp: monster.mHP,
+                monsterHp: monster.cHP,
+                atkCounter,
+            });
 
         if (isNewFight) {
             this.resolveFight(); // whatever was being watched has ended

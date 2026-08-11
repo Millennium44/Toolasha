@@ -29,6 +29,7 @@ import { combatLevel as computeCombatLevel, COMBAT_SKILLS } from '../../utils/co
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
 import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
 import { estimateLiveClearChance, FIGHT_TIMEOUT_SECONDS, MIN_ELAPSED_SECONDS } from './labyrinth-live-combat.js';
+import { isFreshLabyrinthFight } from './labyrinth-fight-log.js';
 
 import { compareToPrediction } from './labyrinth-outcome-log.js';
 import {
@@ -1578,20 +1579,20 @@ class LabyrinthClearRate {
             return;
         }
 
-        // battleId stays put across labyrinth attempts and a retry of the same
-        // room brings back a monster with the same maximum, so neither says a
-        // new fight started. Two things do: health that went up, which only a
-        // fresh monster can do, and an attack counter that went down, which
-        // only a fresh battle can do. Without them, retrying a room kept the
-        // previous attempt's record — a start time minutes old, and a rate so
-        // slow it read as no chance at all.
+        // battleId stays put across labyrinth attempts, so a retry needs another
+        // signal: an attack counter that reset, a monster maximum that changed,
+        // or the monster's health leaping back to full. That last one counts only
+        // the spawn's jump from low to full, not the bump a self-healing monster
+        // gives itself mid-fight — see isFreshLabyrinthFight. Without a boundary at
+        // all, retrying a room kept the previous attempt's record: a start time
+        // minutes old, and a rate so slow it read as no chance.
         const fight = this._fight;
-        const isNewFight =
-            !fight ||
-            fight.battleId !== data.battleId ||
-            fight.monsterMaxHp !== monster.mHP ||
-            monster.cHP > fight.lastMonsterHp ||
-            player.atkCounter < fight.lastAtkCounter;
+        const isNewFight = isFreshLabyrinthFight(fight, {
+            battleId: data.battleId,
+            monsterMaxHp: monster.mHP,
+            monsterHp: monster.cHP,
+            atkCounter: Number(player.atkCounter) || 0,
+        });
 
         if (isNewFight) {
             this._fight = {
