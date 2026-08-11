@@ -635,9 +635,24 @@ class LabyrinthRoomLogs {
                 // a fight need not begin at full
                 playerMaxHp: player.mHP,
                 playerHpStart: player.cHP,
+                // Gross damage each side dealt, summed from the health that fell
+                // tick to tick. The endpoints alone give damage net of healing —
+                // and you regenerate through a fight — while the sim reports it
+                // gross, so a net-vs-gross comparison read as the sim over-hitting.
+                grossTaken: 0,
+                grossDealt: 0,
+                prevPlayerHp: player.cHP,
+                prevMonsterHp: monster.cHP,
                 startedAt: Date.now(),
             };
         }
+
+        // Accumulate the drops, not the endpoints: a health bar that fell 300 and
+        // regenerated 100 took 300, not 200, and that is what the monster dealt
+        const takenStep = this.fight.prevPlayerHp - player.cHP;
+        if (takenStep > 0) this.fight.grossTaken += takenStep;
+        const dealtStep = this.fight.prevMonsterHp - monster.cHP;
+        if (dealtStep > 0) this.fight.grossDealt += dealtStep;
 
         Object.assign(this.fight, {
             lastMonsterHp: monster.cHP,
@@ -646,6 +661,8 @@ class LabyrinthRoomLogs {
             playerHpFraction,
             playerHpEnd: player.cHP,
             monsterHpEnd: monster.cHP,
+            prevPlayerHp: player.cHP,
+            prevMonsterHp: monster.cHP,
         });
 
         // The tile may not have been calculated when the room was entered, and
@@ -794,6 +811,10 @@ class LabyrinthRoomLogs {
                 playerMaxHp: fight.playerMaxHp,
                 playerHpStart: fight.playerHpStart,
                 playerHpEnd: fight.playerHpEnd,
+                // Gross damage summed from the drops — matches the sim's gross
+                // totals, unlike the endpoints, which are net of your regen
+                monsterDamage: fight.grossDealt,
+                playerDamageTaken: fight.grossTaken,
             });
         }
 

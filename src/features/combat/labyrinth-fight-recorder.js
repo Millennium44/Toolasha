@@ -94,6 +94,8 @@ export function clearRecording() {
  * @param {number} attempt.playerMaxHp - Your maximum health
  * @param {number} attempt.playerHpStart - Your health when the fight began
  * @param {number} attempt.playerHpEnd - Your health on the last tick seen
+ * @param {number} [attempt.monsterDamage] - Gross damage you dealt (summed drops), if measured
+ * @param {number} [attempt.playerDamageTaken] - Gross damage you took (summed drops), if measured
  */
 export function noteAttempt(attempt) {
     if (!recording) return;
@@ -107,6 +109,9 @@ export function noteAttempt(attempt) {
     if (seconds < MIN_FIGHT_SECONDS || monsterMaxHp <= 0 || playerMaxHp <= 0) return;
     if (attempt.outcome === 'unknown') return;
 
+    const grossDealt = Number(attempt.monsterDamage);
+    const grossTaken = Number(attempt.playerDamageTaken);
+
     attempts.push({
         monsterHrid: String(attempt.monsterHrid),
         monsterName: attempt.monsterName ? String(attempt.monsterName) : null,
@@ -119,6 +124,10 @@ export function noteAttempt(attempt) {
         playerMaxHp,
         playerHpStart: Math.max(0, Number(attempt.playerHpStart) || 0),
         playerHpEnd: Math.max(0, Number(attempt.playerHpEnd) || 0),
+        // Gross damage, summed from the drops — net of nothing, so it matches the
+        // sim's gross totals. Null when a caller could not measure it (old data).
+        monsterDamage: Number.isFinite(grossDealt) && grossDealt >= 0 ? grossDealt : null,
+        playerDamageTaken: Number.isFinite(grossTaken) && grossTaken >= 0 ? grossTaken : null,
     });
 
     if (attempts.length > MAX_LAB_ATTEMPTS) {

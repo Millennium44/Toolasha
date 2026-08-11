@@ -85,17 +85,28 @@ export function deviationPct(observed, predicted) {
 }
 
 /**
- * The damage each side dealt over one attempt.
+ * The gross damage each side dealt over one attempt.
  *
- * A fresh monster always starts at full, so what you dealt is how far its health
- * fell; a cleared room's monster fell all the way whether or not the killing tick
- * was seen. You have no food or drink in the labyrinth, so your health only
- * falls, and what you took is how far yours fell from where the fight began.
+ * Gross, not net: the comparison is against the sim's `totalDamageDealt`, which
+ * counts every hit before any healing. Reading damage off the endpoints instead
+ * — where a health bar ends versus where it began — quietly subtracts whatever
+ * regenerated during the fight, and you regenerate through a labyrinth fight. A
+ * recorder that summed the drops tick by tick reports the gross figure directly;
+ * `monsterDamage`/`playerDamageTaken` carry it. Only an older recording that
+ * lacks them falls back to the endpoints, which understate the monster by your
+ * regen and read as the sim over-hitting.
  *
  * @param {Object} attempt
  * @returns {{monsterDamage: number, playerTaken: number}}
  */
 function exchange(attempt) {
+    if (Number.isFinite(attempt.monsterDamage) && Number.isFinite(attempt.playerDamageTaken)) {
+        return {
+            monsterDamage: Math.max(0, attempt.monsterDamage),
+            playerTaken: Math.max(0, attempt.playerDamageTaken),
+        };
+    }
+    // Endpoint fallback for recordings made before gross damage was summed
     const monsterDamage = attempt.cleared
         ? attempt.monsterMaxHp
         : Math.max(0, attempt.monsterMaxHp - attempt.monsterHpEnd);

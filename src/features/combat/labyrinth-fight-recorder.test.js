@@ -69,6 +69,21 @@ describe('labyrinth fight recorder', () => {
         expect(recorder.recordingStatus().attempts).toBe(0);
     });
 
+    test('gross damage figures are kept when measured', () => {
+        recorder.startRecording();
+        recorder.noteAttempt(attempt({ monsterDamage: 5000, playerDamageTaken: 2600 }));
+        const a = recorder.recordedAttempts()[0];
+        expect(a.monsterDamage).toBe(5000);
+        expect(a.playerDamageTaken).toBe(2600);
+    });
+
+    test('gross damage is null when a caller could not measure it', () => {
+        recorder.startRecording();
+        recorder.noteAttempt(attempt());
+        expect(recorder.recordedAttempts()[0].monsterDamage).toBeNull();
+        expect(recorder.recordedAttempts()[0].playerDamageTaken).toBeNull();
+    });
+
     test('recordedAttempts hands back a copy, not the buffer', () => {
         recorder.startRecording();
         recorder.noteAttempt(attempt());
