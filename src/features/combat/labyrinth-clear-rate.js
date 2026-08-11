@@ -201,6 +201,9 @@ class LabyrinthClearRate {
             clearBaseline: () => this.clearOutcomeBaseline(),
             recompute: (uncapped) => this.recomputeCombatSims(uncapped),
             replay: () => this.replayRecordedFights(),
+            // The gear a recorded fight was fought in, so the pool keeps fights on
+            // different gear apart and the replay compares like with like
+            fingerprint: () => this._snapshotContentFingerprint(),
         });
 
         const unregister = domObserver.onClass('LabyrinthClearRate', 'LabyrinthPanel_skipThreshold', () =>

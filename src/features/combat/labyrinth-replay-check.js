@@ -33,6 +33,23 @@ export const MIN_LAB_FIGHTS = 5;
  */
 const CLEAN_START_HP_FRACTION = 0.9;
 
+/**
+ * Room levels a monster appears at are spread across a random labyrinth, so
+ * grouping by exact level would never pool enough fights of one monster to judge.
+ * Levels are bucketed to this width instead — a band narrow enough that the
+ * monster scales by only about this percent across it — and the group is
+ * re-simulated at the median level of the fights in it.
+ */
+const LEVEL_BUCKET = 10;
+
+/** The median of a list of numbers, for the level a bucket is re-simulated at */
+function median(values) {
+    if (!values.length) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+}
+
 /** The sim's own run-to-run wobble, folded into every margin so a within-noise call stays honest */
 const SIM_NOISE_FLOOR_PCT = 2;
 
@@ -144,13 +161,16 @@ export function deriveObserved(attempts) {
         const maxHp = Number(attempt.playerMaxHp) || 0;
         if (maxHp > 0 && Number(attempt.playerHpStart) < maxHp * CLEAN_START_HP_FRACTION) continue;
 
-        const key = `${attempt.monsterHrid}:${attempt.roomLevel}`;
+        const level = Math.max(0, Math.floor(Number(attempt.roomLevel) || 0));
+        const bucket = Math.round(level / LEVEL_BUCKET) * LEVEL_BUCKET;
+        const key = `${attempt.monsterHrid}:${bucket}`;
         let group = groups.get(key);
         if (!group) {
             group = {
                 monsterHrid: attempt.monsterHrid,
                 monsterName: attempt.monsterName || null,
-                roomLevel: Math.max(0, Math.floor(Number(attempt.roomLevel) || 0)),
+                bucket,
+                levels: [],
                 fights: 0,
                 clears: 0,
                 totalSeconds: 0,
@@ -165,6 +185,7 @@ export function deriveObserved(attempts) {
         }
 
         const { monsterDamage, playerTaken } = exchange(attempt);
+        group.levels.push(level);
         group.fights += 1;
         group.clears += attempt.cleared ? 1 : 0;
         group.totalSeconds += seconds;
@@ -178,6 +199,11 @@ export function deriveObserved(attempts) {
 
     const out = [...groups.values()].map((group) => ({
         ...group,
+        // The level the group is re-simulated at, and the span it pools, so the
+        // display can be honest about a bucket that mixes a few nearby levels
+        roomLevel: median(group.levels),
+        levelLow: Math.min(...group.levels),
+        levelHigh: Math.max(...group.levels),
         dps: group.totalSeconds > 0 ? group.totalMonsterDamage / group.totalSeconds : 0,
         takenPerSecond: group.totalSeconds > 0 ? group.totalPlayerTaken / group.totalSeconds : 0,
         secondsPerFight: group.fights > 0 ? group.totalSeconds / group.fights : 0,
@@ -340,6 +366,8 @@ export function compareLab(observed, predicted) {
         monsterHrid: observed.monsterHrid,
         monsterName: observed.monsterName || null,
         roomLevel: observed.roomLevel,
+        levelLow: observed.levelLow ?? observed.roomLevel,
+        levelHigh: observed.levelHigh ?? observed.roomLevel,
         fights: observed.fights,
         clears: observed.clears,
         metrics: [dps, taken, clear, seconds],

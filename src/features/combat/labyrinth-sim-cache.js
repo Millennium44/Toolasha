@@ -138,13 +138,14 @@ export const simCacheMethods = {
      * recorded fights and putting each beside the same rate a fresh sim produces
      * for that monster at that room level. The comparison itself is pure and
      * lives in labyrinth-replay-check; this feeds it the sim, run with the loadout
-     * you are wearing now — which is why the recorder warns against a gear change
-     * between recording and replay.
+     * you are wearing now — which is why it pools only the fights fought in that
+     * same gear, by fingerprint.
      *
-     * @returns {Promise<{groups: Array<Object>, recordedAt: number|null}>}
+     * @returns {Promise<{groups: Array<Object>, fingerprint: string}>}
      */
     async replayRecordedFights() {
-        const attempts = labFightRecorder.recordedAttempts();
+        const fingerprint = this._snapshotContentFingerprint();
+        const attempts = labFightRecorder.recordedAttempts(fingerprint);
         const observed = deriveObserved(attempts);
         // The most-fought rooms first, and only those with enough fights to be
         // worth a sim — a couple bound the sim cost and answer the question
@@ -183,7 +184,10 @@ export const simCacheMethods = {
             }
         }
 
-        return { groups, recordedAt: labFightRecorder.recordingStatus().recordedAt };
+        // What the pool holds for this gear, so the panel can say "12 fights over
+        // 3 monsters, none with enough yet" when nothing cleared the bar
+        const status = labFightRecorder.recordingStatus(fingerprint);
+        return { groups, pool: status };
     },
 
     /**
