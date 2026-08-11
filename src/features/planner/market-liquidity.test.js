@@ -14,7 +14,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const history = vi.hoisted(() => ({ rows: {}, calls: [] }));
+const history = vi.hoisted(() => ({ rows: {}, calls: [], hasVolume: true }));
 
 vi.mock('../market/mooket/market-history-api.js', () => ({
     default: {
@@ -22,6 +22,7 @@ vi.mock('../market/mooket/market-history-api.js', () => ({
             history.calls.push({ itemHrid, level, days });
             return history.rows[itemHrid] ?? null;
         },
+        currentSource: () => ({ key: history.hasVolume ? 'mooket2' : 'mooket1', hasVolume: history.hasVolume }),
     },
 }));
 
@@ -58,6 +59,7 @@ beforeEach(() => {
     resetLiquidityCache();
     history.rows = {};
     history.calls = [];
+    history.hasVolume = true;
 });
 
 describe('measuring how fast an item sells', () => {
@@ -67,6 +69,18 @@ describe('measuring how fast an item sells', () => {
 
         expect(volume.known).toBe(true);
         expect(volume.unitsPerDay).toBeCloseTo(240, 6);
+    });
+
+    test('a source with no volume is unknown, not a measured zero, and is not even fetched', async () => {
+        // mooket I carries no volume; its silence must not read as "sells nothing"
+        history.hasVolume = false;
+        history.rows['/items/log'] = tradedAt(240);
+
+        const volume = await dailyVolume('/items/log');
+
+        expect(volume.known).toBe(false);
+        expect(volume.unitsPerDay).toBe(0);
+        expect(history.calls).toHaveLength(0);
     });
 
     test('asks the server once per item, however often it is asked', async () => {

@@ -1283,6 +1283,17 @@ export const settingsGroups = {
                 default: false,
                 help: 'Adds a History tab to the marketplace: a floating chart of an item\u2019s ask, bid, average traded price and volume over the last day to six months, plus a row of pinned items. The game shows what an item costs now and nothing about what it cost before, which makes every price impossible to judge. The data comes from the pooled dataset the mooket project (by Q7, MIT) maintains at q7.nainai.eu.org. This talks to a third party in both directions and is off until you turn it on: it tells that server which items you look up, and it sends back the order books you open, which is where the history you read comes from \u2014 reading a pooled dataset without feeding it is what empties it.',
             },
+            market_historySource: {
+                id: 'market_historySource',
+                label: 'Market: Price history data source',
+                type: 'select',
+                default: 'mooket2',
+                options: [
+                    { value: 'mooket2', label: 'mooket II \u2014 Q7 (q7.nainai.eu.org)' },
+                    { value: 'mooket1', label: 'mooket I \u2014 IOMisaka (mooket.qi-e.top)' },
+                ],
+                help: 'Which pooled server the price history, the pinned-item prices and the My Listings "Mooket Refresh" read from. mooket II (the default) carries ask, bid, average traded price and volume. mooket I is a separate community pool: it carries only ask and bid, so on it the chart\u2019s third line is a computed midpoint of the quotes (shown as "Mid", not a real traded average), there are no volume bars, and the goal planner\u2019s market-volume limits switch off (it has no volume to measure). Both are third parties and both are governed by the switch above; order books you contribute always go to mooket II regardless of this choice.',
+            },
             market_showTopOrderAge: {
                 id: 'market_showTopOrderAge',
                 label: 'Market: Show top order age on My Listings',

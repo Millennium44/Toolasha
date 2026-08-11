@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Selectable price-history source: mooket I alongside mooket II
+
+The price history, the pinned-item prices and the My Listings "Mooket Refresh" all read from a pooled community server, and there are two of them — the Q7 pool (mooket II, `q7.nainai.eu.org`) Toolasha already used, and IOMisaka's original mooket pool (mooket I, `mooket.qi-e.top`). A new **Market: Price history data source** setting picks between them. Both are normalised to one internal shape, so the chart, the refresh button and the goal planner all read whichever you choose.
+
+The two pools carry different data, and the UI adapts honestly rather than pretending they're identical:
+
+- **mooket II** (default) carries ask, bid, average _traded_ price and volume — the full chart, unchanged.
+- **mooket I** carries only ask and bid. On it, the chart's third line is a **computed midpoint of the quotes, labelled "Mid"** (not a real traded average), the **volume bars and volume axis disappear** (there's nothing to draw), and the tooltip's buy/sell volume split is suppressed. Critically, the **goal planner's market-volume limits switch off** on mooket I: a source with no volume tells us nothing about how fast a thing sells, which is _unknown_, not a measured zero — treating its silence as zero would have wrongly crushed every gold rate to nothing the moment you switched sources.
+
+Both sources are third parties governed by the existing `Market: Price history panel` switch. Order books you contribute back still go to mooket II regardless of which source you read, since that's the pool whose format the upload speaks.
+
 ### "Mooket Refresh" button on the My Listings tab
 
 The game's `marketplace.json` feed refreshes only about once an hour at no fixed minute, so the Top Order Price column on My Listings can sit most of an hour behind the real book with nothing in the number to say so. A new **Mooket Refresh** button in the My Listings header bar (next to Upgrade Capacity / Refresh Next) pulls fresher prices for every item you have listed in one click: it walks your listed items, asks the pooled Mooket dataset for each one's newest sighting, and patches the fresher ones into the same price cache the Top Order Price column already redraws from — so the column updates to Mooket's current numbers without opening each item by hand. A sighting older than the game's own snapshot is left alone rather than stamped as current (a rarely-opened item can be staler in the pool than in the snapshot), and a one-sided sighting keeps the other side's known price rather than blanking it. Reads the same third-party server as the price history panel, so it rides the existing `Market: Price history panel` (`market_pooledHistory`) switch and does nothing until that is on.
