@@ -168,6 +168,24 @@ class ListingPriceDisplay {
             dataManager.on('market_item_order_books_updated', orderBookHandler);
         }
 
+        // Re-render when the market price data itself changes — a marketplace.json
+        // snapshot refresh or an order-book price patch both call
+        // marketAPI.notifyListeners(). The undercut alert already listens here,
+        // which is why an undercut fired an alert but never moved the Top Order
+        // Price column: this table was not a listener. Unconditional (not gated on
+        // Top Order Age) so the price column refreshes even with the age column
+        // off, and debounced because a snapshot refresh fires a burst.
+        const marketPriceHandler = () => {
+            clearTimeout(this._marketPriceRefreshTimer);
+            this._marketPriceRefreshTimer = setTimeout(() => {
+                document.querySelectorAll('[class*="MarketplacePanel_myListingsTable"]').forEach((table) => {
+                    table.classList.remove('mwi-listing-prices-set');
+                    this.updateTable(table);
+                });
+            }, 200);
+        };
+        marketAPI.on(marketPriceHandler);
+
         // Store for cleanup
         this.unregisterWebSocket = () => {
             dataManager.off('character_initialized', initHandler);
@@ -175,6 +193,8 @@ class ListingPriceDisplay {
             if (orderBookHandler) {
                 dataManager.off('market_item_order_books_updated', orderBookHandler);
             }
+            marketAPI.off(marketPriceHandler);
+            clearTimeout(this._marketPriceRefreshTimer);
         };
 
         this.cleanupRegistry.registerCleanup(() => {

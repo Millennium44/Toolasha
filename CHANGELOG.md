@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### My Listings' Top Order Price refreshes when the market moves
+
+The Top Order Price column on the My Listings tab only redrew when your own listings changed (or, with the age column on, when you re-opened an item's order book), so an undercut fired an alert but left the column showing the stale price. It now subscribes to the same market-data updates the undercut alert uses — a marketplace snapshot refresh or an order-book price patch redraws the column (debounced), so being undercut turns the price red here too.
+
 ### Custom Tabs: an enhanced item is no longer double-counted in Unorganized
 
 An enhanced item is tracked under both its base and its `+level` key, so an unassigned one was collected through both — inflating the "Unorganized (N)" count and placing the tile twice. A shared, deduped collector (each physical tile once) now backs both the header count and the lightweight visibility pass (ported from upstream Celasha/Toolasha#627).
