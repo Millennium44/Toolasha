@@ -12,6 +12,7 @@ The bulk reroll button opened a task's reroll menu and then never rerolled anyth
 
 - **The reroll chooser is now read off the whole card** instead of a single sub-container, so the coin and cowbell options are found wherever the build places them. The per-button filter already rejects every control and Toolasha's own injected buttons, so a card at rest still offers nothing. With the paid options visible again, a demoted free reroll falls through to paying and the task actually rerolls — and the protection/reroll indicators repaint as soon as the server confirms and the chooser closes.
 - **The reroll option is also re-read off the card immediately before it is pressed**, so the click lands on the node actually on screen rather than one React has re-rendered away, and the press goes out as a bubbling `MouseEvent` (the real-event path the discard flow already uses).
+- **The game's own "Reroll" button — the one that opens the chooser — is now pressed with the same dispatched `MouseEvent`.** A plain `element.click()` on it did not always reach the game's handler, so the chooser never opened on its own and a reroll only worked once the menu had been opened by hand. The Back/Cancel press that settles the card afterwards was made robust the same way.
 
 ### In Progress payout: leaner, plus a Roster button
 

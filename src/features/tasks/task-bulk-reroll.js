@@ -478,7 +478,11 @@ export class TaskBulkReroll {
             (b) => b.textContent.trim().toLowerCase() === 'reroll'
         );
         if (!expandBtn) return [];
-        expandBtn.click();
+        // A dispatched MouseEvent, not element.click(): the same real-event path
+        // the discard flow relies on, because a plain click on this button did
+        // not always reach the game's handler — the chooser never opened, and
+        // the reroll only worked when the menu had been opened by hand first.
+        robustClick(expandBtn);
 
         const wantFree = this._mayStillOfferFree();
         const optionsDeadline = Date.now() + CHOOSER_WAIT_MS;
@@ -599,7 +603,7 @@ export class TaskBulkReroll {
                       )
                     : null;
             if (escapeBtn) {
-                escapeBtn.click();
+                robustClick(escapeBtn);
                 await sleep(300);
             }
         } catch (error) {

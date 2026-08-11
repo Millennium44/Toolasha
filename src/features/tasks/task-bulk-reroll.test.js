@@ -363,7 +363,7 @@ describe('a free reroll nobody had seen yet', () => {
      * @param {number} [options.freeAfterMs=0] - How late the free row is
      * @returns {HTMLElement} The card, showing Go / Reroll / trash
      */
-    function restingCard({ free = true, freeAfterMs = 0 } = {}) {
+    function restingCard({ free = true, freeAfterMs = 0, rerollLabel = 'Reroll' } = {}) {
         const card = document.createElement('div');
         card.className = 'RandomTask_randomTask__1abc';
         const row = document.createElement('div');
@@ -391,7 +391,7 @@ describe('a free reroll nobody had seen yet', () => {
         go.textContent = 'Go';
         const trash = document.createElement('button');
         const reroll = document.createElement('button');
-        reroll.textContent = 'Reroll';
+        reroll.textContent = rerollLabel;
         reroll.addEventListener('click', () => {
             row.replaceChildren(option('Back'), option('10,000', 'coin'), option('1', 'cowbell'));
             if (free) {
@@ -423,6 +423,28 @@ describe('a free reroll nobody had seen yet', () => {
         expect(await acting).toBe(true);
         expect(card.dataset.pressed).toBe('MooPass Free Reroll');
         expect(reroller.lastClickWasFree).toBe(true);
+    });
+
+    test('the menu is opened with a dispatched event, as the discard flow already is', async () => {
+        // The reroll only worked when the chooser had been opened by hand. The
+        // Reroll button that opens the chooser is pressed with a real dispatched
+        // MouseEvent now (the path the discard trash can already relies on),
+        // because a plain element.click() did not always reach the game handler.
+        vi.useFakeTimers();
+        const reroller = new TaskBulkReroll();
+        const card = restingCard();
+        let dispatched = false;
+        const reroll = [...card.querySelectorAll('button')].find((b) => b.textContent === 'Reroll');
+        reroll.addEventListener('click', (e) => {
+            if (e instanceof MouseEvent && e.bubbles) dispatched = true;
+        });
+
+        const acting = reroller._actOnCard(card, 'coin');
+        await vi.advanceTimersByTimeAsync(600);
+
+        expect(await acting).toBe(true);
+        expect(dispatched).toBe(true);
+        expect(card.dataset.pressed).toBe('MooPass Free Reroll');
     });
 
     test('a MooPass row drawn a beat after the paid ones is still the one pressed', async () => {
