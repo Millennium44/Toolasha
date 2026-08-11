@@ -1048,6 +1048,23 @@ class LabyrinthRoomLogs {
             'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px;';
         this.recomputeButton.addEventListener('click', () => this.onRecomputeClicked());
 
+        // A slow, timeout-heavy room (a hard combat tile) stops its sim on the
+        // simulated-hours budget long before it pins the rate down, so its clear
+        // chance reads "(capped)" with a wide band. With this on, Recompute lifts
+        // that time cap and runs each room to its precision target — more precise,
+        // but slower, so it is an opt-in toggle rather than the default.
+        this.uncapped = false;
+        this.uncappedButton = document.createElement('button');
+        this.uncappedButton.textContent = 'Uncapped';
+        this.uncappedButton.title =
+            'Run Recompute with the sim’s time cap lifted, so slow rooms reach their precision target instead ' +
+            'of stopping at a wide "(capped)" band. More precise but slower.';
+        this.uncappedButton.addEventListener('click', () => {
+            this.uncapped = !this.uncapped;
+            this.paintUncapped();
+        });
+
+        actions.appendChild(this.uncappedButton);
         actions.appendChild(this.recomputeButton);
         actions.appendChild(this.exportButton);
         actions.appendChild(this.clearButton);
@@ -1104,6 +1121,15 @@ class LabyrinthRoomLogs {
             ? 'Throw away every recorded fight and start the accuracy record over'
             : 'Clear the room log';
         this.clearButton.style.background = this.resetArmed ? 'rgba(255,100,100,0.55)' : 'rgba(255,255,255,0.12)';
+        this.paintUncapped();
+    }
+
+    /** Show whether an uncapped Recompute is armed */
+    paintUncapped() {
+        if (!this.uncappedButton) return;
+        this.uncappedButton.style.cssText =
+            'height:18px; border:0; border-radius:4px; font-size:10px; cursor:pointer; padding:0 6px; ' +
+            (this.uncapped ? 'background:rgba(77,151,255,0.95); color:#fff;' : 'background:rgba(255,255,255,0.12); color:#9ec4ff;');
     }
 
     /**
@@ -1120,10 +1146,10 @@ class LabyrinthRoomLogs {
 
         const label = button.textContent;
         button.disabled = true;
-        button.textContent = 'Recomputing…';
+        button.textContent = this.uncapped ? 'Recomputing (uncapped)…' : 'Recomputing…';
         button.style.opacity = '0.6';
         try {
-            await this.simSource.recompute();
+            await this.simSource.recompute(this.uncapped === true);
         } catch (error) {
             console.error('[LabyrinthRoomLogs] Recomputing sims failed:', error);
         } finally {

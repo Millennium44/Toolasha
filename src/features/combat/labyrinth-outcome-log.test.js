@@ -73,11 +73,20 @@ describe('foldFloorOutcomes', () => {
     });
 
     test('a win never outruns its own attempt', () => {
-        // A room cleared first try can go straight from unseen to cleared with
-        // no update in between showing it entered — and 1 clear in 0 attempts
-        // would be a rate above 100%
-        const state = foldAll([grid([combat({ entryCount: 0 })]), grid([clearedRoom()])]);
+        // A genuine first-try win has its entry counted before (or with) the
+        // clear, so 1 clear never reads as a rate above 100%
+        const state = foldAll([grid([combat({ entryCount: 1 })]), grid([clearedRoom()])]);
         expect(state.totals[MIMIC]).toMatchObject({ attempts: 1, clears: 1 });
+    });
+
+    test('a revealed room cleared without ever being entered is not counted', () => {
+        // A tile can be cleared without a fight — a shroud, a beacon, a floor
+        // skip — and the server marks it isCleared with entryCount still zero.
+        // Counting that booked phantom 1/1 clears at levels far above anything
+        // the character could actually clear, which dragged the whole record
+        // toward "sim too low". The same guard the best-level tracker applies.
+        const state = foldAll([grid([combat({ entryCount: 0 })]), grid([clearedRoom()])]);
+        expect(state.totals[MIMIC]).toBeUndefined();
     });
 
     test('the same floor folded twice counts once', () => {

@@ -198,7 +198,7 @@ class LabyrinthClearRate {
             reset: () => this.resetOutcomes(),
             markBaseline: () => this.markOutcomeBaseline(),
             clearBaseline: () => this.clearOutcomeBaseline(),
-            recompute: () => this.recomputeCombatSims(),
+            recompute: (uncapped) => this.recomputeCombatSims(uncapped),
         });
 
         const unregister = domObserver.onClass('LabyrinthClearRate', 'LabyrinthPanel_skipThreshold', () =>
@@ -2419,6 +2419,8 @@ class LabyrinthClearRate {
      */
     async runTileCalculation(options = {}) {
         const auto = options.auto === true;
+        // Lift the sim's time cap for this run, so slow rooms reach precision
+        const uncapped = options.uncapped === true;
         if (this.tileCalcRunning) return;
         if (!this.roomData) {
             if (!auto) this.setTileStatus('No labyrinth data');
@@ -2497,7 +2499,7 @@ class LabyrinthClearRate {
 
             let combatRetryNeeded = 0;
             for (const target of combatTargets) {
-                const result = await this.computeCombatClear(target.room.monsterHrid, target.roomLevel);
+                const result = await this.computeCombatClear(target.room.monsterHrid, target.roomLevel, { uncapped });
                 completed++;
                 this.setTileProgress(completed / total);
 

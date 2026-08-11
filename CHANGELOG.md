@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Labyrinth: stop counting un-fought rooms as clears, and an uncapped sim option
+
+- **Phantom clears removed from the accuracy record.** A revealed tile can be cleared without a fight — a shroud, a beacon, a floor skip — and the server marks it `isCleared` with `entryCount` still zero. The accuracy fold counted that as a win, booking phantom `1/1` clears at levels far above anything you could actually clear (e.g. a level-231 milking room on a level-116 skill) and dragging the whole record toward "sim too low". A clear now only counts for a room you actually entered — the same guard the best-level tracker already applies. (Tradeoff: a genuine first-try win whose entry update was never separately seen no longer counts, which the best-level tracker already accepted; it removes far more noise than it costs.)
+- **Uncapped sim option.** A slow, timeout-heavy room (a hard combat tile) stops its sim on the simulated-hours budget long before it pins the rate down, so its clear chance reads "(capped)" with a wide band. A new **Uncapped** toggle in the Room Logs toolbar lifts that time cap for the next **Recompute**, so each room runs to its precision target instead (still bounded by the 20,000-trial backstop, so it can't run forever). More precise but slower, so it's an opt-in toggle rather than the default. Note this tightens the band around the sim's estimate — it does not fix a sim that is *biased* (e.g. high-level Cyclops, where the model itself over-predicts survival).
+
 ### Labyrinth: Recompute button, honest attempt counts, and a panel that stays put
 
 Three fixes to the Labyrinth sim/room-logs panel:

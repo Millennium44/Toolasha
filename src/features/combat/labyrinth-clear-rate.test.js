@@ -2249,7 +2249,16 @@ describe('recomputeCombatSims clears every cached sim before re-running', () => 
         expect(labyrinthClearRate.combatCache.size).toBe(0);
         expect(labyrinthClearRate._combatCacheMeta.size).toBe(0);
         // Manual re-run (auto:false) is what re-sims instead of reusing the cache
-        expect(runSpy).toHaveBeenCalledWith({ auto: false });
+        expect(runSpy).toHaveBeenCalledWith({ auto: false, uncapped: false });
+        runSpy.mockRestore();
+    });
+
+    test('passes the uncapped flag through to the tile calc', async () => {
+        const runSpy = vi.spyOn(labyrinthClearRate, 'runTileCalculation').mockResolvedValue(undefined);
+
+        await labyrinthClearRate.recomputeCombatSims(true);
+
+        expect(runSpy).toHaveBeenCalledWith({ auto: false, uncapped: true });
         runSpy.mockRestore();
     });
 });
