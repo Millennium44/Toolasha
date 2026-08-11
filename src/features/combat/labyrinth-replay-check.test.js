@@ -127,6 +127,17 @@ describe('compareLab verdicts and diagnosis', () => {
         expect(result.diagnosis).toMatch(/under-models the monster/i);
     });
 
+    test('a sim that over-models the monster is caught, and named', () => {
+        // Sim predicts the monster deals 14/s; it really deals 10/s → its rate
+        // comes in under, and the sim over-modelled it. This is the case that
+        // used to fall through to "within noise".
+        const result = compareLab(observed(), predictedLike({ takenPerSecond: 14 }));
+        const taken = result.metrics.find((m) => m.key === 'taken');
+        expect(taken.verdict).toBe('below');
+        expect(result.diagnosis).toMatch(/over-models the monster/i);
+        expect(result.diagnosis).not.toMatch(/within noise/i);
+    });
+
     test('too few fights is called insufficient, not consistent', () => {
         const thin = deriveObserved(losses(2))[0];
         const result = compareLab(thin, predictedLike());
