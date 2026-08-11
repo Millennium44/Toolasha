@@ -6,11 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
-### Bulk reroll: the reroll menu is pressed, not just opened
+### Bulk reroll: the paid options are found again, so a spent free reroll no longer bricks the card
 
-The bulk reroll button opened a task's reroll menu and then never pressed anything — the chooser was pulled up and left sitting there, no reroll happened, and the card's protection and reroll-count indicators froze because a card mid-flow is one every Toolasha pass declines to repaint. The cause: the reroll option is read while the chooser is still drawing, React re-renders the row and swaps the button node, and the deferred `element.click()` landed on the detached original — an event that never reaches React's delegated handler, so the press did nothing.
+The bulk reroll button opened a task's reroll menu and then never rerolled anything, and the card's protection and reroll-count indicators froze (a card left mid-flow is one every Toolasha pass declines to repaint). The console gave it away: the chooser was only offering `["MooPass Free Reroll"]` — the coin and cowbell options were not being found at all. The reader narrowed its scan to the first `*rerollOption*`-named element on the card, but the live chooser puts the free reroll in its own `RandomTask_rerollOptionsContainer` and leaves the paid buttons a level up in the `buttonsContainer` beside it. So the scan saw exactly one button, the free one; and once the free reroll was demoted for going nowhere (a MooPass whose daily rerolls are spent still shows the button but reaches no server), there was no paid option left to fall back to and the card was skipped.
 
-- **The reroll option is now re-read off the card immediately before it is pressed**, so the click lands on the node actually on screen rather than one React has since replaced. The press also goes out as a bubbling `MouseEvent` (the same real-event path the discard flow already uses), which reaches React's handler whichever node it is. This fixes both reported symptoms at once: the reroll now happens, and the protection/reroll indicators refresh again as soon as the server confirms and the chooser closes.
+- **The reroll chooser is now read off the whole card** instead of a single sub-container, so the coin and cowbell options are found wherever the build places them. The per-button filter already rejects every control and Toolasha's own injected buttons, so a card at rest still offers nothing. With the paid options visible again, a demoted free reroll falls through to paying and the task actually rerolls — and the protection/reroll indicators repaint as soon as the server confirms and the chooser closes.
+- **The reroll option is also re-read off the card immediately before it is pressed**, so the click lands on the node actually on screen rather than one React has re-rendered away, and the press goes out as a bubbling `MouseEvent` (the real-event path the discard flow already uses).
 
 ### In Progress payout: leaner, plus a Roster button
 
