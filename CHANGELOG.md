@@ -8,55 +8,39 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### The Sort Tasks button sorts even with a reroll menu open
 
-Pressing Sort Tasks did nothing while any card had its reroll chooser (or discard confirmation) open — the sort held back so it would not re-append the mid-flow card and pull the pending click out from under it. That guard is right for the _automatic_ passes (auto-sort, sort-after-read), but a direct button press is the player asking for order right now, so it is now honoured immediately: the board sorts through, reroll menu and all. The automatic triggers still defer and sort once the board settles.
+A direct press now sorts the board immediately, mid-reroll and all. The automatic passes (auto-sort, sort-after-read) still wait for the board to settle so they never yank a pending click.
 
-Two fixes to when the protected/cap edge appears.
+### The protected/cap task border keeps up again
 
-- **It no longer waits for the reroll menu to close.** After a reroll, the card keeps its chooser open, and the border was being withheld from any card mid-flow — so the green edge only moved to the new task once you pressed Back, and in the meantime seemed "stuck" (a tab switch, which re-creates the cards, was the only thing that refreshed it). The edge is an inset box-shadow that shifts no layout and cannot disturb the click you are in the middle of, so it is now redrawn on a mid-flow card too — the border tracks the task the reroll landed on right away. Only the one thing that genuinely should not touch a mid-flow card, the legacy outline reset that fights the auto-reroll border, is still held back until the menu closes.
-- **It shows instantly when the board opens.** The card-appeared watcher only drew the border on a delayed 150 ms pass, so protected cards were briefly borderless every time the board rendered. The border is now painted synchronously the moment a card appears, with the 150 ms pass kept as a fallback for the rare case the card's React fiber is not yet reachable. The watcher only fires for a freshly added card node, which carries no border yet, so the immediate pass can only add an edge, never flicker one off.
+It is redrawn right away on a card that is mid-reroll (it used to wait for the menu to close, so the edge looked stuck until you pressed Back), and painted the instant the board opens instead of after a 150 ms delay.
 
 ### The task bulk-reroll button is removed
 
-The bulk-reroll stepper is gone — feature, header button, and its setting. It could never work reliably: the game gates a task reroll on a **trusted** click that opens the reroll chooser, and a userscript's synthetic open leaves the reroll inert (a hand-opened menu rerolls; a Toolasha-opened one does not — confirmed by an A/B test). No synthetic DOM event can be trusted, so the only way to drive it was to send the game's own reroll message over its WebSocket, which is not a road this fork wants to go down. Rather than ship a button that only works if you open the menu by hand first, it is removed.
-
-- Removed the `taskBulkReroll` feature and its "Task bulk reroll stepper" setting, and reverted the WebSocket groundwork (socket capture, `send()`, and the temporary `[Toolasha WS-OUT]` logging) added while investigating it.
-- **Reroll protection and the reroll-cost reader are untouched** — `findRerollOptions` and the 🛡️ cap/per-task protection stay exactly as they were.
+The game only honours a reroll from a real click that opens the menu, which a userscript can't fake — so the button never worked unless you opened the menu by hand first. Reroll protection and the 🛡️ cap/per-task guards are untouched.
 
 ### In Progress payout: leaner, plus a Roster button
 
-- **The token gold valuation is dropped on the In Progress tab.** "2,100 (≈23,672,727g via credit exchange)" is now just "2,100" there — the In Progress tab is a glance at a running trial, and the gold conversion belongs on the Trials tab, where it still shows in full.
-- **The "No Treasury level seen" nag is gone from the In Progress tab.** Treasury only prices tokens, which the In Progress tab no longer does, so the reminder is kept for the Trials tab. Builder's Hall (which moves the Guild Points themselves) is unaffected.
-- **A Roster button** in the payout controls opens Toolasha's guild roster panel — each member's share of the week's XP and who has gone quiet.
+Drops the token gold valuation and the "No Treasury level seen" nag from the In Progress tab (both kept on the Trials tab), and adds a Roster button that opens the guild roster panel.
 
 ### Skilling In Progress panel no longer squashes the game's card off-screen
 
-The skilling In Progress panel nests the trial card two non-wrapping flex rows deep — a column holds a `battleArea` row (the roster beside a `challengeArea` row) which holds the card. Toolasha's payout and analysis blocks anchor to that card, so they were landing inside the narrow 722px `challengeArea` beside it, squashing the game's own skilling card to 44px and cutting it off. The block placer only escaped one row (into the still-non-wrapping `battleArea`), and the payout block did not escape at all.
+Injected payout/analysis blocks now take a full-width line above and below the roster+card row instead of shrinking the game's own skilling card to a sliver beside them.
 
-- **Injected blocks now climb out of every nested non-wrapping flex row** to the first column/grid/block ancestor, so they take a full-width line above and below the roster+card row instead of stealing its width. The payout block uses the same escape. Grids, wrapping rows and ordinary flow are unchanged, so the Trials tab and combat In Progress placement are untouched.
+### Skilling trials: no flat projection once slowing is measured, and timestamped readings
 
-### Skilling trials: the flat projection is gone once slowing is known, and readings are timestamped
+Drops the misleadingly-high "On pace (flat)" tier once a slowdown is known (it survives in the tooltip), and keeps a downsampled timestamped reading series in the export so the tier forecast can be checked against what was banked.
 
-- **The "On pace (flat)" tier projection is no longer shown beside the real one.** A skilling trial's success rate falls with every tier, so the flat projection — the current fill rate held for the whole hour — reads far too high (it was printing "21 tiers → T21 (Lv.300)" in green next to the honest "~T11"). Once a slowdown has been measured, only the **Expected** row is shown; the flat number survives in that row's tooltip, where it explains itself instead of competing with the estimate. With no slowdown measured yet, the single "On pace for" row is unchanged.
-- **Skilling readings are now kept as a timestamped series** (`trialSkilling.series` in the export), downsampled to the start, every tier boundary, and once per 15 s otherwise, capped so a long session cannot grow it without bound. This is what lets the tier forecast be replayed at points across a trial and checked against the tier actually banked — the recorder previously kept only the last reading, so there was nothing to test the estimate against.
+### Trial scoreboard: honest damage-taken label, and a runaway split is flagged
 
-### Trial scoreboard: damage-taken is labelled honestly, and a runaway split is flagged
-
-Two clarity fixes to the trial scoreboard, from comparing a real recording against the game's post-trial stats modal.
-
-- **Damage taken is two different quantities, and the panel now says which.** The game's modal reports **pre-mitigation** gross incoming; the live stream can only read **post-mitigation** health actually lost and healed back (and even that is a floor — damage healed on the same tick is invisible). A recording confirmed the stream's damage-taken equals healing-received almost exactly per player, i.e. it measures HP oscillation, not incoming damage. The Taken tab now carries a note spelling out pre- vs post-mitigation on both sources, and the export's `supportCoverage.damageTaken` says the same, so the two are never compared as if they should match.
-- **A measured damage split that exceeds the bosses' health is flagged.** The summed health of every boss seen is a hard ceiling on total party damage (`bossHpCeiling`, exposed as `damageCeiling` on the breakdown). When the live damage tab's per-player total runs past that ceiling, a note warns the split is over-attributing — the usual cause being a fast damage-over-time build collecting shared ticks — and points at the game's post-trial stats as the tiebreak. One-sided: a total under the ceiling is not thereby confirmed.
+Damage taken is now labelled pre- vs post-mitigation (the live stream can only read the latter), and a per-player damage split that runs past the bosses' combined health is flagged as over-attributing.
 
 ### Dev builds install over a same-numbered release
 
-The dev userscript and the published one share a `@name` and a `@version`, so once a release shipped a number (2.93.0), a dev build of that number read as "already installed" — Tampermonkey would not replace 2.93.0 with 2.93.0, and a fresh dev file silently kept the old code (a new feature simply never appeared). The standalone dev build now appends the build stamp as a fourth version segment (e.g. `2.93.0.20260810213045`), so every dev build sorts newer than the release and newer than the last dev build and a reinstall always takes. A later real release still supersedes it (higher minor), and the published header is untouched.
+The dev build now appends its build timestamp as a fourth version segment, so a reinstall always takes even when the release number hasn't changed.
 
 ### Scrolls in the Combat Simulator
 
-The Combat Simulator can now carry Labyrinth combat scrolls, so a sim reflects the buffs you actually run and the Upgrade advisor can say which scroll is worth carrying. All seven combat scrolls are offered: **Damage** (+8%), **Attack Speed** (+15%), **Cast Speed** (+15%), **Critical Rate** (+10%), **Combat Drop** (+15%), **Wisdom** (+20% combat EXP) and **Rare Find** (+60%). Each is opened for a 30-minute buff effective in normal combat (not the Labyrinth or Guild Trials), and each one moves a combat number the engine reads — damage and attack speed as ratio boosts, the rest as flat.
-
-- **New "Scrolls" section on the Configure tab** (combat mode), next to Guild Shrines. It starts checked at the scrolls you currently have active, and each one you tick is folded into the sim.
-- **New "Scrolls" mode on the Upgrade tab**, alongside Community. It measures what each scroll is worth: turning on one you are not carrying, or — for one already on — what you would lose by dropping it. Scrolls carry a per-run seal cost the advisor does not price, so like community buffs they land in the "measured, but not priced" box and are read on their deltas.
-- **Engine plumbing:** a player's chosen scrolls ride the DTO (`scrollBuffs`) and resolve to combat buffs at the single point every per-player sim passes through, so parties, all-zones runs and upgrade candidates all pick them up. Magnitudes come from a dedicated combat-scroll table with the values off the game's own item tooltips, each mapped to the ratio- or flat-boost slot its buff type uses.
+The sim and Upgrade advisor now carry the seven Labyrinth combat scrolls (Damage, Attack Speed, Cast Speed, Critical Rate, Combat Drop, Wisdom, Rare Find): a Scrolls section on Configure to sim with them, and a Scrolls mode on Upgrade to measure what each is worth.
 
 ## Unreleased — branch `claude/mcs-ingest`
 
