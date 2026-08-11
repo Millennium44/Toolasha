@@ -16,6 +16,8 @@ import { buildGameDataPayload, getCommunityBuffs } from '../combat-sim/combat-si
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
 import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import loadoutSnapshot from './loadout-snapshot.js';
+import labFightRecorder from './labyrinth-fight-recorder.js';
+import { deriveObserved, predictedFromSim, compareLab } from './labyrinth-replay-check.js';
 import { roomXpPerHour } from './labyrinth-formulas.js';
 import { DISCARD_LEGACY } from './labyrinth-outcomes.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
@@ -46,6 +48,10 @@ const COMBAT_CACHE_MAX_ENTRIES = 200;
 const DECISION_MIN_TRIALS = 40;
 /** A room sitting exactly on the bar never decides; this is where it gives up */
 const DECISION_MAX_TRIALS = 4000;
+/** A recorded room needs at least this many fights before a replay is worth a sim */
+const MIN_REPLAY_FIGHTS = 3;
+/** At most this many rooms are replayed at once, so a Replay press is bounded */
+const MAX_REPLAY_GROUPS = 3;
 
 /** Prototype methods mixed into LabyrinthClearRate */
 export const simCacheMethods = {
@@ -121,6 +127,63 @@ export const simCacheMethods = {
             minTrials: MIN_SIM_TRIALS,
             maxTrials: MAX_SIM_TRIALS,
         };
+    },
+
+    /**
+     * Re-simulate the rooms the recorder captured and compare the real damage
+     * rates against the sim's.
+     *
+     * The accuracy record asks whether the clear chance is right; this asks why
+     * it is wrong, by measuring your damage rate and the monster's from the
+     * recorded fights and putting each beside the same rate a fresh sim produces
+     * for that monster at that room level. The comparison itself is pure and
+     * lives in labyrinth-replay-check; this feeds it the sim, run with the loadout
+     * you are wearing now — which is why the recorder warns against a gear change
+     * between recording and replay.
+     *
+     * @returns {Promise<{groups: Array<Object>, recordedAt: number|null}>}
+     */
+    async replayRecordedFights() {
+        const attempts = labFightRecorder.recordedAttempts();
+        const observed = deriveObserved(attempts);
+        // The most-fought rooms first, and only those with enough fights to be
+        // worth a sim — a couple bound the sim cost and answer the question
+        const worth = observed.filter((group) => group.fights >= MIN_REPLAY_FIGHTS).slice(0, MAX_REPLAY_GROUPS);
+
+        const groups = [];
+        for (const group of worth) {
+            try {
+                const loadoutId = this.getLabyrinthLoadoutId(group.monsterHrid);
+                const dto = this.buildLabyrinthPlayerDTO(loadoutId);
+                if (!dto) continue;
+
+                const simResult = await runLabyrinthSimulation({
+                    gameData: buildGameDataPayload(),
+                    playerDTOs: [dto],
+                    zoneHrid: '/actions/combat/fly',
+                    monsterHrid: group.monsterHrid,
+                    roomLevel: group.roomLevel,
+                    crates: this.getCrateHrids(),
+                    hours: this.getSimHours(),
+                    precision: this.getSimStopRule(),
+                    communityBuffs: getCommunityBuffs(),
+                    labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
+                    fullAbilities: this.labyrinthFullAbilities(),
+                });
+
+                const predicted = predictedFromSim(simResult, {
+                    playerHrid: dto.hrid || 'player1',
+                    monsterHrid: group.monsterHrid,
+                });
+                if (!predicted) continue;
+
+                groups.push(compareLab(group, predicted));
+            } catch (error) {
+                console.error('[LabyrinthSimCache] Replaying a recorded room failed:', error);
+            }
+        }
+
+        return { groups, recordedAt: labFightRecorder.recordingStatus().recordedAt };
     },
 
     /**

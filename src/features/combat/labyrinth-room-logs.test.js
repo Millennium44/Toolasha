@@ -178,6 +178,7 @@ describe('the sim accuracy list opens a room type at a time', () => {
         labyrinthRoomLogs.panel = null;
         labyrinthRoomLogs.view = 'accuracy';
         labyrinthRoomLogs.expandedSubjects = new Set();
+        labyrinthRoomLogs.replayResult = null;
         labyrinthRoomLogs.simSource = { accuracy: async () => snapshot };
         await labyrinthRoomLogs.renderAccuracy();
     });
@@ -209,6 +210,50 @@ describe('the sim accuracy list opens a room type at a time', () => {
         await labyrinthRoomLogs.renderAccuracy();
 
         expect(text()).not.toContain('Milking Lv.173');
+    });
+
+    test('a replay result draws above the record with its diagnosis and rates', async () => {
+        labyrinthRoomLogs.replayResult = {
+            groups: [
+                {
+                    monsterHrid: '/monsters/cyclops',
+                    monsterName: 'Cyclops',
+                    roomLevel: 200,
+                    fights: 6,
+                    clears: 2,
+                    metrics: [
+                        {
+                            key: 'dps',
+                            label: 'Your damage / s',
+                            observed: 8000,
+                            predicted: 10000,
+                            deviationPct: -20,
+                            marginPct: 3,
+                            verdict: 'below',
+                        },
+                        {
+                            key: 'taken',
+                            label: 'Monster damage / s',
+                            observed: 500,
+                            predicted: 500,
+                            deviationPct: 0,
+                            marginPct: 3,
+                            verdict: 'consistent',
+                        },
+                    ],
+                    diagnosis: 'Sim over-credits your damage: real fights kill the monster slower.',
+                },
+            ],
+            recordedAt: 123,
+        };
+        await labyrinthRoomLogs.renderAccuracy();
+
+        expect(text()).toContain('Calibration replay');
+        expect(text()).toContain('Cyclops');
+        expect(text()).toContain('over-credits your damage');
+        expect(text()).toContain('Your damage / s');
+        // The observed-vs-sim figure and its deviation both read out
+        expect(text()).toContain('vs sim');
     });
 
     test('one room type opening does not open the others', async () => {
