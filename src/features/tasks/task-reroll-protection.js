@@ -64,8 +64,14 @@ class TaskRerollProtection {
             (await storage.get(`taskCapCowbellThreshold_${charId}`, 'settings', null)) ??
             (await storage.get('taskCapCowbellThreshold', 'settings', 32));
 
-        // Watch for task cards appearing
+        // Watch for task cards appearing. Draw at once so the protected border
+        // is there the instant the card is — the observer only ever fires for a
+        // freshly added card node, which carries no border yet, so an immediate
+        // pass can only add one, never flicker an existing one off. The 150 ms
+        // pass stays as a fallback for the rare case the card's React fiber (and
+        // so its quest) is not yet reachable on the first pass.
         const unregister = domObserver.onClass('TaskRerollProtection', 'RandomTask_randomTask', (taskNode) => {
+            this._processTaskCard(taskNode);
             setTimeout(() => this._processTaskCard(taskNode), 150);
         });
         this.unregisterHandlers.push(unregister);
@@ -145,14 +151,15 @@ class TaskRerollProtection {
             this._wireRerollInterception(taskCard);
         }
 
-        // Repainting a card that is showing the reroll chooser or the discard
-        // confirmation changes it under the player's pending click. The chooser
-        // survives the reroll, so the repaint is booked for when it closes —
-        // the highlight otherwise still describes the rerolled-away task.
-        if (isCardInConfirmState(taskCard)) {
-            armConfirmSettleWatch();
-            return;
-        }
+        // A card mid-flow (its reroll chooser or discard confirmation open) still
+        // gets its border redrawn. The edge is an inset box-shadow — it shifts no
+        // layout and cannot disturb the click the player is in the middle of — so
+        // drawing it now is what makes the green move the instant a reroll lands,
+        // rather than waiting for the menu to be closed. The settle watch is still
+        // armed so the one thing that CAN disturb a mid-flow card (the legacy
+        // outline reset, which fights task-auto-reroll) runs only once it settles.
+        const inConfirm = isCardInConfirmState(taskCard);
+        if (inConfirm) armConfirmSettleWatch();
 
         // Get quest data via fiber traversal
         const quest = this._getQuestFromCard(taskCard);
@@ -187,8 +194,10 @@ class TaskRerollProtection {
         // here so an upgrade does not leave one behind. It is also how
         // task-auto-reroll draws its "worth rerolling" border, so clearing it
         // unconditionally makes the two features fight over the same card every
-        // pass — which the player sees as the card flickering.
-        if (!taskCard.querySelector('.mwi-autoreroll-badge')) {
+        // pass — which the player sees as the card flickering. Kept out of the
+        // mid-flow pass so the two never fight over a card the player is
+        // mid-click on; it runs on the settle pass instead.
+        if (!inConfirm && !taskCard.querySelector('.mwi-autoreroll-badge')) {
             taskCard.style.removeProperty('outline');
             taskCard.style.removeProperty('outline-offset');
         }

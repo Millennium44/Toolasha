@@ -6,6 +6,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### The Sort Tasks button sorts even with a reroll menu open
+
+Pressing Sort Tasks did nothing while any card had its reroll chooser (or discard confirmation) open — the sort held back so it would not re-append the mid-flow card and pull the pending click out from under it. That guard is right for the _automatic_ passes (auto-sort, sort-after-read), but a direct button press is the player asking for order right now, so it is now honoured immediately: the board sorts through, reroll menu and all. The automatic triggers still defer and sort once the board settles.
+
+Two fixes to when the protected/cap edge appears.
+
+- **It no longer waits for the reroll menu to close.** After a reroll, the card keeps its chooser open, and the border was being withheld from any card mid-flow — so the green edge only moved to the new task once you pressed Back, and in the meantime seemed "stuck" (a tab switch, which re-creates the cards, was the only thing that refreshed it). The edge is an inset box-shadow that shifts no layout and cannot disturb the click you are in the middle of, so it is now redrawn on a mid-flow card too — the border tracks the task the reroll landed on right away. Only the one thing that genuinely should not touch a mid-flow card, the legacy outline reset that fights the auto-reroll border, is still held back until the menu closes.
+- **It shows instantly when the board opens.** The card-appeared watcher only drew the border on a delayed 150 ms pass, so protected cards were briefly borderless every time the board rendered. The border is now painted synchronously the moment a card appears, with the 150 ms pass kept as a fallback for the rare case the card's React fiber is not yet reachable. The watcher only fires for a freshly added card node, which carries no border yet, so the immediate pass can only add an edge, never flicker one off.
+
+### The task bulk-reroll button is removed
+
+The bulk-reroll stepper is gone — feature, header button, and its setting. It could never work reliably: the game gates a task reroll on a **trusted** click that opens the reroll chooser, and a userscript's synthetic open leaves the reroll inert (a hand-opened menu rerolls; a Toolasha-opened one does not — confirmed by an A/B test). No synthetic DOM event can be trusted, so the only way to drive it was to send the game's own reroll message over its WebSocket, which is not a road this fork wants to go down. Rather than ship a button that only works if you open the menu by hand first, it is removed.
+
+- Removed the `taskBulkReroll` feature and its "Task bulk reroll stepper" setting, and reverted the WebSocket groundwork (socket capture, `send()`, and the temporary `[Toolasha WS-OUT]` logging) added while investigating it.
+- **Reroll protection and the reroll-cost reader are untouched** — `findRerollOptions` and the 🛡️ cap/per-task protection stay exactly as they were.
+
 ### In Progress payout: leaner, plus a Roster button
 
 - **The token gold valuation is dropped on the In Progress tab.** "2,100 (≈23,672,727g via credit exchange)" is now just "2,100" there — the In Progress tab is a glance at a running trial, and the gold conversion belongs on the Trials tab, where it still shows in full.

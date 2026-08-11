@@ -168,7 +168,8 @@ class TaskSorter {
             this.sortButton.textContent = 'Sort Tasks';
             this.sortButton.style.marginLeft = '8px';
             this.sortButton.setAttribute('data-mwi-task-sort', 'true');
-            this.sortButton.addEventListener('click', () => this.sortTasks());
+            // A direct press sorts now, even with a reroll chooser open
+            this.sortButton.addEventListener('click', () => this.sortTasks(true));
             headerElement.appendChild(this.sortButton);
         }
 
@@ -349,9 +350,13 @@ class TaskSorter {
     }
 
     /**
-     * Sort all tasks in the task board
+     * Sort all tasks in the task board.
+     *
+     * @param {boolean} [force=false] - Sort even while a card is mid-flow.
+     *   Pressing the Sort Tasks button is a direct instruction to sort now, so it
+     *   is honoured at once; the automatic triggers stay polite and defer.
      */
-    sortTasks() {
+    sortTasks(force = false) {
         const taskList = document.querySelector(GAME.TASK_LIST);
         if (!taskList) {
             return;
@@ -366,7 +371,8 @@ class TaskSorter {
         // One of the cards is showing a reroll chooser or a discard
         // confirmation and is waiting on a second click. Re-appending the cards
         // moves that one out of the DOM and back, which is exactly the click
-        // being pulled out from under the player, so the board is left alone.
+        // being pulled out from under the player, so the automatic passes leave
+        // the board alone.
         //
         // What happens next depends on who asked. Auto-sort is a standing
         // instruction that the board be in order, and a reroll is the commonest
@@ -374,8 +380,10 @@ class TaskSorter {
         // and sorts as soon as no card is mid-flow. Without it, sorting is
         // something the player does, and re-ordering the board some seconds
         // after they closed a chooser is not what they pressed anything for:
-        // the board waits for the button.
-        if (boardHasConfirmingCard(taskList)) {
+        // the board waits for the button. A `force` press of that button is the
+        // player asking for order right now, mid-flow and all, so it does not
+        // defer.
+        if (!force && boardHasConfirmingCard(taskList)) {
             if (this.unsubscribeSettle) armConfirmSettleWatch();
             return;
         }

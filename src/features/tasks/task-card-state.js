@@ -21,8 +21,8 @@
  * re-render — redraw it.
  *
  * Except that there is no such pass. The game leaves the reroll chooser open
- * after a reroll (task-bulk-reroll has always had to click Back to get the
- * trash can again, for exactly that reason), so the card sits mid-flow with the
+ * after a reroll (the player has to click Back to get the trash can again), so
+ * the card sits mid-flow with the
  * *new* task in it for as long as the player keeps rerolling — and every
  * injector's quest-update pass, which runs 250-400 ms after the reroll, skips
  * it. Nothing re-runs when the chooser finally closes either: the injectors are
