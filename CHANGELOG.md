@@ -2806,6 +2806,27 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## Upstream Changelog
 
+## [2.95.0](https://github.com/Millennium44/Toolasha/compare/v2.94.0...v2.95.0) (2026-08-11)
+
+### Features
+
+- **tasks:** let a manual Sort Tasks press sort even with a reroll menu open ([82f8926](https://github.com/Millennium44/Toolasha/commit/82f89264f699fcac1f30d7b7f80faac29817723e))
+- **tasks:** remove the bulk-reroll button ([dd52fc9](https://github.com/Millennium44/Toolasha/commit/dd52fc950aaeffdd9bb2a0045cd02b435fa5e408))
+- **ws:** capture the game socket and log outgoing frames to replay a reroll ([714ba66](https://github.com/Millennium44/Toolasha/commit/714ba666a9c30ea16eb93b5c374ea0f7fa8ba711))
+
+### Bug Fixes
+
+- **tasks:** bulk reroll presses the menu instead of just opening it ([ecc16e0](https://github.com/Millennium44/Toolasha/commit/ecc16e09427f3aeba4bfb9969f4a06c00be31841))
+- **tasks:** draw the protected task border synchronously when a card appears ([4cd7f29](https://github.com/Millennium44/Toolasha/commit/4cd7f29d0b3ecbc04307b42e5b053a56440c14f8))
+- **tasks:** open the reroll chooser with a dispatched event so it works without a manual press ([ed02fcb](https://github.com/Millennium44/Toolasha/commit/ed02fcb7b465663f29cdcd1da559f3af9c1a414d))
+- **tasks:** read the reroll chooser off the whole card so paid options are found ([9cbda23](https://github.com/Millennium44/Toolasha/commit/9cbda23650d5191324b8028957aefc68fc25d405))
+- **tasks:** settle a just-opened reroll chooser, and silence the worker math.js source-map error ([d0dbebc](https://github.com/Millennium44/Toolasha/commit/d0dbebca15d4952fb1397a379e80297a59096cd0))
+- **tasks:** update the protected border on a mid-flow card, and drop the diagnostics ([6f7afd3](https://github.com/Millennium44/Toolasha/commit/6f7afd3bba493d45a9b6148d7c1dea4fdc6736c8))
+
+### Miscellaneous Chores
+
+- **tasks:** temporary protection-repaint diagnostics ([2184bdc](https://github.com/Millennium44/Toolasha/commit/2184bdc86e9c585b7cb2cac296ffaa43542c4a9c))
+
 ## [2.94.0](https://github.com/Millennium44/Toolasha/compare/v2.93.0...v2.94.0) (2026-08-10)
 
 ### Features
