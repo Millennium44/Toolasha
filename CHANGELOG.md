@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### "Check Mooket price" button in the marketplace item view
+
+The game's `marketplace.json` price feed refreshes only about once an hour, at no fixed minute, so the price it quotes can be most of an hour stale with nothing in the number to say so. A new **⧉ Check Mooket price** button sits under the item you're viewing in the marketplace and, on click, asks the pooled Mooket dataset for its newest sighting of that item, then shows both readings side by side — game vs Mooket, each with how old it is — and marks whichever is fresher. Because the Mooket pool is fed continuously by clients opening books, for anything people are actually looking at it is often minutes old rather than up to an hour; but a rarely-opened item can be older in the pool than in the snapshot, which is why both ages are shown rather than one being declared correct. Reads the same third-party server as the price history panel, so it rides the existing `Market: Price history panel` (`market_pooledHistory`) switch and does nothing until that is on.
+
 ### My Listings' Top Order Price refreshes when the market moves
 
 The Top Order Price column on the My Listings tab only redrew when your own listings changed (or, with the age column on, when you re-opened an item's order book), so an undercut fired an alert but left the column showing the stale price. It now subscribes to the same market-data updates the undercut alert uses — a marketplace snapshot refresh or an order-book price patch redraws the column (debounced), so being undercut turns the price red here too.
