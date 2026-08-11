@@ -903,7 +903,11 @@ export default class CustomTabsUI {
                 orderCounter = this._injectAccordionHeaders(invContainer, this._config.tabs, 0, tileMap, orderCounter);
             }
 
-            if (config.getSettingValue('inventoryTabs_showUnorganized')) {
+            // getSetting (not getSettingValue) so a character switch, which clears
+            // the per-character cache mid-layout-pass, reads the schema default
+            // (true) instead of null and does not drop the Unorganized bucket
+            // until the cache reloads (ported from upstream Celasha/Toolasha#636).
+            if (config.getSetting('inventoryTabs_showUnorganized')) {
                 orderCounter = this._injectUnorganized(invContainer, tileMap, orderCounter);
             }
 
