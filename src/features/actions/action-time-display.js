@@ -649,6 +649,20 @@ class ActionTimeDisplay {
      * @param {HTMLElement} actionNameElement - The action name DOM element
      */
     setupActionNameObserver(actionNameElement) {
+        // Disconnect any observer already running before replacing it. Both
+        // waitForActionPanel() and the persistent Header_actionName watcher call
+        // this on a character switch, and without this a second call would orphan
+        // the first observer — its disconnect handle overwritten and lost. That
+        // leaked observer keeps watching the element, and since updateDisplay()
+        // only disconnects the *current* this.actionNameObserver before appending
+        // its stats span, the leaked one fires on that append and re-triggers
+        // updateDisplay in an unbounded loop that freezes the tab. (Ported from
+        // upstream Celasha/Toolasha#623.)
+        if (this.actionNameObserver) {
+            this.actionNameObserver();
+            this.actionNameObserver = null;
+        }
+
         // Watch for text content changes in the action name element
         this.actionNameObserver = createMutationWatcher(
             actionNameElement,
