@@ -128,6 +128,25 @@ function sleep(ms) {
 }
 
 /**
+ * Press a live game button so its React handler actually runs.
+ *
+ * The reroll option was captured off `findRerollOptions` while the chooser was
+ * still drawing, and by the time the click lands React may have re-rendered the
+ * row and replaced that node. A plain `element.click()` on the now-detached node
+ * fires an event that never bubbles up to React's delegated listener on the root
+ * container, so the handler never runs — the chooser opens and nothing else
+ * happens, which is exactly the "pulls the reroll menu up but never presses
+ * anything" the player reported. Dispatching a bubbling MouseEvent on a freshly
+ * re-queried node is the same real-event path the discard flow already relies
+ * on, and it reaches React whether the node is the current one or not.
+ *
+ * @param {HTMLElement} button - The button to press
+ */
+function robustClick(button) {
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+}
+
+/**
  * What makes one task different from the task that replaced it.
  *
  * A reroll keeps the quest id and changes everything else about it; a free
@@ -404,14 +423,37 @@ export class TaskBulkReroll {
         const freeOption = this.freeRerollStalled ? null : usable.find((option) => option.kind === 'free');
         if (freeOption) {
             this.lastClickWasFree = true;
-            freeOption.button.click();
-            return true;
+            return this._clickOption(card, (option) => option.kind === 'free', freeOption.button);
         }
 
         const wantKind = mode === 'coin' ? 'coin' : 'cowbell';
         const target = usable.find((option) => option.kind === wantKind);
         if (!target) return false;
-        target.button.click();
+        return this._clickOption(card, (option) => option.kind === wantKind, target.button);
+    }
+
+    /**
+     * Press a reroll option, re-reading it off the card first.
+     *
+     * The option was found while the chooser was still drawing; React may have
+     * re-rendered the row since and replaced the node, so the button held in the
+     * option object can be detached. Re-querying right before the press gets the
+     * node that is actually on screen, and {@link robustClick} reaches React's
+     * handler either way. The freshly-matched option is preferred, with the
+     * originally-captured button kept as a fallback for the case where the
+     * re-read no longer finds a match.
+     *
+     * @param {HTMLElement} card - The card whose chooser is open
+     * @param {(option: Object) => boolean} matches - Which option to press
+     * @param {HTMLElement} fallbackButton - The button captured earlier
+     * @returns {boolean} Whether a button was pressed
+     * @private
+     */
+    _clickOption(card, matches, fallbackButton) {
+        const fresh = findRerollOptions(card).find((option) => option.available && matches(option));
+        const button = fresh?.button || fallbackButton;
+        if (!button) return false;
+        robustClick(button);
         return true;
     }
 

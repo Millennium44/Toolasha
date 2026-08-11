@@ -273,6 +273,33 @@ describe('the chooser the player actually has', () => {
 
         expect(await reroller._actOnCard(card, 'coin')).toBe(true);
     });
+
+    test('the press lands on the button on screen, not the one React has replaced', async () => {
+        // The reported "pulls the reroll menu up but never presses anything": the
+        // option is read while the chooser is still drawing, React re-renders the
+        // row and swaps the node, and a click on the detached original reaches no
+        // handler. The press must re-read the card and land on what is there now.
+        const reroller = new TaskBulkReroll();
+        const card = screenshotCard();
+
+        // Stand in for React's re-render: replace the live free-reroll button
+        // with a fresh clone and detach the original, mirroring what a re-render
+        // does between the option being read and the click being sent.
+        const row = card.querySelector('div');
+        const original = [...card.querySelectorAll('button')].find((b) => /free reroll/i.test(b.textContent));
+        const fresh = original.cloneNode(true);
+        fresh.addEventListener('click', () => {
+            card.dataset.pressed = 'fresh-free';
+        });
+        row.replaceChild(fresh, original);
+        // A click on the detached original must not be what registers
+        original.addEventListener('click', () => {
+            card.dataset.pressed = 'detached-free';
+        });
+
+        expect(await reroller._clickOption(card, (option) => option.kind === 'free', original)).toBe(true);
+        expect(card.dataset.pressed).toBe('fresh-free');
+    });
 });
 
 describe('the free reroll is demoted, not exiled', () => {
