@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Labyrinth: the calibration recorder is now passive and accumulates across runs
+
+The labyrinth hands out random rooms and only lets you fight one again by failing it, so "record five fights of the same room" was never really possible. The recorder no longer asks you to. There's no Record button any more — **every combat fight is kept automatically**, across runs and page reloads, and the monsters you meet often build up their sample over time. Press **Replay** whenever you're curious and it judges whatever has accumulated.
+
+- **Passive + persistent.** Fights are saved to a per-character store (the labyrinth store, alongside the sim cache) as you play. The **Replay** button shows the count on your current gear — `Replay (37)` — and when nothing has enough attempts yet it says how much is piling up ("12 fights recorded on this gear over 3 monsters, none with enough yet").
+- **Gear-fingerprinted.** Each fight is tagged with the gear it was fought in, and Replay pools only the fights matching what you're wearing now — so a loadout change starts a fresh comparison instead of mixing fights against a different character, mirroring how the accuracy record already invalidates on gear changes.
+- **Levels are bucketed.** Since a monster shows up at scattered levels across random runs, fights are pooled into 10-level bands (e.g. "Cyclops · lvl 245–254") and each band is re-simulated at its median level, so a monster you see often reaches a verdict even though its exact level rarely repeats.
+- Bounded to 500 fights, oldest dropped — many runs of history.
+
 ### Labyrinth: a fight recorder and a calibration replay
 
 The Sim accuracy record tells you _whether_ a room's clear chance is wrong; it can't tell you _why_ — a room that times out and a room that kills you are both "lost", and the fix for each is the opposite. This adds the decomposition, as two new controls in the Room Logs toolbar.

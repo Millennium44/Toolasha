@@ -275,6 +275,12 @@ class LabyrinthRoomLogs {
             this.sessions = stored.sessions.slice(0, this.logSize());
         }
 
+        // Bring the accumulated calibration fights back into memory, so the pool
+        // survives a reload rather than starting empty each session
+        labFightRecorder
+            .load()
+            .catch((error) => console.error('[LabyrinthRoomLogs] Loading fight pool failed:', error));
+
         this.progressHandler = (data) => this.onRoomProgress(data);
         webSocketHook.on('labyrinth_room_progress', this.progressHandler);
 
@@ -797,28 +803,30 @@ class LabyrinthRoomLogs {
         if (attempt.outcome === 'clear') session.cleared = true;
         session.endedAt = Date.now();
 
-        // The extra capture the calibration replay reads, when it is armed. The
-        // room log keeps the outcome; the recorder keeps the damage exchange that
-        // says whether a loss was a timeout or a death.
-        if (labFightRecorder.isRecording()) {
-            labFightRecorder.noteAttempt({
-                monsterHrid: fight.monsterHrid,
-                monsterName: this.prettyMonsterName(fight.monsterHrid),
-                roomLevel: session.roomLevel,
-                seconds: attempt.seconds,
-                outcome: attempt.outcome,
-                cleared: attempt.outcome === 'clear',
-                monsterMaxHp: fight.monsterMaxHp,
-                monsterHpEnd: fight.monsterHpEnd,
-                playerMaxHp: fight.playerMaxHp,
-                playerHpStart: fight.playerHpStart,
-                playerHpEnd: fight.playerHpEnd,
-                // Gross damage summed from the drops — matches the sim's gross
-                // totals, unlike the endpoints, which are net of your regen
-                monsterDamage: fight.grossDealt,
-                playerDamageTaken: fight.grossTaken,
-            });
-        }
+        // The calibration replay reads this. It is passive — the labyrinth gives
+        // random rooms, so every fight is kept and the ones you meet often
+        // accumulate, rather than farming one room. The room log keeps the
+        // outcome; the recorder keeps the damage exchange that says whether a loss
+        // was a timeout or a death, tagged with the gear it was fought in so a
+        // gear change starts a fresh pool.
+        labFightRecorder.noteAttempt({
+            monsterHrid: fight.monsterHrid,
+            monsterName: this.prettyMonsterName(fight.monsterHrid),
+            roomLevel: session.roomLevel,
+            seconds: attempt.seconds,
+            outcome: attempt.outcome,
+            cleared: attempt.outcome === 'clear',
+            monsterMaxHp: fight.monsterMaxHp,
+            monsterHpEnd: fight.monsterHpEnd,
+            playerMaxHp: fight.playerMaxHp,
+            playerHpStart: fight.playerHpStart,
+            playerHpEnd: fight.playerHpEnd,
+            // Gross damage summed from the drops — matches the sim's gross
+            // totals, unlike the endpoints, which are net of your regen
+            monsterDamage: fight.grossDealt,
+            playerDamageTaken: fight.grossTaken,
+            fingerprint: this.simSource?.fingerprint?.() || null,
+        });
 
         this.persist();
         this.renderIfOpen();
@@ -1118,16 +1126,15 @@ class LabyrinthRoomLogs {
             this.paintUncapped();
         });
 
-        // Calibration recorder: arm it, fight a room, then Replay re-sims that
-        // room and reports where the sim diverges from what you just did
-        this.recordButton = document.createElement('button');
-        this.recordButton.addEventListener('click', () => this.onRecordClicked());
-
+        // Calibration replay: fights are recorded passively across runs, so this
+        // just re-sims whatever has accumulated for your current gear and reports
+        // where the sim diverges from what actually happened
         this.replayButton = document.createElement('button');
         this.replayButton.textContent = 'Replay';
         this.replayButton.title =
-            'Re-simulate the rooms you just recorded with your current loadout and compare your real damage ' +
-            'rate and the monster’s against the sim — the decomposition the clear rate alone cannot give.';
+            'Re-simulate the rooms recorded on your current gear and compare your real damage rate and the ' +
+            'monster’s against the sim — the decomposition the clear rate alone cannot give. Fights accumulate ' +
+            'passively as you play; a monster needs a handful before it can be judged.';
         this.replayButton.style.cssText =
             'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.replayButton.addEventListener('click', () => this.onReplayClicked());
@@ -1137,7 +1144,6 @@ class LabyrinthRoomLogs {
         this.captureButton = document.createElement('button');
         this.captureButton.addEventListener('click', () => this.onCaptureClicked());
 
-        actions.appendChild(this.recordButton);
         actions.appendChild(this.replayButton);
         actions.appendChild(this.captureButton);
         actions.appendChild(this.uncappedButton);
@@ -1199,40 +1205,20 @@ class LabyrinthRoomLogs {
             : 'Clear the room log';
         this.clearButton.style.background = this.resetArmed ? 'rgba(255,100,100,0.55)' : 'rgba(255,255,255,0.12)';
         this.paintUncapped();
-        this.paintRecord();
+        this.paintReplay();
         this.paintCapture();
     }
 
-    /** Show whether a calibration recording is running and how much it has caught */
-    paintRecord() {
-        if (!this.recordButton) return;
-        const status = labFightRecorder.recordingStatus();
-        const kept = status.attempts;
-
-        if (status.recording) {
-            this.recordButton.textContent = kept ? `Stop (${kept})` : 'Stop';
-            this.recordButton.title =
-                'Stop the calibration recording. Fights are captured with the damage each side dealt, so Replay ' +
-                'can re-sim them. Keep your loadout unchanged between recording and Replay.';
-        } else {
-            this.recordButton.textContent = kept ? `Record (${kept})` : 'Record';
-            this.recordButton.title =
-                'Record labyrinth fights for calibration — the damage you deal and take, per attempt. Fight a ' +
-                'room, then press Replay to compare against the sim. Keep your loadout unchanged in between.';
-        }
-        this.recordButton.style.cssText =
-            'height:18px; border:0; border-radius:4px; font-size:10px; cursor:pointer; padding:0 6px; ' +
-            'white-space:nowrap; flex-shrink:0; ' +
-            (status.recording
-                ? 'background:rgba(255,110,110,0.85); color:#fff;'
-                : 'background:rgba(255,255,255,0.12); color:#9ec4ff;');
-
-        if (this.replayButton) {
-            const canReplay = kept > 0 && !!this.simSource?.replay;
-            this.replayButton.disabled = !canReplay;
-            this.replayButton.style.opacity = canReplay ? '1' : '0.45';
-            this.replayButton.style.cursor = canReplay ? 'pointer' : 'default';
-        }
+    /** Enable Replay once the pool has fights on the current gear, and count them */
+    paintReplay() {
+        if (!this.replayButton) return;
+        const fingerprint = this.simSource?.fingerprint?.() || null;
+        const kept = labFightRecorder.recordingStatus(fingerprint).attempts;
+        const canReplay = kept > 0 && !!this.simSource?.replay;
+        this.replayButton.textContent = kept ? `Replay (${kept})` : 'Replay';
+        this.replayButton.disabled = !canReplay;
+        this.replayButton.style.opacity = canReplay ? '1' : '0.45';
+        this.replayButton.style.cursor = canReplay ? 'pointer' : 'default';
     }
 
     /** Show whether a raw tick capture is running and how many ticks it has */
@@ -1298,18 +1284,6 @@ class LabyrinthRoomLogs {
             button.style.opacity = '';
             this.render();
         }
-    }
-
-    /** Arm or disarm the calibration recorder. */
-    onRecordClicked() {
-        if (labFightRecorder.isRecording()) {
-            labFightRecorder.stopRecording();
-        } else {
-            // A fresh sitting each time — the replay reads it against the loadout
-            // worn now, so last week's fights on other gear are not part of it
-            labFightRecorder.startRecording();
-        }
-        this.paintRecord();
     }
 
     /**
@@ -1561,12 +1535,15 @@ class LabyrinthRoomLogs {
             return box;
         }
         if (!result?.groups?.length) {
-            box.appendChild(
-                this.makeNote(
-                    `Nothing to replay yet. Press Record, fight a room a few times, then Replay. Needs at least ` +
-                        `a handful of clean attempts on one room.`
-                )
-            );
+            const pool = result?.pool;
+            const note =
+                pool && pool.attempts > 0
+                    ? `${pool.attempts} fight${pool.attempts === 1 ? '' : 's'} recorded on this gear over ` +
+                      `${pool.monsters} monster${pool.monsters === 1 ? '' : 's'}, but none has the handful of ` +
+                      `attempts a rate needs yet. Fights accumulate as you play — keep going and check back.`
+                    : 'No fights recorded on this gear yet. They accumulate automatically as you fight combat ' +
+                      'rooms — no need to do anything, just play and check back.';
+            box.appendChild(this.makeNote(note));
             return box;
         }
 
@@ -1576,9 +1553,14 @@ class LabyrinthRoomLogs {
             const head = document.createElement('div');
             head.style.cssText = 'font-weight:700; color:#f2f7ff; margin:4px 0 2px;';
             const name = group.monsterName || this.prettyMonsterName(group.monsterHrid);
-            head.textContent = `${name} · lvl ${group.roomLevel} · ${group.fights} fight${
-                group.fights === 1 ? '' : 's'
-            }, ${group.clears} cleared`;
+            // A bucket may pool a few nearby levels; say the span, not a false point
+            const lvl =
+                Number.isFinite(group.levelLow) && group.levelHigh > group.levelLow
+                    ? `lvl ${group.levelLow}–${group.levelHigh}`
+                    : `lvl ${group.roomLevel}`;
+            head.textContent = `${name} · ${lvl} · ${group.fights} fight${group.fights === 1 ? '' : 's'}, ${
+                group.clears
+            } cleared`;
             box.appendChild(head);
 
             const diag = document.createElement('div');

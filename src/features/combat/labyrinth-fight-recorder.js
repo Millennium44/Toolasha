@@ -1,90 +1,88 @@
 /**
  * Labyrinth fight recorder
  *
- * The combat recorder keeps the raw feed of a normal fight so attribution can be
- * argued with evidence. The labyrinth needs the same thing for a different
- * question — not "who did what damage" but "does the sim's clear chance match
- * reality" — and it cannot reuse that recorder, because the labyrinth never
- * emits `new_battle`. The combat recorder counts fights on `new_battle`, so a
- * labyrinth recording through it is one unbounded battle that never closes.
+ * The calibration replay needs several fights of one monster to measure a rate.
+ * The labyrinth hands out random rooms and only lets you fight one again by
+ * failing it, so there is no farming a monster to a sample on demand. The way to
+ * a sample is to stop trying to force one: keep every combat fight's damage
+ * exchange, across runs and reloads, and let the ones you happen to meet often
+ * accumulate.
  *
- * So this records per **attempt** rather than per tick, off the fight-boundary
- * detection the room log already does (`battle_updated` health that went up, or
- * an attack counter that reset — see labyrinth-room-logs). Each attempt keeps the
- * endpoints the replay needs: how much of the monster you destroyed, how much
- * health you lost, and how long it took. That is enough to measure your damage
- * rate and the monster's, which is the decomposition the clear-rate alone cannot
- * give: a room that times out and a room that kills you are both "lost", and only
- * the rates say which.
+ * So this is passive and persistent. Every resolved combat fight is kept — no
+ * arming, no targeting — with the gross damage each side dealt (summed from the
+ * health that fell, so regen is not subtracted) and the gear it was fought in.
+ * The replay pools whatever has piled up for the gear you are wearing now, which
+ * is why each attempt carries a fingerprint: a gear change starts a fresh pool
+ * rather than comparing fights fought on different gear against one sim.
  *
- * ## Why endpoints and not ticks
+ * ## Why gross, and why fingerprinted
  *
- * A tick buffer would be megabytes for a question two numbers answer. The
- * labyrinth gives no food or drink, so player health only falls (the sim nulls
- * them too, so the two agree), and a fresh monster always starts at full — so the
- * damage each side dealt over an attempt is the difference between where it
- * started and where the last tick left it. The rate is that over the duration,
- * and a rate is invariant to the health you walked in carrying, which the
- * per-fight duration is not — which is why the replay leans on the rates.
+ * Gross because the sim reports damage gross; net-of-regen made the monster look
+ * weaker than it hit. Fingerprinted because the replay re-simulates with your
+ * current loadout, and a fight fought on last week's gear is a fight against a
+ * different character — pooling it would compare the sim to the wrong fights.
  *
- * ## Armed, not passive
+ * ## Bounded
  *
- * The room log records every fight's outcome already; this is the extra capture
- * you turn on for a calibration sitting and turn off again, because it is read by
- * the replay against the loadout you are wearing *now* and a recording left
- * running across a gear change would be compared against the wrong character.
+ * Five hundred fights, oldest dropped. That is many runs of history, small
+ * enough to hold and write without thinking about it.
  */
 
-/** Attempts kept before the oldest fall off. A calibration sitting is tens, not thousands. */
-const MAX_LAB_ATTEMPTS = 400;
+import { readScoped, writeScoped } from '../../utils/character-key.js';
 
-/** An attempt shorter than this is an abandon, not a fight, and says nothing about a rate */
+/** The labyrinth store, shared with the sim cache — this is labyrinth history */
+const STORE = 'labyrinth';
+const KEY = 'labyrinthFightRecorder';
+
+/** Fights kept before the oldest fall off — many runs of history, still small */
+const MAX_ATTEMPTS = 500;
+
+/** A fight shorter than this is an abandon, not a fight, and says nothing about a rate */
 const MIN_FIGHT_SECONDS = 3;
 
-let recording = false;
-let recordedAt = 0;
 let attempts = [];
-let truncated = false;
-
-/** @returns {boolean} Whether a recording is in progress */
-export function isRecording() {
-    return recording;
-}
+let loaded = false;
+let loading = null;
 
 /**
- * Start a fresh recording.
+ * Read the accumulated fights back from storage, once.
  *
- * Anything previously captured is dropped: a recording is one sitting, and the
- * replay reads whatever is held now against the current loadout.
+ * Called from the room-log feature's initialize so the pool survives a reload.
+ * Idempotent, and safe to call before it has resolved — the in-memory list is
+ * simply empty until it does.
+ *
+ * @returns {Promise<Array<Object>>}
  */
-export function startRecording() {
-    recording = true;
-    recordedAt = Date.now();
-    attempts = [];
-    truncated = false;
+export async function load() {
+    if (loaded) return attempts;
+    if (loading) return loading;
+    loading = (async () => {
+        try {
+            const stored = await readScoped(KEY, STORE, null);
+            if (Array.isArray(stored)) attempts = stored.slice(-MAX_ATTEMPTS);
+        } catch (error) {
+            console.error('[LabyrinthFightRecorder] Reading the fight pool failed:', error);
+        }
+        loaded = true;
+        loading = null;
+        return attempts;
+    })();
+    return loading;
 }
 
-/** Stop recording. What was captured stays captured, for the replay to read. */
-export function stopRecording() {
-    recording = false;
-}
-
-/** Throw away the recording. */
-export function clearRecording() {
-    attempts = [];
-    truncated = false;
-    recordedAt = 0;
+/** Write the pool out. Fire-and-forget: a lost write costs one fight, not the run. */
+function persist() {
+    Promise.resolve(writeScoped(KEY, attempts, STORE)).catch((error) =>
+        console.error('[LabyrinthFightRecorder] Writing the fight pool failed:', error)
+    );
 }
 
 /**
- * Note one resolved attempt, if a recording is running.
- *
- * Called by the room log when it files a fight, with the endpoints read off the
- * last `battle_updated` tick plus the outcome the floor confirmed.
+ * Keep one resolved fight, if it can support a rate.
  *
  * @param {Object} attempt
  * @param {string} attempt.monsterHrid - Which monster
- * @param {string} [attempt.monsterName] - For the file, so it reads without a lookup
+ * @param {string} [attempt.monsterName] - For the file and the display
  * @param {number} attempt.roomLevel - The room's level, which scales the monster
  * @param {number} attempt.seconds - How long the fight ran
  * @param {string} attempt.outcome - clear | death | timeout | unknown
@@ -94,18 +92,16 @@ export function clearRecording() {
  * @param {number} attempt.playerMaxHp - Your maximum health
  * @param {number} attempt.playerHpStart - Your health when the fight began
  * @param {number} attempt.playerHpEnd - Your health on the last tick seen
- * @param {number} [attempt.monsterDamage] - Gross damage you dealt (summed drops), if measured
- * @param {number} [attempt.playerDamageTaken] - Gross damage you took (summed drops), if measured
+ * @param {number} [attempt.monsterDamage] - Gross damage you dealt (summed drops)
+ * @param {number} [attempt.playerDamageTaken] - Gross damage you took (summed drops)
+ * @param {string} [attempt.fingerprint] - The gear the fight was fought in
  */
 export function noteAttempt(attempt) {
-    if (!recording) return;
     if (!attempt || !attempt.monsterHrid) return;
 
     const seconds = Number(attempt.seconds) || 0;
     const monsterMaxHp = Number(attempt.monsterMaxHp) || 0;
     const playerMaxHp = Number(attempt.playerMaxHp) || 0;
-    // A fight with no duration or no scale to it is an abandon or a bad read, and
-    // a rate computed from it is a division by nearly nothing
     if (seconds < MIN_FIGHT_SECONDS || monsterMaxHp <= 0 || playerMaxHp <= 0) return;
     if (attempt.outcome === 'unknown') return;
 
@@ -124,42 +120,48 @@ export function noteAttempt(attempt) {
         playerMaxHp,
         playerHpStart: Math.max(0, Number(attempt.playerHpStart) || 0),
         playerHpEnd: Math.max(0, Number(attempt.playerHpEnd) || 0),
-        // Gross damage, summed from the drops — net of nothing, so it matches the
-        // sim's gross totals. Null when a caller could not measure it (old data).
         monsterDamage: Number.isFinite(grossDealt) && grossDealt >= 0 ? grossDealt : null,
         playerDamageTaken: Number.isFinite(grossTaken) && grossTaken >= 0 ? grossTaken : null,
+        fingerprint: attempt.fingerprint ? String(attempt.fingerprint) : null,
     });
 
-    if (attempts.length > MAX_LAB_ATTEMPTS) {
-        truncated = true;
-        attempts = attempts.slice(attempts.length - MAX_LAB_ATTEMPTS);
-    }
+    if (attempts.length > MAX_ATTEMPTS) attempts = attempts.slice(attempts.length - MAX_ATTEMPTS);
+    persist();
 }
 
 /**
- * A copy of the attempts captured so far.
+ * The accumulated fights, optionally only those fought in one gear.
+ *
+ * @param {string} [fingerprint] - Keep only fights carrying this gear fingerprint
  * @returns {Array<Object>}
  */
-export function recordedAttempts() {
-    return attempts.map((attempt) => ({ ...attempt }));
+export function recordedAttempts(fingerprint) {
+    const list = fingerprint ? attempts.filter((a) => a.fingerprint === fingerprint) : attempts;
+    return list.map((a) => ({ ...a }));
 }
 
 /**
- * How much has been captured, for the button to read.
- * @returns {{recording: boolean, attempts: number, monsters: number, truncated: boolean, recordedAt: number}}
+ * How much has accumulated, for the gear given.
+ *
+ * @param {string} [fingerprint] - Count only fights carrying this gear fingerprint
+ * @returns {{attempts: number, total: number, monsters: number}}
  */
-export function recordingStatus() {
-    const monsters = new Set(attempts.map((a) => a.monsterHrid));
-    return { recording, attempts: attempts.length, monsters: monsters.size, truncated, recordedAt };
+export function recordingStatus(fingerprint) {
+    const list = fingerprint ? attempts.filter((a) => a.fingerprint === fingerprint) : attempts;
+    return { attempts: list.length, total: attempts.length, monsters: new Set(list.map((a) => a.monsterHrid)).size };
+}
+
+/** Throw away every accumulated fight. */
+export function clearRecording() {
+    attempts = [];
+    persist();
 }
 
 /**
- * The recording in a shape safe to write out and read back.
+ * The pool in a shape safe to write out and read back.
  *
  * `extra` is folded in first, so a caller can embed the replay comparison
- * alongside the raw attempts — a saved file then carries both halves of the
- * accuracy check, observed and predicted — without ever overwriting the format
- * tag or the attempts the fixed fields set last.
+ * alongside the raw attempts without clobbering the format tag or the attempts.
  *
  * @param {Object} [extra] - Extra top-level fields to embed, e.g. `{ replay }`
  * @returns {Object}
@@ -169,16 +171,14 @@ export function recordingFile(extra = {}) {
         ...extra,
         format: 'toolasha-labyrinth-recording',
         version: 1,
-        recordedAt: recordedAt || null,
         exportedAt: Date.now(),
-        truncated,
         attempts: recordedAttempts(),
     };
 }
 
 /**
- * Write the recording out as a file.
- * @param {Object} [extra] - Extra top-level fields to embed, e.g. the replay comparison
+ * Write the pool out as a file.
+ * @param {Object} [extra] - Extra top-level fields to embed
  * @returns {boolean} Whether there was anything to write
  */
 export function downloadRecording(extra = {}) {
@@ -198,13 +198,11 @@ export function downloadRecording(extra = {}) {
 }
 
 export default {
-    isRecording,
-    startRecording,
-    stopRecording,
-    clearRecording,
+    load,
     noteAttempt,
     recordedAttempts,
     recordingStatus,
+    clearRecording,
     recordingFile,
     downloadRecording,
 };

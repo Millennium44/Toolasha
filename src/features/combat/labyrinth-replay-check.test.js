@@ -79,6 +79,19 @@ describe('deriveObserved', () => {
         expect(groups).toHaveLength(0);
     });
 
+    test('nearby levels pool into one bucket, re-simmed at the median', () => {
+        // Random labyrinth levels rarely repeat exactly, so a 10-wide band pools
+        const [g] = deriveObserved([
+            attempt({ roomLevel: 245 }),
+            attempt({ roomLevel: 250 }),
+            attempt({ roomLevel: 254 }),
+        ]);
+        expect(g.fights).toBe(3);
+        expect(g.roomLevel).toBe(250); // median, what the group re-sims at
+        expect(g.levelLow).toBe(245);
+        expect(g.levelHigh).toBe(254);
+    });
+
     test('a fight the recorder joined below full health is excluded', () => {
         const groups = deriveObserved([
             attempt({ playerMaxHp: 2000, playerHpStart: 2000 }), // clean full start
