@@ -2262,3 +2262,17 @@ describe('recomputeCombatSims clears every cached sim before re-running', () => 
         runSpy.mockRestore();
     });
 });
+
+describe('fullClearTime shows the real expected clear time, uncapped', () => {
+    test('seconds, minutes, and hours without a 999+/∞ cap', () => {
+        expect(labyrinthClearRate.fullClearTime(48)).toBe('48s');
+        expect(labyrinthClearRate.fullClearTime(655)).toBe('10m 55s');
+        expect(labyrinthClearRate.fullClearTime(1095)).toBe('18m 15s');
+        expect(labyrinthClearRate.fullClearTime(3900)).toBe('1h 5m');
+    });
+
+    test('a room that never clears reads as a dash, not a huge number', () => {
+        expect(labyrinthClearRate.fullClearTime(Infinity)).toBe('—');
+        expect(labyrinthClearRate.fullClearTime(0)).toBe('—');
+    });
+});

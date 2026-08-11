@@ -1003,24 +1003,24 @@ class LabyrinthRoomLogs {
 
         const header = document.createElement('div');
         header.style.cssText =
-            'display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px 6px; ' +
-            'border-bottom:1px solid rgba(146,182,255,0.24); cursor:move;';
+            'display:flex; align-items:center; justify-content:space-between; gap:8px 10px; flex-wrap:wrap; ' +
+            'padding:8px 10px 6px; border-bottom:1px solid rgba(146,182,255,0.24); cursor:move;';
 
         const tabs = document.createElement('div');
         tabs.style.cssText = 'display:inline-flex; align-items:center; gap:4px;';
         this.tabButtons = {
             rooms: this.makeTab('Rooms', 'rooms'),
-            accuracy: this.makeTab('Sim accuracy', 'accuracy'),
+            accuracy: this.makeTab('Accuracy', 'accuracy'),
         };
         tabs.appendChild(this.tabButtons.rooms);
         tabs.appendChild(this.tabButtons.accuracy);
 
         const actions = document.createElement('div');
-        actions.style.cssText = 'display:inline-flex; align-items:center; gap:6px;';
+        actions.style.cssText = 'display:inline-flex; align-items:center; flex-wrap:wrap; gap:4px 6px;';
 
         this.clearButton = document.createElement('button');
         this.clearButton.style.cssText =
-            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px;';
+            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.clearButton.addEventListener('click', () => this.onClearClicked());
 
         const closeBtn = document.createElement('button');
@@ -1036,7 +1036,7 @@ class LabyrinthRoomLogs {
         this.exportButton.textContent = 'Export';
         this.exportButton.title = 'Copy the whole fight record as text, so it can be looked at somewhere else';
         this.exportButton.style.cssText =
-            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px;';
+            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.exportButton.addEventListener('click', () => this.exportAccuracy());
 
         this.recomputeButton = document.createElement('button');
@@ -1045,7 +1045,7 @@ class LabyrinthRoomLogs {
             'Throw away every cached clear-chance sim and simulate the rooms again. Use this after changing ' +
             'gear or a loadout — a plain equip does not always refresh a sim, so a cached result can be stale.';
         this.recomputeButton.style.cssText =
-            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px;';
+            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.recomputeButton.addEventListener('click', () => this.onRecomputeClicked());
 
         // A slow, timeout-heavy room (a hard combat tile) stops its sim on the
@@ -1105,7 +1105,8 @@ class LabyrinthRoomLogs {
         for (const [view, button] of Object.entries(this.tabButtons || {})) {
             const on = this.view === view;
             button.style.cssText =
-                'height:18px; border:0; border-radius:4px; font-size:10px; font-weight:700; cursor:pointer; padding:0 7px; ' +
+                'height:18px; border:0; border-radius:4px; font-size:10px; font-weight:700; cursor:pointer; ' +
+                'padding:0 7px; white-space:nowrap; flex-shrink:0; ' +
                 (on
                     ? 'background:rgba(77,151,255,0.95); color:#fff;'
                     : 'background:rgba(255,255,255,0.1); color:#9ec4ff;');
@@ -1129,6 +1130,7 @@ class LabyrinthRoomLogs {
         if (!this.uncappedButton) return;
         this.uncappedButton.style.cssText =
             'height:18px; border:0; border-radius:4px; font-size:10px; cursor:pointer; padding:0 6px; ' +
+            'white-space:nowrap; flex-shrink:0; ' +
             (this.uncapped ? 'background:rgba(77,151,255,0.95); color:#fff;' : 'background:rgba(255,255,255,0.12); color:#9ec4ff;');
     }
 
