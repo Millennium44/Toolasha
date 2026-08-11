@@ -970,6 +970,10 @@ class EstimatedListingAge {
                     const priceText = row.querySelector('[class*="price"]')?.textContent || '';
                     const quantityText = row.children[0]?.textContent || '';
                     const price = this.parsePrice(priceText);
+                    // A null price coerces to 0 in the priceMatch below and can
+                    // suppress a correct match, so skip the row (this is inside a
+                    // rows.forEach, so return, not continue). Ported from 2.85.0.
+                    if (price === null) return;
                     const quantity = this.parseQuantity(quantityText);
 
                     // Get currently active listings to validate matches
@@ -1053,6 +1057,10 @@ class EstimatedListingAge {
                     const quantityText = row.children[0]?.textContent || '';
 
                     const price = this.parsePrice(priceText);
+                    // parsePrice returns null on empty/invalid text; a null price
+                    // coerces to 0 in the match below and can suppress a correct
+                    // match, so skip the row (ported from upstream 2.85.0).
+                    if (price === null) continue;
                     const quantity = this.parseQuantity(quantityText);
 
                     // Find matching listing from YOUR listings
