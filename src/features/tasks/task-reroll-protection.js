@@ -64,8 +64,14 @@ class TaskRerollProtection {
             (await storage.get(`taskCapCowbellThreshold_${charId}`, 'settings', null)) ??
             (await storage.get('taskCapCowbellThreshold', 'settings', 32));
 
-        // Watch for task cards appearing
+        // Watch for task cards appearing. Draw at once so the protected border
+        // is there the instant the card is — the observer only ever fires for a
+        // freshly added card node, which carries no border yet, so an immediate
+        // pass can only add one, never flicker an existing one off. The 150 ms
+        // pass stays as a fallback for the rare case the card's React fiber (and
+        // so its quest) is not yet reachable on the first pass.
         const unregister = domObserver.onClass('TaskRerollProtection', 'RandomTask_randomTask', (taskNode) => {
+            this._processTaskCard(taskNode);
             setTimeout(() => this._processTaskCard(taskNode), 150);
         });
         this.unregisterHandlers.push(unregister);

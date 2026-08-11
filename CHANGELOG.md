@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### The protected task border shows instantly again
+
+Opening the Task Board left a visible beat before the green "protected" edge appeared on protected tasks. The card-appeared watcher only ever drew the border on a delayed pass — a 150 ms timer after each card node was added — so every time the board rendered, protected cards were briefly borderless. The border is now painted **synchronously** the moment a card appears, with the 150 ms pass kept only as a fallback for the rare case the card's React fiber (and so its quest) is not yet reachable on the first look. The observer only ever fires for a freshly added card node, which carries no border yet, so the immediate pass can only add an edge, never flicker one off.
+
 ### The task bulk-reroll button is removed
 
 The bulk-reroll stepper is gone — feature, header button, and its setting. It could never work reliably: the game gates a task reroll on a **trusted** click that opens the reroll chooser, and a userscript's synthetic open leaves the reroll inert (a hand-opened menu rerolls; a Toolasha-opened one does not — confirmed by an A/B test). No synthetic DOM event can be trusted, so the only way to drive it was to send the game's own reroll message over its WebSocket, which is not a road this fork wants to go down. Rather than ship a button that only works if you open the menu by hand first, it is removed.
