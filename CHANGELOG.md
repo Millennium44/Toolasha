@@ -2818,6 +2818,22 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## Upstream Changelog
 
+## [2.95.1](https://github.com/Millennium44/Toolasha/compare/v2.95.0...v2.95.1) (2026-08-11)
+
+
+### Bug Fixes
+
+* **actions:** disconnect the action-name observer before replacing it ([3c5d45e](https://github.com/Millennium44/Toolasha/commit/3c5d45e8807f37420f510e38576b67a992915275))
+* **core:** port upstream character-switch and settings-cache fixes ([01e072e](https://github.com/Millennium44/Toolasha/commit/01e072e11553237b3947b77c63a6ec3800f9d820))
+* **custom-tabs:** dedupe enhanced tiles in the Unorganized bucket ([497d553](https://github.com/Millennium44/Toolasha/commit/497d553e40a378f10656713944aa513f4b643fff))
+* port upstream null-price guards and Custom Tabs button self-heal ([ab193ba](https://github.com/Millennium44/Toolasha/commit/ab193ba14a38dfe090f7d190ba1647eee6da587b))
+
+
+### Documentation
+
+* **changelog:** condense the new-session fork entries ([c3cdfeb](https://github.com/Millennium44/Toolasha/commit/c3cdfeb23e336571a2219ab138c7459c4f75752e))
+* **changelog:** condense the new-session fork entries to one or two lines each ([f4ffc8d](https://github.com/Millennium44/Toolasha/commit/f4ffc8d55ccd48d61113e69aafe98d77dabc4b93))
+
 ## [2.95.0](https://github.com/Millennium44/Toolasha/compare/v2.94.0...v2.95.0) (2026-08-11)
 
 ### Features
