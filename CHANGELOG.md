@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Undercut alerts finally fire passively, backed by Mooket
+
+The undercut alert refuses to trust a market price older than 15 minutes — but the only price it had for an item you hadn't just opened was the game's `marketplace.json` snapshot, which refreshes only ~once an hour. So for anything you weren't actively watching, the figure proving you'd been undercut was itself too old to count, and the alert stayed silent — an undercut could sit for hours (a buy order outbid for 8h+ was the case that surfaced this) with nothing said. The alert now also consults the newest **Mooket** sighting for each of your active listings, refreshed on the same 15-minute tick (and once at login). A pooled sighting is usually minutes old, so it clears the evidence bar the hourly snapshot can't, and the alert can fire for items you never opened. It compares the freshest of the two sources per side and reports that source's **true** age, so "as of ~3m ago" stays honest; a sighting that's itself older than 15 minutes still proves nothing. Requires the **Market: Price history panel** setting (that's what authorises the pooled lookups); off, the alert behaves exactly as before.
+
 ### Selectable price-history source: mooket I alongside mooket II
 
 The price history, the pinned-item prices and the My Listings "Mooket Refresh" all read from a pooled community server, and there are two of them — the Q7 pool (mooket II, `q7.nainai.eu.org`) Toolasha already used, and IOMisaka's original mooket pool (mooket I, `mooket.qi-e.top`). A new **Market: Price history data source** setting picks between them. Both are normalised to one internal shape, so the chart, the refresh button and the goal planner all read whichever you choose.

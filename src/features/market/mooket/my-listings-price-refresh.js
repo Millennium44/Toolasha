@@ -30,6 +30,7 @@ import marketAPI from '../../../api/marketplace.js';
 import domObserver from '../../../core/dom-observer.js';
 import { createCleanupRegistry } from '../../../utils/cleanup-registry.js';
 import marketHistoryAPI from './market-history-api.js';
+import { freshestSighting } from './market-history-data.js';
 
 /** The header row that carries "N / M Listings", Upgrade Capacity and Refresh Next */
 const LISTING_COUNT_SEL = '[class*="MarketplacePanel_listingCount"]';
@@ -39,46 +40,6 @@ const CONTROLS_ID = 'mwi-mooket-listings-refresh';
 const BTN_CLASS = 'Button_button__1Fe9z Button_small__3fqC7';
 /** Kept low so a click on a long listing list does not burst the third-party server */
 const FETCH_CONCURRENCY = 4;
-
-/**
- * The newest sighting in a set of history rows.
- *
- * A row carries best ask (`a`), best bid (`b`) and a time; a non-positive side
- * means nothing was resting there, not a price of zero, so it becomes null. Pure,
- * so picking the freshest can be tested without a server.
- *
- * @param {Array<Object>|null} rows - Rows from the history API
- * @returns {{time: number, ask: number|null, bid: number|null}|null} Freshest, or null
- */
-export function freshestSighting(rows) {
-    if (!Array.isArray(rows) || !rows.length) return null;
-
-    let best = null;
-    for (const row of rows) {
-        const time = rowTimeMs(row);
-        if (!time) continue;
-        if (!best || time > best.time) {
-            best = {
-                time,
-                ask: row?.a > 0 ? row.a : null,
-                bid: row?.b > 0 ? row.b : null,
-            };
-        }
-    }
-    return best;
-}
-
-/**
- * A row's timestamp in milliseconds. The server writes seconds since the epoch
- * as a number, or occasionally a parseable date string.
- * @param {Object} row - History row
- * @returns {number} Milliseconds, or 0 when unreadable
- */
-function rowTimeMs(row) {
-    if (typeof row?.time === 'number') return row.time * 1000;
-    const parsed = new Date(row?.time).getTime();
-    return Number.isFinite(parsed) ? parsed : 0;
-}
 
 /**
  * Whether a Mooket sighting is worth stamping over the game's price.
