@@ -24,6 +24,7 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const settings = vi.hoisted(() => ({ values: {} }));
 const stored = vi.hoisted(() => ({ values: {} }));
+const observer = vi.hoisted(() => ({ callbacks: {} }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -61,7 +62,14 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/websocket.js', () => ({
     default: { on: () => {}, off: () => {}, onSocketEvent: () => {}, offSocketEvent: () => {} },
 }));
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: (name, _classes, cb) => {
+            observer.callbacks[name] = cb;
+            return () => {};
+        },
+    },
+}));
 vi.mock('../../utils/character-key.js', () => ({
     characterKey: (key) => `${key}_7`,
     readScoped: async (_key, _store, fallback) => fallback,
@@ -447,6 +455,23 @@ describe('a card mid-flow is left alone', () => {
         await vi.advanceTimersByTimeAsync(60 * 1000);
 
         expect(card.style.boxShadow).toBe('');
+    });
+
+    test('a card that appears is bordered at once, not a beat after the board opens', async () => {
+        // The report: the protected green edge only turned up a moment after the
+        // Task Board opened. The card-appeared observer now paints the card
+        // synchronously; the 150 ms pass is a fallback. With fake timers never
+        // advanced, the edge must already be there off the observer's own call.
+        vi.useFakeTimers();
+        stored.values.taskProtectedHrids_7 = [MILKING];
+        await taskRerollProtection.initialize();
+
+        const card = cardOnBoard(['Reroll', 'Go', '']);
+        reactTreeOver(card, { actionHrid: MILKING, coinRerollCount: 0, cowbellRerollCount: 0 });
+
+        observer.callbacks.TaskRerollProtection(card);
+
+        expect(card.style.boxShadow).toContain('76, 175, 80');
     });
 
     test('the protection pass does not repaint a card mid-flow', async () => {
