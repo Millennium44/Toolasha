@@ -65,6 +65,49 @@ export function classifyFight(fight, timeoutSeconds = FIGHT_TIMEOUT_SECONDS) {
     return { outcome, text, seconds, monsterHpLeft, playerHpLeft };
 }
 
+/** A monster at or above this fraction of its maximum has just spawned, not healed */
+const FRESH_MONSTER_HP_FRACTION = 0.95;
+/** ...and a spawn is a jump to full from below this — the low a beaten monster sat at */
+const REVIVED_FROM_HP_FRACTION = 0.9;
+
+/**
+ * Whether a `battle_updated` tick starts a new fight rather than continuing one.
+ *
+ * The labyrinth reuses one battleId across every retry of a room, so that alone
+ * cannot tell a fresh fight from the next tick of the current one. Three things
+ * can: a battleId that changed, a monster whose maximum health changed, and the
+ * player's attack counter going down — only a fresh battle resets it.
+ *
+ * A fourth signal — the monster's health going up — catches a retry the others
+ * miss, but "health went up" is not the same as "a fresh monster spawned". A
+ * monster with life drain, guardian aura or a heal nudges its own health up
+ * mid-fight, and reading every such nudge as a new fight splits one attempt into
+ * several, each starting at whatever low health the split happened to land on. So
+ * the health signal counts only the jump a spawn makes — from the low a beaten
+ * monster sat at, back to full — not the small bump a self-heal gives.
+ *
+ * @param {Object|null} prev - The fight in progress: `{battleId, monsterMaxHp,
+ *   lastMonsterHp, lastAtkCounter}`, or null when none is being watched
+ * @param {Object} curr - This tick: `{battleId, monsterMaxHp, monsterHp, atkCounter}`
+ * @returns {boolean}
+ */
+export function isFreshLabyrinthFight(prev, curr) {
+    if (!prev) return true;
+    if (prev.battleId !== curr.battleId) return true;
+    if (prev.monsterMaxHp !== curr.monsterMaxHp) return true;
+    if (curr.atkCounter < prev.lastAtkCounter) return true;
+
+    const max = curr.monsterMaxHp || 0;
+    if (
+        max > 0 &&
+        curr.monsterHp >= max * FRESH_MONSTER_HP_FRACTION &&
+        prev.lastMonsterHp < max * REVIVED_FROM_HP_FRACTION
+    ) {
+        return true;
+    }
+    return false;
+}
+
 /**
  * Add up a room's attempts.
  *
