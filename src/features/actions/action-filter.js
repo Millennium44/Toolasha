@@ -54,6 +54,19 @@ class ActionFilter {
         config.onSettingChange('profitCalc_craftUpgradeItems', () => {
             if (this._updateCraftBtn) this._updateCraftBtn();
         });
+
+        // A character switch reloads settings with an empty previous map, so the
+        // per-key change callbacks above never fire — the mode/craft buttons and
+        // the profit sections they drive would keep the previous character's
+        // pricing mode. This channel fires whenever settings finish loading, so
+        // the persistent Action Filter (which never re-initializes) resyncs.
+        // Ported from upstream Celasha/Toolasha#630.
+        config.onSettingsLoaded(() => {
+            if (this._updateModeBtn) this._updateModeBtn();
+            if (this._updateCraftBtn) this._updateCraftBtn();
+            this._refreshProfitDisplays();
+        });
+
         actionPanelSort.onSortModeChange(() => {
             if (this._updateSortBtn) this._updateSortBtn();
         });

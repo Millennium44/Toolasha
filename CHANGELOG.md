@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Character switches are serialized, so rapid switching no longer bleeds settings
+
+A rapid character switch could drop a re-init (leaving the previous character's per-character settings applied) or start a rebuild before the last character's teardown finished. The switch lifecycle now runs through one serialized chain, and each re-init verifies it is still for the current character before it applies — latest character wins, nothing dropped or overlapped (ported from upstream Celasha/Toolasha#622).
+
+### Action Filter's pricing mode resyncs after a character switch
+
+The persistent Action Filter never re-initializes, and a character switch skips the per-key change callbacks (the cache is cleared first), so its mode/craft buttons and profit rows could keep the previous character's pricing mode. A new `config.onSettingsLoaded` channel fires whenever settings finish loading, so the filter resyncs (ported from upstream Celasha/Toolasha#630).
+
+### The Unorganized tab no longer vanishes mid-character-switch
+
+The Custom Tabs "Unorganized" bucket was gated on `getSettingValue`, which reads `null` while the per-character cache is briefly empty during a switch — hiding the section until it reloaded. It now reads `getSetting`, which falls back to the schema default (ported from upstream Celasha/Toolasha#636).
+
 ### Action-bar display no longer risks freezing the tab on a character switch
 
 `setupActionNameObserver` now disconnects any running observer before replacing it, so a character switch can't leak a duplicate watcher that loops on the stats span and freezes the tab (ported from upstream Celasha/Toolasha#623).

@@ -152,82 +152,94 @@ function checkFeatureHealth() {
  * Setup character switch handler
  * Re-initializes all features when character switches
  */
-function setupCharacterSwitchHandler() {
-    // Promise that resolves when cleanup is complete
-    let cleanupPromise = null;
-    let reinitScheduled = false;
-
-    // Handle character_switching event (cleanup phase)
-    dataManager.on('character_switching', async (_data) => {
-        cleanupPromise = (async () => {
-            try {
-                // Clear config cache IMMEDIATELY to prevent stale settings
-                if (config && typeof config.clearSettingsCache === 'function') {
-                    config.clearSettingsCache();
+/**
+ * Disable every active feature — the cleanup half of a character switch.
+ * @returns {Promise<void>}
+ */
+async function disableAllFeatures() {
+    const cleanupPromises = [];
+    for (const feature of featureRegistry) {
+        try {
+            const featureInstance = getFeatureInstance(feature.key);
+            if (featureInstance && typeof featureInstance.disable === 'function') {
+                const result = featureInstance.disable();
+                if (result && typeof result.then === 'function') {
+                    cleanupPromises.push(
+                        result.catch((error) => {
+                            console.error(`[FeatureRegistry] Failed to disable ${feature.name}:`, error);
+                        })
+                    );
                 }
-
-                // Disable all active features (cleanup DOM elements, event listeners, etc.)
-                const cleanupPromises = [];
-                for (const feature of featureRegistry) {
-                    try {
-                        const featureInstance = getFeatureInstance(feature.key);
-                        if (featureInstance && typeof featureInstance.disable === 'function') {
-                            const result = featureInstance.disable();
-                            if (result && typeof result.then === 'function') {
-                                cleanupPromises.push(
-                                    result.catch((error) => {
-                                        console.error(`[FeatureRegistry] Failed to disable ${feature.name}:`, error);
-                                    })
-                                );
-                            }
-                        }
-                    } catch (error) {
-                        console.error(`[FeatureRegistry] Failed to disable ${feature.name}:`, error);
-                    }
-                }
-
-                // Wait for all cleanup in parallel
-                if (cleanupPromises.length > 0) {
-                    await Promise.all(cleanupPromises);
-                }
-            } catch (error) {
-                console.error('[FeatureRegistry] Error during character switch cleanup:', error);
             }
-        })();
+        } catch (error) {
+            console.error(`[FeatureRegistry] Failed to disable ${feature.name}:`, error);
+        }
+    }
+    if (cleanupPromises.length > 0) {
+        await Promise.all(cleanupPromises);
+    }
+}
 
-        await cleanupPromise;
+/**
+ * Re-initialize all features when the character switches.
+ *
+ * The switch is driven off two events — `character_switching` (tear down) and
+ * `character_switched` (reload settings, re-enable) — and rapid switches used to
+ * corrupt the result two ways: a boolean "reinit scheduled" guard silently
+ * *dropped* a later switch (A→B→A ended with B's per-character settings applied
+ * under A), and `Promise.race([cleanup, setTimeout(500)])` let a rebuild start
+ * before the previous character's teardown finished, so init overlapped cleanup.
+ *
+ * This serializes the whole lifecycle through one promise chain — cleanup and
+ * reinit for any switch, and successive switches, run strictly in order, none
+ * dropped. And each reinit verifies it is still for the current character
+ * (`currentCharacterId` is updated to the new target before `character_switched`
+ * fires) before and after every await, so a reinit a newer switch has
+ * superseded aborts instead of clobbering the newer character's state — the
+ * "latest character wins" invariant. Ported from upstream Celasha/Toolasha#622.
+ */
+function setupCharacterSwitchHandler() {
+    // One chain that every switch step is appended to, so no two ever overlap.
+    let lifecycleChain = Promise.resolve();
+    const enqueue = (step) => {
+        lifecycleChain = lifecycleChain.then(step).catch((error) => {
+            console.error('[FeatureRegistry] Character-switch lifecycle step failed:', error);
+        });
+        return lifecycleChain;
+    };
+
+    // Cleanup phase
+    dataManager.on('character_switching', () => {
+        // Clear the config cache synchronously, before the chain awaits anything,
+        // so nothing reads the previous character's settings in the gap.
+        if (config && typeof config.clearSettingsCache === 'function') {
+            config.clearSettingsCache();
+        }
+        enqueue(() => disableAllFeatures());
     });
 
-    // Handle character_switched event (re-initialization phase)
-    dataManager.on('character_switched', async (_data) => {
-        // Prevent multiple overlapping reinits
-        if (reinitScheduled) {
-            return;
-        }
+    // Re-initialization phase
+    dataManager.on('character_switched', (data) => {
+        const targetId = data?.newId ?? null;
+        // Still the character this reinit is for? A newer switch updates
+        // currentCharacterId synchronously, so a mismatch means this one is stale.
+        const isStale = () => targetId !== null && dataManager.getCurrentCharacterId() !== targetId;
 
-        reinitScheduled = true;
+        enqueue(async () => {
+            if (isStale()) return;
 
-        try {
-            // Wait for cleanup to complete (with safety timeout)
-            if (cleanupPromise) {
-                await Promise.race([cleanupPromise, new Promise((resolve) => setTimeout(resolve, 500))]);
-            }
-
-            // CRITICAL: Load settings BEFORE any feature initialization
-            // This ensures all features see the new character's settings
+            // Load settings BEFORE any feature initialization so every feature
+            // sees the new character's values (loadSettings reads the current id).
             await config.loadSettings();
             config.applyColorSettings();
+            if (isStale()) return;
 
-            // Small delay to ensure game state is stable
+            // Small delay to let game state settle, then re-init with fresh settings
             await new Promise((resolve) => setTimeout(resolve, 50));
+            if (isStale()) return;
 
-            // Now re-initialize all features with fresh settings
             await initializeFeatures();
-        } catch (error) {
-            console.error('[FeatureRegistry] Error during feature reinitialization:', error);
-        } finally {
-            reinitScheduled = false;
-        }
+        });
     });
 }
 
