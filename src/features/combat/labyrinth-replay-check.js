@@ -23,6 +23,16 @@
 /** Below this many fights a rate is noise, and the verdict says so rather than guessing */
 export const MIN_LAB_FIGHTS = 5;
 
+/**
+ * A fight the recorder saw begin with the player at least this much of full is a
+ * clean start. Below it the player carried a wound in — or the recorder joined
+ * mid-fight — and the sim, which always fights from full, has no equivalent: its
+ * short length skews the fight-length rate and its opening damage may never have
+ * been seen. Retries in one room reset the player to full, so a low start now
+ * reliably marks a partial fight rather than ordinary play.
+ */
+const CLEAN_START_HP_FRACTION = 0.9;
+
 /** The sim's own run-to-run wobble, folded into every margin so a within-noise call stays honest */
 const SIM_NOISE_FLOOR_PCT = 2;
 
@@ -128,6 +138,11 @@ export function deriveObserved(attempts) {
     for (const attempt of attempts || []) {
         const seconds = Number(attempt?.seconds) || 0;
         if (!attempt?.monsterHrid || seconds <= 0 || attempt.outcome === 'unknown') continue;
+
+        // Drop a fight not seen from full — the player started it already hurt, so
+        // it is not the fresh-start fight the sim models
+        const maxHp = Number(attempt.playerMaxHp) || 0;
+        if (maxHp > 0 && Number(attempt.playerHpStart) < maxHp * CLEAN_START_HP_FRACTION) continue;
 
         const key = `${attempt.monsterHrid}:${attempt.roomLevel}`;
         let group = groups.get(key);

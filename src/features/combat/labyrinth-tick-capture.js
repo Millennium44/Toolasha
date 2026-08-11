@@ -42,12 +42,29 @@ export function isCapturing() {
 }
 
 /**
+ * Fill the monster into the capture's context from a `new_battle`, so the file
+ * says what it is even when the caller had no room context to pass — the panel's
+ * labyrinth grid is not always populated when Capture is pressed, but the fight
+ * itself always names its monster.
+ * @param {Object} payload - A new_battle payload
+ */
+function labelFromBattle(payload) {
+    if (context && context.monsterHrid) return;
+    const monsters = Array.isArray(payload?.monsters) ? payload.monsters : Object.values(payload?.monsters || {});
+    const monster = monsters[0];
+    if (monster?.hrid) {
+        context = { ...(context || {}), monsterHrid: monster.hrid, monsterName: monster.name || null };
+    }
+}
+
+/**
  * One tick, timestamped from the capture's start so a replay reproduces timing.
  * @param {string} type - Which message
  * @param {Object} payload - What it carried, trimmed to what a fight needs
  */
 function push(type, payload) {
     if (!capturing) return;
+    if (type === 'new_battle') labelFromBattle(payload);
     ticks.push({ at: Date.now() - startedAt, type, payload });
     // Keep the newest: a long capture that overflows should hold the recent
     // fight, not the one it opened on

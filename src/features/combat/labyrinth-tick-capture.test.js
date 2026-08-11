@@ -57,6 +57,22 @@ describe('labyrinth tick capture', () => {
         expect(file.ticks[0].payload.extra).toBe(1);
     });
 
+    test('the capture labels itself from the fight when given no monster', () => {
+        capture.startCapture();
+        emit('new_battle', { monsters: [{ hrid: '/monsters/dryad', name: 'Dryad' }], players: [] });
+        const file = capture.captureFile();
+        expect(file.context.monsterHrid).toBe('/monsters/dryad');
+        expect(file.context.monsterName).toBe('Dryad');
+    });
+
+    test('a caller-supplied room level survives the monster backfill', () => {
+        capture.startCapture({ roomLevel: 322 });
+        emit('new_battle', { monsters: [{ hrid: '/monsters/dryad', name: 'Dryad' }] });
+        const file = capture.captureFile();
+        expect(file.context.roomLevel).toBe(322);
+        expect(file.context.monsterHrid).toBe('/monsters/dryad');
+    });
+
     test('a stopped capture hears nothing more', () => {
         capture.startCapture();
         emit('battle_updated', battle);

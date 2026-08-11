@@ -78,6 +78,15 @@ describe('deriveObserved', () => {
         const groups = deriveObserved([attempt({ outcome: 'unknown' }), attempt({ seconds: 0 })]);
         expect(groups).toHaveLength(0);
     });
+
+    test('a fight the recorder joined below full health is excluded', () => {
+        const groups = deriveObserved([
+            attempt({ playerMaxHp: 2000, playerHpStart: 2000 }), // clean full start
+            attempt({ playerMaxHp: 2000, playerHpStart: 400 }), // joined mid-fight, dropped
+        ]);
+        expect(groups).toHaveLength(1);
+        expect(groups[0].fights).toBe(1);
+    });
 });
 
 describe('predictedFromSim', () => {
