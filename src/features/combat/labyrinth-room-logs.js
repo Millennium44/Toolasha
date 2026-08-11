@@ -27,6 +27,7 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { classifyFight, fightTally, failureShape } from './labyrinth-fight-log.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
+import labTickCapture from './labyrinth-tick-capture.js';
 import { accuracyReport } from './labyrinth-outcome-log.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { ROOM_TRAVEL_SECONDS } from './labyrinth-formulas.js';
@@ -316,6 +317,9 @@ class LabyrinthRoomLogs {
         }
         for (const [type, handler] of this.xpHandlers) webSocketHook.off(type, handler);
         this.xpHandlers = [];
+        // A raw capture registers its own socket listeners; a feature teardown
+        // that left them on would leak them past the panel that started it
+        labTickCapture.stopCapture();
         this.flushReport();
         if (this.unregisterTab) {
             this.unregisterTab();
@@ -1105,8 +1109,14 @@ class LabyrinthRoomLogs {
             'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.replayButton.addEventListener('click', () => this.onReplayClicked());
 
+        // Raw tick capture: the moment-to-moment feed behind a rate mismatch —
+        // stun gaps, ability cadence, damage per hit — as a file to hand over
+        this.captureButton = document.createElement('button');
+        this.captureButton.addEventListener('click', () => this.onCaptureClicked());
+
         actions.appendChild(this.recordButton);
         actions.appendChild(this.replayButton);
+        actions.appendChild(this.captureButton);
         actions.appendChild(this.uncappedButton);
         actions.appendChild(this.recomputeButton);
         actions.appendChild(this.exportButton);
@@ -1167,6 +1177,7 @@ class LabyrinthRoomLogs {
         this.clearButton.style.background = this.resetArmed ? 'rgba(255,100,100,0.55)' : 'rgba(255,255,255,0.12)';
         this.paintUncapped();
         this.paintRecord();
+        this.paintCapture();
     }
 
     /** Show whether a calibration recording is running and how much it has caught */
@@ -1199,6 +1210,32 @@ class LabyrinthRoomLogs {
             this.replayButton.style.opacity = canReplay ? '1' : '0.45';
             this.replayButton.style.cursor = canReplay ? 'pointer' : 'default';
         }
+    }
+
+    /** Show whether a raw tick capture is running and how many ticks it has */
+    paintCapture() {
+        if (!this.captureButton) return;
+        const status = labTickCapture.captureStatus();
+
+        if (status.capturing) {
+            this.captureButton.textContent = status.ticks ? `Stop & save (${status.ticks})` : 'Capturing…';
+            this.captureButton.title =
+                'Stop the raw capture and download it. It records the moment-to-moment combat feed — every ' +
+                'health, mana and counter tick — so the stun cadence and per-hit damage behind a rate mismatch ' +
+                'can be read. Hand the file over.';
+        } else {
+            this.captureButton.textContent = 'Capture';
+            this.captureButton.title =
+                'Record the raw combat feed of a fight — the tick-by-tick detail the endpoints do not keep, for ' +
+                'diagnosing which mechanic the sim has wrong (stun uptime, ability cadence, per-hit damage). ' +
+                'Start it, fight the room, then stop to download the file.';
+        }
+        this.captureButton.style.cssText =
+            'height:18px; border:0; border-radius:4px; font-size:10px; cursor:pointer; padding:0 6px; ' +
+            'white-space:nowrap; flex-shrink:0; ' +
+            (status.capturing
+                ? 'background:rgba(255,110,110,0.85); color:#fff;'
+                : 'background:rgba(255,255,255,0.12); color:#9ec4ff;');
     }
 
     /** Show whether an uncapped Recompute is armed */
@@ -1283,6 +1320,27 @@ class LabyrinthRoomLogs {
         this.view = 'accuracy';
         this.paintChrome();
         this.render(false);
+    }
+
+    /**
+     * Start the raw tick capture, or stop it and download the file.
+     *
+     * Stop and save is one press: the file is the whole point of the capture, so
+     * there is nothing to do between stopping and handing it over.
+     */
+    onCaptureClicked() {
+        if (labTickCapture.isCapturing()) {
+            labTickCapture.stopCapture();
+            labTickCapture.downloadCapture();
+        } else {
+            const room = this.labContext?.room;
+            labTickCapture.startCapture(
+                room?.monsterHrid
+                    ? { monsterHrid: room.monsterHrid, roomLevel: Math.floor(Number(room.recommendedLevel) || 0) }
+                    : null
+            );
+        }
+        this.paintCapture();
     }
 
     /**
