@@ -1,7 +1,7 @@
 /**
  * Toolasha Actions Library
  * Production, gathering, and alchemy features
- * Version: 2.95.0
+ * Version: 2.95.1
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -4642,6 +4642,19 @@
             config.onSettingChange('profitCalc_craftUpgradeItems', () => {
                 if (this._updateCraftBtn) this._updateCraftBtn();
             });
+
+            // A character switch reloads settings with an empty previous map, so the
+            // per-key change callbacks above never fire — the mode/craft buttons and
+            // the profit sections they drive would keep the previous character's
+            // pricing mode. This channel fires whenever settings finish loading, so
+            // the persistent Action Filter (which never re-initializes) resyncs.
+            // Ported from upstream Celasha/Toolasha#630.
+            config.onSettingsLoaded(() => {
+                if (this._updateModeBtn) this._updateModeBtn();
+                if (this._updateCraftBtn) this._updateCraftBtn();
+                this._refreshProfitDisplays();
+            });
+
             actionPanelSort.onSortModeChange(() => {
                 if (this._updateSortBtn) this._updateSortBtn();
             });
@@ -7801,6 +7814,20 @@
          * @param {HTMLElement} actionNameElement - The action name DOM element
          */
         setupActionNameObserver(actionNameElement) {
+            // Disconnect any observer already running before replacing it. Both
+            // waitForActionPanel() and the persistent Header_actionName watcher call
+            // this on a character switch, and without this a second call would orphan
+            // the first observer — its disconnect handle overwritten and lost. That
+            // leaked observer keeps watching the element, and since updateDisplay()
+            // only disconnects the *current* this.actionNameObserver before appending
+            // its stats span, the leaked one fires on that append and re-triggers
+            // updateDisplay in an unbounded loop that freezes the tab. (Ported from
+            // upstream Celasha/Toolasha#623.)
+            if (this.actionNameObserver) {
+                this.actionNameObserver();
+                this.actionNameObserver = null;
+            }
+
             // Watch for text content changes in the action name element
             this.actionNameObserver = domObserverHelpers_js.createMutationWatcher(
                 actionNameElement,
