@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Action-bar display no longer risks freezing the tab on a character switch
+
+`setupActionNameObserver` now disconnects any running observer before replacing it, so a character switch can't leak a duplicate watcher that loops on the stats span and freezes the tab (ported from upstream Celasha/Toolasha#623).
+
 ### The Sort Tasks button sorts even with a reroll menu open
 
 A direct press now sorts the board immediately, mid-reroll and all. The automatic passes (auto-sort, sort-after-read) still wait for the board to settle so they never yank a pending click.
