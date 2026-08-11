@@ -60,6 +60,18 @@ const CHOOSER_POLL_MS = 100;
 const CHOOSER_WAIT_MS = 1200;
 
 /**
+ * The beat a freshly opened chooser is given before an option is pressed.
+ *
+ * A chooser this click just opened is not interactive the instant its buttons
+ * appear in the DOM — pressing a reroll option in that first frame reaches no
+ * server, and the reroll only landed when the menu had already been open by
+ * hand (so it had long since settled). This is the settle the by-hand case got
+ * for free, made explicit for the case Toolasha opened itself. It is only taken
+ * on the open-it-ourselves path, so an already-open chooser is acted on at once.
+ */
+const CHOOSER_SETTLE_MS = 250;
+
+/**
  * The extra beat a freshly opened chooser gets to produce its MooPass row.
  *
  * This is the difference the player reported between the first click and every
@@ -296,6 +308,10 @@ export class TaskBulkReroll {
                     // is doing produces those constantly, and counting one as
                     // proof would make the free reroll's health check meaningless
                     const confirmed = await this._waitForQuestsUpdate(next.questId, next.signature);
+                    console.log(
+                        `[TaskBulkReroll] reroll ${confirmed ? 'confirmed by server' : 'NOT confirmed (timed out)'}` +
+                            `${this.lastClickWasFree ? ' [free]' : ''}`
+                    );
                     if (this.lastClickWasFree) this._noteFreeRerollResult(confirmed);
                     await sleep(400);
                 } else if (next.mode === 'delete') {
@@ -407,10 +423,20 @@ export class TaskBulkReroll {
         if (mode === 'delete') return this._discardCard(card);
 
         let options = findRerollOptions(card);
+        let justOpened = false;
         if (!options.length) {
             options = await this._openChooser(card);
+            justOpened = true;
         }
         if (!options.length) return false;
+
+        // A chooser this click just opened needs a beat to become interactive
+        // before an option can be pressed. The decision below still runs on what
+        // _openChooser settled on (so a pass already seen spent is not waited for
+        // again), and _clickOption re-reads the card at press time — the settle
+        // only defers that press, it does not re-open the question of which
+        // option to take.
+        if (justOpened) await sleep(CHOOSER_SETTLE_MS);
 
         const usable = options.filter((option) => option.available);
 
@@ -453,6 +479,13 @@ export class TaskBulkReroll {
         const fresh = findRerollOptions(card).find((option) => option.available && matches(option));
         const button = fresh?.button || fallbackButton;
         if (!button) return false;
+        // Diagnostic: which option was pressed, and whether it was the freshly
+        // re-read node or the captured fallback. Paired with the confirm result
+        // in _onClick, this says exactly where a reroll that does not land fails.
+        console.log(
+            '[TaskBulkReroll] pressing reroll option:',
+            fresh ? `${fresh.kind} "${fresh.text}"` : '(fallback button)'
+        );
         robustClick(button);
         return true;
     }

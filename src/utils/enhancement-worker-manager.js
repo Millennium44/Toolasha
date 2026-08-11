@@ -5,6 +5,7 @@
 
 import WorkerPool from './worker-pool.js';
 import { BASE_SUCCESS_RATES, BLESSED_TEA_BASE_CHANCE, buildEnhancementMarkov } from './enhancement-calculator.js';
+import { MATHJS_WORKER_IMPORT } from './mathjs-worker-loader.js';
 
 // Worker pool instance
 let workerPool = null;
@@ -14,8 +15,7 @@ let workerPool = null;
 // buildEnhancementMarkov is serialised in below. A hand-copied chain in this string is exactly
 // how the worker drifted from the calculator and lost the success-chance clamp.
 const WORKER_SCRIPT = `
-// Import math.js library from CDN
-importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js');
+${MATHJS_WORKER_IMPORT}
 
 // Cache for enhancement calculation results
 const calculationCache = new Map();
