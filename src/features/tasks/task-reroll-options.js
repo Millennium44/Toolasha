@@ -174,19 +174,27 @@ export function readRerollOption(button) {
 /**
  * Every reroll option the card is currently offering.
  *
- * Scoped to the chooser's own container when the build still names it
- * recognisably, and to the whole card otherwise — a card at rest offers no
- * options either way, since Go, Reroll and the trash can are all controls.
+ * Read off the whole card, because narrowing to a `*rerollOption*` container
+ * first was the bug behind "the menu opens but nothing rerolls". The live
+ * chooser puts the MooPass free reroll in its own `RandomTask_rerollOptionsContainer`
+ * and leaves the paid coin and cowbell buttons a level up in the
+ * `buttonsContainer` beside it — so scoping to the first `rerollOption`-named
+ * element found exactly one button, the free one, and the moment that free
+ * reroll was unavailable or demoted the reader had no paid option to fall back
+ * to and gave up on the card. The per-button filter below is what does the real
+ * work: a card at rest carries only controls (Go, Reroll, Claim, the icon-only
+ * trash can) and Toolasha's own injected furniture, and every one of those is
+ * rejected, so the whole-card scan offers nothing until a chooser is actually
+ * open.
  *
  * @param {Element|null|undefined} card - A task card
  * @returns {Array<Object>} The options, in the order the card draws them
  */
 export function findRerollOptions(card) {
     if (!card || typeof card.querySelectorAll !== 'function') return [];
-    const scope = card.querySelector('[class*="rerollOption" i]') || card;
 
     const options = [];
-    for (const button of scope.querySelectorAll('button')) {
+    for (const button of card.querySelectorAll('button')) {
         const option = readRerollOption(button);
         if (option) options.push(option);
     }
