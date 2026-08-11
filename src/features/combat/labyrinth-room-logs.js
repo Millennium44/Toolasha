@@ -1356,12 +1356,16 @@ class LabyrinthRoomLogs {
             labTickCapture.stopCapture();
             labTickCapture.downloadCapture();
         } else {
+            // Best-effort label from whatever knows the current room; the capture
+            // backfills the monster from the fight's own feed if this is empty
             const room = this.labContext?.room;
-            labTickCapture.startCapture(
-                room?.monsterHrid
-                    ? { monsterHrid: room.monsterHrid, roomLevel: Math.floor(Number(room.recommendedLevel) || 0) }
-                    : null
-            );
+            const monsterHrid = this.fight?.monsterHrid || this.activeSession?.monsterHrid || room?.monsterHrid || null;
+            const roomLevel =
+                this.fight?.session?.roomLevel ||
+                this.activeSession?.roomLevel ||
+                Math.floor(Number(room?.recommendedLevel) || 0) ||
+                0;
+            labTickCapture.startCapture(monsterHrid || roomLevel ? { monsterHrid, roomLevel } : null);
         }
         this.paintCapture();
     }
