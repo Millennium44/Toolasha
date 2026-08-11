@@ -582,9 +582,14 @@ class MarketHistoryPanel {
     drawChart(series) {
         if (!this.canvas || typeof Chart === 'undefined') return;
 
+        // The source decides two things about how its data is drawn: what the
+        // third line is called (a real transacted average, or a computed midpoint
+        // of the quotes), and whether there is any volume to draw at all.
+        const source = marketHistoryAPI.currentSource();
+
         const labels = historyLabels(series, this.prefs.days);
         const datasets = SERIES.map((spec) => ({
-            label: spec.label,
+            label: spec.key === 'avg' ? source.avgLabel : spec.label,
             data: series.map((point) => point[spec.key] || null),
             borderColor: spec.color,
             borderDash: spec.dash,
@@ -594,23 +599,27 @@ class MarketHistoryPanel {
             spanGaps: true,
             tension: 0,
         }));
-        datasets.push({
-            label: 'Volume',
-            data: series.map((point) => point.volume),
-            borderColor: '#409eff',
-            backgroundColor: 'rgba(64, 158, 255, 0.18)',
-            borderWidth: 1,
-            fill: true,
-            yAxisID: 'volume',
-            pointRadius: 0,
-            pointHitRadius: 6,
-            tension: 0,
-        });
+        if (source.hasVolume) {
+            datasets.push({
+                label: 'Volume',
+                data: series.map((point) => point.volume),
+                borderColor: '#409eff',
+                backgroundColor: 'rgba(64, 158, 255, 0.18)',
+                borderWidth: 1,
+                fill: true,
+                yAxisID: 'volume',
+                pointRadius: 0,
+                pointHitRadius: 6,
+                tension: 0,
+            });
+        }
 
         if (this.chart) {
             this.chart.data.labels = labels;
             this.chart.data.datasets = datasets;
             this.chart.$series = series;
+            // A source switch can turn the volume axis on or off between draws
+            this.chart.options.scales.volume.display = source.hasVolume;
             this.chart.update('none');
             return;
         }
@@ -633,6 +642,7 @@ class MarketHistoryPanel {
                     },
                     volume: {
                         position: 'right',
+                        display: source.hasVolume,
                         grid: { drawOnChartArea: false },
                         ticks: { ...axis, color: '#409eff', callback: (value) => formatKMB(value) },
                     },
@@ -643,8 +653,10 @@ class MarketHistoryPanel {
                         callbacks: {
                             label: (item) => `${item.dataset.label}: ${formatWithSeparator(Math.round(item.parsed.y))}`,
                             // The split is an estimate from where the traded
-                            // price sat in the spread, and says so
+                            // price sat in the spread, and says so. A source with
+                            // no volume has nothing to split, so it says nothing.
                             footer: (items) => {
+                                if (!marketHistoryAPI.currentSource().hasVolume) return '';
                                 const point = this.chart?.$series?.[items[0].dataIndex];
                                 if (!point) return '';
                                 return (

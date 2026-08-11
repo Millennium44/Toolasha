@@ -28,6 +28,7 @@ const history = vi.hoisted(() => ({ rows: {} }));
 vi.mock('../features/market/mooket/market-history-api.js', () => ({
     default: {
         fetchHistory: async (itemHrid) => history.rows[itemHrid] ?? null,
+        currentSource: () => ({ key: 'mooket2', hasVolume: true }),
     },
 }));
 
