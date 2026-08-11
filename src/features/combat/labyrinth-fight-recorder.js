@@ -146,10 +146,18 @@ export function recordingStatus() {
 
 /**
  * The recording in a shape safe to write out and read back.
+ *
+ * `extra` is folded in first, so a caller can embed the replay comparison
+ * alongside the raw attempts — a saved file then carries both halves of the
+ * accuracy check, observed and predicted — without ever overwriting the format
+ * tag or the attempts the fixed fields set last.
+ *
+ * @param {Object} [extra] - Extra top-level fields to embed, e.g. `{ replay }`
  * @returns {Object}
  */
-export function recordingFile() {
+export function recordingFile(extra = {}) {
     return {
+        ...extra,
         format: 'toolasha-labyrinth-recording',
         version: 1,
         recordedAt: recordedAt || null,
@@ -161,12 +169,13 @@ export function recordingFile() {
 
 /**
  * Write the recording out as a file.
+ * @param {Object} [extra] - Extra top-level fields to embed, e.g. the replay comparison
  * @returns {boolean} Whether there was anything to write
  */
-export function downloadRecording() {
+export function downloadRecording(extra = {}) {
     if (!attempts.length) return false;
     try {
-        const blob = new Blob([JSON.stringify(recordingFile())], { type: 'application/json' });
+        const blob = new Blob([JSON.stringify(recordingFile(extra))], { type: 'application/json' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         link.download = `toolasha-labyrinth-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
