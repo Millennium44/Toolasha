@@ -19,7 +19,7 @@ class WebSocketHook {
          *
          * We intercept messages through three paths:
          * 1) MessageEvent.prototype.data getter
-         * 2) WebSocket.prototype addEventListener/onmessage wrappers
+         * 2) The WebSocket constructor subclass wrapper (attachSocketListeners on construct)
          * 3) Direct socket listeners in attachSocketListeners
          */
         this.processedMessageEvents = new WeakSet();

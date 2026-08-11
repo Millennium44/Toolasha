@@ -6,6 +6,34 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Custom Tabs: an enhanced item is no longer double-counted in Unorganized
+
+An enhanced item is tracked under both its base and its `+level` key, so an unassigned one was collected through both — inflating the "Unorganized (N)" count and placing the tile twice. A shared, deduped collector (each physical tile once) now backs both the header count and the lightweight visibility pass (ported from upstream Celasha/Toolasha#627).
+
+### Custom Tabs action buttons heal when the sort-controls row is removed
+
+The +Tab/Export/Import/Expand group is merged into the game's inventory sort-controls row and isn't tracked with the other injected elements, so when the InventorySort feature removed that row the buttons vanished and didn't return. A direct connectivity check now forces a rebuild when they disconnect (ported from upstream Celasha/Toolasha#632).
+
+### Estimated listing age: a null price no longer suppresses a match
+
+Two "your listings beyond the top 20" match sites used a parsed price without checking for `null` (which the parser returns on empty/invalid text). A null coerces to 0 in the price comparison and can hide a correct match; both sites now skip the row instead (ported from upstream Celasha/Toolasha 2.85.0).
+
+### Character switches are serialized, so rapid switching no longer bleeds settings
+
+A rapid character switch could drop a re-init (leaving the previous character's per-character settings applied) or start a rebuild before the last character's teardown finished. The switch lifecycle now runs through one serialized chain, and each re-init verifies it is still for the current character before it applies — latest character wins, nothing dropped or overlapped (ported from upstream Celasha/Toolasha#622).
+
+### Action Filter's pricing mode resyncs after a character switch
+
+The persistent Action Filter never re-initializes, and a character switch skips the per-key change callbacks (the cache is cleared first), so its mode/craft buttons and profit rows could keep the previous character's pricing mode. A new `config.onSettingsLoaded` channel fires whenever settings finish loading, so the filter resyncs (ported from upstream Celasha/Toolasha#630).
+
+### The Unorganized tab no longer vanishes mid-character-switch
+
+The Custom Tabs "Unorganized" bucket was gated on `getSettingValue`, which reads `null` while the per-character cache is briefly empty during a switch — hiding the section until it reloaded. It now reads `getSetting`, which falls back to the schema default (ported from upstream Celasha/Toolasha#636).
+
+### Action-bar display no longer risks freezing the tab on a character switch
+
+`setupActionNameObserver` now disconnects any running observer before replacing it, so a character switch can't leak a duplicate watcher that loops on the stats span and freezes the tab (ported from upstream Celasha/Toolasha#623).
+
 ### The Sort Tasks button sorts even with a reroll menu open
 
 A direct press now sorts the board immediately, mid-reroll and all. The automatic passes (auto-sort, sort-after-read) still wait for the board to settle so they never yank a pending click.

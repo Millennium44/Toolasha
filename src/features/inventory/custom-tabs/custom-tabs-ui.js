@@ -880,6 +880,17 @@ export default class CustomTabsUI {
             this._removeInjectedEls();
         }
 
+        // The +Tab/Export/Import/Expand group is merged into the game's
+        // .mwi-inventory-sort-controls row and is not tracked in _injectedEls, so
+        // its presence check above cannot see it. When InventorySort removes that
+        // row the buttons silently vanish and never come back on the lightweight
+        // path; a direct connectivity check heals them (ported from upstream
+        // Celasha/Toolasha#632).
+        if (!needsFullRebuild && this._actionBtnsEl && !this._actionBtnsEl.isConnected) {
+            needsFullRebuild = true;
+            this._removeInjectedEls();
+        }
+
         if (needsFullRebuild) {
             // Full rebuild: inject action buttons + headers
             let orderCounter = 0;
@@ -903,7 +914,11 @@ export default class CustomTabsUI {
                 orderCounter = this._injectAccordionHeaders(invContainer, this._config.tabs, 0, tileMap, orderCounter);
             }
 
-            if (config.getSettingValue('inventoryTabs_showUnorganized')) {
+            // getSetting (not getSettingValue) so a character switch, which clears
+            // the per-character cache mid-layout-pass, reads the schema default
+            // (true) instead of null and does not drop the Unorganized bucket
+            // until the cache reloads (ported from upstream Celasha/Toolasha#636).
+            if (config.getSetting('inventoryTabs_showUnorganized')) {
                 orderCounter = this._injectUnorganized(invContainer, tileMap, orderCounter);
             }
 
@@ -1008,27 +1023,7 @@ export default class CustomTabsUI {
         const unorgHeader = invContainer.querySelector('.toolasha-ct-unorg-header');
         if (unorgHeader && this._unorgOpen) {
             const unorgOrder = parseInt(unorgHeader.style.order, 10);
-            const assignedSet = getAssignedItemSet(this._config);
-            const unorgTiles = [];
-            for (const [hrid, tiles] of tileMap) {
-                if (/\+\d+$/.test(hrid)) {
-                    // Enhanced key still in tileMap means it wasn't claimed —
-                    // only skip if the exact enhanced hrid is assigned to a tab.
-                    if (!assignedSet.has(hrid)) {
-                        for (const tile of tiles) unorgTiles.push(tile);
-                    }
-                } else {
-                    // Base key: skip if base hrid is assigned; otherwise filter per-tile
-                    // so only tiles whose specific enhancement level is assigned are excluded
-                    if (assignedSet.has(hrid)) continue;
-                    for (const tile of tiles) {
-                        const enhEl = tile.querySelector('[class*="Item_enhancementLevel"]');
-                        const level = enhEl ? parseInt(enhEl.textContent.trim().replace('+', ''), 10) : 0;
-                        const tileHrid = level > 0 ? `${hrid}+${level}` : hrid;
-                        if (!assignedSet.has(tileHrid)) unorgTiles.push(tile);
-                    }
-                }
-            }
+            const unorgTiles = this._collectUnassignedTileEntries(tileMap).flatMap(({ tiles }) => tiles);
             this._assignTileOrders(unorgTiles, unorgOrder + 1, '');
         }
     }
@@ -1855,6 +1850,55 @@ export default class CustomTabsUI {
     // -----------------------------------------------------------------------
 
     /**
+     * The tiles that belong in the Unorganized bucket — everything left in the
+     * tile map that no tab has claimed — grouped by key, each physical tile
+     * counted at most once.
+     *
+     * A tile is registered in the map under both its base hrid and its enhanced
+     * `hrid+level` key (see {@link _buildTileMap}), so an unassigned enhanced item
+     * is reachable through two keys. Without the `seenTiles` guard it is collected
+     * twice: the "Unorganized (N)" header over-counts it and the tile is placed
+     * twice. Base keys are inserted before their enhanced keys, so a deduped tile
+     * stays grouped with its base item. Ported from upstream Celasha/Toolasha#627.
+     *
+     * @param {Map<string, HTMLElement[]>} tileMap - tiles not placed in any tab
+     * @returns {Array<{hrid: string, tiles: HTMLElement[]}>} deduped unorganized entries
+     */
+    _collectUnassignedTileEntries(tileMap) {
+        const assignedSet = getAssignedItemSet(this._config);
+        const remainingEntries = [];
+        const seenTiles = new Set();
+        for (const [hrid, tiles] of tileMap) {
+            if (/\+\d+$/.test(hrid)) {
+                // Enhanced key still present means no tab claimed it; skip only if
+                // the exact enhanced hrid is assigned to a tab.
+                if (assignedSet.has(hrid)) continue;
+                const fresh = tiles.filter((tile) => !seenTiles.has(tile));
+                if (fresh.length > 0) {
+                    for (const tile of fresh) seenTiles.add(tile);
+                    remainingEntries.push({ hrid, tiles: fresh });
+                }
+            } else {
+                // Base key: skip if the base hrid is assigned; otherwise keep only
+                // the tiles whose specific enhancement level is not assigned.
+                if (assignedSet.has(hrid)) continue;
+                const unassignedTiles = tiles.filter((tile) => {
+                    if (seenTiles.has(tile)) return false;
+                    const enhEl = tile.querySelector('[class*="Item_enhancementLevel"]');
+                    const level = enhEl ? parseInt(enhEl.textContent.trim().replace('+', ''), 10) : 0;
+                    const tileHrid = level > 0 ? `${hrid}+${level}` : hrid;
+                    return !assignedSet.has(tileHrid);
+                });
+                if (unassignedTiles.length > 0) {
+                    for (const tile of unassignedTiles) seenTiles.add(tile);
+                    remainingEntries.push({ hrid, tiles: unassignedTiles });
+                }
+            }
+        }
+        return remainingEntries;
+    }
+
+    /**
      * Inject the unorganized bucket header and show unassigned tiles
      * @param {HTMLElement} invContainer
      * @param {Map} tileMap - remaining tiles not placed in any tab
@@ -1862,31 +1906,7 @@ export default class CustomTabsUI {
      * @returns {number} updated orderCounter
      */
     _injectUnorganized(invContainer, tileMap, orderCounter) {
-        const assignedSet = getAssignedItemSet(this._config);
-        const remainingEntries = [];
-        for (const [hrid, tiles] of tileMap) {
-            if (/\+\d+$/.test(hrid)) {
-                // Enhanced key still in tileMap means it wasn't claimed by the base tab
-                // (reserved for a specific enhanced-hrid tab that doesn't exist).
-                // Only skip if the exact enhanced hrid is assigned to a tab.
-                if (!assignedSet.has(hrid)) {
-                    remainingEntries.push({ hrid, tiles });
-                }
-            } else {
-                // Base key: skip if base hrid is assigned; otherwise filter per-tile
-                // so only tiles whose specific enhancement level is assigned are excluded
-                if (assignedSet.has(hrid)) continue;
-                const unassignedTiles = tiles.filter((tile) => {
-                    const enhEl = tile.querySelector('[class*="Item_enhancementLevel"]');
-                    const level = enhEl ? parseInt(enhEl.textContent.trim().replace('+', ''), 10) : 0;
-                    const tileHrid = level > 0 ? `${hrid}+${level}` : hrid;
-                    return !assignedSet.has(tileHrid);
-                });
-                if (unassignedTiles.length > 0) {
-                    remainingEntries.push({ hrid, tiles: unassignedTiles });
-                }
-            }
-        }
+        const remainingEntries = this._collectUnassignedTileEntries(tileMap);
         if (remainingEntries.length === 0) return orderCounter;
 
         const totalTiles = remainingEntries.reduce((sum, e) => sum + e.tiles.length, 0);

@@ -3,17 +3,30 @@
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const state = vi.hoisted(() => ({ isCharacterSwitching: false, enabledFeatures: new Set() }));
+const state = vi.hoisted(() => ({
+    isCharacterSwitching: false,
+    enabledFeatures: new Set(),
+    currentCharacterId: null,
+    handlers: {},
+    calls: [],
+}));
 
 vi.mock('./config.js', () => ({
     default: {
         isFeatureEnabled: (key) => state.enabledFeatures.has(key),
+        clearSettingsCache: () => state.calls.push('clearCache'),
+        loadSettings: async () => state.calls.push('loadSettings'),
+        applyColorSettings: () => state.calls.push('applyColors'),
     },
 }));
 
 vi.mock('./data-manager.js', () => ({
     default: {
         getIsCharacterSwitching: () => state.isCharacterSwitching,
+        getCurrentCharacterId: () => state.currentCharacterId,
+        on: (event, handler) => {
+            state.handlers[event] = handler;
+        },
     },
 }));
 
@@ -30,6 +43,9 @@ const featureRegistry = (await import('./feature-registry.js')).default;
 beforeEach(() => {
     state.isCharacterSwitching = false;
     state.enabledFeatures = new Set();
+    state.currentCharacterId = null;
+    state.handlers = {};
+    state.calls = [];
     featureRegistry.replaceFeatures([]);
 });
 
@@ -215,5 +231,67 @@ describe('replaceFeatures', () => {
         featureRegistry.replaceFeatures([{ key: 'a', name: 'A', initialize: () => {} }]);
         featureRegistry.replaceFeatures([{ key: 'b', name: 'B', initialize: () => {} }]);
         expect(featureRegistry.getAllFeatures().map((f) => f.key)).toEqual(['b']);
+    });
+});
+
+describe('setupCharacterSwitchHandler — serialized lifecycle', () => {
+    /** Register one enabled feature that logs its disable/initialize into state.calls */
+    function oneFeature() {
+        state.enabledFeatures = new Set(['x']);
+        const initialize = vi.fn(() => state.calls.push('init:x'));
+        const disable = vi.fn(() => state.calls.push('disable:x'));
+        featureRegistry.replaceFeatures([{ key: 'x', name: 'X', initialize, disable }]);
+        return { initialize, disable };
+    }
+
+    test('clears the cache, tears down, reloads settings, then re-inits — in that order', async () => {
+        vi.useFakeTimers();
+        state.currentCharacterId = 'B';
+        oneFeature();
+
+        featureRegistry.setupCharacterSwitchHandler();
+        state.handlers.character_switching();
+        state.handlers.character_switched({ newId: 'B' });
+        await vi.advanceTimersByTimeAsync(100);
+
+        // Cleanup finished before reinit started — no overlap
+        expect(state.calls).toEqual(['clearCache', 'disable:x', 'loadSettings', 'applyColors', 'init:x']);
+        vi.useRealTimers();
+    });
+
+    test('a reinit a newer switch has superseded does not re-initialize', async () => {
+        // The current character is B, but this character_switched is for A — a
+        // stale event a newer switch overtook. Without the target-id check the old
+        // handler would init A over B; now it aborts.
+        vi.useFakeTimers();
+        state.currentCharacterId = 'B';
+        const { initialize } = oneFeature();
+
+        featureRegistry.setupCharacterSwitchHandler();
+        state.handlers.character_switching();
+        state.handlers.character_switched({ newId: 'A' });
+        await vi.advanceTimersByTimeAsync(100);
+
+        expect(initialize).not.toHaveBeenCalled();
+        vi.useRealTimers();
+    });
+
+    test('a second switch in flight is not dropped', async () => {
+        // The old boolean guard returned early on the second character_switched
+        // while the first reinit was still running, dropping it. Serialized, both
+        // run.
+        vi.useFakeTimers();
+        state.currentCharacterId = 'B';
+        const { initialize } = oneFeature();
+
+        featureRegistry.setupCharacterSwitchHandler();
+        state.handlers.character_switching();
+        state.handlers.character_switched({ newId: 'B' });
+        state.handlers.character_switching();
+        state.handlers.character_switched({ newId: 'B' });
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(initialize).toHaveBeenCalledTimes(2);
+        vi.useRealTimers();
     });
 });

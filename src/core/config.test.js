@@ -22,6 +22,14 @@ vi.mock('./settings-storage.js', () => ({
         saveSettings: vi.fn(() => Promise.resolve()),
         loadSettings: vi.fn(() => Promise.resolve({})),
         buildDefaults: vi.fn(() => ({})),
+        setCharacterId: vi.fn(),
+    },
+}));
+
+vi.mock('./data-manager.js', () => ({
+    default: {
+        getCurrentCharacterName: () => 'TestChar',
+        getCurrentCharacterId: () => 'char-1',
     },
 }));
 
@@ -86,6 +94,49 @@ describe('Config.setSetting', () => {
         config.onSettingChange('pricingMode', cb);
         config.setSetting('pricingMode', 'optimistic');
         expect(cb).toHaveBeenCalledWith('optimistic');
+    });
+});
+
+describe('Config.onSettingsLoaded', () => {
+    beforeEach(() => {
+        config.settingsLoadedCallbacks = [];
+        config.settingsMap = {};
+    });
+
+    test('fires after loadSettings repopulates the map, even when the previous map was empty', async () => {
+        // The character-switch case: the cache is cleared (previous map empty), so
+        // no per-key change callback fires — this channel is the only resync signal.
+        const cb = vi.fn();
+        config.onSettingsLoaded(cb);
+
+        await config.loadSettings('char-1');
+
+        expect(cb).toHaveBeenCalledTimes(1);
+    });
+
+    test('offSettingsLoaded unsubscribes', async () => {
+        const cb = vi.fn();
+        config.onSettingsLoaded(cb);
+        config.offSettingsLoaded(cb);
+
+        await config.loadSettings('char-1');
+
+        expect(cb).not.toHaveBeenCalled();
+    });
+
+    test('a throwing callback does not stop the others', async () => {
+        const boom = vi.fn(() => {
+            throw new Error('nope');
+        });
+        const after = vi.fn();
+        config.onSettingsLoaded(boom);
+        config.onSettingsLoaded(after);
+        const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        await config.loadSettings('char-1');
+
+        expect(after).toHaveBeenCalledTimes(1);
+        spy.mockRestore();
     });
 });
 

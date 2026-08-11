@@ -13,6 +13,22 @@ const game = vi.hoisted(() => ({
     itemDetails: {},
 }));
 
+// Track every watcher setupActionNameObserver creates and whether it was
+// disconnected, so a leaked duplicate observer is detectable without a real DOM.
+const watchers = vi.hoisted(() => ({ disconnects: [] }));
+
+vi.mock('../../utils/dom-observer-helpers.js', async () => {
+    const actual = await vi.importActual('../../utils/dom-observer-helpers.js');
+    return {
+        ...actual,
+        createMutationWatcher: () => {
+            const disconnect = vi.fn();
+            watchers.disconnects.push(disconnect);
+            return disconnect;
+        },
+    };
+});
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getItemDetails: (hrid) => game.itemDetails[hrid] ?? null,
@@ -65,6 +81,28 @@ beforeEach(() => {
             alchemyDetail: { bulkMultiplier: 1, transmuteSuccessRate: 0.5 },
         },
     };
+});
+
+describe('setupActionNameObserver does not leak a duplicate observer', () => {
+    test('a second setup disconnects the first watcher before replacing it', () => {
+        // Both waitForActionPanel() and the persistent Header_actionName watcher
+        // call this on a character switch. Without the disconnect guard the
+        // second call orphaned the first observer — its handle lost — and the
+        // leaked observer, which updateDisplay() can no longer reach to silence,
+        // fired on the stats-span append and looped until the tab froze
+        // (upstream Celasha/Toolasha#623).
+        watchers.disconnects.length = 0;
+        actionTimeDisplay.actionNameObserver = null;
+
+        actionTimeDisplay.setupActionNameObserver({});
+        actionTimeDisplay.setupActionNameObserver({});
+
+        expect(watchers.disconnects).toHaveLength(2);
+        expect(watchers.disconnects[0]).toHaveBeenCalledTimes(1);
+        expect(watchers.disconnects[1]).not.toHaveBeenCalled();
+
+        actionTimeDisplay.actionNameObserver = null;
+    });
 });
 
 describe('calculateMaterialLimit — alchemy coin fee', () => {
