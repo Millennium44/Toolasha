@@ -880,6 +880,17 @@ export default class CustomTabsUI {
             this._removeInjectedEls();
         }
 
+        // The +Tab/Export/Import/Expand group is merged into the game's
+        // .mwi-inventory-sort-controls row and is not tracked in _injectedEls, so
+        // its presence check above cannot see it. When InventorySort removes that
+        // row the buttons silently vanish and never come back on the lightweight
+        // path; a direct connectivity check heals them (ported from upstream
+        // Celasha/Toolasha#632).
+        if (!needsFullRebuild && this._actionBtnsEl && !this._actionBtnsEl.isConnected) {
+            needsFullRebuild = true;
+            this._removeInjectedEls();
+        }
+
         if (needsFullRebuild) {
             // Full rebuild: inject action buttons + headers
             let orderCounter = 0;
