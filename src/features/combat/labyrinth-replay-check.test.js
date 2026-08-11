@@ -54,6 +54,26 @@ describe('deriveObserved', () => {
         expect(groups[0].fights).toBe(2);
     });
 
+    test('gross damage figures win over the endpoints, so regen is not subtracted', () => {
+        // Endpoints say you took 2000 and dealt 600; gross says 2500 and 700
+        // (you regenerated 500 through the fight, and the monster healed 100)
+        const [g] = deriveObserved([
+            attempt({
+                outcome: 'death',
+                cleared: false,
+                monsterMaxHp: 1000,
+                monsterHpEnd: 400,
+                playerMaxHp: 2000,
+                playerHpStart: 2000,
+                playerHpEnd: 0,
+                monsterDamage: 700,
+                playerDamageTaken: 2500,
+            }),
+        ]);
+        expect(g.totalPlayerTaken).toBe(2500);
+        expect(g.totalMonsterDamage).toBe(700);
+    });
+
     test('an unknown outcome and a zero-length fight are excluded', () => {
         const groups = deriveObserved([attempt({ outcome: 'unknown' }), attempt({ seconds: 0 })]);
         expect(groups).toHaveLength(0);
