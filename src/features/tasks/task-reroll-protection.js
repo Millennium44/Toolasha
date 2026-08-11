@@ -78,8 +78,7 @@ class TaskRerollProtection {
 
         // Re-process on quest updates (task content may change after reroll)
         const questHandler = () => {
-            console.log('[TaskProt] quests_updated → repaint in 300ms');
-            setTimeout(() => this._processAllCards('quests_updated'), 300);
+            setTimeout(() => this._processAllCards(), 300);
         };
         webSocketHook.on('quests_updated', questHandler);
         this.unregisterHandlers.push(() => webSocketHook.off('quests_updated', questHandler));
@@ -97,30 +96,21 @@ class TaskRerollProtection {
         // A closing reroll chooser adds an action row, not a card, so no
         // observer above sees it — this is what repaints the cards the pass
         // above declined to touch
-        this.unregisterHandlers.push(
-            onConfirmFlowSettled(() => {
-                console.log('[TaskProt] confirm flow settled → repaint');
-                this._processAllCards('settle');
-            })
-        );
+        this.unregisterHandlers.push(onConfirmFlowSettled(() => this._processAllCards()));
 
         // Process existing cards
-        this._processAllCards('init');
+        this._processAllCards();
     }
 
     /**
      * Process all visible task cards.
-     * @param {string} [source] - Who triggered this pass (diagnostic)
      * @private
      */
-    _processAllCards(source = '?') {
+    _processAllCards() {
         const cards = document.querySelectorAll('[class*="RandomTask_randomTask"]');
-        let confirming = 0;
         for (const card of cards) {
-            if (isCardInConfirmState(card)) confirming += 1;
             this._processTaskCard(card);
         }
-        console.log(`[TaskProt] _processAllCards(${source}): ${cards.length} cards, ${confirming} mid-flow/skipped`);
     }
 
     /**
@@ -161,14 +151,15 @@ class TaskRerollProtection {
             this._wireRerollInterception(taskCard);
         }
 
-        // Repainting a card that is showing the reroll chooser or the discard
-        // confirmation changes it under the player's pending click. The chooser
-        // survives the reroll, so the repaint is booked for when it closes —
-        // the highlight otherwise still describes the rerolled-away task.
-        if (isCardInConfirmState(taskCard)) {
-            armConfirmSettleWatch();
-            return;
-        }
+        // A card mid-flow (its reroll chooser or discard confirmation open) still
+        // gets its border redrawn. The edge is an inset box-shadow — it shifts no
+        // layout and cannot disturb the click the player is in the middle of — so
+        // drawing it now is what makes the green move the instant a reroll lands,
+        // rather than waiting for the menu to be closed. The settle watch is still
+        // armed so the one thing that CAN disturb a mid-flow card (the legacy
+        // outline reset, which fights task-auto-reroll) runs only once it settles.
+        const inConfirm = isCardInConfirmState(taskCard);
+        if (inConfirm) armConfirmSettleWatch();
 
         // Get quest data via fiber traversal
         const quest = this._getQuestFromCard(taskCard);
@@ -203,8 +194,10 @@ class TaskRerollProtection {
         // here so an upgrade does not leave one behind. It is also how
         // task-auto-reroll draws its "worth rerolling" border, so clearing it
         // unconditionally makes the two features fight over the same card every
-        // pass — which the player sees as the card flickering.
-        if (!taskCard.querySelector('.mwi-autoreroll-badge')) {
+        // pass — which the player sees as the card flickering. Kept out of the
+        // mid-flow pass so the two never fight over a card the player is
+        // mid-click on; it runs on the settle pass instead.
+        if (!inConfirm && !taskCard.querySelector('.mwi-autoreroll-badge')) {
             taskCard.style.removeProperty('outline');
             taskCard.style.removeProperty('outline-offset');
         }

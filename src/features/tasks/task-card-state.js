@@ -157,11 +157,9 @@ export function armConfirmSettleWatch(root = document) {
     if (settleTimer !== null) return;
     if (settleSubscribers.size === 0) return;
 
-    console.log('[Settle] watch armed');
     settleTimer = setInterval(() => {
         if (boardHasConfirmingCard(root)) return;
 
-        console.log('[Settle] board settled → firing', settleSubscribers.size, 'subscriber(s)');
         // Stopped before the callbacks run: a pass that skips some *other*
         // card re-arms the watch from inside its own skip, and clearing the
         // timer afterwards would throw that new arming away

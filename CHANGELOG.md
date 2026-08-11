@@ -6,13 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
-### Temporary: protection repaint diagnostics
+### The protected border updates the instant a reroll lands, and shows instantly on open
 
-While tracking down a report that the protected border stops updating in place (and only refreshes on a tab switch), the repaint paths log which trigger fired — `[TaskProt] quests_updated`, `[TaskProt] _processAllCards(source): N cards, M mid-flow/skipped`, `[TaskProt] confirm flow settled`, and `[Settle] watch armed` / `board settled`. These lines are diagnostic and are removed once the broken path is identified and fixed.
+Two fixes to when the protected/cap edge appears.
 
-### The protected task border shows instantly again
-
-Opening the Task Board left a visible beat before the green "protected" edge appeared on protected tasks. The card-appeared watcher only ever drew the border on a delayed pass — a 150 ms timer after each card node was added — so every time the board rendered, protected cards were briefly borderless. The border is now painted **synchronously** the moment a card appears, with the 150 ms pass kept only as a fallback for the rare case the card's React fiber (and so its quest) is not yet reachable on the first look. The observer only ever fires for a freshly added card node, which carries no border yet, so the immediate pass can only add an edge, never flicker one off.
+- **It no longer waits for the reroll menu to close.** After a reroll, the card keeps its chooser open, and the border was being withheld from any card mid-flow — so the green edge only moved to the new task once you pressed Back, and in the meantime seemed "stuck" (a tab switch, which re-creates the cards, was the only thing that refreshed it). The edge is an inset box-shadow that shifts no layout and cannot disturb the click you are in the middle of, so it is now redrawn on a mid-flow card too — the border tracks the task the reroll landed on right away. Only the one thing that genuinely should not touch a mid-flow card, the legacy outline reset that fights the auto-reroll border, is still held back until the menu closes.
+- **It shows instantly when the board opens.** The card-appeared watcher only drew the border on a delayed 150 ms pass, so protected cards were briefly borderless every time the board rendered. The border is now painted synchronously the moment a card appears, with the 150 ms pass kept as a fallback for the rare case the card's React fiber is not yet reachable. The watcher only fires for a freshly added card node, which carries no border yet, so the immediate pass can only add an edge, never flicker one off.
 
 ### The task bulk-reroll button is removed
 
