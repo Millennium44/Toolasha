@@ -198,6 +198,7 @@ class LabyrinthClearRate {
             reset: () => this.resetOutcomes(),
             markBaseline: () => this.markOutcomeBaseline(),
             clearBaseline: () => this.clearOutcomeBaseline(),
+            recompute: () => this.recomputeCombatSims(),
         });
 
         const unregister = domObserver.onClass('LabyrinthClearRate', 'LabyrinthPanel_skipThreshold', () =>

@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Labyrinth: Recompute button, honest attempt counts, and a panel that stays put
+
+Three fixes to the Labyrinth sim/room-logs panel:
+
+- **Recompute button.** The combat-sim cache is keyed by loadout id, not gear contents, so a plain equip the game doesn't surface as a loadout update can leave a room's clear-chance sim cached under gear you no longer wear — and even "Calculate Labyrinth" reuses it (it skips rooms with a cached result). A new **Recompute** button in the Room Logs panel throws away every cached sim and simulates the visible rooms again, so a stale "cached Nh ago" figure can be forced fresh after a gear change.
+- **Room Log stops under-reporting attempts.** Win/death/timeout is only classified from live battle data, which the game streams only while you're on the combat view — so a run spent on other tabs showed e.g. "Won 0/6" on attempt 29. The panel now shows the server's own attempt count (which counts every attempt regardless of view): "Won 0/6 · 26 total", or "26 attempts, none watched" when no fights were seen. The died/timed-out breakdown still speaks only for the watched subset, since that's all it can.
+- **Panel no longer jumps to the top.** The Room Logs / Sim-accuracy list rebuilt itself on every experience/labyrinth update — several times a second during a fight — and reset its scroll each time, making it unreadable while open. It now preserves the scroll position across redraws (a tab switch still starts at the top).
+
 ### Undercut alerts finally fire passively, backed by Mooket
 
 The undercut alert refuses to trust a market price older than 15 minutes — but the only price it had for an item you hadn't just opened was the game's `marketplace.json` snapshot, which refreshes only ~once an hour. So for anything you weren't actively watching, the figure proving you'd been undercut was itself too old to count, and the alert stayed silent — an undercut could sit for hours (a buy order outbid for 8h+ was the case that surfaced this) with nothing said. The alert now also consults the newest **Mooket** sighting for each of your active listings, refreshed on the same 15-minute tick (and once at login). A pooled sighting is usually minutes old, so it clears the evidence bar the hourly snapshot can't, and the alert can fire for items you never opened. It compares the freshest of the two sources per side and reports that source's **true** age, so "as of ~3m ago" stays honest; a sighting that's itself older than 15 minutes still proves nothing. Requires the **Market: Price history panel** setting (that's what authorises the pooled lookups); off, the alert behaves exactly as before.

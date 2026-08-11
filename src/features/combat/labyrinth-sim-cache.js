@@ -249,6 +249,28 @@ export const simCacheMethods = {
     },
 
     /**
+     * Throw away every cached combat sim and simulate the visible rooms again.
+     *
+     * The manual answer to a stale result: the cache key does not encode gear, so
+     * a loadout change the game never surfaced as `loadouts_updated` (a plain
+     * equip) leaves a sim cached under gear you no longer wear, and even
+     * "Calculate Labyrinth" reuses it — `computeCombatClear` returns early on a
+     * cache hit. Emptying both layers first forces a real re-sim.
+     *
+     * The invalidation baseline is re-anchored to the current gear afterwards, so
+     * the very next input-change check does not see a difference and clear what
+     * this just computed.
+     *
+     * @returns {Promise<void>}
+     */
+    async recomputeCombatSims() {
+        this.combatCache.clear();
+        this._clearPersistedCombatCache();
+        this._snapshotFingerprint = this._snapshotContentFingerprint();
+        await this.runTileCalculation({ auto: false });
+    },
+
+    /**
      * Run combat sim for a monster room and return clear stats
      */
     async computeCombatClear(monsterHrid, roomLevel, options = {}) {
