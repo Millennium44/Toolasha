@@ -5,7 +5,6 @@
 
 import WorkerPool from './worker-pool.js';
 import { BASE_SUCCESS_RATES, BLESSED_TEA_BASE_CHANCE, buildEnhancementMarkov } from './enhancement-calculator.js';
-import { MATHJS_WORKER_IMPORT } from './mathjs-worker-loader.js';
 
 // Worker pool instance
 let workerPool = null;
@@ -15,7 +14,8 @@ let workerPool = null;
 // buildEnhancementMarkov is serialised in below and networth costs the same chain the tooltip
 // quotes, clamp and blessed-tea chance included.
 const WORKER_SCRIPT = `
-${MATHJS_WORKER_IMPORT}
+// Import math.js library for enhancement calculations
+importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js');
 
 // Cache for item valuations
 const valuationCache = new Map();
