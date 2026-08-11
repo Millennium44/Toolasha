@@ -405,6 +405,13 @@ function registerFeatures() {
             async: true,
         },
         {
+            key: 'mooketLivePriceCheck',
+            name: 'Mooket Live Price Check',
+            category: 'Market',
+            module: Market.mooketLivePriceCheck,
+            async: false,
+        },
+        {
             key: 'queueLengthEstimator',
             name: 'Queue Length Estimator',
             category: 'Market',
