@@ -128,6 +128,8 @@ class MarketHistoryAPI {
         this.socket = null;
         this.reconnectTimer = null;
         this.closing = false;
+        /** Which pool the open socket is contributing to, so a source switch can redirect it */
+        this.socketSourceKey = null;
         /** Said once. The getter is read on every book, and on every reconnect. */
         this.notedTestServer = false;
     }
@@ -215,7 +217,12 @@ class MarketHistoryAPI {
     }
 
     /**
-     * Open the reporting socket, if contributing is on.
+     * Open the reporting socket to the selected pool, if contributing is on.
+     *
+     * You feed the pool you read: the socket goes to whichever source is
+     * selected, so switching source moves your contributions with it. Both pools
+     * accept the same `market_item_order_books_updated` message on the same
+     * `/market/ws` path, so only the host differs.
      *
      * It reconnects on its own because the alternative is a session that stops
      * contributing after the first blip and never says so.
@@ -224,22 +231,29 @@ class MarketHistoryAPI {
         if (!this.contributing || this.socket) return;
 
         this.closing = false;
-        const url = `${HISTORY_HOST.replace(/^http/, 'ws')}/market/ws`;
+        const source = this.currentSource();
+        this.socketSourceKey = source.key;
+        const url = `${source.host.replace(/^http/, 'ws')}/market/ws`;
 
+        let socket;
         try {
-            this.socket = new WebSocket(url);
+            socket = new WebSocket(url);
         } catch (error) {
             console.error('[MooketHistory] Opening the reporting socket failed:', error);
             this.socket = null;
             return;
         }
+        this.socket = socket;
 
-        this.socket.addEventListener('close', () => {
+        socket.addEventListener('close', () => {
+            // A socket superseded by a reconnect (e.g. a source switch) must not
+            // null out the one that replaced it
+            if (this.socket !== socket) return;
             this.socket = null;
             if (this.closing || !this.contributing) return;
             this.reconnectTimer = setTimeout(() => this.connect(), RECONNECT_DELAY_MS);
         });
-        this.socket.addEventListener('error', () => {
+        socket.addEventListener('error', () => {
             // 'close' follows and handles the reconnect; logging both would
             // just double the noise on a server that is simply down
         });
@@ -253,6 +267,7 @@ class MarketHistoryAPI {
         }
         this.socket?.close();
         this.socket = null;
+        this.socketSourceKey = null;
     }
 
     /**
@@ -261,6 +276,13 @@ class MarketHistoryAPI {
      */
     report(payload) {
         if (!this.contributing) return;
+
+        // A socket still open to the pool that was selected a moment ago is closed
+        // and reopened to the one selected now, so contributions follow the source
+        if (this.socket && this.socketSourceKey !== this.currentSource().key) {
+            this.disconnect();
+        }
+
         if (!this.socket) {
             this.connect();
             return;

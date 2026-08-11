@@ -80,6 +80,24 @@ describe('on the live server', () => {
         });
     });
 
+    test('contribution follows the selected source', () => {
+        on('www.milkywayidle.com');
+
+        marketHistoryAPI.connect();
+        expect(sockets[0].url).toBe('wss://q7.nainai.eu.org/market/ws');
+
+        // Switch source and report: the old socket is dropped and a new one opens
+        // to the newly selected pool
+        settings.market_historySource = 'mooket1';
+        marketHistoryAPI.report({ marketItemOrderBooks: {} }); // closes the stale socket, reconnects
+        marketHistoryAPI.report({ marketItemOrderBooks: { '/items/cheese': {} } }); // sends to the new one
+
+        expect(sockets).toHaveLength(2);
+        expect(sockets[1].url).toBe('wss://mooket.qi-e.top/market/ws');
+        expect(sockets[0].sent).toHaveLength(0);
+        expect(sockets[1].sent).toHaveLength(1);
+    });
+
     test('the switch being off still stops everything', () => {
         on('www.milkywayidle.com');
         settings.market_pooledHistory = false;

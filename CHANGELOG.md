@@ -15,7 +15,7 @@ The two pools carry different data, and the UI adapts honestly rather than prete
 - **mooket II** (default) carries ask, bid, average _traded_ price and volume — the full chart, unchanged.
 - **mooket I** carries only ask and bid. On it, the chart's third line is a **computed midpoint of the quotes, labelled "Mid"** (not a real traded average), the **volume bars and volume axis disappear** (there's nothing to draw), and the tooltip's buy/sell volume split is suppressed. Critically, the **goal planner's market-volume limits switch off** on mooket I: a source with no volume tells us nothing about how fast a thing sells, which is _unknown_, not a measured zero — treating its silence as zero would have wrongly crushed every gold rate to nothing the moment you switched sources.
 
-Both sources are third parties governed by the existing `Market: Price history panel` switch. Order books you contribute back still go to mooket II regardless of which source you read, since that's the pool whose format the upload speaks.
+Both sources are third parties governed by the existing `Market: Price history panel` switch. You feed the pool you read: the order books you contribute back now follow the selected source — switching source closes the reporting socket to the old pool and reopens it to the new one (both accept the same message on the same `/market/ws` path).
 
 ### "Mooket Refresh" button on the My Listings tab
 
