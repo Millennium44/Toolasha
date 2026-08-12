@@ -96,3 +96,46 @@ describe('MarketAPI fetch', () => {
         error.mockRestore();
     });
 });
+
+describe('MarketAPI getPriceTimestamp', () => {
+    beforeEach(() => {
+        vi.resetModules();
+        vi.stubGlobal('fetch', vi.fn());
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    test('reports the snapshot time when no fresher patch exists', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.lastFetchTimestamp = 1000;
+        marketAPI.pricePatchs = {};
+        expect(marketAPI.getPriceTimestamp('/items/x', 0)).toBe(1000);
+    });
+
+    test('a patch newer than the snapshot wins', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.lastFetchTimestamp = 1000;
+        marketAPI.pricePatchs = { '/items/x:0': { a: 1, b: 2, timestamp: 2000 } };
+        expect(marketAPI.getPriceTimestamp('/items/x', 0)).toBe(2000);
+    });
+
+    test('a patch older than the snapshot is ignored', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.lastFetchTimestamp = 5000;
+        marketAPI.pricePatchs = { '/items/x:0': { a: 1, b: 2, timestamp: 2000 } };
+        expect(marketAPI.getPriceTimestamp('/items/x', 0)).toBe(5000);
+    });
+
+    test('null when nothing has been fetched', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.lastFetchTimestamp = 0;
+        marketAPI.pricePatchs = {};
+        expect(marketAPI.getPriceTimestamp('/items/x', 0)).toBeNull();
+    });
+});
