@@ -4667,17 +4667,16 @@ describe('guide-driven ability swaps', () => {
         expect(candidates.some((c) => c.replacesHrid === '/abilities/invincible')).toBe(false);
     });
 
-    test('signature-only narrows to the aura choice and the build-defining ability', () => {
-        const candidates = swaps(fireMage(), { signatureSwapsOnly: true });
+    test('aura-only narrows to just the aura choice', () => {
+        const candidates = swaps(fireMage(), { auraSwapsOnly: true });
 
-        expect(incoming(candidates)).toEqual(['/abilities/fireball', '/abilities/mystic_aura']);
-        // Precision is still on-guide even though it is not offered here, so
-        // nothing proposes replacing the guide's own Elemental Affinity with
-        // the signature
+        // Only the other aura is offered; the signature (Fireball) and the rest
+        // of the guide's set are left out — aura-only is only about which aura.
+        expect(incoming(candidates)).toEqual(['/abilities/mystic_aura']);
         expect(candidates.some((c) => c.replacesHrid === '/abilities/elemental_affinity')).toBe(false);
     });
 
-    test('a wark signature keeps both halves of its OR', () => {
+    test('aura-only does not reach a wark signature — its aura slot is Invincible', () => {
         const wark = loadout(TWO_HAND_SLOT, '/items/griffin_bulwark', [
             { hrid: '/abilities/invincible', level: 10 },
             { hrid: '/abilities/smack', level: 30 },
@@ -4685,10 +4684,10 @@ describe('guide-driven ability swaps', () => {
             null,
             null,
         ]);
-        expect(incoming(swaps(wark, { signatureSwapsOnly: true }))).toEqual([
-            '/abilities/retribution',
-            '/abilities/shield_bash',
-        ]);
+        // A wark's aura group is just Invincible (no OR alternative) and it is
+        // equipped, so aura-only offers nothing: the signature group (Shield
+        // Bash / Retribution) is no longer reached.
+        expect(incoming(swaps(wark, { auraSwapsOnly: true }))).toEqual([]);
     });
 
     test('a loadout already running the whole guide is offered nothing at all', () => {

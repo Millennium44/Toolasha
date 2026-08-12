@@ -552,7 +552,7 @@ describe('the Upgrade tab asks two questions instead of one', () => {
         expect(ui.panel.querySelector('#mwi-labsim-crit-aura-label')).toBeNull();
     });
 
-    test('Signature only sits inside the Ability Swaps chip and hides with it', () => {
+    test('Aura only sits inside the Ability Swaps chip and hides with it', () => {
         const group = ui.panel.querySelector('[data-lab-mode-options="ability_swap"]');
         expect(ui.panel.querySelector('[data-lab-mode-chip="ability_swap"]').contains(group)).toBe(true);
 
@@ -563,27 +563,27 @@ describe('the Upgrade tab asks two questions instead of one', () => {
     });
 
     test('and means nothing while Ability Swaps is unchecked', () => {
-        ui.panel.querySelector('#mwi-labsim-swap-signature-only').checked = true;
+        ui.panel.querySelector('#mwi-labsim-swap-aura-only').checked = true;
         check('ability_swap', false);
-        expect(ui._getSignatureSwapsOnly()).toBe(false);
+        expect(ui._getAuraSwapsOnly()).toBe(false);
 
         check('ability_swap', true);
-        expect(ui._getSignatureSwapsOnly()).toBe(true);
+        expect(ui._getAuraSwapsOnly()).toBe(true);
     });
 
     test('the choice is written down like its neighbours, box state and all', async () => {
         check('ability_swap', true);
-        const signature = ui.panel.querySelector('#mwi-labsim-swap-signature-only');
+        const signature = ui.panel.querySelector('#mwi-labsim-swap-aura-only');
         signature.checked = true;
         signature.dispatchEvent(new window.Event('change', { bubbles: true }));
         await settle();
-        expect(storage.written['labSimSwapSignatureOnly_me']).toBe(true);
+        expect(storage.written['labSimSwapAuraOnly_me']).toBe(true);
 
         // Unchecking the set must not save a false over the tick — it would be
         // lost the moment Ability Swaps was checked again
         check('ability_swap', false);
         await settle();
-        expect(storage.written['labSimSwapSignatureOnly_me']).toBe(true);
+        expect(storage.written['labSimSwapAuraOnly_me']).toBe(true);
     });
 
     test('the size of a swap run across every fight is said before it starts', () => {

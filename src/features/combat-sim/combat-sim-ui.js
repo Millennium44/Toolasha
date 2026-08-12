@@ -80,14 +80,14 @@ const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
 const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
 
 /**
- * Storage key for the Ability Swaps "Signature only" sub-option.
+ * Storage key for the Ability Swaps "Aura only" sub-option.
  *
  * Remembered with the candidate sets themselves, and for the same reason: it is
  * how you want swaps ranked rather than something about one particular run, and
  * an unremembered narrowing means the next Analyze quietly costs several times
  * as much.
  */
-const SWAP_SIGNATURE_ONLY_KEY = 'combatSimSwapSignatureOnly';
+const SWAP_AURA_ONLY_KEY = 'combatSimSwapAuraOnly';
 
 /**
  * Storage key for the all-zones Max-tier Food toggle.
@@ -1264,9 +1264,9 @@ const MODE_OPTIONS = {
     ability_swap: `
         <span data-mode-options="ability_swap" style="display:none; align-items:center; gap:4px;">
             <span style="color:#2a2a4a;">|</span>
-            <label id="mwi-csim-swap-signature-label" title="Sim only the swaps that define the build: the aura the guide offers for your archetype (both sides of its OR), and the archetype's signature ability — Puncture for a spear, Maim for a sword, Shield Bash for a mace, Shield Bash or Retribution for a wark, Pestilent Shot for a bow, Steady Shot or Silencing Shot for a crossbow, Fireball, Water Strike or Entangle for magic. The rest of the guide's set is left out, which is most of the run." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
-                <input type="checkbox" id="mwi-csim-swap-signature-only" style="margin:0; cursor:pointer;">
-                Signature only
+            <label id="mwi-csim-swap-aura-label" title="Sim only the aura swap: the guide's aura group for your archetype, both sides of its OR — Critical Aura or Mystic Aura for magic, Critical Aura or Fierce Aura for melee/ranged, Invincible for a wark. Everything else in the guide's set is left out, which is most of the run." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-csim-swap-aura-only" style="margin:0; cursor:pointer;">
+                Aura only
             </label>
         </span>`,
     combat_level: `
@@ -2001,11 +2001,11 @@ class CombatSimUI {
                 this._saveUpgradeModes();
             });
         });
-        this.panel.querySelector('#mwi-csim-swap-signature-only')?.addEventListener('change', () => {
-            this._saveSwapSignatureOnly();
+        this.panel.querySelector('#mwi-csim-swap-aura-only')?.addEventListener('change', () => {
+            this._saveSwapAuraOnly();
         });
         this._restoreUpgradeModes();
-        this._restoreSwapSignatureOnly();
+        this._restoreSwapAuraOnly();
         this._loadUpgradeColumnPrefs();
         this._loadMaxTierFoodPref();
         this._restorePanelGeometry();
@@ -5817,26 +5817,26 @@ class CombatSimUI {
     }
 
     /**
-     * Persist the Ability Swaps "Signature only" sub-option.
+     * Persist the Ability Swaps "Aura only" sub-option.
      * @private
      */
-    async _saveSwapSignatureOnly() {
+    async _saveSwapAuraOnly() {
         try {
-            const box = this.panel?.querySelector('#mwi-csim-swap-signature-only');
-            await writeScoped(SWAP_SIGNATURE_ONLY_KEY, Boolean(box?.checked));
+            const box = this.panel?.querySelector('#mwi-csim-swap-aura-only');
+            await writeScoped(SWAP_AURA_ONLY_KEY, Boolean(box?.checked));
         } catch (error) {
             console.error('[CombatSimUI] Failed to save the signature-swap option:', error);
         }
     }
 
     /**
-     * Restore the remembered "Signature only" sub-option.
+     * Restore the remembered "Aura only" sub-option.
      * @private
      */
-    async _restoreSwapSignatureOnly() {
+    async _restoreSwapAuraOnly() {
         try {
-            const saved = await readScoped(SWAP_SIGNATURE_ONLY_KEY, 'settings', false);
-            const box = this.panel?.querySelector('#mwi-csim-swap-signature-only');
+            const saved = await readScoped(SWAP_AURA_ONLY_KEY, 'settings', false);
+            const box = this.panel?.querySelector('#mwi-csim-swap-aura-only');
             if (box) box.checked = Boolean(saved);
         } catch (error) {
             console.error('[CombatSimUI] Failed to restore the signature-swap option:', error);
@@ -5953,9 +5953,9 @@ class CombatSimUI {
             const abilityTargets = upgradeModes.includes('ability_level')
                 ? this._getAbilityTargets('#mwi-csim-ability-targets')
                 : null;
-            const signatureSwapsOnly =
+            const auraSwapsOnly =
                 upgradeModes.includes('ability_swap') &&
-                Boolean(this.panel.querySelector('#mwi-csim-swap-signature-only')?.checked);
+                Boolean(this.panel.querySelector('#mwi-csim-swap-aura-only')?.checked);
             const results = await runUpgradeAnalysis(
                 {
                     playerDTOs,
@@ -5977,7 +5977,7 @@ class CombatSimUI {
                     guildShrineTargetLevel,
                     guildShrineTargets,
                     communityBuffTargetLevel,
-                    signatureSwapsOnly,
+                    auraSwapsOnly,
                 },
                 ({ current, total, description }) => {
                     if (this._upgradeAborted) return;

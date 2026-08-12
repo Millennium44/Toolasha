@@ -434,12 +434,11 @@ export function resolveAbilityHrid(name, abilityDetailMap) {
  * What the guide says a loadout should be casting, resolved against game data.
  *
  * `offers` is what may be swapped *in*: every ability in the archetype's set
- * that is not already equipped, or — in signature-only mode — just the aura
- * group and the signature group, which are the two decisions that define the
- * build. `memberOf` always covers the *whole* set regardless of that mode, and
- * is what the generator uses to tell an on-guide ability from an off-guide one:
- * without it, signature-only mode would happily propose replacing the Frenzy
- * the guide asked for.
+ * that is not already equipped, or — in aura-only mode — just the aura group,
+ * which is the single decision that mode is about. `memberOf` always covers the
+ * *whole* set regardless of that mode, and is what the generator uses to tell an
+ * on-guide ability from an off-guide one: without it, aura-only mode would
+ * happily propose replacing the Frenzy the guide asked for.
  *
  * Returns null when the archetype cannot be established, and also when none of
  * the guide's abilities exist in the game data at all — a guide that resolves
@@ -449,13 +448,13 @@ export function resolveAbilityHrid(name, abilityDetailMap) {
  * @param {Object} playerDTO - Player DTO with equipment and abilities
  * @param {Object} gameData - Game data payload
  * @param {Object} [options]
- * @param {boolean} [options.signatureOnly=false] - Restrict `offers` to the aura
- *   and signature groups
+ * @param {boolean} [options.auraOnly=false] - Restrict `offers` to the aura
+ *   group only (historical option name; the UI calls it "Aura only")
  * @returns {{archetype: string, label: string, offers: string[],
- *   memberOf: Map<string, number>, signatureOnly: boolean}|null}
+ *   memberOf: Map<string, number>, auraOnly: boolean}|null}
  */
 export function buildGuidePlan(playerDTO, gameData, options = {}) {
-    const { signatureOnly = false } = options;
+    const { auraOnly = false } = options;
     const key = detectArchetype(playerDTO, gameData);
     const archetype = key ? BUILD_GUIDE[key] : null;
     if (!archetype) return null;
@@ -476,7 +475,9 @@ export function buildGuidePlan(playerDTO, gameData, options = {}) {
     if (memberOf.size === 0) return null;
 
     const equipped = new Set((playerDTO?.abilities || []).filter((ability) => ability?.hrid).map((a) => a.hrid));
-    const wanted = signatureOnly ? [resolved[0], resolved[resolved.length - 1]] : resolved;
+    // auraOnly is the historical flag name; it now restricts offers to the
+    // aura group alone (resolved[0]) — the "Aura only" UI toggle.
+    const wanted = auraOnly ? [resolved[0]] : resolved;
     // An empty `offers` is a real answer, and not the same as a null plan: a
     // loadout already running the whole guide has nothing to swap, and falling
     // back to every-ability there would answer a question the guide has already
@@ -484,5 +485,5 @@ export function buildGuidePlan(playerDTO, gameData, options = {}) {
     // hands back null.
     const offers = [...new Set(wanted.flat())].filter((hrid) => !equipped.has(hrid));
 
-    return { archetype: key, label: archetype.label, offers, memberOf, signatureOnly };
+    return { archetype: key, label: archetype.label, offers, memberOf, auraOnly };
 }

@@ -229,14 +229,14 @@ describe('buildGuidePlan', () => {
         expect(plan.offers).not.toContain('/abilities/entangle');
     });
 
-    test('signature-only keeps the aura choice and the signature ability', () => {
-        const plan = buildGuidePlan(fireMage, gameData({}), { signatureOnly: true });
-        expect(plan.offers.sort()).toEqual(['/abilities/mystic_aura', '/abilities/fireball'].sort());
-        expect(plan.signatureOnly).toBe(true);
+    test('aura-only offers just the other aura, not the signature', () => {
+        const plan = buildGuidePlan(fireMage, gameData({}), { auraOnly: true });
+        expect(plan.offers).toEqual(['/abilities/mystic_aura']);
+        expect(plan.auraOnly).toBe(true);
     });
 
     test('but still knows the whole set, so the rest of it is not treated as replaceable', () => {
-        const plan = buildGuidePlan(fireMage, gameData({}), { signatureOnly: true });
+        const plan = buildGuidePlan(fireMage, gameData({}), { auraOnly: true });
         // Precision is not offered in this mode, but it is still on-guide — the
         // generator reads `memberOf` to decide what may be displaced
         expect(plan.memberOf.has('/abilities/precision')).toBe(true);
@@ -244,16 +244,21 @@ describe('buildGuidePlan', () => {
         expect(plan.memberOf.get('/abilities/fireball')).not.toBe(plan.memberOf.get('/abilities/precision'));
     });
 
-    test('a wark plan is the defensive set with both signature options', () => {
+    test('a wark plan captures both signature options in full mode, none in aura-only', () => {
         const wark = {
             equipment: { [TWO_HAND]: { hrid: '/items/griffin_bulwark' }, [OFF_HAND]: null },
             abilities: [{ hrid: '/abilities/invincible', level: 10 }, null, null, null, null],
         };
-        const plan = buildGuidePlan(wark, gameData({}), { signatureOnly: true });
-        expect(plan.archetype).toBe('wark');
-        expect(plan.offers.sort()).toEqual(['/abilities/shield_bash', '/abilities/retribution'].sort());
+        const full = buildGuidePlan(wark, gameData({}), {});
+        expect(full.archetype).toBe('wark');
+        expect(full.offers).toContain('/abilities/shield_bash');
+        expect(full.offers).toContain('/abilities/retribution');
         // Invincible is slotted, so it is not offered — but it is on-guide
-        expect(plan.memberOf.get('/abilities/invincible')).toBe(0);
+        expect(full.memberOf.get('/abilities/invincible')).toBe(0);
+
+        // Aura-only reaches only the aura slot, which for a wark is Invincible —
+        // already slotted, so nothing is offered and the signature is not reached.
+        expect(buildGuidePlan(wark, gameData({}), { auraOnly: true }).offers).toEqual([]);
     });
 
     test('is null when the archetype cannot be read', () => {
@@ -277,9 +282,7 @@ describe('buildGuidePlan', () => {
         const plan = buildGuidePlan(perfect, gameData({}));
         // Fierce Aura is the one thing left, and only because it is the OR-half
         expect(plan.offers).toEqual(['/abilities/fierce_aura']);
-        expect(buildGuidePlan(perfect, gameData({}), { signatureOnly: true }).offers).toEqual([
-            '/abilities/fierce_aura',
-        ]);
+        expect(buildGuidePlan(perfect, gameData({}), { auraOnly: true }).offers).toEqual(['/abilities/fierce_aura']);
     });
 
     test('is null when the game data has none of the guide abilities', () => {
