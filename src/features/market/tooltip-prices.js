@@ -19,6 +19,7 @@ import {
     uninstallEnhancementSourceToggle,
 } from '../enhancement/tooltip-enhancement.js';
 import { getTooltipEnhancementParams } from '../enhancement/enhancement-params-source.js';
+import { abilityHridFromUseHref } from '../../utils/loadout-scraper.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import {
     numberFormatter,
@@ -189,6 +190,30 @@ class TooltipPrices {
      * @param {Element} tooltipElement - The tooltip popper element
      */
     async handleTooltip(tooltipElement) {
+        // Check if it's a collection tooltip
+        const collectionContent = tooltipElement.querySelector('div.Collection_tooltipContent__2IcSJ');
+        const isCollectionTooltip = !!collectionContent;
+
+        // Check if it's a regular item tooltip
+        const nameElement = tooltipElement.querySelector('div.ItemTooltipText_name__2JAHA');
+        const isItemTooltip = !!nameElement;
+
+        // Hovering an ability itself (in a loadout / ability slot), not its book
+        // item: the game's tooltip shows level and description but not what the
+        // level cost. Add the same "Fresh to Lv" status the book tooltip gives,
+        // detected by the ability sprite the popper carries. This runs on its own
+        // setting, independent of the item-price gates below.
+        if (!isCollectionTooltip && !isItemTooltip && config.getSetting('itemTooltip_abilityStatus')) {
+            const use = tooltipElement.querySelector('use');
+            const abilityHrid = abilityHridFromUseHref(
+                use?.getAttribute('href') || use?.getAttribute('xlink:href') || ''
+            );
+            if (abilityHrid) {
+                this.handleAbilityTooltip(tooltipElement, abilityHrid);
+            }
+            return;
+        }
+
         // Skip if no tooltip features are enabled
         if (
             !config.getSetting('itemTooltip_prices') &&
@@ -197,14 +222,6 @@ class TooltipPrices {
         ) {
             return;
         }
-
-        // Check if it's a collection tooltip
-        const collectionContent = tooltipElement.querySelector('div.Collection_tooltipContent__2IcSJ');
-        const isCollectionTooltip = !!collectionContent;
-
-        // Check if it's a regular item tooltip
-        const nameElement = tooltipElement.querySelector('div.ItemTooltipText_name__2JAHA');
-        const isItemTooltip = !!nameElement;
 
         if (!isCollectionTooltip && !isItemTooltip) {
             return; // Not a tooltip we can enhance
@@ -1372,10 +1389,14 @@ class TooltipPrices {
      * @param {Object} abilityStatus - Ability status data
      * @param {boolean} isCollectionTooltip - Whether this is a collection tooltip
      */
-    injectAbilityStatusDisplay(tooltipElement, abilityStatus, isCollectionTooltip) {
-        const tooltipText = isCollectionTooltip
-            ? tooltipElement.querySelector('div.Collection_tooltipContent__2IcSJ')
-            : tooltipElement.querySelector('div.ItemTooltipText_itemTooltipText__zFq3A');
+    injectAbilityStatusDisplay(tooltipElement, abilityStatus, isCollectionTooltip, abilityMode = false) {
+        // In abilityMode the tooltip is the ability's own (not its book item), so
+        // there is no item/collection text node \u2014 append to the tooltip content box.
+        const tooltipText = abilityMode
+            ? tooltipElement.querySelector('.MuiTooltip-tooltip') || tooltipElement
+            : isCollectionTooltip
+              ? tooltipElement.querySelector('div.Collection_tooltipContent__2IcSJ')
+              : tooltipElement.querySelector('div.ItemTooltipText_itemTooltipText__zFq3A');
 
         if (!tooltipText) {
             return;
@@ -1399,7 +1420,26 @@ class TooltipPrices {
                 ? `<div>Books held: ${numberFormatter(abilityStatus.heldBooks)} \u2192 Lv ${abilityStatus.levelWithHeld}</div>`
                 : '';
 
-        if (!abilityStatus.learned) {
+        if (abilityMode) {
+            // The game's ability tooltip already shows level and xp; add only what
+            // it does not \u2014 what the level cost fresh, and held books.
+            const fresh = abilityStatus.freshCost;
+            if (!abilityStatus.learned) {
+                html += `<div style="color: ${config.COLOR_TOOLTIP_LOSS}; font-weight: 600;">\u26a0 Unlearned</div>`;
+                if (heldLine) {
+                    html += `<div style="margin-top: 4px; margin-left: 8px; font-size: 0.9em;">${heldLine}</div>`;
+                }
+            } else {
+                if (fresh?.total > 0) {
+                    html +=
+                        `<div style="opacity: 0.7;">Fresh to Lv ${abilityStatus.level}: ` +
+                        `${formatTooltipPrice(Math.round(fresh.total))} (${numberFormatter(Math.ceil(fresh.books))} books)</div>`;
+                }
+                if (heldLine) {
+                    html += `<div style="font-size: 0.9em;">${heldLine}</div>`;
+                }
+            }
+        } else if (!abilityStatus.learned) {
             // Not learned
             html += `<div style="color: ${config.COLOR_TOOLTIP_LOSS}; font-weight: 600;">`;
             html += `\u26A0 Unlearned</div>`;
@@ -1444,8 +1484,35 @@ class TooltipPrices {
                 `In loadouts: ${abilityStatus.loadouts.join(', ')}</div>`;
         }
 
+        // Nothing worth a bordered section (e.g. a maxed ability hovered with no
+        // held books and no loadouts) — leave the tooltip untouched.
+        if (!html) {
+            return;
+        }
+
         statusDiv.innerHTML = html;
         tooltipText.appendChild(statusDiv);
+    }
+
+    /**
+     * Add the ability-status block to a tooltip shown for an ability itself
+     * (in a loadout or ability slot), not its book item. Reuses the book
+     * tooltip's computation; dedups per ability on the popper.
+     * @param {HTMLElement} tooltipElement - The MuiTooltip popper
+     * @param {string} abilityHrid - e.g. '/abilities/precision'
+     */
+    handleAbilityTooltip(tooltipElement, abilityHrid) {
+        if (tooltipElement.dataset.abilityStatusProcessed === abilityHrid) {
+            return;
+        }
+        tooltipElement.dataset.abilityStatusProcessed = abilityHrid;
+
+        // getAbilityStatus takes the book item hrid and derives the ability back.
+        const itemHrid = abilityHrid.replace('/abilities/', '/items/');
+        const abilityStatus = this.getAbilityStatus(itemHrid);
+        if (abilityStatus) {
+            this.injectAbilityStatusDisplay(tooltipElement, abilityStatus, false, true);
+        }
     }
 
     /**
