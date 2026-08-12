@@ -2871,6 +2871,19 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## Upstream Changelog
 
+## [2.96.2](https://github.com/Millennium44/Toolasha/compare/v2.96.1...v2.96.2) (2026-08-12)
+
+
+### Bug Fixes
+
+* **settings:** remove stale experimental warning from task reroll tracker ([ec2060e](https://github.com/Millennium44/Toolasha/commit/ec2060ece0835914f6ead52d61673664bea8e069))
+* **settings:** remove the stale experimental warning from the task reroll tracker ([1ad3296](https://github.com/Millennium44/Toolasha/commit/1ad329624a544d3cb2e71d5e2f68087b74c24197))
+
+
+### Documentation
+
+* **changelog:** condense fork changelog entries and require short ones ([cacf261](https://github.com/Millennium44/Toolasha/commit/cacf2617c304eeb7c4cc3c9a0a49d9822545cb54))
+
 ## [2.96.1](https://github.com/Millennium44/Toolasha/compare/v2.96.0...v2.96.1) (2026-08-12)
 
 ### Bug Fixes
