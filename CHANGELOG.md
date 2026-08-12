@@ -2891,6 +2891,18 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## Upstream Changelog
 
+## [2.97.0](https://github.com/Millennium44/Toolasha/compare/v2.96.5...v2.97.0) (2026-08-12)
+
+
+### Features
+
+* **combat-sim:** add an Achievements section to toggle achievement combat buffs ([d9c184f](https://github.com/Millennium44/Toolasha/commit/d9c184f7c5010745ea3dce01a258bcc564bbe733))
+
+
+### Bug Fixes
+
+* **combat-sim:** restore the loadout picker in packaged builds ([d804c7a](https://github.com/Millennium44/Toolasha/commit/d804c7a059d82893b11ebef5d44846e789151588))
+
 ## [2.96.5](https://github.com/Millennium44/Toolasha/compare/v2.96.4...v2.96.5) (2026-08-12)
 
 ### Build System
