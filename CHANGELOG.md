@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Sim: Achievements section — toggle your achievement combat buffs
+
+The sim already applied your completed-achievement combat buffs (e.g. Damage +2%) silently; there was no way to see or change them. A new **Achievements** section on the Configure tab lists the combat buffs your achievements grant, each ticked by default (so results are unchanged) — untick one to sim without it. It reads your real buffs with their exact values; a character with no combat achievement buffs shows no section.
+
+### Sim: the loadout picker is back in the packaged build
+
+The Combat Sim and Lab Sim loadout dropdown vanished in the released userscript (it still worked in dev): both UIs read the loadout list from their own bundle's copy of the snapshot store, which the websocket never feeds in the multi-bundle build, so the list was always empty and the `<select>` never rendered. Both now read the fed store through the bundle bridge — the same fix the apply path already had — so you can pick a saved loadout to sim as again. A regression test now asserts the picker renders from the bridge store.
+
 ### Author credit: full contributor list and code-source attribution
 
 Both userscript headers now carry the same, tidied `@author` credit. It restores the contributors who were only in the dev header (Shykai, amVoidGuy, vlad, kuganDev, Paradoxian, Maarg, SilkyPanda, MekaPyon, vidonnus) and adds a line crediting the tools this fork borrowed code and ideas from: MWITools (bot7420), MWI Combat Suite (Frotty), JIGS (jigglymoose), the Labyrinth Win Rate Calculator (dakonglong), and the mooket pools (Q7, IOMisaka).

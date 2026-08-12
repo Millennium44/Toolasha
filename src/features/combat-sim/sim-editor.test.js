@@ -42,8 +42,16 @@ vi.mock('./combat-sim-adapter.js', () => ({
     applyGuildBuffLevel: (buffs) => buffs,
 }));
 
+// This bundle's own (direct-import) copy of the store. In the packaged build it
+// is never fed by the websocket, so it answers empty — the bug this guards.
 vi.mock('../combat/loadout-snapshot.js', () => ({
     default: { getAllSnapshots: () => [], resolveEquipment: () => [] },
+}));
+
+// The fed store lives behind the bundle bridge; the picker must read it there.
+const bridge = vi.hoisted(() => ({ snapshots: [] }));
+vi.mock('../../utils/bundle-bridge.js', () => ({
+    loadoutSnapshot: () => ({ getAllSnapshots: () => bridge.snapshots, resolveEquipment: () => [] }),
 }));
 
 const { SimEditor } = await import('./sim-editor.js');
@@ -74,6 +82,7 @@ function editorWithStrangers() {
 }
 
 beforeEach(() => {
+    bridge.snapshots = [];
     game.characterData = { character: { id: 'me', name: 'Milkman' } };
     game.selfDTO = { ...emptyDTO('player1'), attackLevel: 90, debuffOnLevelGap: 0.3 };
     game.allPlayers = {
@@ -229,6 +238,97 @@ describe('community buff levels stop where the game does', () => {
 
         expect(dto.communityBuffLevels.experience).toBe(20);
         expect(input.value).toBe('20');
+    });
+});
+
+describe('loadout picker reads the fed store, not this bundle', () => {
+    test('renders the dropdown from the bridge store even when this bundle owns an empty copy', () => {
+        // The direct import (mocked empty above) is the packaged bundle's own,
+        // never-fed copy; a naive read of it hides the picker. The picker must
+        // list what the bridge store — the one the websocket feeds — actually has.
+        bridge.snapshots = [
+            { name: 'Bruteforce', actionTypeHrid: '/action_types/combat' },
+            { name: 'Everything', actionTypeHrid: null },
+        ];
+        const { el } = editorWithStrangers();
+
+        const select = el.querySelector('#mwi-csim-loadout-select');
+        expect(select).toBeTruthy();
+        expect(select.textContent).toContain('Bruteforce');
+        expect(select.textContent).toContain('Everything (All Skills)');
+    });
+
+    test('a non-combat loadout is filtered out of the combat picker', () => {
+        bridge.snapshots = [{ name: 'Milking', actionTypeHrid: '/action_types/milking' }];
+        const { el } = editorWithStrangers();
+
+        // Only a skilling loadout exists, so there is nothing combat to pick.
+        expect(el.querySelector('#mwi-csim-loadout-select')).toBeFalsy();
+    });
+
+    test('no picker when the fed store has no loadouts at all', () => {
+        const { el } = editorWithStrangers();
+        expect(el.querySelector('#mwi-csim-loadout-select')).toBeFalsy();
+    });
+});
+
+describe('achievements section', () => {
+    const damage = { typeHrid: '/buff_types/damage', ratioBoost: 0.02 };
+    const wisdom = { typeHrid: '/buff_types/wisdom', flatBoost: 0.05 };
+
+    test('lists the detected achievement buffs, all ticked by default', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+
+        const html = editor._renderAchievementsSection({ achievementCombatBuffs: [damage, wisdom] });
+
+        expect(html).toContain('data-achievement-buff="/buff_types/damage"');
+        expect(html).toContain('Damage +2%');
+        expect(html).toContain('data-achievement-buff="/buff_types/wisdom"');
+        expect(html).toMatch(/data-achievement-buff="\/buff_types\/damage" checked/);
+        expect(html).toContain('2 active');
+    });
+
+    test('a toggled-off buff renders unchecked and drops the active count', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+
+        const html = editor._renderAchievementsSection({
+            achievementCombatBuffs: [damage, wisdom],
+            achievementBuffsOff: ['/buff_types/damage'],
+        });
+
+        expect(html).not.toMatch(/data-achievement-buff="\/buff_types\/damage" checked/);
+        expect(html).toMatch(/data-achievement-buff="\/buff_types\/wisdom" checked/);
+        expect(html).toContain('1 active');
+    });
+
+    test('a player with no achievement buffs shows no section', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        expect(editor._renderAchievementsSection({ achievementCombatBuffs: [] })).toBe('');
+    });
+
+    test('the skilling tab hides it', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div'), skillingMode: true });
+        expect(editor._renderAchievementsSection({ achievementCombatBuffs: [damage] })).toBe('');
+    });
+
+    test('unticking excludes the buff; re-ticking restores it', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        el.innerHTML =
+            '<input type="checkbox" data-achievement-buff="/buff_types/damage" checked>' +
+            '<input type="checkbox" data-achievement-buff="/buff_types/wisdom" checked>';
+        const dto = { achievementBuffsOff: [] };
+
+        editor._wireEditorEvents(el, dto);
+        const dmg = el.querySelector('[data-achievement-buff="/buff_types/damage"]');
+        dmg.checked = false;
+        dmg.dispatchEvent(new Event('change'));
+
+        expect(dto.achievementBuffsOff).toEqual(['/buff_types/damage']);
+
+        dmg.checked = true;
+        dmg.dispatchEvent(new Event('change'));
+        expect(dto.achievementBuffsOff).toEqual([]);
     });
 });
 

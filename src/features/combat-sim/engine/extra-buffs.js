@@ -39,7 +39,13 @@ export function buildScrollBuffs(scrollTypeHrids) {
 export function buildPlayerExtraBuffs(sharedBuffs, playerDTO) {
     const shared = Array.isArray(sharedBuffs) ? sharedBuffs : [];
     const guildBuffs = Array.isArray(playerDTO?.guildCombatBuffs) ? playerDTO.guildCombatBuffs : [];
-    const achievementBuffs = Array.isArray(playerDTO?.achievementCombatBuffs) ? playerDTO.achievementCombatBuffs : [];
+    // Achievement combat buffs are auto-detected and applied by default; the
+    // Configure section lets a player exclude one for a what-if by listing its
+    // buff type in achievementBuffsOff.
+    const off = new Set(Array.isArray(playerDTO?.achievementBuffsOff) ? playerDTO.achievementBuffsOff : []);
+    const achievementBuffs = (
+        Array.isArray(playerDTO?.achievementCombatBuffs) ? playerDTO.achievementCombatBuffs : []
+    ).filter((buff) => !off.has(buff?.typeHrid));
     const scrollBuffs = buildScrollBuffs(playerDTO?.scrollBuffs);
 
     return [...shared, ...guildBuffs, ...achievementBuffs, ...scrollBuffs];
