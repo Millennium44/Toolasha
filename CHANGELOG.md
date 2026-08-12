@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Author credit: full contributor list and code-source attribution
+
+Both userscript headers now carry the same, tidied `@author` credit. It restores the contributors who were only in the dev header (Shykai, amVoidGuy, vlad, kuganDev, Paradoxian, Maarg, SilkyPanda, MekaPyon, vidonnus) and adds a line crediting the tools this fork borrowed code and ideas from: MWITools (bot7420), MWI Combat Suite (Frotty), JIGS (jigglymoose), the Labyrinth Win Rate Calculator (dakonglong), and the mooket pools (Q7, IOMisaka).
+
 ### Author credit leads with Millennium44 (production header too)
 
 The previous author change only touched the dev header (`userscript-header.txt`); the GreasyFork build takes its header from `library-headers/entrypoint.txt`, which still led with the upstream authors. That production header now leads with "Millennium44 (fork of Celasha and Claude's Toolasha)" as well, so the published listing shows the fork maintainer.
