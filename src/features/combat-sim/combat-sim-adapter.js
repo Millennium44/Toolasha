@@ -219,6 +219,7 @@ export function buildPlayerDTO() {
         communityBuffLevels: { productionEfficiency: 0, enhancingSpeed: 0, gatheringQuantity: 0, experience: 0 },
         guildCombatBuffs: [],
         achievementCombatBuffs: [],
+        achievementBuffsOff: [],
         guildShrineLevels: {},
         scrollBuffs: [],
     };
