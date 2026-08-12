@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Author credit leads with Millennium44 (production header too)
+
+The previous author change only touched the dev header (`userscript-header.txt`); the GreasyFork build takes its header from `library-headers/entrypoint.txt`, which still led with the upstream authors. That production header now leads with "Millennium44 (fork of Celasha and Claude's Toolasha)" as well, so the published listing shows the fork maintainer.
+
 ### Author credit leads with Millennium44
 
 The userscript `@author` header now opens with "Millennium44 (fork of Celasha and Claude's Toolasha)" instead of leading with the upstream authors, so the GreasyFork listing credits the fork maintainer. The contributor thank-yous are unchanged.
