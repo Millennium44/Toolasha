@@ -89,8 +89,8 @@ import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { SimEditor } from './sim-editor.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
-import { labyrinthClearRate } from '../../utils/bundle-bridge.js';
-import loadoutSnapshot from '../combat/loadout-snapshot.js';
+import { labyrinthClearRate, loadoutSnapshot } from '../../utils/bundle-bridge.js';
+import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 
 const PANEL_ID = 'mwi-lab-sim-panel';
 
@@ -1287,7 +1287,7 @@ class LabSimUI {
             .join('');
         const loadoutId = dataManager.characterData?.characterSetting?.[`labyrinthLoadout${pascal}`];
         if (!loadoutId) return;
-        const snapshot = loadoutSnapshot.snapshots[loadoutId];
+        const snapshot = (loadoutSnapshot() || bundledLoadoutSnapshot).snapshots[loadoutId];
         if (!snapshot?.name) return;
         this._editor.applyLoadoutByName(snapshot.name);
     }
@@ -3229,7 +3229,8 @@ class LabSimUI {
             const dto = (labyrinthClearRate() || bundledLabyrinthClearRate).buildLabyrinthPlayerDTO(loadoutId);
             if (!dto) continue;
             const loadoutName =
-                loadoutSnapshot.snapshots[loadoutId]?.name || (loadoutId ? `Loadout #${loadoutId}` : 'Current gear');
+                (loadoutSnapshot() || bundledLoadoutSnapshot).snapshots[loadoutId]?.name ||
+                (loadoutId ? `Loadout #${loadoutId}` : 'Current gear');
             fights.push({ monsterHrid: monster.hrid, monsterName: monster.name, roomLevel, dto, loadoutName });
         }
         return fights;
@@ -4403,7 +4404,7 @@ class LabSimUI {
         const container = this.panel?.querySelector('#mwi-labsim-skilling-loadouts');
         if (!container) return;
 
-        const allSnapshots = loadoutSnapshot.getAllSnapshots();
+        const allSnapshots = (loadoutSnapshot() || bundledLoadoutSnapshot).getAllSnapshots();
         const nonCombatSnapshots = allSnapshots.filter(
             (s) => s.actionTypeHrid && s.actionTypeHrid !== '/action_types/combat'
         );
@@ -4436,7 +4437,7 @@ class LabSimUI {
         // Auto-populate from game's lab automation settings for any skill not already set
         if (Object.keys(this._skillLoadouts).length < skills.length) {
             const charSetting = dataManager.characterData?.characterSetting;
-            const snapshots = loadoutSnapshot.snapshots || {};
+            const snapshots = (loadoutSnapshot() || bundledLoadoutSnapshot).snapshots || {};
             for (const skill of skills) {
                 if (this._skillLoadouts[skill.hrid]) continue;
                 const skillId = skill.hrid.replace('/skills/', '');
@@ -4506,7 +4507,7 @@ class LabSimUI {
      */
     _buildSkillEquipmentMap(gameData) {
         const itemDetailMap = gameData?.itemDetailMap || {};
-        const allSnapshots = loadoutSnapshot.getAllSnapshots();
+        const allSnapshots = (loadoutSnapshot() || bundledLoadoutSnapshot).getAllSnapshots();
         const equipmentMap = {};
 
         for (const [skillHrid, loadoutName] of Object.entries(this._skillLoadouts)) {
@@ -4520,7 +4521,7 @@ class LabSimUI {
             // now, and the previous fallback only looked at what was equipped
             // this moment — so every loadout except the active one reported the
             // enhancement it had when it was last saved, often +0
-            for (const equip of loadoutSnapshot.resolveEquipment(snapshot)) {
+            for (const equip of (loadoutSnapshot() || bundledLoadoutSnapshot).resolveEquipment(snapshot)) {
                 const itemDetail = itemDetailMap[equip.itemHrid];
                 const equipType = itemDetail?.equipmentDetail?.type;
                 if (!equipType) continue;
