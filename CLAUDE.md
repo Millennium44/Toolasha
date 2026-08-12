@@ -9,7 +9,7 @@ This file contains general workflow and behavioral guidelines for AI assistants 
 - **Always rebase, never merge**: When pulling changes, always use `git pull --rebase`
 - **Never merge a release-please PR immediately**: wait for the "Format Release Please" workflow to push its `version:sync` + prettier commit onto the release-please branch first — the userscript `@version` is stamped only there. Merging before it lands ships a release labelled with the previous version (this happened with 2.90.0).
 - **No attribution trailers in public-facing commits**: commits on the `releases` branch must not carry Co-Authored-By or session trailers — GreasyFork renders those commit messages as the public version changelog.
-- **Keep the fork changelog current**: Every pushed change must be recorded in the "Fork Changelog" section at the top of `CHANGELOG.md`, in the same commit that makes the change. Add an entry under the current branch's Unreleased heading with the commit's subject and user-facing bullet points (what changed, why it matters). Do not touch the upstream changelog section below it.
+- **Keep the fork changelog current**: Every pushed change must be recorded in the "Fork Changelog" section at the top of `CHANGELOG.md`, in the same commit that makes the change. Add an entry under the current branch's Unreleased heading. **Keep it short**: a one- to two-sentence summary per change, or a few terse bullets when there are genuinely separate changes — not multi-paragraph explanations. Say what changed and why it matters; leave the deep mechanism and the war story to the commit body and the code. Do not touch the upstream changelog section below it.
 
 ### Code Changes
 
