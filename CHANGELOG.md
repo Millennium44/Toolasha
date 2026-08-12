@@ -2884,6 +2884,38 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## Upstream Changelog
 
+## [2.96.0](https://github.com/Millennium44/Toolasha/compare/v2.95.1...v2.96.0) (2026-08-12)
+
+
+### Features
+
+* **labyrinth:** embed the replay comparison in the exported recording ([43d2dc7](https://github.com/Millennium44/Toolasha/commit/43d2dc7f06b86e1e350500df748300636190ec9b))
+* **labyrinth:** fight recorder and calibration replay ([72c7924](https://github.com/Millennium44/Toolasha/commit/72c79249b936a15e9a897da2041df4c429663cf1))
+* **labyrinth:** full-ability sim calibration setting, tooltip clear-time, panel bar polish ([d76926c](https://github.com/Millennium44/Toolasha/commit/d76926cd2100d74f71e2aec2814acbb967c86899))
+* **labyrinth:** passive, persistent, gear-pooled fight recorder ([c47fbe5](https://github.com/Millennium44/Toolasha/commit/c47fbe5a1984f616e9d2b466f980f28848297d4a))
+* **labyrinth:** raw tick capture as a Capture button ([91297b6](https://github.com/Millennium44/Toolasha/commit/91297b63e6fd6864e290c3a658731b535602b132))
+* **labyrinth:** recompute button, server-count reconciliation, scroll preservation ([efeca69](https://github.com/Millennium44/Toolasha/commit/efeca6941a68bedc4fa109edc8a76d7a10ab5e05))
+* **labyrinth:** self-label captures, drop partial-HP fights from replay ([98f0e0d](https://github.com/Millennium44/Toolasha/commit/98f0e0d8370f89de4810b04dea17ae1a6d0380d5))
+* **market:** add "Check Mooket price" button to the marketplace item view ([a1cb04f](https://github.com/Millennium44/Toolasha/commit/a1cb04f56d750123e0e2699157d997b84baf7ef7))
+* **market:** add mooket I as a selectable price-history source ([750b4fa](https://github.com/Millennium44/Toolasha/commit/750b4fad78f3e1bb9505fec188a32ab3896330ff))
+* **market:** contribute order books to the selected mooket source ([c0ddf36](https://github.com/Millennium44/Toolasha/commit/c0ddf360e293609ea4316615a038db8bfca02feb))
+* **market:** refresh My Listings Top Order Price on market-data updates ([bf9fb16](https://github.com/Millennium44/Toolasha/commit/bf9fb16ba6160fea41406572653d45a18dfb3a6d))
+* **market:** replace item-view Mooket check with a My Listings bulk price refresh ([2bfc00c](https://github.com/Millennium44/Toolasha/commit/2bfc00c1f4e18460797d647e5c5d9f75a6b6e5da))
+* **notifications:** back undercut alerts with fresh Mooket sightings ([a887f3f](https://github.com/Millennium44/Toolasha/commit/a887f3fdb6d7c4c7e18770564778c13f14fc1eea))
+
+
+### Bug Fixes
+
+* **labyrinth:** diagnose over-modelled monster damage, not just under ([1bc4711](https://github.com/Millennium44/Toolasha/commit/1bc471197fd63d7bb209ad737cb992c24ddf6242))
+* **labyrinth:** measure observed damage gross, not net of regen ([4e84338](https://github.com/Millennium44/Toolasha/commit/4e843382c804129f1e582c483bbe3455132c829f))
+* **labyrinth:** stop counting un-fought rooms as clears; add uncapped sim option ([144480e](https://github.com/Millennium44/Toolasha/commit/144480e2e7e2ccd1292f62cc54d862277a2090c2))
+* **labyrinth:** stop self-healing monsters splitting one fight into many ([26138eb](https://github.com/Millennium44/Toolasha/commit/26138ebede9ad74b68c938655374c9930f37859e))
+
+
+### Documentation
+
+* **changelog:** apply prettier markdown formatting ([d710633](https://github.com/Millennium44/Toolasha/commit/d7106338ccf4b518482e030e27b6a27a93a1a7c0))
+
 ## [2.95.1](https://github.com/Millennium44/Toolasha/compare/v2.95.0...v2.95.1) (2026-08-11)
 
 ### Bug Fixes
