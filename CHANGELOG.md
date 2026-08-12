@@ -2888,6 +2888,13 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## Upstream Changelog
 
+## [2.96.1](https://github.com/Millennium44/Toolasha/compare/v2.96.0...v2.96.1) (2026-08-12)
+
+### Bug Fixes
+
+- **market:** show a fresh undercut in My Listings without opening the item ([bae2de2](https://github.com/Millennium44/Toolasha/commit/bae2de26ffb5fd0279fce281299873b9777ee90d))
+- **market:** show a fresh undercut in My Listings without opening the item ([732c5ea](https://github.com/Millennium44/Toolasha/commit/732c5eae72f19851aecf7384c245e73ede5dc49e))
+
 ## [2.96.0](https://github.com/Millennium44/Toolasha/compare/v2.95.1...v2.96.0) (2026-08-12)
 
 ### Features
