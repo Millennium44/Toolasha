@@ -19,6 +19,7 @@ import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
+import { achievementBuffLabel } from '../../utils/achievement-combat-buffs.js';
 
 const ACCENT = '#4a9eff';
 const ACCENT_BG = 'rgba(74, 158, 255, 0.12)';
@@ -504,6 +505,7 @@ export class SimEditor {
         html += this._renderHouseRoomsSection(dto, gameData);
         html += this._renderGuildShrinesSection(dto);
         html += this._renderScrollsSection(dto);
+        html += this._renderAchievementsSection(dto);
         if (this.skillingMode) {
             html += this._renderTokenUpgradesSection(dto);
             html += this._renderCommunityBuffsSection(dto);
@@ -1656,6 +1658,42 @@ export class SimEditor {
         return html;
     }
 
+    /**
+     * The combat buffs the player's completed achievements grant (e.g. Damage
+     * +2%). These are auto-detected off the player's own data and applied by
+     * default; the section lets you untick one to sim without it. A player with
+     * no combat achievement buffs, or the skilling tab, shows nothing.
+     * @private
+     */
+    _renderAchievementsSection(dto) {
+        if (this.skillingMode) return '';
+        const buffs = Array.isArray(dto.achievementCombatBuffs) ? dto.achievementCombatBuffs : [];
+        if (buffs.length === 0) return '';
+        const off = new Set(Array.isArray(dto.achievementBuffsOff) ? dto.achievementBuffsOff : []);
+        const activeCount = buffs.filter((buff) => !off.has(buff?.typeHrid)).length;
+
+        let html = `<div style="margin-bottom:10px;">`;
+        html += `<div style="color:${ACCENT}; font-weight:700; font-size:12px; margin-bottom:6px; cursor:pointer; user-select:none;" data-toggle="achievement-section">`;
+        html += `<span data-arrow="achievement-section" style="display:inline-block; width:14px; font-size:10px;">&#9654;</span> Achievements`;
+        html += `<span style="color:#888; font-weight:400; font-size:11px; margin-left:6px;">${activeCount} active</span>`;
+        html += '</div>';
+        html += `<div id="mwi-csim-achievement-section" style="display:none;">`;
+
+        for (const buff of buffs) {
+            const typeHrid = buff?.typeHrid;
+            if (!typeHrid) continue;
+            const checked = off.has(typeHrid) ? '' : ' checked';
+            html += `<label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:3px; cursor:pointer;">`;
+            html += `<input type="checkbox" data-achievement-buff="${typeHrid}"${checked} style="cursor:pointer;">`;
+            html += `<span style="color:#888;">${achievementBuffLabel(buff)}</span>`;
+            html += '</label>';
+        }
+        html += `<div style="color:#666; font-size:10px; margin-top:4px;">From your completed achievements. Untick to sim without one.</div>`;
+
+        html += '</div></div>';
+        return html;
+    }
+
     /** @private */
     _renderTokenUpgradesSection(dto) {
         const upgrades = [
@@ -1846,6 +1884,21 @@ export class SimEditor {
                     set.delete(typeHrid);
                 }
                 dto.scrollBuffs = [...set];
+            });
+        });
+
+        editorArea.querySelectorAll('[data-achievement-buff]').forEach((input) => {
+            input.addEventListener('change', () => {
+                const typeHrid = input.dataset.achievementBuff;
+                // The buff is applied by default; the DTO carries the *excluded*
+                // set, so an unticked box adds the type and a ticked box removes it.
+                const set = new Set(Array.isArray(dto.achievementBuffsOff) ? dto.achievementBuffsOff : []);
+                if (input.checked) {
+                    set.delete(typeHrid);
+                } else {
+                    set.add(typeHrid);
+                }
+                dto.achievementBuffsOff = [...set];
             });
         });
 

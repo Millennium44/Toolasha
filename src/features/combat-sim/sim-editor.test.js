@@ -272,6 +272,66 @@ describe('loadout picker reads the fed store, not this bundle', () => {
     });
 });
 
+describe('achievements section', () => {
+    const damage = { typeHrid: '/buff_types/damage', ratioBoost: 0.02 };
+    const wisdom = { typeHrid: '/buff_types/wisdom', flatBoost: 0.05 };
+
+    test('lists the detected achievement buffs, all ticked by default', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+
+        const html = editor._renderAchievementsSection({ achievementCombatBuffs: [damage, wisdom] });
+
+        expect(html).toContain('data-achievement-buff="/buff_types/damage"');
+        expect(html).toContain('Damage +2%');
+        expect(html).toContain('data-achievement-buff="/buff_types/wisdom"');
+        expect(html).toMatch(/data-achievement-buff="\/buff_types\/damage" checked/);
+        expect(html).toContain('2 active');
+    });
+
+    test('a toggled-off buff renders unchecked and drops the active count', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+
+        const html = editor._renderAchievementsSection({
+            achievementCombatBuffs: [damage, wisdom],
+            achievementBuffsOff: ['/buff_types/damage'],
+        });
+
+        expect(html).not.toMatch(/data-achievement-buff="\/buff_types\/damage" checked/);
+        expect(html).toMatch(/data-achievement-buff="\/buff_types\/wisdom" checked/);
+        expect(html).toContain('1 active');
+    });
+
+    test('a player with no achievement buffs shows no section', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        expect(editor._renderAchievementsSection({ achievementCombatBuffs: [] })).toBe('');
+    });
+
+    test('the skilling tab hides it', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div'), skillingMode: true });
+        expect(editor._renderAchievementsSection({ achievementCombatBuffs: [damage] })).toBe('');
+    });
+
+    test('unticking excludes the buff; re-ticking restores it', () => {
+        const el = document.createElement('div');
+        const editor = new SimEditor({ editorEl: el });
+        el.innerHTML =
+            '<input type="checkbox" data-achievement-buff="/buff_types/damage" checked>' +
+            '<input type="checkbox" data-achievement-buff="/buff_types/wisdom" checked>';
+        const dto = { achievementBuffsOff: [] };
+
+        editor._wireEditorEvents(el, dto);
+        const dmg = el.querySelector('[data-achievement-buff="/buff_types/damage"]');
+        dmg.checked = false;
+        dmg.dispatchEvent(new Event('change'));
+
+        expect(dto.achievementBuffsOff).toEqual(['/buff_types/damage']);
+
+        dmg.checked = true;
+        dmg.dispatchEvent(new Event('change'));
+        expect(dto.achievementBuffsOff).toEqual([]);
+    });
+});
+
 describe('scrolls section', () => {
     test('offers the combat scrolls and pre-checks the ones the player carries', () => {
         const editor = new SimEditor({ editorEl: document.createElement('div') });

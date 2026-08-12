@@ -38,6 +38,26 @@ describe('buildPlayerExtraBuffs', () => {
         expect(buildPlayerExtraBuffs(shared, { guildCombatBuffs: guild })).toEqual([...shared, ...guild]);
     });
 
+    test('an achievement buff whose type is toggled off is dropped, the rest kept', () => {
+        const damage = { typeHrid: '/buff_types/damage', ratioBoost: 0.02 };
+        const wisdom = { typeHrid: '/buff_types/wisdom', flatBoost: 0.02 };
+
+        const result = buildPlayerExtraBuffs(shared, {
+            achievementCombatBuffs: [damage, wisdom],
+            achievementBuffsOff: ['/buff_types/damage'],
+        });
+
+        expect(result).toEqual([...shared, wisdom]);
+    });
+
+    test('an empty off-list leaves every detected achievement buff applied', () => {
+        const damage = { typeHrid: '/buff_types/damage', ratioBoost: 0.02 };
+        expect(buildPlayerExtraBuffs(shared, { achievementCombatBuffs: [damage], achievementBuffsOff: [] })).toEqual([
+            ...shared,
+            damage,
+        ]);
+    });
+
     test('empty arrays change nothing', () => {
         expect(buildPlayerExtraBuffs(shared, { guildCombatBuffs: [], achievementCombatBuffs: [] })).toEqual(shared);
     });
