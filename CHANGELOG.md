@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Task reroll tracker: drop the experimental warning
+
+The "Track task reroll costs" setting no longer warns it is experimental and may freeze the UI — it's stable. Default unchanged (on).
+
 ### My Listings: a fresh undercut now shows without opening the item
 
 The Top Order Price column trusted the last-opened order book, so an undercut stayed hidden behind your own price until you reopened the item. It now surfaces the game snapshot's price when it beats you (a rival's by definition, never your own order) — so undercuts show on their own, without ever displaying your own listing or downgrading a genuinely-fresher book. The age column follows suit.
