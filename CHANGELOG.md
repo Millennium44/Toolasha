@@ -4,7 +4,11 @@
 
 All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.84.0, commit `77e9ddb`). Newest first. Every pushed change must be recorded here in the same commit that makes it. Upstream release history is preserved below.
 
-## Unreleased — branch `claude/new-session-s8abcv`
+## Unreleased — branch `main`
+
+### Enhancement tooltip: the source toggle is discoverable and mobile-friendly
+
+The "Yours ⇄ / Pro ⇄" chip on enhancement tooltips now shows a keycap **P** so the press-to-toggle hotkey is visible, not just buried in the hover title. On touch devices it drops the key (no keyboard), enlarges to a finger-sized tap target, and reads "tap" — the chip was already tappable on tap-to-open tooltips, just too small and unlabeled.
 
 ### Upgrade advisor: "Signature only" is now "Aura only"
 

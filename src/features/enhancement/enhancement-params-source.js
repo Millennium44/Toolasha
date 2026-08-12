@@ -12,6 +12,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import { isMobileMode } from '../../utils/mobile.js';
 import {
     getEnhancingParams,
     getAutoDetectedParams,
@@ -125,22 +126,32 @@ export function buildSourceChipHTML(params) {
     const source = describeEnhancementSource(params);
     const isPro = source.kind === 'pro';
     const proColor = config.COLOR_TOOLTIP_WARNING || '#ffb020';
+    // On a touch device there is no P key and hover tooltips never open, so the
+    // chip carries its own visible affordance: a keycap "P" on desktop, the word
+    // "tap" on a phone, and a finger-sized hit area there.
+    const mobile = isMobileMode();
+    const action = mobile ? 'Tap' : 'Click (or press P)';
 
     const title = isPro
-        ? `${source.detail}. Click (or press P) to switch back to your own stats.`
+        ? `${source.detail}. ${action} to switch back to your own stats.`
         : source.detail
-          ? `${source.detail}. Click (or press P) to compare against pro rates.`
-          : 'Computed from your own enhancing level, gear and teas. Click (or press P) to compare against pro rates.';
+          ? `${source.detail}. ${action} to compare against pro rates.`
+          : `Computed from your own enhancing level, gear and teas. ${action} to compare against pro rates.`;
 
     const style = isPro
         ? `background: ${proColor}; color: #14181f; border: 1px solid ${proColor};`
         : 'background: rgba(255,255,255,0.10); color: inherit; border: 1px solid rgba(255,255,255,0.30);';
+    const sizing = mobile ? 'padding: 3px 9px; font-size: 0.85em;' : 'padding: 0 5px; font-size: 0.75em;';
+    const hint = mobile
+        ? ' <span style="opacity: 0.7; font-weight: 600;">tap</span>'
+        : ' <span style="border: 1px solid currentColor; border-radius: 3px; padding: 0 3px; margin-left: 1px;' +
+          ' font-size: 0.85em; opacity: 0.75;">P</span>';
 
     return (
         `<span class="${SOURCE_CHIP_CLASS}" role="button" tabindex="0" title="${escapeAttr(title)}" ` +
-        'style="pointer-events: auto; cursor: pointer; margin-left: 6px; padding: 0 5px; border-radius: 8px; ' +
-        `font-size: 0.75em; font-weight: 700; letter-spacing: 0.3px; white-space: nowrap; vertical-align: middle; ${style}">` +
-        `${source.label} ⇄</span>`
+        `style="pointer-events: auto; cursor: pointer; margin-left: 6px; border-radius: 8px; ${sizing} ` +
+        `font-weight: 700; letter-spacing: 0.3px; white-space: nowrap; vertical-align: middle; ${style}">` +
+        `${source.label} ⇄${hint}</span>`
     );
 }
 
