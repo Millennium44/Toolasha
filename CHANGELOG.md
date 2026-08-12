@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### My Listings: a fresh undercut now shows without opening the item
+
+The Top Order Price column read the last-**opened** order book first — which excludes your own orders but goes stale the moment you leave the item — and only fell back to the game snapshot. So after you were outbid on a buy (or undercut on a sell), the column kept showing your own price as the top until you re-opened the item, even though the undercut alert had already fired off the fresher snapshot. The column now trusts the snapshot over a staler opened book **when it shows a price that beats you** — a price better than your own is a rival's by definition, never your own order — so the real top order appears on its own. It never shows your own listing and never downgrades a book that's actually fresher (when you're still winning, the own-excluding book reading is kept). The age column follows the same rule, so a just-seen undercut no longer reads a days-old age. (The "Mooket Refresh 0 of 4" you saw was actually correct here — the game snapshot already knew the higher bid; the column just wasn't showing it.)
+
 ### Labyrinth: the calibration recorder is now passive and accumulates across runs
 
 The labyrinth hands out random rooms and only lets you fight one again by failing it, so "record five fights of the same room" was never really possible. The recorder no longer asks you to. There's no Record button any more — **every combat fight is kept automatically**, across runs and page reloads, and the monsters you meet often build up their sample over time. Press **Replay** whenever you're curious and it judges whatever has accumulated.
