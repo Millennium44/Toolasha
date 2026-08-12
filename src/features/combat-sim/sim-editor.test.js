@@ -42,8 +42,16 @@ vi.mock('./combat-sim-adapter.js', () => ({
     applyGuildBuffLevel: (buffs) => buffs,
 }));
 
+// This bundle's own (direct-import) copy of the store. In the packaged build it
+// is never fed by the websocket, so it answers empty — the bug this guards.
 vi.mock('../combat/loadout-snapshot.js', () => ({
     default: { getAllSnapshots: () => [], resolveEquipment: () => [] },
+}));
+
+// The fed store lives behind the bundle bridge; the picker must read it there.
+const bridge = vi.hoisted(() => ({ snapshots: [] }));
+vi.mock('../../utils/bundle-bridge.js', () => ({
+    loadoutSnapshot: () => ({ getAllSnapshots: () => bridge.snapshots, resolveEquipment: () => [] }),
 }));
 
 const { SimEditor } = await import('./sim-editor.js');
@@ -74,6 +82,7 @@ function editorWithStrangers() {
 }
 
 beforeEach(() => {
+    bridge.snapshots = [];
     game.characterData = { character: { id: 'me', name: 'Milkman' } };
     game.selfDTO = { ...emptyDTO('player1'), attackLevel: 90, debuffOnLevelGap: 0.3 };
     game.allPlayers = {
@@ -229,6 +238,37 @@ describe('community buff levels stop where the game does', () => {
 
         expect(dto.communityBuffLevels.experience).toBe(20);
         expect(input.value).toBe('20');
+    });
+});
+
+describe('loadout picker reads the fed store, not this bundle', () => {
+    test('renders the dropdown from the bridge store even when this bundle owns an empty copy', () => {
+        // The direct import (mocked empty above) is the packaged bundle's own,
+        // never-fed copy; a naive read of it hides the picker. The picker must
+        // list what the bridge store — the one the websocket feeds — actually has.
+        bridge.snapshots = [
+            { name: 'Bruteforce', actionTypeHrid: '/action_types/combat' },
+            { name: 'Everything', actionTypeHrid: null },
+        ];
+        const { el } = editorWithStrangers();
+
+        const select = el.querySelector('#mwi-csim-loadout-select');
+        expect(select).toBeTruthy();
+        expect(select.textContent).toContain('Bruteforce');
+        expect(select.textContent).toContain('Everything (All Skills)');
+    });
+
+    test('a non-combat loadout is filtered out of the combat picker', () => {
+        bridge.snapshots = [{ name: 'Milking', actionTypeHrid: '/action_types/milking' }];
+        const { el } = editorWithStrangers();
+
+        // Only a skilling loadout exists, so there is nothing combat to pick.
+        expect(el.querySelector('#mwi-csim-loadout-select')).toBeFalsy();
+    });
+
+    test('no picker when the fed store has no loadouts at all', () => {
+        const { el } = editorWithStrangers();
+        expect(el.querySelector('#mwi-csim-loadout-select')).toBeFalsy();
     });
 });
 

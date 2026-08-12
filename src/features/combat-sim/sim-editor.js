@@ -15,7 +15,8 @@ import {
     guildBuffMaxLevel,
     applyGuildBuffLevel,
 } from './combat-sim-adapter.js';
-import loadoutSnapshot from '../combat/loadout-snapshot.js';
+import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
+import { loadoutSnapshot } from '../../utils/bundle-bridge.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { COMBAT_SCROLL_LABELS, COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 
@@ -465,7 +466,10 @@ export class SimEditor {
 
         // Loadout dropdown + Reset button (skip in skillingMode — loadouts assigned per-skill)
         if (!this.skillingMode) {
-            const allSnapshots = loadoutSnapshot.getAllSnapshots();
+            // Read through the bridge: in the packaged multi-bundle build this
+            // file's own copy of the store is never fed by the websocket, so a
+            // direct getAllSnapshots() returns [] and the picker never renders.
+            const allSnapshots = (loadoutSnapshot() || bundledLoadoutSnapshot).getAllSnapshots();
             const filteredSnapshots = allSnapshots.filter(
                 (s) => !s.actionTypeHrid || s.actionTypeHrid === '/action_types/combat'
             );
