@@ -127,7 +127,7 @@ const UPGRADE_LEVEL_SOURCE_KEY = 'labSimUpgradeLevelSource';
  * unremembered narrowing means the next Analyze quietly costs several times as
  * much across a whole labyrinth.
  */
-const UPGRADE_SWAP_SIGNATURE_KEY = 'labSimSwapSignatureOnly';
+const UPGRADE_SWAP_AURA_KEY = 'labSimSwapAuraOnly';
 
 /**
  * Labyrinth token levels the Configure tab is simulating under.
@@ -266,9 +266,9 @@ const LAB_MODE_OPTIONS = {
     ability_swap: `
         <span id="mwi-labsim-swap-group" data-lab-mode-options="ability_swap" style="display:none; align-items:center; gap:4px;">
             <span style="color:#2a2a4a;">|</span>
-            <label id="mwi-labsim-swap-signature-label" title="Sim only the swaps that define the build: the aura the guide offers for the loadout's archetype (both sides of its OR), and the archetype's signature ability — Puncture for a spear, Maim for a sword, Shield Bash for a mace, Shield Bash or Retribution for a wark, Pestilent Shot for a bow, Steady Shot or Silencing Shot for a crossbow, Fireball, Water Strike or Entangle for magic. The rest of the guide's set is left out, which is most of the run. Across several fights each loadout is read for its own archetype, so a labyrinth mixing a melee and a magic loadout gets each build's own signature." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
-                <input type="checkbox" id="mwi-labsim-swap-signature-only" style="margin:0; cursor:pointer;">
-                Signature only
+            <label id="mwi-labsim-swap-aura-label" title="Sim only the aura swap: the guide's aura group for the loadout's archetype, both sides of its OR — Critical Aura or Mystic Aura for magic, Critical Aura or Fierce Aura for melee/ranged, Invincible for a wark. Everything else in the guide's set is left out, which is most of the run. Across several fights each loadout is read for its own archetype, so a labyrinth mixing a melee and a magic loadout gets each build's own aura choice." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-labsim-swap-aura-only" style="margin:0; cursor:pointer;">
+                Aura only
             </label>
         </span>`,
     combat_level: `
@@ -1197,7 +1197,7 @@ class LabSimUI {
             this._refreshLevelSourceReadout();
             void this._saveUpgradeSelection();
         });
-        this.panel.querySelector('#mwi-labsim-swap-signature-only')?.addEventListener('change', () => {
+        this.panel.querySelector('#mwi-labsim-swap-aura-only')?.addEventListener('change', () => {
             void this._saveUpgradeSelection();
         });
         void this._restoreUpgradeSelection();
@@ -1670,8 +1670,8 @@ class LabSimUI {
             // Ability Swaps would otherwise save a false over the tick and lose
             // it the moment the set is checked again
             await writeScoped(
-                UPGRADE_SWAP_SIGNATURE_KEY,
-                Boolean(this.panel?.querySelector('#mwi-labsim-swap-signature-only')?.checked),
+                UPGRADE_SWAP_AURA_KEY,
+                Boolean(this.panel?.querySelector('#mwi-labsim-swap-aura-only')?.checked),
                 'settings'
             );
         } catch (error) {
@@ -1688,9 +1688,9 @@ class LabSimUI {
      * @returns {boolean}
      * @private
      */
-    _getSignatureSwapsOnly() {
+    _getAuraSwapsOnly() {
         if (!this._getUpgradeDimensions().includes('ability_swap')) return false;
-        return Boolean(this.panel?.querySelector('#mwi-labsim-swap-signature-only')?.checked);
+        return Boolean(this.panel?.querySelector('#mwi-labsim-swap-aura-only')?.checked);
     }
 
     /**
@@ -1701,12 +1701,12 @@ class LabSimUI {
     async _restoreUpgradeSelection() {
         let selection;
         let savedLevelSource = null;
-        let savedSignatureOnly = false;
+        let savedAuraOnly = false;
         try {
             const savedDimensions = await readScoped(UPGRADE_DIMENSIONS_KEY, 'settings', null);
             const savedScope = await readScoped(UPGRADE_SCOPE_KEY, 'settings', null);
             savedLevelSource = await readScoped(UPGRADE_LEVEL_SOURCE_KEY, 'settings', null);
-            savedSignatureOnly = Boolean(await readScoped(UPGRADE_SWAP_SIGNATURE_KEY, 'settings', false));
+            savedAuraOnly = Boolean(await readScoped(UPGRADE_SWAP_AURA_KEY, 'settings', false));
             const legacyMode =
                 savedDimensions === null && savedScope === null
                     ? await readScoped(LEGACY_UPGRADE_MODE_KEY, 'settings', null)
@@ -1731,8 +1731,8 @@ class LabSimUI {
         if (levelSourceSelect) {
             levelSourceSelect.value = sanitizeLabLevelSource(savedLevelSource, this._configureLevel());
         }
-        const signatureBox = this.panel.querySelector('#mwi-labsim-swap-signature-only');
-        if (signatureBox) signatureBox.checked = savedSignatureOnly;
+        const signatureBox = this.panel.querySelector('#mwi-labsim-swap-aura-only');
+        if (signatureBox) signatureBox.checked = savedAuraOnly;
         this._populateUpgradeTargets(selection.monsters);
         this._onUpgradeSelectionChanged();
     }
@@ -2545,7 +2545,7 @@ class LabSimUI {
                         combatLevelTargets,
                         abilityTargets,
                         modes: plan.modes,
-                        signatureSwapsOnly: this._getSignatureSwapsOnly(),
+                        auraSwapsOnly: this._getAuraSwapsOnly(),
                         houseTargetLevel,
                         houseTargets,
                         guildShrineTargetLevel,
@@ -2597,7 +2597,7 @@ class LabSimUI {
                     abilityTargetLevel,
                     combatLevelTargets,
                     abilityTargets,
-                    signatureSwapsOnly: this._getSignatureSwapsOnly(),
+                    auraSwapsOnly: this._getAuraSwapsOnly(),
                     // The single-fight analysis takes one mode, and ranks
                     // anything else it is handed beside whatever that mode
                     // generated — which is how a multi-set selection lands in
@@ -2616,7 +2616,7 @@ class LabSimUI {
                             abilityLevelType,
                             combatLevelTargets,
                             abilityTargets,
-                            signatureSwapsOnly: this._getSignatureSwapsOnly(),
+                            auraSwapsOnly: this._getAuraSwapsOnly(),
                             houseTargetLevel,
                             houseTargets,
                             guildShrineTargetLevel,
@@ -2667,7 +2667,7 @@ class LabSimUI {
      * @param {Object} playerDTO - The loadout being analyzed
      * @param {Object} gameData - From `buildGameDataPayload`
      * @param {Object} options - `{ abilityTargetLevel, abilityLevelType, combatLevelTargets, abilityTargets,
-     *   signatureSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets }`
+     *   auraSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets }`
      * @returns {Array<Object>} Candidates, deduplicated by the analysis itself
      * @private
      */
@@ -2678,7 +2678,7 @@ class LabSimUI {
             abilityLevelType,
             combatLevelTargets,
             abilityTargets,
-            signatureSwapsOnly = false,
+            auraSwapsOnly = false,
             houseTargetLevel = 0,
             houseTargets = null,
             guildShrineTargetLevel = 0,
@@ -2701,7 +2701,7 @@ class LabSimUI {
                     houseTargets,
                     communityBuffs,
                     guildShrineTargetLevel,
-                    { signatureSwapsOnly, houseWinRateOnly: true, communityBuffTargetLevel, guildShrineTargets }
+                    { auraSwapsOnly, houseWinRateOnly: true, communityBuffTargetLevel, guildShrineTargets }
                 )
             );
         } catch (error) {

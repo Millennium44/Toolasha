@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Upgrade advisor: "Signature only" is now "Aura only"
+
+The Ability Swaps sub-option that restricted swaps to the aura + signature groups now restricts to just the aura group — the single "which aura" decision. Renamed the checkbox to "Aura only" with an updated tooltip, and renamed the internal option throughout (`auraOnly` / `auraSwapsOnly`).
+
 ### Upgrade advisor: the aura OR-alternative is offered again
 
 Ability Swaps stopped offering the other aura in your archetype's aura group — e.g. running Mystic Aura, it never proposed Critical Aura. The generator was running each guide offer through a style-from-buff-data heuristic that misreads a universal aura (Critical Aura) as another style and vetoed it. The guide's own ability set is style-correct by construction, so on the guide path that heuristic no longer runs; it now only guards the every-ability fallback.

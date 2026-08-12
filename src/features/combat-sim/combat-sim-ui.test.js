@@ -2616,7 +2616,7 @@ describe('the guild shrine per-shrine targets grid', () => {
  * the guide's set is what everybody runs anyway. Restricting to those two is
  * most of the run's cost, so the switch has to survive being closed.
  */
-describe('the Signature-only swap option', () => {
+describe('the Aura-only swap option', () => {
     beforeEach(() => {
         mocks.upgradeResult = { baseline: null, results: [], food: null };
         mocks.onRun = null;
@@ -2656,7 +2656,7 @@ describe('the Signature-only swap option', () => {
 
     test('rides along with the analysis', async () => {
         swapsOnly();
-        ui.panel.querySelector('#mwi-csim-swap-signature-only').checked = true;
+        ui.panel.querySelector('#mwi-csim-swap-aura-only').checked = true;
 
         let seen = null;
         mocks.onRun = (params) => {
@@ -2664,7 +2664,7 @@ describe('the Signature-only swap option', () => {
         };
         await ui._onUpgradeAnalyze();
 
-        expect(seen.signatureSwapsOnly).toBe(true);
+        expect(seen.auraSwapsOnly).toBe(true);
     });
 
     test('and means nothing when swaps are not being generated at all', async () => {
@@ -2672,7 +2672,7 @@ describe('the Signature-only swap option', () => {
         zone.innerHTML = '<option value="/zones/a">A</option>';
         zone.value = '/zones/a';
         ui.panel.querySelector('[data-upgrade-mode="ability_swap"]').checked = false;
-        ui.panel.querySelector('#mwi-csim-swap-signature-only').checked = true;
+        ui.panel.querySelector('#mwi-csim-swap-aura-only').checked = true;
 
         let seen = null;
         mocks.onRun = (params) => {
@@ -2680,11 +2680,11 @@ describe('the Signature-only swap option', () => {
         };
         await ui._onUpgradeAnalyze();
 
-        expect(seen.signatureSwapsOnly).toBe(false);
+        expect(seen.auraSwapsOnly).toBe(false);
     });
 
     test('is remembered across a rebuild', async () => {
-        const box = ui.panel.querySelector('#mwi-csim-swap-signature-only');
+        const box = ui.panel.querySelector('#mwi-csim-swap-aura-only');
         box.checked = true;
         box.dispatchEvent(new window.Event('change'));
         await Promise.resolve();
@@ -2694,15 +2694,15 @@ describe('the Signature-only swap option', () => {
         await Promise.resolve();
         await Promise.resolve();
 
-        expect(ui.panel.querySelector('#mwi-csim-swap-signature-only').checked).toBe(true);
+        expect(ui.panel.querySelector('#mwi-csim-swap-aura-only').checked).toBe(true);
     });
 
-    test('says which ability it means for each build', () => {
-        const title = ui.panel.querySelector('#mwi-csim-swap-signature-label').getAttribute('title');
+    test('describes the aura group it narrows to', () => {
+        const title = ui.panel.querySelector('#mwi-csim-swap-aura-label').getAttribute('title');
 
-        expect(title).toContain('Puncture');
-        expect(title).toContain('Retribution');
-        expect(title).toContain('Entangle');
+        expect(title).toContain('Critical Aura');
+        expect(title).toContain('Mystic Aura');
+        expect(title).toContain('Fierce Aura');
         // Interpolated into a title attribute: a double quote would end it early
         expect(title).not.toContain('"');
     });

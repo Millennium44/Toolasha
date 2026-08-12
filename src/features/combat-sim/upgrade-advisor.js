@@ -999,7 +999,7 @@ function freeAbilitySlot(abilities, slot) {
  *   run in favour of Puncture.
  *
  * Group membership is always read from the archetype's *whole* set, never from
- * the signature-only subset — otherwise signature-only mode would treat every
+ * the aura-only subset — otherwise aura-only mode would treat every
  * non-signature guide ability as off-guide and offer to replace it.
  *
  * @param {Object} guide - From `buildGuidePlan`
@@ -1075,7 +1075,7 @@ function addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates) {
  * @param {string} [abilityLevelType='increment'] - 'increment' (add N levels) or 'target' (absolute level)
  * @param {Object} [communityBuffs=null] - Configured community buffs, for the 'community_buff' set
  * @param {number} [guildShrineTargetLevel=0] - Absolute shrine buff level to buy up to; 0 means one level up
- * @param {Object} [options] - `{ signatureSwapsOnly, houseWinRateOnly, communityBuffTargetLevel,
+ * @param {Object} [options] - `{ auraSwapsOnly, houseWinRateOnly, communityBuffTargetLevel,
  *   guildShrineTargets }`. `houseWinRateOnly` narrows the house set to rooms that can move a
  *   fight's outcome, for an analysis ranked on win rate alone; `communityBuffTargetLevel` buys
  *   several buff levels at once; `guildShrineTargets` is a per-shrine target map that takes
@@ -1436,7 +1436,7 @@ export function generateCandidates(
         // which is the behaviour this set has always had.
         const guide =
             mode === 'ability_swap'
-                ? buildGuidePlan(playerDTO, gameData, { signatureOnly: Boolean(options.signatureSwapsOnly) })
+                ? buildGuidePlan(playerDTO, gameData, { auraOnly: Boolean(options.auraSwapsOnly) })
                 : null;
         const abilityTargetsMap =
             abilityTargets && typeof abilityTargets === 'object' && Object.keys(abilityTargets).length > 0
@@ -2967,7 +2967,7 @@ export function explainUpgradeCost(candidate, gameData) {
  * Run the full upgrade analysis: baseline sim + one sim per candidate.
  * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeModes,
  *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
- *   houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets, optimizeFood, signatureSwapsOnly }
+ *   houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets, optimizeFood, auraSwapsOnly }
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
@@ -2994,7 +2994,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         guildShrineTargets = null,
         communityBuffTargetLevel = 0,
         optimizeFood = false,
-        signatureSwapsOnly = false,
+        auraSwapsOnly = false,
         extraCandidates = [],
     } = params;
     const { abortSignal } = options;
@@ -3024,7 +3024,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             houseTargets,
             communityBuffs,
             guildShrineTargetLevel,
-            { signatureSwapsOnly, communityBuffTargetLevel, guildShrineTargets }
+            { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets }
         )
     );
     // Candidates the caller asked for by name, alongside whatever the mode
@@ -3937,7 +3937,7 @@ function explainLabCandidateCost(candidate, gameData) {
  * @param {Array} [params.labyrinthCombatBuffs] - Combat buffs from labyrinth upgrades
  * @param {string} params.upgradeMode - 'equipment', 'ability_level', or 'ability_swap'
  * @param {number} [params.abilityTargetLevel] - Target ability level
- * @param {boolean} [params.signatureSwapsOnly] - Restrict ability swaps to the build guide's
+ * @param {boolean} [params.auraSwapsOnly] - Restrict ability swaps to the build guide's
  *   aura options and the archetype's signature ability
  * @param {number} [params.guildShrineTargetLevel] - One level for every shrine buff
  * @param {Object} [params.guildShrineTargets] - buffHrid → target level; takes precedence
@@ -3963,7 +3963,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
         skipBackSlot,
         combatLevelTargets,
         abilityTargets,
-        signatureSwapsOnly = false,
+        auraSwapsOnly = false,
         houseTargetLevel = 0,
         houseTargets = null,
         guildShrineTargetLevel = 0,
@@ -4003,7 +4003,7 @@ export async function runLabyrinthUpgradeAnalysis(params, onProgress, options = 
             // This table ranks win rate and Gold/1% and nothing else, so a room
             // whose only combat-facing buffs are the global wisdom and rare find
             // every room grants has nothing it could move here
-            { signatureSwapsOnly, houseWinRateOnly: true, guildShrineTargets }
+            { auraSwapsOnly, houseWinRateOnly: true, guildShrineTargets }
         )
     );
 
@@ -4764,17 +4764,17 @@ function allFightsPoolKey(candidate) {
  *
  * @param {Array<Object>} fights - `[{ dto, loadoutName }]`
  * @param {Object} gameData - Game data payload
- * @param {boolean} signatureOnly - Whether the run restricted swaps to aura + signature
+ * @param {boolean} auraOnly - Whether the run restricted swaps to the aura group only
  * @returns {Array<{loadoutName: string, archetype: string|null, label: string|null}>}
  */
-function summariseArchetypes(fights, gameData, signatureOnly) {
+function summariseArchetypes(fights, gameData, auraOnly) {
     const seen = new Map();
     for (const fight of fights || []) {
         const loadoutName = fight?.loadoutName || 'Loadout';
         if (seen.has(loadoutName)) continue;
         let plan = null;
         try {
-            plan = buildGuidePlan(fight.dto, gameData, { signatureOnly });
+            plan = buildGuidePlan(fight.dto, gameData, { auraOnly });
         } catch (error) {
             // A guide that cannot be read is the same answer as no archetype,
             // and is never worth failing a whole analysis over
@@ -4930,7 +4930,7 @@ export function labAllFightsTrialBudget(sims, hours) {
  * always simulated.
  *
  * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel,
- *   combatLevelTargets, signatureSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel,
+ *   combatLevelTargets, auraSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel,
  *   guildShrineTargets, tokenLevels }
  *   where fights = [{ monsterHrid, monsterName, roomLevel, dto, loadoutName }]
  * @param {Function} onProgress - Called with { current, total, description }, and
@@ -4951,7 +4951,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         combatLevelTargets,
         abilityTargets,
         modes = ['combat_level'],
-        signatureSwapsOnly = false,
+        auraSwapsOnly = false,
         houseTargetLevel = 0,
         houseTargets = null,
         guildShrineTargetLevel = 0,
@@ -5017,7 +5017,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
                 // Every row in this table is ranked on attempts to clear, so a
                 // house room that can only move XP or loot is a row that can
                 // only report the sims' own noise
-                { signatureSwapsOnly, houseWinRateOnly: true, guildShrineTargets }
+                { auraSwapsOnly, houseWinRateOnly: true, guildShrineTargets }
             );
             for (const candidate of fightCandidates) {
                 pool(candidate.type === 'ability_swap' ? pooledSwapCandidate(candidate, gameData) : candidate);
@@ -5044,7 +5044,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
     // back to the wide search — a difference of thousands of simulations and of
     // what the table can be trusted to have looked at. After pooling, nothing in
     // the results says which loadout went which way.
-    const archetypes = modes.includes('ability_swap') ? summariseArchetypes(fights, gameData, signatureSwapsOnly) : [];
+    const archetypes = modes.includes('ability_swap') ? summariseArchetypes(fights, gameData, auraSwapsOnly) : [];
     // Which fights each candidate is actually about. A combat level is every
     // fight; a piece of gear is only the fights whose loadout wears the piece it
     // replaces — installing a melee sword into a magic loadout measures a
