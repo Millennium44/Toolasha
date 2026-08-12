@@ -2881,11 +2881,10 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## [2.96.4](https://github.com/Millennium44/Toolasha/compare/v2.96.3...v2.96.4) (2026-08-12)
 
-
 ### Build System
 
-* **userscript:** lead the production author credit with Millennium44 ([d23f95f](https://github.com/Millennium44/Toolasha/commit/d23f95f8d51e923907981a3b7237b8e8eec3b3fb))
-* **userscript:** lead the production author credit with Millennium44 ([21ad429](https://github.com/Millennium44/Toolasha/commit/21ad429f6a33da4108be680af4eea7907a1f2786))
+- **userscript:** lead the production author credit with Millennium44 ([d23f95f](https://github.com/Millennium44/Toolasha/commit/d23f95f8d51e923907981a3b7237b8e8eec3b3fb))
+- **userscript:** lead the production author credit with Millennium44 ([21ad429](https://github.com/Millennium44/Toolasha/commit/21ad429f6a33da4108be680af4eea7907a1f2786))
 
 ## [2.96.3](https://github.com/Millennium44/Toolasha/compare/v2.96.2...v2.96.3) (2026-08-12)
 
