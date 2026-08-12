@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Ability hover: shows the "fresh to level" cost, like the book tooltip
+
+Hovering an ability itself (in a loadout or ability slot) now adds the same "Fresh to Lv N: <cost> (<books> books)" line the ability-book tooltip shows — plus held-book progress when you carry any. It's a compact block (the game already shows level/xp), detected off the ability's own icon, and rides the existing "ability status" tooltip setting.
+
 ### Enhancement tooltip: the source toggle is discoverable and mobile-friendly
 
 The "Yours ⇄ / Pro ⇄" chip on enhancement tooltips now shows a keycap **P** so the press-to-toggle hotkey is visible, not just buried in the hover title. On touch devices it drops the key (no keyboard), enlarges to a finger-sized tap target, and reads "tap" — the chip was already tappable on tap-to-open tooltips, just too small and unlabeled.
