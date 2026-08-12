@@ -1,7 +1,7 @@
 /**
  * Toolasha Core Library
  * Core infrastructure and API clients
- * Version: 2.96.1
+ * Version: 2.96.2
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -3267,7 +3267,7 @@
                     type: 'checkbox',
                     default: true,
                     requiresRefresh: true,
-                    help: 'Tracks how much gold/cowbells spent rerolling each task (EXPERIMENTAL - may cause UI freezing)',
+                    help: 'Tracks how much gold/cowbells spent rerolling each task',
                 },
                 taskMapIndex: {
                     id: 'taskMapIndex',
