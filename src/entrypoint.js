@@ -1658,7 +1658,7 @@ if (isCombatSimulatorPage()) {
     // Expose minimal user-facing API
     const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
-    targetWindow.Toolasha.version = '2.96.1';
+    targetWindow.Toolasha.version = '2.96.2';
     // Which fork this build came from. Version numbers are shared with
     // upstream, so the what's-new popup keys on the (fork, version) pair —
     // the same number on a different fork is still an update.
