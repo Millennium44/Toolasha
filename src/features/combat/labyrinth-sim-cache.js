@@ -16,6 +16,8 @@ import { buildGameDataPayload, getCommunityBuffs } from '../combat-sim/combat-si
 import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
 import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import loadoutSnapshot from './loadout-snapshot.js';
+import labFightRecorder from './labyrinth-fight-recorder.js';
+import { deriveObserved, predictedFromSim, compareLab } from './labyrinth-replay-check.js';
 import { roomXpPerHour } from './labyrinth-formulas.js';
 import { DISCARD_LEGACY } from './labyrinth-outcomes.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
@@ -26,6 +28,14 @@ export const DEFAULT_SIM_PRECISION_PCT = 1;
 const MIN_SIM_TRIALS = 100;
 /** Backstop for a rate near a coin toss, which never converges cheaply */
 const MAX_SIM_TRIALS = 20000;
+/**
+ * Simulated-hours budget for an uncapped run — high enough that time never binds
+ * before the trial cap does, so a slow, timeout-heavy room (a hard combat tile
+ * whose fights each burn the two-minute limit) runs on to its precision target
+ * instead of stopping at a wide "(capped)" band. The `MAX_SIM_TRIALS` backstop
+ * still bounds it, so "uncapped" means "not stopped by the clock", not "forever".
+ */
+const UNCAPPED_SIM_HOURS = 100000;
 /** Persisted mirror of combatCache, in the 'labyrinth' store */
 const COMBAT_CACHE_STORAGE_KEY = 'labyrinthCombatSimCache';
 const COMBAT_CACHE_STORE = 'labyrinth';
@@ -38,6 +48,10 @@ const COMBAT_CACHE_MAX_ENTRIES = 200;
 const DECISION_MIN_TRIALS = 40;
 /** A room sitting exactly on the bar never decides; this is where it gives up */
 const DECISION_MAX_TRIALS = 4000;
+/** A recorded room needs at least this many fights before a replay is worth a sim */
+const MIN_REPLAY_FIGHTS = 3;
+/** At most this many rooms are replayed at once, so a Replay press is bounded */
+const MAX_REPLAY_GROUPS = 3;
 
 /** Prototype methods mixed into LabyrinthClearRate */
 export const simCacheMethods = {
@@ -64,7 +78,22 @@ export const simCacheMethods = {
         // one is deliberately coarse — forty fights can leave ±12 points — and
         // a tile badge reading it would present that as a measurement.
         const mode = decideAgainst === null ? `${this.getSimPrecisionPct()}pp` : `dec${decideAgainst}`;
-        return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}`;
+        // The full-ability toggle changes the fight entirely, so its two states
+        // must not share a cache slot — flipping it re-sims rather than serving a
+        // result computed under the other rule.
+        const abilities = this.labyrinthFullAbilities() ? ':fullabil' : '';
+        return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}${abilities}`;
+    },
+
+    /**
+     * Whether combat sims build the monster with its full ability kit rather
+     * than only the tier-0 subset. Off by default; a testing lever for the
+     * labyrinth calibration fix (a tier-0 monster drops its stun/debuff kit and
+     * the sim over-predicts clears — see Monster).
+     * @returns {boolean}
+     */
+    labyrinthFullAbilities() {
+        return config.getSetting('combatSim_labyrinthFullAbilities') === true;
     },
 
     /**
@@ -98,6 +127,67 @@ export const simCacheMethods = {
             minTrials: MIN_SIM_TRIALS,
             maxTrials: MAX_SIM_TRIALS,
         };
+    },
+
+    /**
+     * Re-simulate the rooms the recorder captured and compare the real damage
+     * rates against the sim's.
+     *
+     * The accuracy record asks whether the clear chance is right; this asks why
+     * it is wrong, by measuring your damage rate and the monster's from the
+     * recorded fights and putting each beside the same rate a fresh sim produces
+     * for that monster at that room level. The comparison itself is pure and
+     * lives in labyrinth-replay-check; this feeds it the sim, run with the loadout
+     * you are wearing now — which is why it pools only the fights fought in that
+     * same gear, by fingerprint.
+     *
+     * @returns {Promise<{groups: Array<Object>, fingerprint: string}>}
+     */
+    async replayRecordedFights() {
+        const fingerprint = this._snapshotContentFingerprint();
+        const attempts = labFightRecorder.recordedAttempts(fingerprint);
+        const observed = deriveObserved(attempts);
+        // The most-fought rooms first, and only those with enough fights to be
+        // worth a sim — a couple bound the sim cost and answer the question
+        const worth = observed.filter((group) => group.fights >= MIN_REPLAY_FIGHTS).slice(0, MAX_REPLAY_GROUPS);
+
+        const groups = [];
+        for (const group of worth) {
+            try {
+                const loadoutId = this.getLabyrinthLoadoutId(group.monsterHrid);
+                const dto = this.buildLabyrinthPlayerDTO(loadoutId);
+                if (!dto) continue;
+
+                const simResult = await runLabyrinthSimulation({
+                    gameData: buildGameDataPayload(),
+                    playerDTOs: [dto],
+                    zoneHrid: '/actions/combat/fly',
+                    monsterHrid: group.monsterHrid,
+                    roomLevel: group.roomLevel,
+                    crates: this.getCrateHrids(),
+                    hours: this.getSimHours(),
+                    precision: this.getSimStopRule(),
+                    communityBuffs: getCommunityBuffs(),
+                    labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
+                    fullAbilities: this.labyrinthFullAbilities(),
+                });
+
+                const predicted = predictedFromSim(simResult, {
+                    playerHrid: dto.hrid || 'player1',
+                    monsterHrid: group.monsterHrid,
+                });
+                if (!predicted) continue;
+
+                groups.push(compareLab(group, predicted));
+            } catch (error) {
+                console.error('[LabyrinthSimCache] Replaying a recorded room failed:', error);
+            }
+        }
+
+        // What the pool holds for this gear, so the panel can say "12 fights over
+        // 3 monsters, none with enough yet" when nothing cleared the bar
+        const status = labFightRecorder.recordingStatus(fingerprint);
+        return { groups, pool: status };
     },
 
     /**
@@ -249,6 +339,28 @@ export const simCacheMethods = {
     },
 
     /**
+     * Throw away every cached combat sim and simulate the visible rooms again.
+     *
+     * The manual answer to a stale result: the cache key does not encode gear, so
+     * a loadout change the game never surfaced as `loadouts_updated` (a plain
+     * equip) leaves a sim cached under gear you no longer wear, and even
+     * "Calculate Labyrinth" reuses it — `computeCombatClear` returns early on a
+     * cache hit. Emptying both layers first forces a real re-sim.
+     *
+     * The invalidation baseline is re-anchored to the current gear afterwards, so
+     * the very next input-change check does not see a difference and clear what
+     * this just computed.
+     *
+     * @returns {Promise<void>}
+     */
+    async recomputeCombatSims(uncapped = false) {
+        this.combatCache.clear();
+        this._clearPersistedCombatCache();
+        this._snapshotFingerprint = this._snapshotContentFingerprint();
+        await this.runTileCalculation({ auto: false, uncapped: uncapped === true });
+    },
+
+    /**
      * Run combat sim for a monster room and return clear stats
      */
     async computeCombatClear(monsterHrid, roomLevel, options = {}) {
@@ -288,7 +400,9 @@ export const simCacheMethods = {
                 monsterHrid,
                 roomLevel,
                 crates: crateHrids,
-                hours: this.getSimHours(),
+                // An uncapped run lifts the simulated-hours ceiling so a slow
+                // room runs to its precision target rather than stopping wide
+                hours: options.uncapped ? UNCAPPED_SIM_HOURS : this.getSimHours(),
                 precision:
                     bar === null
                         ? this.getSimStopRule()
@@ -307,6 +421,9 @@ export const simCacheMethods = {
                 // as one.
                 communityBuffs: getCommunityBuffs(),
                 labyrinthCombatBuffs,
+                // Testing lever: build the monster with its full ability kit
+                // instead of only the tier-0 subset the labyrinth would drop
+                fullAbilities: this.labyrinthFullAbilities(),
             });
 
             const attempts = simResult.labyAttemptCount || 1;

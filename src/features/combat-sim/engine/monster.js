@@ -8,13 +8,19 @@ class Monster extends CombatUnit {
     difficultyTier = 0;
     roomLevel = 0;
 
-    constructor(hrid, difficultyTier = 0, roomLevel = 0) {
+    constructor(hrid, difficultyTier = 0, roomLevel = 0, includeAllAbilities = false) {
         super();
 
         this.isPlayer = false;
         this.hrid = hrid;
         this.difficultyTier = difficultyTier;
         this.roomLevel = roomLevel;
+        // Labyrinth runs a monster at difficultyTier 0 (it scales by room level,
+        // not tier), which would otherwise drop every tier-gated ability — the
+        // Cyclops's whole kit (stun, defence shred, self-buffs) among them —
+        // leaving the sim to fight a bare auto-attacker. This lets the labyrinth
+        // path keep tier 0 for stats while still instantiating the full kit.
+        this.includeAllAbilities = includeAllAbilities === true;
 
         const combatMonsterDetailMap = getGameData().combatMonsterDetailMap;
         const gameMonster = combatMonsterDetailMap[this.hrid];
@@ -28,7 +34,7 @@ class Monster extends CombatUnit {
         const labyrinthScaleFactor = this.roomLevel > 0 ? this.roomLevel / LABYRINTH_BASE_ROOM_LEVEL : 1;
 
         for (let i = 0; i < gameMonster.abilities.length; i++) {
-            if (gameMonster.abilities[i].minDifficultyTier > this.difficultyTier) {
+            if (!this.includeAllAbilities && gameMonster.abilities[i].minDifficultyTier > this.difficultyTier) {
                 continue;
             }
             const baseLevel = gameMonster.abilities[i].level;

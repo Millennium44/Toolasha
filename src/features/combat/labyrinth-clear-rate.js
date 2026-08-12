@@ -29,6 +29,7 @@ import { combatLevel as computeCombatLevel, COMBAT_SKILLS } from '../../utils/co
 import labyrinthRoomLogs from './labyrinth-room-logs.js';
 import { getAnnotationContainer, pruneEmptyAnnotationContainers } from './labyrinth-annotations.js';
 import { estimateLiveClearChance, FIGHT_TIMEOUT_SECONDS, MIN_ELAPSED_SECONDS } from './labyrinth-live-combat.js';
+import { isFreshLabyrinthFight } from './labyrinth-fight-log.js';
 
 import { compareToPrediction } from './labyrinth-outcome-log.js';
 import {
@@ -198,6 +199,11 @@ class LabyrinthClearRate {
             reset: () => this.resetOutcomes(),
             markBaseline: () => this.markOutcomeBaseline(),
             clearBaseline: () => this.clearOutcomeBaseline(),
+            recompute: (uncapped) => this.recomputeCombatSims(uncapped),
+            replay: () => this.replayRecordedFights(),
+            // The gear a recorded fight was fought in, so the pool keeps fights on
+            // different gear apart and the replay compares like with like
+            fingerprint: () => this._snapshotContentFingerprint(),
         });
 
         const unregister = domObserver.onClass('LabyrinthClearRate', 'LabyrinthPanel_skipThreshold', () =>
@@ -1576,20 +1582,20 @@ class LabyrinthClearRate {
             return;
         }
 
-        // battleId stays put across labyrinth attempts and a retry of the same
-        // room brings back a monster with the same maximum, so neither says a
-        // new fight started. Two things do: health that went up, which only a
-        // fresh monster can do, and an attack counter that went down, which
-        // only a fresh battle can do. Without them, retrying a room kept the
-        // previous attempt's record — a start time minutes old, and a rate so
-        // slow it read as no chance at all.
+        // battleId stays put across labyrinth attempts, so a retry needs another
+        // signal: an attack counter that reset, a monster maximum that changed,
+        // or the monster's health leaping back to full. That last one counts only
+        // the spawn's jump from low to full, not the bump a self-healing monster
+        // gives itself mid-fight — see isFreshLabyrinthFight. Without a boundary at
+        // all, retrying a room kept the previous attempt's record: a start time
+        // minutes old, and a rate so slow it read as no chance.
         const fight = this._fight;
-        const isNewFight =
-            !fight ||
-            fight.battleId !== data.battleId ||
-            fight.monsterMaxHp !== monster.mHP ||
-            monster.cHP > fight.lastMonsterHp ||
-            player.atkCounter < fight.lastAtkCounter;
+        const isNewFight = isFreshLabyrinthFight(fight, {
+            battleId: data.battleId,
+            monsterMaxHp: monster.mHP,
+            monsterHp: monster.cHP,
+            atkCounter: Number(player.atkCounter) || 0,
+        });
 
         if (isNewFight) {
             this._fight = {
@@ -2418,6 +2424,8 @@ class LabyrinthClearRate {
      */
     async runTileCalculation(options = {}) {
         const auto = options.auto === true;
+        // Lift the sim's time cap for this run, so slow rooms reach precision
+        const uncapped = options.uncapped === true;
         if (this.tileCalcRunning) return;
         if (!this.roomData) {
             if (!auto) this.setTileStatus('No labyrinth data');
@@ -2496,7 +2504,7 @@ class LabyrinthClearRate {
 
             let combatRetryNeeded = 0;
             for (const target of combatTargets) {
-                const result = await this.computeCombatClear(target.room.monsterHrid, target.roomLevel);
+                const result = await this.computeCombatClear(target.room.monsterHrid, target.roomLevel, { uncapped });
                 completed++;
                 this.setTileProgress(completed / total);
 
@@ -3822,6 +3830,10 @@ class LabyrinthClearRate {
         addRow('Double Progress', pct(result.doubleChance));
         addRow('Actions in 2m', `${result.attempts}`);
         addRow('Action Duration', `${result.actionSeconds.toFixed(2)}s`);
+        // The full expected time to clear, uncapped (the tile badge caps at "999+")
+        if (Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0) {
+            addRow('Est. clear time', this.fullClearTime(result.expectedSeconds));
+        }
         if (result.xpPerRoom) {
             addRow('EXP / Room', `${result.xpPerRoom.toFixed(1)}`);
         }
@@ -3895,6 +3907,12 @@ class LabyrinthClearRate {
                 `${(result.clearChance * 100).toFixed(1)}% ±${band}${result.hitTarget ? '' : ' (capped)'}`
             );
             addRow('Fights Simulated', `${result.trials.toLocaleString()}`);
+        }
+
+        // The full expected time to clear, uncapped — the tile badge caps at
+        // "999+", which hides how long a slow room really takes
+        if (Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0) {
+            addRow('Est. clear time', this.fullClearTime(result.expectedSeconds));
         }
 
         // Per entry rather than per clear. A fight earns experience by landing
@@ -4267,6 +4285,23 @@ class LabyrinthClearRate {
         const m = Math.floor(s / 60);
         const rem = s % 60;
         return `~${m}:${rem.toString().padStart(2, '0')}`;
+    }
+
+    /**
+     * Expected time to clear a room, in full — not capped at "999+" or "∞" the
+     * way the tile badge is. The badge has to stay short, but on hover the real
+     * figure is what tells you a room "clears" in twenty minutes, not two.
+     * @param {number} seconds - Expected seconds per clear (losing attempts included)
+     * @returns {string} e.g. "48s", "10m 55s", "1h 5m", or "—" when it never clears
+     */
+    fullClearTime(seconds) {
+        if (!Number.isFinite(seconds) || seconds <= 0) return '—';
+        const s = Math.round(seconds);
+        if (s < 60) return `${s}s`;
+        const m = Math.floor(s / 60);
+        if (m < 60) return `${m}m ${s % 60}s`;
+        const h = Math.floor(m / 60);
+        return `${h}h ${m % 60}m`;
     }
 }
 

@@ -187,7 +187,16 @@ export function foldFloorOutcomes(totals, seen, rooms, options = {}) {
         if (!subjectHrid) continue;
 
         const newEntries = Math.max(0, room.entryCount - priorEntries);
-        const newClear = room.isCleared && !priorCleared ? 1 : 0;
+        // A clear only counts for a room you actually entered. A revealed tile
+        // can be cleared without a fight — a shroud, a beacon, a floor skip — and
+        // the server marks it `isCleared` with `entryCount` still zero; counting
+        // that booked a 1/1 at levels far above anything you could clear and
+        // dragged the whole record toward "sim too low". A genuine first-try win
+        // has its entry counted in the same update, so `room.entryCount` is
+        // already at least one there. (The same guard the best-level tracker
+        // applies in labyrinth-tracker.js.)
+        const entered = room.entryCount > 0 || priorEntries > 0;
+        const newClear = room.isCleared && !priorCleared && entered ? 1 : 0;
         if (newEntries === 0 && newClear === 0) continue;
 
         const key = outcomeKey(subjectHrid, roomLevel);

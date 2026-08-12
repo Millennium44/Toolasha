@@ -9,10 +9,13 @@ const LABYRINTH_TIMEOUT = 120 * 1e9; // 120 seconds in nanoseconds
  * Timeout (120s) or player death = loss; enemy killed = win.
  */
 class Labyrinth {
-    constructor(monsterHrid, roomLevel, crateHrids = [], liveState = null) {
+    constructor(monsterHrid, roomLevel, crateHrids = [], liveState = null, fullAbilities = false) {
         this.monsterHrid = monsterHrid;
         this.hrid = monsterHrid;
         this.roomLevel = roomLevel;
+        // Whether the monster is built with its full ability kit rather than only
+        // the abilities available at difficultyTier 0 (see Monster)
+        this.fullAbilities = fullAbilities === true;
         this.buffs = [];
         this.attemptCount = 0;
         this.encounterStartTime = 0;
@@ -43,7 +46,7 @@ class Labyrinth {
      */
     getMonster() {
         this.attemptCount++;
-        return [new Monster(this.monsterHrid, 0, this.roomLevel)];
+        return [new Monster(this.monsterHrid, 0, this.roomLevel, this.fullAbilities)];
     }
 
     /**

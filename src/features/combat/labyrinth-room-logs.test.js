@@ -88,6 +88,42 @@ describe('floorSummary', () => {
     });
 });
 
+describe('combatMeta reconciles the watched tally against the server count', () => {
+    const session = (over = {}) => ({
+        predicted: 0.458,
+        actions: [],
+        entryCount: 0,
+        startedAt: 1_000,
+        endedAt: 2_000,
+        xp: 0,
+        ...over,
+    });
+
+    test('shows the server total when it counted more attempts than were watched', () => {
+        const meta = labyrinthRoomLogs.combatMeta(
+            session({ actions: [{ outcome: 'death' }, { outcome: 'death' }, { outcome: 'timeout' }], entryCount: 26 })
+        );
+        expect(meta).toContain('Won 0/3');
+        expect(meta).toContain('· 26 total');
+    });
+
+    test('says none were watched when the server counted attempts but no battle data arrived', () => {
+        expect(labyrinthRoomLogs.combatMeta(session({ actions: [], entryCount: 26 }))).toContain(
+            '26 attempts, none watched'
+        );
+    });
+
+    test('adds no server clause when the watched count already matches the server', () => {
+        const meta = labyrinthRoomLogs.combatMeta(session({ actions: [{ outcome: 'clear' }], entryCount: 1 }));
+        expect(meta).toContain('Won 1/1');
+        expect(meta).not.toContain('total');
+    });
+
+    test('falls back to "No result yet" when nothing is known from either side', () => {
+        expect(labyrinthRoomLogs.combatMeta(session({ actions: [], entryCount: 0 }))).toContain('No result yet');
+    });
+});
+
 describe('the sim accuracy list opens a room type at a time', () => {
     const row = (level, over = {}) => ({
         subjectHrid: '/skills/milking',
@@ -142,6 +178,7 @@ describe('the sim accuracy list opens a room type at a time', () => {
         labyrinthRoomLogs.panel = null;
         labyrinthRoomLogs.view = 'accuracy';
         labyrinthRoomLogs.expandedSubjects = new Set();
+        labyrinthRoomLogs.replayResult = null;
         labyrinthRoomLogs.simSource = { accuracy: async () => snapshot };
         await labyrinthRoomLogs.renderAccuracy();
     });
@@ -173,6 +210,50 @@ describe('the sim accuracy list opens a room type at a time', () => {
         await labyrinthRoomLogs.renderAccuracy();
 
         expect(text()).not.toContain('Milking Lv.173');
+    });
+
+    test('a replay result draws above the record with its diagnosis and rates', async () => {
+        labyrinthRoomLogs.replayResult = {
+            groups: [
+                {
+                    monsterHrid: '/monsters/cyclops',
+                    monsterName: 'Cyclops',
+                    roomLevel: 200,
+                    fights: 6,
+                    clears: 2,
+                    metrics: [
+                        {
+                            key: 'dps',
+                            label: 'Your damage / s',
+                            observed: 8000,
+                            predicted: 10000,
+                            deviationPct: -20,
+                            marginPct: 3,
+                            verdict: 'below',
+                        },
+                        {
+                            key: 'taken',
+                            label: 'Monster damage / s',
+                            observed: 500,
+                            predicted: 500,
+                            deviationPct: 0,
+                            marginPct: 3,
+                            verdict: 'consistent',
+                        },
+                    ],
+                    diagnosis: 'Sim over-credits your damage: real fights kill the monster slower.',
+                },
+            ],
+            recordedAt: 123,
+        };
+        await labyrinthRoomLogs.renderAccuracy();
+
+        expect(text()).toContain('Calibration replay');
+        expect(text()).toContain('Cyclops');
+        expect(text()).toContain('over-credits your damage');
+        expect(text()).toContain('Your damage / s');
+        // The observed-vs-sim figure and its deviation both read out
+        expect(text()).toContain('vs sim');
     });
 
     test('one room type opening does not open the others', async () => {

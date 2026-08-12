@@ -1,8 +1,57 @@
 import { describe, test, expect } from 'vitest';
-import { classifyFight, fightTally, failureShape, TIMEOUT_GRACE_SECONDS } from './labyrinth-fight-log.js';
+import {
+    classifyFight,
+    fightTally,
+    failureShape,
+    isFreshLabyrinthFight,
+    TIMEOUT_GRACE_SECONDS,
+} from './labyrinth-fight-log.js';
 import { FIGHT_TIMEOUT_SECONDS } from './labyrinth-live-combat.js';
 
 const fight = (over = {}) => ({ monsterHpFraction: 0.4, playerHpFraction: 0.6, seconds: 40, ...over });
+
+describe('isFreshLabyrinthFight', () => {
+    const prev = (over = {}) => ({
+        battleId: 'b1',
+        monsterMaxHp: 1000,
+        lastMonsterHp: 700,
+        lastAtkCounter: 10,
+        ...over,
+    });
+    const curr = (over = {}) => ({ battleId: 'b1', monsterMaxHp: 1000, monsterHp: 650, atkCounter: 11, ...over });
+
+    test('no fight in progress is always fresh', () => {
+        expect(isFreshLabyrinthFight(null, curr())).toBe(true);
+    });
+
+    test('a changed battleId or monster maximum is fresh', () => {
+        expect(isFreshLabyrinthFight(prev(), curr({ battleId: 'b2' }))).toBe(true);
+        expect(isFreshLabyrinthFight(prev(), curr({ monsterMaxHp: 1200, monsterHp: 1200 }))).toBe(true);
+    });
+
+    test('an attack counter that reset is fresh', () => {
+        expect(isFreshLabyrinthFight(prev({ lastAtkCounter: 30 }), curr({ atkCounter: 0 }))).toBe(true);
+    });
+
+    test('a continuing fight with falling health is not fresh', () => {
+        expect(isFreshLabyrinthFight(prev({ lastMonsterHp: 700 }), curr({ monsterHp: 650 }))).toBe(false);
+    });
+
+    test('a self-heal mid-fight does NOT read as a new fight', () => {
+        // The Dryad life-drains from 600 back up to 660 — nowhere near full
+        expect(isFreshLabyrinthFight(prev({ lastMonsterHp: 600 }), curr({ monsterHp: 660 }))).toBe(false);
+    });
+
+    test('a self-heal while near full does NOT read as a new fight', () => {
+        // Health went up and is above 95%, but it did not come back from the low
+        // a spawn revives from — so it is a heal, not a spawn
+        expect(isFreshLabyrinthFight(prev({ lastMonsterHp: 980 }), curr({ monsterHp: 995 }))).toBe(false);
+    });
+
+    test('a spawn — the jump from low to full — is fresh', () => {
+        expect(isFreshLabyrinthFight(prev({ lastMonsterHp: 40 }), curr({ monsterHp: 1000 }))).toBe(true);
+    });
+});
 
 describe('classifyFight', () => {
     test('the floor outranks the last tick', () => {

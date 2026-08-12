@@ -77,7 +77,12 @@ vi.mock('./market-price-store.js', () => ({
     default: { initialize: async () => {}, cleanup: () => {}, ingestSnapshot: () => {}, priceFor: () => null },
 }));
 vi.mock('./market-history-api.js', () => ({
-    default: { connect: () => {}, disconnect: () => {}, fetchHistory: async () => [] },
+    default: {
+        connect: () => {},
+        disconnect: () => {},
+        fetchHistory: async () => [],
+        currentSource: () => ({ key: 'mooket2', hasVolume: true, avgLabel: 'Avg' }),
+    },
 }));
 
 const { default: panel, splitLegacyWatchlist } = await import('./index.js');

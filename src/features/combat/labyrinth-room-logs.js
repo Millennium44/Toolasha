@@ -25,7 +25,9 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
-import { classifyFight, fightTally, failureShape } from './labyrinth-fight-log.js';
+import { classifyFight, fightTally, failureShape, isFreshLabyrinthFight } from './labyrinth-fight-log.js';
+import labFightRecorder from './labyrinth-fight-recorder.js';
+import labTickCapture from './labyrinth-tick-capture.js';
 import { accuracyReport } from './labyrinth-outcome-log.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { ROOM_TRAVEL_SECONDS } from './labyrinth-formulas.js';
@@ -273,6 +275,12 @@ class LabyrinthRoomLogs {
             this.sessions = stored.sessions.slice(0, this.logSize());
         }
 
+        // Bring the accumulated calibration fights back into memory, so the pool
+        // survives a reload rather than starting empty each session
+        labFightRecorder
+            .load()
+            .catch((error) => console.error('[LabyrinthRoomLogs] Loading fight pool failed:', error));
+
         this.progressHandler = (data) => this.onRoomProgress(data);
         webSocketHook.on('labyrinth_room_progress', this.progressHandler);
 
@@ -315,6 +323,9 @@ class LabyrinthRoomLogs {
         }
         for (const [type, handler] of this.xpHandlers) webSocketHook.off(type, handler);
         this.xpHandlers = [];
+        // A raw capture registers its own socket listeners; a feature teardown
+        // that left them on would leak them past the panel that started it
+        labTickCapture.stopCapture();
         this.flushReport();
         if (this.unregisterTab) {
             this.unregisterTab();
@@ -603,19 +614,21 @@ class LabyrinthRoomLogs {
         const playerHpFraction = player.cHP / player.mHP;
         const atkCounter = Number(player.atkCounter) || 0;
 
-        // battleId stays put across labyrinth attempts and a retry of the same
-        // room brings back a monster with the same maximum, so neither says a
-        // new fight started. Two things do: health that went up, which only a
-        // fresh monster can do, and an attack counter that went down, which only
-        // a fresh battle can do.
+        // A new session is always a new fight; otherwise defer to the shared
+        // boundary test, which counts a monster-health jump only when it is the
+        // leap to full a spawn makes — not the bump a self-healing monster (the
+        // Dryad's life drain, a guardian aura) gives itself mid-fight, which used
+        // to split one attempt into several at whatever low health it landed on.
         const fight = this.fight;
         const isNewFight =
             !fight ||
             fight.session !== session ||
-            fight.battleId !== data.battleId ||
-            fight.monsterMaxHp !== monster.mHP ||
-            monster.cHP > fight.lastMonsterHp ||
-            atkCounter < fight.lastAtkCounter;
+            isFreshLabyrinthFight(fight, {
+                battleId: data.battleId,
+                monsterMaxHp: monster.mHP,
+                monsterHp: monster.cHP,
+                atkCounter,
+            });
 
         if (isNewFight) {
             this.resolveFight(); // whatever was being watched has ended
@@ -625,15 +638,39 @@ class LabyrinthRoomLogs {
                 monsterHrid: session.monsterHrid,
                 battleId: data.battleId,
                 monsterMaxHp: monster.mHP,
+                // Absolute health at the first tick, so the recorder can measure
+                // the damage each side dealt — you carry health between rooms, so
+                // a fight need not begin at full
+                playerMaxHp: player.mHP,
+                playerHpStart: player.cHP,
+                // Gross damage each side dealt, summed from the health that fell
+                // tick to tick. The endpoints alone give damage net of healing —
+                // and you regenerate through a fight — while the sim reports it
+                // gross, so a net-vs-gross comparison read as the sim over-hitting.
+                grossTaken: 0,
+                grossDealt: 0,
+                prevPlayerHp: player.cHP,
+                prevMonsterHp: monster.cHP,
                 startedAt: Date.now(),
             };
         }
+
+        // Accumulate the drops, not the endpoints: a health bar that fell 300 and
+        // regenerated 100 took 300, not 200, and that is what the monster dealt
+        const takenStep = this.fight.prevPlayerHp - player.cHP;
+        if (takenStep > 0) this.fight.grossTaken += takenStep;
+        const dealtStep = this.fight.prevMonsterHp - monster.cHP;
+        if (dealtStep > 0) this.fight.grossDealt += dealtStep;
 
         Object.assign(this.fight, {
             lastMonsterHp: monster.cHP,
             lastAtkCounter: atkCounter,
             monsterHpFraction,
             playerHpFraction,
+            playerHpEnd: player.cHP,
+            monsterHpEnd: monster.cHP,
+            prevPlayerHp: player.cHP,
+            prevMonsterHp: monster.cHP,
         });
 
         // The tile may not have been calculated when the room was entered, and
@@ -765,6 +802,31 @@ class LabyrinthRoomLogs {
         }
         if (attempt.outcome === 'clear') session.cleared = true;
         session.endedAt = Date.now();
+
+        // The calibration replay reads this. It is passive — the labyrinth gives
+        // random rooms, so every fight is kept and the ones you meet often
+        // accumulate, rather than farming one room. The room log keeps the
+        // outcome; the recorder keeps the damage exchange that says whether a loss
+        // was a timeout or a death, tagged with the gear it was fought in so a
+        // gear change starts a fresh pool.
+        labFightRecorder.noteAttempt({
+            monsterHrid: fight.monsterHrid,
+            monsterName: this.prettyMonsterName(fight.monsterHrid),
+            roomLevel: session.roomLevel,
+            seconds: attempt.seconds,
+            outcome: attempt.outcome,
+            cleared: attempt.outcome === 'clear',
+            monsterMaxHp: fight.monsterMaxHp,
+            monsterHpEnd: fight.monsterHpEnd,
+            playerMaxHp: fight.playerMaxHp,
+            playerHpStart: fight.playerHpStart,
+            playerHpEnd: fight.playerHpEnd,
+            // Gross damage summed from the drops — matches the sim's gross
+            // totals, unlike the endpoints, which are net of your regen
+            monsterDamage: fight.grossDealt,
+            playerDamageTaken: fight.grossTaken,
+            fingerprint: this.simSource?.fingerprint?.() || null,
+        });
 
         this.persist();
         this.renderIfOpen();
@@ -1003,24 +1065,24 @@ class LabyrinthRoomLogs {
 
         const header = document.createElement('div');
         header.style.cssText =
-            'display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px 6px; ' +
-            'border-bottom:1px solid rgba(146,182,255,0.24); cursor:move;';
+            'display:flex; align-items:center; justify-content:space-between; gap:8px 10px; flex-wrap:wrap; ' +
+            'padding:8px 10px 6px; border-bottom:1px solid rgba(146,182,255,0.24); cursor:move;';
 
         const tabs = document.createElement('div');
         tabs.style.cssText = 'display:inline-flex; align-items:center; gap:4px;';
         this.tabButtons = {
             rooms: this.makeTab('Rooms', 'rooms'),
-            accuracy: this.makeTab('Sim accuracy', 'accuracy'),
+            accuracy: this.makeTab('Accuracy', 'accuracy'),
         };
         tabs.appendChild(this.tabButtons.rooms);
         tabs.appendChild(this.tabButtons.accuracy);
 
         const actions = document.createElement('div');
-        actions.style.cssText = 'display:inline-flex; align-items:center; gap:6px;';
+        actions.style.cssText = 'display:inline-flex; align-items:center; flex-wrap:wrap; gap:4px 6px;';
 
         this.clearButton = document.createElement('button');
         this.clearButton.style.cssText =
-            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px;';
+            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.clearButton.addEventListener('click', () => this.onClearClicked());
 
         const closeBtn = document.createElement('button');
@@ -1036,9 +1098,56 @@ class LabyrinthRoomLogs {
         this.exportButton.textContent = 'Export';
         this.exportButton.title = 'Copy the whole fight record as text, so it can be looked at somewhere else';
         this.exportButton.style.cssText =
-            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px;';
+            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.exportButton.addEventListener('click', () => this.exportAccuracy());
 
+        this.recomputeButton = document.createElement('button');
+        this.recomputeButton.textContent = 'Recompute';
+        this.recomputeButton.title =
+            'Throw away every cached clear-chance sim and simulate the rooms again. Use this after changing ' +
+            'gear or a loadout — a plain equip does not always refresh a sim, so a cached result can be stale.';
+        this.recomputeButton.style.cssText =
+            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
+        this.recomputeButton.addEventListener('click', () => this.onRecomputeClicked());
+
+        // A slow, timeout-heavy room (a hard combat tile) stops its sim on the
+        // simulated-hours budget long before it pins the rate down, so its clear
+        // chance reads "(capped)" with a wide band. With this on, Recompute lifts
+        // that time cap and runs each room to its precision target — more precise,
+        // but slower, so it is an opt-in toggle rather than the default.
+        this.uncapped = false;
+        this.uncappedButton = document.createElement('button');
+        this.uncappedButton.textContent = 'Uncapped';
+        this.uncappedButton.title =
+            'Run Recompute with the sim’s time cap lifted, so slow rooms reach their precision target instead ' +
+            'of stopping at a wide "(capped)" band. More precise but slower.';
+        this.uncappedButton.addEventListener('click', () => {
+            this.uncapped = !this.uncapped;
+            this.paintUncapped();
+        });
+
+        // Calibration replay: fights are recorded passively across runs, so this
+        // just re-sims whatever has accumulated for your current gear and reports
+        // where the sim diverges from what actually happened
+        this.replayButton = document.createElement('button');
+        this.replayButton.textContent = 'Replay';
+        this.replayButton.title =
+            'Re-simulate the rooms recorded on your current gear and compare your real damage rate and the ' +
+            'monster’s against the sim — the decomposition the clear rate alone cannot give. Fights accumulate ' +
+            'passively as you play; a monster needs a handful before it can be judged.';
+        this.replayButton.style.cssText =
+            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
+        this.replayButton.addEventListener('click', () => this.onReplayClicked());
+
+        // Raw tick capture: the moment-to-moment feed behind a rate mismatch —
+        // stun gaps, ability cadence, damage per hit — as a file to hand over
+        this.captureButton = document.createElement('button');
+        this.captureButton.addEventListener('click', () => this.onCaptureClicked());
+
+        actions.appendChild(this.replayButton);
+        actions.appendChild(this.captureButton);
+        actions.appendChild(this.uncappedButton);
+        actions.appendChild(this.recomputeButton);
         actions.appendChild(this.exportButton);
         actions.appendChild(this.clearButton);
         actions.appendChild(closeBtn);
@@ -1068,7 +1177,7 @@ class LabyrinthRoomLogs {
             this.view = view;
             this.resetArmed = false;
             this.paintChrome();
-            this.render();
+            this.render(false);
         });
         return button;
     }
@@ -1078,7 +1187,8 @@ class LabyrinthRoomLogs {
         for (const [view, button] of Object.entries(this.tabButtons || {})) {
             const on = this.view === view;
             button.style.cssText =
-                'height:18px; border:0; border-radius:4px; font-size:10px; font-weight:700; cursor:pointer; padding:0 7px; ' +
+                'height:18px; border:0; border-radius:4px; font-size:10px; font-weight:700; cursor:pointer; ' +
+                'padding:0 7px; white-space:nowrap; flex-shrink:0; ' +
                 (on
                     ? 'background:rgba(77,151,255,0.95); color:#fff;'
                     : 'background:rgba(255,255,255,0.1); color:#9ec4ff;');
@@ -1094,6 +1204,144 @@ class LabyrinthRoomLogs {
             ? 'Throw away every recorded fight and start the accuracy record over'
             : 'Clear the room log';
         this.clearButton.style.background = this.resetArmed ? 'rgba(255,100,100,0.55)' : 'rgba(255,255,255,0.12)';
+        this.paintUncapped();
+        this.paintReplay();
+        this.paintCapture();
+    }
+
+    /** Enable Replay once the pool has fights on the current gear, and count them */
+    paintReplay() {
+        if (!this.replayButton) return;
+        const fingerprint = this.simSource?.fingerprint?.() || null;
+        const kept = labFightRecorder.recordingStatus(fingerprint).attempts;
+        const canReplay = kept > 0 && !!this.simSource?.replay;
+        this.replayButton.textContent = kept ? `Replay (${kept})` : 'Replay';
+        this.replayButton.disabled = !canReplay;
+        this.replayButton.style.opacity = canReplay ? '1' : '0.45';
+        this.replayButton.style.cursor = canReplay ? 'pointer' : 'default';
+    }
+
+    /** Show whether a raw tick capture is running and how many ticks it has */
+    paintCapture() {
+        if (!this.captureButton) return;
+        const status = labTickCapture.captureStatus();
+
+        if (status.capturing) {
+            this.captureButton.textContent = status.ticks ? `Stop & save (${status.ticks})` : 'Capturing…';
+            this.captureButton.title =
+                'Stop the raw capture and download it. It records the moment-to-moment combat feed — every ' +
+                'health, mana and counter tick — so the stun cadence and per-hit damage behind a rate mismatch ' +
+                'can be read. Hand the file over.';
+        } else {
+            this.captureButton.textContent = 'Capture';
+            this.captureButton.title =
+                'Record the raw combat feed of a fight — the tick-by-tick detail the endpoints do not keep, for ' +
+                'diagnosing which mechanic the sim has wrong (stun uptime, ability cadence, per-hit damage). ' +
+                'Start it, fight the room, then stop to download the file.';
+        }
+        this.captureButton.style.cssText =
+            'height:18px; border:0; border-radius:4px; font-size:10px; cursor:pointer; padding:0 6px; ' +
+            'white-space:nowrap; flex-shrink:0; ' +
+            (status.capturing
+                ? 'background:rgba(255,110,110,0.85); color:#fff;'
+                : 'background:rgba(255,255,255,0.12); color:#9ec4ff;');
+    }
+
+    /** Show whether an uncapped Recompute is armed */
+    paintUncapped() {
+        if (!this.uncappedButton) return;
+        this.uncappedButton.style.cssText =
+            'height:18px; border:0; border-radius:4px; font-size:10px; cursor:pointer; padding:0 6px; ' +
+            'white-space:nowrap; flex-shrink:0; ' +
+            (this.uncapped
+                ? 'background:rgba(77,151,255,0.95); color:#fff;'
+                : 'background:rgba(255,255,255,0.12); color:#9ec4ff;');
+    }
+
+    /**
+     * Clear every cached clear-chance sim and simulate the rooms again.
+     *
+     * The heavy lifting lives in the clear-rate feature, reached through the sim
+     * source; this only drives the button so a run in progress cannot be started
+     * twice and says what it is doing while it runs.
+     */
+    async onRecomputeClicked() {
+        const button = this.recomputeButton;
+        if (!button || button.disabled) return;
+        if (!this.simSource?.recompute) return;
+
+        const label = button.textContent;
+        button.disabled = true;
+        button.textContent = this.uncapped ? 'Recomputing (uncapped)…' : 'Recomputing…';
+        button.style.opacity = '0.6';
+        try {
+            await this.simSource.recompute(this.uncapped === true);
+        } catch (error) {
+            console.error('[LabyrinthRoomLogs] Recomputing sims failed:', error);
+        } finally {
+            button.disabled = false;
+            button.textContent = label;
+            button.style.opacity = '';
+            this.render();
+        }
+    }
+
+    /**
+     * Re-simulate the recorded rooms and show where the sim diverges.
+     *
+     * The comparison itself lives in the clear-rate feature, reached through the
+     * sim source, because it owns the simulator and the loadout. This drives the
+     * button, drops the result on the panel, and switches to the accuracy view
+     * where it is drawn above the record.
+     */
+    async onReplayClicked() {
+        const button = this.replayButton;
+        if (!button || button.disabled) return;
+        if (!this.simSource?.replay) return;
+
+        const label = button.textContent;
+        button.disabled = true;
+        button.textContent = 'Replaying…';
+        button.style.opacity = '0.6';
+        try {
+            this.replayResult = await this.simSource.replay();
+        } catch (error) {
+            console.error('[LabyrinthRoomLogs] Replaying recorded fights failed:', error);
+            this.replayResult = { error: true };
+        } finally {
+            button.disabled = false;
+            button.textContent = label;
+            button.style.opacity = '';
+        }
+
+        this.view = 'accuracy';
+        this.paintChrome();
+        this.render(false);
+    }
+
+    /**
+     * Start the raw tick capture, or stop it and download the file.
+     *
+     * Stop and save is one press: the file is the whole point of the capture, so
+     * there is nothing to do between stopping and handing it over.
+     */
+    onCaptureClicked() {
+        if (labTickCapture.isCapturing()) {
+            labTickCapture.stopCapture();
+            labTickCapture.downloadCapture();
+        } else {
+            // Best-effort label from whatever knows the current room; the capture
+            // backfills the monster from the fight's own feed if this is empty
+            const room = this.labContext?.room;
+            const monsterHrid = this.fight?.monsterHrid || this.activeSession?.monsterHrid || room?.monsterHrid || null;
+            const roomLevel =
+                this.fight?.session?.roomLevel ||
+                this.activeSession?.roomLevel ||
+                Math.floor(Number(room?.recommendedLevel) || 0) ||
+                0;
+            labTickCapture.startCapture(monsterHrid || roomLevel ? { monsterHrid, roomLevel } : null);
+        }
+        this.paintCapture();
     }
 
     /**
@@ -1155,11 +1403,32 @@ class LabyrinthRoomLogs {
         }
     }
 
-    render() {
+    /**
+     * Redraw the open view, keeping the scroll position where it was.
+     *
+     * Both renderers empty the list and rebuild it, which resets the browser's
+     * scroll to the top — and they run on every experience/labyrinth update, so
+     * a panel left open while a fight ticks was yanked back to the top several
+     * times a second and could not be read. The offset is saved before the wipe
+     * and restored after (after the await, for the async accuracy view). A tab
+     * switch is the one redraw that *should* start at the top, so it opts out.
+     *
+     * @param {boolean} [preserveScroll=true] - Keep the current scroll offset
+     */
+    render(preserveScroll = true) {
+        const list = this.panel?.querySelector('.mwi-lab-logs-list');
+        const top = preserveScroll && list ? list.scrollTop : 0;
+        const restore = () => {
+            if (!preserveScroll) return;
+            const current = this.panel?.querySelector('.mwi-lab-logs-list');
+            if (current) current.scrollTop = top;
+        };
+
         if (this.view === 'accuracy') {
-            this.renderAccuracy();
+            this.renderAccuracy().then(restore).catch(restore);
         } else {
             this.renderPanel();
+            restore();
         }
     }
 
@@ -1231,6 +1500,115 @@ class LabyrinthRoomLogs {
         note.style.cssText = 'font-size:11px; color:#9ab0d8; text-align:center; padding:8px; line-height:1.4;';
         note.textContent = text;
         return note;
+    }
+
+    /** How a replay metric value reads, by which metric it is */
+    formatReplayValue(key, value) {
+        if (!Number.isFinite(value)) return '—';
+        if (key === 'clearRate') return `${Math.round(value * 100)}%`;
+        if (key === 'secondsPerFight') return `${value.toFixed(1)}s`;
+        return `${formatKMB(value)}/s`;
+    }
+
+    /**
+     * The calibration replay's verdict, drawn above the accuracy record.
+     *
+     * One block per room replayed: the diagnosis in a sentence, then the four
+     * rates with what you did, what the sim predicted, and how far apart they are.
+     *
+     * @param {Object} result - From the sim source's `replay`
+     * @returns {HTMLElement}
+     */
+    renderReplayResult(result) {
+        const box = document.createElement('div');
+        box.style.cssText =
+            'border:1px solid rgba(146,182,255,0.35); border-radius:6px; background:rgba(18,26,40,0.95); ' +
+            'padding:7px 8px; margin-bottom:8px; font-size:11px; line-height:1.35;';
+
+        const title = document.createElement('div');
+        title.style.cssText = 'font-weight:700; color:#cfe0ff; margin-bottom:4px;';
+        title.textContent = 'Calibration replay';
+        box.appendChild(title);
+
+        if (result?.error) {
+            box.appendChild(this.makeNote('The replay could not run — the sim or loadout was unavailable.'));
+            return box;
+        }
+        if (!result?.groups?.length) {
+            const pool = result?.pool;
+            const note =
+                pool && pool.attempts > 0
+                    ? `${pool.attempts} fight${pool.attempts === 1 ? '' : 's'} recorded on this gear over ` +
+                      `${pool.monsters} monster${pool.monsters === 1 ? '' : 's'}, but none has the handful of ` +
+                      `attempts a rate needs yet. Fights accumulate as you play — keep going and check back.`
+                    : 'No fights recorded on this gear yet. They accumulate automatically as you fight combat ' +
+                      'rooms — no need to do anything, just play and check back.';
+            box.appendChild(this.makeNote(note));
+            return box;
+        }
+
+        const colour = { above: '#ff9a6b', below: '#ff9a6b', consistent: '#8fe6a0', insufficient: '#9ab0d8' };
+
+        for (const group of result.groups) {
+            const head = document.createElement('div');
+            head.style.cssText = 'font-weight:700; color:#f2f7ff; margin:4px 0 2px;';
+            const name = group.monsterName || this.prettyMonsterName(group.monsterHrid);
+            // A bucket may pool a few nearby levels; say the span, not a false point
+            const lvl =
+                Number.isFinite(group.levelLow) && group.levelHigh > group.levelLow
+                    ? `lvl ${group.levelLow}–${group.levelHigh}`
+                    : `lvl ${group.roomLevel}`;
+            head.textContent = `${name} · ${lvl} · ${group.fights} fight${group.fights === 1 ? '' : 's'}, ${
+                group.clears
+            } cleared`;
+            box.appendChild(head);
+
+            const diag = document.createElement('div');
+            diag.style.cssText = 'color:#d7e6ff; margin-bottom:3px;';
+            diag.textContent = group.diagnosis;
+            box.appendChild(diag);
+
+            for (const metric of group.metrics) {
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex; justify-content:space-between; gap:8px; padding:1px 0;';
+
+                const left = document.createElement('span');
+                left.style.cssText = 'color:#9ab0d8;';
+                left.textContent = metric.label;
+
+                const right = document.createElement('span');
+                right.style.cssText = `color:${colour[metric.verdict] || '#e6eefc'}; text-align:right;`;
+                const you = this.formatReplayValue(metric.key, metric.observed);
+                const sim = this.formatReplayValue(metric.key, metric.predicted);
+                let tag = '';
+                if (metric.verdict === 'insufficient') {
+                    tag = ' (too few)';
+                } else if (Number.isFinite(metric.deviationPct)) {
+                    const sign = metric.deviationPct >= 0 ? '+' : '−';
+                    tag = ` (${sign}${Math.abs(metric.deviationPct).toFixed(0)}%)`;
+                }
+                right.textContent = `${you} vs sim ${sim}${tag}`;
+
+                row.appendChild(left);
+                row.appendChild(right);
+                box.appendChild(row);
+            }
+        }
+
+        const save = document.createElement('button');
+        save.textContent = 'Save comparison';
+        save.style.cssText =
+            'margin-top:6px; height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); ' +
+            'color:#9ec4ff; font-size:10px; cursor:pointer; padding:0 6px;';
+        save.title =
+            'Download the recorded attempts together with this replay comparison — observed vs sim per rate, ' +
+            'and the verdict — so the whole accuracy check can be handed over or kept';
+        // Embed the comparison beside the raw attempts, so one file is the whole
+        // check rather than only the half a bare recording carries
+        save.addEventListener('click', () => labFightRecorder.downloadRecording({ replay: result }));
+        box.appendChild(save);
+
+        return box;
     }
 
     renderSessionCard(session) {
@@ -1402,9 +1780,22 @@ class LabyrinthRoomLogs {
         const tally = fightTally(session.actions);
         const parts = [session.predicted === null ? 'Sim —' : `Sim ${(session.predicted * 100).toFixed(0)}%`];
 
-        parts.push(
-            tally.total ? `Won ${tally.clears}/${tally.total} (${Math.round(tally.rate * 100)}%)` : 'No result yet'
-        );
+        // Only fights watched on the combat view are classified (win/death/
+        // timeout); the server's entryCount counts every attempt, including those
+        // that ran while you were on another tab. Show the server total so a run
+        // spent mostly off-screen does not read as if those attempts never
+        // happened — with the watched subset named, since that is all the
+        // died/timed-out breakdown can speak for.
+        const serverAttempts = Math.floor(Number(session.entryCount) || 0);
+        if (tally.total) {
+            let result = `Won ${tally.clears}/${tally.total} (${Math.round(tally.rate * 100)}%)`;
+            if (serverAttempts > tally.total) result += ` · ${serverAttempts} total`;
+            parts.push(result);
+        } else if (serverAttempts > 0) {
+            parts.push(`${serverAttempts} attempt${serverAttempts === 1 ? '' : 's'}, none watched`);
+        } else {
+            parts.push('No result yet');
+        }
         const shape = failureShape(tally);
         if (shape) parts.push(shape);
 
@@ -1487,6 +1878,11 @@ class LabyrinthRoomLogs {
         if (token !== this.renderToken || this.view !== 'accuracy') return;
 
         list.textContent = '';
+
+        // The calibration replay, when one has been run, sits above the record —
+        // it answers "why is the rate wrong" that the record only flags
+        if (this.replayResult) list.appendChild(this.renderReplayResult(this.replayResult));
+
         const { rows, summary } = snapshot;
         if (!rows.length) {
             list.appendChild(

@@ -99,6 +99,36 @@ function rowTime(row) {
 }
 
 /**
+ * The newest sighting in a set of history rows, as ask/bid with a millisecond
+ * timestamp.
+ *
+ * A row's `a`/`b` are best ask and best bid; a non-positive side was empty, not
+ * a price of zero, so it becomes null. The time is normalised to milliseconds
+ * (rows carry seconds) so a caller can compare it against `Date.now()` directly.
+ * Pure, so picking the freshest can be tested without a server.
+ *
+ * @param {Array<Object>|null} rows - Rows from the history API
+ * @returns {{time: number, ask: number|null, bid: number|null}|null} Freshest, or null
+ */
+export function freshestSighting(rows) {
+    if (!Array.isArray(rows) || !rows.length) return null;
+
+    let best = null;
+    for (const row of rows) {
+        const seconds = rowTime(row);
+        if (!seconds) continue;
+        if (!best || seconds > best.seconds) {
+            best = {
+                seconds,
+                ask: row?.a > 0 ? row.a : null,
+                bid: row?.b > 0 ? row.b : null,
+            };
+        }
+    }
+    return best ? { time: best.seconds * 1000, ask: best.ask, bid: best.bid } : null;
+}
+
+/**
  * Reduce history rows to the points a chart draws.
  *
  * @param {Array<Object>} rows - Rows from the history API

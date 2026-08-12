@@ -2237,3 +2237,42 @@ describe('re-planning a route after shrouds have been spent', () => {
         expect(document.querySelectorAll('.mwi-labyrinth-beacon-overlay').length).toBeGreaterThan(0);
     });
 });
+
+describe('recomputeCombatSims clears every cached sim before re-running', () => {
+    test('empties both cache layers and re-runs the tile calc', async () => {
+        labyrinthClearRate.combatCache.set('imp:200:1:1pp:', { clearChance: 0.5 });
+        labyrinthClearRate._combatCacheMeta.set('imp:200:1:1pp:', { computedAt: 1, snapshotFingerprint: 'x' });
+        const runSpy = vi.spyOn(labyrinthClearRate, 'runTileCalculation').mockResolvedValue(undefined);
+
+        await labyrinthClearRate.recomputeCombatSims();
+
+        expect(labyrinthClearRate.combatCache.size).toBe(0);
+        expect(labyrinthClearRate._combatCacheMeta.size).toBe(0);
+        // Manual re-run (auto:false) is what re-sims instead of reusing the cache
+        expect(runSpy).toHaveBeenCalledWith({ auto: false, uncapped: false });
+        runSpy.mockRestore();
+    });
+
+    test('passes the uncapped flag through to the tile calc', async () => {
+        const runSpy = vi.spyOn(labyrinthClearRate, 'runTileCalculation').mockResolvedValue(undefined);
+
+        await labyrinthClearRate.recomputeCombatSims(true);
+
+        expect(runSpy).toHaveBeenCalledWith({ auto: false, uncapped: true });
+        runSpy.mockRestore();
+    });
+});
+
+describe('fullClearTime shows the real expected clear time, uncapped', () => {
+    test('seconds, minutes, and hours without a 999+/∞ cap', () => {
+        expect(labyrinthClearRate.fullClearTime(48)).toBe('48s');
+        expect(labyrinthClearRate.fullClearTime(655)).toBe('10m 55s');
+        expect(labyrinthClearRate.fullClearTime(1095)).toBe('18m 15s');
+        expect(labyrinthClearRate.fullClearTime(3900)).toBe('1h 5m');
+    });
+
+    test('a room that never clears reads as a dash, not a huge number', () => {
+        expect(labyrinthClearRate.fullClearTime(Infinity)).toBe('—');
+        expect(labyrinthClearRate.fullClearTime(0)).toBe('—');
+    });
+});
