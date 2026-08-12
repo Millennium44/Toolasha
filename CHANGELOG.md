@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Upgrade advisor: the aura OR-alternative is offered again
+
+Ability Swaps stopped offering the other aura in your archetype's aura group — e.g. running Mystic Aura, it never proposed Critical Aura. The generator was running each guide offer through a style-from-buff-data heuristic that misreads a universal aura (Critical Aura) as another style and vetoed it. The guide's own ability set is style-correct by construction, so on the guide path that heuristic no longer runs; it now only guards the every-ability fallback.
+
 ### Sim: Achievements section — toggle your achievement combat buffs
 
 The sim already applied your completed-achievement combat buffs (e.g. Damage +2%) silently; there was no way to see or change them. A new **Achievements** section on the Configure tab lists the combat buffs your achievements grant, each ticked by default (so results are unchanged) — untick one to sim without it. It reads your real buffs with their exact values; a character with no combat achievement buffs shows no section.
