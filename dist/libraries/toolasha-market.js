@@ -1,7 +1,7 @@
 /**
  * Toolasha Market Library
  * Market, inventory, and economy features
- * Version: 2.96.0
+ * Version: 2.96.1
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -10203,7 +10203,8 @@
                             itemHrid,
                             enhancementLevel,
                             isSell,
-                            ownListingIds
+                            ownListingIds,
+                            price
                         );
                         row.insertBefore(topOrderAgeCell, row.children[insertIndex + 1]);
                     }
@@ -10245,12 +10246,13 @@
                         enhancementLevel,
                         isSell,
                         priceCache,
-                        ownListingIds
+                        ownListingIds,
+                        price
                     );
                     row.dataset.mwiTopOrderPrice =
                         topOrderPriceVal !== null && topOrderPriceVal >= 0 ? String(topOrderPriceVal) : '';
                     if (config.getSetting('market_showTopOrderAge')) {
-                        const ageMs = this._getTopOrderAgeMs(itemHrid, enhancementLevel, isSell, ownListingIds);
+                        const ageMs = this._getTopOrderAgeMs(itemHrid, enhancementLevel, isSell, ownListingIds, price);
                         row.dataset.mwiTopOrderAgeMs = ageMs !== null ? String(ageMs) : '';
                     }
                 } else {
@@ -10291,8 +10293,48 @@
          * Get the top competing order price for a listing (shared by cell display and sort)
          * @returns {number|null} Price or null if unavailable
          */
-        _getTopOrderPrice(itemHrid, enhancementLevel, isSell, priceCache, ownListingIds) {
+        /**
+         * The market snapshot's competing price when it shows you have been beaten and
+         * is newer than the opened-book cache — the undercut a stale book hides.
+         *
+         * The opened order book can exclude your own orders but is only as fresh as
+         * the last time you opened the item. The snapshot (`marketplace.json`, kept
+         * current on a timer, plus any Mooket refresh patch) is a single price that
+         * cannot tell your order from a rival's — but a price better than your own is
+         * a rival's by definition, never your own order. So when the snapshot is
+         * fresher than the book and shows a price that beats you, it is a real
+         * undercut the stale book is hiding, and safe to surface without opening the
+         * item. When it does not beat you, the book's own-excluding figure is kept,
+         * so this never shows your own order and never downgrades a fresher book.
+         *
+         * @param {string} itemHrid - Item
+         * @param {number} enhancementLevel - Enhancement level
+         * @param {boolean} isSell - Whether the listing is a sell
+         * @param {number|null} ownPrice - The listing's own price
+         * @param {number|null} bookUpdated - When the opened book was last refreshed, or null
+         * @returns {{price: number, timestamp: number|null}|null}
+         */
+        _freshMarketBeat(itemHrid, enhancementLevel, isSell, ownPrice, bookUpdated) {
+            if (typeof ownPrice !== 'number' || !(ownPrice > 0)) return null;
+
+            const market = marketAPI.getPrice(itemHrid, enhancementLevel);
+            const marketPrice = market ? (isSell ? market.ask : market.bid) : null;
+            if (typeof marketPrice !== 'number' || !(marketPrice > 0)) return null;
+
+            const beatsYou = isSell ? marketPrice < ownPrice : marketPrice > ownPrice;
+            if (!beatsYou) return null;
+
+            const timestamp = marketAPI.getPriceTimestamp(itemHrid, enhancementLevel);
+            const fresher = bookUpdated === null || (typeof timestamp === 'number' && timestamp > bookUpdated);
+            if (!fresher) return null;
+
+            return { price: marketPrice, timestamp };
+        }
+
+        _getTopOrderPrice(itemHrid, enhancementLevel, isSell, priceCache, ownListingIds, ownPrice = null) {
             const cacheEntry = estimatedListingAge.orderBooksCache[itemHrid];
+            let bookPrice = null;
+            const bookUpdated = cacheEntry?.lastUpdated ?? null;
             if (cacheEntry) {
                 const orderBookData = cacheEntry.data || cacheEntry;
                 if (orderBookData?.orderBooks) {
@@ -10300,10 +10342,16 @@
                     if (orderBook) {
                         const topOrders = isSell ? orderBook.asks : orderBook.bids;
                         const topCompeting = topOrders?.find((o) => !ownListingIds.has(o.listingId));
-                        if (topCompeting) return topCompeting.price;
+                        if (topCompeting) bookPrice = topCompeting.price;
                     }
                 }
             }
+
+            // A fresh undercut in the snapshot beats a staler book's reading
+            const beat = this._freshMarketBeat(itemHrid, enhancementLevel, isSell, ownPrice, bookUpdated);
+            if (beat) return beat.price;
+            if (bookPrice !== null) return bookPrice;
+
             const key = `${itemHrid}:${enhancementLevel}`;
             const marketPrice = priceCache.get(key);
             return marketPrice ? (isSell ? marketPrice.ask : marketPrice.bid) : null;
@@ -10314,10 +10362,17 @@
          * Returns -1 if no competing orders exist, null if data unavailable
          * @returns {number|null}
          */
-        _getTopOrderAgeMs(itemHrid, enhancementLevel, isSell, ownListingIds) {
+        _getTopOrderAgeMs(itemHrid, enhancementLevel, isSell, ownListingIds, ownPrice = null) {
             const cacheEntry = estimatedListingAge.orderBooksCache[itemHrid];
-            if (!cacheEntry) return null;
+            const bookUpdated = cacheEntry?.lastUpdated ?? null;
 
+            // When a fresh snapshot undercut overrode the price, its age is the
+            // snapshot's, not the stale book's — otherwise the column would read a
+            // just-seen price beside a days-old age
+            const beat = this._freshMarketBeat(itemHrid, enhancementLevel, isSell, ownPrice, bookUpdated);
+            if (beat) return typeof beat.timestamp === 'number' ? Math.max(0, Date.now() - beat.timestamp) : null;
+
+            if (!cacheEntry) return null;
             const orderBookData = cacheEntry.data || cacheEntry;
             if (!orderBookData || !orderBookData.orderBooks || orderBookData.orderBooks.length === 0) return null;
 
@@ -10344,7 +10399,14 @@
          * @returns {HTMLElement} Table cell element
          */
         createTopOrderPriceCell(itemHrid, enhancementLevel, isSell, price, priceCache, ownListingIds = new Set()) {
-            const topOrderPrice = this._getTopOrderPrice(itemHrid, enhancementLevel, isSell, priceCache, ownListingIds);
+            const topOrderPrice = this._getTopOrderPrice(
+                itemHrid,
+                enhancementLevel,
+                isSell,
+                priceCache,
+                ownListingIds,
+                price
+            );
             const lastUpdated = estimatedListingAge.orderBooksCache[itemHrid]?.lastUpdated ?? null;
 
             if (topOrderPrice === null || topOrderPrice === -1) {
@@ -10375,12 +10437,12 @@
          * @param {Set<number>} ownListingIds - User's own listing IDs to exclude
          * @returns {HTMLElement} Table cell element
          */
-        createTopOrderAgeCell(itemHrid, enhancementLevel, isSell, ownListingIds = new Set()) {
+        createTopOrderAgeCell(itemHrid, enhancementLevel, isSell, ownListingIds = new Set(), price = null) {
             const cacheEntry = estimatedListingAge.orderBooksCache[itemHrid];
             if (!cacheEntry) return createStyledCell('N/A', config.COLOR_TEXT_SECONDARY, { fontSize: '0.9em' });
 
             const lastUpdated = cacheEntry.lastUpdated;
-            const ageMs = this._getTopOrderAgeMs(itemHrid, enhancementLevel, isSell, ownListingIds);
+            const ageMs = this._getTopOrderAgeMs(itemHrid, enhancementLevel, isSell, ownListingIds, price);
 
             if (ageMs === null) return createStyledCell('N/A', config.COLOR_TEXT_SECONDARY, { fontSize: '0.9em' });
             if (ageMs === -1) return createStyledCell('None', '#00FF00', { fontSize: '0.9em' });

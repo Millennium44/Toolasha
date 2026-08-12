@@ -1,7 +1,7 @@
 /**
  * Toolasha Core Library
  * Core infrastructure and API clients
- * Version: 2.96.0
+ * Version: 2.96.1
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -9693,6 +9693,27 @@
                 ask: normalizeMarketPriceValue(price.a), // Sell price
                 bid: normalizeMarketPriceValue(price.b), // Buy price
             };
+        }
+
+        /**
+         * When the price this returns for an item was last known to be current, in ms
+         * since the epoch.
+         *
+         * A write-through patch (e.g. a Mooket refresh) carries its own time and wins
+         * when it is newer than the snapshot; otherwise the figure is as old as the
+         * whole `marketplace.json` feed. There is no per-item API timestamp — the feed
+         * is one snapshot — so this is the best "how fresh is this number" available.
+         *
+         * @param {string} itemHrid - Item
+         * @param {number} [enhancementLevel] - Enhancement level
+         * @returns {number|null} Milliseconds since epoch, or null when nothing is known
+         */
+        getPriceTimestamp(itemHrid, enhancementLevel = 0) {
+            const patch = this.pricePatchs[`${itemHrid}:${enhancementLevel}`];
+            if (patch && this.lastFetchTimestamp && patch.timestamp > this.lastFetchTimestamp) {
+                return patch.timestamp;
+            }
+            return this.lastFetchTimestamp || null;
         }
 
         /**
