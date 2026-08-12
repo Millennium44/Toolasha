@@ -2883,6 +2883,14 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## Upstream Changelog
 
+## [2.96.5](https://github.com/Millennium44/Toolasha/compare/v2.96.4...v2.96.5) (2026-08-12)
+
+
+### Build System
+
+* **userscript:** expand and tidy the author credit ([791f0ea](https://github.com/Millennium44/Toolasha/commit/791f0ea63cec53a47b8858c91ae2a0dd96f43659))
+* **userscript:** expand and tidy the author credit ([03471d6](https://github.com/Millennium44/Toolasha/commit/03471d67a0b76d5bc52090a0e1c59adf4b38af5a))
+
 ## [2.96.4](https://github.com/Millennium44/Toolasha/compare/v2.96.3...v2.96.4) (2026-08-12)
 
 ### Build System
