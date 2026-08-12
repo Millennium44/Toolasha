@@ -13,12 +13,12 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const settings = vi.hoisted(() => ({ market_pooledHistory: true }));
+const settings = vi.hoisted(() => ({ market_pooledHistory: true, market_historySource: 'mooket2' }));
 vi.mock('../../../core/config.js', () => ({
-    default: { getSetting: (key) => settings[key] === true },
+    default: { getSetting: (key) => settings[key] },
 }));
 
-const { default: marketHistoryAPI, HISTORY_HOST } = await import('./market-history-api.js');
+const { default: marketHistoryAPI, HISTORY_HOST, normaliseMooket1Rows } = await import('./market-history-api.js');
 
 /** Every socket this test opened, so "none" can be asserted */
 let sockets = [];
@@ -49,6 +49,7 @@ function on(hostname) {
 beforeEach(() => {
     sockets = [];
     settings.market_pooledHistory = true;
+    settings.market_historySource = 'mooket2';
     globalThis.WebSocket = FakeSocket;
     globalThis.WebSocket.OPEN = 1;
     marketHistoryAPI.socket = null;
@@ -77,6 +78,24 @@ describe('on the live server', () => {
         expect(JSON.parse(sockets[0].sent[0])).toMatchObject({
             marketItemOrderBooks: { '/items/cheese': {} },
         });
+    });
+
+    test('contribution follows the selected source', () => {
+        on('www.milkywayidle.com');
+
+        marketHistoryAPI.connect();
+        expect(sockets[0].url).toBe('wss://q7.nainai.eu.org/market/ws');
+
+        // Switch source and report: the old socket is dropped and a new one opens
+        // to the newly selected pool
+        settings.market_historySource = 'mooket1';
+        marketHistoryAPI.report({ marketItemOrderBooks: {} }); // closes the stale socket, reconnects
+        marketHistoryAPI.report({ marketItemOrderBooks: { '/items/cheese': {} } }); // sends to the new one
+
+        expect(sockets).toHaveLength(2);
+        expect(sockets[1].url).toBe('wss://mooket.qi-e.top/market/ws');
+        expect(sockets[0].sent).toHaveLength(0);
+        expect(sockets[1].sent).toHaveLength(1);
     });
 
     test('the switch being off still stops everything', () => {
@@ -146,5 +165,97 @@ describe('on the test server', () => {
         expect(rows).toEqual([{ time: 1, ask: 5 }]);
         expect(fetchMock).toHaveBeenCalledTimes(1);
         expect(fetchMock.mock.calls[0][0]).toContain('/api/market/history');
+    });
+});
+
+describe('history source', () => {
+    beforeEach(() => {
+        on('www.milkywayidle.com');
+    });
+
+    test('mooket II is the default and its rows pass through unchanged', async () => {
+        const rows = [{ a: 5, b: 4, p: 4.5, v: 10, time: 1 }];
+        const fetchMock = vi.fn(async () => ({ ok: true, json: async () => rows }));
+        globalThis.fetch = fetchMock;
+
+        const out = await marketHistoryAPI.fetchHistory('/items/cheese', 0, 7);
+
+        expect(fetchMock.mock.calls[0][0]).toContain('/api/market/history');
+        expect(out).toEqual(rows);
+        expect(marketHistoryAPI.currentSource()).toMatchObject({ key: 'mooket2', hasVolume: true, avgLabel: 'Avg' });
+    });
+
+    test('an unrecognised source setting falls back to the default', () => {
+        settings.market_historySource = 'no-such-pool';
+        expect(marketHistoryAPI.currentSource().key).toBe('mooket2');
+    });
+
+    test('mooket I reads its own endpoint and is folded into the common row shape', async () => {
+        settings.market_historySource = 'mooket1';
+        const payload = {
+            ask: [
+                { time: 1, price: 10 },
+                { time: 2, price: 12 },
+            ],
+            bid: [
+                { time: 1, price: 8 },
+                { time: 2, price: 9 },
+            ],
+        };
+        const fetchMock = vi.fn(async () => ({ ok: true, json: async () => payload }));
+        globalThis.fetch = fetchMock;
+
+        const out = await marketHistoryAPI.fetchHistory('/items/cheese', 0, 3);
+
+        const url = fetchMock.mock.calls[0][0];
+        expect(url).toContain('/market/item/history');
+        expect(url).toContain(`time=${3 * 86400}`);
+        expect(out).toEqual([
+            { a: 10, b: 8, p: 9, v: 0, time: 1 },
+            { a: 12, b: 9, p: 10.5, v: 0, time: 2 },
+        ]);
+        expect(marketHistoryAPI.currentSource()).toMatchObject({ key: 'mooket1', hasVolume: false, avgLabel: 'Mid' });
+    });
+});
+
+describe('normaliseMooket1Rows', () => {
+    test('folds ask/bid series into rows with a midpoint and zero volume', () => {
+        expect(normaliseMooket1Rows({ ask: [{ time: 1, price: 10 }], bid: [{ time: 1, price: 6 }] })).toEqual([
+            { a: 10, b: 6, p: 8, v: 0, time: 1 },
+        ]);
+    });
+
+    test('accepts the plural asks/bids key too', () => {
+        expect(normaliseMooket1Rows({ asks: [{ time: 2, price: 4 }], bids: [{ time: 2, price: 2 }] })).toEqual([
+            { a: 4, b: 2, p: 3, v: 0, time: 2 },
+        ]);
+    });
+
+    test('a non-positive side is -1, and the midpoint uses the side that is there', () => {
+        expect(normaliseMooket1Rows({ ask: [{ time: 1, price: 10 }], bid: [{ time: 1, price: -1 }] })).toEqual([
+            { a: 10, b: -1, p: 10, v: 0, time: 1 },
+        ]);
+    });
+
+    test('a moment with neither side quoted is dropped', () => {
+        expect(
+            normaliseMooket1Rows({
+                ask: [
+                    { time: 1, price: -1 },
+                    { time: 2, price: 5 },
+                ],
+                bid: [
+                    { time: 1, price: 0 },
+                    { time: 2, price: 5 },
+                ],
+            })
+        ).toEqual([{ a: 5, b: 5, p: 5, v: 0, time: 2 }]);
+    });
+
+    test('empty or malformed payloads produce no rows', () => {
+        expect(normaliseMooket1Rows(null)).toEqual([]);
+        expect(normaliseMooket1Rows({})).toEqual([]);
+        // A quote with no timestamp cannot be placed on the axis, so it is dropped
+        expect(normaliseMooket1Rows({ ask: [{ price: 5 }], bid: [{ price: 4 }] })).toEqual([]);
     });
 });

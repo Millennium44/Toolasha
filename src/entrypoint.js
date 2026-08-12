@@ -405,6 +405,13 @@ function registerFeatures() {
             async: true,
         },
         {
+            key: 'myListingsPriceRefresh',
+            name: 'My Listings Mooket Price Refresh',
+            category: 'Market',
+            module: Market.myListingsPriceRefresh,
+            async: false,
+        },
+        {
             key: 'queueLengthEstimator',
             name: 'Queue Length Estimator',
             category: 'Market',
