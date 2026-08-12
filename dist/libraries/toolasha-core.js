@@ -1,7 +1,7 @@
 /**
  * Toolasha Core Library
  * Core infrastructure and API clients
- * Version: 2.95.1
+ * Version: 2.96.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -2270,6 +2270,17 @@
                     default: false,
                     help: 'Adds a History tab to the marketplace: a floating chart of an item\u2019s ask, bid, average traded price and volume over the last day to six months, plus a row of pinned items. The game shows what an item costs now and nothing about what it cost before, which makes every price impossible to judge. The data comes from the pooled dataset the mooket project (by Q7, MIT) maintains at q7.nainai.eu.org. This talks to a third party in both directions and is off until you turn it on: it tells that server which items you look up, and it sends back the order books you open, which is where the history you read comes from \u2014 reading a pooled dataset without feeding it is what empties it.',
                 },
+                market_historySource: {
+                    id: 'market_historySource',
+                    label: 'Market: Price history data source',
+                    type: 'select',
+                    default: 'mooket2',
+                    options: [
+                        { value: 'mooket2', label: 'mooket II \u2014 Q7 (q7.nainai.eu.org)' },
+                        { value: 'mooket1', label: 'mooket I \u2014 IOMisaka (mooket.qi-e.top)' },
+                    ],
+                    help: 'Which pooled server the price history, the pinned-item prices and the My Listings "Mooket Refresh" read from \u2014 and, since you feed the pool you read, the one your opened order books are contributed back to. mooket II (the default) carries ask, bid, average traded price and volume. mooket I is a separate community pool: it carries only ask and bid, so on it the chart\u2019s third line is a computed midpoint of the quotes (shown as "Mid", not a real traded average), there are no volume bars, and the goal planner\u2019s market-volume limits switch off (it has no volume to measure). Both are third parties and both are governed by the switch above.',
+                },
                 market_showTopOrderAge: {
                     id: 'market_showTopOrderAge',
                     label: 'Market: Show top order age on My Listings',
@@ -2835,6 +2846,13 @@
                     max: 100,
                     step: 1,
                     help: 'Upper bound on a single room simulation, in simulated hours. Precision normally ends a run well before this; the ceiling stops a room near a coin toss from running forever',
+                },
+                combatSim_labyrinthFullAbilities: {
+                    id: 'combatSim_labyrinthFullAbilities',
+                    label: 'Labyrinth: Model full monster abilities in combat sim (testing)',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'The labyrinth builds each monster at difficulty tier 0, which drops every tier-gated ability — so a monster like the Cyclops is simulated as a bare auto-attacker with none of its stun, defence shred or self-buffs, and the sim over-predicts your clear chance (it fails in reality as roughly equal deaths and timeouts). With this on, the sim builds the monster with its full ability kit instead. Off by default while it is verified: turn it on, press Recompute, and compare the new clear chances against the Sim accuracy record. Expect combat rooms — especially high-level ones — to read lower and closer to what actually happens.',
                 },
                 labyrinthPathClearThreshold: {
                     id: 'labyrinthPathClearThreshold',

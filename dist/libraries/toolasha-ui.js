@@ -1,11 +1,11 @@
 /**
  * Toolasha UI Library
  * UI enhancements, tasks, skills, and misc features
- * Version: 2.95.1
+ * Version: 2.96.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, dataManager, domObserver, formatters_js, timerRegistry_js, domObserverHelpers_js, dom_js, storage, panelZIndex_js, floatingPanel_js, panelGeometry_js, characterKey_js, overlayRows_js, opanelConfig_js, choiceDialog_js, mobile_js, overlayLayout_js, settingsSchema_js, toast_js, bundleBridge_js, houseCostCalculator, overlayFormat_js, marketplaceTabs_js, marketData_js, roomSkills_js, marketAPI, numberParser_js, pricingHelper_js, webSocketHook, simplePanel_js, damageAttribution_js, combatDPS, combatStatsDataCollector, combatStatsCalculator_js, damageTracker_js, damageTakenTracker_js, battlePanelMonsters_js, spawnExpectation_js, combatDropModel_js, allZonesSnapshot_js, partyLint_js, csvExport_js, itemNavigation_js, efficiency_js, guildCreditPricing_js, adoptionConsent_js, gameText_js, performanceMonitor, backgroundWork_js, profileCommand_js, selectors_js, progressEta_js, gameServer_js, reactInput_js, actionPanelHelper_js, expectedValueCalculator, gatheringProfit_js, productionProfit_js, profitHelpers_js, actionCalculator_js, equipmentParser_js, profitConstants_js, combatSimRunner_js, combatSimAdapter_js, assetManifest, gameLookups_js, chunkedHistory_js, skillProgress_js, skillHistory_js, deferredLoad_js, combatLevel_js, experienceParser_js, dropLuck_js, marketplaceAutofill_js, cleanupRegistry_js, settingsStorage, scrollBuffValues_js, enhancementConfig_js, chestTally_js, chestImport_js, tokenValuation_js, customPriceOverrides_js, materialCalculator_js, alchemyFees_js, enhancementCalculator_js, teaParser_js, combatSimUI, tableColumns_js, consumableTarget_js, consumableForecast_js, keyLedger_js, orderBook_js, shoppingList_js, alchemyProfitCalculator, buffParser_js) {
+(function (config, dataManager, domObserver, formatters_js, timerRegistry_js, domObserverHelpers_js, dom_js, storage, panelZIndex_js, floatingPanel_js, panelGeometry_js, characterKey_js, overlayRows_js, opanelConfig_js, choiceDialog_js, mobile_js, overlayLayout_js, settingsSchema_js, toast_js, bundleBridge_js, houseCostCalculator, overlayFormat_js, marketplaceTabs_js, marketData_js, roomSkills_js, marketAPI, numberParser_js, pricingHelper_js, webSocketHook, simplePanel_js, damageAttribution_js, combatDPS, combatStatsDataCollector, combatStatsCalculator_js, damageTracker_js, damageTakenTracker_js, battlePanelMonsters_js, spawnExpectation_js, combatDropModel_js, allZonesSnapshot_js, partyLint_js, csvExport_js, itemNavigation_js, efficiency_js, guildCreditPricing_js, adoptionConsent_js, gameText_js, performanceMonitor, backgroundWork_js, profileCommand_js, selectors_js, progressEta_js, gameServer_js, reactInput_js, actionPanelHelper_js, expectedValueCalculator, gatheringProfit_js, productionProfit_js, profitHelpers_js, actionCalculator_js, equipmentParser_js, profitConstants_js, combatSimRunner_js, combatSimAdapter_js, assetManifest, gameLookups_js, chunkedHistory_js, skillProgress_js, skillHistory_js, deferredLoad_js, combatLevel_js, experienceParser_js, dropLuck_js, marketplaceAutofill_js, cleanupRegistry_js, settingsStorage, scrollBuffValues_js, enhancementConfig_js, chestTally_js, chestImport_js, tokenValuation_js, customPriceOverrides_js, materialCalculator_js, alchemyFees_js, enhancementCalculator_js, teaParser_js, combatSimUI, tableColumns_js, marketHistoryAPI, marketHistoryData_js, consumableTarget_js, consumableForecast_js, keyLedger_js, orderBook_js, shoppingList_js, alchemyProfitCalculator, buffParser_js) {
     'use strict';
 
     function _interopNamespaceDefault(e) {
@@ -58211,7 +58211,7 @@ ${starCSS}
         return overrides;
     }
 
-    var forkChangelog = "## Unreleased — branch `claude/new-session-s8abcv`\n\n### Custom Tabs: an enhanced item is no longer double-counted in Unorganized\n\nAn enhanced item is tracked under both its base and its `+level` key, so an unassigned one was collected through both — inflating the \"Unorganized (N)\" count and placing the tile twice. A shared, deduped collector (each physical tile once) now backs both the header count and the lightweight visibility pass (ported from upstream Celasha/Toolasha#627).\n\n### Custom Tabs action buttons heal when the sort-controls row is removed\n\nThe +Tab/Export/Import/Expand group is merged into the game's inventory sort-controls row and isn't tracked with the other injected elements, so when the InventorySort feature removed that row the buttons vanished and didn't return. A direct connectivity check now forces a rebuild when they disconnect (ported from upstream Celasha/Toolasha#632).\n\n### Estimated listing age: a null price no longer suppresses a match\n\nTwo \"your listings beyond the top 20\" match sites used a parsed price without checking for `null` (which the parser returns on empty/invalid text). A null coerces to 0 in the price comparison and can hide a correct match; both sites now skip the row instead (ported from upstream Celasha/Toolasha 2.85.0).\n\n### Character switches are serialized, so rapid switching no longer bleeds settings\n\nA rapid character switch could drop a re-init (leaving the previous character's per-character settings applied) or start a rebuild before the last character's teardown finished. The switch lifecycle now runs through one serialized chain, and each re-init verifies it is still for the current character before it applies — latest character wins, nothing dropped or overlapped (ported from upstream Celasha/Toolasha#622).\n\n### Action Filter's pricing mode resyncs after a character switch\n\nThe persistent Action Filter never re-initializes, and a character switch skips the per-key change callbacks (the cache is cleared first), so its mode/craft buttons and profit rows could keep the previous character's pricing mode. A new `config.onSettingsLoaded` channel fires whenever settings finish loading, so the filter resyncs (ported from upstream Celasha/Toolasha#630).\n\n### The Unorganized tab no longer vanishes mid-character-switch\n\nThe Custom Tabs \"Unorganized\" bucket was gated on `getSettingValue`, which reads `null` while the per-character cache is briefly empty during a switch — hiding the section until it reloaded. It now reads `getSetting`, which falls back to the schema default (ported from upstream Celasha/Toolasha#636).\n\n### Action-bar display no longer risks freezing the tab on a character switch\n\n`setupActionNameObserver` now disconnects any running observer before replacing it, so a character switch can't leak a duplicate watcher that loops on the stats span and freezes the tab (ported from upstream Celasha/Toolasha#623).\n\n### The Sort Tasks button sorts even with a reroll menu open\n\nA direct press now sorts the board immediately, mid-reroll and all. The automatic passes (auto-sort, sort-after-read) still wait for the board to settle so they never yank a pending click.\n\n### The protected/cap task border keeps up again\n\nIt is redrawn right away on a card that is mid-reroll (it used to wait for the menu to close, so the edge looked stuck until you pressed Back), and painted the instant the board opens instead of after a 150 ms delay.\n\n### The task bulk-reroll button is removed\n\nThe game only honours a reroll from a real click that opens the menu, which a userscript can't fake — so the button never worked unless you opened the menu by hand first. Reroll protection and the 🛡️ cap/per-task guards are untouched.\n\n### In Progress payout: leaner, plus a Roster button\n\nDrops the token gold valuation and the \"No Treasury level seen\" nag from the In Progress tab (both kept on the Trials tab), and adds a Roster button that opens the guild roster panel.\n\n### Skilling In Progress panel no longer squashes the game's card off-screen\n\nInjected payout/analysis blocks now take a full-width line above and below the roster+card row instead of shrinking the game's own skilling card to a sliver beside them.\n\n### Skilling trials: no flat projection once slowing is measured, and timestamped readings\n\nDrops the misleadingly-high \"On pace (flat)\" tier once a slowdown is known (it survives in the tooltip), and keeps a downsampled timestamped reading series in the export so the tier forecast can be checked against what was banked.\n\n### Trial scoreboard: honest damage-taken label, and a runaway split is flagged\n\nDamage taken is now labelled pre- vs post-mitigation (the live stream can only read the latter), and a per-player damage split that runs past the bosses' combined health is flagged as over-attributing.\n\n### Dev builds install over a same-numbered release\n\nThe dev build now appends its build timestamp as a fourth version segment, so a reinstall always takes even when the release number hasn't changed.\n\n### Scrolls in the Combat Simulator\n\nThe sim and Upgrade advisor now carry the seven Labyrinth combat scrolls (Damage, Attack Speed, Cast Speed, Critical Rate, Combat Drop, Wisdom, Rare Find): a Scrolls section on Configure to sim with them, and a Scrolls mode on Upgrade to measure what each is worth.\n\n";
+    var forkChangelog = "## Unreleased — branch `claude/new-session-s8abcv`\n\n### Labyrinth: the calibration recorder is now passive and accumulates across runs\n\nThe labyrinth hands out random rooms and only lets you fight one again by failing it, so \"record five fights of the same room\" was never really possible. The recorder no longer asks you to. There's no Record button any more — **every combat fight is kept automatically**, across runs and page reloads, and the monsters you meet often build up their sample over time. Press **Replay** whenever you're curious and it judges whatever has accumulated.\n\n- **Passive + persistent.** Fights are saved to a per-character store (the labyrinth store, alongside the sim cache) as you play. The **Replay** button shows the count on your current gear — `Replay (37)` — and when nothing has enough attempts yet it says how much is piling up (\"12 fights recorded on this gear over 3 monsters, none with enough yet\").\n- **Gear-fingerprinted.** Each fight is tagged with the gear it was fought in, and Replay pools only the fights matching what you're wearing now — so a loadout change starts a fresh comparison instead of mixing fights against a different character, mirroring how the accuracy record already invalidates on gear changes.\n- **Levels are bucketed.** Since a monster shows up at scattered levels across random runs, fights are pooled into 10-level bands (e.g. \"Cyclops · lvl 245–254\") and each band is re-simulated at its median level, so a monster you see often reaches a verdict even though its exact level rarely repeats.\n- Bounded to 500 fights, oldest dropped — many runs of history.\n\n### Labyrinth: a fight recorder and a calibration replay\n\nThe Sim accuracy record tells you _whether_ a room's clear chance is wrong; it can't tell you _why_ — a room that times out and a room that kills you are both \"lost\", and the fix for each is the opposite. This adds the decomposition, as two new controls in the Room Logs toolbar.\n\n- **Record** arms a calibration recorder. It captures each labyrinth fight's damage exchange — how much of the monster you destroyed, how much health you lost, and how long it took — off the same fight boundaries the room log already detects (the labyrinth never emits `new_battle`, so the normal combat recorder can't do this). It records per attempt rather than per tick: the labyrinth gives no food or drink (the sim agrees, nulling both), so each side's health only falls and the endpoints are enough to measure a rate. Bounded to 400 attempts.\n- **Replay** re-simulates the recorded rooms with your current loadout and puts your real damage rate and the monster's beside the sim's, per room. It reports four figures — your damage/s, the monster's damage/s, the clear rate and the fight length — each with a noise-aware verdict, and reads them into one sentence: _\"Sim over-credits your damage\"_ (real fights kill slower → more timeouts), _\"Sim under-models the monster's damage\"_ (you die faster than predicted → more deaths), or both. This is the missing diagnostic for the high-level Cyclops case, where the clear chance reads far above what the room delivers but the record alone can't say which side of the exchange is off.\n- **Save comparison** downloads the recorded attempts _together with_ the replay comparison — observed vs sim for each rate, plus the verdict and diagnosis — so a single file is the whole accuracy check rather than only the raw fights.\n- **Self-healing monsters no longer split one fight into several.** The fight-boundary detector (used by both the Room Logs recorder and the live attempt-bar estimate) treated _any_ rise in the monster's health as a fresh monster spawning. But a monster with life drain, guardian aura or a heal — the Dryad, among others — nudges its own health up mid-fight, and every nudge was read as a new attempt, chopping one real fight into pieces that each started at whatever low health the split landed on (wrong short durations, absurd start-HP, and the old \"cleared in 4.5s\" phantoms). The detector now counts a health rise as a new fight only when it's the jump from low back to full that a spawn makes, not the small bump a self-heal gives. This corrupted recorded fights and the live clear-chance readout on every self-healing monster.\n- **Observed damage is now measured gross, not net of your regen.** The recorder read each side's damage off the fight's endpoints — where the health bar ended versus where it began — which quietly subtracts everything that regenerated during the fight. You regenerate through a labyrinth fight (measured ~16 HP/s in one high-level room), and the sim reports damage **gross** (every hit, before healing), so comparing the two made the monster's damage look 15–40% below the sim's — a phantom \"sim over-models the monster\" on every regen-heavy room. The recorder now sums the health that actually fell tick by tick and stores that gross figure; the replay uses it (older recordings without it fall back to the endpoints). In one Salamander room this moved observed monster damage from 49/s (net) to ~68/s (gross) against a 59/s sim — i.e. the sim was slightly _under_, not 17% over. Your DPS and the clear rate were never affected.\n- The replay's one-line diagnosis now names **all four** directions, not just two: your damage over- or under-credited, and the monster's damage under- **or over**-modelled. A room where the sim thinks the monster hits harder than it really does (observed monster-damage rate below the sim's, beyond noise) used to fall through to \"within noise\" because only the \"hits harder\" direction was handled — it now reads \"Sim over-models the monster's damage: it hits softer than predicted…\", which is exactly the high-level Pyre Hunter case.\n- **Capture** records the raw combat feed of a fight — the tick-by-tick health/mana/counter stream the endpoints don't keep — and downloads it. That's the detail behind _why_ a rate is off: how often your attack counter stalls (stun uptime), how often the monster casts (ability cadence), and how much each hit lands for. Start it, fight the room, stop to save the file. It was previously only reachable from the console (`Toolasha.Debug.captureLab`); now it's a button. Bounded to 8000 ticks (tens of fights) and self-stops after 15 minutes so an armed capture can't run away.\n- The **Capture** file now labels itself. It used to save `context: null` when the labyrinth grid wasn't loaded at the moment you pressed the button; it now reads the monster straight off the fight's own feed, and takes the room level from the active fight, so a capture always says what it is.\n- The replay now **drops any fight it did not see from full health** — a fight you walked into already hurt, or one the recorder joined mid-way. The sim always fights from full, so a partial-HP fight has no equivalent in it, and its short length would skew the rates. (Retries in one room reset you to full, so a low start reliably marks a partial fight, not ordinary play.)\n- Keep your loadout unchanged between Record and Replay — the replay re-sims against the gear you're wearing now, so a gear change in between compares against the wrong character. Needs a handful of clean attempts on a room before it will replay it.\n\n### Labyrinth: full-ability sim calibration (testing), tooltip clear-time, tidier panel bar\n\n- **Full monster abilities in the combat sim (testing setting).** The labyrinth builds every monster at difficulty tier 0, and the engine drops any ability gated above tier 0 — so a monster like the Cyclops is simulated as a bare auto-attacker with none of its stun, defence shred or self-buffs, and the sim over-predicts your clear chance (the fights then fail in reality as roughly equal deaths and timeouts, worsening as the room level climbs). A new **Labyrinth: Model full monster abilities in combat sim (testing)** setting builds the monster with its full kit instead, keeping tier 0 only for stat scaling. Off by default while it's verified: turn it on, press Recompute, and compare the new clear chances against the Sim accuracy record — combat rooms, especially high-level ones, should read lower and closer to what actually happens. The setting is part of the sim cache key, so toggling it re-sims rather than serving a stale result.\n- **Expected clear time on hover, uncapped.** The room tile badge caps its time at \"999+\", which hides how long a slow room really takes. The combat and skilling room hover previews now carry an **Est. clear time** line with the real figure (e.g. \"18m 15s\", \"1h 5m\"), or \"—\" for a room that never clears.\n- **Tidier Room Logs top bar.** The header wraps gracefully instead of squashing, button labels no longer break mid-word, and the \"Sim accuracy\" tab is shortened to \"Accuracy\" so the tabs and the Uncapped/Recompute/Export/Clear controls fit.\n\n### Labyrinth: stop counting un-fought rooms as clears, and an uncapped sim option\n\n- **Phantom clears removed from the accuracy record.** A revealed tile can be cleared without a fight — a shroud, a beacon, a floor skip — and the server marks it `isCleared` with `entryCount` still zero. The accuracy fold counted that as a win, booking phantom `1/1` clears at levels far above anything you could actually clear (e.g. a level-231 milking room on a level-116 skill) and dragging the whole record toward \"sim too low\". A clear now only counts for a room you actually entered — the same guard the best-level tracker already applies. (Tradeoff: a genuine first-try win whose entry update was never separately seen no longer counts, which the best-level tracker already accepted; it removes far more noise than it costs.)\n- **Uncapped sim option.** A slow, timeout-heavy room (a hard combat tile) stops its sim on the simulated-hours budget long before it pins the rate down, so its clear chance reads \"(capped)\" with a wide band. A new **Uncapped** toggle in the Room Logs toolbar lifts that time cap for the next **Recompute**, so each room runs to its precision target instead (still bounded by the 20,000-trial backstop, so it can't run forever). More precise but slower, so it's an opt-in toggle rather than the default. Note this tightens the band around the sim's estimate — it does not fix a sim that is _biased_ (e.g. high-level Cyclops, where the model itself over-predicts survival).\n\n### Labyrinth: Recompute button, honest attempt counts, and a panel that stays put\n\nThree fixes to the Labyrinth sim/room-logs panel:\n\n- **Recompute button.** The combat-sim cache is keyed by loadout id, not gear contents, so a plain equip the game doesn't surface as a loadout update can leave a room's clear-chance sim cached under gear you no longer wear — and even \"Calculate Labyrinth\" reuses it (it skips rooms with a cached result). A new **Recompute** button in the Room Logs panel throws away every cached sim and simulates the visible rooms again, so a stale \"cached Nh ago\" figure can be forced fresh after a gear change.\n- **Room Log stops under-reporting attempts.** Win/death/timeout is only classified from live battle data, which the game streams only while you're on the combat view — so a run spent on other tabs showed e.g. \"Won 0/6\" on attempt 29. The panel now shows the server's own attempt count (which counts every attempt regardless of view): \"Won 0/6 · 26 total\", or \"26 attempts, none watched\" when no fights were seen. The died/timed-out breakdown still speaks only for the watched subset, since that's all it can.\n- **Panel no longer jumps to the top.** The Room Logs / Sim-accuracy list rebuilt itself on every experience/labyrinth update — several times a second during a fight — and reset its scroll each time, making it unreadable while open. It now preserves the scroll position across redraws (a tab switch still starts at the top).\n\n### Undercut alerts finally fire passively, backed by Mooket\n\nThe undercut alert refuses to trust a market price older than 15 minutes — but the only price it had for an item you hadn't just opened was the game's `marketplace.json` snapshot, which refreshes only ~once an hour. So for anything you weren't actively watching, the figure proving you'd been undercut was itself too old to count, and the alert stayed silent — an undercut could sit for hours (a buy order outbid for 8h+ was the case that surfaced this) with nothing said. The alert now also consults the newest **Mooket** sighting for each of your active listings, refreshed on the same 15-minute tick (and once at login). A pooled sighting is usually minutes old, so it clears the evidence bar the hourly snapshot can't, and the alert can fire for items you never opened. It compares the freshest of the two sources per side and reports that source's **true** age, so \"as of ~3m ago\" stays honest; a sighting that's itself older than 15 minutes still proves nothing. Requires the **Market: Price history panel** setting (that's what authorises the pooled lookups); off, the alert behaves exactly as before.\n\n### Selectable price-history source: mooket I alongside mooket II\n\nThe price history, the pinned-item prices and the My Listings \"Mooket Refresh\" all read from a pooled community server, and there are two of them — the Q7 pool (mooket II, `q7.nainai.eu.org`) Toolasha already used, and IOMisaka's original mooket pool (mooket I, `mooket.qi-e.top`). A new **Market: Price history data source** setting picks between them. Both are normalised to one internal shape, so the chart, the refresh button and the goal planner all read whichever you choose.\n\nThe two pools carry different data, and the UI adapts honestly rather than pretending they're identical:\n\n- **mooket II** (default) carries ask, bid, average _traded_ price and volume — the full chart, unchanged.\n- **mooket I** carries only ask and bid. On it, the chart's third line is a **computed midpoint of the quotes, labelled \"Mid\"** (not a real traded average), the **volume bars and volume axis disappear** (there's nothing to draw), and the tooltip's buy/sell volume split is suppressed. Critically, the **goal planner's market-volume limits switch off** on mooket I: a source with no volume tells us nothing about how fast a thing sells, which is _unknown_, not a measured zero — treating its silence as zero would have wrongly crushed every gold rate to nothing the moment you switched sources.\n\nBoth sources are third parties governed by the existing `Market: Price history panel` switch. You feed the pool you read: the order books you contribute back now follow the selected source — switching source closes the reporting socket to the old pool and reopens it to the new one (both accept the same message on the same `/market/ws` path).\n\n### \"Mooket Refresh\" button on the My Listings tab\n\nThe game's `marketplace.json` feed refreshes only about once an hour at no fixed minute, so the Top Order Price column on My Listings can sit most of an hour behind the real book with nothing in the number to say so. A new **Mooket Refresh** button in the My Listings header bar (next to Upgrade Capacity / Refresh Next) pulls fresher prices for every item you have listed in one click: it walks your listed items, asks the pooled Mooket dataset for each one's newest sighting, and patches the fresher ones into the same price cache the Top Order Price column already redraws from — so the column updates to Mooket's current numbers without opening each item by hand. A sighting older than the game's own snapshot is left alone rather than stamped as current (a rarely-opened item can be staler in the pool than in the snapshot), and a one-sided sighting keeps the other side's known price rather than blanking it. Reads the same third-party server as the price history panel, so it rides the existing `Market: Price history panel` (`market_pooledHistory`) switch and does nothing until that is on.\n\n### My Listings' Top Order Price refreshes when the market moves\n\nThe Top Order Price column on the My Listings tab only redrew when your own listings changed (or, with the age column on, when you re-opened an item's order book), so an undercut fired an alert but left the column showing the stale price. It now subscribes to the same market-data updates the undercut alert uses — a marketplace snapshot refresh or an order-book price patch redraws the column (debounced), so being undercut turns the price red here too.\n\n### Custom Tabs: an enhanced item is no longer double-counted in Unorganized\n\nAn enhanced item is tracked under both its base and its `+level` key, so an unassigned one was collected through both — inflating the \"Unorganized (N)\" count and placing the tile twice. A shared, deduped collector (each physical tile once) now backs both the header count and the lightweight visibility pass (ported from upstream Celasha/Toolasha#627).\n\n### Custom Tabs action buttons heal when the sort-controls row is removed\n\nThe +Tab/Export/Import/Expand group is merged into the game's inventory sort-controls row and isn't tracked with the other injected elements, so when the InventorySort feature removed that row the buttons vanished and didn't return. A direct connectivity check now forces a rebuild when they disconnect (ported from upstream Celasha/Toolasha#632).\n\n### Estimated listing age: a null price no longer suppresses a match\n\nTwo \"your listings beyond the top 20\" match sites used a parsed price without checking for `null` (which the parser returns on empty/invalid text). A null coerces to 0 in the price comparison and can hide a correct match; both sites now skip the row instead (ported from upstream Celasha/Toolasha 2.85.0).\n\n### Character switches are serialized, so rapid switching no longer bleeds settings\n\nA rapid character switch could drop a re-init (leaving the previous character's per-character settings applied) or start a rebuild before the last character's teardown finished. The switch lifecycle now runs through one serialized chain, and each re-init verifies it is still for the current character before it applies — latest character wins, nothing dropped or overlapped (ported from upstream Celasha/Toolasha#622).\n\n### Action Filter's pricing mode resyncs after a character switch\n\nThe persistent Action Filter never re-initializes, and a character switch skips the per-key change callbacks (the cache is cleared first), so its mode/craft buttons and profit rows could keep the previous character's pricing mode. A new `config.onSettingsLoaded` channel fires whenever settings finish loading, so the filter resyncs (ported from upstream Celasha/Toolasha#630).\n\n### The Unorganized tab no longer vanishes mid-character-switch\n\nThe Custom Tabs \"Unorganized\" bucket was gated on `getSettingValue`, which reads `null` while the per-character cache is briefly empty during a switch — hiding the section until it reloaded. It now reads `getSetting`, which falls back to the schema default (ported from upstream Celasha/Toolasha#636).\n\n### Action-bar display no longer risks freezing the tab on a character switch\n\n`setupActionNameObserver` now disconnects any running observer before replacing it, so a character switch can't leak a duplicate watcher that loops on the stats span and freezes the tab (ported from upstream Celasha/Toolasha#623).\n\n### The Sort Tasks button sorts even with a reroll menu open\n\nA direct press now sorts the board immediately, mid-reroll and all. The automatic passes (auto-sort, sort-after-read) still wait for the board to settle so they never yank a pending click.\n\n### The protected/cap task border keeps up again\n\nIt is redrawn right away on a card that is mid-reroll (it used to wait for the menu to close, so the edge looked stuck until you pressed Back), and painted the instant the board opens instead of after a 150 ms delay.\n\n### The task bulk-reroll button is removed\n\nThe game only honours a reroll from a real click that opens the menu, which a userscript can't fake — so the button never worked unless you opened the menu by hand first. Reroll protection and the 🛡️ cap/per-task guards are untouched.\n\n### In ";
 
     var forkOverview = "This is the **Millennium44 fork of Toolasha**. It folds MWI Combat Suite into Toolasha — live DPS tracking, loot and drop tracking, drop-luck analysis, and a full labyrinth simulator — so one script gives you both halves of the game instead of two userscripts.\n\n### Combat & simulators\n\n- Live DPS, hit/crit rate, damage-taken and net-sustain read off your own fights.\n- Loot and drop tracking with drop-luck analysis that judges combat, gathering and production.\n- A combat recorder: record real fights, replay them against the simulator, get a verdict with honest noise bands.\n- A combat simulator whose upgrade picks are costed and ranked on real market and credit costs.\n- Per-character combat stats, sim state and histories — no character reads another's books.\n\n### Market & profit\n\n- One market price API prices almost everything: upgrades, net worth, drop income, guild tokens, every action.\n- Prices capped by the volume the market has actually absorbed, so thin markets stop inflating rankings.\n- Profit lines on the action bar, pinned pages, alchemy rankings and the combat profit panel.\n- Market-history viewer with a live undercut alert that re-checks against a refreshed snapshot.\n- An upgrade advisor that costs and ranks gear and ability candidates against live prices.\n\n### Labyrinth\n\n- A labyrinth simulator with auto-pathing and auto-beaconing planned from the actual run.\n- Multi-target analysis with combined armour swaps and supply-aware torch/shroud/beacon planning.\n- Skilling-sim candidates scoped to the skill you are simming, with the skip level set for you.\n- Upgrade, All-Fights and Skilling analyses, each exportable to CSV.\n\n### Guild\n\n- Live trial measurement: per-player DPS and damage/healing attribution from the fight you watch.\n- Tier read straight off the boss bar, with pace, ETA and payout maths.\n- A trial report your guild can actually read, with honest coverage caveats.\n\n### Quality of life\n\n- A curated overlay of tiles with bundled presets, activity auto-switching, and tiles that open their panels.\n- A Ctrl+K (Cmd+K) command palette over every panel, overlay row, saved layout and setting.\n- Mobile-friendly panels: viewport clamping, reachable close buttons, finger-sized targets, a floating launcher.\n- Notifications for empty queues, community-buff expiry, and finished labyrinth runs.\n- Task tools: measured tokens/hour, net task income, and reroll handling that takes the free MooPass reroll.\n- Equipment Savings (\"eWatch\"): savings goals for gear and ability levels, fed from the simulators.\n- A goal planner that turns \"get me X gold / level N\" into a ranked plan from your real measured rates.\n\n### Data & sync\n\n- Cross-device sync of your whole database through one private GitHub gist you own.\n- Gzip-compressed, optionally AES-256 encrypted, conflict-aware, guarded against overwriting a year of data.\n- Chunked per-period history that survives months, with honest quota handling and per-character backups.\n- Hundreds of bug fixes and a test suite grown from ~2,300 to over 8,500 tests.\n";
 
@@ -72402,12 +72402,19 @@ ${starCSS}
      * Your side is the game's own `myMarketListings`, kept current by the data
      * manager on every `market_listings_updated`; only listings the server calls
      * active are compared, because a filled or cancelled listing has no price to
-     * defend. The market's side is the marketplace API cache — the API snapshot
-     * patched by any order book you have opened since — which is honest about one
-     * thing this feature must be honest about too: it can be up to fifteen minutes
-     * old. So every message carries the age of the figure it used, a figure older
-     * than the cache's own validity window proves nothing and fires nothing, and an
-     * item with no cached price at all is unknown rather than undercut.
+     * defend. The market's side is the freshest of two figures: the marketplace API
+     * cache — the API snapshot patched by any order book you have opened since — and,
+     * when the price history panel is on, the newest sighting of the item in the
+     * pooled Mooket dataset. That second source is what makes the alert work
+     * passively: the game's `marketplace.json` refreshes only about once an hour, so
+     * for an item you have not opened its snapshot is usually older than the fifteen
+     * minutes a figure is allowed to be and still count — the undercut is real but
+     * unprovable, and the alert stays silent. A Mooket sighting is typically minutes
+     * old, so it clears that bar.
+     *
+     * Every message carries the true age of whichever figure it used, a figure older
+     * than the fifteen-minute window proves nothing and fires nothing, and an item
+     * neither source can price is unknown rather than undercut.
      *
      * ## Repeats
      *
@@ -72424,19 +72431,46 @@ ${starCSS}
     /** Master switch; nothing below it is consulted while this is off */
     const MASTER_SETTING = 'notifications_marketListingUndercut';
 
+    /** Reading the pooled dataset is what authorises the fresher Mooket lookups */
+    const POOLED_HISTORY_SETTING = 'market_pooledHistory';
+
     /** The status HRID the server puts on a listing that is still on the board */
     const ACTIVE_STATUS = '/market_listing_status/active';
+
+    /** Kept low so refreshing a long listing list does not burst the third-party server */
+    const MOOKET_CONCURRENCY = 4;
+
+    /**
+     * Run an async worker over items with a bounded number in flight at once.
+     * @param {Array<any>} items - Work items
+     * @param {number} limit - Maximum concurrent workers
+     * @param {(item: any) => Promise<void>} worker - Per-item work
+     * @returns {Promise<void>}
+     */
+    async function runPool(items, limit, worker) {
+        const queue = [...items];
+        const runners = Array.from({ length: Math.min(limit, queue.length) }, async () => {
+            while (queue.length) {
+                await worker(queue.shift());
+            }
+        });
+        await Promise.all(runners);
+    }
 
     class MarketUndercutAlerts {
         constructor() {
             /** listingId → {armed, price}; price so an edit is seen as a fresh start */
             this.listingStates = new Map();
+            /** `itemHrid:level` → {ask, bid, timestamp}; the newest Mooket sighting held */
+            this.mooketObservations = new Map();
             this.unregisterHandlers = [];
             this.characterSwitchingHandler = null;
             /** Holds the active-refresh interval so cleanup can clear it */
             this.timers = timerRegistry_js.createTimerRegistry();
             /** True while a forced refresh is in flight, so an overlapping tick is skipped */
             this.refreshInFlight = false;
+            /** True while a Mooket refresh is in flight, so an overlapping tick is skipped */
+            this.mooketRefreshInFlight = false;
         }
 
         /**
@@ -72474,6 +72508,9 @@ ${starCSS}
             dataManager.on('character_switching', this.characterSwitchingHandler);
 
             this.startActiveRefresh();
+            // Seed the Mooket figures now rather than waiting a whole cache window,
+            // so an item already undercut at login can be caught on the first look
+            this.refreshMooketObservations();
         }
 
         /**
@@ -72498,8 +72535,69 @@ ${starCSS}
         startActiveRefresh() {
             const intervalId = setInterval(() => {
                 this.refreshSnapshot();
+                this.refreshMooketObservations();
             }, marketAPI.CACHE_DURATION);
             this.timers.registerInterval(intervalId);
+        }
+
+        /**
+         * Pull each active listing's newest Mooket sighting into the local cache.
+         *
+         * Only when the price history panel is on — that switch is what authorises
+         * talking to the third-party pool at all. The lookups are the same cache in
+         * front of the same server the history chart uses (a five-minute TTL), so a
+         * fifteen-minute tick mostly reuses what is already held; the point is a price
+         * fresh enough to clear the fifteen-minute evidence bar the game's hourly
+         * snapshot cannot. Skips its own overlapping ticks, and re-runs the check once
+         * with whatever it learned.
+         *
+         * @returns {Promise<void>}
+         */
+        async refreshMooketObservations() {
+            if (!config.getSetting(POOLED_HISTORY_SETTING)) return;
+            if (this.mooketRefreshInFlight) return;
+
+            const items = this.distinctActiveItems();
+            if (!items.length) return;
+
+            this.mooketRefreshInFlight = true;
+            let learned = false;
+            try {
+                await runPool(items, MOOKET_CONCURRENCY, async (item) => {
+                    try {
+                        const rows = await marketHistoryAPI.fetchHistory(item.itemHrid, item.enhancementLevel, 1);
+                        const sighting = marketHistoryData_js.freshestSighting(rows);
+                        if (!sighting || (sighting.ask === null && sighting.bid === null)) return;
+                        this.mooketObservations.set(`${item.itemHrid}:${item.enhancementLevel}`, {
+                            ask: sighting.ask,
+                            bid: sighting.bid,
+                            timestamp: sighting.time,
+                        });
+                        learned = true;
+                    } catch (error) {
+                        console.error('[MarketUndercutAlerts] Mooket lookup failed:', item.itemHrid, error);
+                    }
+                });
+            } finally {
+                this.mooketRefreshInFlight = false;
+            }
+
+            if (learned) this.check();
+        }
+
+        /**
+         * The distinct items behind your active listings.
+         * @returns {Array<{itemHrid: string, enhancementLevel: number}>}
+         */
+        distinctActiveItems() {
+            const byKey = new Map();
+            for (const listing of dataManager.getMarketListings()) {
+                if (listing?.status !== ACTIVE_STATUS || !listing.itemHrid) continue;
+                const enhancementLevel = listing.enhancementLevel || 0;
+                const key = `${listing.itemHrid}:${enhancementLevel}`;
+                if (!byKey.has(key)) byKey.set(key, { itemHrid: listing.itemHrid, enhancementLevel });
+            }
+            return [...byKey.values()];
         }
 
         /**
@@ -72526,33 +72624,51 @@ ${starCSS}
         }
 
         /**
-         * The cached market figure for an item, dated.
+         * The freshest dated figure for the one side of an item that matters, across
+         * both sources.
          *
-         * `getPrice` prefers an order-book patch over the API snapshot when the
-         * patch is fresher, but returns only the prices — so the same choice is
-         * mirrored here to recover the timestamp of whichever source it used. An
-         * observation that cannot be dated is returned as no observation at all:
-         * a figure of unknown age cannot honestly be called evidence.
+         * A sell listing is defended against the best ask, a buy order against the
+         * best bid, so only that side is considered — and a source that does not quote
+         * it (an empty book, a Mooket sighting with no bids) contributes nothing even
+         * when it is the newest. Of the sources that do quote the side, the newest
+         * wins, carrying its own true timestamp so the message's age stays honest.
+         *
+         * The game figure mirrors `getPrice`'s own choice between the API snapshot and
+         * a fresher order-book patch, to recover the right timestamp for it. The
+         * Mooket figure is the last sighting {@link refreshMooketObservations} pulled.
          *
          * @param {string} itemHrid - Item HRID
          * @param {number} enhancementLevel - Enhancement level
-         * @returns {{ask: number|null, bid: number|null, timestamp: number}|null} Prices and when they were true
+         * @param {boolean} isSell - Sell listing (best ask) rather than buy order (best bid)
+         * @returns {{price: number, timestamp: number}|null} The figure and when it was true
          */
-        priceObservation(itemHrid, enhancementLevel) {
+        sideObservation(itemHrid, enhancementLevel, isSell) {
+            const candidates = [];
+
             const price = marketAPI.getPrice(itemHrid, enhancementLevel);
-            if (!price) {
-                return null;
+            if (price) {
+                const patch = marketAPI.pricePatchs?.[`${itemHrid}:${enhancementLevel}`];
+                const usedPatch =
+                    !!patch && typeof patch.timestamp === 'number' && patch.timestamp > marketAPI.lastFetchTimestamp;
+                const timestamp = usedPatch ? patch.timestamp : marketAPI.lastFetchTimestamp;
+                const sidePrice = isSell ? price.ask : price.bid;
+                if (Number.isFinite(timestamp) && Number.isFinite(sidePrice)) {
+                    candidates.push({ price: sidePrice, timestamp });
+                }
             }
 
-            const patch = marketAPI.pricePatchs?.[`${itemHrid}:${enhancementLevel}`];
-            const usedPatch =
-                !!patch && typeof patch.timestamp === 'number' && patch.timestamp > marketAPI.lastFetchTimestamp;
-            const timestamp = usedPatch ? patch.timestamp : marketAPI.lastFetchTimestamp;
-            if (!Number.isFinite(timestamp)) {
-                return null;
+            const mooket = this.mooketObservations.get(`${itemHrid}:${enhancementLevel}`);
+            if (mooket) {
+                const sidePrice = isSell ? mooket.ask : mooket.bid;
+                if (Number.isFinite(mooket.timestamp) && Number.isFinite(sidePrice)) {
+                    candidates.push({ price: sidePrice, timestamp: mooket.timestamp });
+                }
             }
 
-            return { ask: price.ask, bid: price.bid, timestamp };
+            if (!candidates.length) return null;
+            return candidates.reduce((freshest, candidate) =>
+                candidate.timestamp > freshest.timestamp ? candidate : freshest
+            );
         }
 
         /**
@@ -72590,8 +72706,12 @@ ${starCSS}
                 this.listingStates.set(listing.id, state);
             }
 
-            const observation = this.priceObservation(listing.itemHrid, listing.enhancementLevel || 0);
-            const bestPrice = observation ? (listing.isSell ? observation.ask : observation.bid) : null;
+            const observation = this.sideObservation(
+                listing.itemHrid,
+                listing.enhancementLevel || 0,
+                listing.isSell === true
+            );
+            const bestPrice = observation ? observation.price : null;
             const priceAgeMs = observation ? Date.now() - observation.timestamp : null;
 
             const { fire, armed } = listingBeaten({
@@ -72648,8 +72768,10 @@ ${starCSS}
             this.unregisterHandlers.forEach((unregister) => unregister());
             this.unregisterHandlers = [];
             this.listingStates.clear();
+            this.mooketObservations.clear();
             this.timers.clearAll();
             this.refreshInFlight = false;
+            this.mooketRefreshInFlight = false;
         }
     }
 
@@ -77599,4 +77721,4 @@ ${starCSS}
 
     console.log('[Toolasha] UI library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Utils.formatters, Toolasha.Utils.timerRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.dom, Toolasha.Core.storage, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.characterKey, Toolasha.Utils.overlayRows, Toolasha.Utils.opanelConfig, Toolasha.Utils.choiceDialog, Toolasha.Utils.mobile, Toolasha.Utils.overlayLayout, Toolasha.Core, Toolasha.Utils.toast, Toolasha.Utils.bundleBridge, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.marketData, Toolasha.Utils.roomSkills, Toolasha.Core.marketAPI, Toolasha.Utils.numberParser, Toolasha.Utils.pricingHelper, Toolasha.Core.webSocketHook, Toolasha.Utils.simplePanel, Toolasha.Utils.damageAttribution, Toolasha.Combat.combatDPS, Toolasha.Combat.combatStatsDataCollector, Toolasha.Combat.combatStatsCalculator, Toolasha.Combat.damageTracker, Toolasha.Combat.damageTakenTracker, Toolasha.Utils.battlePanelMonsters, Toolasha.Utils.spawnExpectation, Toolasha.Utils.combatDropModel, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.partyLint, Toolasha.Utils.csvExport, Toolasha.Utils.itemNavigation, Toolasha.Utils.efficiency, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.adoptionConsent, Toolasha.Utils.gameText, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.profileCommand, Toolasha.Utils.selectors, Toolasha.Utils.progressEta, Toolasha.Utils.gameServer, Toolasha.Utils.reactInput, Toolasha.Utils.actionPanelHelper, Toolasha.Market.expectedValueCalculator, Toolasha.Market.gatheringProfit, Toolasha.Market.productionProfit, Toolasha.Utils.profitHelpers, Toolasha.Utils.actionCalculator, Toolasha.Utils.equipmentParser, Toolasha.Utils.profitConstants, Toolasha.Sim.combatSimRunner, Toolasha.Sim.combatSimAdapter, Toolasha.Utils.assetManifest, Toolasha.Utils.gameLookups, Toolasha.Utils.chunkedHistory, Toolasha.Utils.skillProgress, Toolasha.Utils.skillHistory, Toolasha.Utils.deferredLoad, Toolasha.Utils.combatLevel, Toolasha.Utils.experienceParser, Toolasha.Utils.dropLuck, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.cleanupRegistry, Toolasha.Core.settingsStorage, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.enhancementConfig, Toolasha.Utils.chestTally, Toolasha.Utils.chestImport, Toolasha.Utils.tokenValuation, Toolasha.Utils.customPriceOverrides, Toolasha.Utils.materialCalculator, Toolasha.Utils.alchemyFees, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.teaParser, Toolasha.Sim.combatSimUI, Toolasha.Utils.tableColumns, Toolasha.Utils.consumableTarget, Toolasha.Utils.consumableForecast, Toolasha.Utils.keyLedger, Toolasha.Utils.orderBook, Toolasha.Utils.shoppingList, Toolasha.Market.alchemyProfitCalculator, Toolasha.Utils.buffParser);
+})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Utils.formatters, Toolasha.Utils.timerRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.dom, Toolasha.Core.storage, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.characterKey, Toolasha.Utils.overlayRows, Toolasha.Utils.opanelConfig, Toolasha.Utils.choiceDialog, Toolasha.Utils.mobile, Toolasha.Utils.overlayLayout, Toolasha.Core, Toolasha.Utils.toast, Toolasha.Utils.bundleBridge, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.marketData, Toolasha.Utils.roomSkills, Toolasha.Core.marketAPI, Toolasha.Utils.numberParser, Toolasha.Utils.pricingHelper, Toolasha.Core.webSocketHook, Toolasha.Utils.simplePanel, Toolasha.Utils.damageAttribution, Toolasha.Combat.combatDPS, Toolasha.Combat.combatStatsDataCollector, Toolasha.Combat.combatStatsCalculator, Toolasha.Combat.damageTracker, Toolasha.Combat.damageTakenTracker, Toolasha.Utils.battlePanelMonsters, Toolasha.Utils.spawnExpectation, Toolasha.Utils.combatDropModel, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.partyLint, Toolasha.Utils.csvExport, Toolasha.Utils.itemNavigation, Toolasha.Utils.efficiency, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.adoptionConsent, Toolasha.Utils.gameText, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.profileCommand, Toolasha.Utils.selectors, Toolasha.Utils.progressEta, Toolasha.Utils.gameServer, Toolasha.Utils.reactInput, Toolasha.Utils.actionPanelHelper, Toolasha.Market.expectedValueCalculator, Toolasha.Market.gatheringProfit, Toolasha.Market.productionProfit, Toolasha.Utils.profitHelpers, Toolasha.Utils.actionCalculator, Toolasha.Utils.equipmentParser, Toolasha.Utils.profitConstants, Toolasha.Sim.combatSimRunner, Toolasha.Sim.combatSimAdapter, Toolasha.Utils.assetManifest, Toolasha.Utils.gameLookups, Toolasha.Utils.chunkedHistory, Toolasha.Utils.skillProgress, Toolasha.Utils.skillHistory, Toolasha.Utils.deferredLoad, Toolasha.Utils.combatLevel, Toolasha.Utils.experienceParser, Toolasha.Utils.dropLuck, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.cleanupRegistry, Toolasha.Core.settingsStorage, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.enhancementConfig, Toolasha.Utils.chestTally, Toolasha.Utils.chestImport, Toolasha.Utils.tokenValuation, Toolasha.Utils.customPriceOverrides, Toolasha.Utils.materialCalculator, Toolasha.Utils.alchemyFees, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.teaParser, Toolasha.Sim.combatSimUI, Toolasha.Utils.tableColumns, Toolasha.Market.marketHistoryAPI, Toolasha.Market.marketHistoryData, Toolasha.Utils.consumableTarget, Toolasha.Utils.consumableForecast, Toolasha.Utils.keyLedger, Toolasha.Utils.orderBook, Toolasha.Utils.shoppingList, Toolasha.Market.alchemyProfitCalculator, Toolasha.Utils.buffParser);

@@ -1,7 +1,7 @@
 /**
  * Toolasha Actions Library
  * Production, gathering, and alchemy features
- * Version: 2.95.1
+ * Version: 2.96.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -30143,6 +30143,15 @@
 
         const unknown = { itemHrid, unitsPerDay: 0, days: 0, known: false };
         let answer = unknown;
+
+        // A source that carries no volume (mooket I) tells us nothing about how much
+        // trades — which is a different thing from a source that watched and saw
+        // nothing. Treating its silence as a measured zero would crush every rate to
+        // nothing the moment someone switched sources, so it stays unknown.
+        if (!marketHistoryAPI.currentSource().hasVolume) {
+            cache.set(key, unknown);
+            return unknown;
+        }
 
         try {
             const rows = await marketHistoryAPI.fetchHistory(itemHrid, enhancementLevel, LIQUIDITY_WINDOW_DAYS);

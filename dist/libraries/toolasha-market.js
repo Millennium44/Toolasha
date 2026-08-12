@@ -1,7 +1,7 @@
 /**
  * Toolasha Market Library
  * Market, inventory, and economy features
- * Version: 2.95.1
+ * Version: 2.96.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -9421,6 +9421,24 @@
                 dataManager.on('market_item_order_books_updated', orderBookHandler);
             }
 
+            // Re-render when the market price data itself changes — a marketplace.json
+            // snapshot refresh or an order-book price patch both call
+            // marketAPI.notifyListeners(). The undercut alert already listens here,
+            // which is why an undercut fired an alert but never moved the Top Order
+            // Price column: this table was not a listener. Unconditional (not gated on
+            // Top Order Age) so the price column refreshes even with the age column
+            // off, and debounced because a snapshot refresh fires a burst.
+            const marketPriceHandler = () => {
+                clearTimeout(this._marketPriceRefreshTimer);
+                this._marketPriceRefreshTimer = setTimeout(() => {
+                    document.querySelectorAll('[class*="MarketplacePanel_myListingsTable"]').forEach((table) => {
+                        table.classList.remove('mwi-listing-prices-set');
+                        this.updateTable(table);
+                    });
+                }, 200);
+            };
+            marketAPI.on(marketPriceHandler);
+
             // Store for cleanup
             this.unregisterWebSocket = () => {
                 dataManager.off('character_initialized', initHandler);
@@ -9428,6 +9446,8 @@
                 if (orderBookHandler) {
                     dataManager.off('market_item_order_books_updated', orderBookHandler);
                 }
+                marketAPI.off(marketPriceHandler);
+                clearTimeout(this._marketPriceRefreshTimer);
             };
 
             this.cleanupRegistry.registerCleanup(() => {
@@ -14181,9 +14201,9 @@
      */
 
 
-    const LISTING_COUNT_SEL = '[class*="MarketplacePanel_listingCount"]';
+    const LISTING_COUNT_SEL$1 = '[class*="MarketplacePanel_listingCount"]';
     const TABLE_SEL = '[class*="MarketplacePanel_myListingsTable"]';
-    const BTN_CLASS = 'Button_button__1Fe9z Button_small__3fqC7';
+    const BTN_CLASS$1 = 'Button_button__1Fe9z Button_small__3fqC7';
 
     class ListingRefreshNavigator {
         constructor() {
@@ -14202,7 +14222,7 @@
 
         _watch() {
             const ensureButton = () => {
-                const countContainer = document.querySelector(LISTING_COUNT_SEL);
+                const countContainer = document.querySelector(LISTING_COUNT_SEL$1);
 
                 if (!countContainer) {
                     if (this.refreshBtn && document.body.contains(this.refreshBtn)) {
@@ -14220,7 +14240,7 @@
 
                 const btn = document.createElement('button');
                 btn.type = 'button';
-                btn.className = BTN_CLASS;
+                btn.className = BTN_CLASS$1;
                 btn.textContent = 'Refresh Next';
                 btn.addEventListener('click', () => this._refreshNext());
 
@@ -20070,8 +20090,89 @@
      */
 
 
-    /** The mooket project's server */
+    /**
+     * The mooket II server (Q7). This is also the pool this client *contributes* to —
+     * the order books it uploads always go here, whichever source is being read,
+     * because it is the pool Toolasha was built around and the one whose format the
+     * reporting socket speaks.
+     */
     const HISTORY_HOST = 'https://q7.nainai.eu.org';
+
+    /**
+     * Where an item's history can be read from. Two community pools, on different
+     * servers, in different shapes:
+     *
+     * - **mooket II (Q7)** returns rows of `{a, b, p, v}` — ask, bid, an average
+     *   *transacted* price, and volume. The full picture, and the default.
+     * - **mooket I (IOMisaka)** returns only ask and bid series. It carries no
+     *   volume, and no transacted average — so its third line is a computed midpoint
+     *   of the quotes (labelled "Mid", not "Avg", because it is not evidence of what
+     *   anything sold for), and it can bound no liquidity. Its strength is a live
+     *   current price, which the freshest sighting of a one-day pull stands in for.
+     *
+     * Both are normalised to the same `{a, b, p, v, time}` row so everything
+     * downstream — the chart, the My Listings refresh, the goal planner — reads one
+     * shape and only has to branch on `hasVolume` / `avgLabel` for presentation.
+     */
+    const SOURCES = {
+        mooket2: {
+            key: 'mooket2',
+            label: 'mooket II (Q7)',
+            host: HISTORY_HOST,
+            hasVolume: true,
+            avgLabel: 'Avg',
+        },
+        mooket1: {
+            key: 'mooket1',
+            label: 'mooket I (IOMisaka)',
+            host: 'https://mooket.qi-e.top',
+            hasVolume: false,
+            avgLabel: 'Mid',
+        },
+    };
+
+    /** The source assumed when the setting is unset or unrecognised */
+    const DEFAULT_SOURCE_KEY = 'mooket2';
+
+    /**
+     * Fold mooket I's two quote series into the common row shape.
+     *
+     * The server answers `{ask|asks: [{time, price}], bid|bids: [{time, price}]}`,
+     * with the two arrays index-aligned. A non-positive price means that side of the
+     * book was empty at that moment, which is `-1` here rather than a price of zero;
+     * a moment with neither side quoted carries no information and is dropped. The
+     * "average" slot is filled with the midpoint of whatever sides were quoted —
+     * mooket I has no transacted price, and the chart draws this as "Mid". Volume is
+     * `0` because the server does not report it (and `0` reads correctly everywhere
+     * as "no volume known", not "no trades").
+     *
+     * Pure: server payload in, rows out.
+     *
+     * @param {Object} data - The mooket I history payload
+     * @returns {Array<{a: number, b: number, p: number, v: number, time: number}>}
+     */
+    function normaliseMooket1Rows(data) {
+        const asks = data?.ask || data?.asks || [];
+        const bids = data?.bid || data?.bids || [];
+        const count = Math.min(asks.length, bids.length);
+
+        const rows = [];
+        for (let i = 0; i < count; i += 1) {
+            const a = asks[i]?.price > 0 ? asks[i].price : -1;
+            const b = bids[i]?.price > 0 ? bids[i].price : -1;
+            if (a < 0 && b < 0) continue;
+
+            let p = -1;
+            if (a > 0 && b > 0) p = (a + b) / 2;
+            else if (a > 0) p = a;
+            else if (b > 0) p = b;
+
+            const time = asks[i]?.time ?? bids[i]?.time;
+            if (typeof time !== 'number') continue;
+            rows.push({ a, b, p, v: 0, time });
+        }
+        return rows;
+    }
 
     /** How long a fetched range is reused before asking again */
     const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -20088,6 +20189,8 @@
             this.socket = null;
             this.reconnectTimer = null;
             this.closing = false;
+            /** Which pool the open socket is contributing to, so a source switch can redirect it */
+            this.socketSourceKey = null;
             /** Said once. The getter is read on every book, and on every reconnect. */
             this.notedTestServer = false;
         }
@@ -20095,6 +20198,19 @@
         /** @returns {boolean} Whether history may be fetched at all */
         get enabled() {
             return config.getSetting('market_pooledHistory') === true;
+        }
+
+        /**
+         * The source history is currently read from.
+         *
+         * Read fresh each call rather than cached, so changing the setting takes
+         * effect on the next lookup without a reload. Falls back to the default when
+         * the setting is unset or names a source that no longer exists.
+         *
+         * @returns {{key: string, label: string, host: string, hasVolume: boolean, avgLabel: string}}
+         */
+        currentSource() {
+            return SOURCES[config.getSetting('market_historySource')] || SOURCES[DEFAULT_SOURCE_KEY];
         }
 
         /**
@@ -20128,20 +20244,29 @@
         async fetchHistory(itemHrid, enhancementLevel, days) {
             if (!this.enabled || !itemHrid) return null;
 
-            const key = `${itemHrid}:${enhancementLevel}:${days}`;
+            const source = this.currentSource();
+            // The source is part of the key: the same item at the same range is a
+            // different answer from a different pool, and switching sources must not
+            // read the other one's cached rows.
+            const key = `${source.key}:${itemHrid}:${enhancementLevel}:${days}`;
             const cached = this.cache.get(key);
             if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.rows;
 
             const url =
-                `${HISTORY_HOST}/api/market/history?item_id=${encodeURIComponent(itemHrid)}` +
-                `&variant=${enhancementLevel}&days=${days}`;
+                source.key === 'mooket1'
+                    ? `${source.host}/market/item/history?name=${encodeURIComponent(itemHrid)}` +
+                      `&level=${enhancementLevel}&time=${days * 86400}`
+                    : `${source.host}/api/market/history?item_id=${encodeURIComponent(itemHrid)}` +
+                      `&variant=${enhancementLevel}&days=${days}`;
 
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
             try {
                 const response = await fetch(url, { signal: controller.signal });
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const rows = await response.json();
+                const payload = await response.json();
+                // mooket II already speaks the common row shape; mooket I is folded into it
+                const rows = source.key === 'mooket1' ? normaliseMooket1Rows(payload) : payload;
                 this.cache.set(key, { rows, at: Date.now() });
                 return rows;
             } catch (error) {
@@ -20153,7 +20278,12 @@
         }
 
         /**
-         * Open the reporting socket, if contributing is on.
+         * Open the reporting socket to the selected pool, if contributing is on.
+         *
+         * You feed the pool you read: the socket goes to whichever source is
+         * selected, so switching source moves your contributions with it. Both pools
+         * accept the same `market_item_order_books_updated` message on the same
+         * `/market/ws` path, so only the host differs.
          *
          * It reconnects on its own because the alternative is a session that stops
          * contributing after the first blip and never says so.
@@ -20162,22 +20292,29 @@
             if (!this.contributing || this.socket) return;
 
             this.closing = false;
-            const url = `${HISTORY_HOST.replace(/^http/, 'ws')}/market/ws`;
+            const source = this.currentSource();
+            this.socketSourceKey = source.key;
+            const url = `${source.host.replace(/^http/, 'ws')}/market/ws`;
 
+            let socket;
             try {
-                this.socket = new WebSocket(url);
+                socket = new WebSocket(url);
             } catch (error) {
                 console.error('[MooketHistory] Opening the reporting socket failed:', error);
                 this.socket = null;
                 return;
             }
+            this.socket = socket;
 
-            this.socket.addEventListener('close', () => {
+            socket.addEventListener('close', () => {
+                // A socket superseded by a reconnect (e.g. a source switch) must not
+                // null out the one that replaced it
+                if (this.socket !== socket) return;
                 this.socket = null;
                 if (this.closing || !this.contributing) return;
                 this.reconnectTimer = setTimeout(() => this.connect(), RECONNECT_DELAY_MS);
             });
-            this.socket.addEventListener('error', () => {
+            socket.addEventListener('error', () => {
                 // 'close' follows and handles the reconnect; logging both would
                 // just double the noise on a server that is simply down
             });
@@ -20191,6 +20328,7 @@
             }
             this.socket?.close();
             this.socket = null;
+            this.socketSourceKey = null;
         }
 
         /**
@@ -20199,6 +20337,13 @@
          */
         report(payload) {
             if (!this.contributing) return;
+
+            // A socket still open to the pool that was selected a moment ago is closed
+            // and reopened to the one selected now, so contributions follow the source
+            if (this.socket && this.socketSourceKey !== this.currentSource().key) {
+                this.disconnect();
+            }
+
             if (!this.socket) {
                 this.connect();
                 return;
@@ -20316,6 +20461,36 @@
     }
 
     /**
+     * The newest sighting in a set of history rows, as ask/bid with a millisecond
+     * timestamp.
+     *
+     * A row's `a`/`b` are best ask and best bid; a non-positive side was empty, not
+     * a price of zero, so it becomes null. The time is normalised to milliseconds
+     * (rows carry seconds) so a caller can compare it against `Date.now()` directly.
+     * Pure, so picking the freshest can be tested without a server.
+     *
+     * @param {Array<Object>|null} rows - Rows from the history API
+     * @returns {{time: number, ask: number|null, bid: number|null}|null} Freshest, or null
+     */
+    function freshestSighting(rows) {
+        if (!Array.isArray(rows) || !rows.length) return null;
+
+        let best = null;
+        for (const row of rows) {
+            const seconds = rowTime(row);
+            if (!seconds) continue;
+            if (!best || seconds > best.seconds) {
+                best = {
+                    seconds,
+                    ask: row?.a > 0 ? row.a : null,
+                    bid: row?.b > 0 ? row.b : null,
+                };
+            }
+        }
+        return best ? { time: best.seconds * 1000, ask: best.ask, bid: best.bid } : null;
+    }
+
+    /**
      * Reduce history rows to the points a chart draws.
      *
      * @param {Array<Object>} rows - Rows from the history API
@@ -20406,6 +20581,7 @@
         DAILY_GROUPING_THRESHOLD: DAILY_GROUPING_THRESHOLD,
         HISTORY_RANGES: HISTORY_RANGES,
         buildHistorySeries: buildHistorySeries,
+        freshestSighting: freshestSighting,
         historyLabels: historyLabels,
         median: median,
         splitVolume: splitVolume
@@ -21099,9 +21275,14 @@
         drawChart(series) {
             if (!this.canvas || typeof Chart === 'undefined') return;
 
+            // The source decides two things about how its data is drawn: what the
+            // third line is called (a real transacted average, or a computed midpoint
+            // of the quotes), and whether there is any volume to draw at all.
+            const source = marketHistoryAPI.currentSource();
+
             const labels = historyLabels(series, this.prefs.days);
             const datasets = SERIES.map((spec) => ({
-                label: spec.label,
+                label: spec.key === 'avg' ? source.avgLabel : spec.label,
                 data: series.map((point) => point[spec.key] || null),
                 borderColor: spec.color,
                 borderDash: spec.dash,
@@ -21111,23 +21292,27 @@
                 spanGaps: true,
                 tension: 0,
             }));
-            datasets.push({
-                label: 'Volume',
-                data: series.map((point) => point.volume),
-                borderColor: '#409eff',
-                backgroundColor: 'rgba(64, 158, 255, 0.18)',
-                borderWidth: 1,
-                fill: true,
-                yAxisID: 'volume',
-                pointRadius: 0,
-                pointHitRadius: 6,
-                tension: 0,
-            });
+            if (source.hasVolume) {
+                datasets.push({
+                    label: 'Volume',
+                    data: series.map((point) => point.volume),
+                    borderColor: '#409eff',
+                    backgroundColor: 'rgba(64, 158, 255, 0.18)',
+                    borderWidth: 1,
+                    fill: true,
+                    yAxisID: 'volume',
+                    pointRadius: 0,
+                    pointHitRadius: 6,
+                    tension: 0,
+                });
+            }
 
             if (this.chart) {
                 this.chart.data.labels = labels;
                 this.chart.data.datasets = datasets;
                 this.chart.$series = series;
+                // A source switch can turn the volume axis on or off between draws
+                this.chart.options.scales.volume.display = source.hasVolume;
                 this.chart.update('none');
                 return;
             }
@@ -21150,6 +21335,7 @@
                         },
                         volume: {
                             position: 'right',
+                            display: source.hasVolume,
                             grid: { drawOnChartArea: false },
                             ticks: { ...axis, color: '#409eff', callback: (value) => formatters_js.formatKMB(value) },
                         },
@@ -21160,8 +21346,10 @@
                             callbacks: {
                                 label: (item) => `${item.dataset.label}: ${formatters_js.formatWithSeparator(Math.round(item.parsed.y))}`,
                                 // The split is an estimate from where the traded
-                                // price sat in the spread, and says so
+                                // price sat in the spread, and says so. A source with
+                                // no volume has nothing to split, so it says nothing.
                                 footer: (items) => {
+                                    if (!marketHistoryAPI.currentSource().hasVolume) return '';
                                     const point = this.chart?.$series?.[items[0].dataIndex];
                                     if (!point) return '';
                                     return (
@@ -21251,6 +21439,281 @@
     }
 
     const marketHistoryPanel = new MarketHistoryPanel();
+
+    /**
+     * My Listings — Mooket Price Refresh
+     *
+     * A button on the marketplace's My Listings tab that pulls fresher prices for
+     * every item you have listed from the pooled Mooket dataset, in one click.
+     *
+     * The game's `marketplace.json` feed refreshes only about once an hour at no
+     * fixed minute, so the Top Order Price column can sit most of an hour behind the
+     * real book with nothing in the number to say so. The Mooket pool is fed
+     * continuously by clients opening item books, so for anything people are trading
+     * its newest sighting is usually far fresher. This walks your listed items, asks
+     * Mooket for each one's newest sighting, and — where that sighting is newer than
+     * the game's last snapshot — patches it into the same price cache the Top Order
+     * Price column already redraws from, so the column updates to the fresher number
+     * without opening each item by hand.
+     *
+     * A sighting older than the game's own snapshot is left alone rather than
+     * stamped as current: a rarely-opened item can be staler in the pool than in the
+     * snapshot, and overwriting a fresher reading with an older one would be a
+     * downgrade dressed up as a refresh.
+     *
+     * Reading the pool means telling a third-party server which items you looked up,
+     * the same cost the price-history panel pays, so this rides the same
+     * `market_pooledHistory` switch and does nothing until it is on.
+     */
+
+
+    /** The header row that carries "N / M Listings", Upgrade Capacity and Refresh Next */
+    const LISTING_COUNT_SEL = '[class*="MarketplacePanel_listingCount"]';
+    const MY_LISTINGS_TABLE_SEL = '[class*="MarketplacePanel_myListingsTable"]';
+    const CONTROLS_ID = 'mwi-mooket-listings-refresh';
+    /** The game's own small-button styling, so the control reads as part of the bar */
+    const BTN_CLASS = 'Button_button__1Fe9z Button_small__3fqC7';
+    /** Kept low so a click on a long listing list does not burst the third-party server */
+    const FETCH_CONCURRENCY = 4;
+
+    /**
+     * Whether a Mooket sighting is worth stamping over the game's price.
+     *
+     * With no game snapshot to measure against there is nothing fresher to protect,
+     * so any sighting applies. Otherwise it applies only when it is strictly newer
+     * than the snapshot — an equal or older sighting is not a refresh. Pure.
+     *
+     * @param {number} sightingTimeMs - When Mooket last saw the book
+     * @param {number|null} snapshotTimeMs - When the game's snapshot was taken, or null
+     * @returns {boolean}
+     */
+    function shouldApplySighting(sightingTimeMs, snapshotTimeMs) {
+        if (typeof sightingTimeMs !== 'number' || sightingTimeMs <= 0) return false;
+        if (typeof snapshotTimeMs !== 'number') return true;
+        return sightingTimeMs > snapshotTimeMs;
+    }
+
+    /**
+     * Distinct listed items from a set of table rows.
+     *
+     * Reads the item straight off each row's icon and enhancement badge — the rows
+     * on screen are exactly "your listings", independent of whether any other
+     * feature has stamped them. Coin icons (the price column) are skipped. Pure over
+     * its row inputs, so the dedup is testable.
+     *
+     * @param {Iterable<HTMLElement>} rows - `tbody tr` elements of the My Listings table
+     * @returns {Array<{itemHrid: string, enhancementLevel: number}>}
+     */
+    function distinctListedItems(rows) {
+        const byKey = new Map();
+        for (const row of rows) {
+            const item = readRowItem(row);
+            if (!item) continue;
+            const key = `${item.itemHrid}:${item.enhancementLevel}`;
+            if (!byKey.has(key)) byKey.set(key, item);
+        }
+        return [...byKey.values()];
+    }
+
+    /**
+     * The item a My Listings row is for.
+     * @param {HTMLElement} row - A table row
+     * @returns {{itemHrid: string, enhancementLevel: number}|null}
+     */
+    function readRowItem(row) {
+        let itemHrid = null;
+        for (const use of row.querySelectorAll('use')) {
+            const id = use.href?.baseVal?.split('#')[1];
+            if (id && !id.toLowerCase().includes('coin')) {
+                itemHrid = `/items/${id}`;
+                break;
+            }
+        }
+        if (!itemHrid) return null;
+
+        const badge = row.querySelector('[class*="enhancementLevel"]');
+        const enhancementLevel = Number(badge?.textContent?.replace(/[^0-9]/g, '')) || 0;
+        return { itemHrid, enhancementLevel };
+    }
+
+    /**
+     * Run an async worker over items with a bounded number in flight at once.
+     * @param {Array<any>} items - Work items
+     * @param {number} limit - Maximum concurrent workers
+     * @param {(item: any) => Promise<void>} worker - Per-item work
+     * @returns {Promise<void>}
+     */
+    async function runPool(items, limit, worker) {
+        const queue = [...items];
+        const runners = Array.from({ length: Math.min(limit, queue.length) }, async () => {
+            while (queue.length) {
+                await worker(queue.shift());
+            }
+        });
+        await Promise.all(runners);
+    }
+
+    class MyListingsPriceRefresh {
+        constructor() {
+            this.isInitialized = false;
+            this.cleanupRegistry = cleanupRegistry_js.createCleanupRegistry();
+            this.controls = null;
+            this.button = null;
+            this.status = null;
+            this.busy = false;
+        }
+
+        initialize() {
+            if (this.isInitialized) return;
+            // Same third-party read as the history panel, so the same switch governs it
+            if (!config.getSetting('market_pooledHistory')) return;
+            this.isInitialized = true;
+
+            const unregister = domObserver.onClass(
+                'MooketListingsRefresh',
+                'MarketplacePanel_listingCount',
+                () => this.ensureControls(),
+                { debounce: true }
+            );
+            this.cleanupRegistry.registerCleanup(unregister);
+            this.ensureControls();
+        }
+
+        cleanup() {
+            this.controls?.remove();
+            this.controls = null;
+            this.button = null;
+            this.status = null;
+            this.busy = false;
+            this.cleanupRegistry.cleanup();
+            this.isInitialized = false;
+        }
+
+        /** Put the button back in the header bar, rebuilding if the bar was re-rendered. */
+        ensureControls() {
+            const bar = document.querySelector(LISTING_COUNT_SEL);
+            if (!bar) return;
+            if (this.controls && this.controls.isConnected && bar.contains(this.controls)) return;
+
+            const controls = document.createElement('span');
+            controls.id = CONTROLS_ID;
+            controls.style.cssText = 'display:inline-flex; align-items:center; gap:6px; margin-left:6px;';
+
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = BTN_CLASS;
+            button.textContent = 'Mooket Refresh';
+            button.title =
+                'Pull fresher prices for every item in your listings from the pooled Mooket dataset and update the ' +
+                'Top Order Price column. Reads a third-party server (the same one the price history panel uses).';
+            button.addEventListener('click', () => this.runRefresh());
+            controls.appendChild(button);
+
+            const status = document.createElement('span');
+            status.style.cssText = 'font-size:12px; color:#9aa4c0;';
+            controls.appendChild(status);
+
+            bar.appendChild(controls);
+            this.controls = controls;
+            this.button = button;
+            this.status = status;
+        }
+
+        /** @param {string} text - A short message shown next to the button */
+        setStatus(text) {
+            if (this.status) this.status.textContent = text;
+        }
+
+        /**
+         * @param {boolean} busy - Whether a refresh is running
+         * @param {string} [label] - Button label to show while busy
+         */
+        setBusy(busy, label) {
+            this.busy = busy;
+            if (!this.button) return;
+            this.button.disabled = busy;
+            this.button.style.opacity = busy ? '0.6' : '';
+            this.button.textContent = busy ? label || 'Refreshing…' : 'Mooket Refresh';
+        }
+
+        /**
+         * Fetch Mooket's newest sighting for each listed item and patch the fresher
+         * ones into the market price cache, which redraws the Top Order Price column.
+         */
+        async runRefresh() {
+            if (this.busy) return;
+
+            const items = this.gatherListedItems();
+            if (!items.length) {
+                this.setStatus('No listings found.');
+                return;
+            }
+
+            this.setBusy(true, `Refreshing ${items.length}…`);
+            this.setStatus('');
+            // One snapshot age for the whole marketplace.json feed, so it is read once
+            const dataAge = marketAPI.getDataAge();
+            const snapshotTime = typeof dataAge === 'number' ? Date.now() - dataAge : null;
+            let applied = 0;
+
+            try {
+                await runPool(items, FETCH_CONCURRENCY, async (item) => {
+                    try {
+                        const rows = await marketHistoryAPI.fetchHistory(item.itemHrid, item.enhancementLevel, 1);
+                        const sighting = freshestSighting(rows);
+                        if (!sighting || (sighting.ask === null && sighting.bid === null)) return;
+                        if (!shouldApplySighting(sighting.time, snapshotTime)) return;
+
+                        // Keep the side Mooket did not see rather than blanking it — a
+                        // one-sided sighting should not erase a known price on the other
+                        const existing = marketAPI.getPrice(item.itemHrid, item.enhancementLevel);
+                        const ask = sighting.ask !== null ? sighting.ask : (existing?.ask ?? null);
+                        const bid = sighting.bid !== null ? sighting.bid : (existing?.bid ?? null);
+                        marketAPI.updatePrice(item.itemHrid, item.enhancementLevel, ask, bid);
+                        applied += 1;
+                    } catch (error) {
+                        console.error('[MooketListingsRefresh] Refreshing an item failed:', item.itemHrid, error);
+                    }
+                });
+                this.setStatus(`Updated ${applied} of ${items.length} from Mooket.`);
+            } catch (error) {
+                console.error('[MooketListingsRefresh] Refresh failed:', error);
+                this.setStatus('Refresh failed.');
+            } finally {
+                this.setBusy(false);
+            }
+        }
+
+        /**
+         * The distinct items you have listed.
+         *
+         * Taken from the rendered table when it is up, since that is exactly what the
+         * button says it refreshes; falls back to the character's listing data when
+         * the table is not mounted (nothing is, off the My Listings tab, but the
+         * fallback keeps the method honest).
+         *
+         * @returns {Array<{itemHrid: string, enhancementLevel: number}>}
+         */
+        gatherListedItems() {
+            const table = document.querySelector(MY_LISTINGS_TABLE_SEL);
+            if (table) {
+                const rows = table.querySelectorAll('tbody tr');
+                const items = distinctListedItems(rows);
+                if (items.length) return items;
+            }
+
+            const byKey = new Map();
+            for (const listing of dataManager.getMarketListings()) {
+                if (!listing?.itemHrid || listing.status === '/market_listing_status/cancelled') continue;
+                const enhancementLevel = Number(listing.enhancementLevel) || 0;
+                const key = `${listing.itemHrid}:${enhancementLevel}`;
+                if (!byKey.has(key)) byKey.set(key, { itemHrid: listing.itemHrid, enhancementLevel });
+            }
+            return [...byKey.values()];
+        }
+    }
+
+    const myListingsPriceRefresh = new MyListingsPriceRefresh();
 
     /**
      * Philosopher's Stone Transmutation Calculator
@@ -43154,6 +43617,7 @@
         listingMarkers,
         marketplaceBadgeFilter,
         marketHistoryPanel,
+        myListingsPriceRefresh,
         marketHistoryAPI,
         marketHistoryData,
         philoCalculator,

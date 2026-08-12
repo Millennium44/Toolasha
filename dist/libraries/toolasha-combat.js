@@ -1,7 +1,7 @@
 /**
  * Toolasha Combat Library
  * Combat, abilities, and combat stats features
- * Version: 2.95.1
+ * Version: 2.96.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -1001,7 +1001,7 @@
      * Enough for a long fight, small enough to hand to somebody. Reaching it banks
      * the segment rather than ending the recording — see the module note.
      */
-    const MAX_TICKS = 4000;
+    const MAX_TICKS$1 = 4000;
 
     /**
      * The point at which a segment is cut whether or not a fight has ended.
@@ -1012,7 +1012,7 @@
      * real fight, so reaching it is a fault rather than a long battle, and the
      * segment is marked as having lost one.
      */
-    const MAX_TICKS_HARD = MAX_TICKS * 2;
+    const MAX_TICKS_HARD = MAX_TICKS$1 * 2;
 
     /**
      * Ticks kept across banked segments, so the whole session can still be handed over.
@@ -1022,7 +1022,7 @@
      * which is the size somebody can actually send. Past it the oldest segments keep
      * their per-fight summary and lose their payloads, and the file says so.
      */
-    const RETAINED_TICKS = MAX_TICKS * 5;
+    const RETAINED_TICKS = MAX_TICKS$1 * 5;
 
     /**
      * The shared hook instance.
@@ -1040,9 +1040,9 @@
     /** Panel snapshots stop once the wave is known, since the payload names it then */
     const MAX_PANEL_SNAPSHOTS = 40;
 
-    let ticks = [];
+    let ticks$1 = [];
     let recording = false;
-    let startedAt$2 = 0;
+    let startedAt$3 = 0;
     let recordingStartedAt = 0;
     let onNewBattle$3 = null;
     let onBattleUpdated$2 = null;
@@ -1121,7 +1121,7 @@
             // `typeof` and not `Number()`: null is how a provider says "too few
             // fights to measure the spread", and `Number(null)` is zero, which is a
             // band tighter than any target and would stop the recording instantly
-            const measured = noiseProvider(recordingFile());
+            const measured = noiseProvider(recordingFile$1());
             marginPct = typeof measured === 'number' && Number.isFinite(measured) ? measured : null;
         } catch (error) {
             console.error('[CombatRecorder] Measuring the sample noise failed:', error);
@@ -1361,9 +1361,9 @@
      * @returns {{ticks: number, seconds: number, full: boolean, fights: number, segments: number,
      *   target: Object|null, targetMet: boolean, marginPct: number|null}}
      */
-    function recordingStatus() {
+    function recordingStatus$1() {
         return {
-            ticks: ticks.length,
+            ticks: ticks$1.length,
             seconds: recordingStartedAt ? (Date.now() - recordingStartedAt) / 1000 : 0,
             full: lostFight,
             fights: completedFights,
@@ -1390,7 +1390,7 @@
         // the button inherits it without every caller having to pass it along
         if (wanted !== undefined) setRecordTarget$1(wanted);
 
-        ticks = [];
+        ticks$1 = [];
         segments = [];
         lostFight = false;
         sawNewBattle = false;
@@ -1400,8 +1400,8 @@
         segmentFights = 0;
         targetMet = false;
         marginPct = null;
-        startedAt$2 = Date.now();
-        recordingStartedAt = startedAt$2;
+        startedAt$3 = Date.now();
+        recordingStartedAt = startedAt$3;
         recording = true;
         loadout = captureLoadout();
 
@@ -1422,7 +1422,7 @@
                 // then put the switch back, so the next load is an ordinary one
                 if (!thenDownload) return;
 
-                if (downloadRecording()) config.setSetting('combatRecorder_autoStart', false);
+                if (downloadRecording$1()) config.setSetting('combatRecorder_autoStart', false);
             }, seconds * 1000);
         }
     }
@@ -1433,8 +1433,8 @@
      * @param {string} type - Which message
      * @param {Object} payload - What it carried
      */
-    function push(type, payload) {
-        const entry = { at: Date.now() - startedAt$2, type, payload };
+    function push$1(type, payload) {
+        const entry = { at: Date.now() - startedAt$3, type, payload };
 
         // Only while the wave is unknown. Once `new_battle` has arrived the payload
         // names everything and the screen has nothing left to add.
@@ -1442,7 +1442,7 @@
             entry.panel = battlePanelMonsters_js.describeMonsterPanel();
             panelSnapshots += 1;
         }
-        ticks.push(entry);
+        ticks$1.push(entry);
     }
 
     /**
@@ -1454,14 +1454,14 @@
      * to know it was the fortieth.
      */
     function rotateSegment() {
-        const file = recordingFile();
+        const file = recordingFile$1();
 
         bankSegment(file);
 
-        ticks = [];
+        ticks$1 = [];
         segmentIndex += 1;
         segmentFights = 0;
-        startedAt$2 = Date.now();
+        startedAt$3 = Date.now();
         lostFight = false;
         loadout = captureLoadout();
 
@@ -1504,7 +1504,7 @@
         // whatever was being fought when the recording began has no beginning here
         const closesFight = type === 'new_battle' && sawNewBattle;
 
-        push(type, payload);
+        push$1(type, payload);
         if (type === 'new_battle') sawNewBattle = true;
         if (closesFight) {
             completedFights += 1;
@@ -1523,12 +1523,12 @@
         }
 
         const atBoundary = type === 'new_battle';
-        const rotating = ticks.length >= MAX_TICKS && (atBoundary || ticks.length >= MAX_TICKS_HARD);
+        const rotating = ticks$1.length >= MAX_TICKS$1 && (atBoundary || ticks$1.length >= MAX_TICKS_HARD);
 
         if (!rotating) {
             // Only at a fight boundary: a checkpoint costs a re-derivation and a
             // write, and mid-fight there is nothing new to derive
-            if (closesFight) notify(checkpointListeners, recordingFile());
+            if (closesFight) notify(checkpointListeners, recordingFile$1());
             return;
         }
 
@@ -1542,11 +1542,11 @@
         // The battle that closed the old segment opens the new one. It is the same
         // payload in both, and harmless in both: the old segment reads it only as
         // the end of its last fight, the new one only as the start of its first.
-        if (atBoundary) push('new_battle', payload);
+        if (atBoundary) push$1('new_battle', payload);
 
         // The segment just banked is already folded in, so whatever was checkpointed
         // from it is now a duplicate waiting to happen
-        notify(checkpointListeners, recordingFile());
+        notify(checkpointListeners, recordingFile$1());
     }
 
     /** Stop keeping it. What has been captured stays captured. */
@@ -1562,9 +1562,9 @@
         // second `stopRecording` on an idle module has not ended anything, and
         // announcing it would have every listener read the same run twice
         const wasRecording = recording;
-        const finished = recording && ticks.length > 0;
+        const finished = recording && ticks$1.length > 0;
         recording = false;
-        if (finished) notify(completionListeners, recordingFile());
+        if (finished) notify(completionListeners, recordingFile$1());
 
         // Announced even when the last segment was empty. A recording stopped just
         // after a rotation has nothing to hand over and still has a checkpoint
@@ -1581,17 +1581,17 @@
      *
      * @returns {Object}
      */
-    function recordingFile() {
+    function recordingFile$1() {
         return {
             format: 'toolasha-combat-recording',
             version: 1,
-            seconds: startedAt$2 ? (Date.now() - startedAt$2) / 1000 : 0,
+            seconds: startedAt$3 ? (Date.now() - startedAt$3) / 1000 : 0,
             truncated: lostFight,
             segment: segmentIndex,
             loadout,
             // A copy, because a checkpoint listener is handed this mid-recording and
             // the buffer it was read from goes on filling up behind it
-            ticks: [...ticks],
+            ticks: [...ticks$1],
         };
     }
 
@@ -1606,7 +1606,7 @@
      * @returns {Object}
      */
     function sessionFile() {
-        const live = recordingFile();
+        const live = recordingFile$1();
         const all = [
             ...segments.map(segmentEntry),
             segmentEntry({ ...live, fights: segmentFights, tickCount: live.ticks.length, summary: summarizeSegment(live) }),
@@ -1658,8 +1658,8 @@
      *
      * @returns {boolean} Whether there was anything to write
      */
-    function downloadRecording() {
-        if (!ticks.length && !segments.length) return false;
+    function downloadRecording$1() {
+        if (!ticks$1.length && !segments.length) return false;
 
         try {
             const blob = new Blob([JSON.stringify(sessionFile())], { type: 'application/json' });
@@ -1691,15 +1691,15 @@
         },
         cleanup: () => {
             stopRecording();
-            ticks = [];
+            ticks$1 = [];
             segments = [];
         },
         isRecording,
-        recordingStatus,
+        recordingStatus: recordingStatus$1,
         startRecording,
         stopRecording,
-        downloadRecording,
-        recordingFile,
+        downloadRecording: downloadRecording$1,
+        recordingFile: recordingFile$1,
         sessionFile,
         onRecordingComplete,
         onRecordingCheckpoint,
@@ -11656,7 +11656,7 @@
     /** Whether this session has seen a battle begin; see the taken tracker for why */
     let announced$1 = false;
 
-    let startedAt$1 = 0;
+    let startedAt$2 = 0;
     let lastTickAt$1 = 0;
     let seconds$1 = 0;
     let battleId$1 = null;
@@ -11708,7 +11708,7 @@
         manaSeries = {};
         seconds$1 = 0;
         lastTickAt$1 = 0;
-        startedAt$1 = Date.now();
+        startedAt$2 = Date.now();
     }
 
     /**
@@ -11826,11 +11826,11 @@
         // Wall clock against time actually swinging. The gap between them is what
         // walking between fights costs, which is the figure DPs leads its enemy
         // card with — a rotation cannot fix it and a zone change can.
-        const logging = startedAt$1 ? (Date.now() - startedAt$1) / 1000 : 0;
+        const logging = startedAt$2 ? (Date.now() - startedAt$2) / 1000 : 0;
 
         return {
             seconds: seconds$1,
-            startedAt: startedAt$1,
+            startedAt: startedAt$2,
             logging,
             players: players.sort((a, b) => b.damage - a.damage),
             enemies: enemies.sort((a, b) => b.damage - a.damage),
@@ -12788,7 +12788,7 @@
     let announced = false;
 
     let encounters = 0;
-    let startedAt = 0;
+    let startedAt$1 = 0;
     let lastTickAt = 0;
     let seconds = 0;
     let battleId = null;
@@ -12816,7 +12816,7 @@
         encounters = 0;
         seconds = 0;
         lastTickAt = 0;
-        startedAt = Date.now();
+        startedAt$1 = Date.now();
     }
 
     /**
@@ -12903,7 +12903,7 @@
             }))
             .sort((a, b) => b.average - a.average);
 
-        return { seconds, encounters, startedAt, players, enemies, waves: waveList };
+        return { seconds, encounters, startedAt: startedAt$1, players, enemies, waves: waveList };
     }
 
     /**
@@ -15663,7 +15663,7 @@
     const MIN_SAMPLE_FIGHTS = 3;
 
     /** Two-sided 95% normal quantile */
-    const Z95 = 1.96;
+    const Z95$1 = 1.96;
 
     /**
      * The simulator's own sampling noise at {@link SIM_HOURS}, as a percentage.
@@ -15673,7 +15673,7 @@
      * and costs nothing, and at half a day of simulated combat the run-to-run spread
      * on damage per second is small.
      */
-    const SIM_NOISE_FLOOR_PCT = 2;
+    const SIM_NOISE_FLOOR_PCT$1 = 2;
 
     /** Long enough that the prediction is steady, short enough to wait for */
     const SIM_HOURS = 12;
@@ -16408,7 +16408,7 @@
      * @param {number} predicted - What was said would happen
      * @returns {number|null} Positive when the observation is the larger
      */
-    function deviationPct(observed, predicted) {
+    function deviationPct$1(observed, predicted) {
         if (!Number.isFinite(observed) || !Number.isFinite(predicted) || predicted === 0) return null;
         return ((observed - predicted) / predicted) * 100;
     }
@@ -16424,7 +16424,7 @@
      * @param {number} [floorPct] - Allowance for the predicted side's own randomness
      * @returns {number|null} Null when there are too few fights to say
      */
-    function noiseMargin(samples, floorPct = SIM_NOISE_FLOOR_PCT) {
+    function noiseMargin(samples, floorPct = SIM_NOISE_FLOOR_PCT$1) {
         const values = (samples || []).filter((value) => Number.isFinite(value));
         if (values.length < MIN_SAMPLE_FIGHTS) return null;
 
@@ -16433,7 +16433,7 @@
 
         const variance = values.reduce((total, value) => total + (value - mean) ** 2, 0) / (values.length - 1);
         const standardError = Math.sqrt(variance / values.length);
-        const samplePct = ((Z95 * standardError) / mean) * 100;
+        const samplePct = ((Z95$1 * standardError) / mean) * 100;
 
         return Math.hypot(samplePct, floorPct);
     }
@@ -16459,7 +16459,7 @@
      * @returns {{fights: number, marginPct: number, targetPct: number, requiredFights: number,
      *   needed: number, reachable: boolean, quiet: boolean, text: string}|null}
      */
-    function sampleSizeFor(observed, targetPct = NOISE_QUIET_PCT, floorPct = SIM_NOISE_FLOOR_PCT) {
+    function sampleSizeFor(observed, targetPct = NOISE_QUIET_PCT, floorPct = SIM_NOISE_FLOOR_PCT$1) {
         const values = (observed?.samples?.dps || []).filter((value) => Number.isFinite(value));
         if (values.length < MIN_SAMPLE_FIGHTS) return null;
 
@@ -16470,7 +16470,7 @@
         // The spread relative to the mean, which is the only thing about this sample
         // that carries over to a larger one
         const variation = Math.sqrt(variance) / mean;
-        const marginPct = Math.hypot(((Z95 * Math.sqrt(variance / values.length)) / mean) * 100, floorPct);
+        const marginPct = Math.hypot(((Z95$1 * Math.sqrt(variance / values.length)) / mean) * 100, floorPct);
         const band = marginPct >= 10 ? marginPct.toFixed(0) : marginPct.toFixed(1);
         const shared = { fights: values.length, marginPct, targetPct };
 
@@ -16500,7 +16500,7 @@
             };
         }
 
-        const requiredFights = Math.ceil(((Z95 * variation * 100) / Math.sqrt(room)) ** 2);
+        const requiredFights = Math.ceil(((Z95$1 * variation * 100) / Math.sqrt(room)) ** 2);
         const needed = Math.max(0, requiredFights - values.length);
         return {
             ...shared,
@@ -16564,8 +16564,8 @@
      * @param {Object} metric - `{key, label, observed, predicted, samples}`
      * @returns {Object} The same, plus `deviationPct`, `marginPct` and `verdict`
      */
-    function compareMetric({ key, label, observed, predicted, samples }) {
-        const deviation = deviationPct(observed, predicted);
+    function compareMetric$1({ key, label, observed, predicted, samples }) {
+        const deviation = deviationPct$1(observed, predicted);
         const margin = noiseMargin(samples);
 
         let verdict = 'insufficient';
@@ -16627,7 +16627,7 @@
         if (!observed || !predicted) return null;
 
         const compare = ({ key, label }) =>
-            compareMetric({
+            compareMetric$1({
                 key,
                 label,
                 observed: observed[key],
@@ -16690,7 +16690,7 @@
                 skillHrid,
                 observed: observedRate,
                 predicted: predictedRate,
-                deviationPct: deviationPct(observedRate, predictedRate),
+                deviationPct: deviationPct$1(observedRate, predictedRate),
             });
         }
 
@@ -17158,7 +17158,7 @@
                 version: 1,
                 exportedAt: Date.now(),
                 simHours: SIM_HOURS,
-                simNoiseFloorPct: SIM_NOISE_FLOOR_PCT,
+                simNoiseFloorPct: SIM_NOISE_FLOOR_PCT$1,
                 zone: {
                     hrid: observed?.zoneHrid ?? null,
                     name: observed?.zoneHrid ? zoneName(observed.zoneHrid) : null,
@@ -17446,7 +17446,7 @@
                           `over the square root of the sample, so about ${suggestion.requiredFights} fights of this zone ` +
                           `would put it under ±${NOISE_QUIET_PCT}%. It assumes the next fights look like these ones, and ` +
                           'the rolling window only keeps the most recent few hours of them.'
-                    : `±${NOISE_QUIET_PCT}% is inside the flat ±${SIM_NOISE_FLOOR_PCT}% allowed for the simulator's ` +
+                    : `±${NOISE_QUIET_PCT}% is inside the flat ±${SIM_NOISE_FLOOR_PCT$1}% allowed for the simulator's ` +
                           'own randomness, which no sample size shrinks.'
             )
         );
@@ -17846,7 +17846,7 @@
             'done. A target is reached at the end of a fight, never in the middle of one, so a recording ' +
             'overshoots by the fight it was in rather than losing it. In ±% the number is a band rather than a ' +
             'count: recording continues until the margin on the sample is under it, and a band inside the ' +
-            `simulator's own ±${SIM_NOISE_FLOOR_PCT}% allowance is never reached, so it records until stopped.`;
+            `simulator's own ±${SIM_NOISE_FLOOR_PCT$1}% allowance is never reached, so it records until stopped.`;
         Object.assign(box.style, {
             width: '46px',
             background: 'rgba(255, 255, 255, 0.06)',
@@ -19195,6 +19195,49 @@
         return { outcome, text, seconds, monsterHpLeft, playerHpLeft };
     }
 
+    /** A monster at or above this fraction of its maximum has just spawned, not healed */
+    const FRESH_MONSTER_HP_FRACTION = 0.95;
+    /** ...and a spawn is a jump to full from below this — the low a beaten monster sat at */
+    const REVIVED_FROM_HP_FRACTION = 0.9;
+
+    /**
+     * Whether a `battle_updated` tick starts a new fight rather than continuing one.
+     *
+     * The labyrinth reuses one battleId across every retry of a room, so that alone
+     * cannot tell a fresh fight from the next tick of the current one. Three things
+     * can: a battleId that changed, a monster whose maximum health changed, and the
+     * player's attack counter going down — only a fresh battle resets it.
+     *
+     * A fourth signal — the monster's health going up — catches a retry the others
+     * miss, but "health went up" is not the same as "a fresh monster spawned". A
+     * monster with life drain, guardian aura or a heal nudges its own health up
+     * mid-fight, and reading every such nudge as a new fight splits one attempt into
+     * several, each starting at whatever low health the split happened to land on. So
+     * the health signal counts only the jump a spawn makes — from the low a beaten
+     * monster sat at, back to full — not the small bump a self-heal gives.
+     *
+     * @param {Object|null} prev - The fight in progress: `{battleId, monsterMaxHp,
+     *   lastMonsterHp, lastAtkCounter}`, or null when none is being watched
+     * @param {Object} curr - This tick: `{battleId, monsterMaxHp, monsterHp, atkCounter}`
+     * @returns {boolean}
+     */
+    function isFreshLabyrinthFight(prev, curr) {
+        if (!prev) return true;
+        if (prev.battleId !== curr.battleId) return true;
+        if (prev.monsterMaxHp !== curr.monsterMaxHp) return true;
+        if (curr.atkCounter < prev.lastAtkCounter) return true;
+
+        const max = curr.monsterMaxHp || 0;
+        if (
+            max > 0 &&
+            curr.monsterHp >= max * FRESH_MONSTER_HP_FRACTION &&
+            prev.lastMonsterHp < max * REVIVED_FROM_HP_FRACTION
+        ) {
+            return true;
+        }
+        return false;
+    }
+
     /**
      * Add up a room's attempts.
      *
@@ -19243,6 +19286,389 @@
         if (!tally.deaths) return 'running out of time';
         return `${tally.deaths} died, ${tally.timeouts} timed out`;
     }
+
+    /**
+     * Labyrinth fight recorder
+     *
+     * The calibration replay needs several fights of one monster to measure a rate.
+     * The labyrinth hands out random rooms and only lets you fight one again by
+     * failing it, so there is no farming a monster to a sample on demand. The way to
+     * a sample is to stop trying to force one: keep every combat fight's damage
+     * exchange, across runs and reloads, and let the ones you happen to meet often
+     * accumulate.
+     *
+     * So this is passive and persistent. Every resolved combat fight is kept — no
+     * arming, no targeting — with the gross damage each side dealt (summed from the
+     * health that fell, so regen is not subtracted) and the gear it was fought in.
+     * The replay pools whatever has piled up for the gear you are wearing now, which
+     * is why each attempt carries a fingerprint: a gear change starts a fresh pool
+     * rather than comparing fights fought on different gear against one sim.
+     *
+     * ## Why gross, and why fingerprinted
+     *
+     * Gross because the sim reports damage gross; net-of-regen made the monster look
+     * weaker than it hit. Fingerprinted because the replay re-simulates with your
+     * current loadout, and a fight fought on last week's gear is a fight against a
+     * different character — pooling it would compare the sim to the wrong fights.
+     *
+     * ## Bounded
+     *
+     * Five hundred fights, oldest dropped. That is many runs of history, small
+     * enough to hold and write without thinking about it.
+     */
+
+
+    /** The labyrinth store, shared with the sim cache — this is labyrinth history */
+    const STORE = 'labyrinth';
+    const KEY = 'labyrinthFightRecorder';
+
+    /** Fights kept before the oldest fall off — many runs of history, still small */
+    const MAX_ATTEMPTS$1 = 500;
+
+    /** A fight shorter than this is an abandon, not a fight, and says nothing about a rate */
+    const MIN_FIGHT_SECONDS = 3;
+
+    let attempts = [];
+    let loaded = false;
+    let loading = null;
+
+    /**
+     * Read the accumulated fights back from storage, once.
+     *
+     * Called from the room-log feature's initialize so the pool survives a reload.
+     * Idempotent, and safe to call before it has resolved — the in-memory list is
+     * simply empty until it does.
+     *
+     * @returns {Promise<Array<Object>>}
+     */
+    async function load() {
+        if (loaded) return attempts;
+        if (loading) return loading;
+        loading = (async () => {
+            try {
+                const stored = await characterKey_js.readScoped(KEY, STORE, null);
+                if (Array.isArray(stored)) attempts = stored.slice(-MAX_ATTEMPTS$1);
+            } catch (error) {
+                console.error('[LabyrinthFightRecorder] Reading the fight pool failed:', error);
+            }
+            loaded = true;
+            loading = null;
+            return attempts;
+        })();
+        return loading;
+    }
+
+    /** Write the pool out. Fire-and-forget: a lost write costs one fight, not the run. */
+    function persist() {
+        Promise.resolve(characterKey_js.writeScoped(KEY, attempts, STORE)).catch((error) =>
+            console.error('[LabyrinthFightRecorder] Writing the fight pool failed:', error)
+        );
+    }
+
+    /**
+     * Keep one resolved fight, if it can support a rate.
+     *
+     * @param {Object} attempt
+     * @param {string} attempt.monsterHrid - Which monster
+     * @param {string} [attempt.monsterName] - For the file and the display
+     * @param {number} attempt.roomLevel - The room's level, which scales the monster
+     * @param {number} attempt.seconds - How long the fight ran
+     * @param {string} attempt.outcome - clear | death | timeout | unknown
+     * @param {boolean} attempt.cleared - The floor's word on whether the room cleared
+     * @param {number} attempt.monsterMaxHp - The monster's maximum health
+     * @param {number} attempt.monsterHpEnd - Its health on the last tick seen
+     * @param {number} attempt.playerMaxHp - Your maximum health
+     * @param {number} attempt.playerHpStart - Your health when the fight began
+     * @param {number} attempt.playerHpEnd - Your health on the last tick seen
+     * @param {number} [attempt.monsterDamage] - Gross damage you dealt (summed drops)
+     * @param {number} [attempt.playerDamageTaken] - Gross damage you took (summed drops)
+     * @param {string} [attempt.fingerprint] - The gear the fight was fought in
+     */
+    function noteAttempt(attempt) {
+        if (!attempt || !attempt.monsterHrid) return;
+
+        const seconds = Number(attempt.seconds) || 0;
+        const monsterMaxHp = Number(attempt.monsterMaxHp) || 0;
+        const playerMaxHp = Number(attempt.playerMaxHp) || 0;
+        if (seconds < MIN_FIGHT_SECONDS || monsterMaxHp <= 0 || playerMaxHp <= 0) return;
+        if (attempt.outcome === 'unknown') return;
+
+        const grossDealt = Number(attempt.monsterDamage);
+        const grossTaken = Number(attempt.playerDamageTaken);
+
+        attempts.push({
+            monsterHrid: String(attempt.monsterHrid),
+            monsterName: attempt.monsterName ? String(attempt.monsterName) : null,
+            roomLevel: Math.max(0, Math.floor(Number(attempt.roomLevel) || 0)),
+            seconds,
+            outcome: String(attempt.outcome || 'unknown'),
+            cleared: Boolean(attempt.cleared),
+            monsterMaxHp,
+            monsterHpEnd: Math.max(0, Number(attempt.monsterHpEnd) || 0),
+            playerMaxHp,
+            playerHpStart: Math.max(0, Number(attempt.playerHpStart) || 0),
+            playerHpEnd: Math.max(0, Number(attempt.playerHpEnd) || 0),
+            monsterDamage: Number.isFinite(grossDealt) && grossDealt >= 0 ? grossDealt : null,
+            playerDamageTaken: Number.isFinite(grossTaken) && grossTaken >= 0 ? grossTaken : null,
+            fingerprint: attempt.fingerprint ? String(attempt.fingerprint) : null,
+        });
+
+        if (attempts.length > MAX_ATTEMPTS$1) attempts = attempts.slice(attempts.length - MAX_ATTEMPTS$1);
+        persist();
+    }
+
+    /**
+     * The accumulated fights, optionally only those fought in one gear.
+     *
+     * @param {string} [fingerprint] - Keep only fights carrying this gear fingerprint
+     * @returns {Array<Object>}
+     */
+    function recordedAttempts(fingerprint) {
+        const list = fingerprint ? attempts.filter((a) => a.fingerprint === fingerprint) : attempts;
+        return list.map((a) => ({ ...a }));
+    }
+
+    /**
+     * How much has accumulated, for the gear given.
+     *
+     * @param {string} [fingerprint] - Count only fights carrying this gear fingerprint
+     * @returns {{attempts: number, total: number, monsters: number}}
+     */
+    function recordingStatus(fingerprint) {
+        const list = fingerprint ? attempts.filter((a) => a.fingerprint === fingerprint) : attempts;
+        return { attempts: list.length, total: attempts.length, monsters: new Set(list.map((a) => a.monsterHrid)).size };
+    }
+
+    /** Throw away every accumulated fight. */
+    function clearRecording() {
+        attempts = [];
+        persist();
+    }
+
+    /**
+     * The pool in a shape safe to write out and read back.
+     *
+     * `extra` is folded in first, so a caller can embed the replay comparison
+     * alongside the raw attempts without clobbering the format tag or the attempts.
+     *
+     * @param {Object} [extra] - Extra top-level fields to embed, e.g. `{ replay }`
+     * @returns {Object}
+     */
+    function recordingFile(extra = {}) {
+        return {
+            ...extra,
+            format: 'toolasha-labyrinth-recording',
+            version: 1,
+            exportedAt: Date.now(),
+            attempts: recordedAttempts(),
+        };
+    }
+
+    /**
+     * Write the pool out as a file.
+     * @param {Object} [extra] - Extra top-level fields to embed
+     * @returns {boolean} Whether there was anything to write
+     */
+    function downloadRecording(extra = {}) {
+        if (!attempts.length) return false;
+        try {
+            const blob = new Blob([JSON.stringify(recordingFile(extra))], { type: 'application/json' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `toolasha-labyrinth-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+            link.click();
+            URL.revokeObjectURL(link.href);
+            return true;
+        } catch (error) {
+            console.error('[LabyrinthFightRecorder] Writing the recording failed:', error);
+            return false;
+        }
+    }
+
+    var labFightRecorder = {
+        load,
+        noteAttempt,
+        recordedAttempts,
+        recordingStatus,
+        clearRecording,
+        recordingFile,
+        downloadRecording,
+    };
+
+    /**
+     * Labyrinth tick capture
+     *
+     * The fight recorder keeps endpoints — how much damage, how long — which is
+     * enough to measure a rate and say the sim is over- or under-crediting a side.
+     * It is not enough to say *why*. "The monster's stun is under-modelled" is a
+     * claim about the moment-to-moment feed: how often your attack counter stalls,
+     * how often the monster casts, how much each hit lands for. Those live in the
+     * ticks, not in the totals.
+     *
+     * So this keeps the ticks. It records the ordered `battle_updated` stream — both
+     * sides' health, mana and counters, three times a second — and the `new_battle`
+     * that names the units and their abilities, exactly as they arrive, timestamped
+     * so a replay can reconstruct the timeline. It is the raw feed the console
+     * `Toolasha.Debug.captureLab` produced, as a button and a downloadable file.
+     *
+     * Bounded, because ticks arrive several times a second and an armed capture left
+     * running is a tab that grows until it falls over — and time-bounded too, so a
+     * capture nobody stopped stops itself. One fight is ~360 ticks; the cap holds
+     * tens of fights, and past it the oldest ticks fall off so the recent fight is
+     * always the one kept.
+     */
+
+
+    /** Ticks kept before the oldest fall off — far more than one fight, bounded so a tab can't grow forever */
+    const MAX_TICKS = 8000;
+
+    /** A capture nobody stopped stops itself here, so an armed one is never left running */
+    const MAX_CAPTURE_MS = 15 * 60 * 1000;
+
+    let capturing = false;
+    let startedAt = 0;
+    let ticks = [];
+    let context = null;
+    let handlers = null;
+    let autoStopTimer = null;
+
+    /** @returns {boolean} Whether a capture is running */
+    function isCapturing() {
+        return capturing;
+    }
+
+    /**
+     * Fill the monster into the capture's context from a `new_battle`, so the file
+     * says what it is even when the caller had no room context to pass — the panel's
+     * labyrinth grid is not always populated when Capture is pressed, but the fight
+     * itself always names its monster.
+     * @param {Object} payload - A new_battle payload
+     */
+    function labelFromBattle(payload) {
+        if (context && context.monsterHrid) return;
+        const monsters = Array.isArray(payload?.monsters) ? payload.monsters : Object.values(payload?.monsters || {});
+        const monster = monsters[0];
+        if (monster?.hrid) {
+            context = { ...(context || {}), monsterHrid: monster.hrid, monsterName: monster.name || null };
+        }
+    }
+
+    /**
+     * One tick, timestamped from the capture's start so a replay reproduces timing.
+     * @param {string} type - Which message
+     * @param {Object} payload - What it carried, trimmed to what a fight needs
+     */
+    function push(type, payload) {
+        if (!capturing) return;
+        if (type === 'new_battle') labelFromBattle(payload);
+        ticks.push({ at: Date.now() - startedAt, type, payload });
+        // Keep the newest: a long capture that overflows should hold the recent
+        // fight, not the one it opened on
+        if (ticks.length > MAX_TICKS) ticks = ticks.slice(ticks.length - MAX_TICKS);
+    }
+
+    /**
+     * Start recording the raw combat feed.
+     *
+     * @param {Object} [ctx] - What is being fought, for the file — `{ monsterHrid, roomLevel }`
+     */
+    function startCapture(ctx = null) {
+        stopCapture$1();
+        capturing = true;
+        startedAt = Date.now();
+        ticks = [];
+        context = ctx || null;
+
+        // Both sides' health/mana/counters, and the message that names the units and
+        // their abilities. `battle_updated` is trimmed to what a fight reads; the
+        // rest (chat, ids) is noise a capture does not need.
+        const onBattle = (data) => push('battle_updated', { pMap: data?.pMap, mMap: data?.mMap, battleId: data?.battleId });
+        const onNew = (data) => push('new_battle', data);
+
+        webSocketHook.on('battle_updated', onBattle);
+        webSocketHook.on('new_battle', onNew);
+        handlers = { onBattle, onNew };
+
+        autoStopTimer = setTimeout(() => stopCapture$1(), MAX_CAPTURE_MS);
+    }
+
+    /** Stop recording. What was captured stays captured, for the file. */
+    function stopCapture$1() {
+        if (autoStopTimer) {
+            clearTimeout(autoStopTimer);
+            autoStopTimer = null;
+        }
+        if (handlers) {
+            webSocketHook.off('battle_updated', handlers.onBattle);
+            webSocketHook.off('new_battle', handlers.onNew);
+            handlers = null;
+        }
+        capturing = false;
+    }
+
+    /** Throw away the captured ticks. */
+    function clearCapture() {
+        ticks = [];
+        startedAt = 0;
+        context = null;
+    }
+
+    /**
+     * How much has been captured, for the button to read.
+     * @returns {{capturing: boolean, ticks: number, seconds: number}}
+     */
+    function captureStatus() {
+        return {
+            capturing,
+            ticks: ticks.length,
+            seconds: startedAt ? (Date.now() - startedAt) / 1000 : 0,
+        };
+    }
+
+    /**
+     * The capture in a shape safe to write out and read back.
+     * @returns {Object}
+     */
+    function captureFile() {
+        return {
+            format: 'toolasha-labyrinth-tick-capture',
+            version: 1,
+            recordedAt: startedAt || null,
+            exportedAt: Date.now(),
+            context: context || null,
+            ticks: ticks.map((tick) => ({ ...tick })),
+        };
+    }
+
+    /**
+     * Write the capture out as a file.
+     * @returns {boolean} Whether there was anything to write
+     */
+    function downloadCapture() {
+        if (!ticks.length) return false;
+        try {
+            const blob = new Blob([JSON.stringify(captureFile())], { type: 'application/json' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `toolasha-labyrinth-ticks-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+            link.click();
+            URL.revokeObjectURL(link.href);
+            return true;
+        } catch (error) {
+            console.error('[LabyrinthTickCapture] Writing the capture failed:', error);
+            return false;
+        }
+    }
+
+    var labTickCapture = {
+        isCapturing,
+        startCapture,
+        stopCapture: stopCapture$1,
+        clearCapture,
+        captureStatus,
+        captureFile,
+        downloadCapture,
+    };
 
     /**
      * Labyrinth Outcome Log
@@ -19433,7 +19859,16 @@
             if (!subjectHrid) continue;
 
             const newEntries = Math.max(0, room.entryCount - priorEntries);
-            const newClear = room.isCleared && !priorCleared ? 1 : 0;
+            // A clear only counts for a room you actually entered. A revealed tile
+            // can be cleared without a fight — a shroud, a beacon, a floor skip — and
+            // the server marks it `isCleared` with `entryCount` still zero; counting
+            // that booked a 1/1 at levels far above anything you could clear and
+            // dragged the whole record toward "sim too low". A genuine first-try win
+            // has its entry counted in the same update, so `room.entryCount` is
+            // already at least one there. (The same guard the best-level tracker
+            // applies in labyrinth-tracker.js.)
+            const entered = room.entryCount > 0 || priorEntries > 0;
+            const newClear = room.isCleared && !priorCleared && entered ? 1 : 0;
             if (newEntries === 0 && newClear === 0) continue;
 
             const key = outcomeKey(subjectHrid, roomLevel);
@@ -20759,6 +21194,12 @@
                 this.sessions = stored.sessions.slice(0, this.logSize());
             }
 
+            // Bring the accumulated calibration fights back into memory, so the pool
+            // survives a reload rather than starting empty each session
+            labFightRecorder
+                .load()
+                .catch((error) => console.error('[LabyrinthRoomLogs] Loading fight pool failed:', error));
+
             this.progressHandler = (data) => this.onRoomProgress(data);
             webSocketHook.on('labyrinth_room_progress', this.progressHandler);
 
@@ -20801,6 +21242,9 @@
             }
             for (const [type, handler] of this.xpHandlers) webSocketHook.off(type, handler);
             this.xpHandlers = [];
+            // A raw capture registers its own socket listeners; a feature teardown
+            // that left them on would leak them past the panel that started it
+            labTickCapture.stopCapture();
             this.flushReport();
             if (this.unregisterTab) {
                 this.unregisterTab();
@@ -21089,19 +21533,21 @@
             const playerHpFraction = player.cHP / player.mHP;
             const atkCounter = Number(player.atkCounter) || 0;
 
-            // battleId stays put across labyrinth attempts and a retry of the same
-            // room brings back a monster with the same maximum, so neither says a
-            // new fight started. Two things do: health that went up, which only a
-            // fresh monster can do, and an attack counter that went down, which only
-            // a fresh battle can do.
+            // A new session is always a new fight; otherwise defer to the shared
+            // boundary test, which counts a monster-health jump only when it is the
+            // leap to full a spawn makes — not the bump a self-healing monster (the
+            // Dryad's life drain, a guardian aura) gives itself mid-fight, which used
+            // to split one attempt into several at whatever low health it landed on.
             const fight = this.fight;
             const isNewFight =
                 !fight ||
                 fight.session !== session ||
-                fight.battleId !== data.battleId ||
-                fight.monsterMaxHp !== monster.mHP ||
-                monster.cHP > fight.lastMonsterHp ||
-                atkCounter < fight.lastAtkCounter;
+                isFreshLabyrinthFight(fight, {
+                    battleId: data.battleId,
+                    monsterMaxHp: monster.mHP,
+                    monsterHp: monster.cHP,
+                    atkCounter,
+                });
 
             if (isNewFight) {
                 this.resolveFight(); // whatever was being watched has ended
@@ -21111,15 +21557,39 @@
                     monsterHrid: session.monsterHrid,
                     battleId: data.battleId,
                     monsterMaxHp: monster.mHP,
+                    // Absolute health at the first tick, so the recorder can measure
+                    // the damage each side dealt — you carry health between rooms, so
+                    // a fight need not begin at full
+                    playerMaxHp: player.mHP,
+                    playerHpStart: player.cHP,
+                    // Gross damage each side dealt, summed from the health that fell
+                    // tick to tick. The endpoints alone give damage net of healing —
+                    // and you regenerate through a fight — while the sim reports it
+                    // gross, so a net-vs-gross comparison read as the sim over-hitting.
+                    grossTaken: 0,
+                    grossDealt: 0,
+                    prevPlayerHp: player.cHP,
+                    prevMonsterHp: monster.cHP,
                     startedAt: Date.now(),
                 };
             }
+
+            // Accumulate the drops, not the endpoints: a health bar that fell 300 and
+            // regenerated 100 took 300, not 200, and that is what the monster dealt
+            const takenStep = this.fight.prevPlayerHp - player.cHP;
+            if (takenStep > 0) this.fight.grossTaken += takenStep;
+            const dealtStep = this.fight.prevMonsterHp - monster.cHP;
+            if (dealtStep > 0) this.fight.grossDealt += dealtStep;
 
             Object.assign(this.fight, {
                 lastMonsterHp: monster.cHP,
                 lastAtkCounter: atkCounter,
                 monsterHpFraction,
                 playerHpFraction,
+                playerHpEnd: player.cHP,
+                monsterHpEnd: monster.cHP,
+                prevPlayerHp: player.cHP,
+                prevMonsterHp: monster.cHP,
             });
 
             // The tile may not have been calculated when the room was entered, and
@@ -21251,6 +21721,31 @@
             }
             if (attempt.outcome === 'clear') session.cleared = true;
             session.endedAt = Date.now();
+
+            // The calibration replay reads this. It is passive — the labyrinth gives
+            // random rooms, so every fight is kept and the ones you meet often
+            // accumulate, rather than farming one room. The room log keeps the
+            // outcome; the recorder keeps the damage exchange that says whether a loss
+            // was a timeout or a death, tagged with the gear it was fought in so a
+            // gear change starts a fresh pool.
+            labFightRecorder.noteAttempt({
+                monsterHrid: fight.monsterHrid,
+                monsterName: this.prettyMonsterName(fight.monsterHrid),
+                roomLevel: session.roomLevel,
+                seconds: attempt.seconds,
+                outcome: attempt.outcome,
+                cleared: attempt.outcome === 'clear',
+                monsterMaxHp: fight.monsterMaxHp,
+                monsterHpEnd: fight.monsterHpEnd,
+                playerMaxHp: fight.playerMaxHp,
+                playerHpStart: fight.playerHpStart,
+                playerHpEnd: fight.playerHpEnd,
+                // Gross damage summed from the drops — matches the sim's gross
+                // totals, unlike the endpoints, which are net of your regen
+                monsterDamage: fight.grossDealt,
+                playerDamageTaken: fight.grossTaken,
+                fingerprint: this.simSource?.fingerprint?.() || null,
+            });
 
             this.persist();
             this.renderIfOpen();
@@ -21489,24 +21984,24 @@
 
             const header = document.createElement('div');
             header.style.cssText =
-                'display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px 6px; ' +
-                'border-bottom:1px solid rgba(146,182,255,0.24); cursor:move;';
+                'display:flex; align-items:center; justify-content:space-between; gap:8px 10px; flex-wrap:wrap; ' +
+                'padding:8px 10px 6px; border-bottom:1px solid rgba(146,182,255,0.24); cursor:move;';
 
             const tabs = document.createElement('div');
             tabs.style.cssText = 'display:inline-flex; align-items:center; gap:4px;';
             this.tabButtons = {
                 rooms: this.makeTab('Rooms', 'rooms'),
-                accuracy: this.makeTab('Sim accuracy', 'accuracy'),
+                accuracy: this.makeTab('Accuracy', 'accuracy'),
             };
             tabs.appendChild(this.tabButtons.rooms);
             tabs.appendChild(this.tabButtons.accuracy);
 
             const actions = document.createElement('div');
-            actions.style.cssText = 'display:inline-flex; align-items:center; gap:6px;';
+            actions.style.cssText = 'display:inline-flex; align-items:center; flex-wrap:wrap; gap:4px 6px;';
 
             this.clearButton = document.createElement('button');
             this.clearButton.style.cssText =
-                'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px;';
+                'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
             this.clearButton.addEventListener('click', () => this.onClearClicked());
 
             const closeBtn = document.createElement('button');
@@ -21522,9 +22017,56 @@
             this.exportButton.textContent = 'Export';
             this.exportButton.title = 'Copy the whole fight record as text, so it can be looked at somewhere else';
             this.exportButton.style.cssText =
-                'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px;';
+                'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
             this.exportButton.addEventListener('click', () => this.exportAccuracy());
 
+            this.recomputeButton = document.createElement('button');
+            this.recomputeButton.textContent = 'Recompute';
+            this.recomputeButton.title =
+                'Throw away every cached clear-chance sim and simulate the rooms again. Use this after changing ' +
+                'gear or a loadout — a plain equip does not always refresh a sim, so a cached result can be stale.';
+            this.recomputeButton.style.cssText =
+                'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
+            this.recomputeButton.addEventListener('click', () => this.onRecomputeClicked());
+
+            // A slow, timeout-heavy room (a hard combat tile) stops its sim on the
+            // simulated-hours budget long before it pins the rate down, so its clear
+            // chance reads "(capped)" with a wide band. With this on, Recompute lifts
+            // that time cap and runs each room to its precision target — more precise,
+            // but slower, so it is an opt-in toggle rather than the default.
+            this.uncapped = false;
+            this.uncappedButton = document.createElement('button');
+            this.uncappedButton.textContent = 'Uncapped';
+            this.uncappedButton.title =
+                'Run Recompute with the sim’s time cap lifted, so slow rooms reach their precision target instead ' +
+                'of stopping at a wide "(capped)" band. More precise but slower.';
+            this.uncappedButton.addEventListener('click', () => {
+                this.uncapped = !this.uncapped;
+                this.paintUncapped();
+            });
+
+            // Calibration replay: fights are recorded passively across runs, so this
+            // just re-sims whatever has accumulated for your current gear and reports
+            // where the sim diverges from what actually happened
+            this.replayButton = document.createElement('button');
+            this.replayButton.textContent = 'Replay';
+            this.replayButton.title =
+                'Re-simulate the rooms recorded on your current gear and compare your real damage rate and the ' +
+                'monster’s against the sim — the decomposition the clear rate alone cannot give. Fights accumulate ' +
+                'passively as you play; a monster needs a handful before it can be judged.';
+            this.replayButton.style.cssText =
+                'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
+            this.replayButton.addEventListener('click', () => this.onReplayClicked());
+
+            // Raw tick capture: the moment-to-moment feed behind a rate mismatch —
+            // stun gaps, ability cadence, damage per hit — as a file to hand over
+            this.captureButton = document.createElement('button');
+            this.captureButton.addEventListener('click', () => this.onCaptureClicked());
+
+            actions.appendChild(this.replayButton);
+            actions.appendChild(this.captureButton);
+            actions.appendChild(this.uncappedButton);
+            actions.appendChild(this.recomputeButton);
             actions.appendChild(this.exportButton);
             actions.appendChild(this.clearButton);
             actions.appendChild(closeBtn);
@@ -21554,7 +22096,7 @@
                 this.view = view;
                 this.resetArmed = false;
                 this.paintChrome();
-                this.render();
+                this.render(false);
             });
             return button;
         }
@@ -21564,7 +22106,8 @@
             for (const [view, button] of Object.entries(this.tabButtons || {})) {
                 const on = this.view === view;
                 button.style.cssText =
-                    'height:18px; border:0; border-radius:4px; font-size:10px; font-weight:700; cursor:pointer; padding:0 7px; ' +
+                    'height:18px; border:0; border-radius:4px; font-size:10px; font-weight:700; cursor:pointer; ' +
+                    'padding:0 7px; white-space:nowrap; flex-shrink:0; ' +
                     (on
                         ? 'background:rgba(77,151,255,0.95); color:#fff;'
                         : 'background:rgba(255,255,255,0.1); color:#9ec4ff;');
@@ -21580,6 +22123,144 @@
                 ? 'Throw away every recorded fight and start the accuracy record over'
                 : 'Clear the room log';
             this.clearButton.style.background = this.resetArmed ? 'rgba(255,100,100,0.55)' : 'rgba(255,255,255,0.12)';
+            this.paintUncapped();
+            this.paintReplay();
+            this.paintCapture();
+        }
+
+        /** Enable Replay once the pool has fights on the current gear, and count them */
+        paintReplay() {
+            if (!this.replayButton) return;
+            const fingerprint = this.simSource?.fingerprint?.() || null;
+            const kept = labFightRecorder.recordingStatus(fingerprint).attempts;
+            const canReplay = kept > 0 && !!this.simSource?.replay;
+            this.replayButton.textContent = kept ? `Replay (${kept})` : 'Replay';
+            this.replayButton.disabled = !canReplay;
+            this.replayButton.style.opacity = canReplay ? '1' : '0.45';
+            this.replayButton.style.cursor = canReplay ? 'pointer' : 'default';
+        }
+
+        /** Show whether a raw tick capture is running and how many ticks it has */
+        paintCapture() {
+            if (!this.captureButton) return;
+            const status = labTickCapture.captureStatus();
+
+            if (status.capturing) {
+                this.captureButton.textContent = status.ticks ? `Stop & save (${status.ticks})` : 'Capturing…';
+                this.captureButton.title =
+                    'Stop the raw capture and download it. It records the moment-to-moment combat feed — every ' +
+                    'health, mana and counter tick — so the stun cadence and per-hit damage behind a rate mismatch ' +
+                    'can be read. Hand the file over.';
+            } else {
+                this.captureButton.textContent = 'Capture';
+                this.captureButton.title =
+                    'Record the raw combat feed of a fight — the tick-by-tick detail the endpoints do not keep, for ' +
+                    'diagnosing which mechanic the sim has wrong (stun uptime, ability cadence, per-hit damage). ' +
+                    'Start it, fight the room, then stop to download the file.';
+            }
+            this.captureButton.style.cssText =
+                'height:18px; border:0; border-radius:4px; font-size:10px; cursor:pointer; padding:0 6px; ' +
+                'white-space:nowrap; flex-shrink:0; ' +
+                (status.capturing
+                    ? 'background:rgba(255,110,110,0.85); color:#fff;'
+                    : 'background:rgba(255,255,255,0.12); color:#9ec4ff;');
+        }
+
+        /** Show whether an uncapped Recompute is armed */
+        paintUncapped() {
+            if (!this.uncappedButton) return;
+            this.uncappedButton.style.cssText =
+                'height:18px; border:0; border-radius:4px; font-size:10px; cursor:pointer; padding:0 6px; ' +
+                'white-space:nowrap; flex-shrink:0; ' +
+                (this.uncapped
+                    ? 'background:rgba(77,151,255,0.95); color:#fff;'
+                    : 'background:rgba(255,255,255,0.12); color:#9ec4ff;');
+        }
+
+        /**
+         * Clear every cached clear-chance sim and simulate the rooms again.
+         *
+         * The heavy lifting lives in the clear-rate feature, reached through the sim
+         * source; this only drives the button so a run in progress cannot be started
+         * twice and says what it is doing while it runs.
+         */
+        async onRecomputeClicked() {
+            const button = this.recomputeButton;
+            if (!button || button.disabled) return;
+            if (!this.simSource?.recompute) return;
+
+            const label = button.textContent;
+            button.disabled = true;
+            button.textContent = this.uncapped ? 'Recomputing (uncapped)…' : 'Recomputing…';
+            button.style.opacity = '0.6';
+            try {
+                await this.simSource.recompute(this.uncapped === true);
+            } catch (error) {
+                console.error('[LabyrinthRoomLogs] Recomputing sims failed:', error);
+            } finally {
+                button.disabled = false;
+                button.textContent = label;
+                button.style.opacity = '';
+                this.render();
+            }
+        }
+
+        /**
+         * Re-simulate the recorded rooms and show where the sim diverges.
+         *
+         * The comparison itself lives in the clear-rate feature, reached through the
+         * sim source, because it owns the simulator and the loadout. This drives the
+         * button, drops the result on the panel, and switches to the accuracy view
+         * where it is drawn above the record.
+         */
+        async onReplayClicked() {
+            const button = this.replayButton;
+            if (!button || button.disabled) return;
+            if (!this.simSource?.replay) return;
+
+            const label = button.textContent;
+            button.disabled = true;
+            button.textContent = 'Replaying…';
+            button.style.opacity = '0.6';
+            try {
+                this.replayResult = await this.simSource.replay();
+            } catch (error) {
+                console.error('[LabyrinthRoomLogs] Replaying recorded fights failed:', error);
+                this.replayResult = { error: true };
+            } finally {
+                button.disabled = false;
+                button.textContent = label;
+                button.style.opacity = '';
+            }
+
+            this.view = 'accuracy';
+            this.paintChrome();
+            this.render(false);
+        }
+
+        /**
+         * Start the raw tick capture, or stop it and download the file.
+         *
+         * Stop and save is one press: the file is the whole point of the capture, so
+         * there is nothing to do between stopping and handing it over.
+         */
+        onCaptureClicked() {
+            if (labTickCapture.isCapturing()) {
+                labTickCapture.stopCapture();
+                labTickCapture.downloadCapture();
+            } else {
+                // Best-effort label from whatever knows the current room; the capture
+                // backfills the monster from the fight's own feed if this is empty
+                const room = this.labContext?.room;
+                const monsterHrid = this.fight?.monsterHrid || this.activeSession?.monsterHrid || room?.monsterHrid || null;
+                const roomLevel =
+                    this.fight?.session?.roomLevel ||
+                    this.activeSession?.roomLevel ||
+                    Math.floor(Number(room?.recommendedLevel) || 0) ||
+                    0;
+                labTickCapture.startCapture(monsterHrid || roomLevel ? { monsterHrid, roomLevel } : null);
+            }
+            this.paintCapture();
         }
 
         /**
@@ -21641,11 +22322,32 @@
             }
         }
 
-        render() {
+        /**
+         * Redraw the open view, keeping the scroll position where it was.
+         *
+         * Both renderers empty the list and rebuild it, which resets the browser's
+         * scroll to the top — and they run on every experience/labyrinth update, so
+         * a panel left open while a fight ticks was yanked back to the top several
+         * times a second and could not be read. The offset is saved before the wipe
+         * and restored after (after the await, for the async accuracy view). A tab
+         * switch is the one redraw that *should* start at the top, so it opts out.
+         *
+         * @param {boolean} [preserveScroll=true] - Keep the current scroll offset
+         */
+        render(preserveScroll = true) {
+            const list = this.panel?.querySelector('.mwi-lab-logs-list');
+            const top = preserveScroll && list ? list.scrollTop : 0;
+            const restore = () => {
+                if (!preserveScroll) return;
+                const current = this.panel?.querySelector('.mwi-lab-logs-list');
+                if (current) current.scrollTop = top;
+            };
+
             if (this.view === 'accuracy') {
-                this.renderAccuracy();
+                this.renderAccuracy().then(restore).catch(restore);
             } else {
                 this.renderPanel();
+                restore();
             }
         }
 
@@ -21717,6 +22419,115 @@
             note.style.cssText = 'font-size:11px; color:#9ab0d8; text-align:center; padding:8px; line-height:1.4;';
             note.textContent = text;
             return note;
+        }
+
+        /** How a replay metric value reads, by which metric it is */
+        formatReplayValue(key, value) {
+            if (!Number.isFinite(value)) return '—';
+            if (key === 'clearRate') return `${Math.round(value * 100)}%`;
+            if (key === 'secondsPerFight') return `${value.toFixed(1)}s`;
+            return `${formatters_js.formatKMB(value)}/s`;
+        }
+
+        /**
+         * The calibration replay's verdict, drawn above the accuracy record.
+         *
+         * One block per room replayed: the diagnosis in a sentence, then the four
+         * rates with what you did, what the sim predicted, and how far apart they are.
+         *
+         * @param {Object} result - From the sim source's `replay`
+         * @returns {HTMLElement}
+         */
+        renderReplayResult(result) {
+            const box = document.createElement('div');
+            box.style.cssText =
+                'border:1px solid rgba(146,182,255,0.35); border-radius:6px; background:rgba(18,26,40,0.95); ' +
+                'padding:7px 8px; margin-bottom:8px; font-size:11px; line-height:1.35;';
+
+            const title = document.createElement('div');
+            title.style.cssText = 'font-weight:700; color:#cfe0ff; margin-bottom:4px;';
+            title.textContent = 'Calibration replay';
+            box.appendChild(title);
+
+            if (result?.error) {
+                box.appendChild(this.makeNote('The replay could not run — the sim or loadout was unavailable.'));
+                return box;
+            }
+            if (!result?.groups?.length) {
+                const pool = result?.pool;
+                const note =
+                    pool && pool.attempts > 0
+                        ? `${pool.attempts} fight${pool.attempts === 1 ? '' : 's'} recorded on this gear over ` +
+                          `${pool.monsters} monster${pool.monsters === 1 ? '' : 's'}, but none has the handful of ` +
+                          `attempts a rate needs yet. Fights accumulate as you play — keep going and check back.`
+                        : 'No fights recorded on this gear yet. They accumulate automatically as you fight combat ' +
+                          'rooms — no need to do anything, just play and check back.';
+                box.appendChild(this.makeNote(note));
+                return box;
+            }
+
+            const colour = { above: '#ff9a6b', below: '#ff9a6b', consistent: '#8fe6a0', insufficient: '#9ab0d8' };
+
+            for (const group of result.groups) {
+                const head = document.createElement('div');
+                head.style.cssText = 'font-weight:700; color:#f2f7ff; margin:4px 0 2px;';
+                const name = group.monsterName || this.prettyMonsterName(group.monsterHrid);
+                // A bucket may pool a few nearby levels; say the span, not a false point
+                const lvl =
+                    Number.isFinite(group.levelLow) && group.levelHigh > group.levelLow
+                        ? `lvl ${group.levelLow}–${group.levelHigh}`
+                        : `lvl ${group.roomLevel}`;
+                head.textContent = `${name} · ${lvl} · ${group.fights} fight${group.fights === 1 ? '' : 's'}, ${
+                group.clears
+            } cleared`;
+                box.appendChild(head);
+
+                const diag = document.createElement('div');
+                diag.style.cssText = 'color:#d7e6ff; margin-bottom:3px;';
+                diag.textContent = group.diagnosis;
+                box.appendChild(diag);
+
+                for (const metric of group.metrics) {
+                    const row = document.createElement('div');
+                    row.style.cssText = 'display:flex; justify-content:space-between; gap:8px; padding:1px 0;';
+
+                    const left = document.createElement('span');
+                    left.style.cssText = 'color:#9ab0d8;';
+                    left.textContent = metric.label;
+
+                    const right = document.createElement('span');
+                    right.style.cssText = `color:${colour[metric.verdict] || '#e6eefc'}; text-align:right;`;
+                    const you = this.formatReplayValue(metric.key, metric.observed);
+                    const sim = this.formatReplayValue(metric.key, metric.predicted);
+                    let tag = '';
+                    if (metric.verdict === 'insufficient') {
+                        tag = ' (too few)';
+                    } else if (Number.isFinite(metric.deviationPct)) {
+                        const sign = metric.deviationPct >= 0 ? '+' : '−';
+                        tag = ` (${sign}${Math.abs(metric.deviationPct).toFixed(0)}%)`;
+                    }
+                    right.textContent = `${you} vs sim ${sim}${tag}`;
+
+                    row.appendChild(left);
+                    row.appendChild(right);
+                    box.appendChild(row);
+                }
+            }
+
+            const save = document.createElement('button');
+            save.textContent = 'Save comparison';
+            save.style.cssText =
+                'margin-top:6px; height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); ' +
+                'color:#9ec4ff; font-size:10px; cursor:pointer; padding:0 6px;';
+            save.title =
+                'Download the recorded attempts together with this replay comparison — observed vs sim per rate, ' +
+                'and the verdict — so the whole accuracy check can be handed over or kept';
+            // Embed the comparison beside the raw attempts, so one file is the whole
+            // check rather than only the half a bare recording carries
+            save.addEventListener('click', () => labFightRecorder.downloadRecording({ replay: result }));
+            box.appendChild(save);
+
+            return box;
         }
 
         renderSessionCard(session) {
@@ -21888,9 +22699,22 @@
             const tally = fightTally(session.actions);
             const parts = [session.predicted === null ? 'Sim —' : `Sim ${(session.predicted * 100).toFixed(0)}%`];
 
-            parts.push(
-                tally.total ? `Won ${tally.clears}/${tally.total} (${Math.round(tally.rate * 100)}%)` : 'No result yet'
-            );
+            // Only fights watched on the combat view are classified (win/death/
+            // timeout); the server's entryCount counts every attempt, including those
+            // that ran while you were on another tab. Show the server total so a run
+            // spent mostly off-screen does not read as if those attempts never
+            // happened — with the watched subset named, since that is all the
+            // died/timed-out breakdown can speak for.
+            const serverAttempts = Math.floor(Number(session.entryCount) || 0);
+            if (tally.total) {
+                let result = `Won ${tally.clears}/${tally.total} (${Math.round(tally.rate * 100)}%)`;
+                if (serverAttempts > tally.total) result += ` · ${serverAttempts} total`;
+                parts.push(result);
+            } else if (serverAttempts > 0) {
+                parts.push(`${serverAttempts} attempt${serverAttempts === 1 ? '' : 's'}, none watched`);
+            } else {
+                parts.push('No result yet');
+            }
             const shape = failureShape(tally);
             if (shape) parts.push(shape);
 
@@ -21973,6 +22797,11 @@
             if (token !== this.renderToken || this.view !== 'accuracy') return;
 
             list.textContent = '';
+
+            // The calibration replay, when one has been run, sits above the record —
+            // it answers "why is the rate wrong" that the record only flags
+            if (this.replayResult) list.appendChild(this.renderReplayResult(this.replayResult));
+
             const { rows, summary } = snapshot;
             if (!rows.length) {
                 list.appendChild(
@@ -24378,6 +25207,383 @@
     };
 
     /**
+     * Labyrinth replay check
+     *
+     * The accuracy record already asks whether the sim's clear chance matches how
+     * often a room is actually cleared. That is one bit per attempt and it takes
+     * hundreds of them to say anything — and when it finally does, it says the rate
+     * is wrong without saying why. A room that times out and a room that kills you
+     * are both "lost", and the fix for each is the opposite: more damage, or more
+     * defence.
+     *
+     * This decomposes the gap. From a handful of recorded attempts it measures two
+     * rates the clear chance hides — how fast you destroyed the monster, and how
+     * fast it destroyed you — and compares each against the same rate the sim
+     * produces for that monster at that room level. A sim that over-credits your
+     * damage shows up as your rate falling short; one that under-models the monster's
+     * shows up as its rate running over. Either one, or both, is what pushes the
+     * predicted clear chance above what the room delivers.
+     *
+     * Pure: recorded attempts and a sim result in, a comparison out. The sim itself
+     * is run by the clear-rate feature, which owns the simulator and the loadout.
+     */
+
+    /** Below this many fights a rate is noise, and the verdict says so rather than guessing */
+    const MIN_LAB_FIGHTS = 5;
+
+    /**
+     * A fight the recorder saw begin with the player at least this much of full is a
+     * clean start. Below it the player carried a wound in — or the recorder joined
+     * mid-fight — and the sim, which always fights from full, has no equivalent: its
+     * short length skews the fight-length rate and its opening damage may never have
+     * been seen. Retries in one room reset the player to full, so a low start now
+     * reliably marks a partial fight rather than ordinary play.
+     */
+    const CLEAN_START_HP_FRACTION = 0.9;
+
+    /**
+     * Room levels a monster appears at are spread across a random labyrinth, so
+     * grouping by exact level would never pool enough fights of one monster to judge.
+     * Levels are bucketed to this width instead — a band narrow enough that the
+     * monster scales by only about this percent across it — and the group is
+     * re-simulated at the median level of the fights in it.
+     */
+    const LEVEL_BUCKET = 10;
+
+    /** The median of a list of numbers, for the level a bucket is re-simulated at */
+    function median(values) {
+        if (!values.length) return 0;
+        const sorted = [...values].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+    }
+
+    /** The sim's own run-to-run wobble, folded into every margin so a within-noise call stays honest */
+    const SIM_NOISE_FLOOR_PCT = 2;
+
+    /** 95% of a normal sits inside this many standard errors of the mean */
+    const Z95 = 1.96;
+
+    /**
+     * The mean of a list of numbers.
+     * @param {number[]} values
+     * @returns {number}
+     */
+    function mean(values) {
+        if (!values.length) return 0;
+        return values.reduce((sum, v) => sum + v, 0) / values.length;
+    }
+
+    /**
+     * The 95% margin on a sample's mean, as a percent of that mean.
+     *
+     * Null when there are too few points to measure a spread or the mean is zero —
+     * both are "cannot say", which the caller must not read as "zero spread".
+     *
+     * @param {number[]} values
+     * @returns {number|null}
+     */
+    function relMarginPct(values) {
+        if (!Array.isArray(values) || values.length < 2) return null;
+        const m = mean(values);
+        if (!(m > 0)) return null;
+        const variance = values.reduce((sum, v) => sum + (v - m) ** 2, 0) / (values.length - 1);
+        const stdErr = Math.sqrt(variance) / Math.sqrt(values.length);
+        return ((Z95 * stdErr) / m) * 100;
+    }
+
+    /**
+     * A sample's margin, widened by the sim's own noise so a comparison against a
+     * simulated figure is not called a finding on a difference the sim itself would
+     * produce between two runs.
+     *
+     * @param {number[]} values
+     * @returns {number|null}
+     */
+    function widenedMarginPct(values) {
+        const base = relMarginPct(values);
+        if (base === null) return null;
+        return Math.hypot(base, SIM_NOISE_FLOOR_PCT);
+    }
+
+    /**
+     * Signed deviation of an observed value from a predicted one, as a percent of
+     * the prediction. Positive means observed ran higher than the sim expected.
+     *
+     * @param {number} observed
+     * @param {number} predicted
+     * @returns {number|null} Null when the prediction is zero and a ratio is undefined
+     */
+    function deviationPct(observed, predicted) {
+        if (!(predicted > 0)) return null;
+        return ((observed - predicted) / predicted) * 100;
+    }
+
+    /**
+     * The gross damage each side dealt over one attempt.
+     *
+     * Gross, not net: the comparison is against the sim's `totalDamageDealt`, which
+     * counts every hit before any healing. Reading damage off the endpoints instead
+     * — where a health bar ends versus where it began — quietly subtracts whatever
+     * regenerated during the fight, and you regenerate through a labyrinth fight. A
+     * recorder that summed the drops tick by tick reports the gross figure directly;
+     * `monsterDamage`/`playerDamageTaken` carry it. Only an older recording that
+     * lacks them falls back to the endpoints, which understate the monster by your
+     * regen and read as the sim over-hitting.
+     *
+     * @param {Object} attempt
+     * @returns {{monsterDamage: number, playerTaken: number}}
+     */
+    function exchange(attempt) {
+        if (Number.isFinite(attempt.monsterDamage) && Number.isFinite(attempt.playerDamageTaken)) {
+            return {
+                monsterDamage: Math.max(0, attempt.monsterDamage),
+                playerTaken: Math.max(0, attempt.playerDamageTaken),
+            };
+        }
+        // Endpoint fallback for recordings made before gross damage was summed
+        const monsterDamage = attempt.cleared
+            ? attempt.monsterMaxHp
+            : Math.max(0, attempt.monsterMaxHp - attempt.monsterHpEnd);
+        const playerTaken = Math.max(0, attempt.playerHpStart - attempt.playerHpEnd);
+        return { monsterDamage, playerTaken };
+    }
+
+    /**
+     * Group recorded attempts by monster and room level, into the rates the replay
+     * compares. Groups are returned most-fought first, since that is the one worth
+     * spending a sim on.
+     *
+     * @param {Array<Object>} attempts - From the recorder
+     * @returns {Array<Object>} One entry per monster+level fought
+     */
+    function deriveObserved(attempts) {
+        const groups = new Map();
+
+        for (const attempt of attempts || []) {
+            const seconds = Number(attempt?.seconds) || 0;
+            if (!attempt?.monsterHrid || seconds <= 0 || attempt.outcome === 'unknown') continue;
+
+            // Drop a fight not seen from full — the player started it already hurt, so
+            // it is not the fresh-start fight the sim models
+            const maxHp = Number(attempt.playerMaxHp) || 0;
+            if (maxHp > 0 && Number(attempt.playerHpStart) < maxHp * CLEAN_START_HP_FRACTION) continue;
+
+            const level = Math.max(0, Math.floor(Number(attempt.roomLevel) || 0));
+            const bucket = Math.round(level / LEVEL_BUCKET) * LEVEL_BUCKET;
+            const key = `${attempt.monsterHrid}:${bucket}`;
+            let group = groups.get(key);
+            if (!group) {
+                group = {
+                    monsterHrid: attempt.monsterHrid,
+                    monsterName: attempt.monsterName || null,
+                    bucket,
+                    levels: [],
+                    fights: 0,
+                    clears: 0,
+                    totalSeconds: 0,
+                    totalMonsterDamage: 0,
+                    totalPlayerTaken: 0,
+                    dpsSamples: [],
+                    takenSamples: [],
+                    secondsSamples: [],
+                    clearSamples: [],
+                };
+                groups.set(key, group);
+            }
+
+            const { monsterDamage, playerTaken } = exchange(attempt);
+            group.levels.push(level);
+            group.fights += 1;
+            group.clears += attempt.cleared ? 1 : 0;
+            group.totalSeconds += seconds;
+            group.totalMonsterDamage += monsterDamage;
+            group.totalPlayerTaken += playerTaken;
+            group.dpsSamples.push(monsterDamage / seconds);
+            group.takenSamples.push(playerTaken / seconds);
+            group.secondsSamples.push(seconds);
+            group.clearSamples.push(attempt.cleared ? 1 : 0);
+        }
+
+        const out = [...groups.values()].map((group) => ({
+            ...group,
+            // The level the group is re-simulated at, and the span it pools, so the
+            // display can be honest about a bucket that mixes a few nearby levels
+            roomLevel: median(group.levels),
+            levelLow: Math.min(...group.levels),
+            levelHigh: Math.max(...group.levels),
+            dps: group.totalSeconds > 0 ? group.totalMonsterDamage / group.totalSeconds : 0,
+            takenPerSecond: group.totalSeconds > 0 ? group.totalPlayerTaken / group.totalSeconds : 0,
+            secondsPerFight: group.fights > 0 ? group.totalSeconds / group.fights : 0,
+            clearRate: group.fights > 0 ? group.clears / group.fights : 0,
+        }));
+
+        out.sort((a, b) => b.fights - a.fights);
+        return out;
+    }
+
+    /**
+     * The same four rates, read off a labyrinth sim result.
+     *
+     * `totalDamageDealt` is keyed by the unit that dealt it, so your DTO's hrid is
+     * the damage you dealt and the monster's hrid is the damage you took.
+     *
+     * @param {Object} simResult - From runLabyrinthSimulation
+     * @param {Object} keys
+     * @param {string} keys.playerHrid - The player DTO's hrid
+     * @param {string} keys.monsterHrid - The monster fought
+     * @returns {Object|null} Null when the sim produced no time to divide by
+     */
+    function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
+        if (!simResult) return null;
+        const simSeconds = (Number(simResult.simulatedTime) || 0) / 1e9;
+        if (!(simSeconds > 0)) return null;
+
+        const attempts = Math.max(0, Number(simResult.labyAttemptCount) || 0);
+        const wins = Math.max(0, Number(simResult.encounters) || 0);
+        const dealt = Number(simResult.totalDamageDealt?.[playerHrid]) || 0;
+        const taken = Number(simResult.totalDamageDealt?.[monsterHrid]) || 0;
+
+        return {
+            dps: dealt / simSeconds,
+            takenPerSecond: taken / simSeconds,
+            secondsPerFight: attempts > 0 ? simSeconds / attempts : 0,
+            clearRate: attempts > 0 ? wins / attempts : 0,
+            attempts,
+            wins,
+            simSeconds,
+        };
+    }
+
+    /**
+     * Compare one observed rate against its prediction.
+     *
+     * @param {string} key - Metric id
+     * @param {string} label - How it reads
+     * @param {number} observed
+     * @param {number} predicted
+     * @param {number[]} samples - The per-fight values the observed rate came from
+     * @param {number} fights - How many fights back the observed rate
+     * @returns {Object}
+     */
+    function compareMetric(key, label, observed, predicted, samples, fights) {
+        const marginPct = widenedMarginPct(samples);
+        const dev = deviationPct(observed, predicted);
+
+        let verdict;
+        if (fights < MIN_LAB_FIGHTS || marginPct === null || dev === null) {
+            verdict = 'insufficient';
+        } else if (Math.abs(dev) <= marginPct) {
+            verdict = 'consistent';
+        } else {
+            verdict = dev > 0 ? 'above' : 'below';
+        }
+
+        return { key, label, observed, predicted, deviationPct: dev, marginPct, verdict };
+    }
+
+    /**
+     * Read the four verdicts into one sentence about what the sim is getting wrong.
+     *
+     * @param {Object} dps - Your-damage metric
+     * @param {Object} taken - Monster-damage metric
+     * @param {Object} clear - Clear-rate metric
+     * @returns {string}
+     */
+    function diagnose(dps, taken, clear) {
+        // Both damage metrics err in either direction, and each direction is a
+        // different finding. `below` on your damage means the sim credited you more
+        // than you delivered; `below` on the monster's means it credited the monster
+        // more than it dealt — the sim over-modelled the monster, which is why the
+        // observed rate came in under.
+        const yourDamage = dps.verdict === 'below' ? 'over' : dps.verdict === 'above' ? 'under' : null;
+        const monsterDamage = taken.verdict === 'above' ? 'under' : taken.verdict === 'below' ? 'over' : null;
+
+        if (yourDamage === 'over' && monsterDamage === 'under') {
+            return 'Sim over-credits your damage and under-models the monster’s — both push the clear chance too high.';
+        }
+        if (yourDamage === 'over') {
+            return 'Sim over-credits your damage: real fights kill the monster slower, so more of them time out.';
+        }
+        if (monsterDamage === 'under') {
+            return 'Sim under-models the monster’s damage: you take more than predicted, so more attempts end in death.';
+        }
+        if (monsterDamage === 'over') {
+            return (
+                'Sim over-models the monster’s damage: it hits softer than predicted, so you survive longer than it ' +
+                'expects — the clear rate can still match if you are outmatched either way.'
+            );
+        }
+        if (yourDamage === 'under') {
+            return 'Sim under-credits your damage: you kill the monster faster than predicted.';
+        }
+        if (clear.verdict === 'below') {
+            return 'Clear rate runs below prediction but the damage rates line up — the gap is likely CC uptime or variance, not raw damage.';
+        }
+        if (clear.verdict === 'above') {
+            return 'Clear rate runs above prediction but the damage rates line up — likely CC uptime or variance, not raw damage.';
+        }
+        if (dps.verdict === 'insufficient' || taken.verdict === 'insufficient') {
+            return `Not enough fights yet — record at least ${MIN_LAB_FIGHTS} clean attempts for a rate worth reading.`;
+        }
+        return 'Observed and predicted line up within noise.';
+    }
+
+    /**
+     * Compare an observed group against a sim's prediction for the same room.
+     *
+     * @param {Object} observed - One entry from {@link deriveObserved}
+     * @param {Object} predicted - From {@link predictedFromSim}
+     * @returns {Object}
+     */
+    function compareLab(observed, predicted) {
+        const dps = compareMetric(
+            'dps',
+            'Your damage / s',
+            observed.dps,
+            predicted.dps,
+            observed.dpsSamples,
+            observed.fights
+        );
+        const taken = compareMetric(
+            'taken',
+            'Monster damage / s',
+            observed.takenPerSecond,
+            predicted.takenPerSecond,
+            observed.takenSamples,
+            observed.fights
+        );
+        const clear = compareMetric(
+            'clearRate',
+            'Clear rate',
+            observed.clearRate,
+            predicted.clearRate,
+            observed.clearSamples,
+            observed.fights
+        );
+        const seconds = compareMetric(
+            'secondsPerFight',
+            'Fight length',
+            observed.secondsPerFight,
+            predicted.secondsPerFight,
+            observed.secondsSamples,
+            observed.fights
+        );
+
+        return {
+            monsterHrid: observed.monsterHrid,
+            monsterName: observed.monsterName || null,
+            roomLevel: observed.roomLevel,
+            levelLow: observed.levelLow ?? observed.roomLevel,
+            levelHigh: observed.levelHigh ?? observed.roomLevel,
+            fights: observed.fights,
+            clears: observed.clears,
+            metrics: [dps, taken, clear, seconds],
+            diagnosis: diagnose(dps, taken, clear),
+        };
+    }
+
+    /**
      * Labyrinth Combat Sim Cache
      *
      * Everything between a combat room and the simulator: the cache key a room's
@@ -24396,6 +25602,14 @@
     const MIN_SIM_TRIALS = 100;
     /** Backstop for a rate near a coin toss, which never converges cheaply */
     const MAX_SIM_TRIALS = 20000;
+    /**
+     * Simulated-hours budget for an uncapped run — high enough that time never binds
+     * before the trial cap does, so a slow, timeout-heavy room (a hard combat tile
+     * whose fights each burn the two-minute limit) runs on to its precision target
+     * instead of stopping at a wide "(capped)" band. The `MAX_SIM_TRIALS` backstop
+     * still bounds it, so "uncapped" means "not stopped by the clock", not "forever".
+     */
+    const UNCAPPED_SIM_HOURS = 100000;
     /** Persisted mirror of combatCache, in the 'labyrinth' store */
     const COMBAT_CACHE_STORAGE_KEY = 'labyrinthCombatSimCache';
     const COMBAT_CACHE_STORE = 'labyrinth';
@@ -24408,6 +25622,10 @@
     const DECISION_MIN_TRIALS = 40;
     /** A room sitting exactly on the bar never decides; this is where it gives up */
     const DECISION_MAX_TRIALS = 4000;
+    /** A recorded room needs at least this many fights before a replay is worth a sim */
+    const MIN_REPLAY_FIGHTS = 3;
+    /** At most this many rooms are replayed at once, so a Replay press is bounded */
+    const MAX_REPLAY_GROUPS = 3;
 
     /** Prototype methods mixed into LabyrinthClearRate */
     const simCacheMethods = {
@@ -24434,7 +25652,22 @@
             // one is deliberately coarse — forty fights can leave ±12 points — and
             // a tile badge reading it would present that as a measurement.
             const mode = decideAgainst === null ? `${this.getSimPrecisionPct()}pp` : `dec${decideAgainst}`;
-            return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}`;
+            // The full-ability toggle changes the fight entirely, so its two states
+            // must not share a cache slot — flipping it re-sims rather than serving a
+            // result computed under the other rule.
+            const abilities = this.labyrinthFullAbilities() ? ':fullabil' : '';
+            return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}${abilities}`;
+        },
+
+        /**
+         * Whether combat sims build the monster with its full ability kit rather
+         * than only the tier-0 subset. Off by default; a testing lever for the
+         * labyrinth calibration fix (a tier-0 monster drops its stun/debuff kit and
+         * the sim over-predicts clears — see Monster).
+         * @returns {boolean}
+         */
+        labyrinthFullAbilities() {
+            return config.getSetting('combatSim_labyrinthFullAbilities') === true;
         },
 
         /**
@@ -24468,6 +25701,67 @@
                 minTrials: MIN_SIM_TRIALS,
                 maxTrials: MAX_SIM_TRIALS,
             };
+        },
+
+        /**
+         * Re-simulate the rooms the recorder captured and compare the real damage
+         * rates against the sim's.
+         *
+         * The accuracy record asks whether the clear chance is right; this asks why
+         * it is wrong, by measuring your damage rate and the monster's from the
+         * recorded fights and putting each beside the same rate a fresh sim produces
+         * for that monster at that room level. The comparison itself is pure and
+         * lives in labyrinth-replay-check; this feeds it the sim, run with the loadout
+         * you are wearing now — which is why it pools only the fights fought in that
+         * same gear, by fingerprint.
+         *
+         * @returns {Promise<{groups: Array<Object>, fingerprint: string}>}
+         */
+        async replayRecordedFights() {
+            const fingerprint = this._snapshotContentFingerprint();
+            const attempts = labFightRecorder.recordedAttempts(fingerprint);
+            const observed = deriveObserved(attempts);
+            // The most-fought rooms first, and only those with enough fights to be
+            // worth a sim — a couple bound the sim cost and answer the question
+            const worth = observed.filter((group) => group.fights >= MIN_REPLAY_FIGHTS).slice(0, MAX_REPLAY_GROUPS);
+
+            const groups = [];
+            for (const group of worth) {
+                try {
+                    const loadoutId = this.getLabyrinthLoadoutId(group.monsterHrid);
+                    const dto = this.buildLabyrinthPlayerDTO(loadoutId);
+                    if (!dto) continue;
+
+                    const simResult = await combatSimRunner_js.runLabyrinthSimulation({
+                        gameData: combatSimAdapter_js.buildGameDataPayload(),
+                        playerDTOs: [dto],
+                        zoneHrid: '/actions/combat/fly',
+                        monsterHrid: group.monsterHrid,
+                        roomLevel: group.roomLevel,
+                        crates: this.getCrateHrids(),
+                        hours: this.getSimHours(),
+                        precision: this.getSimStopRule(),
+                        communityBuffs: combatSimAdapter_js.getCommunityBuffs(),
+                        labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
+                        fullAbilities: this.labyrinthFullAbilities(),
+                    });
+
+                    const predicted = predictedFromSim(simResult, {
+                        playerHrid: dto.hrid || 'player1',
+                        monsterHrid: group.monsterHrid,
+                    });
+                    if (!predicted) continue;
+
+                    groups.push(compareLab(group, predicted));
+                } catch (error) {
+                    console.error('[LabyrinthSimCache] Replaying a recorded room failed:', error);
+                }
+            }
+
+            // What the pool holds for this gear, so the panel can say "12 fights over
+            // 3 monsters, none with enough yet" when nothing cleared the bar
+            const status = labFightRecorder.recordingStatus(fingerprint);
+            return { groups, pool: status };
         },
 
         /**
@@ -24619,6 +25913,28 @@
         },
 
         /**
+         * Throw away every cached combat sim and simulate the visible rooms again.
+         *
+         * The manual answer to a stale result: the cache key does not encode gear, so
+         * a loadout change the game never surfaced as `loadouts_updated` (a plain
+         * equip) leaves a sim cached under gear you no longer wear, and even
+         * "Calculate Labyrinth" reuses it — `computeCombatClear` returns early on a
+         * cache hit. Emptying both layers first forces a real re-sim.
+         *
+         * The invalidation baseline is re-anchored to the current gear afterwards, so
+         * the very next input-change check does not see a difference and clear what
+         * this just computed.
+         *
+         * @returns {Promise<void>}
+         */
+        async recomputeCombatSims(uncapped = false) {
+            this.combatCache.clear();
+            this._clearPersistedCombatCache();
+            this._snapshotFingerprint = this._snapshotContentFingerprint();
+            await this.runTileCalculation({ auto: false, uncapped: uncapped === true });
+        },
+
+        /**
          * Run combat sim for a monster room and return clear stats
          */
         async computeCombatClear(monsterHrid, roomLevel, options = {}) {
@@ -24658,7 +25974,9 @@
                     monsterHrid,
                     roomLevel,
                     crates: crateHrids,
-                    hours: this.getSimHours(),
+                    // An uncapped run lifts the simulated-hours ceiling so a slow
+                    // room runs to its precision target rather than stopping wide
+                    hours: options.uncapped ? UNCAPPED_SIM_HOURS : this.getSimHours(),
                     precision:
                         bar === null
                             ? this.getSimStopRule()
@@ -24677,6 +25995,9 @@
                     // as one.
                     communityBuffs: combatSimAdapter_js.getCommunityBuffs(),
                     labyrinthCombatBuffs,
+                    // Testing lever: build the monster with its full ability kit
+                    // instead of only the tier-0 subset the labyrinth would drop
+                    fullAbilities: this.labyrinthFullAbilities(),
                 });
 
                 const attempts = simResult.labyAttemptCount || 1;
@@ -25295,6 +26616,11 @@
                 reset: () => this.resetOutcomes(),
                 markBaseline: () => this.markOutcomeBaseline(),
                 clearBaseline: () => this.clearOutcomeBaseline(),
+                recompute: (uncapped) => this.recomputeCombatSims(uncapped),
+                replay: () => this.replayRecordedFights(),
+                // The gear a recorded fight was fought in, so the pool keeps fights on
+                // different gear apart and the replay compares like with like
+                fingerprint: () => this._snapshotContentFingerprint(),
             });
 
             const unregister = domObserver.onClass('LabyrinthClearRate', 'LabyrinthPanel_skipThreshold', () =>
@@ -26673,20 +27999,20 @@
                 return;
             }
 
-            // battleId stays put across labyrinth attempts and a retry of the same
-            // room brings back a monster with the same maximum, so neither says a
-            // new fight started. Two things do: health that went up, which only a
-            // fresh monster can do, and an attack counter that went down, which
-            // only a fresh battle can do. Without them, retrying a room kept the
-            // previous attempt's record — a start time minutes old, and a rate so
-            // slow it read as no chance at all.
+            // battleId stays put across labyrinth attempts, so a retry needs another
+            // signal: an attack counter that reset, a monster maximum that changed,
+            // or the monster's health leaping back to full. That last one counts only
+            // the spawn's jump from low to full, not the bump a self-healing monster
+            // gives itself mid-fight — see isFreshLabyrinthFight. Without a boundary at
+            // all, retrying a room kept the previous attempt's record: a start time
+            // minutes old, and a rate so slow it read as no chance.
             const fight = this._fight;
-            const isNewFight =
-                !fight ||
-                fight.battleId !== data.battleId ||
-                fight.monsterMaxHp !== monster.mHP ||
-                monster.cHP > fight.lastMonsterHp ||
-                player.atkCounter < fight.lastAtkCounter;
+            const isNewFight = isFreshLabyrinthFight(fight, {
+                battleId: data.battleId,
+                monsterMaxHp: monster.mHP,
+                monsterHp: monster.cHP,
+                atkCounter: Number(player.atkCounter) || 0,
+            });
 
             if (isNewFight) {
                 this._fight = {
@@ -27515,6 +28841,8 @@
          */
         async runTileCalculation(options = {}) {
             const auto = options.auto === true;
+            // Lift the sim's time cap for this run, so slow rooms reach precision
+            const uncapped = options.uncapped === true;
             if (this.tileCalcRunning) return;
             if (!this.roomData) {
                 if (!auto) this.setTileStatus('No labyrinth data');
@@ -27593,7 +28921,7 @@
 
                 let combatRetryNeeded = 0;
                 for (const target of combatTargets) {
-                    const result = await this.computeCombatClear(target.room.monsterHrid, target.roomLevel);
+                    const result = await this.computeCombatClear(target.room.monsterHrid, target.roomLevel, { uncapped });
                     completed++;
                     this.setTileProgress(completed / total);
 
@@ -28919,6 +30247,10 @@
             addRow('Double Progress', pct(result.doubleChance));
             addRow('Actions in 2m', `${result.attempts}`);
             addRow('Action Duration', `${result.actionSeconds.toFixed(2)}s`);
+            // The full expected time to clear, uncapped (the tile badge caps at "999+")
+            if (Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0) {
+                addRow('Est. clear time', this.fullClearTime(result.expectedSeconds));
+            }
             if (result.xpPerRoom) {
                 addRow('EXP / Room', `${result.xpPerRoom.toFixed(1)}`);
             }
@@ -28992,6 +30324,12 @@
                     `${(result.clearChance * 100).toFixed(1)}% ±${band}${result.hitTarget ? '' : ' (capped)'}`
                 );
                 addRow('Fights Simulated', `${result.trials.toLocaleString()}`);
+            }
+
+            // The full expected time to clear, uncapped — the tile badge caps at
+            // "999+", which hides how long a slow room really takes
+            if (Number.isFinite(result.expectedSeconds) && result.expectedSeconds > 0) {
+                addRow('Est. clear time', this.fullClearTime(result.expectedSeconds));
             }
 
             // Per entry rather than per clear. A fight earns experience by landing
@@ -29364,6 +30702,23 @@
             const m = Math.floor(s / 60);
             const rem = s % 60;
             return `~${m}:${rem.toString().padStart(2, '0')}`;
+        }
+
+        /**
+         * Expected time to clear a room, in full — not capped at "999+" or "∞" the
+         * way the tile badge is. The badge has to stay short, but on hover the real
+         * figure is what tells you a room "clears" in twenty minutes, not two.
+         * @param {number} seconds - Expected seconds per clear (losing attempts included)
+         * @returns {string} e.g. "48s", "10m 55s", "1h 5m", or "—" when it never clears
+         */
+        fullClearTime(seconds) {
+            if (!Number.isFinite(seconds) || seconds <= 0) return '—';
+            const s = Math.round(seconds);
+            if (s < 60) return `${s}s`;
+            const m = Math.floor(s / 60);
+            if (m < 60) return `${m}m ${s % 60}s`;
+            const h = Math.floor(m / 60);
+            return `${h}h ${m % 60}m`;
         }
     }
 
