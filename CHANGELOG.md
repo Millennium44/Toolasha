@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `claude/new-session-s8abcv`
 
+### Author credit leads with Millennium44
+
+The userscript `@author` header now opens with "Millennium44 (fork of Celasha and Claude's Toolasha)" instead of leading with the upstream authors, so the GreasyFork listing credits the fork maintainer. The contributor thank-yous are unchanged.
+
 ### Task reroll tracker: drop the experimental warning
 
 The "Track task reroll costs" setting no longer warns it is experimental and may freeze the UI — it's stable. Default unchanged (on).
