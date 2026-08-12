@@ -1029,10 +1029,9 @@ function guideSwapAllowed(guide, currentHrid, incomingHrid) {
  * @param {Object} playerDTO - Player DTO with abilities
  * @param {Object} gameData - Game data payload
  * @param {Object} guide - From `buildGuidePlan`
- * @param {string} playerStyle - From `getPlayerCombatStyle`
  * @param {Array} candidates - Candidate list (mutated)
  */
-function addGuideEmptySlotCandidates(playerDTO, gameData, guide, playerStyle, candidates) {
+function addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates) {
     const abilities = playerDTO.abilities || [];
     const equipped = new Set(abilities.filter((a) => a).map((a) => a.hrid));
     const specialSlotFree = abilities.length > 0 && !abilities[0];
@@ -1043,7 +1042,9 @@ function addGuideEmptySlotCandidates(playerDTO, gameData, guide, playerStyle, ca
         if (!abDetail || equipped.has(abHrid)) continue;
         const slotIdx = abDetail.isSpecialAbility ? (specialSlotFree ? 0 : -1) : firstFreeNormal;
         if (slotIdx < 0) continue;
-        if (!isAbilityCompatible(getAbilityCombatStyle(abDetail), playerStyle)) continue;
+        // No style guard here: every abHrid is a guide offer, and the guide's set
+        // is style-correct by construction (see the swap loop). The heuristic would
+        // wrongly drop a universal aura into an empty special slot.
 
         const level = Math.max(1, ownedAbility(abHrid)?.level || 0);
         const swapName = abDetail.name || abHrid.split('/').pop();
@@ -1490,10 +1491,19 @@ export function generateCandidates(
                     if (abDetail.isSpecialAbility && slotIdx !== 0) continue;
                     if (!abDetail.isSpecialAbility && slotIdx === 0) continue;
                     if (abHrid === '/abilities/promote') continue;
-                    if (guide && !guideSwapAllowed(guide, ability.hrid, abHrid)) continue;
-
-                    const abStyle = getAbilityCombatStyle(abDetail);
-                    if (!isAbilityCompatible(abStyle, playerStyle)) continue;
+                    // The guide's own set is style-correct by construction — each
+                    // archetype lists its own style's abilities plus the universal
+                    // Critical Aura — so on the guide path trust guideSwapAllowed and
+                    // skip the style heuristic. That heuristic reads style from buff
+                    // data and mis-vetoes a universal aura whose buffs happen to look
+                    // like another style (Critical Aura on a magic build), silently
+                    // dropping the aura swap. Only the every-ability fallback, which
+                    // offers the whole game, needs the compatibility guard.
+                    if (guide) {
+                        if (!guideSwapAllowed(guide, ability.hrid, abHrid)) continue;
+                    } else if (!isAbilityCompatible(getAbilityCombatStyle(abDetail), playerStyle)) {
+                        continue;
+                    }
 
                     const swapName = abDetail.name || abHrid.split('/').pop();
                     candidates.push({
@@ -1516,7 +1526,7 @@ export function generateCandidates(
             }
         }
 
-        if (guide) addGuideEmptySlotCandidates(playerDTO, gameData, guide, playerStyle, candidates);
+        if (guide) addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates);
     }
 
     if (mode === 'combat_level') {
