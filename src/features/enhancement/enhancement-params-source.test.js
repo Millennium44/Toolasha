@@ -17,6 +17,7 @@ const settings = vi.hoisted(() => ({ store: {} }));
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => settings.store[key] ?? false,
+        getSettingValue: (key, fallback) => settings.store[key] ?? fallback,
         setSetting: (key, value) => {
             settings.store[key] = value;
         },
@@ -160,5 +161,21 @@ describe('the source chip', () => {
     test('says in its tooltip which way the click will move', () => {
         expect(buildSourceChipHTML({ paramsSource: 'auto' })).toContain('compare against pro rates');
         expect(buildSourceChipHTML({ paramsSource: 'pro' })).toContain('back to your own stats');
+    });
+
+    test('surfaces the P hotkey as a visible affordance on desktop', () => {
+        const chip = buildSourceChipHTML({ paramsSource: 'auto' });
+        expect(chip).toContain('>P</span>');
+        expect(chip).toContain('press P');
+    });
+
+    test('on a touch device it invites a tap and drops the key it cannot press', () => {
+        settings.store.mobileMode = 'on';
+        const chip = buildSourceChipHTML({ paramsSource: 'auto' });
+        delete settings.store.mobileMode;
+
+        expect(chip).toContain('>tap</span>');
+        expect(chip).toContain('Tap to compare against pro rates');
+        expect(chip).not.toContain('press P');
     });
 });
