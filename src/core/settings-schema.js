@@ -2280,7 +2280,7 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 requiresRefresh: true,
-                help: 'Tracks how much gold/cowbells spent rerolling each task (EXPERIMENTAL - may cause UI freezing)',
+                help: 'Tracks how much gold/cowbells spent rerolling each task',
             },
             taskMapIndex: {
                 id: 'taskMapIndex',
