@@ -43,6 +43,7 @@ import { formatWithSeparator, formatKMB, timeReadable } from '../../utils/format
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
+import { attachMinimize } from '../../utils/panel-minimize.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { expectedKills, killComparison } from '../../utils/expected-kills.js';
@@ -356,6 +357,8 @@ class CombatPanel {
         this.detachResize?.();
         this.detachDrag = null;
         this.detachResize = null;
+        this.minimizeCtl?.destroy();
+        this.minimizeCtl = null;
 
         if (!this.panel) return;
         unregisterFloatingPanel(this.panel);
@@ -444,6 +447,16 @@ class CombatPanel {
             fontVariantNumeric: 'tabular-nums',
         });
         this.panel.appendChild(this.bodyEl);
+
+        this.minimizeCtl = attachMinimize({
+            panel: this.panel,
+            header,
+            body: this.bodyEl,
+            panelKey: this.id,
+            beforeEl: close,
+            defaultHeight: this.size.height,
+            accent: COLORS.text,
+        });
 
         this.detachDrag = makeDraggable(this.panel, header, (position) => {
             saveGeometry(this.id, { left: parseFloat(position.left), top: parseFloat(position.top) });

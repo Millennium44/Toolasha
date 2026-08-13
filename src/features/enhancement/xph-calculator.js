@@ -12,6 +12,7 @@ import { getEnhancingParams, describeParamsSource } from '../../utils/enhancemen
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import { attachMinimize } from '../../utils/panel-minimize.js';
 import {
     getCheapestProtectionPrice,
     getEnhancementMaterialPrice,
@@ -314,6 +315,15 @@ class XPHCalculator {
 
         this.tableBody = this.panel.querySelector('#mwi-xph-tbody');
 
+        this.minimizeCtl = attachMinimize({
+            panel: this.panel,
+            header,
+            body: [controls, routeSection, tableContainer, status],
+            panelKey: PANEL_ID,
+            beforeEl: header.querySelector('#mwi-xph-close'),
+            accent: '#aaa',
+        });
+
         this.panel.querySelector('#mwi-xph-close').addEventListener('click', () => {
             this.panel.style.display = 'none';
         });
@@ -535,6 +545,8 @@ class XPHCalculator {
         this.unregisterHandlers.forEach((fn) => fn());
         this.unregisterHandlers = [];
         this.timerRegistry.clearAll();
+        this.minimizeCtl?.destroy();
+        this.minimizeCtl = null;
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();

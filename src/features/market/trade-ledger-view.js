@@ -18,9 +18,13 @@ import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { visibleTabsContainer } from '../../utils/marketplace-tabs.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
+import { attachMinimize } from '../../utils/panel-minimize.js';
 
 /** How many weekly summary lines the modal shows. */
 const WEEKS_SHOWN = 8;
+
+/** Stable key for persisting the modal's minimized state; there is no geometry to key off. */
+const PANEL_KEY = 'tradeLedgerModal';
 
 const BASIS_TOOLTIP =
     'Average-cost basis: each sell is matched against the average price of buys recorded in this ledger ' +
@@ -312,6 +316,15 @@ class TradeLedgerView {
         this.modal.appendChild(content);
         document.body.appendChild(this.modal);
 
+        this.minimizeCtl = attachMinimize({
+            panel: content,
+            header,
+            body: [weeksContainer, tableContainer],
+            panelKey: PANEL_KEY,
+            beforeEl: closeBtn,
+            accent: '#e8ecf5',
+        });
+
         this.modal.addEventListener('click', (e) => {
             if (e.target === this.modal) {
                 this.closeModal();
@@ -536,6 +549,8 @@ class TradeLedgerView {
             this.marketplaceTab.remove();
             this.marketplaceTab = null;
         }
+        this.minimizeCtl?.destroy();
+        this.minimizeCtl = null;
         if (this.modal) {
             this.modal.remove();
             this.modal = null;

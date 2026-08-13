@@ -36,6 +36,7 @@ import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
+import { attachMinimize } from '../../utils/panel-minimize.js';
 import { itemIcon, linkToMarketplace, shortDuration, ROW_COLORS } from '../../utils/overlay-format.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
@@ -317,6 +318,15 @@ class AbilityBookPanel {
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
         restoreGeometry(this.panel, GEOMETRY_KEY, { width: 400, height: 240 });
+
+        this.minimizeCtl = attachMinimize({
+            panel: this.panel,
+            header: this.headerEl,
+            body: this.bodyEl,
+            panelKey: GEOMETRY_KEY,
+            beforeEl: this.headerEl.lastElementChild,
+            accent: COLORS.text,
+        });
 
         this._render();
         this.refreshId = setInterval(() => {
@@ -731,6 +741,8 @@ class AbilityBookPanel {
         this.detachDrag = null;
         this.detachResize?.();
         this.detachResize = null;
+        this.minimizeCtl?.destroy();
+        this.minimizeCtl = null;
 
         if (!this.panel) return;
         unregisterFloatingPanel(this.panel);

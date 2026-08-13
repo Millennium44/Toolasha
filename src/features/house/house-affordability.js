@@ -26,6 +26,7 @@ import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
+import { attachMinimize } from '../../utils/panel-minimize.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
@@ -422,6 +423,15 @@ class HousesPanel {
         registerFloatingPanel(this.panel);
         restoreGeometry(this.panel, GEOMETRY_KEY, { width: 380, height: 200 });
 
+        this.minimizeCtl = attachMinimize({
+            panel: this.panel,
+            header,
+            body,
+            panelKey: GEOMETRY_KEY,
+            beforeEl: header.lastElementChild,
+            accent: COLORS.text,
+        });
+
         this._render();
         // Costs move with the market, and coins move as you play
         this.refreshId = setInterval(() => {
@@ -716,6 +726,8 @@ class HousesPanel {
         this.detachDrag = null;
         this.detachResize?.();
         this.detachResize = null;
+        this.minimizeCtl?.destroy();
+        this.minimizeCtl = null;
         if (!this.panel) return;
         unregisterFloatingPanel(this.panel);
         this.panel.remove();

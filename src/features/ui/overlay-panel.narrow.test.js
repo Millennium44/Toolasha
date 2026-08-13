@@ -39,6 +39,9 @@ const geometry = vi.hoisted(() => ({ saved: null, writes: [] }));
 // verbatim, so what the test sees is the panel's own answer to it rather than
 // the shared layer's
 vi.mock('../../utils/panel-geometry.js', () => ({
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
     restoreGeometry: async (panel) => {
         if (!geometry.saved) return;
         panel.style.width = `${geometry.saved.width}px`;

@@ -54,6 +54,7 @@ import { formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
+import { attachMinimize } from '../../utils/panel-minimize.js';
 import { planGoals, describeGoal, describeLeg, GOAL_TYPES } from './goal-planner.js';
 import { buildPlannerContext, withHouseCosts, coinsHeld } from './goal-planner-context.js';
 import { loadGoals, addGoal, removeGoal, loadSnapshot, saveSnapshot, saveCombatGear } from './goal-planner-store.js';
@@ -540,6 +541,15 @@ class GoalPlannerPanel {
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
         restoreGeometry(this.panel, GEOMETRY_KEY, { width: 400, height: 240 });
+
+        this.minimizeCtl = attachMinimize({
+            panel: this.panel,
+            header,
+            body: this.bodyEl,
+            panelKey: GEOMETRY_KEY,
+            beforeEl: header.lastElementChild,
+            accent: COLORS.text,
+        });
 
         this._render();
         // A panel opened before the goals came back from storage would show an
@@ -1202,6 +1212,8 @@ class GoalPlannerPanel {
         this.detachDrag = null;
         this.detachResize?.();
         this.detachResize = null;
+        this.minimizeCtl?.destroy();
+        this.minimizeCtl = null;
 
         if (!this.panel) return;
         unregisterFloatingPanel(this.panel);

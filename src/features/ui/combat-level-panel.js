@@ -53,6 +53,7 @@ import { formatWithSeparator, formatKMB, timeReadable } from '../../utils/format
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
+import { attachMinimize } from '../../utils/panel-minimize.js';
 import { shortDuration, row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import {
     COMBAT_SKILLS,
@@ -587,6 +588,15 @@ class CombatLevelPanel {
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
         restoreGeometry(this.panel, GEOMETRY_KEY, { width: 420, height: 240 });
+
+        this.minimizeCtl = attachMinimize({
+            panel: this.panel,
+            header: this.headerEl,
+            body: this.bodyEl,
+            panelKey: GEOMETRY_KEY,
+            beforeEl: this.headerEl.lastElementChild,
+            accent: COLORS.text,
+        });
 
         this._render();
         this.refreshId = setInterval(() => {
@@ -1625,6 +1635,8 @@ class CombatLevelPanel {
         this.detachDrag = null;
         this.detachResize?.();
         this.detachResize = null;
+        this.minimizeCtl?.destroy();
+        this.minimizeCtl = null;
 
         if (!this.panel) return;
         unregisterFloatingPanel(this.panel);

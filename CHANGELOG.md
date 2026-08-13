@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Every panel can be minimized without closing it
+
+Floating panels now have a **–** button in the header (beside the close ✕) that folds the panel down to its title strip, leaving it draggable and running — click **□** to bring it back. It works across both shared panel shells (party loot, guild roster, DPS/deaths/profit tiles, and the rest) and the bespoke tool windows (Combat Sim, Lab Sim, Enhancement XP/hr, Consumables, Houses, Goal Planner, and more). The minimized state is remembered per panel across refreshes, alongside its position.
+
+### Combat & Lab Sim: optionally remember upgrade results across refreshes
+
+New opt-in setting (default off) keeps the last Upgrade-tab results after a page reload — for both Combat Sim and Lab Sim — until you run a new analysis, so a run you waited minutes on is still there when you come back. A quiet banner marks restored results. Off by default because it stores the full result set (one blob per character per sim) in the browser database.
+
 ### Combat Sim Results: a ⌖ button targets that zone in Configure
 
 Each row of the all-zones Results table now has a ⌖ button that sets that zone and tier as the Configure target and jumps to the Configure tab (leaving all-zones mode so the single-zone selects reappear) — no more scrolling the zone dropdown to sim a promising row. The table also now defaults to sorting by Score (descending) instead of unsorted.

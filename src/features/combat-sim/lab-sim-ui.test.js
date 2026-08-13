@@ -97,6 +97,9 @@ vi.mock('../../utils/panel-z-index.js', () => ({
 // it, and hands it back what a drag or a resize produced — so the mock applies a
 // geometry the way the real one does and records what it is told.
 vi.mock('../../utils/panel-geometry.js', () => ({
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
     restoreGeometry: async (panel, panelKey, min) => {
         geometry.restoreCalls.push({ panelKey, min });
         const saved = geometry.saved;

@@ -16,6 +16,7 @@ import config from '../core/config.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from './panel-z-index.js';
 import { makeDraggable, makeResizable } from './floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from './panel-geometry.js';
+import { attachMinimize } from './panel-minimize.js';
 import { ROW_COLORS } from './overlay-format.js';
 
 const DEFAULT_REFRESH_MS = 3000;
@@ -36,6 +37,7 @@ export function createPanel({ id, title, size, draw, accent = '#8fb4ff', refresh
     let refreshId = null;
     let detachDrag = null;
     let detachResize = null;
+    let minimizeCtl = null;
 
     /** Draw, or say which panel could not be drawn */
     function render() {
@@ -137,6 +139,15 @@ export function createPanel({ id, title, size, draw, accent = '#8fb4ff', refresh
         });
         panel.appendChild(bodyEl);
 
+        minimizeCtl = attachMinimize({
+            panel,
+            header,
+            body: bodyEl,
+            panelKey: id,
+            beforeEl: close,
+            defaultHeight: size.height,
+        });
+
         detachDrag = makeDraggable(panel, header, (position) => {
             saveGeometry(id, { left: parseFloat(position.left), top: parseFloat(position.top) });
         });
@@ -171,6 +182,8 @@ export function createPanel({ id, title, size, draw, accent = '#8fb4ff', refresh
             detachResize?.();
             detachDrag = null;
             detachResize = null;
+            minimizeCtl?.destroy();
+            minimizeCtl = null;
 
             if (!panel) return;
             unregisterFloatingPanel(panel);

@@ -49,6 +49,7 @@ import {
     reopenIfLeftOpen,
 } from '../../utils/panel-geometry.js';
 import { askChoice } from '../../utils/choice-dialog.js';
+import { attachMinimize } from '../../utils/panel-minimize.js';
 import {
     toExport,
     fromToolashaExport,
@@ -853,6 +854,15 @@ class TreasureTracker {
             onResize: (size) => saveGeometry(POPUP_GEOMETRY_KEY, size),
         });
 
+        this.popupMinimizeCtl = attachMinimize({
+            panel: popup,
+            header,
+            body,
+            panelKey: POPUP_GEOMETRY_KEY,
+            beforeEl: closeBtn,
+            accent: COLORS.text,
+        });
+
         // Dismissed by clicking away from it, the way the game's own loot dialog
         // and MCS's treasure pane both behave. Deferred by a tick so the click
         // that *opened* it does not immediately close it again.
@@ -974,6 +984,8 @@ class TreasureTracker {
         this._detachPopupDrag = null;
         this._detachPopupResize?.();
         this._detachPopupResize = null;
+        this.popupMinimizeCtl?.destroy();
+        this.popupMinimizeCtl = null;
         if (!this.popup) return;
         unregisterFloatingPanel(this.popup);
         this.popup.remove();
@@ -1023,6 +1035,16 @@ class TreasureTracker {
         // to, so a 420 that no phone can honour is a minimum that hands the
         // panel back wider than the screen
         restoreGeometry(this.panel, PANEL_GEOMETRY_KEY, MIN_PANEL);
+
+        this.minimizeCtl = attachMinimize({
+            panel: this.panel,
+            header: this.headerEl,
+            body: this.contentEl,
+            panelKey: PANEL_GEOMETRY_KEY,
+            beforeEl: this.headerEl.lastElementChild,
+            accent: COLORS.text,
+        });
+
         this._render();
     }
 
@@ -1518,6 +1540,8 @@ class TreasureTracker {
         this._detachDrag = null;
         this._detachResize?.();
         this._detachResize = null;
+        this.minimizeCtl?.destroy();
+        this.minimizeCtl = null;
         if (!this.panel) return;
         unregisterFloatingPanel(this.panel);
         this.panel.remove();

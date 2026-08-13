@@ -49,6 +49,9 @@ vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: (hrid) => ({ '/items/a': 100 })[hrid] ?? null }));
 vi.mock('../../utils/panel-geometry.js', () => ({
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
     restoreGeometry: () => {},
     saveGeometry: () => {},
     saveOpenState: async () => {},

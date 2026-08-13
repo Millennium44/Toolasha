@@ -30,6 +30,9 @@ vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
     }),
 }));
 vi.mock('../../utils/panel-geometry.js', () => ({
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
     restoreGeometry: () => {},
     saveGeometry: () => {},
     saveOpenState: async () => {},

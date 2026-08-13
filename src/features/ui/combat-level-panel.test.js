@@ -35,6 +35,9 @@ vi.mock('../../core/data-manager.js', () => ({
 
 // Geometry is held in IndexedDB, which is not what this file is about
 vi.mock('../../utils/panel-geometry.js', () => ({
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
     restoreGeometry: () => {},
     saveGeometry: () => {},
     saveOpenState: async () => {},

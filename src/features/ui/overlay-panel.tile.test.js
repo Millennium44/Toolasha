@@ -25,6 +25,9 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     bringPanelToFront: () => {},
 }));
 vi.mock('../../utils/panel-geometry.js', () => ({
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
     restoreGeometry: async () => {},
     saveGeometry: async () => {},
     clearGeometry: async () => {},

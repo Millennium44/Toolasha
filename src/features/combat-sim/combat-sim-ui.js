@@ -16,6 +16,8 @@ import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
+import { attachMinimize } from '../../utils/panel-minimize.js';
+import { saveUpgradeResults, loadUpgradeResults } from './upgrade-results-store.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import {
     ALL_ZONES_SNAPSHOT_KEY,
@@ -78,6 +80,8 @@ const ACCENT_BTN_BORDER = 'rgba(74, 158, 255, 0.4)';
 /** Storage key for the remembered Upgrade-tab candidate sets */
 const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
 const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
+/** Storage key for the last Upgrade-tab results, remembered across refreshes (opt-in) */
+const UPGRADE_RESULTS_KEY = 'combatSimUpgradeResults';
 
 /**
  * Storage key for the Ability Swaps "Aura only" sub-option.
@@ -1954,6 +1958,7 @@ class CombatSimUI {
         // to make the panel wider; the edges give the whole side as a target.
         const addGrip = (css, axis) => {
             const grip = document.createElement('div');
+            grip.className = 'toolasha-resize-grip';
             grip.style.cssText = `position:absolute; z-index:1; ${css}`;
             this.panel.appendChild(grip);
             this._setupResize(grip, axis);
@@ -1977,6 +1982,17 @@ class CombatSimUI {
 
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
+
+        // Minimize: fold the whole panel to its header, remembering the state.
+        // Every non-header child is a content sibling to hide.
+        this.minimizeCtl = attachMinimize({
+            panel: this.panel,
+            header,
+            body: [tabBar, configureContent, resultsContent, seekContent, upgradeContent, progressContainer, status],
+            panelKey: GEOMETRY_KEY,
+            beforeEl: header.querySelector('#mwi-csim-close'),
+            accent: '#aaa',
+        });
 
         // Event listeners
         this.panel.querySelector('#mwi-csim-close').addEventListener('click', () => this.hide());
@@ -2008,6 +2024,7 @@ class CombatSimUI {
         this._restoreSwapAuraOnly();
         this._loadUpgradeColumnPrefs();
         this._loadMaxTierFoodPref();
+        this._restoreUpgradeResults();
         this._restorePanelGeometry();
         this.panel.querySelector('#mwi-csim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-csim-ability-targets');
@@ -6040,6 +6057,9 @@ class CombatSimUI {
             // measurement, and throwing them away meant a run stopped one short
             // of the end showed nothing at all
             const completed = results?.results?.length || 0;
+            // A fresh run supersedes any restored set — drop the "from a previous
+            // run" note before drawing, and remember the new results (opt-in).
+            this._restoredUpgradeAt = null;
             if (this._upgradeAborted) {
                 if (completed) {
                     this._renderUpgradeResults(results);
@@ -6054,6 +6074,7 @@ class CombatSimUI {
                 const foodNote = results.food ? ' Food search complete.' : '';
                 this._setStatus(`Analysis complete. ${completed} upgrades evaluated.${foodNote}`);
             }
+            if (completed) saveUpgradeResults(UPGRADE_RESULTS_KEY, results);
         } catch (error) {
             console.error('[CombatSimUI] Upgrade analysis failed:', error);
             this._setStatus('Analysis failed: ' + error.message);
@@ -7154,6 +7175,41 @@ class CombatSimUI {
      * @param {Object} results - { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
      * @private
      */
+    /**
+     * Restore the last Upgrade-tab results after a refresh, when the option is on
+     * and a fresh run has not already drawn its own. Fire-and-forget from panel
+     * open; draws into the (possibly hidden) Upgrade tab so the results are there
+     * when the tab is next shown.
+     * @private
+     */
+    async _restoreUpgradeResults() {
+        try {
+            if (this._upgradeResultsData) return;
+            const payload = await loadUpgradeResults(UPGRADE_RESULTS_KEY);
+            if (!payload || this._upgradeResultsData) return;
+            if (!this.panel?.querySelector('#mwi-csim-upgrade-results')) return;
+            this._restoredUpgradeAt = payload.savedAt || null;
+            this._renderUpgradeResults(payload.data);
+        } catch (error) {
+            console.error('[CombatSimUI] Restoring upgrade results failed:', error);
+        }
+    }
+
+    /**
+     * A quiet banner saying the shown results are remembered from a previous run.
+     * @param {number} savedAt - Epoch ms the results were saved
+     * @returns {string} HTML
+     * @private
+     */
+    _restoredUpgradeNote(savedAt) {
+        const when = savedAt ? new Date(savedAt).toLocaleString() : 'a previous session';
+        return (
+            `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; ` +
+            `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
+            `Showing results remembered from ${when}. Run a new analysis to refresh them.</div>`
+        );
+    }
+
     _renderUpgradeResults(results) {
         const container = this.panel.querySelector('#mwi-csim-upgrade-results');
         if (!container) return;
@@ -7186,6 +7242,7 @@ class CombatSimUI {
         const unpricedRows = purchasable.filter((r) => r.cost == null);
 
         let html = foodHtml;
+        if (this._restoredUpgradeAt) html = this._restoredUpgradeNote(this._restoredUpgradeAt) + html;
         if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline);
         if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
         if (levelRows.length) html += this._renderUpgradeLevelTable(levelRows, results.baseline);

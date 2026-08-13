@@ -25,6 +25,9 @@ vi.mock('../../core/config.js', () => ({
 // Geometry and the stage ticks both live in IndexedDB, which is not what this
 // file is about
 vi.mock('../../utils/panel-geometry.js', () => ({
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
     restoreGeometry: () => {},
     saveGeometry: () => {},
     saveOpenState: async () => {},
