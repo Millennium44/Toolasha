@@ -2981,6 +2981,20 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## Upstream Changelog
 
+## [2.101.0](https://github.com/Millennium44/Toolasha/compare/v2.100.0...v2.101.0) (2026-08-13)
+
+### Features
+
+- gate 8/13 marketplace-patch behaviour to the test server ([f77edfd](https://github.com/Millennium44/Toolasha/commit/f77edfdb46735db077b141eb7f65066263e780c7))
+- net-worth value-source setting (order book vs game's market value) ([7878930](https://github.com/Millennium44/Toolasha/commit/78789301489c6fee72cada4e31639269092b8787))
+- **profile:** count shrine levels in gear score and combat sim ([93a0fad](https://github.com/Millennium44/Toolasha/commit/93a0fadb884c1307fa3570cc95b110e348167338))
+- reconcile prices against the game's official market values ([59761e8](https://github.com/Millennium44/Toolasha/commit/59761e8df0b55c9e2ab60011069b81a506e655b2))
+
+### Bug Fixes
+
+- **market:** raise marketplace tax 2% → 5% (8/13/2026 game update) ([3ed9c3b](https://github.com/Millennium44/Toolasha/commit/3ed9c3be598cb42859b0ddf10ae85fe96cd00a79))
+- **market:** restore marketplace autofill after typable-input update ([5fbd912](https://github.com/Millennium44/Toolasha/commit/5fbd91285f7f2a9dda06493817d416a9cfe4940b))
+
 ## [2.100.0](https://github.com/Millennium44/Toolasha/compare/v2.99.0...v2.100.0) (2026-08-13)
 
 ### Features
