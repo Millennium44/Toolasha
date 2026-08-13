@@ -1,11 +1,11 @@
 /**
  * Toolasha Combat Simulator Library
  * The battle engine, shared by every feature that simulates a fight
- * Version: 2.100.0
+ * Version: 2.101.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, domObserver, dataManager, marketAPI, tokenValuation_js, marketData_js, profitHelpers_js, evWorkerManager_js, bundleBridge_js, storage, webSocketHook, timerRegistry_js, chunkedHistory_js, gameLookups_js, materialCalculator_js, abilityCostCalculator_js, formatters_js, overlayFormat_js, marketplaceTabs_js, simplePanel_js, overlayRows_js, roomSkills_js, equipmentSavings_js, characterKey_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, watchlist_js, dropSources_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, mobile_js, teaParser_js, numberParser_js, dungeonKeys_js, domObserverHelpers_js, backgroundWork_js, marketplaceAutofill_js, allZonesSnapshot_js, liquidityCap_js, partyLint_js, progressEta_js, csvExport_js, dungeonLevelGap_js, equipmentParser_js, combatLevel_js, guildCreditPricing_js) {
+(function (config, domObserver, dataManager, marketAPI, tokenValuation_js, marketData_js, profitHelpers_js, evWorkerManager_js, profitConstants_js, bundleBridge_js, storage, webSocketHook, timerRegistry_js, chunkedHistory_js, gameLookups_js, materialCalculator_js, abilityCostCalculator_js, formatters_js, overlayFormat_js, marketplaceTabs_js, simplePanel_js, overlayRows_js, roomSkills_js, equipmentSavings_js, characterKey_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, watchlist_js, dropSources_js, enhancementCalculator_js, enhancementConfig_js, mobile_js, teaParser_js, numberParser_js, dungeonKeys_js, domObserverHelpers_js, backgroundWork_js, marketplaceAutofill_js, allZonesSnapshot_js, liquidityCap_js, partyLint_js, progressEta_js, csvExport_js, dungeonLevelGap_js, equipmentParser_js, combatLevel_js, guildCreditPricing_js) {
     'use strict';
 
     /**
@@ -20,7 +20,7 @@
     class ExpectedValueCalculator {
         constructor() {
             // Constants
-            this.MARKET_TAX = 0.02; // 2% marketplace tax
+            this.MARKET_TAX = profitConstants_js.MARKET_TAX; // marketplace tax (see profit-constants)
             this.CONVERGENCE_ITERATIONS = 4; // Nested container convergence
 
             // Cache for container EVs
@@ -7791,6 +7791,39 @@
     }
 
     /**
+     * Turn a shared profile's `guildBuffLevelMap` (buffHrid → level) into the two DTO
+     * fields the sim needs: the level map the editor renders, and the synthesized
+     * combat buff array the engine applies.
+     *
+     * The server pre-computes `guildCombatBuffs` for your own character, but a shared
+     * profile carries only the levels, so the combat halves are synthesized here the
+     * same way the upgrade advisor does when it explores a level. Skilling shrines
+     * are kept in the level map (so the editor shows them) but not synthesized — a
+     * combat sim has no use for them.
+     *
+     * @param {Object} levelMap - buffHrid → level (a bare number, as the profile sends)
+     * @returns {{guildShrineLevels: Object, guildCombatBuffs: Array<Object>}}
+     */
+    function buildGuildBuffsFromLevels(levelMap) {
+        const guildShrineLevels = {};
+        let guildCombatBuffs = [];
+        if (!levelMap || typeof levelMap !== 'object') {
+            return { guildShrineLevels, guildCombatBuffs };
+        }
+
+        const detailMap = getGuildBuffDetailMap();
+        for (const [buffHrid, rawLevel] of Object.entries(levelMap)) {
+            const level = Math.max(0, Math.floor(Number(rawLevel) || 0));
+            guildShrineLevels[buffHrid] = level;
+            const detail = detailMap[buffHrid];
+            if (detail?.isCombat && level > 0) {
+                guildCombatBuffs = [...guildCombatBuffs, ...synthesizeGuildBuffs(detail, level)];
+            }
+        }
+        return { guildShrineLevels, guildCombatBuffs };
+    }
+
+    /**
      * Build a player DTO from the current character data.
      * Outputs the format expected by Player.createFromDTO():
      *   { staminaLevel, ..., equipment: { '/equipment_types/head': {hrid, enhancementLevel}, ... },
@@ -8196,6 +8229,8 @@
             drinks: [],
             abilities: [],
             houseRooms: {},
+            guildShrineLevels: {},
+            guildCombatBuffs: [],
         };
 
         // Extract skill levels
@@ -8308,6 +8343,16 @@
             for (const house of Object.values(profile.profile.characterHouseRoomMap)) {
                 dto.houseRooms[house.houseRoomHrid] = house.level;
             }
+        }
+
+        // Guild shrine levels — the game now shares each player's shrine levels on
+        // their profile (guildBuffLevelMap). The server does not pre-compute their
+        // combat buffs the way it does for your own character, so synthesize them so
+        // an imported character fights with its shrines, not without.
+        if (profile.profile?.guildBuffLevelMap) {
+            const { guildShrineLevels, guildCombatBuffs } = buildGuildBuffsFromLevels(profile.profile.guildBuffLevelMap);
+            dto.guildShrineLevels = guildShrineLevels;
+            dto.guildCombatBuffs = guildCombatBuffs;
         }
 
         return dto;
@@ -8911,6 +8956,7 @@
         applyLoadoutSnapshotToDTO: applyLoadoutSnapshotToDTO,
         buildAllPlayerDTOs: buildAllPlayerDTOs,
         buildGameDataPayload: buildGameDataPayload,
+        buildGuildBuffsFromLevels: buildGuildBuffsFromLevels,
         buildPlayerDTO: buildPlayerDTO,
         buildPlayerDTOFromProfile: buildPlayerDTOFromProfile,
         calculateDungeonKeyCosts: calculateDungeonKeyCosts,
@@ -20437,13 +20483,14 @@
 
         /**
          * Whether combat sims build the monster with its full ability kit rather
-         * than only the tier-0 subset. Off by default; a testing lever for the
-         * labyrinth calibration fix (a tier-0 monster drops its stun/debuff kit and
-         * the sim over-predicts clears — see Monster).
+         * than only the tier-0 subset. Always on now: a tier-0 monster drops its
+         * stun/debuff kit and the sim over-predicts clears (see Monster), and the
+         * full-ability build was verified to read closer to reality, so the testing
+         * toggle graduated into permanent behavior.
          * @returns {boolean}
          */
         labyrinthFullAbilities() {
-            return config.getSetting('combatSim_labyrinthFullAbilities') === true;
+            return true;
         },
 
         /**
@@ -49545,4 +49592,4 @@
 
     console.log('[Toolasha] Sim library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.domObserver, Toolasha.Core.dataManager, Toolasha.Core.marketAPI, Toolasha.Utils.tokenValuation, Toolasha.Utils.marketData, Toolasha.Utils.profitHelpers, Toolasha.Utils.evWorkerManager, Toolasha.Utils.bundleBridge, Toolasha.Core.storage, Toolasha.Core.webSocketHook, Toolasha.Utils.timerRegistry, Toolasha.Utils.chunkedHistory, Toolasha.Utils.gameLookups, Toolasha.Utils.materialCalculator, Toolasha.Utils.abilityCalc, Toolasha.Utils.formatters, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.simplePanel, Toolasha.Utils.overlayRows, Toolasha.Utils.roomSkills, Toolasha.Utils.equipmentSavings, Toolasha.Utils.characterKey, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.mobile, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.dungeonKeys, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.backgroundWork, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.liquidityCap, Toolasha.Utils.partyLint, Toolasha.Utils.progressEta, Toolasha.Utils.csvExport, Toolasha.Utils.dungeonLevelGap, Toolasha.Utils.equipmentParser, Toolasha.Utils.combatLevel, Toolasha.Utils.guildCreditPricing);
+})(Toolasha.Core.config, Toolasha.Core.domObserver, Toolasha.Core.dataManager, Toolasha.Core.marketAPI, Toolasha.Utils.tokenValuation, Toolasha.Utils.marketData, Toolasha.Utils.profitHelpers, Toolasha.Utils.evWorkerManager, Toolasha.Utils.profitConstants, Toolasha.Utils.bundleBridge, Toolasha.Core.storage, Toolasha.Core.webSocketHook, Toolasha.Utils.timerRegistry, Toolasha.Utils.chunkedHistory, Toolasha.Utils.gameLookups, Toolasha.Utils.materialCalculator, Toolasha.Utils.abilityCalc, Toolasha.Utils.formatters, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.simplePanel, Toolasha.Utils.overlayRows, Toolasha.Utils.roomSkills, Toolasha.Utils.equipmentSavings, Toolasha.Utils.characterKey, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.mobile, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.dungeonKeys, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.backgroundWork, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.liquidityCap, Toolasha.Utils.partyLint, Toolasha.Utils.progressEta, Toolasha.Utils.csvExport, Toolasha.Utils.dungeonLevelGap, Toolasha.Utils.equipmentParser, Toolasha.Utils.combatLevel, Toolasha.Utils.guildCreditPricing);

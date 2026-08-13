@@ -1,7 +1,7 @@
 /**
  * Toolasha Actions Library
  * Production, gathering, and alchemy features
- * Version: 2.100.0
+ * Version: 2.101.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -2027,13 +2027,13 @@
         const marketTaxLine = document.createElement('div');
         marketTaxLine.style.marginLeft = '8px';
         const marketTaxLabel = marketTaxMissing ? '-- ⚠' : `${formatters_js.formatLargeNumber(marketTax)}/hr`;
-        marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${marketTaxLabel}`;
+        marketTaxLine.textContent = `• Market Tax: ${Math.round(profitConstants_js.MARKET_TAX * 100)}% of revenue → ${marketTaxLabel}`;
         marketTaxContent.appendChild(marketTaxLine);
 
         const marketTaxHeader = marketTaxMissing ? '-- ⚠' : `${formatters_js.formatLargeNumber(marketTax)}/hr`;
         const marketTaxSection = uiComponents_js.createCollapsibleSection(
             '',
-            `Market Tax: ${marketTaxHeader} (2%)`,
+            `Market Tax: ${marketTaxHeader} (${Math.round(profitConstants_js.MARKET_TAX * 100)}%)`,
             null,
             marketTaxContent,
             false,
@@ -2446,7 +2446,7 @@
                 profitData.gourmetBonusItems * profitData.outputPrice +
                 bonusRevenueTotal * efficiencyMultiplier
         );
-        // Calculate market tax (2% of revenue)
+        // Calculate market tax
         const marketTax = Math.round(revenue * profitConstants_js.MARKET_TAX);
         const costs = Math.round(profitData.materialCostPerHour + profitData.totalTeaCostPerHour + marketTax);
         const summary = netMissing
@@ -2658,13 +2658,13 @@
             : marketTaxEstimated
               ? `${formatters_js.formatLargeNumber(marketTax)}/hr ⚠`
               : `${formatters_js.formatLargeNumber(marketTax)}/hr`;
-        marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${marketTaxLabel}`;
+        marketTaxLine.textContent = `• Market Tax: ${Math.round(profitConstants_js.MARKET_TAX * 100)}% of revenue → ${marketTaxLabel}`;
         marketTaxContent.appendChild(marketTaxLine);
 
         const marketTaxHeader = marketTaxLabel;
         const marketTaxSection = uiComponents_js.createCollapsibleSection(
             '',
-            `Market Tax: ${marketTaxHeader} (2%)`,
+            `Market Tax: ${marketTaxHeader} (${Math.round(profitConstants_js.MARKET_TAX * 100)}%)`,
             null,
             marketTaxContent,
             false,
@@ -3230,12 +3230,12 @@
         const marketTaxLine = document.createElement('div');
         marketTaxLine.style.marginLeft = '8px';
         const marketTaxLabel = formatMissingLabel(marketTaxMissing, `${formatPerAction(marketTaxPerAction)}/action`);
-        marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${marketTaxLabel}`;
+        marketTaxLine.textContent = `• Market Tax: ${Math.round(profitConstants_js.MARKET_TAX * 100)}% of revenue → ${marketTaxLabel}`;
         marketTaxContent.appendChild(marketTaxLine);
 
         const marketTaxSection = uiComponents_js.createCollapsibleSection(
             '',
-            `Market Tax: ${marketTaxLabel} (2%)`,
+            `Market Tax: ${marketTaxLabel} (${Math.round(profitConstants_js.MARKET_TAX * 100)}%)`,
             null,
             marketTaxContent,
             false,
@@ -3520,12 +3520,12 @@
             : marketTaxEstimated
               ? `${formatPerAction(marketTaxPerAction)}/action ⚠`
               : `${formatPerAction(marketTaxPerAction)}/action`;
-        marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${marketTaxLabel}`;
+        marketTaxLine.textContent = `• Market Tax: ${Math.round(profitConstants_js.MARKET_TAX * 100)}% of revenue → ${marketTaxLabel}`;
         marketTaxContent.appendChild(marketTaxLine);
 
         const marketTaxSection = uiComponents_js.createCollapsibleSection(
             '',
-            `Market Tax: ${marketTaxLabel} (2%)`,
+            `Market Tax: ${marketTaxLabel} (${Math.round(profitConstants_js.MARKET_TAX * 100)}%)`,
             null,
             marketTaxContent,
             false,
@@ -3826,13 +3826,13 @@
         const marketTaxLine = document.createElement('div');
         marketTaxLine.style.marginLeft = '8px';
         const marketTaxLabel = marketTaxMissing ? '-- ⚠' : formatters_js.formatLargeNumber(totalMarketTax);
-        marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${marketTaxLabel}`;
+        marketTaxLine.textContent = `• Market Tax: ${Math.round(profitConstants_js.MARKET_TAX * 100)}% of revenue → ${marketTaxLabel}`;
         marketTaxContent.appendChild(marketTaxLine);
 
         const marketTaxHeader = marketTaxMissing ? '-- ⚠' : formatters_js.formatLargeNumber(totalMarketTax);
         const marketTaxSection = uiComponents_js.createCollapsibleSection(
             '',
-            `Market Tax: ${marketTaxHeader} (2%)`,
+            `Market Tax: ${marketTaxHeader} (${Math.round(profitConstants_js.MARKET_TAX * 100)}%)`,
             null,
             marketTaxContent,
             false,
@@ -4133,13 +4133,13 @@
             : marketTaxEstimated
               ? `${formatters_js.formatLargeNumber(totalMarketTax)} ⚠`
               : formatters_js.formatLargeNumber(totalMarketTax);
-        marketTaxLine.textContent = `• Market Tax: 2% of revenue → ${marketTaxLabel}`;
+        marketTaxLine.textContent = `• Market Tax: ${Math.round(profitConstants_js.MARKET_TAX * 100)}% of revenue → ${marketTaxLabel}`;
         marketTaxContent.appendChild(marketTaxLine);
 
         const marketTaxHeader = marketTaxLabel;
         const marketTaxSection = uiComponents_js.createCollapsibleSection(
             '',
-            `Market Tax: ${marketTaxHeader} (2%)`,
+            `Market Tax: ${marketTaxHeader} (${Math.round(profitConstants_js.MARKET_TAX * 100)}%)`,
             null,
             marketTaxContent,
             false,
@@ -17932,7 +17932,7 @@
                     const priceData = marketAPI.getPrice(result.itemHrid, 0);
                     if (priceData) {
                         const price = priceType === 'ask' ? priceData.ask : priceData.bid;
-                        totalValue += profitHelpers_js.calculatePriceAfterTax(price * result.amount); // 2% market tax
+                        totalValue += profitHelpers_js.calculatePriceAfterTax(price * result.amount); // market tax (see profit-constants)
                     }
                 }
             }
@@ -17945,7 +17945,7 @@
             const essencePriceData = marketAPI.getPrice('/items/enhancing_essence', 0);
             if (essencePriceData) {
                 const essencePrice = priceType === 'ask' ? essencePriceData.ask : essencePriceData.bid;
-                totalValue += profitHelpers_js.calculatePriceAfterTax(essencePrice * essenceAmount); // 2% market tax
+                totalValue += profitHelpers_js.calculatePriceAfterTax(essencePrice * essenceAmount); // market tax (see profit-constants)
             }
 
             return totalValue;
@@ -18536,9 +18536,7 @@
         const efficiencyBoostedBonusRevenue = bonusRevenue.totalBonusRevenue * efficiencyMultiplier;
         totalRevenue += efficiencyBoostedBonusRevenue;
 
-        // Apply market tax (2%)
-        const MARKET_TAX = 0.02;
-        const profitPerHour = totalRevenue * (1 - MARKET_TAX);
+        const profitPerHour = totalRevenue * (1 - profitConstants_js.MARKET_TAX);
 
         return profitPerHour;
     }
@@ -18636,10 +18634,9 @@
         const bonusRevenue = bonusRevenueCalculator_js.calculateBonusRevenue(actionDetails, actionsPerHour, equipment, itemDetailMap);
         const efficiencyBoostedBonusRevenue = (bonusRevenue?.totalBonusRevenue || 0) * efficiencyMultiplier;
 
-        // Apply market tax (2%) to revenue portion only (including bonus revenue)
-        const MARKET_TAX = 0.02;
+        // Apply market tax to the revenue portion only (including bonus revenue)
         const revenuePerHour = actionsPerHour * outputRevenue * efficiencyMultiplier;
-        const marketTax = (revenuePerHour + efficiencyBoostedBonusRevenue) * MARKET_TAX;
+        const marketTax = (revenuePerHour + efficiencyBoostedBonusRevenue) * profitConstants_js.MARKET_TAX;
         const netProfitPerHour = grossProfitPerHour + efficiencyBoostedBonusRevenue - marketTax;
 
         return netProfitPerHour;

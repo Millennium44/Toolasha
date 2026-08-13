@@ -1,7 +1,7 @@
 /**
  * Toolasha Core Library
  * Core infrastructure and API clients
- * Version: 2.100.0
+ * Version: 2.101.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -2498,6 +2498,17 @@
                     default: true,
                     help: 'Displays the total market value of all items in each inventory category',
                 },
+                networth_valueSource: {
+                    id: 'networth_valueSource',
+                    label: 'Net worth value source',
+                    type: 'select',
+                    default: 'orderBook',
+                    options: [
+                        { value: 'orderBook', label: 'Order book (ask/bid, by pricing mode below)' },
+                        { value: 'officialValue', label: "Game's market value (matches inventory tooltip)" },
+                    ],
+                    help: "Order book prices your items from the live ask/bid using the pricing mode below. Game's market value uses the value the game itself publishes (behind the inventory's Total Market Value) — a single estimate per item, refreshed every ~10 min, so it stays fresher than the market feed and makes the net-worth total match the game. Only takes effect once the marketplace update is live.",
+                },
                 networth_pricingMode: {
                     id: 'networth_pricingMode',
                     label: 'Net worth pricing mode',
@@ -2507,7 +2518,7 @@
                         { value: 'ask', label: 'Ask price (patient sell value)' },
                         { value: 'bid', label: 'Bid price (instant liquidation value)' },
                     ],
-                    help: 'Ask shows what you could get by listing patiently. Bid shows what you could get by selling instantly.',
+                    help: "Ask shows what you could get by listing patiently. Bid shows what you could get by selling instantly. Ignored when the value source above is set to the game's market value.",
                 },
                 networth_highEnhancementUseCost: {
                     id: 'networth_highEnhancementUseCost',
@@ -2860,13 +2871,6 @@
                     max: 100,
                     step: 1,
                     help: 'Upper bound on a single room simulation, in simulated hours. Precision normally ends a run well before this; the ceiling stops a room near a coin toss from running forever',
-                },
-                combatSim_labyrinthFullAbilities: {
-                    id: 'combatSim_labyrinthFullAbilities',
-                    label: 'Labyrinth: Model full monster abilities in combat sim (testing)',
-                    type: 'checkbox',
-                    default: false,
-                    help: 'The labyrinth builds each monster at difficulty tier 0, which drops every tier-gated ability — so a monster like the Cyclops is simulated as a bare auto-attacker with none of its stun, defence shred or self-buffs, and the sim over-predicts your clear chance (it fails in reality as roughly equal deaths and timeouts). With this on, the sim builds the monster with its full ability kit instead. Off by default while it is verified: turn it on, press Recompute, and compare the new clear chances against the Sim accuracy record. Expect combat rooms — especially high-level ones — to read lower and closer to what actually happens.',
                 },
                 labyrinthPathClearThreshold: {
                     id: 'labyrinthPathClearThreshold',
@@ -6293,6 +6297,28 @@
             } catch (error) {
                 console.error('[Data Manager] Failed to load init_client_data:', error);
                 return false;
+            }
+        }
+
+        /**
+         * The game's official market-value map, decompressed by the game's own util.
+         *
+         * Published since the 8/13/2026 update: an estimated value for every item and
+         * enhancement level — the figure behind the inventory's "Total Market Value"
+         * and the tradable range. Raw reader only; caching and band derivation live in
+         * utils/market-values.js. Absent on the live server until the patch lands, so
+         * a missing util is a normal no-data, not an error.
+         * @returns {{marketValuesVersion: number, marketItemValues: Object}|null}
+         */
+        getMarketItemValues() {
+            try {
+                if (typeof localStorageUtil !== 'undefined' && typeof localStorageUtil.getMarketItemValues === 'function') {
+                    return localStorageUtil.getMarketItemValues();
+                }
+                return null;
+            } catch (error) {
+                console.error('[Data Manager] Failed to read market item values:', error);
+                return null;
             }
         }
 

@@ -1,7 +1,7 @@
 /**
  * Toolasha Utils Library
  * All utility modules
- * Version: 2.100.0
+ * Version: 2.101.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -2617,14 +2617,60 @@
     });
 
     /**
+     * Marketplace-patch server gate (8/13/2026 update).
+     *
+     * The 8/13/2026 marketplace update — 5% market tax, shrine levels shared on
+     * profiles, and the rest — is live on the test server and reaches the live
+     * server within hours. Until it is live everywhere, the live server must behave
+     * exactly as it did before, so every patch-dependent behaviour is gated on which
+     * server the script is running on.
+     *
+     * ## Un-gating, in one place
+     *
+     * When the patch is live everywhere, change the body of {@link isMarketplacePatchLive}
+     * to `return true;` and ship. Every gated behaviour (the tax rate, the shrine
+     * fold into gear score, anything added later) flips to the patched rule at once,
+     * so there is a single line to flip and nothing to hunt down.
+     *
+     * ## Why hostname
+     *
+     * The userscript matches both `www.milkywayidle.com` and `test.milkywayidle.com`,
+     * so the same build runs on both and the hostname is the only thing that tells
+     * them apart. It is read at load and does not change within a session. In a Web
+     * Worker (spawned from a blob URL) the hostname is not the game's, so anything
+     * that must know the rate inside a worker is passed the value from the main
+     * thread rather than re-deriving it here.
+     */
+
+    /**
+     * Whether the 8/13/2026 marketplace patch is in effect on the current server.
+     * @returns {boolean}
+     */
+    function isMarketplacePatchLive() {
+        // Un-gate point: replace the two lines below with `return true;` once the
+        // patch is live on www as well.
+        if (typeof location === 'undefined' || !location || !location.hostname) return false;
+        return location.hostname.includes('test.milkywayidle');
+    }
+
+    var serverGate = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        isMarketplacePatchLive: isMarketplacePatchLive
+    });
+
+    /**
      * Profit Calculation Constants
      * Shared constants used across profit calculators
      */
 
+
     /**
-     * Marketplace tax rate (2%)
+     * Marketplace tax rate. Raised from 2% to 5% in the 8/13/2026 marketplace update,
+     * gated on the server: the test server (patch live) uses 5%, the live server keeps
+     * 2% until the patch reaches it — see {@link isMarketplacePatchLive}. This is the
+     * single source of truth; read it here rather than hardcoding a percentage.
      */
-    const MARKET_TAX = 0.02;
+    const MARKET_TAX = isMarketplacePatchLive() ? 0.05 : 0.02;
 
     /**
      * Bag of 10 Cowbells item HRID (subject to 18% market tax)
@@ -3124,6 +3170,132 @@
     });
 
     /**
+     * Official market values and the tradable-range clamp.
+     *
+     * Since the 8/13/2026 update the game publishes an estimated value for every
+     * item and enhancement level — the same figure behind the inventory's "Total
+     * Market Value" tooltip. Two things follow from it:
+     *
+     *  - A **value** for items whose live order book is empty or stale, so networth
+     *    can price an illiquid item the way the game does rather than falling all
+     *    the way back to crafting cost.
+     *  - A **tradable range** (about ±10% around the value): the game rejects buy
+     *    or sell orders outside it, so a hypothetical sell above the band or buy
+     *    below it cannot actually fill. A stale snapshot price parked outside the
+     *    band would otherwise print an impossible profit or valuation.
+     *
+     * The map is reached through the game's own `localStorageUtil.getMarketItemValues()`
+     * (via dataManager), which decompresses the localStorage blob for us — reading it
+     * raw yields compressed bytes. The dev's advice was to cache it rather than
+     * re-fetch, so the util is called at most once per refresh interval and the map
+     * is swapped only when its version changes; everything else reads the cache.
+     *
+     * All of this is gated behind {@link isMarketplacePatchLive}: the util does not
+     * exist on the live server until the patch lands, so before then every helper
+     * here is an inert pass-through and the plugin behaves exactly as it did.
+     */
+
+
+    /** The width of the tradable range either side of the value (~±10%). */
+    const BAND_FACTOR = 1.1;
+
+    /** Re-read the value map at most this often; the game util decompresses on each call. */
+    const REFRESH_INTERVAL_MS = 30_000;
+
+    let cache$2 = { version: null, values: null };
+    let lastRefresh = 0;
+
+    /**
+     * Re-read the value map through the game util, throttled and version-guarded so
+     * the decompress happens at most once per interval and only swaps the cache when
+     * the map actually changed. A no-op until the patch is live. Cheap to call often.
+     * @param {number} [now=Date.now()] - Injectable clock, for tests
+     * @returns {Object|null} `{ itemHrid: { level: value } }`, or null before any read
+     */
+    function refreshMarketValues(now = Date.now()) {
+        if (!isMarketplacePatchLive()) return cache$2.values;
+        if (cache$2.values && now - lastRefresh < REFRESH_INTERVAL_MS) return cache$2.values;
+        if (typeof dataManager$1.getMarketItemValues !== 'function') return cache$2.values;
+        lastRefresh = now;
+        try {
+            const payload = dataManager$1.getMarketItemValues();
+            const version = payload?.marketValuesVersion ?? null;
+            const values = payload?.marketItemValues ?? null;
+            if (values && version !== cache$2.version) {
+                cache$2 = { version, values };
+            }
+            return cache$2.values;
+        } catch (error) {
+            console.error('[Market Values] Reading market values failed:', error);
+            return cache$2.values;
+        }
+    }
+
+    /**
+     * The official value of one item at one enhancement level, from cache.
+     * @param {string} itemHrid - Item HRID
+     * @param {number} [enhancementLevel=0] - Enhancement level
+     * @returns {number|null}
+     */
+    function marketValueFor(itemHrid, enhancementLevel = 0) {
+        const value = cache$2.values?.[itemHrid]?.[String(enhancementLevel)];
+        return typeof value === 'number' && value > 0 ? value : null;
+    }
+
+    /**
+     * The tradable range implied by a market value (~±10% around it).
+     * @param {number|null} value - Market value
+     * @returns {{min:number, max:number}|null}
+     */
+    function bandFromValue(value) {
+        if (!(value > 0)) return null;
+        return { min: value / BAND_FACTOR, max: value * BAND_FACTOR };
+    }
+
+    /**
+     * Reconcile a raw order-book ask/bid pair against the official value.
+     *
+     * A pass-through until the patch is live or when the item has no official value.
+     * Otherwise each present side is clamped into the tradable range (a stale price
+     * parked outside it is pulled to the nearest edge, which is as far as an order
+     * could actually reach), and a missing side is filled with the value itself — so
+     * an item with an empty book is still priced the way the game prices it.
+     *
+     * @param {number|null} ask - Raw best ask
+     * @param {number|null} bid - Raw best bid
+     * @param {string} itemHrid - Item HRID
+     * @param {number} [enhancementLevel=0] - Enhancement level
+     * @returns {{ask:number|null, bid:number|null}}
+     */
+    function reconcileBook(ask, bid, itemHrid, enhancementLevel = 0) {
+        if (!isMarketplacePatchLive()) return { ask, bid };
+        const value = marketValueFor(itemHrid, enhancementLevel);
+        if (value === null) return { ask, bid };
+        const band = bandFromValue(value);
+        const clamp = (x) => (typeof x === 'number' && x >= 0 ? Math.min(Math.max(x, band.min), band.max) : null);
+        return {
+            ask: typeof ask === 'number' && ask >= 0 ? clamp(ask) : value,
+            bid: typeof bid === 'number' && bid >= 0 ? clamp(bid) : value,
+        };
+    }
+
+    /** Reset the cache and refresh throttle. Tests only. */
+    function _resetMarketValues() {
+        cache$2 = { version: null, values: null };
+        lastRefresh = 0;
+    }
+
+    var marketValues = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        BAND_FACTOR: BAND_FACTOR,
+        _resetMarketValues: _resetMarketValues,
+        bandFromValue: bandFromValue,
+        marketValueFor: marketValueFor,
+        reconcileBook: reconcileBook,
+        refreshMarketValues: refreshMarketValues
+    });
+
+    /**
      * Market Data Utility
      * Centralized access to market prices with smart pricing mode handling
      */
@@ -3166,10 +3338,14 @@
             return customPrice;
         }
 
-        // Get raw price data from API
+        // Get raw price data from API, reconciled against the official market value:
+        // stale prices are clamped into the tradable range and an empty book is
+        // valued the way the game values it. A pass-through until the patch is live.
+        refreshMarketValues();
         const priceData = marketAPI.getPrice(itemHrid, enhancementLevel);
+        const { ask, bid } = reconcileBook(priceData?.ask ?? null, priceData?.bid ?? null, itemHrid, enhancementLevel);
 
-        if (!priceData) {
+        if (ask === null && bid === null) {
             return null;
         }
 
@@ -3184,7 +3360,7 @@
                 console.warn(`[Market Data] Unknown pricing mode: ${pricingMode}, defaulting to ask`);
                 loggedWarnings.add(warningKey);
             }
-            return priceData.ask || 0;
+            return ask || 0;
         }
 
         const resolvePrice = (value) => {
@@ -3202,21 +3378,21 @@
         // Return price based on mode
         switch (pricingMode) {
             case 'ask':
-                return resolvePrice(priceData.ask);
+                return resolvePrice(ask);
             case 'bid':
-                return resolvePrice(priceData.bid);
+                return resolvePrice(bid);
             case 'average':
-                if (typeof priceData.ask !== 'number' || typeof priceData.bid !== 'number') {
+                if (typeof ask !== 'number' || typeof bid !== 'number') {
                     return null;
                 }
 
-                if (priceData.ask < 0 || priceData.bid < 0) {
+                if (ask < 0 || bid < 0) {
                     return null;
                 }
 
-                return (priceData.ask + priceData.bid) / 2;
+                return (ask + bid) / 2;
             default:
-                return resolvePrice(priceData.ask);
+                return resolvePrice(ask);
         }
     }
 
@@ -3260,16 +3436,18 @@
      * @returns {Object|null} Object with {ask, bid, average} or null if no market data
      */
     function getItemPrices(itemHrid, enhancementLevel = 0) {
+        refreshMarketValues();
         const priceData = marketAPI.getPrice(itemHrid, enhancementLevel);
+        const { ask, bid } = reconcileBook(priceData?.ask ?? null, priceData?.bid ?? null, itemHrid, enhancementLevel);
 
-        if (!priceData) {
+        if (ask === null && bid === null) {
             return null;
         }
 
         return {
-            ask: priceData.ask,
-            bid: priceData.bid,
-            average: (priceData.ask + priceData.bid) / 2,
+            ask,
+            bid,
+            average: (ask + bid) / 2,
         };
     }
 
@@ -5707,7 +5885,7 @@
     /**
      * Calculate price after marketplace tax
      * @param {number} price - Price before tax
-     * @param {number} [taxRate=MARKET_TAX] - Tax rate (e.g., 0.02 for 2%)
+     * @param {number} [taxRate=MARKET_TAX] - Tax rate (e.g., 0.05 for 5%)
      * @returns {number} Price after tax deduction
      *
      * @example
@@ -7348,7 +7526,7 @@ self.onmessage = function (e) {
     class ExpectedValueCalculator {
         constructor() {
             // Constants
-            this.MARKET_TAX = 0.02; // 2% marketplace tax
+            this.MARKET_TAX = MARKET_TAX; // marketplace tax (see profit-constants)
             this.CONVERGENCE_ITERATIONS = 4; // Nested container convergence
 
             // Cache for container EVs
@@ -18654,8 +18832,18 @@ self.onmessage = function (e) {
      * @returns {HTMLInputElement|null} Quantity input element or null
      */
     function findQuantityInput(modal) {
-        // Get all number inputs in the modal
-        const allInputs = Array.from(modal.querySelectorAll('input[type="number"]'));
+        // The game's own quantity row settles it, and is the reliable path since the
+        // 8/13/2026 marketplace update made the price and quantity fields typable —
+        // they are `type="text"` now, so the old `input[type="number"]` selector
+        // below matched nothing and the quantity stopped being filled.
+        const rowInput = modal.querySelector('div[class*="MarketplacePanel_quantityInputs"] input');
+        if (rowInput) {
+            return rowInput;
+        }
+
+        // Fallback: read every input (any type — the fields are text now), and tell
+        // the quantity box from the enhancement-level box by its surrounding label.
+        const allInputs = Array.from(modal.querySelectorAll('input'));
 
         if (allInputs.length === 0) {
             return null;
@@ -18750,9 +18938,18 @@ self.onmessage = function (e) {
             return;
         }
 
-        // Set the quantity value
+        // Set the quantity value through the prototype setter React does not own
+        const previous = String(quantityInput.value ?? '');
+        const next = quantity.toString();
         const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        nativeInputValueSetter.call(quantityInput, quantity.toString());
+        nativeInputValueSetter.call(quantityInput, next);
+
+        // Rewind React's value tracker so the input event below reads as a real
+        // change. Without it a strictly-controlled input (as the typable marketplace
+        // fields now are) can snap straight back to its own value on the next render.
+        if (previous !== next) {
+            quantityInput._valueTracker?.setValue?.(previous);
+        }
 
         // Trigger input event to notify React
         const inputEvent = new Event('input', { bubbles: true });
@@ -24005,6 +24202,7 @@ self.onmessage = function (e) {
         efficiency: efficiency$1,
         profitHelpers: profitHelpers$1,
         profitConstants: profitConstants$1,
+        serverGate,
         dom: dom$1,
         mobile,
         domObserverHelpers,
@@ -24021,6 +24219,7 @@ self.onmessage = function (e) {
         houseEfficiency: houseEfficiency$1,
         experienceCalculator: experienceCalculator$1,
         marketData: marketData$1,
+        marketValues,
         abilityCalc,
         equipmentParser,
         uiComponents: uiComponents$1,

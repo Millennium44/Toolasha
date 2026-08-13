@@ -1,11 +1,11 @@
 /**
  * Toolasha Market Library
  * Market, inventory, and economy features
- * Version: 2.100.0
+ * Version: 2.101.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, dataManager, domObserver, marketAPI, houseEfficiency_js, efficiency_js, bonusRevenueCalculator_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, mobile_js, formatters_js, marketData_js, teaParser_js, numberParser_js, profitHelpers_js, buffParser_js, alchemyFees_js, equipmentParser_js, actionCalculator_js, tokenValuation_js, evWorkerManager_js, abilityCostCalculator_js, dom, dungeonKeys_js, materialCalculator_js, gameLookups_js, timerRegistry_js, storage, characterKey_js, selectors_js, cleanupRegistry_js, domObserverHelpers_js, marketplaceTabs_js, reactInput_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, overlayFormat_js, watchlist_js, dropSources_js, overlayRows_js, backgroundWork_js, webSocketHook, bundleBridge_js, toast_js, gameServer_js, enhancementMultipliers_js, performanceMonitor, houseCostCalculator_js, networthWorkerManager_js, guildCreditPricing_js, chunkedHistory_js, marketplaceAutofill_js, skillHistory_js, abilityBooks_js, deferredLoad_js, simplePanel_js, settingsStorage, chestTally_js, choiceDialog_js, chestImport_js, csvExport_js, roomSkills_js, equipmentSavings_js) {
+(function (config, dataManager, domObserver, marketAPI, houseEfficiency_js, efficiency_js, bonusRevenueCalculator_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, mobile_js, formatters_js, marketData_js, teaParser_js, numberParser_js, profitHelpers_js, buffParser_js, alchemyFees_js, equipmentParser_js, actionCalculator_js, tokenValuation_js, evWorkerManager_js, abilityCostCalculator_js, dom, dungeonKeys_js, materialCalculator_js, gameLookups_js, timerRegistry_js, storage, characterKey_js, selectors_js, cleanupRegistry_js, domObserverHelpers_js, marketplaceTabs_js, reactInput_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, overlayFormat_js, watchlist_js, dropSources_js, overlayRows_js, backgroundWork_js, webSocketHook, bundleBridge_js, toast_js, gameServer_js, enhancementMultipliers_js, performanceMonitor, houseCostCalculator_js, marketValues_js, networthWorkerManager_js, guildCreditPricing_js, chunkedHistory_js, marketplaceAutofill_js, skillHistory_js, abilityBooks_js, deferredLoad_js, simplePanel_js, settingsStorage, chestTally_js, choiceDialog_js, chestImport_js, csvExport_js, roomSkills_js, equipmentSavings_js) {
     'use strict';
 
     function _interopNamespaceDefault(e) {
@@ -1872,7 +1872,7 @@
             const outputPriceEstimated = outputPriceMissing && craftingFallback > 0;
             const outputPrice = outputPriceMissing ? craftingFallback : rawOutputPrice;
 
-            // Apply market tax (2% tax on sales)
+            // Apply market tax on sales
             const priceAfterTax = profitHelpers_js.calculatePriceAfterTax(outputPrice);
 
             // Cost per item (without efficiency scaling)
@@ -1907,7 +1907,7 @@
             // Apply efficiency multiplier to bonus revenue (efficiency repeats the action, including bonus rolls)
             const efficiencyBoostedBonusRevenue = (bonusRevenue?.totalBonusRevenue || 0) * efficiencyMultiplier;
 
-            // Calculate market tax (2% of gross revenue including bonus revenue)
+            // Calculate market tax of gross revenue including bonus revenue
             const marketTax = (revenuePerHour + efficiencyBoostedBonusRevenue) * profitConstants_js.MARKET_TAX;
 
             // Total costs per hour (materials + teas + market tax)
@@ -2326,7 +2326,7 @@
     class ExpectedValueCalculator {
         constructor() {
             // Constants
-            this.MARKET_TAX = 0.02; // 2% marketplace tax
+            this.MARKET_TAX = profitConstants_js.MARKET_TAX; // marketplace tax (see profit-constants)
             this.CONVERGENCE_ITERATIONS = 4; // Nested container convergence
 
             // Cache for container EVs
@@ -4144,7 +4144,7 @@
      * - Equipment speed bonuses
      * - Efficiency buffs (level, house, tea, equipment)
      * - Gourmet tea bonus items (production skills only)
-     * - Market tax (2%)
+     * - Market tax
      */
 
 
@@ -4432,7 +4432,7 @@
             processingConversions.some((conversion) => conversion.missingPrice) ||
             (bonusRevenue?.hasMissingPrices ?? false);
 
-        // Calculate market tax (2% of gross revenue)
+        // Calculate market tax
         const marketTax = revenuePerHour * profitConstants_js.MARKET_TAX;
 
         // Calculate net profit (revenue - market tax - drink costs)
@@ -10389,7 +10389,7 @@
             if (filledQuantity === orderQuantity) {
                 return isSell ? unclaimedCoinCount : unclaimedItemCount * price;
             }
-            const taxRate = isSell ? (itemHrid === '/items/bag_of_10_cowbells' ? 0.18 : 0.02) : 0;
+            const taxRate = isSell ? (itemHrid === profitConstants_js.COWBELL_BAG_HRID ? profitConstants_js.COWBELL_BAG_TAX : profitConstants_js.MARKET_TAX) : 0;
             return (orderQuantity - filledQuantity) * Math.floor(profitHelpers_js.calculatePriceAfterTax(price, taxRate));
         }
 
@@ -11215,7 +11215,7 @@
                         continue;
                     }
 
-                    const tax = listing.itemHrid === '/items/bag_of_10_cowbells' ? 0.82 : 0.98;
+                    const tax = listing.itemHrid === profitConstants_js.COWBELL_BAG_HRID ? 1 - profitConstants_js.COWBELL_BAG_TAX : 1 - profitConstants_js.MARKET_TAX;
                     const remainingQuantity = Math.max(0, listing.orderQuantity - listing.filledQuantity);
 
                     if (remainingQuantity > 0) {
@@ -15362,7 +15362,7 @@
          */
         async executeAction(actionType, itemHrid, enhancementLevel = 0) {
             // Read quantity from item submenu input before navigating away
-            const amountInput = document.querySelector('[class*="Item_amountInputContainer"] input[type="number"]');
+            const amountInput = document.querySelector('[class*="Item_amountInputContainer"] input');
             if (amountInput) {
                 const qty = parseInt(amountInput.value, 10);
                 if (qty > 0) {
@@ -15696,7 +15696,7 @@
 
                 // Determine enhancement level from modal (if present)
                 let enhancementLevel = 0;
-                const allInputs = modal.querySelectorAll('input[type="number"]');
+                const allInputs = modal.querySelectorAll('input');
                 for (const input of allInputs) {
                     const parent = input.closest('div');
                     if (parent?.textContent?.includes('Enhancement Level')) {
@@ -15742,7 +15742,13 @@
          * @returns {HTMLInputElement|null} Quantity input element or null
          */
         findQuantityInput(modal) {
-            const allInputs = Array.from(modal.querySelectorAll('input[type="number"]'));
+            // The game's own quantity row — reliable, and works whether the fields are
+            // number inputs (pre-8/13 marketplace update) or typable text ones (after).
+            const rowInput = modal.querySelector('div[class*="MarketplacePanel_quantityInputs"] input');
+            if (rowInput) return rowInput;
+
+            // Any input, not just number — the fields are text since the update.
+            const allInputs = Array.from(modal.querySelectorAll('input'));
 
             if (allInputs.length === 0) return null;
             if (allInputs.length === 1) return allInputs[0];
@@ -15829,7 +15835,7 @@
                 for (const row of [priceRow, quantityRow]) {
                     if (!row) continue;
 
-                    const input = row.querySelector('input[type="number"]');
+                    const input = row.querySelector('input');
                     if (!input) continue;
 
                     const buttonContainers = row.querySelectorAll('div[class*="MarketplacePanel_buttonContainer"]');
@@ -19152,7 +19158,7 @@
             const wouldInsta = minListingValue > 0 && stackValue < minListingValue;
             const referencePrice = (wouldInsta ? (bid ?? ask) : (ask ?? bid)) || 0;
             if (referencePrice <= 0) return false;
-            const marketNet = Math.floor(referencePrice * 0.98);
+            const marketNet = Math.floor(referencePrice * (1 - profitConstants_js.MARKET_TAX));
             if (vendorPrice < marketNet) return false;
             return this._openVendorSell(vendorPrice, marketNet);
         }
@@ -25655,6 +25661,47 @@
     }
 
     /**
+     * The prices net worth should use for one item at one enhancement level.
+     *
+     * Honors the "Net worth value source" setting and reconciles the raw order book
+     * against the game's official market value:
+     *   - officialValue: the game's own published value (a single estimate), when it
+     *     has one — the figure behind the inventory's Total Market Value.
+     *   - orderBook: the live ask/bid, with a stale price clamped into the tradable
+     *     range and an empty book filled from the value.
+     * A pass-through to the raw order book until the marketplace patch is live.
+     *
+     * @param {string} itemHrid - Item HRID
+     * @param {number} enhancementLevel - Enhancement level
+     * @param {Map|null} priceCache - Batch cache from getPricesBatch(), or null to fetch
+     * @returns {{ask:number|null, bid:number|null, average:number|null}|number|null}
+     */
+    function resolveNetworthPrices(itemHrid, enhancementLevel, priceCache = null) {
+        const raw = priceCache
+            ? priceCache.get(`${itemHrid}:${enhancementLevel}`)
+            : marketData_js.getItemPrices(itemHrid, enhancementLevel);
+
+        marketValues_js.refreshMarketValues();
+        const valueSource = config.getSettingValue('networth_valueSource') || 'orderBook';
+        if (valueSource === 'officialValue') {
+            const official = marketValues_js.marketValueFor(itemHrid, enhancementLevel);
+            if (official !== null) {
+                return { ask: official, bid: official, average: official };
+            }
+        }
+
+        if (raw && typeof raw === 'object') {
+            const { ask, bid } = marketValues_js.reconcileBook(raw.ask ?? null, raw.bid ?? null, itemHrid, enhancementLevel);
+            if (ask === null && bid === null) {
+                return null;
+            }
+            return { ask, bid, average: ask !== null && bid !== null ? (ask + bid) / 2 : null };
+        }
+
+        return raw ?? null;
+    }
+
+    /**
      * Get market price for an item
      * @param {string} itemHrid - Item HRID
      * @param {number} enhancementLevel - Enhancement level
@@ -25671,18 +25718,11 @@
         // Determine which price field to use based on networth pricing mode
         const pricingMode = config.getSettingValue('networth_pricingMode') || 'ask';
 
-        let prices;
-
-        // Use cache if provided, otherwise fetch directly
-        if (priceCache) {
-            const key = `${itemHrid}:${enhancementLevel}`;
-            prices = priceCache.get(key);
-        } else {
-            prices = marketData_js.getItemPrices(itemHrid, enhancementLevel);
-        }
+        // Reconciled against the official market value and the value-source setting
+        const prices = resolveNetworthPrices(itemHrid, enhancementLevel, priceCache);
 
         // Try selected pricing mode first
-        const price = prices?.[pricingMode];
+        const price = typeof prices === 'number' ? prices : prices?.[pricingMode];
         if (price && price > 0) {
             return price;
         }
@@ -26055,11 +26095,12 @@
                 } else {
                     // Check if the configured pricing mode's price is missing — valuation
                     // uses that mode, so classifying on ask alone would run the expensive
-                    // enhancement-path fallback synchronously on the main thread
-                    const priceKey = `${item.itemHrid}:${enhancementLevel}`;
-                    const prices = priceCache ? priceCache.get(priceKey) : null;
+                    // enhancement-path fallback synchronously on the main thread. Resolve
+                    // the same way getMarketPrice will, so an item the official value can
+                    // price (or a book the value can fill) is not sent to the worker.
+                    const resolved = resolveNetworthPrices(item.itemHrid, enhancementLevel, priceCache);
                     const hasMarketPrice =
-                        prices && ((typeof prices === 'number' && prices > 0) || prices[pricingMode] > 0);
+                        resolved && (typeof resolved === 'number' ? resolved > 0 : resolved[pricingMode] > 0);
 
                     if (!hasMarketPrice) {
                         needsWorker = true;
@@ -26403,8 +26444,8 @@
 
             if (listing.isSell) {
                 // Selling: value is locked in listing + unclaimed coins
-                // Apply marketplace fee (2% for normal items, 18% for cowbells)
-                const fee = listing.itemHrid === '/items/bag_of_10_cowbells' ? 0.18 : 0.02;
+                // Apply marketplace fee (cowbells are taxed higher than everything else)
+                const fee = listing.itemHrid === profitConstants_js.COWBELL_BAG_HRID ? profitConstants_js.COWBELL_BAG_TAX : profitConstants_js.MARKET_TAX;
 
                 const value = await calculateItemValue(
                     { itemHrid: listing.itemHrid, enhancementLevel, count: quantity },
@@ -36368,7 +36409,7 @@
 
     const BASIS_TOOLTIP =
         'Average-cost basis: each sell is matched against the average price of buys recorded in this ledger ' +
-        'for the same item + enhancement level. Sell proceeds are always net of the 2% market tax. ' +
+        'for the same item + enhancement level. Sell proceeds are always net of the market tax. ' +
         'Sells of items never bought through the ledger are shown as revenue with cost "—", not as profit.';
 
     class TradeLedgerView {
@@ -36769,7 +36810,7 @@
                 { label: 'Item' },
                 { label: 'Enh' },
                 { label: 'Bought' },
-                { label: 'Sold (net)', title: 'Quantity @ average proceeds per unit, after the 2% market tax' },
+                { label: 'Sold (net)', title: 'Quantity @ average proceeds per unit, after the market tax' },
                 { label: 'Realized', title: BASIS_TOOLTIP },
                 { label: 'Last Activity' },
             ];
@@ -44062,4 +44103,4 @@
 
     console.log('[Toolasha] Market library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.marketAPI, Toolasha.Utils.houseEfficiency, Toolasha.Utils.efficiency, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.mobile, Toolasha.Utils.formatters, Toolasha.Utils.marketData, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.profitHelpers, Toolasha.Utils.buffParser, Toolasha.Utils.alchemyFees, Toolasha.Utils.equipmentParser, Toolasha.Utils.actionCalculator, Toolasha.Utils.tokenValuation, Toolasha.Utils.evWorkerManager, Toolasha.Utils.abilityCalc, Toolasha.Utils.dom, Toolasha.Utils.dungeonKeys, Toolasha.Utils.materialCalculator, Toolasha.Utils.gameLookups, Toolasha.Utils.timerRegistry, Toolasha.Core.storage, Toolasha.Utils.characterKey, Toolasha.Utils.selectors, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.reactInput, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.overlayFormat, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.overlayRows, Toolasha.Utils.backgroundWork, Toolasha.Core.webSocketHook, Toolasha.Utils.bundleBridge, Toolasha.Utils.toast, Toolasha.Utils.gameServer, Toolasha.Utils.enhancementMultipliers, Toolasha.Core.performanceMonitor, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.networthWorkerManager, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.chunkedHistory, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.skillHistory, Toolasha.Utils.abilityBooks, Toolasha.Utils.deferredLoad, Toolasha.Utils.simplePanel, Toolasha.Core.settingsStorage, Toolasha.Utils.chestTally, Toolasha.Utils.choiceDialog, Toolasha.Utils.chestImport, Toolasha.Utils.csvExport, Toolasha.Utils.roomSkills, Toolasha.Utils.equipmentSavings);
+})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.marketAPI, Toolasha.Utils.houseEfficiency, Toolasha.Utils.efficiency, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.mobile, Toolasha.Utils.formatters, Toolasha.Utils.marketData, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.profitHelpers, Toolasha.Utils.buffParser, Toolasha.Utils.alchemyFees, Toolasha.Utils.equipmentParser, Toolasha.Utils.actionCalculator, Toolasha.Utils.tokenValuation, Toolasha.Utils.evWorkerManager, Toolasha.Utils.abilityCalc, Toolasha.Utils.dom, Toolasha.Utils.dungeonKeys, Toolasha.Utils.materialCalculator, Toolasha.Utils.gameLookups, Toolasha.Utils.timerRegistry, Toolasha.Core.storage, Toolasha.Utils.characterKey, Toolasha.Utils.selectors, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.reactInput, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.overlayFormat, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.overlayRows, Toolasha.Utils.backgroundWork, Toolasha.Core.webSocketHook, Toolasha.Utils.bundleBridge, Toolasha.Utils.toast, Toolasha.Utils.gameServer, Toolasha.Utils.enhancementMultipliers, Toolasha.Core.performanceMonitor, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.marketValues, Toolasha.Utils.networthWorkerManager, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.chunkedHistory, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.skillHistory, Toolasha.Utils.abilityBooks, Toolasha.Utils.deferredLoad, Toolasha.Utils.simplePanel, Toolasha.Core.settingsStorage, Toolasha.Utils.chestTally, Toolasha.Utils.choiceDialog, Toolasha.Utils.chestImport, Toolasha.Utils.csvExport, Toolasha.Utils.roomSkills, Toolasha.Utils.equipmentSavings);

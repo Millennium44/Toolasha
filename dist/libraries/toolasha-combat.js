@@ -1,11 +1,11 @@
 /**
  * Toolasha Combat Library
  * Combat, abilities, and combat stats features
- * Version: 2.100.0
+ * Version: 2.101.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, dataManager, domObserver, webSocketHook, storage, bundleBridge_js, battlePanelMonsters_js, panelZIndex_js, scrollBuffValues_js, gameText_js, timerRegistry_js, characterKey_js, dom, profileCommand_js, domObserverHelpers_js, csvExport_js, formatters_js, choiceDialog_js, marketAPI, marketData_js, dropLuck_js, combatDropModel_js, overlayRows_js, overlayFormat_js, keyLedger_js, dungeonLevelGap_js, marketplaceTabs_js, simplePanel_js, damageAttribution_js, abilityCostCalculator_js, houseCostCalculator_js, enhancementConfig_js, enhancementWorkerManager_js, enhancementCalculator_js, profitConstants_js, mobile_js, teaParser_js, numberParser_js, gameLookups_js, guildCreditPricing_js, combatSimAdapter_js, combatSimRunner_js, equipmentParser_js, wilson_js, Monster, gameData_js, combatLevel_js, reactInput_js, combatSim, labSim, expectedValueCalculator, dungeonKeys_js, actionCalculator_js, efficiency_js, consumableForecast_js, consumableTarget_js, marketplaceAutofill_js, abilityBooks_js, itemNavigation_js, combatSimUI, performanceMonitor, backgroundWork_js, tableColumns_js, selectors_js, progressEta_js, gameServer_js, toast_js) {
+(function (config, dataManager, domObserver, webSocketHook, storage, bundleBridge_js, battlePanelMonsters_js, panelZIndex_js, scrollBuffValues_js, gameText_js, timerRegistry_js, characterKey_js, dom, profileCommand_js, domObserverHelpers_js, csvExport_js, formatters_js, choiceDialog_js, marketAPI, marketData_js, dropLuck_js, combatDropModel_js, overlayRows_js, overlayFormat_js, keyLedger_js, dungeonLevelGap_js, marketplaceTabs_js, simplePanel_js, damageAttribution_js, abilityCostCalculator_js, houseCostCalculator_js, enhancementConfig_js, enhancementWorkerManager_js, enhancementCalculator_js, profitConstants_js, mobile_js, teaParser_js, numberParser_js, gameLookups_js, guildCreditPricing_js, serverGate_js, combatSimAdapter_js, combatSimRunner_js, equipmentParser_js, wilson_js, Monster, gameData_js, combatLevel_js, reactInput_js, combatSim, labSim, expectedValueCalculator, dungeonKeys_js, actionCalculator_js, efficiency_js, consumableForecast_js, consumableTarget_js, marketplaceAutofill_js, abilityBooks_js, itemNavigation_js, combatSimUI, performanceMonitor, backgroundWork_js, tableColumns_js, selectors_js, progressEta_js, gameServer_js, toast_js) {
     'use strict';
 
     /**
@@ -13854,8 +13854,20 @@
             // 4. Calculate Skiller Equipment Score (async - runs after combat completes)
             const skillerEquipmentResult = await calculateEquipmentScore(profileData, 'skiller');
 
-            const combatTotalScore = houseResult.score + abilityResult.score + combatEquipmentResult.score;
-            const skillerTotalScore = skillerEquipmentResult.score;
+            // Shrine levels are shared on every profile once the marketplace patch is
+            // live, so a shrine's value then belongs in the score the same way
+            // house/ability/equipment do — combat shrines in the combat total,
+            // skilling shrines in the skiller total. Before the patch is live
+            // everywhere, shrines are known only for your own character, so folding
+            // them in would make your score incomparable with everybody else's;
+            // gated on the server until then, and kept on their own line meanwhile.
+            const foldShrine = serverGate_js.isMarketplacePatchLive();
+            const combatTotalScore =
+                houseResult.score +
+                abilityResult.score +
+                combatEquipmentResult.score +
+                (foldShrine ? guildShrineResult.combat.score : 0);
+            const skillerTotalScore = skillerEquipmentResult.score + (foldShrine ? guildShrineResult.skilling.score : 0);
 
             return {
                 // Combat score (house + ability + combat equipment)
@@ -13863,13 +13875,14 @@
                 house: houseResult.score,
                 ability: abilityResult.score,
                 equipment: combatEquipmentResult.score,
-                // Its own line, deliberately outside `total`: shrine levels are only
-                // ever known for your own character, so folding them in would make
-                // your score incomparable with everybody else's
+                // Now folded into `total`/`skillerTotal` above (combat and skilling
+                // halves respectively). Kept as its own field too, so a breakdown can
+                // still show the shrine line and its unpriced token count.
                 guildShrine: guildShrineResult.score,
                 guildShrineTokens: guildShrineResult.tokens,
-                // False for every profile that is not your own — the display leaves
-                // the line out rather than printing a zero for what it cannot see
+                // True whenever the profile carried shrine levels — your own always,
+                // and now any shared profile the game exposes them on. False leaves
+                // the line out rather than printing a zero for what cannot be seen.
                 guildShrineKnown: guildShrineResult.known,
                 guildShrineCombat: guildShrineResult.combat.score,
                 guildShrineCombatTokens: guildShrineResult.combat.tokens,
@@ -14095,7 +14108,13 @@
         const emptyBucket = () => ({ score: 0, tokens: 0, breakdown: [] });
         const unknown = { known: false, ...emptyBucket(), combat: emptyBucket(), skilling: emptyBucket() };
 
-        const buffMap = profileData?.profile?.characterGuildBuffMap;
+        // Your own profile carries `characterGuildBuffMap` ({ hrid: { level } }); a
+        // shared profile now carries `guildBuffLevelMap` ({ hrid: level }) — the game
+        // exposes every player's shrine levels on their profile. Either is a real
+        // reading; the level is normalised out of both shapes in the loop below.
+        const ownMap = profileData?.profile?.characterGuildBuffMap;
+        const sharedMap = profileData?.profile?.guildBuffLevelMap;
+        const buffMap = ownMap && Object.keys(ownMap).length > 0 ? ownMap : sharedMap;
         const gameData = dataManager.getInitClientData();
         const detailMap = gameData?.guildBuffDetailMap;
         // An empty map is not a reading: shrine levels ride on guild traffic that
@@ -14112,7 +14131,7 @@
         const skilling = { cost: 0, tokens: 0, breakdown: [] };
 
         for (const [buffHrid, entry] of Object.entries(buffMap)) {
-            const level = Math.max(0, Math.floor(Number(entry?.level) || 0));
+            const level = Math.max(0, Math.floor(Number(typeof entry === 'number' ? entry : entry?.level) || 0));
             const detail = detailMap[buffHrid];
             if (!detail || level <= 0) continue;
 
@@ -14762,17 +14781,15 @@
             },
         ];
 
-        // Only your own character has shrine levels to show, and only a shrine that
-        // was actually bought is worth a line
+        // Shrine levels are shared on every profile now, so a bought shrine is worth
+        // a line — and it is counted in the combat total above, like everything else.
         if (score.guildShrineKnown && score.guildShrineCombat > 0) {
             sections.push({
                 id: 'combat-shrines',
                 title: 'Guild shrines',
                 score: score.guildShrineCombat,
                 rows: score.breakdown?.guildShrinesCombat || [],
-                note:
-                    `Outside the combat total, since no other player's card can carry it. ` +
-                    `${formatters_js.formatWithSeparator(score.guildShrineCombatTokens || 0)} guild tokens also spent, which have no price.`,
+                note: `${formatters_js.formatWithSeparator(score.guildShrineCombatTokens || 0)} guild tokens also spent, which have no price.`,
             });
         }
 
@@ -15088,16 +15105,16 @@
             value.style.whiteSpace = 'nowrap';
 
             container.append(label, value);
-            // Guild shrines are shown on their own line rather than inside the total:
-            // nobody else's card can carry the figure, so adding it would make this
-            // score mean something different from every score it gets compared with
+            // Shrine value is part of the combat and skiller totals now (the game
+            // shares shrine levels on every profile), so it sits alongside the other
+            // components; the guild tokens behind it still have no price.
             const shrineLine =
                 score.guildShrine > 0
                     ? `Guild shrines ${score.guildShrine.toFixed(1)} (+${score.guildShrineTokens} tokens, unpriced)\n`
                     : '';
             container.title =
                 `Equipment ${score.equipment.toFixed(1)} · Abilities ${score.ability.toFixed(1)} · ` +
-                `House ${score.house.toFixed(1)}\n` +
+                `House ${score.house.toFixed(1)} · Shrines ${(score.guildShrineCombat || 0).toFixed(1)}\n` +
                 `Skiller ${score.skillerTotal.toFixed(1)}\n` +
                 shrineLine +
                 'The same score as your profile card: the build’s cost in millions of coins.\n' +
@@ -25661,13 +25678,14 @@
 
         /**
          * Whether combat sims build the monster with its full ability kit rather
-         * than only the tier-0 subset. Off by default; a testing lever for the
-         * labyrinth calibration fix (a tier-0 monster drops its stun/debuff kit and
-         * the sim over-predicts clears — see Monster).
+         * than only the tier-0 subset. Always on now: a tier-0 monster drops its
+         * stun/debuff kit and the sim over-predicts clears (see Monster), and the
+         * full-ability build was verified to read closer to reality, so the testing
+         * toggle graduated into permanent behavior.
          * @returns {boolean}
          */
         labyrinthFullAbilities() {
-            return config.getSetting('combatSim_labyrinthFullAbilities') === true;
+            return true;
         },
 
         /**
@@ -46598,7 +46616,7 @@
             }
 
             // Calculate sell → rebuy scenario
-            const SELLER_TAX = 0.02;
+            const SELLER_TAX = profitConstants_js.MARKET_TAX;
             const sellPrice = selectedRow.buyPrice; // bid price = what market will buy at
             const directCredits = batches * selectedRow.creditCount;
 
@@ -46624,7 +46642,7 @@
 
             advisor.style.borderColor = creditDiff > 0 ? 'rgba(74,222,128,0.3)' : 'rgba(255,107,107,0.3)';
             advisor.innerHTML = `
-            <div style="color:#9ca3af; margin-bottom:6px; font-size:11px;">Sell → rebuy best item (2% tax)</div>
+            <div style="color:#9ca3af; margin-bottom:6px; font-size:11px;">Sell → rebuy best item (${Math.round(profitConstants_js.MARKET_TAX * 100)}% tax)</div>
             <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
                 <span style="color:#aaa;">Direct exchange</span>
                 <span style="color:#e0e0e0; font-weight:600;">${directCredits.toLocaleString()} credits</span>
@@ -58450,4 +58468,4 @@
 
     console.log('[Toolasha] Combat library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.webSocketHook, Toolasha.Core.storage, Toolasha.Utils.bundleBridge, Toolasha.Utils.battlePanelMonsters, Toolasha.Utils.panelZIndex, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.gameText, Toolasha.Utils.timerRegistry, Toolasha.Utils.characterKey, Toolasha.Utils.dom, Toolasha.Utils.profileCommand, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.csvExport, Toolasha.Utils.formatters, Toolasha.Utils.choiceDialog, Toolasha.Core.marketAPI, Toolasha.Utils.marketData, Toolasha.Utils.dropLuck, Toolasha.Utils.combatDropModel, Toolasha.Utils.overlayRows, Toolasha.Utils.overlayFormat, Toolasha.Utils.keyLedger, Toolasha.Utils.dungeonLevelGap, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.simplePanel, Toolasha.Utils.damageAttribution, Toolasha.Utils.abilityCalc, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.enhancementWorkerManager, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.profitConstants, Toolasha.Utils.mobile, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.gameLookups, Toolasha.Utils.guildCreditPricing, Toolasha.Sim.combatSimAdapter, Toolasha.Sim.combatSimRunner, Toolasha.Utils.equipmentParser, Toolasha.Sim.wilson, Toolasha.Sim.monster, Toolasha.Sim.gameData, Toolasha.Utils.combatLevel, Toolasha.Utils.reactInput, Toolasha.Sim.combatSim, Toolasha.Sim.labSim, Toolasha.Market.expectedValueCalculator, Toolasha.Utils.dungeonKeys, Toolasha.Utils.actionCalculator, Toolasha.Utils.efficiency, Toolasha.Utils.consumableForecast, Toolasha.Utils.consumableTarget, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.abilityBooks, Toolasha.Utils.itemNavigation, Toolasha.Sim.combatSimUI, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.tableColumns, Toolasha.Utils.selectors, Toolasha.Utils.progressEta, Toolasha.Utils.gameServer, Toolasha.Utils.toast);
+})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.webSocketHook, Toolasha.Core.storage, Toolasha.Utils.bundleBridge, Toolasha.Utils.battlePanelMonsters, Toolasha.Utils.panelZIndex, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.gameText, Toolasha.Utils.timerRegistry, Toolasha.Utils.characterKey, Toolasha.Utils.dom, Toolasha.Utils.profileCommand, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.csvExport, Toolasha.Utils.formatters, Toolasha.Utils.choiceDialog, Toolasha.Core.marketAPI, Toolasha.Utils.marketData, Toolasha.Utils.dropLuck, Toolasha.Utils.combatDropModel, Toolasha.Utils.overlayRows, Toolasha.Utils.overlayFormat, Toolasha.Utils.keyLedger, Toolasha.Utils.dungeonLevelGap, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.simplePanel, Toolasha.Utils.damageAttribution, Toolasha.Utils.abilityCalc, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.enhancementWorkerManager, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.profitConstants, Toolasha.Utils.mobile, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.gameLookups, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.serverGate, Toolasha.Sim.combatSimAdapter, Toolasha.Sim.combatSimRunner, Toolasha.Utils.equipmentParser, Toolasha.Sim.wilson, Toolasha.Sim.monster, Toolasha.Sim.gameData, Toolasha.Utils.combatLevel, Toolasha.Utils.reactInput, Toolasha.Sim.combatSim, Toolasha.Sim.labSim, Toolasha.Market.expectedValueCalculator, Toolasha.Utils.dungeonKeys, Toolasha.Utils.actionCalculator, Toolasha.Utils.efficiency, Toolasha.Utils.consumableForecast, Toolasha.Utils.consumableTarget, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.abilityBooks, Toolasha.Utils.itemNavigation, Toolasha.Sim.combatSimUI, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.tableColumns, Toolasha.Utils.selectors, Toolasha.Utils.progressEta, Toolasha.Utils.gameServer, Toolasha.Utils.toast);
