@@ -166,6 +166,8 @@ class EnhancementUI {
             if (!enabled) {
                 this.hide();
             } else {
+                // Turning the feature on clears any manual command-palette hide.
+                this.manualHidden = false;
                 this.updateVisibility();
             }
         };
@@ -270,6 +272,10 @@ class EnhancementUI {
 
         // If main tracker is disabled, always hide
         if (!trackerEnabled) {
+            this.hide();
+        } else if (this.manualHidden) {
+            // A manual toggle (command palette) wins over the auto-show logic
+            // until the user toggles it back on.
             this.hide();
         } else if (showOnlyOnEnhancingScreen !== true) {
             this.show();
@@ -1027,15 +1033,32 @@ class EnhancementUI {
 
         const color = worth.net >= 0 ? STYLE.colors.success : STYLE.colors.danger;
         const sign = worth.net >= 0 ? '+' : '−';
-        const title =
-            `+${worth.level} sell value ${this.formatNumber(worth.valueN)} ` +
-            `(after ${(worth.sellTax * 100).toFixed(0)}% fee) − base +0 value ${this.formatNumber(worth.value0 || 0)} ` +
-            `− spent ${this.formatNumber(worth.spent)}. Net gain from enhancing vs selling the base as-is.`;
-        return `
-            <div style="margin-top: 6px; display: flex; justify-content: space-between; font-size: 13px;" title="${title}">
-                <span>💎 Worth it (net):</span>
-                <strong style="color: ${color};">${sign}${this.formatNumber(Math.abs(worth.net))}</strong>
+        const detailsId = `worth-details-${session.id}`;
+        const keep = 1 - worth.sellTax;
+        const feePct = (worth.sellTax * 100).toFixed(0);
+
+        // A row of the breakdown: label left, figure right.
+        const row = (label, value, valueColor = STYLE.colors.textPrimary) => `
+            <div style="display: flex; justify-content: space-between; margin-top: 2px; font-size: 12px;">
+                <span style="color: ${STYLE.colors.textSecondary};">${label}</span>
+                <span style="color: ${valueColor};">${value}</span>
             </div>`;
+
+        let html = '<div style="margin-top: 6px; font-size: 13px;">';
+        html += `
+            <div style="display: flex; justify-content: space-between; cursor: pointer; font-weight: bold; padding: 3px 0;"
+                 onclick="document.getElementById('${detailsId}').style.display = document.getElementById('${detailsId}').style.display === 'none' ? 'block' : 'none'">
+                <span>💎 Worth it (net, click for details)</span>
+                <span style="color: ${color};">${sign}${this.formatNumber(Math.abs(worth.net))}</span>
+            </div>`;
+        html += `<div id="${detailsId}" style="display: none; margin-left: 10px; margin-top: 3px;">`;
+        html += row(`+${worth.level} value (bid)`, this.formatNumber(worth.valueN));
+        html += row(`After ${feePct}% sell fee`, this.formatNumber(worth.valueN * keep));
+        html += row('Base +0 value (after fee)', `− ${this.formatNumber((worth.value0 || 0) * keep)}`);
+        html += row('Spent enhancing', `− ${this.formatNumber(worth.spent)}`);
+        html += row('Net', `${sign}${this.formatNumber(Math.abs(worth.net))}`, color);
+        html += '</div></div>';
+        return html;
     }
 
     /**
@@ -1232,16 +1255,19 @@ class EnhancementUI {
     }
 
     /**
-     * Toggle UI visibility
+     * Toggle UI visibility. Remembers a manual hide so the auto-show logic does
+     * not immediately bring it back (see updateVisibility). Called from the
+     * command palette.
      */
     toggle() {
-        if (this.floatingUI) {
-            const isVisible = this.floatingUI.style.display !== 'none';
-            if (isVisible) {
-                this.hide();
-            } else {
-                this.show();
-            }
+        if (!this.floatingUI) return;
+        const isVisible = this.floatingUI.style.display !== 'none';
+        if (isVisible) {
+            this.manualHidden = true;
+            this.hide();
+        } else {
+            this.manualHidden = false;
+            this.show();
         }
     }
 
