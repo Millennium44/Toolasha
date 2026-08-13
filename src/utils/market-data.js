@@ -7,6 +7,7 @@ import marketAPI from '../api/marketplace.js';
 import config from '../core/config.js';
 import { getCustomPrice } from '../features/settings/custom-price-overrides.js';
 import { formatRelativeTime } from './formatters.js';
+import { refreshMarketValues, reconcileBook } from './market-values.js';
 
 // Track logged warnings to prevent console spam
 const loggedWarnings = new Set();
@@ -45,10 +46,14 @@ export function getItemPrice(itemHrid, options = {}) {
         return customPrice;
     }
 
-    // Get raw price data from API
+    // Get raw price data from API, reconciled against the official market value:
+    // stale prices are clamped into the tradable range and an empty book is
+    // valued the way the game values it. A pass-through until the patch is live.
+    refreshMarketValues();
     const priceData = marketAPI.getPrice(itemHrid, enhancementLevel);
+    const { ask, bid } = reconcileBook(priceData?.ask ?? null, priceData?.bid ?? null, itemHrid, enhancementLevel);
 
-    if (!priceData) {
+    if (ask === null && bid === null) {
         return null;
     }
 
@@ -63,7 +68,7 @@ export function getItemPrice(itemHrid, options = {}) {
             console.warn(`[Market Data] Unknown pricing mode: ${pricingMode}, defaulting to ask`);
             loggedWarnings.add(warningKey);
         }
-        return priceData.ask || 0;
+        return ask || 0;
     }
 
     const resolvePrice = (value) => {
@@ -81,21 +86,21 @@ export function getItemPrice(itemHrid, options = {}) {
     // Return price based on mode
     switch (pricingMode) {
         case 'ask':
-            return resolvePrice(priceData.ask);
+            return resolvePrice(ask);
         case 'bid':
-            return resolvePrice(priceData.bid);
+            return resolvePrice(bid);
         case 'average':
-            if (typeof priceData.ask !== 'number' || typeof priceData.bid !== 'number') {
+            if (typeof ask !== 'number' || typeof bid !== 'number') {
                 return null;
             }
 
-            if (priceData.ask < 0 || priceData.bid < 0) {
+            if (ask < 0 || bid < 0) {
                 return null;
             }
 
-            return (priceData.ask + priceData.bid) / 2;
+            return (ask + bid) / 2;
         default:
-            return resolvePrice(priceData.ask);
+            return resolvePrice(ask);
     }
 }
 
@@ -139,16 +144,18 @@ export function getPriceAgeString() {
  * @returns {Object|null} Object with {ask, bid, average} or null if no market data
  */
 export function getItemPrices(itemHrid, enhancementLevel = 0) {
+    refreshMarketValues();
     const priceData = marketAPI.getPrice(itemHrid, enhancementLevel);
+    const { ask, bid } = reconcileBook(priceData?.ask ?? null, priceData?.bid ?? null, itemHrid, enhancementLevel);
 
-    if (!priceData) {
+    if (ask === null && bid === null) {
         return null;
     }
 
     return {
-        ask: priceData.ask,
-        bid: priceData.bid,
-        average: (priceData.ask + priceData.bid) / 2,
+        ask,
+        bid,
+        average: (ask + bid) / 2,
     };
 }
 
