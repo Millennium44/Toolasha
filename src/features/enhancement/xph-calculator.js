@@ -12,7 +12,13 @@ import { getEnhancingParams, describeParamsSource } from '../../utils/enhancemen
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
-import { getCheapestProtectionPrice, getEnhancementMaterialPrice } from './tooltip-enhancement.js';
+import {
+    getCheapestProtectionPrice,
+    getEnhancementMaterialPrice,
+    calculateEnhancementPath,
+    buildEnhancementTooltipHTML,
+} from './tooltip-enhancement.js';
+import { getTooltipEnhancementParams } from './enhancement-params-source.js';
 
 const PANEL_ID = 'mwi-xph-calc-panel';
 const BTN_CLASS = 'mwi-xph-calc-btn';
@@ -249,6 +255,28 @@ class XPHCalculator {
                 cursor: pointer;">Calculate</button>
         `;
 
+        // "Enhance any item" — a route for an item you neither own nor see
+        // listed. The route math needs no market data (base item falls back to
+        // its crafting cost), so any enhanceable item can be quoted here.
+        const routeSection = document.createElement('div');
+        routeSection.style.cssText = 'padding: 8px 14px; border-bottom: 1px solid #222; flex-shrink: 0;';
+        routeSection.innerHTML = `
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <label style="color:#888; font-size:12px;">Enhance any item</label>
+                <input id="mwi-xph-item" list="mwi-xph-item-list" placeholder="type an item name…"
+                    style="flex:1; min-width:140px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                    border-radius:4px; padding:3px 8px; font-size:12px;">
+                <datalist id="mwi-xph-item-list"></datalist>
+                <label style="color:#888; font-size:12px;">to +</label>
+                <input id="mwi-xph-item-target" type="number" min="1" max="20" value="${defaultMax}" style="${inputStyle}">
+                <button id="mwi-xph-item-route" style="
+                    background: rgba(0,200,150,0.2); color: #00c896; border: 1px solid rgba(0,200,150,0.4);
+                    border-radius: 6px; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;">Route</button>
+            </div>
+            <div id="mwi-xph-item-route-out" style="display:none; margin-top:8px; max-height:240px; overflow-y:auto;
+                background:rgba(0,0,0,0.25); border:1px solid #222; border-radius:6px; padding:8px; font-size:12px;"></div>
+        `;
+
         // Table container
         const tableContainer = document.createElement('div');
         tableContainer.style.cssText = 'overflow-y: auto; flex: 1;';
@@ -278,6 +306,7 @@ class XPHCalculator {
 
         this.panel.appendChild(header);
         this.panel.appendChild(controls);
+        this.panel.appendChild(routeSection);
         this.panel.appendChild(tableContainer);
         this.panel.appendChild(status);
         document.body.appendChild(this.panel);
@@ -294,6 +323,66 @@ class XPHCalculator {
         ['name', 'xph', 'gpx', 'cphr'].forEach((col) => {
             this.panel.querySelector(`#mwi-xph-th-${col}`)?.addEventListener('click', () => this._sort(col));
         });
+
+        const itemInput = this.panel.querySelector('#mwi-xph-item');
+        itemInput.addEventListener('focus', () => this._populateItemList());
+        this.panel.querySelector('#mwi-xph-item-route').addEventListener('click', () => this._showItemRoute());
+        itemInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') this._showItemRoute();
+        });
+    }
+
+    /**
+     * Fill the item datalist with every enhanceable item, once. Built lazily on
+     * first focus because game data may not be loaded when the panel is created.
+     * @private
+     */
+    _populateItemList() {
+        if (this._itemsByName) return;
+        const gameData = dataManager.getInitClientData();
+        const map = gameData?.itemDetailMap;
+        if (!map) return;
+
+        this._itemsByName = new Map();
+        const options = [];
+        for (const [hrid, details] of Object.entries(map)) {
+            if (!details.enhancementCosts?.length || !details.name) continue;
+            this._itemsByName.set(details.name.toLowerCase(), hrid);
+            options.push(`<option value="${details.name.replace(/"/g, '&quot;')}"></option>`);
+        }
+        const list = this.panel?.querySelector('#mwi-xph-item-list');
+        if (list) list.innerHTML = options.join('');
+    }
+
+    /**
+     * Compute and render the enhancing route for the typed item and target level,
+     * regardless of ownership or market listings.
+     * @private
+     */
+    _showItemRoute() {
+        const out = this.panel?.querySelector('#mwi-xph-item-route-out');
+        if (!out) return;
+        out.style.display = 'block';
+
+        this._populateItemList();
+        const name = (this.panel.querySelector('#mwi-xph-item')?.value || '').trim().toLowerCase();
+        const hrid = this._itemsByName?.get(name);
+        if (!hrid) {
+            out.innerHTML =
+                '<div style="color:#888;">Type an enhanceable item name and pick it from the list.</div>';
+            return;
+        }
+
+        const target = Math.max(1, Math.min(20, parseInt(this.panel.querySelector('#mwi-xph-item-target')?.value, 10) || 1));
+        let data = null;
+        try {
+            data = calculateEnhancementPath(hrid, target, getTooltipEnhancementParams(hrid));
+        } catch (error) {
+            console.error('[XPHCalculator] Route failed:', error);
+        }
+        out.innerHTML = data
+            ? buildEnhancementTooltipHTML(data)
+            : '<div style="color:#888;">No route available (item not enhanceable, or game data not loaded).</div>';
     }
 
     _setupDrag(header) {
