@@ -30,9 +30,15 @@ function buildModal({ headerText = 'Buy Now', inputs = [{ label: 'Quantity' }] }
 
     for (const input of inputs) {
         const wrapper = document.createElement('div');
-        wrapper.textContent = input.label || '';
+        // A row class (as the game marks its Price/Quantity rows) is the reliable
+        // anchor; when present the label need not be an ancestor, matching the
+        // real DOM where it is a sibling.
+        if (input.rowClass) wrapper.className = input.rowClass;
+        if (!input.rowClass) wrapper.textContent = input.label || '';
         const el = document.createElement('input');
-        el.type = 'number';
+        // The marketplace fields became typable text inputs on 8/13/2026; default
+        // to number so the pre-patch tests are unchanged.
+        el.type = input.type || 'number';
         wrapper.appendChild(el);
         modal.appendChild(wrapper);
     }
@@ -121,6 +127,43 @@ describe('createAutofillManager', () => {
         const inputs = modal.querySelectorAll('input');
         expect(inputs[0].value).toBe(''); // enhancement level untouched
         expect(inputs[1].value).toBe('7'); // quantity filled
+    });
+
+    test('fills a typable text quantity input (8/13/2026 marketplace update made the fields text)', () => {
+        const manager = createAutofillManager('Test-Observer');
+        manager.setQuantity(48);
+        manager.initialize();
+
+        // Price is a text input too; the quantity is found among all inputs, not
+        // only number ones — the regression was a type="number" selector.
+        const modal = buildModal({
+            headerText: 'Buy Listing',
+            inputs: [
+                { label: 'Price', type: 'text' },
+                { label: 'Quantity', type: 'text' },
+            ],
+        });
+        observerState.handlers['Test-Observer'](modal);
+
+        const inputs = modal.querySelectorAll('input');
+        expect(inputs[1].value).toBe('48');
+    });
+
+    test('finds the quantity input by the game row class even when the label is not an ancestor', () => {
+        const manager = createAutofillManager('Test-Observer');
+        manager.setQuantity(9);
+        manager.initialize();
+
+        const modal = buildModal({
+            headerText: 'Buy Listing',
+            inputs: [
+                { rowClass: 'MarketplacePanel_priceInputs', type: 'text' },
+                { rowClass: 'MarketplacePanel_quantityInputs', type: 'text' },
+            ],
+        });
+        observerState.handlers['Test-Observer'](modal);
+
+        expect(modal.querySelector('[class*="MarketplacePanel_quantityInputs"] input').value).toBe('9');
     });
 
     test('initialize() twice registers one observer, not two', () => {
