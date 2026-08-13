@@ -141,6 +141,7 @@ vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() })
 const {
     generateCandidates,
     applyPathBootsSimLevel,
+    addRefinedPathBootCandidates,
     runUpgradeAnalysis,
     applyCandidateToDTO,
     calculateUpgradeCost,
@@ -377,6 +378,87 @@ describe('applyPathBootsSimLevel', () => {
         };
         applyPathBootsSimLevel(c);
         expect(c.upgradeLevel).toBe(12);
+    });
+});
+
+describe('addRefinedPathBootCandidates', () => {
+    const gameData = {
+        itemDetailMap: {
+            '/items/pathfinder_boots_refined': { name: 'Pathfinder Boots (R)' },
+            '/items/pathbreaker_boots_refined': { name: 'Pathbreaker Boots (R)' },
+            '/items/pathseeker_boots_refined': { name: 'Pathseeker Boots (R)' },
+        },
+    };
+
+    const baseCandidate = () => ({
+        slot: '/equipment_types/feet',
+        currentHrid: '/items/centaur_boots',
+        currentLevel: 10,
+        upgradeHrid: '/items/pathfinder_boots',
+        upgradeLevel: 10,
+        swapLabel: { from: 'Centaur Boots', to: ['Pathfinder Boots'] },
+        description: 'Centaur Boots +10 → Pathfinder Boots +10',
+        type: 'tier',
+    });
+
+    test('adds a refined sibling for a base path-boot swap', () => {
+        const candidates = [baseCandidate()];
+        addRefinedPathBootCandidates(candidates, gameData);
+        expect(candidates).toHaveLength(2);
+        const refined = candidates.find((c) => c.upgradeHrid === '/items/pathfinder_boots_refined');
+        expect(refined).toBeDefined();
+        expect(refined.currentHrid).toBe('/items/centaur_boots');
+        expect(refined.swapLabel.to).toEqual(['Pathfinder Boots (R)']);
+        expect(refined.type).toBe('tier');
+    });
+
+    test('the added refined sibling normalizes to +7 through the level passes', () => {
+        const candidates = [baseCandidate()];
+        addRefinedPathBootCandidates(candidates, gameData);
+        candidates.forEach(applyPathBootsSimLevel);
+        const refined = candidates.find((c) => c.upgradeHrid === '/items/pathfinder_boots_refined');
+        expect(refined.upgradeLevel).toBe(7);
+        expect(refined.description).toContain('Pathfinder Boots (R) +7');
+    });
+
+    test('does not duplicate a refined swap that already exists for the same worn boot', () => {
+        const candidates = [
+            baseCandidate(),
+            {
+                slot: '/equipment_types/feet',
+                currentHrid: '/items/centaur_boots',
+                currentLevel: 10,
+                upgradeHrid: '/items/pathfinder_boots_refined',
+                upgradeLevel: 7,
+                swapLabel: { from: 'Centaur Boots', to: ['Pathfinder Boots (R)'] },
+                description: 'Centaur Boots +10 → Pathfinder Boots (R) +7',
+                type: 'tier',
+            },
+        ];
+        addRefinedPathBootCandidates(candidates, gameData);
+        const refined = candidates.filter((c) => c.upgradeHrid === '/items/pathfinder_boots_refined');
+        expect(refined).toHaveLength(1);
+    });
+
+    test('leaves non-path-boot candidates alone', () => {
+        const candidates = [
+            {
+                slot: '/equipment_types/feet',
+                currentHrid: '/items/centaur_boots',
+                currentLevel: 10,
+                upgradeHrid: '/items/collectors_boots',
+                upgradeLevel: 10,
+                type: 'tier',
+            },
+        ];
+        addRefinedPathBootCandidates(candidates, gameData);
+        expect(candidates).toHaveLength(1);
+    });
+
+    test('skips a base path boot whose refined form is absent from game data', () => {
+        const candidates = [baseCandidate()];
+        addRefinedPathBootCandidates(candidates, { itemDetailMap: {} });
+        expect(candidates).toHaveLength(1);
     });
 });
 

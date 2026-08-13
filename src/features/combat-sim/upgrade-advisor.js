@@ -1604,6 +1604,9 @@ export function generateCandidates(
             '(or tick Task Fight in the combat sim panel) to see the on-task number.';
     }
 
+    // The crafting-chain walk only reaches base path boots; add their refined
+    // siblings so both appear, before the level passes normalize everything.
+    addRefinedPathBootCandidates(candidates, gameData);
     candidates.forEach(clampRefinedCandidateToMinLevel);
     // After the refined +10 floor, so refined path boots land at +7, not +10.
     candidates.forEach(applyPathBootsSimLevel);
@@ -2564,6 +2567,49 @@ export function applyPathBootsSimLevel(candidate) {
     const unique = [...new Set(levels)];
     const levelText = unique.length === 1 ? `+${unique[0]}` : levels.map((l) => `+${l}`).join('/');
     candidate.description = candidate.description.replace(/\(\+\d+\)$/, `(${levelText})`);
+}
+
+/**
+ * Offer the refined variant of any base path-boot swap. The crafting-chain walk
+ * is single-hop, so from a non-path boot it reaches the base path boot but never
+ * its refined form (refined is crafted from the base, two hops away). For each
+ * base path-boot candidate we add a sibling targeting `<hrid>_refined`, so both
+ * the base and refined boots appear as options. Level is left at the base
+ * candidate's; the +7 pass that follows pins it, and the +10 refined floor
+ * before it is overridden there. Mutates `candidates` in place.
+ * @param {Array} candidates - Candidates from generateCandidates()
+ * @param {Object} gameData - Game data (for the refined item's name/existence)
+ */
+export function addRefinedPathBootCandidates(candidates, gameData) {
+    const additions = [];
+    for (const candidate of candidates) {
+        const baseHrid = candidate.upgradeHrid;
+        if (!baseHrid || baseHrid.endsWith('_refined') || !PATH_BOOTS_BASE_HRIDS.has(baseHrid)) continue;
+
+        const refinedHrid = `${baseHrid}_refined`;
+        const refinedItem = gameData?.itemDetailMap?.[refinedHrid];
+        if (!refinedItem) continue;
+
+        // Don't double up if a refined swap for the same worn boot already exists.
+        const already = candidates
+            .concat(additions)
+            .some((c) => c.upgradeHrid === refinedHrid && c.currentHrid === candidate.currentHrid);
+        if (already) continue;
+
+        const refinedName = refinedItem.name || refinedHrid.split('/').pop();
+        const fromName = candidate.swapLabel?.from || candidate.currentHrid.split('/').pop();
+        additions.push({
+            slot: candidate.slot,
+            currentHrid: candidate.currentHrid,
+            currentLevel: candidate.currentLevel,
+            upgradeHrid: refinedHrid,
+            upgradeLevel: candidate.upgradeLevel,
+            swapLabel: { from: fromName, to: [refinedName] },
+            description: swapDescription(fromName, candidate.currentLevel, [refinedName], [candidate.upgradeLevel]),
+            type: 'tier',
+        });
+    }
+    candidates.push(...additions);
 }
 
 /**
