@@ -1,11 +1,11 @@
 /**
  * Toolasha Market Library
  * Market, inventory, and economy features
- * Version: 2.97.0
+ * Version: 2.98.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, dataManager, domObserver, marketAPI, houseEfficiency_js, efficiency_js, bonusRevenueCalculator_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, formatters_js, marketData_js, teaParser_js, numberParser_js, profitHelpers_js, buffParser_js, alchemyFees_js, equipmentParser_js, actionCalculator_js, tokenValuation_js, evWorkerManager_js, abilityCostCalculator_js, dom, dungeonKeys_js, materialCalculator_js, gameLookups_js, timerRegistry_js, storage, characterKey_js, selectors_js, cleanupRegistry_js, domObserverHelpers_js, marketplaceTabs_js, reactInput_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, overlayFormat_js, watchlist_js, dropSources_js, overlayRows_js, backgroundWork_js, webSocketHook, bundleBridge_js, toast_js, mobile_js, gameServer_js, enhancementMultipliers_js, performanceMonitor, houseCostCalculator_js, networthWorkerManager_js, guildCreditPricing_js, chunkedHistory_js, marketplaceAutofill_js, skillHistory_js, abilityBooks_js, deferredLoad_js, simplePanel_js, settingsStorage, chestTally_js, choiceDialog_js, chestImport_js, csvExport_js, roomSkills_js, equipmentSavings_js) {
+(function (config, dataManager, domObserver, marketAPI, houseEfficiency_js, efficiency_js, bonusRevenueCalculator_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, mobile_js, formatters_js, marketData_js, teaParser_js, numberParser_js, profitHelpers_js, buffParser_js, alchemyFees_js, equipmentParser_js, actionCalculator_js, tokenValuation_js, evWorkerManager_js, abilityCostCalculator_js, dom, dungeonKeys_js, materialCalculator_js, gameLookups_js, timerRegistry_js, storage, characterKey_js, selectors_js, cleanupRegistry_js, domObserverHelpers_js, marketplaceTabs_js, reactInput_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, overlayFormat_js, watchlist_js, dropSources_js, overlayRows_js, backgroundWork_js, webSocketHook, bundleBridge_js, toast_js, gameServer_js, enhancementMultipliers_js, performanceMonitor, houseCostCalculator_js, networthWorkerManager_js, guildCreditPricing_js, chunkedHistory_js, marketplaceAutofill_js, skillHistory_js, abilityBooks_js, deferredLoad_js, simplePanel_js, settingsStorage, chestTally_js, choiceDialog_js, chestImport_js, csvExport_js, roomSkills_js, equipmentSavings_js) {
     'use strict';
 
     function _interopNamespaceDefault(e) {
@@ -276,22 +276,32 @@
         const source = describeEnhancementSource(params);
         const isPro = source.kind === 'pro';
         const proColor = config.COLOR_TOOLTIP_WARNING || '#ffb020';
+        // On a touch device there is no P key and hover tooltips never open, so the
+        // chip carries its own visible affordance: a keycap "P" on desktop, the word
+        // "tap" on a phone, and a finger-sized hit area there.
+        const mobile = mobile_js.isMobileMode();
+        const action = mobile ? 'Tap' : 'Click (or press P)';
 
         const title = isPro
-            ? `${source.detail}. Click (or press P) to switch back to your own stats.`
+            ? `${source.detail}. ${action} to switch back to your own stats.`
             : source.detail
-              ? `${source.detail}. Click (or press P) to compare against pro rates.`
-              : 'Computed from your own enhancing level, gear and teas. Click (or press P) to compare against pro rates.';
+              ? `${source.detail}. ${action} to compare against pro rates.`
+              : `Computed from your own enhancing level, gear and teas. ${action} to compare against pro rates.`;
 
         const style = isPro
             ? `background: ${proColor}; color: #14181f; border: 1px solid ${proColor};`
             : 'background: rgba(255,255,255,0.10); color: inherit; border: 1px solid rgba(255,255,255,0.30);';
+        const sizing = mobile ? 'padding: 3px 9px; font-size: 0.85em;' : 'padding: 0 5px; font-size: 0.75em;';
+        const hint = mobile
+            ? ' <span style="opacity: 0.7; font-weight: 600;">tap</span>'
+            : ' <span style="border: 1px solid currentColor; border-radius: 3px; padding: 0 3px; margin-left: 1px;' +
+              ' font-size: 0.85em; opacity: 0.75;">P</span>';
 
         return (
             `<span class="${SOURCE_CHIP_CLASS}" role="button" tabindex="0" title="${escapeAttr(title)}" ` +
-            'style="pointer-events: auto; cursor: pointer; margin-left: 6px; padding: 0 5px; border-radius: 8px; ' +
-            `font-size: 0.75em; font-weight: 700; letter-spacing: 0.3px; white-space: nowrap; vertical-align: middle; ${style}">` +
-            `${source.label} ⇄</span>`
+            `style="pointer-events: auto; cursor: pointer; margin-left: 6px; border-radius: 8px; ${sizing} ` +
+            `font-weight: 700; letter-spacing: 0.3px; white-space: nowrap; vertical-align: middle; ${style}">` +
+            `${source.label} ⇄${hint}</span>`
         );
     }
 
@@ -4836,6 +4846,36 @@
          * @param {Element} tooltipElement - The tooltip popper element
          */
         async handleTooltip(tooltipElement) {
+            // Check if it's a collection tooltip
+            const collectionContent = tooltipElement.querySelector('div.Collection_tooltipContent__2IcSJ');
+            const isCollectionTooltip = !!collectionContent;
+
+            // Check if it's a regular item tooltip
+            const nameElement = tooltipElement.querySelector('div.ItemTooltipText_name__2JAHA');
+            const isItemTooltip = !!nameElement;
+
+            // Hovering an ability itself (in a loadout / ability slot / another
+            // player's profile), not its book item: the game's tooltip shows level
+            // and description but not what that level cost. Add a "Fresh to Lv" line,
+            // priced at the level the tooltip shows — so on another player's profile
+            // it uses THEIR level, not yours. The ability tooltip is text-only, so it
+            // is identified by its container class and the name it prints. Opt-in via
+            // its own setting, independent of the item-price gates below.
+            const abilityTooltip = tooltipElement.querySelector('[class*="Ability_abilityTooltip"]');
+            if (
+                !isCollectionTooltip &&
+                !isItemTooltip &&
+                abilityTooltip &&
+                config.getSetting('itemTooltip_abilityFreshCost')
+            ) {
+                const abilityName = abilityTooltip.querySelector('[class*="Ability_name"]')?.textContent?.trim();
+                const abilityHrid = this.abilityHridFromName(abilityName);
+                if (abilityHrid) {
+                    this.injectAbilityFreshCost(tooltipElement, abilityTooltip, abilityHrid);
+                }
+                return;
+            }
+
             // Skip if no tooltip features are enabled
             if (
                 !config.getSetting('itemTooltip_prices') &&
@@ -4844,14 +4884,6 @@
             ) {
                 return;
             }
-
-            // Check if it's a collection tooltip
-            const collectionContent = tooltipElement.querySelector('div.Collection_tooltipContent__2IcSJ');
-            const isCollectionTooltip = !!collectionContent;
-
-            // Check if it's a regular item tooltip
-            const nameElement = tooltipElement.querySelector('div.ItemTooltipText_name__2JAHA');
-            const isItemTooltip = !!nameElement;
 
             if (!isCollectionTooltip && !isItemTooltip) {
                 return; // Not a tooltip we can enhance
@@ -6091,8 +6123,80 @@
                     `In loadouts: ${abilityStatus.loadouts.join(', ')}</div>`;
             }
 
+            // Nothing worth a bordered section (e.g. a maxed ability hovered with no
+            // held books and no loadouts) — leave the tooltip untouched.
+            if (!html) {
+                return;
+            }
+
             statusDiv.innerHTML = html;
             tooltipText.appendChild(statusDiv);
+        }
+
+        /**
+         * Add the ability-status block to a tooltip shown for an ability itself
+         * (in a loadout or ability slot), not its book item. Reuses the book
+         * tooltip's computation; dedups per ability on the popper.
+         * @param {HTMLElement} tooltipElement - The MuiTooltip popper
+         * @param {string} abilityHrid - e.g. '/abilities/precision'
+         */
+        /**
+         * Map an ability's display name (as the tooltip prints it) back to its hrid.
+         * @param {string} name - e.g. 'Berserk'
+         * @returns {string|null} e.g. '/abilities/berserk', or null if unknown
+         */
+        abilityHridFromName(name) {
+            if (!name) return null;
+            const map = dataManager.getInitClientData()?.abilityDetailMap;
+            if (!map) return null;
+            const wanted = name.toLowerCase();
+            for (const [hrid, detail] of Object.entries(map)) {
+                if ((detail?.name || '').toLowerCase() === wanted) return hrid;
+            }
+            return null;
+        }
+
+        /**
+         * The level an ability tooltip is showing, from its "Level: N" line. On
+         * another player's profile this is that player's level.
+         * @param {HTMLElement} abilityTooltip
+         * @returns {number} the level, or 0 if not found
+         */
+        _abilityTooltipLevel(abilityTooltip) {
+            const match = (abilityTooltip.textContent || '').match(/Level:\s*([\d,]+)/);
+            return match ? parseInt(match[1].replace(/,/g, ''), 10) : 0;
+        }
+
+        /**
+         * Append a "Fresh to Lv N" line to an ability's own tooltip, priced at the
+         * level the tooltip shows (so it is correct on other players' profiles).
+         * @param {HTMLElement} tooltipElement - The MuiTooltip popper
+         * @param {HTMLElement} abilityTooltip - The ability-tooltip content node
+         * @param {string} abilityHrid - e.g. '/abilities/berserk'
+         */
+        injectAbilityFreshCost(tooltipElement, abilityTooltip, abilityHrid) {
+            if (tooltipElement.dataset.abilityFreshProcessed === abilityHrid) {
+                return;
+            }
+            tooltipElement.dataset.abilityFreshProcessed = abilityHrid;
+
+            const level = this._abilityTooltipLevel(abilityTooltip);
+            if (!level || level < 1) return;
+
+            const fresh = abilityCostCalculator_js.explainAbilityCost(abilityHrid, level);
+            if (!fresh || !(fresh.total > 0)) return;
+
+            const container = tooltipElement.querySelector('.MuiTooltip-tooltip') || tooltipElement;
+            if (container.querySelector('.mwi-ability-fresh')) return;
+
+            const div = document.createElement('div');
+            div.className = 'mwi-ability-fresh';
+            div.style.cssText =
+                'margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px; opacity: 0.85;';
+            div.textContent =
+                `Fresh to Lv ${level}: ${formatTooltipPrice(Math.round(fresh.total))} ` +
+                `(${formatters_js.numberFormatter(Math.ceil(fresh.books))} books)`;
+            container.appendChild(div);
         }
 
         /**
@@ -43721,4 +43825,4 @@
 
     console.log('[Toolasha] Market library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.marketAPI, Toolasha.Utils.houseEfficiency, Toolasha.Utils.efficiency, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.formatters, Toolasha.Utils.marketData, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.profitHelpers, Toolasha.Utils.buffParser, Toolasha.Utils.alchemyFees, Toolasha.Utils.equipmentParser, Toolasha.Utils.actionCalculator, Toolasha.Utils.tokenValuation, Toolasha.Utils.evWorkerManager, Toolasha.Utils.abilityCalc, Toolasha.Utils.dom, Toolasha.Utils.dungeonKeys, Toolasha.Utils.materialCalculator, Toolasha.Utils.gameLookups, Toolasha.Utils.timerRegistry, Toolasha.Core.storage, Toolasha.Utils.characterKey, Toolasha.Utils.selectors, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.reactInput, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.overlayFormat, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.overlayRows, Toolasha.Utils.backgroundWork, Toolasha.Core.webSocketHook, Toolasha.Utils.bundleBridge, Toolasha.Utils.toast, Toolasha.Utils.mobile, Toolasha.Utils.gameServer, Toolasha.Utils.enhancementMultipliers, Toolasha.Core.performanceMonitor, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.networthWorkerManager, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.chunkedHistory, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.skillHistory, Toolasha.Utils.abilityBooks, Toolasha.Utils.deferredLoad, Toolasha.Utils.simplePanel, Toolasha.Core.settingsStorage, Toolasha.Utils.chestTally, Toolasha.Utils.choiceDialog, Toolasha.Utils.chestImport, Toolasha.Utils.csvExport, Toolasha.Utils.roomSkills, Toolasha.Utils.equipmentSavings);
+})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Core.marketAPI, Toolasha.Utils.houseEfficiency, Toolasha.Utils.efficiency, Toolasha.Utils.bonusRevenueCalculator, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.mobile, Toolasha.Utils.formatters, Toolasha.Utils.marketData, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.profitHelpers, Toolasha.Utils.buffParser, Toolasha.Utils.alchemyFees, Toolasha.Utils.equipmentParser, Toolasha.Utils.actionCalculator, Toolasha.Utils.tokenValuation, Toolasha.Utils.evWorkerManager, Toolasha.Utils.abilityCalc, Toolasha.Utils.dom, Toolasha.Utils.dungeonKeys, Toolasha.Utils.materialCalculator, Toolasha.Utils.gameLookups, Toolasha.Utils.timerRegistry, Toolasha.Core.storage, Toolasha.Utils.characterKey, Toolasha.Utils.selectors, Toolasha.Utils.cleanupRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.reactInput, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.overlayFormat, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.overlayRows, Toolasha.Utils.backgroundWork, Toolasha.Core.webSocketHook, Toolasha.Utils.bundleBridge, Toolasha.Utils.toast, Toolasha.Utils.gameServer, Toolasha.Utils.enhancementMultipliers, Toolasha.Core.performanceMonitor, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.networthWorkerManager, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.chunkedHistory, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.skillHistory, Toolasha.Utils.abilityBooks, Toolasha.Utils.deferredLoad, Toolasha.Utils.simplePanel, Toolasha.Core.settingsStorage, Toolasha.Utils.chestTally, Toolasha.Utils.choiceDialog, Toolasha.Utils.chestImport, Toolasha.Utils.csvExport, Toolasha.Utils.roomSkills, Toolasha.Utils.equipmentSavings);

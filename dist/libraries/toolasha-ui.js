@@ -1,7 +1,7 @@
 /**
  * Toolasha UI Library
  * UI enhancements, tasks, skills, and misc features
- * Version: 2.97.0
+ * Version: 2.98.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -50569,7 +50569,7 @@ ${starCSS}
     const CAPE_VALUE_CYCLE = { token: 'mirror', mirror: 'zero', zero: 'token' };
     const CAPE_VALUE_LABEL = { token: 'Token value', mirror: 'Mirror value', zero: 'No value' };
 
-    const MIRROR_HRID = '/items/mirror_of_protection';
+    const MIRROR_HRID$1 = '/items/mirror_of_protection';
     const COWBELL_HRID = '/items/cowbell';
     const COWBELL_BAG_HRID = '/items/bag_of_10_cowbells';
     const COWBELLS_PER_BAG$1 = 10;
@@ -51071,7 +51071,7 @@ ${starCSS}
         _untradableValue(itemHrid) {
             const mode = this.settings.capeValue;
             if (mode === 'zero') return null;
-            if (mode === 'mirror') return marketData_js.getItemPrice(MIRROR_HRID, { context: 'profit', side: 'sell' }) || null;
+            if (mode === 'mirror') return marketData_js.getItemPrice(MIRROR_HRID$1, { context: 'profit', side: 'sell' }) || null;
 
             // Token value: what the tokens it costs would otherwise have bought
             const data = dataManager.getInitClientData();
@@ -58211,7 +58211,7 @@ ${starCSS}
         return overrides;
     }
 
-    var forkChangelog = "## Unreleased — branch `claude/new-session-s8abcv`\n\n### Sim: Achievements section — toggle your achievement combat buffs\n\nThe sim already applied your completed-achievement combat buffs (e.g. Damage +2%) silently; there was no way to see or change them. A new **Achievements** section on the Configure tab lists the combat buffs your achievements grant, each ticked by default (so results are unchanged) — untick one to sim without it. It reads your real buffs with their exact values; a character with no combat achievement buffs shows no section.\n\n### Sim: the loadout picker is back in the packaged build\n\nThe Combat Sim and Lab Sim loadout dropdown vanished in the released userscript (it still worked in dev): both UIs read the loadout list from their own bundle's copy of the snapshot store, which the websocket never feeds in the multi-bundle build, so the list was always empty and the `<select>` never rendered. Both now read the fed store through the bundle bridge — the same fix the apply path already had — so you can pick a saved loadout to sim as again. A regression test now asserts the picker renders from the bridge store.\n\n### Author credit: full contributor list and code-source attribution\n\nBoth userscript headers now carry the same, tidied `@author` credit. It restores the contributors who were only in the dev header (Shykai, amVoidGuy, vlad, kuganDev, Paradoxian, Maarg, SilkyPanda, MekaPyon, vidonnus) and adds a line crediting the tools this fork borrowed code and ideas from: MWITools (bot7420), MWI Combat Suite (Frotty), JIGS (jigglymoose), the Labyrinth Win Rate Calculator (dakonglong), and the mooket pools (Q7, IOMisaka).\n\n### Author credit leads with Millennium44 (production header too)\n\nThe previous author change only touched the dev header (`userscript-header.txt`); the GreasyFork build takes its header from `library-headers/entrypoint.txt`, which still led with the upstream authors. That production header now leads with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" as well, so the published listing shows the fork maintainer.\n\n### Author credit leads with Millennium44\n\nThe userscript `@author` header now opens with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" instead of leading with the upstream authors, so the GreasyFork listing credits the fork maintainer. The contributor thank-yous are unchanged.\n\n### Task reroll tracker: drop the experimental warning\n\nThe \"Track task reroll costs\" setting no longer warns it is experimental and may freeze the UI — it's stable. Default unchanged (on).\n\n### My Listings: a fresh undercut now shows without opening the item\n\nThe Top Order Price column trusted the last-opened order book, so an undercut stayed hidden behind your own price until you reopened the item. It now surfaces the game snapshot's price when it beats you (a rival's by definition, never your own order) — so undercuts show on their own, without ever displaying your own listing or downgrading a genuinely-fresher book. The age column follows suit.\n\n### Labyrinth: the calibration recorder is now passive and accumulates across runs\n\nNo Record button any more — every combat fight is kept automatically, per character and tagged with the gear it was fought in, pooled into 10-level bands so a monster's scattered random levels still accumulate. Press **Replay** to judge whatever has built up on your current gear; a loadout change starts a fresh pool. Bounded to 500 fights.\n\n### Labyrinth: a fight recorder and a calibration replay\n\nThe Sim accuracy record says _whether_ a room's clear chance is wrong, not _why_ — a timeout and a death are both \"lost\", and the fixes are opposite. This adds the decomposition.\n\n- **Replay** re-sims the recorded rooms and puts your real damage/s, the monster's, the clear rate and the fight length beside the sim's, each with a noise-aware verdict and a one-line diagnosis of which side the sim gets wrong. **Save comparison** downloads the whole check as one file.\n- **Capture** saves the raw tick feed of a fight — stun uptime, ability cadence, per-hit damage — for mechanism-level analysis (previously console-only).\n- Measurement fixes found via real captures: damage measured **gross** (not net of your ~16 HP/s regen, which made monsters look 15–40% weaker than the sim); self-healing monsters (life drain, the Dryad) no longer **split one fight into several**; partial-HP fights are dropped; and the diagnosis names all four over/under directions.\n\n### Labyrinth: full-ability sim calibration (testing), tooltip clear-time, tidier panel bar\n\n- Testing setting to model a monster's **full ability kit** in the sim — the labyrinth otherwise builds every monster at tier 0 and drops its gated abilities (the Cyclops's stun, shred, self-buffs). Off by default; it's part of the cache key, so toggling re-sims.\n- **Est. clear time** on combat/skilling room hover, shown past the tile's \"999+\" cap.\n- Room Logs top bar wraps cleanly; \"Sim accuracy\" tab shortened to \"Accuracy\".\n\n### Labyrinth: stop counting un-fought rooms as clears, and an uncapped sim option\n\n- **Phantom clears removed** — a revealed-but-unfought room (shroud, beacon, floor skip) is marked `isCleared` with no entry; it no longer counts as a win and drags the accuracy record toward \"sim too low\".\n- **Uncapped** toggle lifts the sim's time cap for the next Recompute, so a slow, timeout-heavy room reaches its precision target instead of a wide \"(capped)\" band.\n\n### Labyrinth: Recompute button, honest attempt counts, and a panel that stays put\n\n- **Recompute** throws away cached clear-chance sims and re-runs the visible rooms — a plain equip doesn't always refresh a sim cached under old gear.\n- Room Log shows the server's own attempt count, not just the fights it watched on the combat view: \"Won 0/6 · 26 total\".\n- The panel keeps its scroll position across redraws instead of jumping to the top on every update.\n\n### Undercut alerts finally fire passively, backed by Mooket\n\nThe alert distrusts any price older than 15 minutes, but the game snapshot refreshes only ~hourly — so undercuts on items you weren't watching stayed silent for hours. It now also consults the freshest **Mooket** sighting per listing (refreshed every 15 min), reporting its true age, so it can fire for items you never opened. Rides the Price history panel setting.\n\n### Selectable price-history source: mooket I alongside mooket II\n\nA **Market: Price history data source** setting picks between the Q7 pool (mooket II, default — ask/bid/avg/volume) and IOMisaka's original (mooket I — ask/bid only). On mooket I the chart's third line is a computed \"Mid\", the volume bars vanish, and the goal planner's volume limits switch off (a source with no volume tells us nothing about how fast a thing sells — unknown, not a measured zero). The order books you contribute back follow the selected source.\n\n### \"Mooket Refresh\" button on the My Listings tab\n\nA **Mooket Refresh** button in the My Listings header pulls fresher Top Order Prices for every listed item from the Mooket pool in one click, patching the fresher ones into the price cache the column redraws from — no opening each item by hand. Skips a sighting older than the game's snapshot, and keeps a one-sided sighting's other side. Rides the Price history panel setting.\n\n### My Listings' Top Order Price refreshes when the market moves\n\nThe Top Order Price column on the My Listings tab only redrew when your own listings changed (or, with the age column on, when you re-opened an item's order book), so an undercut fired an alert but left the column showing the stale price. It now subscribes to the same market-data updates the undercut alert uses — a marketplace snapshot refresh or an order-book price patch redraws the column (debounced), so being undercut turns the price red here too.\n\n### Custom Tabs: an enhanced item is no longer double-counted in Unorganized\n\nAn enhanced item is tracked under both its base and its `+level` key, so an unassigned one was collected through both — inflating the \"Unorganized (N)\" count and placing the tile twice. A shared, deduped collector (each physical tile once) now backs both the header count and the lightweight visibility pass (ported from upstream Celasha/Toolasha#627).\n\n### Custom Tabs action buttons heal when the sort-controls row is removed\n\nThe +Tab/Export/Import/Expand group is merged into the game's inventory sort-controls row and isn't tracked with the other injected elements, so when the InventorySort feature removed that row the buttons vanished and didn't return. A direct connectivity check now forces a rebuild when they disconnect (ported from upstream Celasha/Toolasha#632).\n\n### Estimated listing age: a null price no longer suppresses a match\n\nTwo \"your listings beyond the top 20\" match sites used a parsed price without checking for `null` (which the parser returns on empty/invalid text). A null coerces to 0 in the price comparison and can hide a correct match; both sites now skip the row instead (ported from upstream Celasha/Toolasha 2.85.0).\n\n### Character switches are serialized, so rapid switching no longer bleeds settings\n\nA rapid character switch could drop a re-init (leaving the previous character's per-character settings applied) or start a rebuild before the last character's teardown finished. The switch lifecycle now runs through one serialized chain, and each re-init verifies it is still for the current character before it applies — latest character wins, nothing dropped or overlapped (ported from upstream Celasha/Toolasha#622).\n\n### Action Filter's pricing mode resyncs after a character switch\n\nThe persistent Action Filter never re-initializes, and a character switch skips the per-key change callbacks (the cache is cleared first), so its mode/craft buttons and profit rows could keep the previous character's pricing mode. A new `config.onSettingsLoaded` channel fires whenever settings finish loading, so the filter resyncs (ported from upstream Celasha/Toolasha#630).\n\n### The Unorganized tab no longer vanishes mid-character-switch\n\nThe Custom Tabs \"Unorganized\" bucket was gated on `getSettingValue`, which reads `null` while the per-character cache is briefly empty during a switch — hiding the section until it reloaded. It now reads `getSetting`, which falls back to the schema default (ported from upstream Celasha/Toolasha#636).\n\n### Action-bar display no longer risks freezing the tab on a character switch\n\n`setupActionNameObserver` now disconnects any running observer before replacing it, so a character switch can't leak a duplicate watcher that loops on the stats span and freezes the tab (ported from upstream Celasha/Toolasha#623).\n\n### The Sort Tasks button sorts even with a reroll menu open\n\nA direct press now sorts the board immediately, mid-reroll and all. The automatic passes (auto-sort, sort-after-read) still wait for the board to settle so they never yank a pending click.\n\n### The protected/cap task border keeps up again\n\nIt is redrawn right away on a card that is mid-reroll (it used to wait for the menu to close, so the edge looked stuck until you pressed Back), and painted the instant the board opens instead of after a 150 ms delay.\n\n### The task bulk-reroll button is removed\n\nThe game only honours a reroll from a real click that opens the menu, which a userscript can't fake — so the button never worked unless you opened the menu by hand first. Reroll protection and the 🛡️ cap/per-task guards are untouched.\n\n### In Progress payout: leaner, plus a Roster button\n\nDrops the token gold valuation and the \"No Treasury level seen\" nag from the In Progress tab (both kept on the Trials tab), and adds a Roster button that opens the guild roster panel.\n\n### Skilling In Progress panel no longer squashes the game's card off-screen\n\nInjected payout/analysis blocks now take a full-width line above and below the roster+card row instead of shrinking the game's own skilling card to a sliver beside them.\n\n### Skilling trials: no flat projection once slowing is measured, and timestamped readings\n\nDrops the misleadingly-high \"On pace (flat)\" tier once a slowdown is known (it survives in the tooltip), and keeps a downsampled timestamped reading series in the export so the tier forecast can be checked against what was banked.\n\n### Trial scoreboard: honest damage-taken label, and a runaway split is flagged\n\nDamage taken is now labelled pre- vs post-mitigation (the live stream can only read the latter), and a per-player damage split that runs past the bosses' combined health is flagged as over-attributing.\n\n### Dev builds install over a same-numbered release\n\nThe dev build now appends its build timestamp as a fourth version segment, so a reinstall always takes even when the release number hasn't changed.\n\n### Scrolls in the Combat Simulator\n\nThe sim and Upgrade advisor now carry the seven Labyrinth combat scrolls (Damage, Attack Speed, Cast Speed, Critical Rate, Combat Drop, Wisdom, Rare Find): a Scrolls section on Configure to sim with them, and a Scrolls mode on Upgrade to measure what each is worth.\n\n";
+    var forkChangelog = "## Unreleased — branch `main`\n\n### Combat Sim Results: a ⌖ button targets that zone in Configure\n\nEach row of the all-zones Results table now has a ⌖ button that sets that zone and tier as the Configure target and jumps to the Configure tab (leaving all-zones mode so the single-zone selects reappear) — no more scrolling the zone dropdown to sim a promising row. The table also now defaults to sorting by Score (descending) instead of unsorted.\n\n### Upgrade advisor: path boots (base and refined) are offered and simmed at +7\n\nThe upgrade advisor simmed a proposed gear swap at the current piece's enhancement level, so path boots (Pathbreaker/Pathfinder/Pathseeker) were quoted at whatever your worn boots are (e.g. +10). They're only obtainable at +7, so a swap to them is now always simmed and priced at +7 — the refined variants override the usual +10 refined floor. The refined path boots are now also _offered_: the crafting-chain walk only reaches the base boot (refined is one hop further), so each base path-boot swap now gets a refined sibling in the table, at +7.\n\n### Enhancement XP/hr panel: get a route for any item, even one you don't own\n\nThe enhancing-route (target level, protection plan, cost) was only reachable by hovering an item that's rendered — owned or listed — so an item with no listing at that level showed nothing. The Enhancement XP/hr panel now has an \"Enhance any item\" box: type any enhanceable item, pick a target level, and get its full route. The base-item price falls back to crafting cost when the market is empty, so it works with zero listings.\n\n### Ability hover: optional \"fresh to level\" cost, priced at the level shown\n\nHovering an ability itself (in a loadout, an ability slot, or on another player's profile) can now add a \"Fresh to Lv N: <cost> (<books> books)\" line, priced at the level the tooltip shows — so on someone else's profile it uses their level, not yours. It's identified from the ability tooltip's own name and gated behind a new, default-off setting (\"Show fresh-to-level cost on ability hovers\"), separate from the ability-book tooltip status.\n\n### Enhancement tooltip: the source toggle is discoverable and mobile-friendly\n\nThe \"Yours ⇄ / Pro ⇄\" chip on enhancement tooltips now shows a keycap **P** so the press-to-toggle hotkey is visible, not just buried in the hover title. On touch devices it drops the key (no keyboard), enlarges to a finger-sized tap target, and reads \"tap\" — the chip was already tappable on tap-to-open tooltips, just too small and unlabeled.\n\n### Upgrade advisor: \"Signature only\" is now \"Aura only\"\n\nThe Ability Swaps sub-option that restricted swaps to the aura + signature groups now restricts to just the aura group — the single \"which aura\" decision. Renamed the checkbox to \"Aura only\" with an updated tooltip, and renamed the internal option throughout (`auraOnly` / `auraSwapsOnly`).\n\n### Upgrade advisor: the aura OR-alternative is offered again\n\nAbility Swaps stopped offering the other aura in your archetype's aura group — e.g. running Mystic Aura, it never proposed Critical Aura. The generator was running each guide offer through a style-from-buff-data heuristic that misreads a universal aura (Critical Aura) as another style and vetoed it. The guide's own ability set is style-correct by construction, so on the guide path that heuristic no longer runs; it now only guards the every-ability fallback.\n\n### Sim: Achievements section — toggle your achievement combat buffs\n\nThe sim already applied your completed-achievement combat buffs (e.g. Damage +2%) silently; there was no way to see or change them. A new **Achievements** section on the Configure tab lists the combat buffs your achievements grant, each ticked by default (so results are unchanged) — untick one to sim without it. It reads your real buffs with their exact values; a character with no combat achievement buffs shows no section.\n\n### Sim: the loadout picker is back in the packaged build\n\nThe Combat Sim and Lab Sim loadout dropdown vanished in the released userscript (it still worked in dev): both UIs read the loadout list from their own bundle's copy of the snapshot store, which the websocket never feeds in the multi-bundle build, so the list was always empty and the `<select>` never rendered. Both now read the fed store through the bundle bridge — the same fix the apply path already had — so you can pick a saved loadout to sim as again. A regression test now asserts the picker renders from the bridge store.\n\n### Author credit: full contributor list and code-source attribution\n\nBoth userscript headers now carry the same, tidied `@author` credit. It restores the contributors who were only in the dev header (Shykai, amVoidGuy, vlad, kuganDev, Paradoxian, Maarg, SilkyPanda, MekaPyon, vidonnus) and adds a line crediting the tools this fork borrowed code and ideas from: MWITools (bot7420), MWI Combat Suite (Frotty), JIGS (jigglymoose), the Labyrinth Win Rate Calculator (dakonglong), and the mooket pools (Q7, IOMisaka).\n\n### Author credit leads with Millennium44 (production header too)\n\nThe previous author change only touched the dev header (`userscript-header.txt`); the GreasyFork build takes its header from `library-headers/entrypoint.txt`, which still led with the upstream authors. That production header now leads with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" as well, so the published listing shows the fork maintainer.\n\n### Author credit leads with Millennium44\n\nThe userscript `@author` header now opens with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" instead of leading with the upstream authors, so the GreasyFork listing credits the fork maintainer. The contributor thank-yous are unchanged.\n\n### Task reroll tracker: drop the experimental warning\n\nThe \"Track task reroll costs\" setting no longer warns it is experimental and may freeze the UI — it's stable. Default unchanged (on).\n\n### My Listings: a fresh undercut now shows without opening the item\n\nThe Top Order Price column trusted the last-opened order book, so an undercut stayed hidden behind your own price until you reopened the item. It now surfaces the game snapshot's price when it beats you (a rival's by definition, never your own order) — so undercuts show on their own, without ever displaying your own listing or downgrading a genuinely-fresher book. The age column follows suit.\n\n### Labyrinth: the calibration recorder is now passive and accumulates across runs\n\nNo Record button any more — every combat fight is kept automatically, per character and tagged with the gear it was fought in, pooled into 10-level bands so a monster's scattered random levels still accumulate. Press **Replay** to judge whatever has built up on your current gear; a loadout change starts a fresh pool. Bounded to 500 fights.\n\n### Labyrinth: a fight recorder and a calibration replay\n\nThe Sim accuracy record says _whether_ a room's clear chance is wrong, not _why_ — a timeout and a death are both \"lost\", and the fixes are opposite. This adds the decomposition.\n\n- **Replay** re-sims the recorded rooms and puts your real damage/s, the monster's, the clear rate and the fight length beside the sim's, each with a noise-aware verdict and a one-line diagnosis of which side the sim gets wrong. **Save comparison** downloads the whole check as one file.\n- **Capture** saves the raw tick feed of a fight — stun uptime, ability cadence, per-hit damage — for mechanism-level analysis (previously console-only).\n- Measurement fixes found via real captures: damage measured **gross** (not net of your ~16 HP/s regen, which made monsters look 15–40% weaker than the sim); self-healing monsters (life drain, the Dryad) no longer **split one fight into several**; partial-HP fights are dropped; and the diagnosis names all four over/under directions.\n\n### Labyrinth: full-ability sim calibration (testing), tooltip clear-time, tidier panel bar\n\n- Testing setting to model a monster's **full ability kit** in the sim — the labyrinth otherwise builds every monster at tier 0 and drops its gated abilities (the Cyclops's stun, shred, self-buffs). Off by default; it's part of the cache key, so toggling re-sims.\n- **Est. clear time** on combat/skilling room hover, shown past the tile's \"999+\" cap.\n- Room Logs top bar wraps cleanly; \"Sim accuracy\" tab shortened to \"Accuracy\".\n\n### Labyrinth: stop counting un-fought rooms as clears, and an uncapped sim option\n\n- **Phantom clears removed** — a revealed-but-unfought room (shroud, beacon, floor skip) is marked `isCleared` with no entry; it no longer counts as a win and drags the accuracy record toward \"sim too low\".\n- **Uncapped** toggle lifts the sim's time cap for the next Recompute, so a slow, timeout-heavy room reaches its precision target instead of a wide \"(capped)\" band.\n\n### Labyrinth: Recompute button, honest attempt counts, and a panel that stays put\n\n- **Recompute** throws away cached clear-chance sims and re-runs the visible rooms — a plain equip doesn't always refresh a sim cached under old gear.\n- Room Log shows the server's own attempt count, not just the fights it watched on the combat view: \"Won 0/6 · 26 total\".\n- The panel keeps its scroll position across redraws instead of jumping to the top on every update.\n\n### Undercut alerts finally fire passively, backed by Mooket\n\nThe alert distrusts any price older than 15 minutes, but the game snapshot refreshes only ~hourly — so undercuts on items you weren't watching stayed silent for hours. It now also consults the freshest **Mooket** sighting per listing (refreshed every 15 min), reporting its true age, so it can fire for items you never opened. Rides the Price history panel setting.\n\n### Selectable price-history source: mooket I alongside mooket II\n\nA **Market: Price history data source** setting picks between the Q7 pool (mooket II, default — ask/bid/avg/volume) and IOMisaka's original (mooket I — ask/bid only). On mooket I the chart's third line is a computed \"Mid\", the volume bars vanish, and the goal planner's volume limits switch off (a source with no volume tells us nothing about how fast a thing sells — unknown, not a measured zero). The order books you contribute back follow the selected source.\n\n### \"Mooket Refresh\" button on the My Listings tab\n\nA **Mooket Refresh** button in the My Listings header pulls fresher Top Order Prices for every listed item from the Mooket pool in one click, patching the fresher ones into the price cache the column redraws from — no opening each item by hand. Skips a sighting older than the game's snapshot, and keeps a one-sided sighting's other side. Rides the Price history panel setting.\n\n### My Listings' Top Order Price refreshes when the market moves\n\nThe Top Order Price column on the My Listings tab only redrew when your own listings changed (or, with the age column on, when you re-opened an item's order book), so an undercut fired an alert but left the column showing the stale price. It now subscribes to the same market-data updates the undercut alert uses — a marketplace snapshot refresh or an order-book price patch redraws the column (debounced), so being undercut turns the price red here too.\n\n### Custom Tabs: an enhanced item is no longer double-counted in Unorganized\n\nAn enhanced item is tracked under both its base and its `+level` key, so an unassigned one was collected through both — inflating the \"Unorganized (N)\" count and placing the tile twice. A shared, deduped collector (each physical tile once) now backs both the header count and the lightweight visibility pass (ported from upstream Celasha/Toolasha#627).\n\n### Custom Tabs action buttons heal when the sort-controls row is removed\n\nThe +Tab/Export/Import/Expand group is merged into the game's inventory sort-controls row and isn't tracked with the other injected elements, so when the InventorySort feature removed that row the buttons vanished and didn't return. A direct connectivity check now forces a rebuild when they disconnect (ported from upstream Celasha/Toolasha#632).\n\n### Estimated listing age: a null price no longer suppresses a match\n\nTwo \"your listings beyond the top 20\" match sites used a parsed price without checking for `null` (which the parser returns on empty/invalid text). A null coerces to 0 in the price comparison and can hide a correct match; both sites now skip the row instead (ported from upstream Celasha/Toolasha 2.85.0).\n\n### Character switches are serialized, so rapid switching no longer bleeds settings\n\nA rapid character switch could drop a re-init (leaving the previous character's per-character settings applied) or start a rebuild before the last character's teardown finished. The switch lifecycle now runs through one serialized chain, and each re-init verifies it is still for the current character before it applies — latest character wins, nothing dropped or overlapped (ported from upstream Celasha/Toolasha#622).\n\n### Action Filter's pricing mode resyncs after a character switch\n\nThe persistent Action Filter never re-initializes, and a character switch skips the per-key change callbacks (the cache is cleared first), so its mode/craft buttons and profit rows could keep the previous character's pricing mode. A new `config.onSettingsLoaded` channel fires whenever settings finish loading, so the filter resyncs (ported from upstream Celasha/Toolasha#630).\n\n### The Unorganized tab no longer vanishes mid-character-switch\n\nThe Custom Tabs \"Unorganized\" bucket was gated on `getSettingValue`, which reads `null` while the per-character cache is briefly empty during a switch — hiding the section until it reloaded. It now reads `getSetting`, which falls back to the schema default (ported from upstream Celasha/Toolasha#636).\n\n### Action-bar display no longer risks freezing the tab on a character switch\n\n`setupActionNameObserver` now disconnects any running observer before replacing it, so a character switch can't leak a duplicate watcher that loops on the stats span and freezes the tab (ported from upstream Celasha/Toolasha#623).\n\n### The Sort Tasks button sorts even with a reroll menu open\n\nA direct press now sorts the board immediately, mid-reroll and all. The automatic passes (auto-sort, sort-after-read) still wait for the board to settle so they never yank a pending click.\n\n### The protected/cap task border keeps up again\n\nIt is redrawn right away on a card that is mid-reroll (it used to wait for the menu to close, so the edge looked stuck until you pressed Back), and painted the instant the board opens instead of after a 150 ms delay.\n\n### The task bulk-reroll button is removed\n\nThe game only honours a reroll from a real click that opens the menu, which a userscript can't fake — so the button never worked unless you opened the menu by hand first. Reroll protection and the 🛡️ cap/per-task guards are untouched.\n\n### In Progress payout: leaner, plus a Roster button\n\nDrops the token gold valuation and the \"No Treasury level seen\" nag from the In Progress tab (both kept on the Trials tab), and adds a Roster button that opens the guild roster panel.\n\n### Skilling In Progress panel no longer squashes the game's card off-screen\n\nInjected payout/analysis blocks now take a full-width line above and below the roster+card row instead of shrinking the game's own skilling card to a sliver beside them.\n\n### Skilling trials: no flat projection once slowing is measured, and timestamped readings\n\nDrops the misleadingly-high \"On pace (flat)\" tier once a slowdown is known (it survives in the tooltip), and keeps a downsampled timestamped reading series in the export so the tier forecast can be checked against what was banked.\n\n### Trial scoreboard: honest damage-taken label, and a runaway split is flagged\n\nDamage taken is now labelled pre- vs post-mitigation (the live stream can only read the latter), and a per-player damage split that runs past the bosses' combined health is flagged as over-attributing.\n\n### Dev builds install over a same-numbered release\n\nThe dev build now appends its build timestamp as a fourth version segment, so a reinstall always takes even when the release number hasn't changed.\n\n### Scrolls in the Combat Simulator\n\nThe sim and Upgrade advisor now carry the seven Labyrinth combat scrolls (Damage, Attack Speed, Cast Speed, Critical Rate, Combat Drop, Wisdom, Rare Find): a Scrolls section on Configure to sim with them, and a Scrolls mode on Upgrade to measure what each is worth.\n\n";
 
     var forkOverview = "This is the **Millennium44 fork of Toolasha**. It folds MWI Combat Suite into Toolasha — live DPS tracking, loot and drop tracking, drop-luck analysis, and a full labyrinth simulator — so one script gives you both halves of the game instead of two userscripts.\n\n### Combat & simulators\n\n- Live DPS, hit/crit rate, damage-taken and net-sustain read off your own fights.\n- Loot and drop tracking with drop-luck analysis that judges combat, gathering and production.\n- A combat recorder: record real fights, replay them against the simulator, get a verdict with honest noise bands.\n- A combat simulator whose upgrade picks are costed and ranked on real market and credit costs.\n- Per-character combat stats, sim state and histories — no character reads another's books.\n\n### Market & profit\n\n- One market price API prices almost everything: upgrades, net worth, drop income, guild tokens, every action.\n- Prices capped by the volume the market has actually absorbed, so thin markets stop inflating rankings.\n- Profit lines on the action bar, pinned pages, alchemy rankings and the combat profit panel.\n- Market-history viewer with a live undercut alert that re-checks against a refreshed snapshot.\n- An upgrade advisor that costs and ranks gear and ability candidates against live prices.\n\n### Labyrinth\n\n- A labyrinth simulator with auto-pathing and auto-beaconing planned from the actual run.\n- Multi-target analysis with combined armour swaps and supply-aware torch/shroud/beacon planning.\n- Skilling-sim candidates scoped to the skill you are simming, with the skip level set for you.\n- Upgrade, All-Fights and Skilling analyses, each exportable to CSV.\n\n### Guild\n\n- Live trial measurement: per-player DPS and damage/healing attribution from the fight you watch.\n- Tier read straight off the boss bar, with pace, ETA and payout maths.\n- A trial report your guild can actually read, with honest coverage caveats.\n\n### Quality of life\n\n- A curated overlay of tiles with bundled presets, activity auto-switching, and tiles that open their panels.\n- A Ctrl+K (Cmd+K) command palette over every panel, overlay row, saved layout and setting.\n- Mobile-friendly panels: viewport clamping, reachable close buttons, finger-sized targets, a floating launcher.\n- Notifications for empty queues, community-buff expiry, and finished labyrinth runs.\n- Task tools: measured tokens/hour, net task income, and reroll handling that takes the free MooPass reroll.\n- Equipment Savings (\"eWatch\"): savings goals for gear and ability levels, fed from the simulators.\n- A goal planner that turns \"get me X gold / level N\" into a ranked plan from your real measured rates.\n\n### Data & sync\n\n- Cross-device sync of your whole database through one private GitHub gist you own.\n- Gzip-compressed, optionally AES-256 encrypted, conflict-aware, guarded against overwriting a year of data.\n- Chunked per-period history that survives months, with honest quota handling and per-character backups.\n- Hundreds of bug fixes and a test suite grown from ~2,300 to over 8,500 tests.\n";
 
@@ -66777,6 +66777,150 @@ ${starCSS}
     }
 
     /**
+     * Which stats an enhancement prediction is quoting.
+     *
+     * The same "+0 → +N" table means two different things depending on whose bench it describes:
+     * what this character would spend, or what a top-end enhancer would. Both are worth seeing —
+     * one is the player's real cost, the other is roughly what the listing in front of them cost
+     * whoever made it — but a number that does not say which one it is is worse than either.
+     *
+     * This module owns that choice: the persisted toggle, the params each side resolves to, and the
+     * chip the tooltip prints so the answer is always on screen next to the numbers.
+     */
+
+
+    /** Setting the toggle persists to. Mirrored in the settings panel under Item Tooltips. */
+    const PRO_RATES_SETTING = 'itemTooltip_enhancementProRates';
+
+    /** Class the delegated click handler looks for, and the marker the chip is found by. */
+    const SOURCE_CHIP_CLASS = 'toolasha-enh-source-chip';
+
+    /** Attribute naming a re-renderable enhancement section, so a toggle can redraw it in place. */
+    const SECTION_ATTR = 'data-toolasha-enh-section';
+
+    /**
+     * Whether enhancement predictions are currently quoting the pro kit rather than the player.
+     * @returns {boolean} True when pro rates are active
+     */
+    function isProRatesActive() {
+        return config.getSetting(PRO_RATES_SETTING) === true;
+    }
+
+    /**
+     * The enhancing parameters a tooltip for this item should be computed with.
+     *
+     * Untradeable items are never somebody else's listing — the player is the only one who can be
+     * enhancing them — so they are always quoted from the character's own stats.
+     *
+     * @param {string} itemHrid - Item the tooltip is describing
+     * @returns {Object} Enhancement parameters, tagged with `paramsSource`
+     */
+    function getTooltipEnhancementParams(itemHrid) {
+        const itemDetails = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid];
+        const isTradeable = itemDetails?.isTradable !== false;
+
+        if (!isTradeable) {
+            return enhancementConfig_js.getAutoDetectedParams();
+        }
+        if (isProRatesActive()) {
+            return enhancementConfig_js.getProRatesParams();
+        }
+        return enhancementConfig_js.getEnhancingParams();
+    }
+
+    /**
+     * Name the source of a set of parameters, for display beside the numbers they produced.
+     * @param {Object} params - Result of getTooltipEnhancementParams() or getEnhancingParams()
+     * @returns {{kind: 'pro'|'manual'|'yours', label: string, detail: string|null}} Chip content
+     */
+    function describeEnhancementSource(params) {
+        if (params?.paramsSource === 'pro') {
+            return {
+                kind: 'pro',
+                label: 'Pro',
+                detail: 'Pro rates: enhancing 140, Observatory 8, ultra + blessed tea, +13 Celestial enhancer, +10 gear',
+            };
+        }
+
+        const overrides = enhancementConfig_js.describeParamsSource(params);
+        if (overrides) {
+            return { kind: 'manual', label: 'Manual', detail: overrides };
+        }
+
+        return { kind: 'yours', label: 'Yours', detail: null };
+    }
+
+    /**
+     * Escape a value for use inside a double-quoted HTML attribute.
+     * @param {*} value - Value to escape
+     * @returns {string} Escaped text
+     */
+    function escapeAttr(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    /**
+     * Build the clickable source chip shown on an enhancement section header.
+     *
+     * Pro rates get a filled, warning-coloured chip: the one mistake worth engineering against is
+     * reading a professional's cost as your own, so that state has to be unmissable rather than
+     * merely legible.
+     *
+     * @param {Object} params - Parameters the section was computed with
+     * @returns {string} HTML for the chip
+     */
+    function buildSourceChipHTML(params) {
+        const source = describeEnhancementSource(params);
+        const isPro = source.kind === 'pro';
+        const proColor = config.COLOR_TOOLTIP_WARNING || '#ffb020';
+        // On a touch device there is no P key and hover tooltips never open, so the
+        // chip carries its own visible affordance: a keycap "P" on desktop, the word
+        // "tap" on a phone, and a finger-sized hit area there.
+        const mobile = mobile_js.isMobileMode();
+        const action = mobile ? 'Tap' : 'Click (or press P)';
+
+        const title = isPro
+            ? `${source.detail}. ${action} to switch back to your own stats.`
+            : source.detail
+              ? `${source.detail}. ${action} to compare against pro rates.`
+              : `Computed from your own enhancing level, gear and teas. ${action} to compare against pro rates.`;
+
+        const style = isPro
+            ? `background: ${proColor}; color: #14181f; border: 1px solid ${proColor};`
+            : 'background: rgba(255,255,255,0.10); color: inherit; border: 1px solid rgba(255,255,255,0.30);';
+        const sizing = mobile ? 'padding: 3px 9px; font-size: 0.85em;' : 'padding: 0 5px; font-size: 0.75em;';
+        const hint = mobile
+            ? ' <span style="opacity: 0.7; font-weight: 600;">tap</span>'
+            : ' <span style="border: 1px solid currentColor; border-radius: 3px; padding: 0 3px; margin-left: 1px;' +
+              ' font-size: 0.85em; opacity: 0.75;">P</span>';
+
+        return (
+            `<span class="${SOURCE_CHIP_CLASS}" role="button" tabindex="0" title="${escapeAttr(title)}" ` +
+            `style="pointer-events: auto; cursor: pointer; margin-left: 6px; border-radius: 8px; ${sizing} ` +
+            `font-weight: 700; letter-spacing: 0.3px; white-space: nowrap; vertical-align: middle; ${style}">` +
+            `${source.label} ⇄${hint}</span>`
+        );
+    }
+
+    /**
+     * Attributes that mark a built section as re-renderable in place after a toggle.
+     * @param {'path'|'milestones'} kind - Which builder produced the section
+     * @param {string} itemHrid - Item the section describes
+     * @param {number} level - Target enhancement level (0 for milestone tables)
+     * @returns {string} Attribute string to splice into the section's root element
+     */
+    function sectionAttributes(kind, itemHrid, level) {
+        return (
+            `${SECTION_ATTR}="${escapeAttr(kind)}" data-toolasha-enh-item="${escapeAttr(itemHrid)}" ` +
+            `data-toolasha-enh-level="${escapeAttr(level)}"`
+        );
+    }
+
+    /**
      * Enhancement Tooltip Module
      *
      * Provides enhancement analysis for item tooltips.
@@ -66787,6 +66931,10 @@ ${starCSS}
      * - Item tooltips: Shows optimal path to reach current enhancement level
      */
 
+    const toolashaConfig = config;
+
+    /** What a mirror plan combines its leaves with */
+    const MIRROR_HRID = '/items/philosophers_mirror';
 
     const _costCache = new Map();
     const _chainTimeCache = new Map();
@@ -66795,6 +66943,516 @@ ${starCSS}
         _costCache.clear();
         _chainTimeCache.clear();
     });
+
+    /**
+     * Calculate optimal enhancement path for an item
+     * Matches Enhancelator's algorithm exactly:
+     * 1. Test all protection strategies for each level
+     * 2. Pick minimum cost for each level (mixed strategies)
+     * 3. Apply mirror optimization to mixed array
+     *
+     * @param {string} itemHrid - Item HRID (e.g., '/items/cheese_sword')
+     * @param {number} currentEnhancementLevel - Current enhancement level (1-20)
+     * @param {Object} config - Enhancement configuration from enhancement-config.js
+     * @returns {Object|null} Enhancement analysis or null if not enhanceable
+     */
+    function calculateEnhancementPath(itemHrid, currentEnhancementLevel, config) {
+        // Validate inputs
+        if (!itemHrid || currentEnhancementLevel < 1 || currentEnhancementLevel > 20) {
+            return null;
+        }
+
+        // Get item details
+        const gameData = dataManager.getInitClientData();
+        if (!gameData) return null;
+
+        const itemDetails = gameData.itemDetailMap[itemHrid];
+        if (!itemDetails) return null;
+
+        // Check if item is enhanceable
+        if (!itemDetails.enhancementCosts || itemDetails.enhancementCosts.length === 0) {
+            return null;
+        }
+
+        const itemLevel = itemDetails.itemLevel || 1;
+
+        // Step 1: Build 2D matrix like Enhancelator (all_results)
+        // For each target level (1 to currentEnhancementLevel)
+        // Test all protection strategies (0, 2, 3, ..., targetLevel)
+        // Result: allResults[targetLevel][protectFrom] = cost data
+
+        const allResults = [];
+
+        for (let targetLevel = 1; targetLevel <= currentEnhancementLevel; targetLevel++) {
+            const resultsForLevel = [];
+
+            // Test "never protect" (0)
+            const neverProtect = calculateCostForStrategy(itemHrid, targetLevel, 0, itemLevel, config);
+            if (neverProtect) {
+                resultsForLevel.push({ protectFrom: 0, ...neverProtect });
+            }
+
+            // Test all "protect from X" strategies (2 through targetLevel)
+            for (let protectFrom = 2; protectFrom <= targetLevel; protectFrom++) {
+                const result = calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel, config);
+                if (result) {
+                    resultsForLevel.push({ protectFrom, ...result });
+                }
+            }
+
+            allResults.push(resultsForLevel);
+        }
+
+        // Step 2: Build target_costs and target_times arrays (minimum cost/time for each level)
+        // Like Enhancelator line 451-453
+        const targetCosts = new Array(currentEnhancementLevel + 1);
+        const targetTimes = new Array(currentEnhancementLevel + 1);
+        const targetAttempts = new Array(currentEnhancementLevel + 1);
+        // Kept alongside the attempts because a mirror plan's protection bill is the sum over the
+        // levels it actually builds, and there is nowhere else that number survives
+        const targetProtections = new Array(currentEnhancementLevel + 1);
+        targetCosts[0] = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost')
+            ? Math.min(getProductionCost(itemHrid) || Infinity, marketData_js.getItemPrices(itemHrid, 0)?.ask || Infinity) ||
+              getRealisticBaseItemPrice(itemHrid)
+            : getRealisticBaseItemPrice(itemHrid); // Level 0: base item
+        targetTimes[0] = 0; // Level 0: no time needed
+        targetAttempts[0] = 0; // Level 0: no attempts needed
+        targetProtections[0] = 0; // Level 0: nothing to protect
+
+        for (let level = 1; level <= currentEnhancementLevel; level++) {
+            const resultsForLevel = allResults[level - 1];
+            // No strategy succeeded for this level (e.g. missing data) — cannot build a path
+            if (resultsForLevel.length === 0) {
+                return null;
+            }
+            // Find the result with minimum cost
+            const minResult = resultsForLevel.reduce((best, curr) => (curr.totalCost < best.totalCost ? curr : best));
+            targetCosts[level] = minResult.totalCost;
+            targetTimes[level] = minResult.totalTime;
+            targetAttempts[level] = minResult.expectedAttempts;
+            targetProtections[level] = minResult.protectionCount || 0;
+        }
+
+        // Snapshot the pre-mirror numbers before the mirror pass rewrites targetCosts in place.
+        // These arrays used to be aliases of the same array, so the "traditional" cost of a level
+        // silently became its mirror cost the moment the pass touched it.
+        const traditionalCosts = [...targetCosts];
+        const traditionalTimes = [...targetTimes];
+        const traditionalAttempts = [...targetAttempts];
+        const traditionalProtections = [...targetProtections];
+
+        // Step 3: Apply Philosopher's Mirror optimization (single pass, in-place)
+        // Like Enhancelator lines 456-465
+        const mirrorPrice = getRealisticBaseItemPrice(MIRROR_HRID);
+        const usedMirror = new Array(currentEnhancementLevel + 1).fill(false);
+
+        if (mirrorPrice > 0) {
+            // +2 is reachable by mirroring a +0 and a +1, so it belongs in the search as well
+            for (let level = 2; level <= currentEnhancementLevel; level++) {
+                const traditionalCost = targetCosts[level];
+                const mirrorCost = targetCosts[level - 2] + targetCosts[level - 1] + mirrorPrice;
+
+                if (mirrorCost < traditionalCost) {
+                    usedMirror[level] = true;
+                    targetCosts[level] = mirrorCost;
+                }
+            }
+        }
+
+        // Step 4: Build final result with breakdown
+        targetCosts[currentEnhancementLevel];
+
+        // Find which protection strategy was optimal for final level (before mirrors)
+        const finalLevelResults = allResults[currentEnhancementLevel - 1];
+        if (finalLevelResults.length === 0) {
+            return null;
+        }
+        const optimalTraditional = finalLevelResults.reduce((best, curr) =>
+            curr.totalCost < best.totalCost ? curr : best
+        );
+
+        // Which levels the finished plan actually mirrors is a question about the path back from
+        // the target, not about the first level where mirroring happened to look cheap. A level
+        // that mirrors but is never reached from the target contributes nothing.
+        const mirrorPlan = expandMirrorPlan(currentEnhancementLevel, usedMirror);
+
+        let optimalStrategy;
+
+        if (mirrorPlan.mirrorCount > 0) {
+            // Mirror was used - build mirror-optimized result
+            optimalStrategy = buildMirrorOptimizedResult(
+                itemHrid,
+                currentEnhancementLevel,
+                mirrorPlan,
+                traditionalCosts,
+                traditionalTimes,
+                traditionalAttempts,
+                traditionalProtections,
+                targetCosts,
+                optimalTraditional,
+                mirrorPrice
+            );
+        } else {
+            // No mirror used - return traditional result
+            optimalStrategy = {
+                protectFrom: optimalTraditional.protectFrom,
+                label: optimalTraditional.protectFrom === 0 ? 'Never' : `+${optimalTraditional.protectFrom}`,
+                expectedAttempts: optimalTraditional.expectedAttempts,
+                totalTime: optimalTraditional.totalTime,
+                baseCost: optimalTraditional.baseCost,
+                baseAskPrice: optimalTraditional.baseAskPrice,
+                baseBidPrice: optimalTraditional.baseBidPrice,
+                baseAskIsCrafted: optimalTraditional.baseAskIsCrafted,
+                baseBidIsCrafted: optimalTraditional.baseBidIsCrafted,
+                materialCost: optimalTraditional.materialCost,
+                materialBreakdown: optimalTraditional.materialBreakdown,
+                protectionCost: optimalTraditional.protectionCost,
+                protectionItemHrid: optimalTraditional.protectionItemHrid,
+                protectionCount: optimalTraditional.protectionCount,
+                protectionAskPrice: optimalTraditional.protectionAskPrice,
+                protectionBidPrice: optimalTraditional.protectionBidPrice,
+                totalCost: optimalTraditional.totalCost,
+                usedMirror: false,
+                mirrorStartLevel: null,
+                materialBill: buildMaterialBill({
+                    materials: optimalTraditional.materialBreakdown,
+                    protectionItemHrid: optimalTraditional.protectionItemHrid,
+                    protectionCount: optimalTraditional.protectionCount,
+                    protectionUnitPrice: optimalTraditional.protectionAskPrice,
+                }),
+            };
+        }
+
+        // Calculate XP/hr for the optimal path
+        let xpPerHour = null;
+        let totalExpectedXP = null;
+        try {
+            const xpCalc = enhancementCalculator_js.calculateEnhancement({
+                enhancingLevel: config.enhancingLevel,
+                houseLevel: config.houseLevel,
+                toolBonus: config.toolBonus || 0,
+                speedBonus: config.speedBonus || 0,
+                itemLevel,
+                targetLevel: currentEnhancementLevel,
+                protectFrom: optimalStrategy.protectFrom,
+                blessedTea: config.teas.blessed,
+                guzzlingBonus: config.guzzlingBonus,
+                blessedTeaBonus: config.blessedTeaBonus,
+            });
+
+            if (xpCalc && xpCalc.visitCounts && xpCalc.totalTime > 0) {
+                // Same XP formula the tracker and the XPH calculator use. The old inline copy read
+                // itemDetails.level, which enhanceable equipment does not have, so it fell through
+                // to a level-requirement lookup and produced a different number for the same item.
+                let totalXP = 0;
+                for (let i = 0; i < currentEnhancementLevel; i++) {
+                    const visits = xpCalc.visitCounts[i];
+                    if (!visits) continue;
+                    const successRate = xpCalc.successRates[i].actualRate / 100;
+                    const successXP = calculateSuccessXP(i, itemHrid);
+                    const failXP = calculateFailureXP(i, itemHrid);
+                    totalXP += visits * (successRate * successXP + (1 - successRate) * failXP);
+                }
+                xpPerHour = Math.round((totalXP / xpCalc.totalTime) * 3600);
+                totalExpectedXP = Math.round(totalXP);
+            }
+        } catch {
+            // XP data is optional; don't let it break the tooltip
+        }
+
+        return {
+            itemHrid,
+            targetLevel: currentEnhancementLevel,
+            itemLevel,
+            optimalStrategy,
+            allStrategies: [optimalStrategy], // Only return optimal
+            xpPerHour,
+            totalExpectedXP,
+            // Carried through so the tooltip can say whose stats these numbers describe: the
+            // character's own, a hand-entered set, or the pro kit
+            enhancementParams: config,
+            paramsNote: describeEnhancementSource(config).detail,
+        };
+    }
+
+    /**
+     * Calculate cost for a single protection strategy to reach a target level
+     * @private
+     */
+    function calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel, config) {
+        try {
+            const params = {
+                enhancingLevel: config.enhancingLevel,
+                houseLevel: config.houseLevel,
+                toolBonus: config.toolBonus || 0,
+                speedBonus: config.speedBonus || 0,
+                itemLevel,
+                targetLevel,
+                protectFrom,
+                blessedTea: config.teas.blessed,
+                guzzlingBonus: config.guzzlingBonus,
+                blessedTeaBonus: config.blessedTeaBonus,
+            };
+
+            // Calculate enhancement statistics. The matrix inversion is the expensive part of a
+            // strategy, and the cost pass needs exactly the same numbers, so it is handed the
+            // result rather than inverting an identical matrix a second time.
+            const result = enhancementCalculator_js.calculateEnhancement(params);
+
+            if (!result || typeof result.attempts !== 'number' || typeof result.totalTime !== 'number') {
+                console.error('[Enhancement Tooltip] Invalid result from calculateEnhancement:', result);
+                return null;
+            }
+
+            // Calculate costs
+            const costs = calculateTotalCost(itemHrid, targetLevel, protectFrom, config, result);
+
+            return {
+                expectedAttempts: result.attempts,
+                totalTime: result.totalTime,
+                ...costs,
+            };
+        } catch (error) {
+            console.error('[Enhancement Tooltip] Strategy calculation error:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Walk the mirror DP back from the target level to the items the plan actually builds.
+     *
+     * The DP decides mirror-or-not level by level, and those decisions are not necessarily a clean
+     * run: +6 can mirror while +5 does not. Assuming a contiguous block from the first mirrored
+     * level and expanding it with Fibonacci quantities invents items the plan never buys. Walking
+     * the decisions backwards from the target instead yields exactly the leaves it does buy.
+     *
+     * @param {number} targetLevel - Level the plan is building
+     * @param {boolean[]} usedMirror - Per-level mirror decisions from the DP
+     * @returns {{leaves: Array<{level: number, quantity: number}>, mirrorCount: number,
+     *   mirrorStartLevel: number|null}} Leaves are levels bought traditionally, highest first
+     * @private
+     */
+    function expandMirrorPlan(targetLevel, usedMirror) {
+        const need = new Array(targetLevel + 1).fill(0);
+        need[targetLevel] = 1;
+
+        let mirrorCount = 0;
+        let mirrorStartLevel = null;
+
+        // High to low: a level is only expanded once every demand for it is known
+        for (let level = targetLevel; level >= 2; level--) {
+            const quantity = need[level];
+            if (!quantity || !usedMirror[level]) continue;
+
+            mirrorCount += quantity;
+            mirrorStartLevel = level; // Lowest mirrored level reached, since we descend
+            need[level - 1] += quantity;
+            need[level - 2] += quantity;
+            need[level] = 0;
+        }
+
+        const leaves = [];
+        for (let level = targetLevel; level >= 0; level--) {
+            if (need[level] > 0) {
+                leaves.push({ level, quantity: need[level] });
+            }
+        }
+
+        return { leaves, mirrorCount, mirrorStartLevel };
+    }
+
+    /**
+     * What a chosen path expects to consume, item by item.
+     *
+     * The path optimiser has always returned totals — so many coins in materials —
+     * which is enough to compare two strategies and not enough to go and buy them.
+     * This is the same arithmetic said as a list, so anything holding a plan can put
+     * it on the marketplace.
+     *
+     * **Every count is an expectation, not a bill.** Enhancing is a Markov chain:
+     * the attempt counts these quantities are multiplied out from are the *expected*
+     * number of attempts along the path, and a real run will take more or fewer.
+     * Buying exactly this list is buying the mean, which is the right order of
+     * magnitude and the wrong number to be surprised by.
+     *
+     * @param {Object} parts - The pieces of a strategy
+     * @param {Array<Object>} [parts.materials] - `materialBreakdown` rows, already multiplied by attempts
+     * @param {number} [parts.materialMultiplier=1] - Scales the rows, for a plan that runs the
+     *   same per-attempt bill a different number of times (a mirror plan's leaves)
+     * @param {string} [parts.protectionItemHrid] - What the plan protects with
+     * @param {number} [parts.protectionCount=0] - Expected protections consumed
+     * @param {number} [parts.protectionUnitPrice=0] - Price of one
+     * @param {number} [parts.mirrorCount=0] - Philosopher's Mirrors the plan combines
+     * @param {number} [parts.mirrorPrice=0] - Price of one
+     * @param {string} [parts.baseItemHrid] - Base item, for a plan that consumes more than the one
+     *   copy its owner is assumed to be holding
+     * @param {number} [parts.baseCount=0] - How many base copies the plan consumes
+     * @param {number} [parts.baseUnitPrice=0] - Price of one
+     * @returns {Array<{itemHrid: string, name: string, count: number, unitPrice: number,
+     *   totalCost: number, kind: string}>} The bill, materials first; `kind` is one of
+     *   `material`, `protection`, `mirror`, `base`
+     * @private
+     */
+    function buildMaterialBill({
+        materials = [],
+        materialMultiplier = 1,
+        protectionItemHrid = null,
+        protectionCount = 0,
+        protectionUnitPrice = 0,
+        mirrorCount = 0,
+        mirrorPrice = 0,
+        baseItemHrid = null,
+        baseCount = 0,
+        baseUnitPrice = 0,
+    } = {}) {
+        const gameData = dataManager.getInitClientData();
+        const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid;
+
+        const bill = [];
+
+        for (const material of materials || []) {
+            const count = (material.totalQuantity || 0) * materialMultiplier;
+            if (!(count > 0)) continue;
+            bill.push({
+                itemHrid: material.itemHrid,
+                name: material.name || nameOf(material.itemHrid),
+                count,
+                unitPrice: material.unitPrice || 0,
+                totalCost: (material.unitPrice || 0) * count,
+                kind: 'material',
+            });
+        }
+
+        if (protectionItemHrid && protectionCount > 0) {
+            bill.push({
+                itemHrid: protectionItemHrid,
+                name: nameOf(protectionItemHrid),
+                count: protectionCount,
+                unitPrice: protectionUnitPrice,
+                totalCost: protectionUnitPrice * protectionCount,
+                kind: 'protection',
+            });
+        }
+
+        if (mirrorCount > 0) {
+            bill.push({
+                itemHrid: MIRROR_HRID,
+                name: nameOf(MIRROR_HRID),
+                count: mirrorCount,
+                unitPrice: mirrorPrice,
+                totalCost: mirrorPrice * mirrorCount,
+                kind: 'mirror',
+            });
+        }
+
+        if (baseItemHrid && baseCount > 0) {
+            bill.push({
+                itemHrid: baseItemHrid,
+                name: nameOf(baseItemHrid),
+                count: baseCount,
+                unitPrice: baseUnitPrice,
+                totalCost: baseUnitPrice * baseCount,
+                kind: 'base',
+            });
+        }
+
+        return bill;
+    }
+
+    /**
+     * Build mirror-optimized result from an expanded plan
+     * @param {string} itemHrid - Item being enhanced
+     * @param {number} targetLevel - Target enhancement level
+     * @param {Object} plan - Result of expandMirrorPlan()
+     * @param {number[]} traditionalCosts - Pre-mirror cost per level
+     * @param {number[]} traditionalTimes - Pre-mirror time per level
+     * @param {number[]} traditionalAttempts - Pre-mirror attempts per level
+     * @param {number[]} traditionalProtections - Pre-mirror protections consumed per level
+     * @param {number[]} targetCosts - Post-mirror cost per level
+     * @param {Object} optimalTraditional - Best non-mirror strategy for the target level
+     * @param {number} mirrorPrice - Price of one Philosopher's Mirror
+     * @private
+     */
+    function buildMirrorOptimizedResult(
+        itemHrid,
+        targetLevel,
+        plan,
+        traditionalCosts,
+        traditionalTimes,
+        traditionalAttempts,
+        traditionalProtections,
+        targetCosts,
+        optimalTraditional,
+        mirrorPrice
+    ) {
+        const { leaves, mirrorCount, mirrorStartLevel } = plan;
+
+        // Every leaf is a level the plan buys outright, so it is priced at its traditional cost
+        const consumedItems = leaves.map(({ level, quantity }) => ({
+            level,
+            quantity,
+            costEach: traditionalCosts[level],
+            totalCost: quantity * traditionalCosts[level],
+        }));
+
+        const consumedItemsCost = consumedItems.reduce((sum, item) => sum + item.totalCost, 0);
+        const totalMirrorsCost = mirrorCount * mirrorPrice;
+
+        // Mirror combinations are instant, so only the leaves cost time and attempts
+        const totalTime = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalTimes[level], 0);
+        const totalAttempts = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalAttempts[level], 0);
+        const totalProtections = leaves.reduce(
+            (sum, { level, quantity }) => sum + quantity * (traditionalProtections[level] || 0),
+            0
+        );
+
+        // Every leaf starts from its own base copy — a mirror plan for +10 buys several items and
+        // combines them, which is the fact a totals-only answer hides and a shopping list cannot
+        const totalBaseItems = leaves.reduce((sum, { quantity }) => sum + quantity, 0);
+
+        // The per-attempt material bill is the same at every level, so the target-level strategy's
+        // breakdown (which is already multiplied by *its* attempts) scales to the plan's attempts
+        const materialMultiplier =
+            optimalTraditional.expectedAttempts > 0 ? totalAttempts / optimalTraditional.expectedAttempts : 0;
+
+        // For mirror phase: ONLY consumed items + mirrors
+        // The consumed item costs from targetCosts already include base/materials/protection
+        // NO separate base/materials/protection for main item!
+
+        return {
+            protectFrom: optimalTraditional.protectFrom,
+            label: optimalTraditional.protectFrom === 0 ? 'Never' : `From +${optimalTraditional.protectFrom}`,
+            expectedAttempts: totalAttempts,
+            totalTime: totalTime,
+            baseCost: 0, // Not applicable for mirror phase
+            materialCost: 0, // Not applicable for mirror phase
+            protectionCost: 0, // Not applicable for mirror phase
+            protectionItemHrid: null,
+            protectionCount: 0,
+            consumedItemsCost,
+            philosopherMirrorCost: totalMirrorsCost,
+            totalCost: targetCosts[targetLevel], // Use recursive formula result for consistency
+            mirrorStartLevel: mirrorStartLevel,
+            usedMirror: true,
+            traditionalCost: optimalTraditional.totalCost,
+            consumedItems: consumedItems,
+            mirrorCount: mirrorCount,
+            consumedItemHrid: itemHrid,
+            materialBill: buildMaterialBill({
+                materials: optimalTraditional.materialBreakdown,
+                materialMultiplier,
+                protectionItemHrid: optimalTraditional.protectionItemHrid || getCheapestProtectionPrice(itemHrid)?.itemHrid,
+                protectionCount: totalProtections,
+                protectionUnitPrice:
+                    optimalTraditional.protectionAskPrice || getCheapestProtectionPrice(itemHrid)?.price || 0,
+                mirrorCount,
+                mirrorPrice,
+                baseItemHrid: itemHrid,
+                baseCount: totalBaseItems,
+                baseUnitPrice: traditionalCosts[0],
+            }),
+        };
+    }
 
     /**
      * Fixed price for untradeable trainee charms, which have no market listing.
@@ -66841,6 +67499,99 @@ ${starCSS}
         const gameData = dataManager.getInitClientData();
         const materialDetail = gameData?.itemDetailMap?.[itemHrid];
         return getProductionCost(itemHrid, side) || materialDetail?.sellPrice || 0;
+    }
+
+    /**
+     * Calculate total cost for enhancement path
+     * Matches original MWI Tools v25.0 cost calculation
+     * @param {string} itemHrid - Item HRID
+     * @param {number} targetLevel - Target enhancement level
+     * @param {number} protectFrom - Protection threshold
+     * @param {Object} config - Enhancement configuration
+     * @param {Object} pathResult - Markov result for this strategy, already computed by the caller
+     * @private
+     */
+    function calculateTotalCost(itemHrid, targetLevel, protectFrom, config, pathResult) {
+        const gameData = dataManager.getInitClientData();
+        const itemDetails = gameData.itemDetailMap[itemHrid];
+
+        // Calculate per-action material cost (same for all enhancement levels)
+        // enhancementCosts is a flat array of materials needed per attempt
+        let perActionCost = 0;
+        const materialBreakdown = [];
+        if (itemDetails.enhancementCosts) {
+            for (const material of itemDetails.enhancementCosts) {
+                const materialDetail = gameData.itemDetailMap[material.itemHrid];
+                const price = getEnhancementMaterialPrice(material.itemHrid, 'ask');
+                const bidPrice = getEnhancementMaterialPrice(material.itemHrid, 'bid');
+                perActionCost += price * material.count;
+
+                const totalQuantity = material.count * pathResult.attempts;
+                materialBreakdown.push({
+                    itemHrid: material.itemHrid,
+                    name: materialDetail?.name || material.itemHrid,
+                    countPerAction: material.count,
+                    totalQuantity,
+                    unitPrice: price,
+                    bidPrice,
+                    totalCost: price * totalQuantity,
+                });
+            }
+        }
+
+        // Total material cost = per-action cost × total attempts
+        const materialCost = perActionCost * pathResult.attempts;
+
+        // Protection cost = cheapest protection option × protection count
+        let protectionCost = 0;
+        let protectionItemHrid = null;
+        let protectionCount = 0;
+        let protectionAskPrice = 0;
+        let protectionBidPrice = 0;
+        if (protectFrom > 0 && pathResult.protectionCount > 0) {
+            const protectionInfo = getCheapestProtectionPrice(itemHrid);
+            if (protectionInfo.price > 0) {
+                protectionCost = protectionInfo.price * pathResult.protectionCount;
+                protectionItemHrid = protectionInfo.itemHrid;
+                protectionCount = pathResult.protectionCount;
+                protectionAskPrice = protectionInfo.price;
+                const protPrices = marketData_js.getItemPrices(protectionInfo.itemHrid, 0);
+                protectionBidPrice = protPrices?.bid > 0 ? protPrices.bid : protectionInfo.price;
+            }
+        }
+
+        // Base item cost (initial investment) — market price or min(crafting, market) per setting
+        const craftingCostAsk = getProductionCost(itemHrid, 'ask');
+        const craftingCostBid = getProductionCost(itemHrid, 'bid');
+        const baseItemPrices = marketData_js.getItemPrices(itemHrid, 0);
+        const marketAsk = baseItemPrices?.ask > 0 ? baseItemPrices.ask : 0;
+        const marketBid = baseItemPrices?.bid > 0 ? baseItemPrices.bid : 0;
+        const useCraftingCost = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost');
+        // Ask drives the decision: use crafted if ask is missing OR crafted ask is cheaper
+        const askIsCrafted = useCraftingCost && craftingCostAsk > 0 && (marketAsk === 0 || craftingCostAsk < marketAsk);
+        const baseAskPrice = askIsCrafted ? craftingCostAsk : marketAsk || getRealisticBaseItemPrice(itemHrid);
+        const baseBidPrice = askIsCrafted
+            ? craftingCostBid || craftingCostAsk
+            : marketBid || getProductionCost(itemHrid, 'bid') || getRealisticBaseItemPrice(itemHrid);
+        const baseCost = baseAskPrice;
+        const baseAskIsCrafted = askIsCrafted;
+        const baseBidIsCrafted = askIsCrafted;
+
+        return {
+            baseCost,
+            baseAskPrice,
+            baseBidPrice,
+            baseAskIsCrafted,
+            baseBidIsCrafted,
+            materialCost,
+            materialBreakdown,
+            protectionCost,
+            protectionItemHrid,
+            protectionCount,
+            protectionAskPrice,
+            protectionBidPrice,
+            totalCost: baseCost + materialCost + protectionCost,
+        };
     }
 
     /**
@@ -67005,6 +67756,316 @@ ${starCSS}
             price: cheapestPrice === Infinity ? 0 : cheapestPrice,
             itemHrid: cheapestItemHrid,
         };
+    }
+
+    /**
+     * Minimum sell price that covers the total cost plus a target hourly rate for the
+     * time the enhancement takes, optionally grossed up for the marketplace seller tax.
+     * @param {number} totalCost - Total cost to reach the level, on one side (ask or bid)
+     * @param {number} totalTimeSeconds - Total enhancing time, in seconds
+     * @param {number} hourlyRate - Target coins/hour for time spent
+     * @param {boolean} includeTax - Whether to gross up for the marketplace seller tax
+     * @returns {number} Minimum sell price
+     */
+    function calculateMinimumSellPrice(totalCost, totalTimeSeconds, hourlyRate, includeTax) {
+        const breakeven = totalCost + hourlyRate * (totalTimeSeconds / 3600);
+        return includeTax ? breakeven / (1 - profitConstants_js.MARKET_TAX) : breakeven;
+    }
+
+    /**
+     * Build HTML for enhancement tooltip section
+     * @param {Object} enhancementData - Enhancement analysis from calculateEnhancementPath()
+     * @returns {string} HTML string
+     */
+    function buildEnhancementTooltipHTML(enhancementData) {
+        if (!enhancementData || !enhancementData.optimalStrategy) {
+            return '';
+        }
+
+        const { itemHrid, targetLevel, optimalStrategy, xpPerHour, totalExpectedXP, paramsNote, enhancementParams } =
+            enhancementData;
+
+        // Validate required fields
+        if (
+            typeof optimalStrategy.expectedAttempts !== 'number' ||
+            typeof optimalStrategy.totalTime !== 'number' ||
+            typeof optimalStrategy.materialCost !== 'number' ||
+            typeof optimalStrategy.totalCost !== 'number'
+        ) {
+            console.error('[Enhancement Tooltip] Missing required fields in optimal strategy:', optimalStrategy);
+            return '';
+        }
+
+        let html =
+            `<div ${sectionAttributes('path', itemHrid, targetLevel)} ` +
+            'style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
+        html +=
+            '<div style="font-weight: bold; margin-bottom: 4px;">ENHANCEMENT PATH (+0 → +' +
+            targetLevel +
+            ')' +
+            buildSourceChipHTML(enhancementParams) +
+            '</div>';
+        html += '<div style="font-size: 0.9em; margin-left: 8px;">';
+
+        // Optimal strategy
+        if (optimalStrategy.protectFrom === 0) {
+            html += '<div>No protection needed for +' + targetLevel + '</div>';
+        } else {
+            html += '<div>Protect from: ' + optimalStrategy.label + '</div>';
+        }
+
+        // Show Philosopher's Mirror usage if applicable
+        if (optimalStrategy.usedMirror && optimalStrategy.mirrorStartLevel) {
+            html +=
+                '<div style="color: ' +
+                config.COLOR_MIRROR +
+                ';">Uses Philosopher\'s Mirror from +' +
+                optimalStrategy.mirrorStartLevel +
+                '</div>';
+        }
+
+        html += '<div>Expected Attempts: ' + formatters_js.formatLargeNumber(optimalStrategy.expectedAttempts.toFixed(1)) + '</div>';
+
+        // Costs table
+        html += '<div style="margin-top: 8px;">';
+        html += `<table style="width: 100%; border-collapse: collapse; font-size: 0.85em; color: ${config.COLOR_TOOLTIP_INFO};">`;
+
+        // Table header
+        html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
+        html += '<th style="padding: 2px 4px; text-align: left;">Material</th>';
+        html += '<th style="padding: 2px 4px; text-align: center;">Count</th>';
+        html += '<th style="padding: 2px 4px; text-align: right;">Ask</th>';
+        html += '<th style="padding: 2px 4px; text-align: right;">Bid</th>';
+        html += '</tr>';
+
+        // Hoisted so both breakdowns populate them and the minimum-sell section below can read them
+        let totalAsk = 0;
+        let totalBid = 0;
+
+        // Check if using mirror optimization
+        if (optimalStrategy.usedMirror && optimalStrategy.consumedItems && optimalStrategy.consumedItems.length > 0) {
+            // Mirror-optimized breakdown
+            // Calculate totals for mirror path
+
+            // Consumed items (enhanced items at specific levels)
+            const sortedConsumed = [...optimalStrategy.consumedItems]
+                .filter((item) => item.quantity > 0)
+                .sort((a, b) => b.level - a.level);
+
+            const gameData = dataManager.getInitClientData();
+            const consumedHrid = optimalStrategy.consumedItemHrid ?? itemHrid;
+            const baseItemDetails = gameData?.itemDetailMap[consumedHrid];
+            const baseItemName = baseItemDetails?.name || consumedHrid;
+
+            const consumedRows = sortedConsumed.map((item) => {
+                const prices = marketData_js.getItemPrices(consumedHrid, item.level);
+                const askPrice = prices?.ask > 0 ? prices.ask : item.costEach;
+                const bidPrice = prices?.bid > 0 ? prices.bid : item.costEach;
+                totalAsk += askPrice * item.quantity;
+                totalBid += bidPrice * item.quantity;
+                return { name: baseItemName + ' +' + item.level, count: item.quantity, askPrice, bidPrice };
+            });
+
+            // Philosopher's Mirror row
+            if (optimalStrategy.philosopherMirrorCost > 0 && optimalStrategy.mirrorCount > 0) {
+                const mirrorPrices = marketData_js.getItemPrices('/items/philosophers_mirror', 0);
+                const mirrorAsk = mirrorPrices?.ask > 0 ? mirrorPrices.ask : 0;
+                const mirrorBid = mirrorPrices?.bid > 0 ? mirrorPrices.bid : 0;
+                totalAsk += mirrorAsk * optimalStrategy.mirrorCount;
+                totalBid += mirrorBid * optimalStrategy.mirrorCount;
+                consumedRows.push({
+                    name: "Philosopher's Mirror",
+                    count: optimalStrategy.mirrorCount,
+                    askPrice: mirrorAsk,
+                    bidPrice: mirrorBid,
+                });
+            }
+
+            // Color total ask/bid by comparison to market price of enhanced item
+            const enhancedPrices = marketData_js.getItemPrices(itemHrid, targetLevel);
+            const totalAskColor =
+                enhancedPrices?.ask > 0
+                    ? totalAsk < enhancedPrices.ask
+                        ? config.COLOR_TOOLTIP_PROFIT
+                        : config.COLOR_TOOLTIP_LOSS
+                    : '';
+            const totalBidColor =
+                enhancedPrices?.bid > 0
+                    ? totalBid < enhancedPrices.bid
+                        ? config.COLOR_TOOLTIP_PROFIT
+                        : config.COLOR_TOOLTIP_LOSS
+                    : '';
+
+            // Total row
+            html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
+            html += '<td style="padding: 2px 4px; font-weight: bold;">Total</td>';
+            html += '<td style="padding: 2px 4px; text-align: center;"></td>';
+            html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalAskColor ? ' color: ' + totalAskColor + ';' : ''}">${formatters_js.formatKMB(totalAsk)}</td>`;
+            html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalBidColor ? ' color: ' + totalBidColor + ';' : ''}">${formatters_js.formatKMB(totalBid)}</td>`;
+            html += '</tr>';
+
+            // Item rows
+            for (const row of consumedRows) {
+                html += '<tr>';
+                html += `<td style="padding: 2px 4px;">${row.name}</td>`;
+                html += `<td style="padding: 2px 4px; text-align: center;">${formatters_js.formatKMB(row.count)}</td>`;
+                html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.askPrice)}</td>`;
+                html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.bidPrice)}</td>`;
+                html += '</tr>';
+            }
+        } else {
+            // Traditional (non-mirror) breakdown
+            // Calculate totals
+            let totalCount = 1; // Base item counts as 1
+            totalAsk = optimalStrategy.baseAskPrice || optimalStrategy.baseCost;
+            totalBid = optimalStrategy.baseBidPrice || optimalStrategy.baseCost;
+
+            const rows = [];
+
+            // Base item row
+            const baseItemLabel = optimalStrategy.baseAskIsCrafted ? 'Craft Item' : 'Buy Item';
+            rows.push({
+                name: toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost') ? baseItemLabel : 'Base Item',
+                count: 1,
+                askPrice: optimalStrategy.baseAskPrice || optimalStrategy.baseCost,
+                bidPrice: optimalStrategy.baseBidPrice || optimalStrategy.baseCost,
+            });
+
+            // Material rows
+            if (optimalStrategy.materialBreakdown && optimalStrategy.materialBreakdown.length > 0) {
+                for (const mat of optimalStrategy.materialBreakdown) {
+                    const count = mat.totalQuantity;
+                    const askPrice = mat.unitPrice;
+                    const bidPrice = mat.bidPrice || mat.unitPrice;
+                    totalCount += count;
+                    totalAsk += askPrice * count;
+                    totalBid += bidPrice * count;
+                    rows.push({ name: mat.name, count, askPrice, bidPrice, isCoin: mat.itemHrid === '/items/coin' });
+                }
+            }
+
+            // Protection row
+            if (optimalStrategy.protectionCost > 0 && optimalStrategy.protectionCount > 0) {
+                const count = optimalStrategy.protectionCount;
+                const askPrice = optimalStrategy.protectionAskPrice || 0;
+                const bidPrice = optimalStrategy.protectionBidPrice || askPrice;
+                totalCount += count;
+                totalAsk += askPrice * count;
+                totalBid += bidPrice * count;
+
+                let protName = 'Protection';
+                if (optimalStrategy.protectionItemHrid) {
+                    const gameData = dataManager.getInitClientData();
+                    const protDetails = gameData?.itemDetailMap[optimalStrategy.protectionItemHrid];
+                    if (protDetails?.name) {
+                        protName = protDetails.name;
+                    }
+                }
+                rows.push({ name: protName, count, askPrice, bidPrice });
+            }
+
+            // Color total ask/bid by comparison to market price of enhanced item
+            const enhancedPrices = marketData_js.getItemPrices(itemHrid, targetLevel);
+            const totalAskColor =
+                enhancedPrices?.ask > 0
+                    ? totalAsk < enhancedPrices.ask
+                        ? config.COLOR_TOOLTIP_PROFIT
+                        : config.COLOR_TOOLTIP_LOSS
+                    : '';
+            const totalBidColor =
+                enhancedPrices?.bid > 0
+                    ? totalBid < enhancedPrices.bid
+                        ? config.COLOR_TOOLTIP_PROFIT
+                        : config.COLOR_TOOLTIP_LOSS
+                    : '';
+
+            // Total row
+            html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
+            html += '<td style="padding: 2px 4px; font-weight: bold;">Total</td>';
+            html += `<td style="padding: 2px 4px; text-align: center;">${formatters_js.formatKMB(totalCount)}</td>`;
+            html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalAskColor ? ' color: ' + totalAskColor + ';' : ''}">${formatters_js.formatKMB(totalAsk)}</td>`;
+            html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalBidColor ? ' color: ' + totalBidColor + ';' : ''}">${formatters_js.formatKMB(totalBid)}</td>`;
+            html += '</tr>';
+
+            // Item rows
+            for (const row of rows) {
+                html += '<tr>';
+                html += `<td style="padding: 2px 4px;">${row.name}</td>`;
+                if (row.isCoin) {
+                    html += '<td style="padding: 2px 4px; text-align: center;">—</td>';
+                    html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.count)}</td>`;
+                    html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.count)}</td>`;
+                } else {
+                    html += `<td style="padding: 2px 4px; text-align: center;">${formatters_js.formatKMB(row.count)}</td>`;
+                    html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.askPrice)}</td>`;
+                    html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.bidPrice)}</td>`;
+                }
+                html += '</tr>';
+            }
+        }
+
+        html += '</table>';
+        html += '</div>';
+
+        // Time estimate
+        const totalSeconds = optimalStrategy.totalTime;
+
+        if (totalSeconds < 60) {
+            // Less than 1 minute: show seconds
+            html += '<div>Time: ~' + Math.round(totalSeconds) + ' seconds</div>';
+        } else if (totalSeconds < 3600) {
+            // Less than 1 hour: show minutes
+            const minutes = Math.round(totalSeconds / 60);
+            html += '<div>Time: ~' + minutes + ' minutes</div>';
+        } else if (totalSeconds < 86400) {
+            // Less than 1 day: show hours
+            const hours = (totalSeconds / 3600).toFixed(1);
+            html += '<div>Time: ~' + hours + ' hours</div>';
+        } else {
+            // 1 day or more: show days
+            const days = (totalSeconds / 86400).toFixed(1);
+            html += '<div>Time: ~' + days + ' days</div>';
+        }
+
+        if (xpPerHour !== null && xpPerHour > 0) {
+            html += '<div style="margin-top: 4px;">XP/hr: ' + formatters_js.formatLargeNumber(xpPerHour) + '</div>';
+        }
+        if (totalExpectedXP !== null && totalExpectedXP > 0) {
+            html += '<div>Total XP: ~' + formatters_js.formatLargeNumber(totalExpectedXP) + '</div>';
+        }
+
+        // Target hourly rate / minimum sell price — only when a rate is configured.
+        // The rate is a text setting, so it is read with getSettingValue(); getSetting() only
+        // ever answers with a boolean and would silently parse to 0 here.
+        const hourlyRate = numberParser_js.parseItemCount(config.getSettingValue('itemTooltip_enhancingHourlyRate', ''), 0);
+        if (hourlyRate > 0) {
+            const includeTax = config.getSetting('itemTooltip_enhancingHourlyRateTax');
+            const minSellAsk = calculateMinimumSellPrice(totalAsk, optimalStrategy.totalTime, hourlyRate, includeTax);
+            const minSellBid = calculateMinimumSellPrice(totalBid, optimalStrategy.totalTime, hourlyRate, includeTax);
+
+            const enhancedPrices = marketData_js.getItemPrices(itemHrid, targetLevel);
+            const priceColor = (price, minimum) =>
+                price > 0 ? (price >= minimum ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS) : '';
+            const askColor = priceColor(enhancedPrices?.ask, minSellAsk);
+            const bidColor = priceColor(enhancedPrices?.bid, minSellBid);
+
+            html += '<div style="margin-top: 4px;">Your rate: ' + formatters_js.formatKMB(hourlyRate) + '/hr</div>';
+            html += '<div>Minimum sell: ';
+            html += `<span${askColor ? ` style="color: ${askColor};"` : ''}>${formatters_js.formatKMB(minSellAsk)}</span>(ask)/`;
+            html += `<span${bidColor ? ` style="color: ${bidColor};"` : ''}>${formatters_js.formatKMB(minSellBid)}</span>(bid)`;
+            html += '</div>';
+        }
+
+        // A quiet note, not a warning: these numbers are only as true as the stats behind them,
+        // and a hand-entered stat is the one place they can quietly stop describing this character
+        if (paramsNote) {
+            html += `<div style="margin-top: 4px; font-size: 0.8em; opacity: 0.6;">${paramsNote}</div>`;
+        }
+
+        html += '</div>'; // Close margin-left div
+        html += '</div>'; // Close main container
+
+        return html;
     }
 
     /**
@@ -69374,6 +70435,28 @@ ${starCSS}
                 cursor: pointer;">Calculate</button>
         `;
 
+            // "Enhance any item" — a route for an item you neither own nor see
+            // listed. The route math needs no market data (base item falls back to
+            // its crafting cost), so any enhanceable item can be quoted here.
+            const routeSection = document.createElement('div');
+            routeSection.style.cssText = 'padding: 8px 14px; border-bottom: 1px solid #222; flex-shrink: 0;';
+            routeSection.innerHTML = `
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <label style="color:#888; font-size:12px;">Enhance any item</label>
+                <input id="mwi-xph-item" list="mwi-xph-item-list" placeholder="type an item name…"
+                    style="flex:1; min-width:140px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
+                    border-radius:4px; padding:3px 8px; font-size:12px;">
+                <datalist id="mwi-xph-item-list"></datalist>
+                <label style="color:#888; font-size:12px;">to +</label>
+                <input id="mwi-xph-item-target" type="number" min="1" max="20" value="${defaultMax}" style="${inputStyle}">
+                <button id="mwi-xph-item-route" style="
+                    background: rgba(0,200,150,0.2); color: #00c896; border: 1px solid rgba(0,200,150,0.4);
+                    border-radius: 6px; padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;">Route</button>
+            </div>
+            <div id="mwi-xph-item-route-out" style="display:none; margin-top:8px; max-height:240px; overflow-y:auto;
+                background:rgba(0,0,0,0.25); border:1px solid #222; border-radius:6px; padding:8px; font-size:12px;"></div>
+        `;
+
             // Table container
             const tableContainer = document.createElement('div');
             tableContainer.style.cssText = 'overflow-y: auto; flex: 1;';
@@ -69403,6 +70486,7 @@ ${starCSS}
 
             this.panel.appendChild(header);
             this.panel.appendChild(controls);
+            this.panel.appendChild(routeSection);
             this.panel.appendChild(tableContainer);
             this.panel.appendChild(status);
             document.body.appendChild(this.panel);
@@ -69419,6 +70503,68 @@ ${starCSS}
             ['name', 'xph', 'gpx', 'cphr'].forEach((col) => {
                 this.panel.querySelector(`#mwi-xph-th-${col}`)?.addEventListener('click', () => this._sort(col));
             });
+
+            const itemInput = this.panel.querySelector('#mwi-xph-item');
+            itemInput.addEventListener('focus', () => this._populateItemList());
+            this.panel.querySelector('#mwi-xph-item-route').addEventListener('click', () => this._showItemRoute());
+            itemInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') this._showItemRoute();
+            });
+        }
+
+        /**
+         * Fill the item datalist with every enhanceable item, once. Built lazily on
+         * first focus because game data may not be loaded when the panel is created.
+         * @private
+         */
+        _populateItemList() {
+            if (this._itemsByName) return;
+            const gameData = dataManager.getInitClientData();
+            const map = gameData?.itemDetailMap;
+            if (!map) return;
+
+            this._itemsByName = new Map();
+            const options = [];
+            for (const [hrid, details] of Object.entries(map)) {
+                if (!details.enhancementCosts?.length || !details.name) continue;
+                this._itemsByName.set(details.name.toLowerCase(), hrid);
+                options.push(`<option value="${details.name.replace(/"/g, '&quot;')}"></option>`);
+            }
+            const list = this.panel?.querySelector('#mwi-xph-item-list');
+            if (list) list.innerHTML = options.join('');
+        }
+
+        /**
+         * Compute and render the enhancing route for the typed item and target level,
+         * regardless of ownership or market listings.
+         * @private
+         */
+        _showItemRoute() {
+            const out = this.panel?.querySelector('#mwi-xph-item-route-out');
+            if (!out) return;
+            out.style.display = 'block';
+
+            this._populateItemList();
+            const name = (this.panel.querySelector('#mwi-xph-item')?.value || '').trim().toLowerCase();
+            const hrid = this._itemsByName?.get(name);
+            if (!hrid) {
+                out.innerHTML = '<div style="color:#888;">Type an enhanceable item name and pick it from the list.</div>';
+                return;
+            }
+
+            const target = Math.max(
+                1,
+                Math.min(20, parseInt(this.panel.querySelector('#mwi-xph-item-target')?.value, 10) || 1)
+            );
+            let data = null;
+            try {
+                data = calculateEnhancementPath(hrid, target, getTooltipEnhancementParams(hrid));
+            } catch (error) {
+                console.error('[XPHCalculator] Route failed:', error);
+            }
+            out.innerHTML = data
+                ? buildEnhancementTooltipHTML(data)
+                : '<div style="color:#888;">No route available (item not enhanceable, or game data not loaded).</div>';
         }
 
         _setupDrag(header) {

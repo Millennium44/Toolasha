@@ -1,7 +1,7 @@
 /**
  * Toolasha Core Library
  * Core infrastructure and API clients
- * Version: 2.97.0
+ * Version: 2.98.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -1720,6 +1720,13 @@
                     type: 'checkbox',
                     default: true,
                     help: 'Shows whether ability is learned and current level/progress on ability book tooltips',
+                },
+                itemTooltip_abilityFreshCost: {
+                    id: 'itemTooltip_abilityFreshCost',
+                    label: 'Show fresh-to-level cost on ability hovers',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'When hovering an ability (in a loadout or ability slot, including on another player’s profile), adds what it would cost to buy that ability up to the level shown. Uses the level in the tooltip, so it is correct on other players’ profiles too.',
                 },
                 itemTooltip_enhancementMilestones: {
                     id: 'itemTooltip_enhancementMilestones',

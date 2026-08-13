@@ -1,11 +1,11 @@
 /**
  * Toolasha Combat Simulator Library
  * The battle engine, shared by every feature that simulates a fight
- * Version: 2.97.0
+ * Version: 2.98.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, domObserver, dataManager, marketAPI, tokenValuation_js, marketData_js, profitHelpers_js, evWorkerManager_js, bundleBridge_js, storage, webSocketHook, timerRegistry_js, chunkedHistory_js, gameLookups_js, materialCalculator_js, abilityCostCalculator_js, formatters_js, overlayFormat_js, marketplaceTabs_js, simplePanel_js, overlayRows_js, roomSkills_js, equipmentSavings_js, characterKey_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, watchlist_js, dropSources_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, teaParser_js, numberParser_js, dungeonKeys_js, domObserverHelpers_js, backgroundWork_js, marketplaceAutofill_js, allZonesSnapshot_js, liquidityCap_js, partyLint_js, progressEta_js, csvExport_js, dungeonLevelGap_js, mobile_js, equipmentParser_js, combatLevel_js, guildCreditPricing_js) {
+(function (config, domObserver, dataManager, marketAPI, tokenValuation_js, marketData_js, profitHelpers_js, evWorkerManager_js, bundleBridge_js, storage, webSocketHook, timerRegistry_js, chunkedHistory_js, gameLookups_js, materialCalculator_js, abilityCostCalculator_js, formatters_js, overlayFormat_js, marketplaceTabs_js, simplePanel_js, overlayRows_js, roomSkills_js, equipmentSavings_js, characterKey_js, panelZIndex_js, floatingPanel_js, panelGeometry_js, watchlist_js, dropSources_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, mobile_js, teaParser_js, numberParser_js, dungeonKeys_js, domObserverHelpers_js, backgroundWork_js, marketplaceAutofill_js, allZonesSnapshot_js, liquidityCap_js, partyLint_js, progressEta_js, csvExport_js, dungeonLevelGap_js, equipmentParser_js, combatLevel_js, guildCreditPricing_js) {
     'use strict';
 
     /**
@@ -11117,12 +11117,11 @@
      * What the guide says a loadout should be casting, resolved against game data.
      *
      * `offers` is what may be swapped *in*: every ability in the archetype's set
-     * that is not already equipped, or — in signature-only mode — just the aura
-     * group and the signature group, which are the two decisions that define the
-     * build. `memberOf` always covers the *whole* set regardless of that mode, and
-     * is what the generator uses to tell an on-guide ability from an off-guide one:
-     * without it, signature-only mode would happily propose replacing the Frenzy
-     * the guide asked for.
+     * that is not already equipped, or — in aura-only mode — just the aura group,
+     * which is the single decision that mode is about. `memberOf` always covers the
+     * *whole* set regardless of that mode, and is what the generator uses to tell an
+     * on-guide ability from an off-guide one: without it, aura-only mode would
+     * happily propose replacing the Frenzy the guide asked for.
      *
      * Returns null when the archetype cannot be established, and also when none of
      * the guide's abilities exist in the game data at all — a guide that resolves
@@ -11132,13 +11131,13 @@
      * @param {Object} playerDTO - Player DTO with equipment and abilities
      * @param {Object} gameData - Game data payload
      * @param {Object} [options]
-     * @param {boolean} [options.signatureOnly=false] - Restrict `offers` to the aura
-     *   and signature groups
+     * @param {boolean} [options.auraOnly=false] - Restrict `offers` to the aura
+     *   group only (historical option name; the UI calls it "Aura only")
      * @returns {{archetype: string, label: string, offers: string[],
-     *   memberOf: Map<string, number>, signatureOnly: boolean}|null}
+     *   memberOf: Map<string, number>, auraOnly: boolean}|null}
      */
     function buildGuidePlan(playerDTO, gameData, options = {}) {
-        const { signatureOnly = false } = options;
+        const { auraOnly = false } = options;
         const key = detectArchetype(playerDTO, gameData);
         const archetype = key ? BUILD_GUIDE[key] : null;
         if (!archetype) return null;
@@ -11159,7 +11158,9 @@
         if (memberOf.size === 0) return null;
 
         const equipped = new Set((playerDTO?.abilities || []).filter((ability) => ability?.hrid).map((a) => a.hrid));
-        const wanted = signatureOnly ? [resolved[0], resolved[resolved.length - 1]] : resolved;
+        // auraOnly is the historical flag name; it now restricts offers to the
+        // aura group alone (resolved[0]) — the "Aura only" UI toggle.
+        const wanted = auraOnly ? [resolved[0]] : resolved;
         // An empty `offers` is a real answer, and not the same as a null plan: a
         // loadout already running the whole guide has nothing to swap, and falling
         // back to every-ability there would answer a question the guide has already
@@ -11167,7 +11168,7 @@
         // hands back null.
         const offers = [...new Set(wanted.flat())].filter((hrid) => !equipped.has(hrid));
 
-        return { archetype: key, label: archetype.label, offers, memberOf, signatureOnly };
+        return { archetype: key, label: archetype.label, offers, memberOf, auraOnly };
     }
 
     /**
@@ -26744,7 +26745,7 @@
      *   run in favour of Puncture.
      *
      * Group membership is always read from the archetype's *whole* set, never from
-     * the signature-only subset — otherwise signature-only mode would treat every
+     * the aura-only subset — otherwise aura-only mode would treat every
      * non-signature guide ability as off-guide and offer to replace it.
      *
      * @param {Object} guide - From `buildGuidePlan`
@@ -26774,10 +26775,9 @@
      * @param {Object} playerDTO - Player DTO with abilities
      * @param {Object} gameData - Game data payload
      * @param {Object} guide - From `buildGuidePlan`
-     * @param {string} playerStyle - From `getPlayerCombatStyle`
      * @param {Array} candidates - Candidate list (mutated)
      */
-    function addGuideEmptySlotCandidates(playerDTO, gameData, guide, playerStyle, candidates) {
+    function addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates) {
         const abilities = playerDTO.abilities || [];
         const equipped = new Set(abilities.filter((a) => a).map((a) => a.hrid));
         const specialSlotFree = abilities.length > 0 && !abilities[0];
@@ -26788,7 +26788,9 @@
             if (!abDetail || equipped.has(abHrid)) continue;
             const slotIdx = abDetail.isSpecialAbility ? (specialSlotFree ? 0 : -1) : firstFreeNormal;
             if (slotIdx < 0) continue;
-            if (!isAbilityCompatible(getAbilityCombatStyle(abDetail), playerStyle)) continue;
+            // No style guard here: every abHrid is a guide offer, and the guide's set
+            // is style-correct by construction (see the swap loop). The heuristic would
+            // wrongly drop a universal aura into an empty special slot.
 
             const level = Math.max(1, ownedAbility(abHrid)?.level || 0);
             const swapName = abDetail.name || abHrid.split('/').pop();
@@ -26819,7 +26821,7 @@
      * @param {string} [abilityLevelType='increment'] - 'increment' (add N levels) or 'target' (absolute level)
      * @param {Object} [communityBuffs=null] - Configured community buffs, for the 'community_buff' set
      * @param {number} [guildShrineTargetLevel=0] - Absolute shrine buff level to buy up to; 0 means one level up
-     * @param {Object} [options] - `{ signatureSwapsOnly, houseWinRateOnly, communityBuffTargetLevel,
+     * @param {Object} [options] - `{ auraSwapsOnly, houseWinRateOnly, communityBuffTargetLevel,
      *   guildShrineTargets }`. `houseWinRateOnly` narrows the house set to rooms that can move a
      *   fight's outcome, for an analysis ranked on win rate alone; `communityBuffTargetLevel` buys
      *   several buff levels at once; `guildShrineTargets` is a per-shrine target map that takes
@@ -27180,7 +27182,7 @@
             // which is the behaviour this set has always had.
             const guide =
                 mode === 'ability_swap'
-                    ? buildGuidePlan(playerDTO, gameData, { signatureOnly: Boolean(options.signatureSwapsOnly) })
+                    ? buildGuidePlan(playerDTO, gameData, { auraOnly: Boolean(options.auraSwapsOnly) })
                     : null;
             const abilityTargetsMap =
                 abilityTargets && typeof abilityTargets === 'object' && Object.keys(abilityTargets).length > 0
@@ -27235,10 +27237,19 @@
                         if (abDetail.isSpecialAbility && slotIdx !== 0) continue;
                         if (!abDetail.isSpecialAbility && slotIdx === 0) continue;
                         if (abHrid === '/abilities/promote') continue;
-                        if (guide && !guideSwapAllowed(guide, ability.hrid, abHrid)) continue;
-
-                        const abStyle = getAbilityCombatStyle(abDetail);
-                        if (!isAbilityCompatible(abStyle, playerStyle)) continue;
+                        // The guide's own set is style-correct by construction — each
+                        // archetype lists its own style's abilities plus the universal
+                        // Critical Aura — so on the guide path trust guideSwapAllowed and
+                        // skip the style heuristic. That heuristic reads style from buff
+                        // data and mis-vetoes a universal aura whose buffs happen to look
+                        // like another style (Critical Aura on a magic build), silently
+                        // dropping the aura swap. Only the every-ability fallback, which
+                        // offers the whole game, needs the compatibility guard.
+                        if (guide) {
+                            if (!guideSwapAllowed(guide, ability.hrid, abHrid)) continue;
+                        } else if (!isAbilityCompatible(getAbilityCombatStyle(abDetail), playerStyle)) {
+                            continue;
+                        }
 
                         const swapName = abDetail.name || abHrid.split('/').pop();
                         candidates.push({
@@ -27261,7 +27272,7 @@
                 }
             }
 
-            if (guide) addGuideEmptySlotCandidates(playerDTO, gameData, guide, playerStyle, candidates);
+            if (guide) addGuideEmptySlotCandidates(playerDTO, gameData, guide, candidates);
         }
 
         if (mode === 'combat_level') {
@@ -27339,7 +27350,12 @@
                 '(or tick Task Fight in the combat sim panel) to see the on-task number.';
         }
 
+        // The crafting-chain walk only reaches base path boots; add their refined
+        // siblings so both appear, before the level passes normalize everything.
+        addRefinedPathBootCandidates(candidates, gameData);
         candidates.forEach(clampRefinedCandidateToMinLevel);
+        // After the refined +10 floor, so refined path boots land at +7, not +10.
+        candidates.forEach(applyPathBootsSimLevel);
         return candidates;
     }
 
@@ -28242,6 +28258,106 @@
         candidate.description = candidate.description.replace(/\(\+\d+\)$/, `(${levelText})`);
     }
 
+    /** Path boots are obtainable only at +7, so a proposed swap to them is simmed and priced at +7. */
+    const PATH_BOOTS_BASE_HRIDS = new Set([
+        '/items/pathbreaker_boots',
+        '/items/pathfinder_boots',
+        '/items/pathseeker_boots',
+    ]);
+    const PATH_BOOTS_SIM_LEVEL = 7;
+
+    /** Whether an item hrid is a path boot (base or refined). */
+    function isPathBoot(hrid) {
+        return Boolean(hrid) && PATH_BOOTS_BASE_HRIDS.has(hrid.replace(/_refined$/, ''));
+    }
+
+    /**
+     * Pin a proposed swap to path boots at +7 — their only obtainable level — rather
+     * than inheriting the worn piece's enhancement level (which the tier candidates
+     * do). Set to exactly +7 whether the current piece is above or below it. Runs
+     * after the refined +10 clamp, so refined path boots override that floor down to
+     * +7. Mirrors clampRefinedCandidateToMinLevel's description redraw.
+     * @param {Object} candidate - Candidate from generateCandidates() (mutated in place)
+     */
+    function applyPathBootsSimLevel(candidate) {
+        let changed = false;
+
+        if (
+            candidate.upgradeHrid !== candidate.currentHrid &&
+            isPathBoot(candidate.upgradeHrid) &&
+            candidate.upgradeLevel !== PATH_BOOTS_SIM_LEVEL
+        ) {
+            candidate.upgradeLevel = PATH_BOOTS_SIM_LEVEL;
+            changed = true;
+        }
+
+        if (candidate.addedSlots) {
+            for (const added of Object.values(candidate.addedSlots)) {
+                if (isPathBoot(added?.hrid) && (added.enhancementLevel || 0) !== PATH_BOOTS_SIM_LEVEL) {
+                    added.enhancementLevel = PATH_BOOTS_SIM_LEVEL;
+                    changed = true;
+                }
+            }
+        }
+
+        if (!changed) return;
+
+        if (candidate.swapLabel) {
+            candidate.description = redescribeSwap(candidate);
+            return;
+        }
+
+        const levels = candidate.addedSlots
+            ? Object.values(candidate.addedSlots).map((item) => item.enhancementLevel || 0)
+            : [candidate.upgradeLevel];
+        const unique = [...new Set(levels)];
+        const levelText = unique.length === 1 ? `+${unique[0]}` : levels.map((l) => `+${l}`).join('/');
+        candidate.description = candidate.description.replace(/\(\+\d+\)$/, `(${levelText})`);
+    }
+
+    /**
+     * Offer the refined variant of any base path-boot swap. The crafting-chain walk
+     * is single-hop, so from a non-path boot it reaches the base path boot but never
+     * its refined form (refined is crafted from the base, two hops away). For each
+     * base path-boot candidate we add a sibling targeting `<hrid>_refined`, so both
+     * the base and refined boots appear as options. Level is left at the base
+     * candidate's; the +7 pass that follows pins it, and the +10 refined floor
+     * before it is overridden there. Mutates `candidates` in place.
+     * @param {Array} candidates - Candidates from generateCandidates()
+     * @param {Object} gameData - Game data (for the refined item's name/existence)
+     */
+    function addRefinedPathBootCandidates(candidates, gameData) {
+        const additions = [];
+        for (const candidate of candidates) {
+            const baseHrid = candidate.upgradeHrid;
+            if (!baseHrid || baseHrid.endsWith('_refined') || !PATH_BOOTS_BASE_HRIDS.has(baseHrid)) continue;
+
+            const refinedHrid = `${baseHrid}_refined`;
+            const refinedItem = gameData?.itemDetailMap?.[refinedHrid];
+            if (!refinedItem) continue;
+
+            // Don't double up if a refined swap for the same worn boot already exists.
+            const already = candidates
+                .concat(additions)
+                .some((c) => c.upgradeHrid === refinedHrid && c.currentHrid === candidate.currentHrid);
+            if (already) continue;
+
+            const refinedName = refinedItem.name || refinedHrid.split('/').pop();
+            const fromName = candidate.swapLabel?.from || candidate.currentHrid.split('/').pop();
+            additions.push({
+                slot: candidate.slot,
+                currentHrid: candidate.currentHrid,
+                currentLevel: candidate.currentLevel,
+                upgradeHrid: refinedHrid,
+                upgradeLevel: candidate.upgradeLevel,
+                swapLabel: { from: fromName, to: [refinedName] },
+                description: swapDescription(fromName, candidate.currentLevel, [refinedName], [candidate.upgradeLevel]),
+                type: 'tier',
+            });
+        }
+        candidates.push(...additions);
+    }
+
     /**
      * Calculate the total net gold cost for a candidate upgrade.
      * Uses market prices as primary source (buy upgraded - sell current).
@@ -28702,7 +28818,7 @@
      * Run the full upgrade analysis: baseline sim + one sim per candidate.
      * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeModes,
      *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
-     *   houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets, optimizeFood, signatureSwapsOnly }
+     *   houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets, optimizeFood, auraSwapsOnly }
      * @param {Function} onProgress - Called with { current, total, description }
      * @param {Object} [options] - { abortSignal: () => boolean }
      * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
@@ -28729,7 +28845,7 @@
             guildShrineTargets = null,
             communityBuffTargetLevel = 0,
             optimizeFood = false,
-            signatureSwapsOnly = false,
+            auraSwapsOnly = false,
             extraCandidates = [],
         } = params;
         const { abortSignal } = options;
@@ -28759,7 +28875,7 @@
                 houseTargets,
                 communityBuffs,
                 guildShrineTargetLevel,
-                { signatureSwapsOnly, communityBuffTargetLevel, guildShrineTargets }
+                { auraSwapsOnly, communityBuffTargetLevel, guildShrineTargets }
             )
         );
         // Candidates the caller asked for by name, alongside whatever the mode
@@ -29670,7 +29786,7 @@
      * @param {Array} [params.labyrinthCombatBuffs] - Combat buffs from labyrinth upgrades
      * @param {string} params.upgradeMode - 'equipment', 'ability_level', or 'ability_swap'
      * @param {number} [params.abilityTargetLevel] - Target ability level
-     * @param {boolean} [params.signatureSwapsOnly] - Restrict ability swaps to the build guide's
+     * @param {boolean} [params.auraSwapsOnly] - Restrict ability swaps to the build guide's
      *   aura options and the archetype's signature ability
      * @param {number} [params.guildShrineTargetLevel] - One level for every shrine buff
      * @param {Object} [params.guildShrineTargets] - buffHrid → target level; takes precedence
@@ -29696,7 +29812,7 @@
             skipBackSlot,
             combatLevelTargets,
             abilityTargets,
-            signatureSwapsOnly = false,
+            auraSwapsOnly = false,
             houseTargetLevel = 0,
             houseTargets = null,
             guildShrineTargetLevel = 0,
@@ -29736,7 +29852,7 @@
                 // This table ranks win rate and Gold/1% and nothing else, so a room
                 // whose only combat-facing buffs are the global wisdom and rare find
                 // every room grants has nothing it could move here
-                { signatureSwapsOnly, houseWinRateOnly: true, guildShrineTargets }
+                { auraSwapsOnly, houseWinRateOnly: true, guildShrineTargets }
             )
         );
 
@@ -30497,17 +30613,17 @@
      *
      * @param {Array<Object>} fights - `[{ dto, loadoutName }]`
      * @param {Object} gameData - Game data payload
-     * @param {boolean} signatureOnly - Whether the run restricted swaps to aura + signature
+     * @param {boolean} auraOnly - Whether the run restricted swaps to the aura group only
      * @returns {Array<{loadoutName: string, archetype: string|null, label: string|null}>}
      */
-    function summariseArchetypes(fights, gameData, signatureOnly) {
+    function summariseArchetypes(fights, gameData, auraOnly) {
         const seen = new Map();
         for (const fight of fights || []) {
             const loadoutName = fight?.loadoutName || 'Loadout';
             if (seen.has(loadoutName)) continue;
             let plan = null;
             try {
-                plan = buildGuidePlan(fight.dto, gameData, { signatureOnly });
+                plan = buildGuidePlan(fight.dto, gameData, { auraOnly });
             } catch (error) {
                 // A guide that cannot be read is the same answer as no archetype,
                 // and is never worth failing a whole analysis over
@@ -30663,7 +30779,7 @@
      * always simulated.
      *
      * @param {Object} params - { fights, crates, hours, communityBuffs, labyrinthCombatBuffs, abilityTargetLevel,
-     *   combatLevelTargets, signatureSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel,
+     *   combatLevelTargets, auraSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel,
      *   guildShrineTargets, tokenLevels }
      *   where fights = [{ monsterHrid, monsterName, roomLevel, dto, loadoutName }]
      * @param {Function} onProgress - Called with { current, total, description }, and
@@ -30684,7 +30800,7 @@
             combatLevelTargets,
             abilityTargets,
             modes = ['combat_level'],
-            signatureSwapsOnly = false,
+            auraSwapsOnly = false,
             houseTargetLevel = 0,
             houseTargets = null,
             guildShrineTargetLevel = 0,
@@ -30750,7 +30866,7 @@
                     // Every row in this table is ranked on attempts to clear, so a
                     // house room that can only move XP or loot is a row that can
                     // only report the sims' own noise
-                    { signatureSwapsOnly, houseWinRateOnly: true, guildShrineTargets }
+                    { auraSwapsOnly, houseWinRateOnly: true, guildShrineTargets }
                 );
                 for (const candidate of fightCandidates) {
                     pool(candidate.type === 'ability_swap' ? pooledSwapCandidate(candidate, gameData) : candidate);
@@ -30777,7 +30893,7 @@
         // back to the wide search — a difference of thousands of simulations and of
         // what the table can be trusted to have looked at. After pooling, nothing in
         // the results says which loadout went which way.
-        const archetypes = modes.includes('ability_swap') ? summariseArchetypes(fights, gameData, signatureSwapsOnly) : [];
+        const archetypes = modes.includes('ability_swap') ? summariseArchetypes(fights, gameData, auraSwapsOnly) : [];
         // Which fights each candidate is actually about. A combat level is every
         // fight; a piece of gear is only the fights whose loadout wears the piece it
         // replaces — installing a melee sword into a magic loadout measures a
@@ -34372,14 +34488,14 @@
     const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
 
     /**
-     * Storage key for the Ability Swaps "Signature only" sub-option.
+     * Storage key for the Ability Swaps "Aura only" sub-option.
      *
      * Remembered with the candidate sets themselves, and for the same reason: it is
      * how you want swaps ranked rather than something about one particular run, and
      * an unremembered narrowing means the next Analyze quietly costs several times
      * as much.
      */
-    const SWAP_SIGNATURE_ONLY_KEY = 'combatSimSwapSignatureOnly';
+    const SWAP_AURA_ONLY_KEY = 'combatSimSwapAuraOnly';
 
     /**
      * Storage key for the all-zones Max-tier Food toggle.
@@ -35544,9 +35660,9 @@
         ability_swap: `
         <span data-mode-options="ability_swap" style="display:none; align-items:center; gap:4px;">
             <span style="color:#2a2a4a;">|</span>
-            <label id="mwi-csim-swap-signature-label" title="Sim only the swaps that define the build: the aura the guide offers for your archetype (both sides of its OR), and the archetype's signature ability — Puncture for a spear, Maim for a sword, Shield Bash for a mace, Shield Bash or Retribution for a wark, Pestilent Shot for a bow, Steady Shot or Silencing Shot for a crossbow, Fireball, Water Strike or Entangle for magic. The rest of the guide's set is left out, which is most of the run." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
-                <input type="checkbox" id="mwi-csim-swap-signature-only" style="margin:0; cursor:pointer;">
-                Signature only
+            <label id="mwi-csim-swap-aura-label" title="Sim only the aura swap: the guide's aura group for your archetype, both sides of its OR — Critical Aura or Mystic Aura for magic, Critical Aura or Fierce Aura for melee/ranged, Invincible for a wark. Everything else in the guide's set is left out, which is most of the run." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-csim-swap-aura-only" style="margin:0; cursor:pointer;">
+                Aura only
             </label>
         </span>`,
         combat_level: `
@@ -35726,8 +35842,8 @@
             // All Zones state
             this._allZonesMode = null; // null = off, 'group' or 'solo'
             this._allZonesResults = null; // Array of {zone, simResult, revenue}
-            this._allZonesSortCol = null;
-            this._allZonesSortAsc = true;
+            this._allZonesSortCol = 'score'; // default the Results table to score, descending
+            this._allZonesSortAsc = false;
             this._earlyExitEnabled = true; // default on
             this._maxTierFoodEnabled = false; // sim all zones on the best food of each kind you run
             // What the displayed results were actually run on, so a re-sort keeps
@@ -36281,11 +36397,11 @@
                     this._saveUpgradeModes();
                 });
             });
-            this.panel.querySelector('#mwi-csim-swap-signature-only')?.addEventListener('change', () => {
-                this._saveSwapSignatureOnly();
+            this.panel.querySelector('#mwi-csim-swap-aura-only')?.addEventListener('change', () => {
+                this._saveSwapAuraOnly();
             });
             this._restoreUpgradeModes();
-            this._restoreSwapSignatureOnly();
+            this._restoreSwapAuraOnly();
             this._loadUpgradeColumnPrefs();
             this._loadMaxTierFoodPref();
             this._restorePanelGeometry();
@@ -36780,6 +36896,7 @@
 
                     return {
                         zone: r.zone.name,
+                        zoneHrid: r.zone.zoneHrid || r.zone.hrid,
                         tier: r.zone.difficultyTier,
                         encounters,
                         deaths: playerDeaths,
@@ -36903,7 +37020,11 @@
                                 const marks =
                                     (row === best.xp ? badge('best XP', '#8ab4f8') : '') +
                                     (row === best.profit ? badge('best profit', '#4caf50') : '');
-                                display = `${val}${marks}`;
+                                // Set this zone + tier as the Configure target
+                                const targetBtn = row.zoneHrid
+                                    ? `<button class="mwi-csim-target-btn" data-hrid="${row.zoneHrid}" data-tier="${row.tier}" title="Set as Configure target" style="margin-left:6px; background:rgba(74,158,255,0.15); border:1px solid rgba(74,158,255,0.4); color:#8ab4f8; border-radius:4px; padding:0 5px; font-size:10px; line-height:1.4; cursor:pointer;">&#9678;</button>`
+                                    : '';
+                                display = `${val}${marks}${targetBtn}`;
                                 style += ' color:#e0e0e0; text-align:left;';
                             } else if (col.key === 'tier') {
                                 display = `T${val}`;
@@ -37017,6 +37138,43 @@
                     this._displayAllZonesResults(zoneResults, hours, gameData);
                 });
             });
+
+            // Each row's ⌖ button sets that zone + tier as the Configure target and
+            // jumps there. Reattached on every re-render, like the sort listeners.
+            container.querySelectorAll('.mwi-csim-target-btn').forEach((btn) => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this._targetZoneFromResults(btn.dataset.hrid, parseInt(btn.dataset.tier, 10) || 0);
+                });
+            });
+        }
+
+        /**
+         * Point the Configure tab at a single zone + tier chosen from the all-zones
+         * Results table, leaving all-zones mode so the single-zone selects show.
+         * @param {string} zoneHrid
+         * @param {number} tier
+         * @private
+         */
+        _targetZoneFromResults(zoneHrid, tier) {
+            if (!zoneHrid) return;
+
+            // The Results table only exists after an all-zones run, which hides the
+            // single-zone selects — clear that mode so they come back.
+            this._allZonesMode = null;
+            const groupBox = this.panel.querySelector('#mwi-csim-allzones-group');
+            const soloBox = this.panel.querySelector('#mwi-csim-allzones-solo');
+            if (groupBox) groupBox.checked = false;
+            if (soloBox) soloBox.checked = false;
+            this._updateAllZonesUI();
+
+            const zoneSelect = this.panel.querySelector('#mwi-csim-zone');
+            const tierSelect = this.panel.querySelector('#mwi-csim-tier');
+            if (zoneSelect) zoneSelect.value = zoneHrid;
+            this._updateTierDropdown();
+            if (tierSelect) tierSelect.value = String(tier);
+
+            this._switchTab('configure');
         }
 
         /**
@@ -40097,26 +40255,26 @@
         }
 
         /**
-         * Persist the Ability Swaps "Signature only" sub-option.
+         * Persist the Ability Swaps "Aura only" sub-option.
          * @private
          */
-        async _saveSwapSignatureOnly() {
+        async _saveSwapAuraOnly() {
             try {
-                const box = this.panel?.querySelector('#mwi-csim-swap-signature-only');
-                await characterKey_js.writeScoped(SWAP_SIGNATURE_ONLY_KEY, Boolean(box?.checked));
+                const box = this.panel?.querySelector('#mwi-csim-swap-aura-only');
+                await characterKey_js.writeScoped(SWAP_AURA_ONLY_KEY, Boolean(box?.checked));
             } catch (error) {
                 console.error('[CombatSimUI] Failed to save the signature-swap option:', error);
             }
         }
 
         /**
-         * Restore the remembered "Signature only" sub-option.
+         * Restore the remembered "Aura only" sub-option.
          * @private
          */
-        async _restoreSwapSignatureOnly() {
+        async _restoreSwapAuraOnly() {
             try {
-                const saved = await characterKey_js.readScoped(SWAP_SIGNATURE_ONLY_KEY, 'settings', false);
-                const box = this.panel?.querySelector('#mwi-csim-swap-signature-only');
+                const saved = await characterKey_js.readScoped(SWAP_AURA_ONLY_KEY, 'settings', false);
+                const box = this.panel?.querySelector('#mwi-csim-swap-aura-only');
                 if (box) box.checked = Boolean(saved);
             } catch (error) {
                 console.error('[CombatSimUI] Failed to restore the signature-swap option:', error);
@@ -40233,9 +40391,9 @@
                 const abilityTargets = upgradeModes.includes('ability_level')
                     ? this._getAbilityTargets('#mwi-csim-ability-targets')
                     : null;
-                const signatureSwapsOnly =
+                const auraSwapsOnly =
                     upgradeModes.includes('ability_swap') &&
-                    Boolean(this.panel.querySelector('#mwi-csim-swap-signature-only')?.checked);
+                    Boolean(this.panel.querySelector('#mwi-csim-swap-aura-only')?.checked);
                 const results = await runUpgradeAnalysis(
                     {
                         playerDTOs,
@@ -40257,7 +40415,7 @@
                         guildShrineTargetLevel,
                         guildShrineTargets,
                         communityBuffTargetLevel,
-                        signatureSwapsOnly,
+                        auraSwapsOnly,
                     },
                     ({ current, total, description }) => {
                         if (this._upgradeAborted) return;
@@ -43432,7 +43590,7 @@
      * unremembered narrowing means the next Analyze quietly costs several times as
      * much across a whole labyrinth.
      */
-    const UPGRADE_SWAP_SIGNATURE_KEY = 'labSimSwapSignatureOnly';
+    const UPGRADE_SWAP_AURA_KEY = 'labSimSwapAuraOnly';
 
     /**
      * Labyrinth token levels the Configure tab is simulating under.
@@ -43571,9 +43729,9 @@
         ability_swap: `
         <span id="mwi-labsim-swap-group" data-lab-mode-options="ability_swap" style="display:none; align-items:center; gap:4px;">
             <span style="color:#2a2a4a;">|</span>
-            <label id="mwi-labsim-swap-signature-label" title="Sim only the swaps that define the build: the aura the guide offers for the loadout's archetype (both sides of its OR), and the archetype's signature ability — Puncture for a spear, Maim for a sword, Shield Bash for a mace, Shield Bash or Retribution for a wark, Pestilent Shot for a bow, Steady Shot or Silencing Shot for a crossbow, Fireball, Water Strike or Entangle for magic. The rest of the guide's set is left out, which is most of the run. Across several fights each loadout is read for its own archetype, so a labyrinth mixing a melee and a magic loadout gets each build's own signature." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
-                <input type="checkbox" id="mwi-labsim-swap-signature-only" style="margin:0; cursor:pointer;">
-                Signature only
+            <label id="mwi-labsim-swap-aura-label" title="Sim only the aura swap: the guide's aura group for the loadout's archetype, both sides of its OR — Critical Aura or Mystic Aura for magic, Critical Aura or Fierce Aura for melee/ranged, Invincible for a wark. Everything else in the guide's set is left out, which is most of the run. Across several fights each loadout is read for its own archetype, so a labyrinth mixing a melee and a magic loadout gets each build's own aura choice." style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="mwi-labsim-swap-aura-only" style="margin:0; cursor:pointer;">
+                Aura only
             </label>
         </span>`,
         combat_level: `
@@ -44502,7 +44660,7 @@
                 this._refreshLevelSourceReadout();
                 void this._saveUpgradeSelection();
             });
-            this.panel.querySelector('#mwi-labsim-swap-signature-only')?.addEventListener('change', () => {
+            this.panel.querySelector('#mwi-labsim-swap-aura-only')?.addEventListener('change', () => {
                 void this._saveUpgradeSelection();
             });
             void this._restoreUpgradeSelection();
@@ -44975,8 +45133,8 @@
                 // Ability Swaps would otherwise save a false over the tick and lose
                 // it the moment the set is checked again
                 await characterKey_js.writeScoped(
-                    UPGRADE_SWAP_SIGNATURE_KEY,
-                    Boolean(this.panel?.querySelector('#mwi-labsim-swap-signature-only')?.checked),
+                    UPGRADE_SWAP_AURA_KEY,
+                    Boolean(this.panel?.querySelector('#mwi-labsim-swap-aura-only')?.checked),
                     'settings'
                 );
             } catch (error) {
@@ -44993,9 +45151,9 @@
          * @returns {boolean}
          * @private
          */
-        _getSignatureSwapsOnly() {
+        _getAuraSwapsOnly() {
             if (!this._getUpgradeDimensions().includes('ability_swap')) return false;
-            return Boolean(this.panel?.querySelector('#mwi-labsim-swap-signature-only')?.checked);
+            return Boolean(this.panel?.querySelector('#mwi-labsim-swap-aura-only')?.checked);
         }
 
         /**
@@ -45006,12 +45164,12 @@
         async _restoreUpgradeSelection() {
             let selection;
             let savedLevelSource = null;
-            let savedSignatureOnly = false;
+            let savedAuraOnly = false;
             try {
                 const savedDimensions = await characterKey_js.readScoped(UPGRADE_DIMENSIONS_KEY, 'settings', null);
                 const savedScope = await characterKey_js.readScoped(UPGRADE_SCOPE_KEY, 'settings', null);
                 savedLevelSource = await characterKey_js.readScoped(UPGRADE_LEVEL_SOURCE_KEY, 'settings', null);
-                savedSignatureOnly = Boolean(await characterKey_js.readScoped(UPGRADE_SWAP_SIGNATURE_KEY, 'settings', false));
+                savedAuraOnly = Boolean(await characterKey_js.readScoped(UPGRADE_SWAP_AURA_KEY, 'settings', false));
                 const legacyMode =
                     savedDimensions === null && savedScope === null
                         ? await characterKey_js.readScoped(LEGACY_UPGRADE_MODE_KEY, 'settings', null)
@@ -45036,8 +45194,8 @@
             if (levelSourceSelect) {
                 levelSourceSelect.value = sanitizeLabLevelSource(savedLevelSource, this._configureLevel());
             }
-            const signatureBox = this.panel.querySelector('#mwi-labsim-swap-signature-only');
-            if (signatureBox) signatureBox.checked = savedSignatureOnly;
+            const signatureBox = this.panel.querySelector('#mwi-labsim-swap-aura-only');
+            if (signatureBox) signatureBox.checked = savedAuraOnly;
             this._populateUpgradeTargets(selection.monsters);
             this._onUpgradeSelectionChanged();
         }
@@ -45850,7 +46008,7 @@
                             combatLevelTargets,
                             abilityTargets,
                             modes: plan.modes,
-                            signatureSwapsOnly: this._getSignatureSwapsOnly(),
+                            auraSwapsOnly: this._getAuraSwapsOnly(),
                             houseTargetLevel,
                             houseTargets,
                             guildShrineTargetLevel,
@@ -45902,7 +46060,7 @@
                         abilityTargetLevel,
                         combatLevelTargets,
                         abilityTargets,
-                        signatureSwapsOnly: this._getSignatureSwapsOnly(),
+                        auraSwapsOnly: this._getAuraSwapsOnly(),
                         // The single-fight analysis takes one mode, and ranks
                         // anything else it is handed beside whatever that mode
                         // generated — which is how a multi-set selection lands in
@@ -45921,7 +46079,7 @@
                                 abilityLevelType,
                                 combatLevelTargets,
                                 abilityTargets,
-                                signatureSwapsOnly: this._getSignatureSwapsOnly(),
+                                auraSwapsOnly: this._getAuraSwapsOnly(),
                                 houseTargetLevel,
                                 houseTargets,
                                 guildShrineTargetLevel,
@@ -45972,7 +46130,7 @@
          * @param {Object} playerDTO - The loadout being analyzed
          * @param {Object} gameData - From `buildGameDataPayload`
          * @param {Object} options - `{ abilityTargetLevel, abilityLevelType, combatLevelTargets, abilityTargets,
-         *   signatureSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets }`
+         *   auraSwapsOnly, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets }`
          * @returns {Array<Object>} Candidates, deduplicated by the analysis itself
          * @private
          */
@@ -45983,7 +46141,7 @@
                 abilityLevelType,
                 combatLevelTargets,
                 abilityTargets,
-                signatureSwapsOnly = false,
+                auraSwapsOnly = false,
                 houseTargetLevel = 0,
                 houseTargets = null,
                 guildShrineTargetLevel = 0,
@@ -46006,7 +46164,7 @@
                         houseTargets,
                         communityBuffs,
                         guildShrineTargetLevel,
-                        { signatureSwapsOnly, houseWinRateOnly: true, communityBuffTargetLevel, guildShrineTargets }
+                        { auraSwapsOnly, houseWinRateOnly: true, communityBuffTargetLevel, guildShrineTargets }
                     )
                 );
             } catch (error) {
@@ -49036,4 +49194,4 @@
 
     console.log('[Toolasha] Sim library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.domObserver, Toolasha.Core.dataManager, Toolasha.Core.marketAPI, Toolasha.Utils.tokenValuation, Toolasha.Utils.marketData, Toolasha.Utils.profitHelpers, Toolasha.Utils.evWorkerManager, Toolasha.Utils.bundleBridge, Toolasha.Core.storage, Toolasha.Core.webSocketHook, Toolasha.Utils.timerRegistry, Toolasha.Utils.chunkedHistory, Toolasha.Utils.gameLookups, Toolasha.Utils.materialCalculator, Toolasha.Utils.abilityCalc, Toolasha.Utils.formatters, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.simplePanel, Toolasha.Utils.overlayRows, Toolasha.Utils.roomSkills, Toolasha.Utils.equipmentSavings, Toolasha.Utils.characterKey, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.dungeonKeys, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.backgroundWork, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.liquidityCap, Toolasha.Utils.partyLint, Toolasha.Utils.progressEta, Toolasha.Utils.csvExport, Toolasha.Utils.dungeonLevelGap, Toolasha.Utils.mobile, Toolasha.Utils.equipmentParser, Toolasha.Utils.combatLevel, Toolasha.Utils.guildCreditPricing);
+})(Toolasha.Core.config, Toolasha.Core.domObserver, Toolasha.Core.dataManager, Toolasha.Core.marketAPI, Toolasha.Utils.tokenValuation, Toolasha.Utils.marketData, Toolasha.Utils.profitHelpers, Toolasha.Utils.evWorkerManager, Toolasha.Utils.bundleBridge, Toolasha.Core.storage, Toolasha.Core.webSocketHook, Toolasha.Utils.timerRegistry, Toolasha.Utils.chunkedHistory, Toolasha.Utils.gameLookups, Toolasha.Utils.materialCalculator, Toolasha.Utils.abilityCalc, Toolasha.Utils.formatters, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.simplePanel, Toolasha.Utils.overlayRows, Toolasha.Utils.roomSkills, Toolasha.Utils.equipmentSavings, Toolasha.Utils.characterKey, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.watchlist, Toolasha.Utils.dropSources, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.mobile, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Utils.dungeonKeys, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.backgroundWork, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.liquidityCap, Toolasha.Utils.partyLint, Toolasha.Utils.progressEta, Toolasha.Utils.csvExport, Toolasha.Utils.dungeonLevelGap, Toolasha.Utils.equipmentParser, Toolasha.Utils.combatLevel, Toolasha.Utils.guildCreditPricing);

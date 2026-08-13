@@ -1,7 +1,7 @@
 /**
  * Toolasha Utils Library
  * All utility modules
- * Version: 2.97.0
+ * Version: 2.98.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -5229,6 +5229,65 @@
     });
 
     /**
+     * Whether this is a touch device, and whether to act like it.
+     *
+     * Two questions, deliberately separate. `hasCoarsePointer` is a fact about the
+     * hardware — the primary pointer cannot hit a 14px target — and things sized
+     * for fingers key on it directly. `isMobileMode` is a *choice* that defaults to
+     * that fact: auto-detection is right until the one person on a touchscreen
+     * laptop wants desktop layouts, and a setting that cannot be overridden is a
+     * bug report waiting to be written.
+     */
+
+
+    /**
+     * Whether the primary pointer is a finger rather than a cursor.
+     *
+     * `pointer: coarse` rather than user-agent sniffing: it asks about the actual
+     * input device instead of guessing from a browser string that lies for
+     * compatibility reasons.
+     *
+     * @returns {boolean}
+     */
+    function hasCoarsePointer() {
+        return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+    }
+
+    /**
+     * Whether features should adjust for a phone-sized, touch-driven screen.
+     *
+     * @returns {boolean}
+     */
+    function isMobileMode() {
+        const mode = config.getSettingValue('mobileMode', 'auto');
+        if (mode === 'on') return true;
+        if (mode === 'off') return false;
+        return hasCoarsePointer();
+    }
+
+    /**
+     * What auto-detection is deciding right now, in a word.
+     *
+     * "Auto-detect" is a promise the settings page cannot keep quietly: on the one
+     * machine where the detection is wrong, the setting looks correct and the
+     * layout does not, and there is nothing on screen to tell the two apart. The
+     * settings UI shows this beside the option so the answer is visible before the
+     * override is needed.
+     *
+     * @returns {string} `'mobile'` or `'desktop'`
+     */
+    function detectedModeLabel() {
+        return hasCoarsePointer() ? 'mobile' : 'desktop';
+    }
+
+    var mobile = /*#__PURE__*/Object.freeze({
+        __proto__: null,
+        detectedModeLabel: detectedModeLabel,
+        hasCoarsePointer: hasCoarsePointer,
+        isMobileMode: isMobileMode
+    });
+
+    /**
      * Number Parser Utility
      * Shared utilities for parsing numeric values from text, including item counts
      */
@@ -6357,65 +6416,6 @@
         setupScrollTooltipDismissal: setupScrollTooltipDismissal,
         waitForElement: waitForElement,
         waitForElements: waitForElements
-    });
-
-    /**
-     * Whether this is a touch device, and whether to act like it.
-     *
-     * Two questions, deliberately separate. `hasCoarsePointer` is a fact about the
-     * hardware — the primary pointer cannot hit a 14px target — and things sized
-     * for fingers key on it directly. `isMobileMode` is a *choice* that defaults to
-     * that fact: auto-detection is right until the one person on a touchscreen
-     * laptop wants desktop layouts, and a setting that cannot be overridden is a
-     * bug report waiting to be written.
-     */
-
-
-    /**
-     * Whether the primary pointer is a finger rather than a cursor.
-     *
-     * `pointer: coarse` rather than user-agent sniffing: it asks about the actual
-     * input device instead of guessing from a browser string that lies for
-     * compatibility reasons.
-     *
-     * @returns {boolean}
-     */
-    function hasCoarsePointer() {
-        return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
-    }
-
-    /**
-     * Whether features should adjust for a phone-sized, touch-driven screen.
-     *
-     * @returns {boolean}
-     */
-    function isMobileMode() {
-        const mode = config.getSettingValue('mobileMode', 'auto');
-        if (mode === 'on') return true;
-        if (mode === 'off') return false;
-        return hasCoarsePointer();
-    }
-
-    /**
-     * What auto-detection is deciding right now, in a word.
-     *
-     * "Auto-detect" is a promise the settings page cannot keep quietly: on the one
-     * machine where the detection is wrong, the setting looks correct and the
-     * layout does not, and there is nothing on screen to tell the two apart. The
-     * settings UI shows this beside the option so the answer is visible before the
-     * override is needed.
-     *
-     * @returns {string} `'mobile'` or `'desktop'`
-     */
-    function detectedModeLabel() {
-        return hasCoarsePointer() ? 'mobile' : 'desktop';
-    }
-
-    var mobile = /*#__PURE__*/Object.freeze({
-        __proto__: null,
-        detectedModeLabel: detectedModeLabel,
-        hasCoarsePointer: hasCoarsePointer,
-        isMobileMode: isMobileMode
     });
 
     /**
