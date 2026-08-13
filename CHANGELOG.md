@@ -2959,6 +2959,21 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## Upstream Changelog
 
+## [2.100.0](https://github.com/Millennium44/Toolasha/compare/v2.99.0...v2.100.0) (2026-08-13)
+
+### Features
+
+- **enhancement:** cost-vs-expected (luck) and worth-it lines in the tracker ([53f126e](https://github.com/Millennium44/Toolasha/commit/53f126ea62aa38a79a5ba29f718eb8dcf10f3ada))
+- **enhancement:** expandable worth-it breakdown + command-palette toggle ([b563071](https://github.com/Millennium44/Toolasha/commit/b5630710b619c00081554dc3061c6b7c0e5fc53a))
+- **enhancement:** idle-duration fix, session merge, on-screen toggle ([62a1430](https://github.com/Millennium44/Toolasha/commit/62a1430e9cfb3509a0d1fbaf7bb5b7aa401b6a87))
+- **loot-log:** enhancing cost, luck and profit summary (opt-in) ([a5fa8fa](https://github.com/Millennium44/Toolasha/commit/a5fa8fabba84db1d2130d73d939202ee551ec342))
+- **loot-log:** merge split enhancing runs + larger summary text ([230c0f3](https://github.com/Millennium44/Toolasha/commit/230c0f389cde5236a0d1579f5eecb2be9468782b))
+- **notifications:** notify when a labyrinth entry regenerates (opt-in) ([3b3332c](https://github.com/Millennium44/Toolasha/commit/3b3332c095a61e825db0c7ca7ed6b1ffd2099738))
+
+### Bug Fixes
+
+- **loot-log:** price enhancing materials like the tracker does ([2afc626](https://github.com/Millennium44/Toolasha/commit/2afc6268690c00c766c29ab7216974fb88e789c6))
+
 ## [2.99.0](https://github.com/Millennium44/Toolasha/compare/v2.98.0...v2.99.0) (2026-08-13)
 
 ### Features
