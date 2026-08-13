@@ -1,7 +1,7 @@
 /**
  * Toolasha Market Library
  * Market, inventory, and economy features
- * Version: 2.99.0
+ * Version: 2.100.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -19490,6 +19490,7 @@
         'notifications_otherCharacterIdle',
         'notifications_communityBuffExpiring',
         'notifications_labyrinthRunFinished',
+        'notifications_labyrinthEntryAvailable',
         'notifications_combatDeath',
         'notifications_enhancementTarget',
         'notifications_trialStarting',

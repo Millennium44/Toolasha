@@ -1,7 +1,7 @@
 /**
  * Toolasha Core Library
  * Core infrastructure and API clients
- * Version: 2.99.0
+ * Version: 2.100.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -1610,6 +1610,13 @@
                     type: 'checkbox',
                     default: true,
                     help: "Places a run's drop value in the distribution of everything those actions could have paid — 50 is typical, 5 means nineteen runs in twenty do better. Only for actions with their own drop table (gathering); combat has its own verdict and production rolls nothing",
+                },
+                lootLogEnhancingCost: {
+                    id: 'lootLogEnhancingCost',
+                    label: 'Loot Log: Enhancing cost, luck and profit',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Adds a summary to enhancing loot-log entries: material and protection cost vs the statistically expected cost (how lucky the run was), and the profit — the finished item’s after-fee value minus the base and what you spent. Reconstructed from the run’s per-level results, assuming the cost-optimal protect level.',
                 },
             },
         },
@@ -3918,6 +3925,13 @@
                     type: 'checkbox',
                     default: false,
                     help: 'Keys on the run going from active to not active, as the server reports it — so it covers every ending: cleared out, ended on a lost fight, or exited on purpose. It does not say which, because the payload does not: there is no outcome or reason field on a labyrinth message, so the alert reports the deepest floor the run reached and leaves it at that. Once per run.',
+                },
+                notifications_labyrinthEntryAvailable: {
+                    id: 'notifications_labyrinthEntryAvailable',
+                    label: 'Notify when a labyrinth entry regenerates',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'The Labyrinth holds up to five entries and regenerates one on a cooldown (a couple of days, less with cooldown upgrades). Fires when the stock rises — the server pushes the new count — or when the projected regeneration instant passes on an open tab, computed from lastLabyrinthTimestamp + labyrinthCooldownHours. Once per regeneration; a full stock is announced once so a regenerated entry does not sit wasted at the cap.',
                 },
                 notifications_combatDeath: {
                     id: 'notifications_combatDeath',

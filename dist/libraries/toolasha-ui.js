@@ -1,11 +1,11 @@
 /**
  * Toolasha UI Library
  * UI enhancements, tasks, skills, and misc features
- * Version: 2.99.0
+ * Version: 2.100.0
  * License: CC-BY-NC-SA-4.0
  */
 
-(function (config, dataManager, domObserver, formatters_js, timerRegistry_js, domObserverHelpers_js, dom_js, storage, panelZIndex_js, floatingPanel_js, panelGeometry_js, characterKey_js, overlayRows_js, opanelConfig_js, choiceDialog_js, mobile_js, overlayLayout_js, settingsSchema_js, toast_js, bundleBridge_js, houseCostCalculator, overlayFormat_js, marketplaceTabs_js, marketData_js, roomSkills_js, marketAPI, numberParser_js, pricingHelper_js, webSocketHook, simplePanel_js, damageAttribution_js, combatDPS, combatStatsDataCollector, combatStatsCalculator_js, damageTracker_js, damageTakenTracker_js, battlePanelMonsters_js, spawnExpectation_js, combatDropModel_js, allZonesSnapshot_js, partyLint_js, csvExport_js, itemNavigation_js, efficiency_js, guildCreditPricing_js, adoptionConsent_js, gameText_js, performanceMonitor, backgroundWork_js, profileCommand_js, selectors_js, progressEta_js, gameServer_js, reactInput_js, actionPanelHelper_js, expectedValueCalculator, gatheringProfit_js, productionProfit_js, profitHelpers_js, actionCalculator_js, equipmentParser_js, profitConstants_js, combatSimRunner_js, combatSimAdapter_js, assetManifest, gameLookups_js, chunkedHistory_js, skillProgress_js, skillHistory_js, deferredLoad_js, combatLevel_js, experienceParser_js, dropLuck_js, marketplaceAutofill_js, cleanupRegistry_js, settingsStorage, scrollBuffValues_js, enhancementConfig_js, chestTally_js, chestImport_js, tokenValuation_js, customPriceOverrides_js, materialCalculator_js, alchemyFees_js, enhancementCalculator_js, teaParser_js, combatSimUI, tableColumns_js, marketHistoryAPI, marketHistoryData_js, consumableTarget_js, consumableForecast_js, keyLedger_js, orderBook_js, shoppingList_js, alchemyProfitCalculator, buffParser_js) {
+(function (config, dataManager, domObserver, formatters_js, timerRegistry_js, domObserverHelpers_js, dom_js, storage, panelZIndex_js, floatingPanel_js, panelGeometry_js, characterKey_js, overlayRows_js, opanelConfig_js, choiceDialog_js, mobile_js, overlayLayout_js, settingsSchema_js, toast_js, enhancementCalculator_js, enhancementConfig_js, profitConstants_js, marketData_js, teaParser_js, numberParser_js, marketAPI, bundleBridge_js, houseCostCalculator, overlayFormat_js, marketplaceTabs_js, roomSkills_js, pricingHelper_js, webSocketHook, simplePanel_js, damageAttribution_js, combatDPS, combatStatsDataCollector, combatStatsCalculator_js, damageTracker_js, damageTakenTracker_js, battlePanelMonsters_js, spawnExpectation_js, combatDropModel_js, allZonesSnapshot_js, partyLint_js, csvExport_js, itemNavigation_js, efficiency_js, guildCreditPricing_js, adoptionConsent_js, gameText_js, performanceMonitor, backgroundWork_js, profileCommand_js, selectors_js, progressEta_js, gameServer_js, reactInput_js, actionPanelHelper_js, expectedValueCalculator, gatheringProfit_js, productionProfit_js, profitHelpers_js, actionCalculator_js, equipmentParser_js, combatSimRunner_js, combatSimAdapter_js, assetManifest, gameLookups_js, chunkedHistory_js, skillProgress_js, skillHistory_js, deferredLoad_js, combatLevel_js, experienceParser_js, dropLuck_js, marketplaceAutofill_js, cleanupRegistry_js, settingsStorage, scrollBuffValues_js, chestTally_js, chestImport_js, tokenValuation_js, customPriceOverrides_js, materialCalculator_js, alchemyFees_js, combatSimUI, tableColumns_js, marketHistoryAPI, marketHistoryData_js, consumableTarget_js, consumableForecast_js, keyLedger_js, orderBook_js, shoppingList_js, alchemyProfitCalculator, buffParser_js) {
     'use strict';
 
     function _interopNamespaceDefault(e) {
@@ -5518,6 +5518,4530 @@
     const overlayTabButton = new OverlayTabButton();
 
     /**
+     * Enhancement Session Data Structure
+     * Represents a single enhancement tracking session for one item
+     */
+
+    /**
+     * Session states
+     */
+    const SessionState = {
+        TRACKING: 'tracking', // Currently tracking enhancements
+        COMPLETED: 'completed'};
+
+    /**
+     * Create a new enhancement session
+     * @param {string} itemHrid - Item HRID being enhanced
+     * @param {string} itemName - Display name of item
+     * @param {number} startLevel - Starting enhancement level
+     * @param {number} targetLevel - Target enhancement level (1-20)
+     * @param {number} protectFrom - Level to start using protection items (0 = never)
+     * @returns {Object} New session object
+     */
+    function createSession(itemHrid, itemName, startLevel, targetLevel, protectFrom = 0) {
+        const now = Date.now();
+
+        return {
+            // Session metadata
+            id: `session_${now}`,
+            state: SessionState.TRACKING,
+            itemHrid,
+            itemName,
+            startLevel,
+            targetLevel,
+            currentLevel: startLevel,
+            protectFrom,
+
+            // Timestamps
+            startTime: now,
+            lastUpdateTime: now,
+            endTime: null,
+
+            // Last attempt tracking (for detecting success/failure)
+            lastAttempt: {
+                attemptNumber: 0,
+                level: startLevel,
+                timestamp: now,
+            },
+
+            // Attempt tracking (per level)
+            // Format: { 1: { success: 5, fail: 3, successRate: 0.625 }, ... }
+            attemptsPerLevel: {},
+
+            // Cost tracking
+            materialCosts: {}, // Format: { itemHrid: { count: 10, totalCost: 50000 } }
+            coinCost: 0,
+            coinCount: 0, // Track number of times coins were spent
+            protectionCost: 0,
+            protectionCount: 0,
+            protectionItemHrid: null, // Track which protection item is being used
+            totalCost: 0,
+
+            // Statistics
+            totalAttempts: 0,
+            totalSuccesses: 0,
+            totalFailures: 0,
+            totalXP: 0, // Total XP gained from enhancements
+            longestSuccessStreak: 0,
+            longestFailureStreak: 0,
+            currentStreak: { type: null, count: 0 }, // 'success' or 'fail'
+
+            // Milestones reached
+            milestonesReached: [], // [5, 10, 15, 20]
+
+            // Enhancement predictions (optional - calculated at session start)
+            predictions: null, // { expectedAttempts, expectedProtections, ... }
+
+            // Counter values when the session was last extended, so validation factors compare the
+            // current leg against the prediction made for it. { totalAttempts, protectionCount }
+            extensionBaseline: null,
+        };
+    }
+
+    /**
+     * Initialize attempts tracking for a level
+     * @param {Object} session - Session object
+     * @param {number} level - Enhancement level
+     */
+    function initializeLevelTracking(session, level) {
+        if (!session.attemptsPerLevel[level]) {
+            session.attemptsPerLevel[level] = {
+                success: 0,
+                fail: 0,
+                successRate: 0,
+            };
+        }
+    }
+
+    /**
+     * Update success rate for a level
+     * @param {Object} session - Session object
+     * @param {number} level - Enhancement level
+     */
+    function updateSuccessRate(session, level) {
+        const levelData = session.attemptsPerLevel[level];
+        if (!levelData) return;
+
+        const total = levelData.success + levelData.fail;
+        levelData.successRate = total > 0 ? levelData.success / total : 0;
+    }
+
+    /**
+     * Record a successful enhancement attempt
+     * @param {Object} session - Session object
+     * @param {number} previousLevel - Level before enhancement (level that succeeded)
+     * @param {number} newLevel - New level after success
+     */
+    function recordSuccess(session, previousLevel, newLevel) {
+        // Initialize tracking if needed for the level that succeeded
+        initializeLevelTracking(session, previousLevel);
+
+        // Record success at the level we enhanced FROM
+        session.attemptsPerLevel[previousLevel].success++;
+        session.totalAttempts++;
+        session.totalSuccesses++;
+
+        // Update success rate for this level
+        updateSuccessRate(session, previousLevel);
+
+        // Update current level
+        session.currentLevel = newLevel;
+
+        // Update streaks
+        if (session.currentStreak.type === 'success') {
+            session.currentStreak.count++;
+        } else {
+            session.currentStreak = { type: 'success', count: 1 };
+        }
+
+        if (session.currentStreak.count > session.longestSuccessStreak) {
+            session.longestSuccessStreak = session.currentStreak.count;
+        }
+
+        // Check for milestones
+        if ([5, 10, 15, 20].includes(newLevel) && !session.milestonesReached.includes(newLevel)) {
+            session.milestonesReached.push(newLevel);
+        }
+
+        // Update timestamp
+        session.lastUpdateTime = Date.now();
+
+        // Check if target reached
+        if (newLevel >= session.targetLevel) {
+            session.state = SessionState.COMPLETED;
+            session.endTime = Date.now();
+        }
+    }
+
+    /**
+     * Record a failed enhancement attempt
+     * @param {Object} session - Session object
+     * @param {number} previousLevel - Level that failed (level we tried to enhance from)
+     */
+    function recordFailure(session, previousLevel, newLevel) {
+        // Initialize tracking if needed for the level that failed
+        initializeLevelTracking(session, previousLevel);
+
+        // Record failure at the level we enhanced FROM
+        session.attemptsPerLevel[previousLevel].fail++;
+        session.totalAttempts++;
+        session.totalFailures++;
+
+        // Update success rate for this level
+        updateSuccessRate(session, previousLevel);
+
+        // Update current level to actual level after failure
+        session.currentLevel = newLevel;
+
+        // Update streaks
+        if (session.currentStreak.type === 'fail') {
+            session.currentStreak.count++;
+        } else {
+            session.currentStreak = { type: 'fail', count: 1 };
+        }
+
+        if (session.currentStreak.count > session.longestFailureStreak) {
+            session.longestFailureStreak = session.currentStreak.count;
+        }
+
+        // Update timestamp
+        session.lastUpdateTime = Date.now();
+    }
+
+    /**
+     * Add material cost to session
+     * @param {Object} session - Session object
+     * @param {string} itemHrid - Material item HRID
+     * @param {number} count - Quantity used
+     * @param {number} unitCost - Cost per item (from market)
+     */
+    function addMaterialCost(session, itemHrid, count, unitCost) {
+        if (!session.materialCosts[itemHrid]) {
+            session.materialCosts[itemHrid] = {
+                count: 0,
+                totalCost: 0,
+            };
+        }
+
+        session.materialCosts[itemHrid].count += count;
+        session.materialCosts[itemHrid].totalCost += count * unitCost;
+
+        // Update total cost
+        recalculateTotalCost(session);
+    }
+
+    /**
+     * Add coin cost to session
+     * @param {Object} session - Session object
+     * @param {number} amount - Coin amount spent
+     */
+    function addCoinCost(session, amount) {
+        session.coinCost += amount;
+        session.coinCount += 1;
+        recalculateTotalCost(session);
+    }
+
+    /**
+     * Add protection item cost to session
+     * @param {Object} session - Session object
+     * @param {string} protectionItemHrid - Protection item HRID
+     * @param {number} cost - Protection item cost
+     */
+    function addProtectionCost(session, protectionItemHrid, cost) {
+        session.protectionCost += cost;
+        session.protectionCount += 1;
+
+        // Store the protection item HRID if not already set
+        if (!session.protectionItemHrid) {
+            session.protectionItemHrid = protectionItemHrid;
+        }
+
+        recalculateTotalCost(session);
+    }
+
+    /**
+     * Recalculate total cost from all sources
+     * @param {Object} session - Session object
+     */
+    function recalculateTotalCost(session) {
+        const materialTotal = Object.values(session.materialCosts).reduce((sum, m) => sum + m.totalCost, 0);
+
+        session.totalCost = materialTotal + session.coinCost + session.protectionCost;
+    }
+
+    /**
+     * Get session duration in seconds
+     * @param {Object} session - Session object
+     * @returns {number} Duration in seconds
+     */
+    function getSessionDuration(session) {
+        // A live session's clock runs to its last recorded attempt, not to the
+        // wall clock. lastUpdateTime advances only when an attempt lands, so once
+        // enhancing stops — the user walked away, or the run was abandoned short of
+        // its target — the duration freezes instead of counting time nobody spent
+        // enhancing. Before this, only a completed run (which sets endTime) ever
+        // stopped, so an idle In-Progress session ticked up forever.
+        const endTime = session.endTime || session.lastUpdateTime || session.startTime;
+        return Math.floor((endTime - session.startTime) / 1000);
+    }
+
+    /**
+     * Calculate overall success rate
+     * @param {Object} session - Session object
+     * @returns {number} Success rate percentage (0-100)
+     */
+    function getOverallSuccessRate(session) {
+        if (session.totalAttempts === 0) return 0;
+        return (session.totalSuccesses / session.totalAttempts) * 100;
+    }
+
+    /**
+     * Finalize session (mark as completed)
+     * @param {Object} session - Session object
+     */
+    function finalizeSession(session) {
+        session.state = SessionState.COMPLETED;
+        session.endTime = Date.now();
+    }
+
+    /**
+     * Check if a completed session can be extended
+     * @param {Object} session - Session object
+     * @param {string} itemHrid - Item HRID
+     * @param {number} currentLevel - Current enhancement level
+     * @returns {boolean} True if session can be extended
+     */
+    function canExtendSession(session, itemHrid, currentLevel) {
+        // Must be same item
+        if (session.itemHrid !== itemHrid) return false;
+
+        // Must be completed
+        if (session.state !== SessionState.COMPLETED) return false;
+
+        // Current level should match where session ended (or close)
+        const levelDiff = Math.abs(session.currentLevel - currentLevel);
+        if (levelDiff <= 1) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Extend a completed session to a new target level
+     *
+     * The predictions are recomputed for the new leg (+10 → +12, say), but the attempt and
+     * protection counters keep running from the whole session. Comparing one against the other
+     * makes the run look wildly over budget, so snapshot the counters here and let the display
+     * diff against them.
+     *
+     * @param {Object} session - Session object
+     * @param {number} newTargetLevel - New target level
+     */
+    function extendSession(session, newTargetLevel) {
+        session.state = SessionState.TRACKING;
+        session.targetLevel = newTargetLevel;
+        session.endTime = null;
+        session.lastUpdateTime = Date.now();
+        session.extensionBaseline = {
+            totalAttempts: session.totalAttempts || 0,
+            protectionCount: session.protectionCount || 0,
+        };
+    }
+
+    /**
+     * Get attempts and protections accrued since the session was last extended.
+     * A session that was never extended reports its full totals.
+     * @param {Object} session - Session object
+     * @returns {{attempts: number, protections: number}} Counters for the current leg
+     */
+    function getCurrentLegCounters(session) {
+        const baseline = session?.extensionBaseline;
+        const attempts = (session?.totalAttempts || 0) - (baseline?.totalAttempts || 0);
+        const protections = (session?.protectionCount || 0) - (baseline?.protectionCount || 0);
+
+        return {
+            attempts: Math.max(0, attempts),
+            protections: Math.max(0, protections),
+        };
+    }
+
+    /**
+     * Combine several sessions into one aggregate reading.
+     *
+     * Sums the counters, costs, XP and duration and re-derives the per-level tally
+     * and overall rate, so runs of the same item split across sessions — or a mix of
+     * items — read as one. The result is shaped like a session in the fields the
+     * per-level and cost renderers touch (`id`, `attemptsPerLevel`, `materialCosts`,
+     * the cost fields, `currentLevel`, `predictions`) so those views can be reused
+     * as they are.
+     *
+     * Predictions are not merged: each describes a single leg's distribution and
+     * they do not add, so the aggregate carries expected attempts/protections only
+     * as plain sums for a rough factor, and `predictions` is left null so the
+     * per-level table shows no misleading "Pred %" against a combined run.
+     *
+     * @param {Array<Object>} sessions - Sessions to combine
+     * @returns {Object|null} Aggregate, or null for an empty list
+     */
+    function mergeSessions(sessions) {
+        if (!Array.isArray(sessions) || sessions.length === 0) return null;
+
+        const agg = {
+            id: 'merged',
+            merged: true,
+            count: 0,
+            itemHrids: [],
+            itemNames: [],
+            totalAttempts: 0,
+            totalSuccesses: 0,
+            totalFailures: 0,
+            totalXP: 0,
+            protectionCount: 0,
+            protectionItemHrid: null,
+            coinCost: 0,
+            coinCount: 0,
+            protectionCost: 0,
+            totalCost: 0,
+            durationSeconds: 0,
+            currentLevel: 0,
+            predictions: null,
+            attemptsPerLevel: {},
+            materialCosts: {},
+            expectedAttempts: 0,
+            expectedProtections: 0,
+        };
+        const seenItems = new Set();
+
+        for (const session of sessions) {
+            if (!session) continue;
+            agg.count += 1;
+
+            if (!seenItems.has(session.itemHrid)) {
+                seenItems.add(session.itemHrid);
+                agg.itemHrids.push(session.itemHrid);
+                agg.itemNames.push(session.itemName);
+            }
+
+            agg.totalAttempts += session.totalAttempts || 0;
+            agg.totalSuccesses += session.totalSuccesses || 0;
+            agg.totalFailures += session.totalFailures || 0;
+            agg.totalXP += session.totalXP || 0;
+            agg.protectionCount += session.protectionCount || 0;
+            agg.coinCost += session.coinCost || 0;
+            agg.coinCount += session.coinCount || 0;
+            agg.protectionCost += session.protectionCost || 0;
+            agg.totalCost += session.totalCost || 0;
+            agg.durationSeconds += getSessionDuration(session);
+            if (!agg.protectionItemHrid && session.protectionItemHrid) {
+                agg.protectionItemHrid = session.protectionItemHrid;
+            }
+
+            for (const [level, tally] of Object.entries(session.attemptsPerLevel || {})) {
+                if (!agg.attemptsPerLevel[level]) {
+                    agg.attemptsPerLevel[level] = { success: 0, fail: 0, successRate: 0 };
+                }
+                agg.attemptsPerLevel[level].success += tally.success || 0;
+                agg.attemptsPerLevel[level].fail += tally.fail || 0;
+            }
+
+            for (const [hrid, material] of Object.entries(session.materialCosts || {})) {
+                if (!agg.materialCosts[hrid]) {
+                    agg.materialCosts[hrid] = { count: 0, totalCost: 0 };
+                }
+                agg.materialCosts[hrid].count += material.count || 0;
+                agg.materialCosts[hrid].totalCost += material.totalCost || 0;
+            }
+
+            if (session.predictions) {
+                agg.expectedAttempts += session.predictions.expectedAttempts || 0;
+                agg.expectedProtections += session.predictions.expectedProtections || 0;
+            }
+        }
+
+        for (const tally of Object.values(agg.attemptsPerLevel)) {
+            const total = tally.success + tally.fail;
+            tally.successRate = total > 0 ? tally.success / total : 0;
+        }
+        agg.successRate = agg.totalAttempts > 0 ? agg.totalSuccesses / agg.totalAttempts : 0;
+
+        return agg;
+    }
+
+    /**
+     * Validate session data integrity
+     * @param {Object} session - Session object
+     * @returns {boolean} True if valid
+     */
+    function validateSession(session) {
+        if (!session || typeof session !== 'object') return false;
+
+        // Required fields
+        if (!session.id || !session.itemHrid || !session.itemName) return false;
+        if (typeof session.startLevel !== 'number' || typeof session.targetLevel !== 'number') return false;
+        if (typeof session.currentLevel !== 'number') return false;
+
+        // Validate level ranges
+        if (session.startLevel < 0 || session.startLevel > 20) return false;
+        if (session.targetLevel < 1 || session.targetLevel > 20) return false;
+        if (session.currentLevel < 0 || session.currentLevel > 20) return false;
+
+        // Validate costs are non-negative
+        if (session.totalCost < 0 || session.coinCost < 0 || session.protectionCost < 0) return false;
+
+        return true;
+    }
+
+    /**
+     * Attempt-count percentiles for finished enhancement runs
+     *
+     * A finished run is one draw from a distribution the calculator already models
+     * — mean, variance and physical minimum, all read off the same Markov chain the
+     * "Expected Attempts" figure comes from. One draw against a heavy-tailed
+     * distribution is only honest as a percentile: "took 63 against a predicted 41"
+     * sounds like the model missed, when a run that long or longer happens 8% of
+     * the time and the model said exactly that.
+     *
+     * Nothing here is a new model. The tail is read off the same shifted-gamma fit
+     * `costPercentiles` and `costExceedanceProbability` already use — with a cost of
+     * one coin per attempt, the cost distribution *is* the attempt distribution —
+     * so the percentile shown for a finished run and the p10/p90 quoted before it
+     * started can never disagree about what the spread was.
+     */
+
+
+    /**
+     * The chance a run takes as many attempts as this one did, or more.
+     *
+     * Null rather than a number when the prediction does not carry its variance —
+     * sessions recorded before the distribution was stored have only a mean, and a
+     * percentile computed against today's recomputed chain would be measured
+     * against stats the run was not played with.
+     *
+     * @param {Object} prediction - Session predictions; needs `expectedAttemptsExact`
+     *   (or `expectedAttempts`), `attemptsVariance` and `minAttempts`
+     * @param {number} observedAttempts - Attempts the run actually took
+     * @returns {number|null} P(attempts ≥ observed) in [0, 1], or null when the
+     *   prediction has no distribution to read it from
+     */
+    function attemptTailProbability(prediction, observedAttempts) {
+        const mean = Number(prediction?.expectedAttemptsExact ?? prediction?.expectedAttempts);
+        const variance = Number(prediction?.attemptsVariance);
+        const minimum = Number(prediction?.minAttempts);
+        const observed = Number(observedAttempts);
+
+        if (!Number.isFinite(mean) || !Number.isFinite(variance) || !Number.isFinite(minimum)) return null;
+        if (!Number.isFinite(observed) || observed < 0) return null;
+
+        // One coin per attempt makes the fitted cost distribution the attempt
+        // distribution itself — same shift, same gamma, same tail
+        const distribution = enhancementCalculator_js.costStats(
+            { attempts: mean, attemptsVariance: variance, minAttempts: minimum },
+            {
+                costPerAttempt: 1,
+            }
+        );
+
+        // Every possible run takes at least the physical minimum
+        if (observed <= distribution.minimum) return 1;
+
+        return enhancementCalculator_js.costExceedanceProbability(distribution, observed);
+    }
+
+    /**
+     * A tail probability as words a player can read.
+     * @param {number} tail - P(attempts ≥ observed), in [0, 1]
+     * @returns {string} e.g. `8%`, `<1%`, `>99%`
+     */
+    function formatTailPercent(tail) {
+        const percent = tail * 100;
+        if (percent < 1) return '<1%';
+        if (percent > 99) return '>99%';
+        return `${Math.round(percent)}%`;
+    }
+
+    /**
+     * The whole observation as one sentence.
+     *
+     * Phrased as "runs take that many or more" so it reads honestly from both
+     * sides: an unlucky run gets a small percentage, a lucky one a large one, and
+     * neither is a claim that the prediction was wrong.
+     *
+     * @param {number} expectedAttempts - What the chain predicted, rounded for display
+     * @param {number} observedAttempts - What the run took
+     * @param {number} tail - P(attempts ≥ observed), from {@link attemptTailProbability}
+     * @returns {string}
+     */
+    function describeAttemptOutcome(expectedAttempts, observedAttempts, tail) {
+        return (
+            `Predicted ${Math.round(expectedAttempts)} attempts, took ${Math.round(observedAttempts)} — ` +
+            `${formatTailPercent(tail)} of runs take that many or more.`
+        );
+    }
+
+    /**
+     * Enhancement calibration
+     *
+     * Writes down, for every enhancement session that reached its target, where the
+     * run landed in the distribution the calculator predicted for it.
+     *
+     * The enhancement tracker already keeps both halves: the prediction taken at
+     * session start (mean, variance and physical minimum of the attempt count, all
+     * off one Markov chain) and the attempts the run actually took. Nobody compares
+     * them, so a chain that is quietly wrong about a tier of gear reads exactly
+     * like one that is right. Unlike the profit calibrations, one session is never
+     * "predicted 41, took 63, therefore off by 54%" — the distribution is heavy
+     * tailed and a single draw only means anything as a percentile. That percentile
+     * is what gets stored, and a *pattern* in the percentiles is what would convict
+     * the chain: a calibrated model scatters them evenly, a flattering one piles
+     * them up at the unlucky end.
+     *
+     * ## What counts as an observation
+     *
+     * A session that reached the target it was predicted for, whose prediction
+     * carries its distribution. A session stopped by hand is censored — its attempt
+     * count says where the player gave up, not where the run would have ended — and
+     * a session recorded before the variance was stored has no distribution to be
+     * a percentile of. Neither is an observation; recording them anyway would be
+     * filling the ledger with numbers that mean nothing.
+     *
+     * The observed count is the current leg's — after an extension the prediction
+     * was recomputed from the extension point, so the attempts diffed against it
+     * must start there too.
+     */
+
+
+    /** Shares the calibration pairs' store; the key below is this recorder's own */
+    const STORE_NAME$b = 'lootLogHistory';
+
+    /** Plenty to see whether the percentiles scatter or pile up */
+    const MAX_RECORDS$1 = 200;
+
+    class EnhancementCalibration {
+        constructor() {
+            this.records = null;
+            /** Serialises writes against each other and against the first load */
+            this.queue = Promise.resolve();
+        }
+
+        /**
+         * Where this character's observations live.
+         * @returns {string|null} Storage key, or null before the character is known
+         */
+        _key() {
+            const charId = dataManager.getCurrentCharacterId();
+            return charId ? `calibrationEnhancing_${charId}` : null;
+        }
+
+        /**
+         * Read the stored observations into memory, once.
+         * @returns {Promise<Array<Object>>} The records
+         */
+        async _load() {
+            if (this.records) return this.records;
+            const key = this._key();
+            if (!key) {
+                this.records = [];
+                return this.records;
+            }
+            try {
+                this.records = await storage.get(key, STORE_NAME$b, []);
+            } catch (error) {
+                console.error('[EnhancementCalibration] Could not read history:', error);
+                this.records = [];
+            }
+            return this.records;
+        }
+
+        /** Persist the observations. */
+        async _save() {
+            const key = this._key();
+            if (!key) return;
+            try {
+                await storage.set(key, this.records, STORE_NAME$b);
+            } catch (error) {
+                console.error('[EnhancementCalibration] Could not save history:', error);
+            }
+        }
+
+        /**
+         * Record a session that just reached its target.
+         *
+         * Safe to call for any session in any state — everything that is not an
+         * observation is declined here rather than at every call site.
+         *
+         * @param {Object} session - An enhancement session (see enhancement-session.js)
+         * @returns {Promise<boolean>} Whether an observation was written
+         */
+        async recordCompletion(session) {
+            if (!config.getSetting('insights_calibration', true)) return false;
+            // Only a run that actually reached its target is a draw from the
+            // predicted distribution; a hand-stopped one is censored at the moment
+            // the player walked away
+            if (!session || session.state !== SessionState.COMPLETED) return false;
+            if (session.currentLevel < session.targetLevel) return false;
+
+            const prediction = session.predictions;
+            const observed = getCurrentLegCounters(session).attempts;
+            if (!(observed > 0)) return false;
+
+            const tail = attemptTailProbability(prediction, observed);
+            // Null means the prediction carries no distribution — an old session,
+            // or one predicted without character stats
+            if (tail === null) return false;
+
+            const record = {
+                // One observation per session and target: an extended session is a
+                // new prediction and may become a second observation
+                id: `${session.id}:${session.targetLevel}`,
+                t: session.endTime || Date.now(),
+                itemHrid: session.itemHrid,
+                itemName: session.itemName,
+                targetLevel: session.targetLevel,
+                protectFrom: session.protectFrom || 0,
+                expectedAttempts: Math.round(prediction.expectedAttemptsExact ?? prediction.expectedAttempts),
+                observedAttempts: observed,
+                /** P(attempts ≥ observed) under the predicted distribution */
+                tailProbability: tail,
+            };
+
+            let written = false;
+            this.queue = this.queue
+                .then(async () => {
+                    await this._load();
+                    if (this.records.some((held) => held.id === record.id)) return;
+                    this.records.push(record);
+                    if (this.records.length > MAX_RECORDS$1) {
+                        this.records.splice(0, this.records.length - MAX_RECORDS$1);
+                    }
+                    await this._save();
+                    written = true;
+                })
+                .catch((error) => {
+                    console.error('[EnhancementCalibration] Recording failed:', error);
+                });
+            await this.queue;
+            return written;
+        }
+
+        // ─── Read API ────────────────────────────────────────────────────────────
+
+        /**
+         * The observations already in memory, for a panel drawing synchronously.
+         * @returns {Array<Object>|null} Records, or null before the first load lands
+         */
+        getCachedRecords() {
+            return this.records;
+        }
+
+        /**
+         * The observations, loading them if this is the first ask.
+         * @returns {Promise<Array<Object>>} Records, oldest first
+         */
+        async getRecords() {
+            return await this._load();
+        }
+
+        /** Forget every observation. */
+        async clear() {
+            this.records = [];
+            await this._save();
+        }
+    }
+
+    const enhancementCalibration = new EnhancementCalibration();
+
+    /**
+     * Enhancement Tracker Storage
+     * Handles persistence of enhancement sessions using IndexedDB
+     *
+     * Sessions belong to the character that ran them: the iron cow's overnight
+     * enhancing run has nothing to do with the market cow's, and a shared key put
+     * both in the same list. Keys are therefore scoped per character and derived at
+     * every read and write — the user switches characters without reloading the
+     * page, so a key resolved once at module load would be the wrong one afterwards.
+     * The legacy global value is adopted by the main character exactly once.
+     */
+
+
+    const STORAGE_KEY$4 = 'enhancementTracker_sessions';
+    const CURRENT_SESSION_KEY = 'enhancementTracker_currentSession';
+    const STORAGE_STORE$1 = 'settings'; // Use existing 'settings' store
+
+    /**
+     * What has been handed to the debounced writer but may not have landed yet.
+     *
+     * Every session update used to write all sessions as one immediate blob into
+     * the settings store — an enhancement run is a write per attempt, of a document
+     * containing every session ever kept. Debouncing coalesces a run into one write,
+     * at the cost of storage lagging memory; these hold the truth in the meantime so
+     * a load during the lag cannot read back a stale blob.
+     */
+    let pendingSessions = null;
+    let pendingCurrentSessionId;
+    let hasPendingCurrentSessionId = false;
+
+    /**
+     * Save all sessions to storage.
+     *
+     * Queued rather than awaited: the debounced write's promise resolves when its
+     * timer fires, so awaiting it would stall every caller for the debounce delay.
+     * `storage.flushAll()` on `beforeunload` is what makes the last one land.
+     * @param {Object} sessions - Sessions object (keyed by session ID)
+     * @returns {Promise<void>}
+     */
+    async function saveSessions(sessions) {
+        pendingSessions = sessions;
+        characterKey_js.writeScoped(STORAGE_KEY$4, sessions, STORAGE_STORE$1);
+    }
+
+    /**
+     * Load all sessions from storage
+     * @returns {Promise<Object>} Sessions object (keyed by session ID)
+     */
+    async function loadSessions$1() {
+        if (pendingSessions !== null) return pendingSessions;
+        try {
+            return await characterKey_js.readScoped(STORAGE_KEY$4, STORAGE_STORE$1, {}, { migrate: 'adopt' });
+        } catch (error) {
+            console.error('[EnhancementStorage] Failed to load sessions:', error);
+            return {};
+        }
+    }
+
+    /**
+     * Save current session ID
+     * @param {string|null} sessionId - Current session ID (null if no active session)
+     * @returns {Promise<void>}
+     */
+    async function saveCurrentSessionId(sessionId) {
+        pendingCurrentSessionId = sessionId;
+        hasPendingCurrentSessionId = true;
+        characterKey_js.writeScoped(CURRENT_SESSION_KEY, sessionId, STORAGE_STORE$1);
+    }
+
+    /**
+     * Load current session ID
+     * @returns {Promise<string|null>} Current session ID or null
+     */
+    async function loadCurrentSessionId() {
+        if (hasPendingCurrentSessionId) return pendingCurrentSessionId;
+        try {
+            return await characterKey_js.readScoped(CURRENT_SESSION_KEY, STORAGE_STORE$1, null, { migrate: 'adopt' });
+        } catch (error) {
+            console.error('[EnhancementStorage] Failed to load current session ID:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Drop the in-memory mirror of the queued writes — for tests, and for anything
+     * that needs the next load to come from storage.
+     */
+    function resetPendingSessionCache() {
+        pendingSessions = null;
+        pendingCurrentSessionId = undefined;
+        hasPendingCurrentSessionId = false;
+    }
+
+    // The mirror holds one character's sessions. Switching characters without a
+    // reload would otherwise serve the departing character's list to the arriving
+    // one — and, worse, write it back under the arriving character's key.
+    dataManager.on('character_switching', () => resetPendingSessionCache());
+
+    /**
+     * Enhancement XP Calculations
+     * Based on Ultimate Enhancement Tracker formulas
+     */
+
+
+    /**
+     * Get base item level from item HRID
+     * @param {string} itemHrid - Item HRID
+     * @returns {number} Base item level
+     */
+    function getBaseItemLevel(itemHrid) {
+        try {
+            const gameData = dataManager.getInitClientData();
+            const itemData = gameData?.itemDetailMap?.[itemHrid];
+
+            if (itemData?.itemLevel) {
+                return itemData.itemLevel;
+            }
+
+            return 0;
+        } catch {
+            return 0;
+        }
+    }
+
+    /**
+     * Get wisdom buff percentage from all sources
+     * Reads from dataManager.characterData (NOT localStorage)
+     * @returns {number} Wisdom buff as decimal (e.g., 0.20 for 20%)
+     */
+    function getWisdomBuff() {
+        try {
+            // Use dataManager for character data (NOT localStorage)
+            const charData = dataManager.characterData;
+            if (!charData) return 0;
+
+            let totalFlatBoost = 0;
+
+            // 1. Community Buffs
+            const communityEnhancingBuffs = charData.communityActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(communityEnhancingBuffs)) {
+                communityEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 2. Equipment Buffs
+            const equipmentEnhancingBuffs = charData.equipmentActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(equipmentEnhancingBuffs)) {
+                equipmentEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 3. House Buffs
+            const houseEnhancingBuffs = charData.houseActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(houseEnhancingBuffs)) {
+                houseEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 4. Guild Buffs
+            const guildEnhancingBuffs = charData.guildActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(guildEnhancingBuffs)) {
+                guildEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 5. Consumable Buffs (from wisdom tea, etc.)
+            const consumableEnhancingBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(consumableEnhancingBuffs)) {
+                consumableEnhancingBuffs.forEach((buff) => {
+                    if (buff.typeHrid === '/buff_types/wisdom') {
+                        totalFlatBoost += buff.flatBoost || 0;
+                    }
+                });
+            }
+
+            // 5. Achievement Buffs
+            totalFlatBoost += dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom');
+
+            // Return as decimal (flatBoost is already in decimal form, e.g., 0.2 for 20%)
+            return totalFlatBoost;
+        } catch {
+            return 0;
+        }
+    }
+
+    /**
+     * Calculate XP gained from successful enhancement
+     * Formula: 1.4 × (1 + wisdom) × enhancementMultiplier × (10 + baseItemLevel)
+     * @param {number} previousLevel - Enhancement level before success
+     * @param {string} itemHrid - Item HRID
+     * @returns {number} XP gained
+     */
+    function calculateSuccessXP(previousLevel, itemHrid) {
+        const baseLevel = getBaseItemLevel(itemHrid);
+        const wisdomBuff = getWisdomBuff();
+
+        // Special handling for enhancement level 0 (base items)
+        const enhancementMultiplier =
+            previousLevel === 0
+                ? 1.0 // Base value for unenhanced items
+                : previousLevel + 1; // Normal progression
+
+        return Math.floor(1.4 * (1 + wisdomBuff) * enhancementMultiplier * (10 + baseLevel));
+    }
+
+    /**
+     * Calculate XP gained from failed enhancement
+     * Formula: 10% of success XP
+     * @param {number} previousLevel - Enhancement level that failed
+     * @param {string} itemHrid - Item HRID
+     * @returns {number} XP gained
+     */
+    function calculateFailureXP(previousLevel, itemHrid) {
+        return Math.floor(calculateSuccessXP(previousLevel, itemHrid) * 0.1);
+    }
+
+    /**
+     * Calculate adjusted attempt number from session data
+     * This makes tracking resume-proof (doesn't rely on WebSocket currentCount)
+     * @param {Object} session - Session object
+     * @returns {number} Next attempt number
+     */
+    function calculateAdjustedAttemptCount(session) {
+        let successCount = 0;
+        let failCount = 0;
+
+        // Sum all successes and failures across all levels
+        for (const level in session.attemptsPerLevel) {
+            const levelData = session.attemptsPerLevel[level];
+            successCount += levelData.success || 0;
+            failCount += levelData.fail || 0;
+        }
+
+        // For the first attempt, return 1
+        if (successCount === 0 && failCount === 0) {
+            return 1;
+        }
+
+        // Return total + 1 for the next attempt
+        return successCount + failCount + 1;
+    }
+
+    /**
+     * Calculate enhancing action time from the game's buff maps
+     * Reads the pre-computed action_speed flatBoost values from all buff sources
+     * and adds level advantage, matching the game's actual speed calculation
+     * @param {string} itemHrid - Item HRID being enhanced
+     * @returns {number} Per-action time in seconds
+     */
+    function getEnhancingActionTime(itemHrid) {
+        try {
+            const charData = dataManager.characterData;
+            if (!charData) return 12;
+
+            // Get base time from game data
+            const actionDetails = dataManager.getActionDetails('/actions/enhancing/enhance');
+            const baseTime = actionDetails?.baseTimeCost ? actionDetails.baseTimeCost / 1e9 : 12;
+
+            // Get enhancing skill level
+            const enhancingSkill = charData.characterSkills?.find((s) => s.skillHrid === '/skills/enhancing');
+            const baseLevel = enhancingSkill?.level || 1;
+
+            // Get tea level bonus from consumable buff map
+            let teaLevelBonus = 0;
+            const consumableBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
+            if (Array.isArray(consumableBuffs)) {
+                for (const buff of consumableBuffs) {
+                    if (buff.typeHrid === '/buff_types/enhancing_level') {
+                        teaLevelBonus = buff.flatBoost || 0;
+                    }
+                }
+            }
+
+            // Sum action_speed flatBoost from ALL buff sources (equipment, house, community, tea)
+            let totalSpeedBuff = 0;
+
+            const buffMaps = [
+                charData.equipmentActionTypeBuffsMap,
+                charData.houseActionTypeBuffsMap,
+                charData.guildActionTypeBuffsMap,
+                charData.communityActionTypeBuffsMap,
+                charData.consumableActionTypeBuffsMap,
+            ];
+
+            for (const buffMap of buffMaps) {
+                const enhancingBuffs = buffMap?.['/action_types/enhancing'];
+                if (!Array.isArray(enhancingBuffs)) continue;
+
+                for (const buff of enhancingBuffs) {
+                    if (buff.typeHrid === '/buff_types/action_speed') {
+                        totalSpeedBuff += buff.flatBoost || 0;
+                    }
+                }
+            }
+
+            // Add personal buffs (Labyrinth seals)
+            totalSpeedBuff += dataManager.getPersonalBuffFlatBoost('/action_types/enhancing', '/buff_types/action_speed');
+
+            // Add level advantage: (effectiveLevel - itemLevel) / 100
+            const effectiveLevel = baseLevel + teaLevelBonus;
+            const itemLevel = getBaseItemLevel(itemHrid);
+            if (effectiveLevel > itemLevel) {
+                totalSpeedBuff += (effectiveLevel - itemLevel) / 100;
+            }
+
+            return Math.max(profitConstants_js.MIN_ACTION_TIME_SECONDS, baseTime / (1 + totalSpeedBuff));
+        } catch {
+            return 12;
+        }
+    }
+
+    /**
+     * Calculate enhancement predictions using character stats
+     * @param {string} itemHrid - Item HRID being enhanced
+     * @param {number} startLevel - Starting enhancement level
+     * @param {number} targetLevel - Target enhancement level
+     * @param {number} protectFrom - Level to start using protection
+     * @returns {Object|null} Prediction data or null if cannot calculate
+     */
+    function calculateEnhancementPredictions(itemHrid, startLevel, targetLevel, protectFrom) {
+        try {
+            // Get item level
+            const itemLevel = getBaseItemLevel(itemHrid);
+
+            // Use getEnhancingParams() for all character stats (level, speed, success, teas, etc.)
+            const params = enhancementConfig_js.getEnhancingParams();
+
+            // Check for blessed tea
+            const hasBlessed = params.teas?.blessed || false;
+
+            // Per-action time from the game's buff maps (authoritative source), handed to the
+            // calculator as an override so the prediction and anything reading result.totalTime
+            // later work off one time base instead of two that can disagree.
+            const perActionTime = getEnhancingActionTime(itemHrid);
+
+            // Calculate predictions (Markov chain for attempts, protections, success rates)
+            const result = enhancementCalculator_js.calculateEnhancement({
+                enhancingLevel: params.enhancingLevel,
+                houseLevel: params.houseLevel,
+                toolBonus: params.toolBonus,
+                speedBonus: params.speedBonus,
+                itemLevel,
+                targetLevel,
+                startLevel,
+                protectFrom,
+                blessedTea: hasBlessed,
+                guzzlingBonus: params.guzzlingBonus,
+                blessedTeaBonus: params.blessedTeaBonus,
+                perActionTimeOverride: perActionTime,
+            });
+
+            if (!result) {
+                return null;
+            }
+
+            return {
+                expectedAttempts: Math.round(result.attemptsRounded),
+                expectedProtections: Math.round(result.protectionCount),
+                // The distribution behind the expectation, kept with it so a finished
+                // run can be read back as a percentile of what was actually predicted
+                // — recomputing the chain later would measure the run against stats
+                // it was not played with. Additive: older sessions simply lack them,
+                // and every reader treats that as "no distribution recorded".
+                expectedAttemptsExact: result.attempts,
+                attemptsVariance: result.attemptsVariance,
+                minAttempts: result.minAttempts,
+                expectedTime: result.totalTime,
+                perActionTime: result.perActionTime,
+                successMultiplier: result.successMultiplier,
+                successRates: result.successRates,
+                // Recorded with the prediction, so a session opened days later still says which
+                // stats it was predicted against
+                paramsNote: enhancementConfig_js.describeParamsSource(params),
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Which stats an enhancement prediction is quoting.
+     *
+     * The same "+0 → +N" table means two different things depending on whose bench it describes:
+     * what this character would spend, or what a top-end enhancer would. Both are worth seeing —
+     * one is the player's real cost, the other is roughly what the listing in front of them cost
+     * whoever made it — but a number that does not say which one it is is worse than either.
+     *
+     * This module owns that choice: the persisted toggle, the params each side resolves to, and the
+     * chip the tooltip prints so the answer is always on screen next to the numbers.
+     */
+
+
+    /** Setting the toggle persists to. Mirrored in the settings panel under Item Tooltips. */
+    const PRO_RATES_SETTING = 'itemTooltip_enhancementProRates';
+
+    /** Class the delegated click handler looks for, and the marker the chip is found by. */
+    const SOURCE_CHIP_CLASS = 'toolasha-enh-source-chip';
+
+    /** Attribute naming a re-renderable enhancement section, so a toggle can redraw it in place. */
+    const SECTION_ATTR = 'data-toolasha-enh-section';
+
+    /**
+     * Whether enhancement predictions are currently quoting the pro kit rather than the player.
+     * @returns {boolean} True when pro rates are active
+     */
+    function isProRatesActive() {
+        return config.getSetting(PRO_RATES_SETTING) === true;
+    }
+
+    /**
+     * The enhancing parameters a tooltip for this item should be computed with.
+     *
+     * Untradeable items are never somebody else's listing — the player is the only one who can be
+     * enhancing them — so they are always quoted from the character's own stats.
+     *
+     * @param {string} itemHrid - Item the tooltip is describing
+     * @returns {Object} Enhancement parameters, tagged with `paramsSource`
+     */
+    function getTooltipEnhancementParams(itemHrid) {
+        const itemDetails = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid];
+        const isTradeable = itemDetails?.isTradable !== false;
+
+        if (!isTradeable) {
+            return enhancementConfig_js.getAutoDetectedParams();
+        }
+        if (isProRatesActive()) {
+            return enhancementConfig_js.getProRatesParams();
+        }
+        return enhancementConfig_js.getEnhancingParams();
+    }
+
+    /**
+     * Name the source of a set of parameters, for display beside the numbers they produced.
+     * @param {Object} params - Result of getTooltipEnhancementParams() or getEnhancingParams()
+     * @returns {{kind: 'pro'|'manual'|'yours', label: string, detail: string|null}} Chip content
+     */
+    function describeEnhancementSource(params) {
+        if (params?.paramsSource === 'pro') {
+            return {
+                kind: 'pro',
+                label: 'Pro',
+                detail: 'Pro rates: enhancing 140, Observatory 8, ultra + blessed tea, +13 Celestial enhancer, +10 gear',
+            };
+        }
+
+        const overrides = enhancementConfig_js.describeParamsSource(params);
+        if (overrides) {
+            return { kind: 'manual', label: 'Manual', detail: overrides };
+        }
+
+        return { kind: 'yours', label: 'Yours', detail: null };
+    }
+
+    /**
+     * Escape a value for use inside a double-quoted HTML attribute.
+     * @param {*} value - Value to escape
+     * @returns {string} Escaped text
+     */
+    function escapeAttr(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    /**
+     * Build the clickable source chip shown on an enhancement section header.
+     *
+     * Pro rates get a filled, warning-coloured chip: the one mistake worth engineering against is
+     * reading a professional's cost as your own, so that state has to be unmissable rather than
+     * merely legible.
+     *
+     * @param {Object} params - Parameters the section was computed with
+     * @returns {string} HTML for the chip
+     */
+    function buildSourceChipHTML(params) {
+        const source = describeEnhancementSource(params);
+        const isPro = source.kind === 'pro';
+        const proColor = config.COLOR_TOOLTIP_WARNING || '#ffb020';
+        // On a touch device there is no P key and hover tooltips never open, so the
+        // chip carries its own visible affordance: a keycap "P" on desktop, the word
+        // "tap" on a phone, and a finger-sized hit area there.
+        const mobile = mobile_js.isMobileMode();
+        const action = mobile ? 'Tap' : 'Click (or press P)';
+
+        const title = isPro
+            ? `${source.detail}. ${action} to switch back to your own stats.`
+            : source.detail
+              ? `${source.detail}. ${action} to compare against pro rates.`
+              : `Computed from your own enhancing level, gear and teas. ${action} to compare against pro rates.`;
+
+        const style = isPro
+            ? `background: ${proColor}; color: #14181f; border: 1px solid ${proColor};`
+            : 'background: rgba(255,255,255,0.10); color: inherit; border: 1px solid rgba(255,255,255,0.30);';
+        const sizing = mobile ? 'padding: 3px 9px; font-size: 0.85em;' : 'padding: 0 5px; font-size: 0.75em;';
+        const hint = mobile
+            ? ' <span style="opacity: 0.7; font-weight: 600;">tap</span>'
+            : ' <span style="border: 1px solid currentColor; border-radius: 3px; padding: 0 3px; margin-left: 1px;' +
+              ' font-size: 0.85em; opacity: 0.75;">P</span>';
+
+        return (
+            `<span class="${SOURCE_CHIP_CLASS}" role="button" tabindex="0" title="${escapeAttr(title)}" ` +
+            `style="pointer-events: auto; cursor: pointer; margin-left: 6px; border-radius: 8px; ${sizing} ` +
+            `font-weight: 700; letter-spacing: 0.3px; white-space: nowrap; vertical-align: middle; ${style}">` +
+            `${source.label} ⇄${hint}</span>`
+        );
+    }
+
+    /**
+     * Attributes that mark a built section as re-renderable in place after a toggle.
+     * @param {'path'|'milestones'} kind - Which builder produced the section
+     * @param {string} itemHrid - Item the section describes
+     * @param {number} level - Target enhancement level (0 for milestone tables)
+     * @returns {string} Attribute string to splice into the section's root element
+     */
+    function sectionAttributes(kind, itemHrid, level) {
+        return (
+            `${SECTION_ATTR}="${escapeAttr(kind)}" data-toolasha-enh-item="${escapeAttr(itemHrid)}" ` +
+            `data-toolasha-enh-level="${escapeAttr(level)}"`
+        );
+    }
+
+    /**
+     * Enhancement Tooltip Module
+     *
+     * Provides enhancement analysis for item tooltips.
+     * Calculates optimal enhancement path and total costs for reaching current enhancement level.
+     *
+     * This module is part of Phase 2 of Option D (Hybrid Approach):
+     * - Enhancement panel: Shows 20-level enhancement table
+     * - Item tooltips: Shows optimal path to reach current enhancement level
+     */
+
+    const toolashaConfig = config;
+
+    /** What a mirror plan combines its leaves with */
+    const MIRROR_HRID$1 = '/items/philosophers_mirror';
+
+    const _costCache = new Map();
+    const _chainTimeCache = new Map();
+
+    marketAPI.on(() => {
+        _costCache.clear();
+        _chainTimeCache.clear();
+    });
+
+    /**
+     * Calculate optimal enhancement path for an item
+     * Matches Enhancelator's algorithm exactly:
+     * 1. Test all protection strategies for each level
+     * 2. Pick minimum cost for each level (mixed strategies)
+     * 3. Apply mirror optimization to mixed array
+     *
+     * @param {string} itemHrid - Item HRID (e.g., '/items/cheese_sword')
+     * @param {number} currentEnhancementLevel - Current enhancement level (1-20)
+     * @param {Object} config - Enhancement configuration from enhancement-config.js
+     * @returns {Object|null} Enhancement analysis or null if not enhanceable
+     */
+    function calculateEnhancementPath(itemHrid, currentEnhancementLevel, config) {
+        // Validate inputs
+        if (!itemHrid || currentEnhancementLevel < 1 || currentEnhancementLevel > 20) {
+            return null;
+        }
+
+        // Get item details
+        const gameData = dataManager.getInitClientData();
+        if (!gameData) return null;
+
+        const itemDetails = gameData.itemDetailMap[itemHrid];
+        if (!itemDetails) return null;
+
+        // Check if item is enhanceable
+        if (!itemDetails.enhancementCosts || itemDetails.enhancementCosts.length === 0) {
+            return null;
+        }
+
+        const itemLevel = itemDetails.itemLevel || 1;
+
+        // Step 1: Build 2D matrix like Enhancelator (all_results)
+        // For each target level (1 to currentEnhancementLevel)
+        // Test all protection strategies (0, 2, 3, ..., targetLevel)
+        // Result: allResults[targetLevel][protectFrom] = cost data
+
+        const allResults = [];
+
+        for (let targetLevel = 1; targetLevel <= currentEnhancementLevel; targetLevel++) {
+            const resultsForLevel = [];
+
+            // Test "never protect" (0)
+            const neverProtect = calculateCostForStrategy(itemHrid, targetLevel, 0, itemLevel, config);
+            if (neverProtect) {
+                resultsForLevel.push({ protectFrom: 0, ...neverProtect });
+            }
+
+            // Test all "protect from X" strategies (2 through targetLevel)
+            for (let protectFrom = 2; protectFrom <= targetLevel; protectFrom++) {
+                const result = calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel, config);
+                if (result) {
+                    resultsForLevel.push({ protectFrom, ...result });
+                }
+            }
+
+            allResults.push(resultsForLevel);
+        }
+
+        // Step 2: Build target_costs and target_times arrays (minimum cost/time for each level)
+        // Like Enhancelator line 451-453
+        const targetCosts = new Array(currentEnhancementLevel + 1);
+        const targetTimes = new Array(currentEnhancementLevel + 1);
+        const targetAttempts = new Array(currentEnhancementLevel + 1);
+        // Kept alongside the attempts because a mirror plan's protection bill is the sum over the
+        // levels it actually builds, and there is nowhere else that number survives
+        const targetProtections = new Array(currentEnhancementLevel + 1);
+        targetCosts[0] = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost')
+            ? Math.min(getProductionCost(itemHrid) || Infinity, marketData_js.getItemPrices(itemHrid, 0)?.ask || Infinity) ||
+              getRealisticBaseItemPrice(itemHrid)
+            : getRealisticBaseItemPrice(itemHrid); // Level 0: base item
+        targetTimes[0] = 0; // Level 0: no time needed
+        targetAttempts[0] = 0; // Level 0: no attempts needed
+        targetProtections[0] = 0; // Level 0: nothing to protect
+
+        for (let level = 1; level <= currentEnhancementLevel; level++) {
+            const resultsForLevel = allResults[level - 1];
+            // No strategy succeeded for this level (e.g. missing data) — cannot build a path
+            if (resultsForLevel.length === 0) {
+                return null;
+            }
+            // Find the result with minimum cost
+            const minResult = resultsForLevel.reduce((best, curr) => (curr.totalCost < best.totalCost ? curr : best));
+            targetCosts[level] = minResult.totalCost;
+            targetTimes[level] = minResult.totalTime;
+            targetAttempts[level] = minResult.expectedAttempts;
+            targetProtections[level] = minResult.protectionCount || 0;
+        }
+
+        // Snapshot the pre-mirror numbers before the mirror pass rewrites targetCosts in place.
+        // These arrays used to be aliases of the same array, so the "traditional" cost of a level
+        // silently became its mirror cost the moment the pass touched it.
+        const traditionalCosts = [...targetCosts];
+        const traditionalTimes = [...targetTimes];
+        const traditionalAttempts = [...targetAttempts];
+        const traditionalProtections = [...targetProtections];
+
+        // Step 3: Apply Philosopher's Mirror optimization (single pass, in-place)
+        // Like Enhancelator lines 456-465
+        const mirrorPrice = getRealisticBaseItemPrice(MIRROR_HRID$1);
+        const usedMirror = new Array(currentEnhancementLevel + 1).fill(false);
+
+        if (mirrorPrice > 0) {
+            // +2 is reachable by mirroring a +0 and a +1, so it belongs in the search as well
+            for (let level = 2; level <= currentEnhancementLevel; level++) {
+                const traditionalCost = targetCosts[level];
+                const mirrorCost = targetCosts[level - 2] + targetCosts[level - 1] + mirrorPrice;
+
+                if (mirrorCost < traditionalCost) {
+                    usedMirror[level] = true;
+                    targetCosts[level] = mirrorCost;
+                }
+            }
+        }
+
+        // Step 4: Build final result with breakdown
+        targetCosts[currentEnhancementLevel];
+
+        // Find which protection strategy was optimal for final level (before mirrors)
+        const finalLevelResults = allResults[currentEnhancementLevel - 1];
+        if (finalLevelResults.length === 0) {
+            return null;
+        }
+        const optimalTraditional = finalLevelResults.reduce((best, curr) =>
+            curr.totalCost < best.totalCost ? curr : best
+        );
+
+        // Which levels the finished plan actually mirrors is a question about the path back from
+        // the target, not about the first level where mirroring happened to look cheap. A level
+        // that mirrors but is never reached from the target contributes nothing.
+        const mirrorPlan = expandMirrorPlan(currentEnhancementLevel, usedMirror);
+
+        let optimalStrategy;
+
+        if (mirrorPlan.mirrorCount > 0) {
+            // Mirror was used - build mirror-optimized result
+            optimalStrategy = buildMirrorOptimizedResult(
+                itemHrid,
+                currentEnhancementLevel,
+                mirrorPlan,
+                traditionalCosts,
+                traditionalTimes,
+                traditionalAttempts,
+                traditionalProtections,
+                targetCosts,
+                optimalTraditional,
+                mirrorPrice
+            );
+        } else {
+            // No mirror used - return traditional result
+            optimalStrategy = {
+                protectFrom: optimalTraditional.protectFrom,
+                label: optimalTraditional.protectFrom === 0 ? 'Never' : `+${optimalTraditional.protectFrom}`,
+                expectedAttempts: optimalTraditional.expectedAttempts,
+                totalTime: optimalTraditional.totalTime,
+                baseCost: optimalTraditional.baseCost,
+                baseAskPrice: optimalTraditional.baseAskPrice,
+                baseBidPrice: optimalTraditional.baseBidPrice,
+                baseAskIsCrafted: optimalTraditional.baseAskIsCrafted,
+                baseBidIsCrafted: optimalTraditional.baseBidIsCrafted,
+                materialCost: optimalTraditional.materialCost,
+                materialBreakdown: optimalTraditional.materialBreakdown,
+                protectionCost: optimalTraditional.protectionCost,
+                protectionItemHrid: optimalTraditional.protectionItemHrid,
+                protectionCount: optimalTraditional.protectionCount,
+                protectionAskPrice: optimalTraditional.protectionAskPrice,
+                protectionBidPrice: optimalTraditional.protectionBidPrice,
+                totalCost: optimalTraditional.totalCost,
+                usedMirror: false,
+                mirrorStartLevel: null,
+                materialBill: buildMaterialBill({
+                    materials: optimalTraditional.materialBreakdown,
+                    protectionItemHrid: optimalTraditional.protectionItemHrid,
+                    protectionCount: optimalTraditional.protectionCount,
+                    protectionUnitPrice: optimalTraditional.protectionAskPrice,
+                }),
+            };
+        }
+
+        // Calculate XP/hr for the optimal path
+        let xpPerHour = null;
+        let totalExpectedXP = null;
+        try {
+            const xpCalc = enhancementCalculator_js.calculateEnhancement({
+                enhancingLevel: config.enhancingLevel,
+                houseLevel: config.houseLevel,
+                toolBonus: config.toolBonus || 0,
+                speedBonus: config.speedBonus || 0,
+                itemLevel,
+                targetLevel: currentEnhancementLevel,
+                protectFrom: optimalStrategy.protectFrom,
+                blessedTea: config.teas.blessed,
+                guzzlingBonus: config.guzzlingBonus,
+                blessedTeaBonus: config.blessedTeaBonus,
+            });
+
+            if (xpCalc && xpCalc.visitCounts && xpCalc.totalTime > 0) {
+                // Same XP formula the tracker and the XPH calculator use. The old inline copy read
+                // itemDetails.level, which enhanceable equipment does not have, so it fell through
+                // to a level-requirement lookup and produced a different number for the same item.
+                let totalXP = 0;
+                for (let i = 0; i < currentEnhancementLevel; i++) {
+                    const visits = xpCalc.visitCounts[i];
+                    if (!visits) continue;
+                    const successRate = xpCalc.successRates[i].actualRate / 100;
+                    const successXP = calculateSuccessXP(i, itemHrid);
+                    const failXP = calculateFailureXP(i, itemHrid);
+                    totalXP += visits * (successRate * successXP + (1 - successRate) * failXP);
+                }
+                xpPerHour = Math.round((totalXP / xpCalc.totalTime) * 3600);
+                totalExpectedXP = Math.round(totalXP);
+            }
+        } catch {
+            // XP data is optional; don't let it break the tooltip
+        }
+
+        return {
+            itemHrid,
+            targetLevel: currentEnhancementLevel,
+            itemLevel,
+            optimalStrategy,
+            allStrategies: [optimalStrategy], // Only return optimal
+            xpPerHour,
+            totalExpectedXP,
+            // Carried through so the tooltip can say whose stats these numbers describe: the
+            // character's own, a hand-entered set, or the pro kit
+            enhancementParams: config,
+            paramsNote: describeEnhancementSource(config).detail,
+        };
+    }
+
+    /**
+     * Calculate cost for a single protection strategy to reach a target level
+     * @private
+     */
+    function calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel, config) {
+        try {
+            const params = {
+                enhancingLevel: config.enhancingLevel,
+                houseLevel: config.houseLevel,
+                toolBonus: config.toolBonus || 0,
+                speedBonus: config.speedBonus || 0,
+                itemLevel,
+                targetLevel,
+                protectFrom,
+                blessedTea: config.teas.blessed,
+                guzzlingBonus: config.guzzlingBonus,
+                blessedTeaBonus: config.blessedTeaBonus,
+            };
+
+            // Calculate enhancement statistics. The matrix inversion is the expensive part of a
+            // strategy, and the cost pass needs exactly the same numbers, so it is handed the
+            // result rather than inverting an identical matrix a second time.
+            const result = enhancementCalculator_js.calculateEnhancement(params);
+
+            if (!result || typeof result.attempts !== 'number' || typeof result.totalTime !== 'number') {
+                console.error('[Enhancement Tooltip] Invalid result from calculateEnhancement:', result);
+                return null;
+            }
+
+            // Calculate costs
+            const costs = calculateTotalCost(itemHrid, targetLevel, protectFrom, config, result);
+
+            return {
+                expectedAttempts: result.attempts,
+                totalTime: result.totalTime,
+                ...costs,
+            };
+        } catch (error) {
+            console.error('[Enhancement Tooltip] Strategy calculation error:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Walk the mirror DP back from the target level to the items the plan actually builds.
+     *
+     * The DP decides mirror-or-not level by level, and those decisions are not necessarily a clean
+     * run: +6 can mirror while +5 does not. Assuming a contiguous block from the first mirrored
+     * level and expanding it with Fibonacci quantities invents items the plan never buys. Walking
+     * the decisions backwards from the target instead yields exactly the leaves it does buy.
+     *
+     * @param {number} targetLevel - Level the plan is building
+     * @param {boolean[]} usedMirror - Per-level mirror decisions from the DP
+     * @returns {{leaves: Array<{level: number, quantity: number}>, mirrorCount: number,
+     *   mirrorStartLevel: number|null}} Leaves are levels bought traditionally, highest first
+     * @private
+     */
+    function expandMirrorPlan(targetLevel, usedMirror) {
+        const need = new Array(targetLevel + 1).fill(0);
+        need[targetLevel] = 1;
+
+        let mirrorCount = 0;
+        let mirrorStartLevel = null;
+
+        // High to low: a level is only expanded once every demand for it is known
+        for (let level = targetLevel; level >= 2; level--) {
+            const quantity = need[level];
+            if (!quantity || !usedMirror[level]) continue;
+
+            mirrorCount += quantity;
+            mirrorStartLevel = level; // Lowest mirrored level reached, since we descend
+            need[level - 1] += quantity;
+            need[level - 2] += quantity;
+            need[level] = 0;
+        }
+
+        const leaves = [];
+        for (let level = targetLevel; level >= 0; level--) {
+            if (need[level] > 0) {
+                leaves.push({ level, quantity: need[level] });
+            }
+        }
+
+        return { leaves, mirrorCount, mirrorStartLevel };
+    }
+
+    /**
+     * What a chosen path expects to consume, item by item.
+     *
+     * The path optimiser has always returned totals — so many coins in materials —
+     * which is enough to compare two strategies and not enough to go and buy them.
+     * This is the same arithmetic said as a list, so anything holding a plan can put
+     * it on the marketplace.
+     *
+     * **Every count is an expectation, not a bill.** Enhancing is a Markov chain:
+     * the attempt counts these quantities are multiplied out from are the *expected*
+     * number of attempts along the path, and a real run will take more or fewer.
+     * Buying exactly this list is buying the mean, which is the right order of
+     * magnitude and the wrong number to be surprised by.
+     *
+     * @param {Object} parts - The pieces of a strategy
+     * @param {Array<Object>} [parts.materials] - `materialBreakdown` rows, already multiplied by attempts
+     * @param {number} [parts.materialMultiplier=1] - Scales the rows, for a plan that runs the
+     *   same per-attempt bill a different number of times (a mirror plan's leaves)
+     * @param {string} [parts.protectionItemHrid] - What the plan protects with
+     * @param {number} [parts.protectionCount=0] - Expected protections consumed
+     * @param {number} [parts.protectionUnitPrice=0] - Price of one
+     * @param {number} [parts.mirrorCount=0] - Philosopher's Mirrors the plan combines
+     * @param {number} [parts.mirrorPrice=0] - Price of one
+     * @param {string} [parts.baseItemHrid] - Base item, for a plan that consumes more than the one
+     *   copy its owner is assumed to be holding
+     * @param {number} [parts.baseCount=0] - How many base copies the plan consumes
+     * @param {number} [parts.baseUnitPrice=0] - Price of one
+     * @returns {Array<{itemHrid: string, name: string, count: number, unitPrice: number,
+     *   totalCost: number, kind: string}>} The bill, materials first; `kind` is one of
+     *   `material`, `protection`, `mirror`, `base`
+     * @private
+     */
+    function buildMaterialBill({
+        materials = [],
+        materialMultiplier = 1,
+        protectionItemHrid = null,
+        protectionCount = 0,
+        protectionUnitPrice = 0,
+        mirrorCount = 0,
+        mirrorPrice = 0,
+        baseItemHrid = null,
+        baseCount = 0,
+        baseUnitPrice = 0,
+    } = {}) {
+        const gameData = dataManager.getInitClientData();
+        const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid;
+
+        const bill = [];
+
+        for (const material of materials || []) {
+            const count = (material.totalQuantity || 0) * materialMultiplier;
+            if (!(count > 0)) continue;
+            bill.push({
+                itemHrid: material.itemHrid,
+                name: material.name || nameOf(material.itemHrid),
+                count,
+                unitPrice: material.unitPrice || 0,
+                totalCost: (material.unitPrice || 0) * count,
+                kind: 'material',
+            });
+        }
+
+        if (protectionItemHrid && protectionCount > 0) {
+            bill.push({
+                itemHrid: protectionItemHrid,
+                name: nameOf(protectionItemHrid),
+                count: protectionCount,
+                unitPrice: protectionUnitPrice,
+                totalCost: protectionUnitPrice * protectionCount,
+                kind: 'protection',
+            });
+        }
+
+        if (mirrorCount > 0) {
+            bill.push({
+                itemHrid: MIRROR_HRID$1,
+                name: nameOf(MIRROR_HRID$1),
+                count: mirrorCount,
+                unitPrice: mirrorPrice,
+                totalCost: mirrorPrice * mirrorCount,
+                kind: 'mirror',
+            });
+        }
+
+        if (baseItemHrid && baseCount > 0) {
+            bill.push({
+                itemHrid: baseItemHrid,
+                name: nameOf(baseItemHrid),
+                count: baseCount,
+                unitPrice: baseUnitPrice,
+                totalCost: baseUnitPrice * baseCount,
+                kind: 'base',
+            });
+        }
+
+        return bill;
+    }
+
+    /**
+     * Build mirror-optimized result from an expanded plan
+     * @param {string} itemHrid - Item being enhanced
+     * @param {number} targetLevel - Target enhancement level
+     * @param {Object} plan - Result of expandMirrorPlan()
+     * @param {number[]} traditionalCosts - Pre-mirror cost per level
+     * @param {number[]} traditionalTimes - Pre-mirror time per level
+     * @param {number[]} traditionalAttempts - Pre-mirror attempts per level
+     * @param {number[]} traditionalProtections - Pre-mirror protections consumed per level
+     * @param {number[]} targetCosts - Post-mirror cost per level
+     * @param {Object} optimalTraditional - Best non-mirror strategy for the target level
+     * @param {number} mirrorPrice - Price of one Philosopher's Mirror
+     * @private
+     */
+    function buildMirrorOptimizedResult(
+        itemHrid,
+        targetLevel,
+        plan,
+        traditionalCosts,
+        traditionalTimes,
+        traditionalAttempts,
+        traditionalProtections,
+        targetCosts,
+        optimalTraditional,
+        mirrorPrice
+    ) {
+        const { leaves, mirrorCount, mirrorStartLevel } = plan;
+
+        // Every leaf is a level the plan buys outright, so it is priced at its traditional cost
+        const consumedItems = leaves.map(({ level, quantity }) => ({
+            level,
+            quantity,
+            costEach: traditionalCosts[level],
+            totalCost: quantity * traditionalCosts[level],
+        }));
+
+        const consumedItemsCost = consumedItems.reduce((sum, item) => sum + item.totalCost, 0);
+        const totalMirrorsCost = mirrorCount * mirrorPrice;
+
+        // Mirror combinations are instant, so only the leaves cost time and attempts
+        const totalTime = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalTimes[level], 0);
+        const totalAttempts = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalAttempts[level], 0);
+        const totalProtections = leaves.reduce(
+            (sum, { level, quantity }) => sum + quantity * (traditionalProtections[level] || 0),
+            0
+        );
+
+        // Every leaf starts from its own base copy — a mirror plan for +10 buys several items and
+        // combines them, which is the fact a totals-only answer hides and a shopping list cannot
+        const totalBaseItems = leaves.reduce((sum, { quantity }) => sum + quantity, 0);
+
+        // The per-attempt material bill is the same at every level, so the target-level strategy's
+        // breakdown (which is already multiplied by *its* attempts) scales to the plan's attempts
+        const materialMultiplier =
+            optimalTraditional.expectedAttempts > 0 ? totalAttempts / optimalTraditional.expectedAttempts : 0;
+
+        // For mirror phase: ONLY consumed items + mirrors
+        // The consumed item costs from targetCosts already include base/materials/protection
+        // NO separate base/materials/protection for main item!
+
+        return {
+            protectFrom: optimalTraditional.protectFrom,
+            label: optimalTraditional.protectFrom === 0 ? 'Never' : `From +${optimalTraditional.protectFrom}`,
+            expectedAttempts: totalAttempts,
+            totalTime: totalTime,
+            baseCost: 0, // Not applicable for mirror phase
+            materialCost: 0, // Not applicable for mirror phase
+            protectionCost: 0, // Not applicable for mirror phase
+            protectionItemHrid: null,
+            protectionCount: 0,
+            consumedItemsCost,
+            philosopherMirrorCost: totalMirrorsCost,
+            totalCost: targetCosts[targetLevel], // Use recursive formula result for consistency
+            mirrorStartLevel: mirrorStartLevel,
+            usedMirror: true,
+            traditionalCost: optimalTraditional.totalCost,
+            consumedItems: consumedItems,
+            mirrorCount: mirrorCount,
+            consumedItemHrid: itemHrid,
+            materialBill: buildMaterialBill({
+                materials: optimalTraditional.materialBreakdown,
+                materialMultiplier,
+                protectionItemHrid: optimalTraditional.protectionItemHrid || getCheapestProtectionPrice(itemHrid)?.itemHrid,
+                protectionCount: totalProtections,
+                protectionUnitPrice:
+                    optimalTraditional.protectionAskPrice || getCheapestProtectionPrice(itemHrid)?.price || 0,
+                mirrorCount,
+                mirrorPrice,
+                baseItemHrid: itemHrid,
+                baseCount: totalBaseItems,
+                baseUnitPrice: traditionalCosts[0],
+            }),
+        };
+    }
+
+    /**
+     * Fixed price for untradeable trainee charms, which have no market listing.
+     */
+    const TRAINEE_CHARM_PRICE = 250000;
+
+    /**
+     * Price one enhancement material.
+     *
+     * Three callers used to each carry their own copy of these rules — trainee charms are
+     * untradeable and priced flat, coins are worth their face value, and a market quote with one
+     * side missing borrows the side that exists — and they had already drifted apart. This is the
+     * single answer all of them ask.
+     *
+     * @param {string} itemHrid - Material item HRID
+     * @param {'ask'|'bid'} [side='ask'] - Which side of the book to price against
+     * @returns {number} Unit price in coins, or 0 when nothing is known about the item
+     */
+    function getEnhancementMaterialPrice(itemHrid, side = 'ask') {
+        if (!itemHrid) return 0;
+
+        // Untradeable: no market listing exists, so use the fixed value on both sides
+        if (itemHrid.startsWith('/items/trainee_')) {
+            return TRAINEE_CHARM_PRICE;
+        }
+        if (itemHrid === '/items/coin') {
+            return 1;
+        }
+
+        const marketPrice = marketData_js.getItemPrices(itemHrid, 0);
+        if (marketPrice) {
+            let ask = marketPrice.ask;
+            let bid = marketPrice.bid;
+
+            // Match MCS behavior: when only one side is quoted, both sides use it
+            if (ask > 0 && bid < 0) bid = ask;
+            if (bid > 0 && ask < 0) ask = bid;
+
+            const price = side === 'bid' ? bid : ask;
+            if (price > 0) return price;
+        }
+
+        // Fallback: production cost, then NPC sell price
+        const gameData = dataManager.getInitClientData();
+        const materialDetail = gameData?.itemDetailMap?.[itemHrid];
+        return getProductionCost(itemHrid, side) || materialDetail?.sellPrice || 0;
+    }
+
+    /**
+     * Calculate total cost for enhancement path
+     * Matches original MWI Tools v25.0 cost calculation
+     * @param {string} itemHrid - Item HRID
+     * @param {number} targetLevel - Target enhancement level
+     * @param {number} protectFrom - Protection threshold
+     * @param {Object} config - Enhancement configuration
+     * @param {Object} pathResult - Markov result for this strategy, already computed by the caller
+     * @private
+     */
+    function calculateTotalCost(itemHrid, targetLevel, protectFrom, config, pathResult) {
+        const gameData = dataManager.getInitClientData();
+        const itemDetails = gameData.itemDetailMap[itemHrid];
+
+        // Calculate per-action material cost (same for all enhancement levels)
+        // enhancementCosts is a flat array of materials needed per attempt
+        let perActionCost = 0;
+        const materialBreakdown = [];
+        if (itemDetails.enhancementCosts) {
+            for (const material of itemDetails.enhancementCosts) {
+                const materialDetail = gameData.itemDetailMap[material.itemHrid];
+                const price = getEnhancementMaterialPrice(material.itemHrid, 'ask');
+                const bidPrice = getEnhancementMaterialPrice(material.itemHrid, 'bid');
+                perActionCost += price * material.count;
+
+                const totalQuantity = material.count * pathResult.attempts;
+                materialBreakdown.push({
+                    itemHrid: material.itemHrid,
+                    name: materialDetail?.name || material.itemHrid,
+                    countPerAction: material.count,
+                    totalQuantity,
+                    unitPrice: price,
+                    bidPrice,
+                    totalCost: price * totalQuantity,
+                });
+            }
+        }
+
+        // Total material cost = per-action cost × total attempts
+        const materialCost = perActionCost * pathResult.attempts;
+
+        // Protection cost = cheapest protection option × protection count
+        let protectionCost = 0;
+        let protectionItemHrid = null;
+        let protectionCount = 0;
+        let protectionAskPrice = 0;
+        let protectionBidPrice = 0;
+        if (protectFrom > 0 && pathResult.protectionCount > 0) {
+            const protectionInfo = getCheapestProtectionPrice(itemHrid);
+            if (protectionInfo.price > 0) {
+                protectionCost = protectionInfo.price * pathResult.protectionCount;
+                protectionItemHrid = protectionInfo.itemHrid;
+                protectionCount = pathResult.protectionCount;
+                protectionAskPrice = protectionInfo.price;
+                const protPrices = marketData_js.getItemPrices(protectionInfo.itemHrid, 0);
+                protectionBidPrice = protPrices?.bid > 0 ? protPrices.bid : protectionInfo.price;
+            }
+        }
+
+        // Base item cost (initial investment) — market price or min(crafting, market) per setting
+        const craftingCostAsk = getProductionCost(itemHrid, 'ask');
+        const craftingCostBid = getProductionCost(itemHrid, 'bid');
+        const baseItemPrices = marketData_js.getItemPrices(itemHrid, 0);
+        const marketAsk = baseItemPrices?.ask > 0 ? baseItemPrices.ask : 0;
+        const marketBid = baseItemPrices?.bid > 0 ? baseItemPrices.bid : 0;
+        const useCraftingCost = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost');
+        // Ask drives the decision: use crafted if ask is missing OR crafted ask is cheaper
+        const askIsCrafted = useCraftingCost && craftingCostAsk > 0 && (marketAsk === 0 || craftingCostAsk < marketAsk);
+        const baseAskPrice = askIsCrafted ? craftingCostAsk : marketAsk || getRealisticBaseItemPrice(itemHrid);
+        const baseBidPrice = askIsCrafted
+            ? craftingCostBid || craftingCostAsk
+            : marketBid || getProductionCost(itemHrid, 'bid') || getRealisticBaseItemPrice(itemHrid);
+        const baseCost = baseAskPrice;
+        const baseAskIsCrafted = askIsCrafted;
+        const baseBidIsCrafted = askIsCrafted;
+
+        return {
+            baseCost,
+            baseAskPrice,
+            baseBidPrice,
+            baseAskIsCrafted,
+            baseBidIsCrafted,
+            materialCost,
+            materialBreakdown,
+            protectionCost,
+            protectionItemHrid,
+            protectionCount,
+            protectionAskPrice,
+            protectionBidPrice,
+            totalCost: baseCost + materialCost + protectionCost,
+        };
+    }
+
+    /**
+     * Get realistic base item price with production cost fallback
+     * Matches original MWI Tools v25.0 getRealisticBaseItemPrice logic
+     * @private
+     */
+    function getRealisticBaseItemPrice(itemHrid) {
+        const marketPrice = marketData_js.getItemPrices(itemHrid, 0);
+        const ask = marketPrice?.ask > 0 ? marketPrice.ask : 0;
+        const bid = marketPrice?.bid > 0 ? marketPrice.bid : 0;
+
+        // Calculate production cost as fallback
+        const productionCost = getProductionCost(itemHrid);
+
+        // If both ask and bid exist
+        if (ask > 0 && bid > 0) {
+            // If ask is significantly higher than bid (>30% markup), use max(bid, production)
+            if (ask / bid > 1.3) {
+                return Math.max(bid, productionCost);
+            }
+            // Otherwise use ask (normal market)
+            return ask;
+        }
+
+        // If only ask exists
+        if (ask > 0) {
+            // If ask is inflated compared to production, use production
+            if (productionCost > 0 && ask / productionCost > 1.3) {
+                return productionCost;
+            }
+            // Otherwise use max of ask and production
+            return Math.max(ask, productionCost);
+        }
+
+        // If only bid exists, use max(bid, production)
+        if (bid > 0) {
+            return Math.max(bid, productionCost);
+        }
+
+        // No market data - use production cost as fallback
+        return productionCost;
+    }
+
+    /**
+     * Calculate production cost from crafting recipe
+     * Matches original MWI Tools v25.0 getBaseItemProductionCost logic
+     * @param {string} itemHrid
+     * @param {'ask'|'bid'} [mode='ask'] - Pricing side to use for input materials
+     * @private
+     */
+    function getProductionCost(itemHrid, mode = 'ask') {
+        const cacheKey = `${itemHrid}|${mode}`;
+        if (_costCache.has(cacheKey)) return _costCache.get(cacheKey);
+        const result = _computeProductionCost(itemHrid, mode);
+        _costCache.set(cacheKey, result);
+        return result;
+    }
+
+    function _computeProductionCost(itemHrid, mode = 'ask') {
+        const gameData = dataManager.getInitClientData();
+        const itemDetails = gameData.itemDetailMap[itemHrid];
+
+        if (!itemDetails || !itemDetails.name) {
+            return 0;
+        }
+
+        // Find the action that produces this item
+        let actionHrid = null;
+        let outputCount = 1;
+        for (const [hrid, action] of Object.entries(gameData.actionDetailMap)) {
+            if (action.outputItems && action.outputItems.length > 0) {
+                const output = action.outputItems[0];
+                if (output.itemHrid === itemHrid) {
+                    actionHrid = hrid;
+                    outputCount = output.count || 1;
+                    break;
+                }
+            }
+        }
+
+        if (!actionHrid) {
+            return 0;
+        }
+
+        const action = gameData.actionDetailMap[actionHrid];
+        let totalPrice = 0;
+
+        // Compute artisan tea reduction dynamically (same approach as material-calculator.js)
+        let artisanBonus = 0;
+        try {
+            const equipment = dataManager.getEquipment();
+            const itemDetailMap = gameData.itemDetailMap || {};
+            const drinkConcentration = teaParser_js.getDrinkConcentration(equipment, itemDetailMap);
+            const activeDrinks = dataManager.getActionDrinkSlots(action.type);
+            artisanBonus = teaParser_js.parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
+        } catch {
+            // Fall back to no reduction if data unavailable
+        }
+
+        // Sum up input material costs (artisan tea reduces material quantities, not upgrade items)
+        if (action.inputItems) {
+            for (const input of action.inputItems) {
+                if (input.itemHrid === '/items/coin') {
+                    totalPrice += input.count * (1 - artisanBonus);
+                    continue;
+                }
+                let inputPrice = marketData_js.getItemPrice(input.itemHrid, { mode }) || 0;
+                if (inputPrice === 0) {
+                    inputPrice = getProductionCost(input.itemHrid, mode);
+                }
+                totalPrice += inputPrice * input.count * (1 - artisanBonus);
+            }
+        }
+
+        // Add upgrade item cost if this is an upgrade recipe (not affected by artisan tea)
+        // Use min(market, craft) so refined items reflect the cheapest way to obtain the base item
+        if (action.upgradeItemHrid) {
+            const upgradeMarketPrice = marketData_js.getItemPrice(action.upgradeItemHrid, { mode }) || 0;
+            const upgradeCraftPrice = getProductionCost(action.upgradeItemHrid, mode);
+            let upgradePrice;
+            if (upgradeMarketPrice > 0 && upgradeCraftPrice > 0) {
+                upgradePrice = Math.min(upgradeMarketPrice, upgradeCraftPrice);
+            } else {
+                upgradePrice = upgradeMarketPrice || upgradeCraftPrice;
+            }
+            totalPrice += upgradePrice;
+        }
+
+        return totalPrice / outputCount;
+    }
+
+    /**
+     * Get cheapest protection item price
+     * Tests: item itself, mirror of protection, and specific protection items
+     * @private
+     */
+    function getCheapestProtectionPrice(itemHrid) {
+        const gameData = dataManager.getInitClientData();
+        const itemDetails = gameData.itemDetailMap[itemHrid];
+
+        // Build list of protection options: [item itself, mirror, ...specific items]
+        const protectionOptions = [itemHrid, '/items/mirror_of_protection'];
+
+        // Add specific protection items if they exist
+        if (itemDetails.protectionItemHrids && itemDetails.protectionItemHrids.length > 0) {
+            protectionOptions.push(...itemDetails.protectionItemHrids);
+        }
+
+        // Find cheapest option
+        let cheapestPrice = Infinity;
+        let cheapestItemHrid = null;
+        for (const protectionHrid of protectionOptions) {
+            const price = getRealisticBaseItemPrice(protectionHrid);
+            if (price > 0 && price < cheapestPrice) {
+                cheapestPrice = price;
+                cheapestItemHrid = protectionHrid;
+            }
+        }
+
+        return {
+            price: cheapestPrice === Infinity ? 0 : cheapestPrice,
+            itemHrid: cheapestItemHrid,
+        };
+    }
+
+    /**
+     * Minimum sell price that covers the total cost plus a target hourly rate for the
+     * time the enhancement takes, optionally grossed up for the marketplace seller tax.
+     * @param {number} totalCost - Total cost to reach the level, on one side (ask or bid)
+     * @param {number} totalTimeSeconds - Total enhancing time, in seconds
+     * @param {number} hourlyRate - Target coins/hour for time spent
+     * @param {boolean} includeTax - Whether to gross up for the marketplace seller tax
+     * @returns {number} Minimum sell price
+     */
+    function calculateMinimumSellPrice(totalCost, totalTimeSeconds, hourlyRate, includeTax) {
+        const breakeven = totalCost + hourlyRate * (totalTimeSeconds / 3600);
+        return includeTax ? breakeven / (1 - profitConstants_js.MARKET_TAX) : breakeven;
+    }
+
+    /**
+     * Build HTML for enhancement tooltip section
+     * @param {Object} enhancementData - Enhancement analysis from calculateEnhancementPath()
+     * @returns {string} HTML string
+     */
+    function buildEnhancementTooltipHTML(enhancementData) {
+        if (!enhancementData || !enhancementData.optimalStrategy) {
+            return '';
+        }
+
+        const { itemHrid, targetLevel, optimalStrategy, xpPerHour, totalExpectedXP, paramsNote, enhancementParams } =
+            enhancementData;
+
+        // Validate required fields
+        if (
+            typeof optimalStrategy.expectedAttempts !== 'number' ||
+            typeof optimalStrategy.totalTime !== 'number' ||
+            typeof optimalStrategy.materialCost !== 'number' ||
+            typeof optimalStrategy.totalCost !== 'number'
+        ) {
+            console.error('[Enhancement Tooltip] Missing required fields in optimal strategy:', optimalStrategy);
+            return '';
+        }
+
+        let html =
+            `<div ${sectionAttributes('path', itemHrid, targetLevel)} ` +
+            'style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
+        html +=
+            '<div style="font-weight: bold; margin-bottom: 4px;">ENHANCEMENT PATH (+0 → +' +
+            targetLevel +
+            ')' +
+            buildSourceChipHTML(enhancementParams) +
+            '</div>';
+        html += '<div style="font-size: 0.9em; margin-left: 8px;">';
+
+        // Optimal strategy
+        if (optimalStrategy.protectFrom === 0) {
+            html += '<div>No protection needed for +' + targetLevel + '</div>';
+        } else {
+            html += '<div>Protect from: ' + optimalStrategy.label + '</div>';
+        }
+
+        // Show Philosopher's Mirror usage if applicable
+        if (optimalStrategy.usedMirror && optimalStrategy.mirrorStartLevel) {
+            html +=
+                '<div style="color: ' +
+                config.COLOR_MIRROR +
+                ';">Uses Philosopher\'s Mirror from +' +
+                optimalStrategy.mirrorStartLevel +
+                '</div>';
+        }
+
+        html += '<div>Expected Attempts: ' + formatters_js.formatLargeNumber(optimalStrategy.expectedAttempts.toFixed(1)) + '</div>';
+
+        // Costs table
+        html += '<div style="margin-top: 8px;">';
+        html += `<table style="width: 100%; border-collapse: collapse; font-size: 0.85em; color: ${config.COLOR_TOOLTIP_INFO};">`;
+
+        // Table header
+        html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
+        html += '<th style="padding: 2px 4px; text-align: left;">Material</th>';
+        html += '<th style="padding: 2px 4px; text-align: center;">Count</th>';
+        html += '<th style="padding: 2px 4px; text-align: right;">Ask</th>';
+        html += '<th style="padding: 2px 4px; text-align: right;">Bid</th>';
+        html += '</tr>';
+
+        // Hoisted so both breakdowns populate them and the minimum-sell section below can read them
+        let totalAsk = 0;
+        let totalBid = 0;
+
+        // Check if using mirror optimization
+        if (optimalStrategy.usedMirror && optimalStrategy.consumedItems && optimalStrategy.consumedItems.length > 0) {
+            // Mirror-optimized breakdown
+            // Calculate totals for mirror path
+
+            // Consumed items (enhanced items at specific levels)
+            const sortedConsumed = [...optimalStrategy.consumedItems]
+                .filter((item) => item.quantity > 0)
+                .sort((a, b) => b.level - a.level);
+
+            const gameData = dataManager.getInitClientData();
+            const consumedHrid = optimalStrategy.consumedItemHrid ?? itemHrid;
+            const baseItemDetails = gameData?.itemDetailMap[consumedHrid];
+            const baseItemName = baseItemDetails?.name || consumedHrid;
+
+            const consumedRows = sortedConsumed.map((item) => {
+                const prices = marketData_js.getItemPrices(consumedHrid, item.level);
+                const askPrice = prices?.ask > 0 ? prices.ask : item.costEach;
+                const bidPrice = prices?.bid > 0 ? prices.bid : item.costEach;
+                totalAsk += askPrice * item.quantity;
+                totalBid += bidPrice * item.quantity;
+                return { name: baseItemName + ' +' + item.level, count: item.quantity, askPrice, bidPrice };
+            });
+
+            // Philosopher's Mirror row
+            if (optimalStrategy.philosopherMirrorCost > 0 && optimalStrategy.mirrorCount > 0) {
+                const mirrorPrices = marketData_js.getItemPrices('/items/philosophers_mirror', 0);
+                const mirrorAsk = mirrorPrices?.ask > 0 ? mirrorPrices.ask : 0;
+                const mirrorBid = mirrorPrices?.bid > 0 ? mirrorPrices.bid : 0;
+                totalAsk += mirrorAsk * optimalStrategy.mirrorCount;
+                totalBid += mirrorBid * optimalStrategy.mirrorCount;
+                consumedRows.push({
+                    name: "Philosopher's Mirror",
+                    count: optimalStrategy.mirrorCount,
+                    askPrice: mirrorAsk,
+                    bidPrice: mirrorBid,
+                });
+            }
+
+            // Color total ask/bid by comparison to market price of enhanced item
+            const enhancedPrices = marketData_js.getItemPrices(itemHrid, targetLevel);
+            const totalAskColor =
+                enhancedPrices?.ask > 0
+                    ? totalAsk < enhancedPrices.ask
+                        ? config.COLOR_TOOLTIP_PROFIT
+                        : config.COLOR_TOOLTIP_LOSS
+                    : '';
+            const totalBidColor =
+                enhancedPrices?.bid > 0
+                    ? totalBid < enhancedPrices.bid
+                        ? config.COLOR_TOOLTIP_PROFIT
+                        : config.COLOR_TOOLTIP_LOSS
+                    : '';
+
+            // Total row
+            html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
+            html += '<td style="padding: 2px 4px; font-weight: bold;">Total</td>';
+            html += '<td style="padding: 2px 4px; text-align: center;"></td>';
+            html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalAskColor ? ' color: ' + totalAskColor + ';' : ''}">${formatters_js.formatKMB(totalAsk)}</td>`;
+            html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalBidColor ? ' color: ' + totalBidColor + ';' : ''}">${formatters_js.formatKMB(totalBid)}</td>`;
+            html += '</tr>';
+
+            // Item rows
+            for (const row of consumedRows) {
+                html += '<tr>';
+                html += `<td style="padding: 2px 4px;">${row.name}</td>`;
+                html += `<td style="padding: 2px 4px; text-align: center;">${formatters_js.formatKMB(row.count)}</td>`;
+                html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.askPrice)}</td>`;
+                html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.bidPrice)}</td>`;
+                html += '</tr>';
+            }
+        } else {
+            // Traditional (non-mirror) breakdown
+            // Calculate totals
+            let totalCount = 1; // Base item counts as 1
+            totalAsk = optimalStrategy.baseAskPrice || optimalStrategy.baseCost;
+            totalBid = optimalStrategy.baseBidPrice || optimalStrategy.baseCost;
+
+            const rows = [];
+
+            // Base item row
+            const baseItemLabel = optimalStrategy.baseAskIsCrafted ? 'Craft Item' : 'Buy Item';
+            rows.push({
+                name: toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost') ? baseItemLabel : 'Base Item',
+                count: 1,
+                askPrice: optimalStrategy.baseAskPrice || optimalStrategy.baseCost,
+                bidPrice: optimalStrategy.baseBidPrice || optimalStrategy.baseCost,
+            });
+
+            // Material rows
+            if (optimalStrategy.materialBreakdown && optimalStrategy.materialBreakdown.length > 0) {
+                for (const mat of optimalStrategy.materialBreakdown) {
+                    const count = mat.totalQuantity;
+                    const askPrice = mat.unitPrice;
+                    const bidPrice = mat.bidPrice || mat.unitPrice;
+                    totalCount += count;
+                    totalAsk += askPrice * count;
+                    totalBid += bidPrice * count;
+                    rows.push({ name: mat.name, count, askPrice, bidPrice, isCoin: mat.itemHrid === '/items/coin' });
+                }
+            }
+
+            // Protection row
+            if (optimalStrategy.protectionCost > 0 && optimalStrategy.protectionCount > 0) {
+                const count = optimalStrategy.protectionCount;
+                const askPrice = optimalStrategy.protectionAskPrice || 0;
+                const bidPrice = optimalStrategy.protectionBidPrice || askPrice;
+                totalCount += count;
+                totalAsk += askPrice * count;
+                totalBid += bidPrice * count;
+
+                let protName = 'Protection';
+                if (optimalStrategy.protectionItemHrid) {
+                    const gameData = dataManager.getInitClientData();
+                    const protDetails = gameData?.itemDetailMap[optimalStrategy.protectionItemHrid];
+                    if (protDetails?.name) {
+                        protName = protDetails.name;
+                    }
+                }
+                rows.push({ name: protName, count, askPrice, bidPrice });
+            }
+
+            // Color total ask/bid by comparison to market price of enhanced item
+            const enhancedPrices = marketData_js.getItemPrices(itemHrid, targetLevel);
+            const totalAskColor =
+                enhancedPrices?.ask > 0
+                    ? totalAsk < enhancedPrices.ask
+                        ? config.COLOR_TOOLTIP_PROFIT
+                        : config.COLOR_TOOLTIP_LOSS
+                    : '';
+            const totalBidColor =
+                enhancedPrices?.bid > 0
+                    ? totalBid < enhancedPrices.bid
+                        ? config.COLOR_TOOLTIP_PROFIT
+                        : config.COLOR_TOOLTIP_LOSS
+                    : '';
+
+            // Total row
+            html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
+            html += '<td style="padding: 2px 4px; font-weight: bold;">Total</td>';
+            html += `<td style="padding: 2px 4px; text-align: center;">${formatters_js.formatKMB(totalCount)}</td>`;
+            html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalAskColor ? ' color: ' + totalAskColor + ';' : ''}">${formatters_js.formatKMB(totalAsk)}</td>`;
+            html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalBidColor ? ' color: ' + totalBidColor + ';' : ''}">${formatters_js.formatKMB(totalBid)}</td>`;
+            html += '</tr>';
+
+            // Item rows
+            for (const row of rows) {
+                html += '<tr>';
+                html += `<td style="padding: 2px 4px;">${row.name}</td>`;
+                if (row.isCoin) {
+                    html += '<td style="padding: 2px 4px; text-align: center;">—</td>';
+                    html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.count)}</td>`;
+                    html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.count)}</td>`;
+                } else {
+                    html += `<td style="padding: 2px 4px; text-align: center;">${formatters_js.formatKMB(row.count)}</td>`;
+                    html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.askPrice)}</td>`;
+                    html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.bidPrice)}</td>`;
+                }
+                html += '</tr>';
+            }
+        }
+
+        html += '</table>';
+        html += '</div>';
+
+        // Time estimate
+        const totalSeconds = optimalStrategy.totalTime;
+
+        if (totalSeconds < 60) {
+            // Less than 1 minute: show seconds
+            html += '<div>Time: ~' + Math.round(totalSeconds) + ' seconds</div>';
+        } else if (totalSeconds < 3600) {
+            // Less than 1 hour: show minutes
+            const minutes = Math.round(totalSeconds / 60);
+            html += '<div>Time: ~' + minutes + ' minutes</div>';
+        } else if (totalSeconds < 86400) {
+            // Less than 1 day: show hours
+            const hours = (totalSeconds / 3600).toFixed(1);
+            html += '<div>Time: ~' + hours + ' hours</div>';
+        } else {
+            // 1 day or more: show days
+            const days = (totalSeconds / 86400).toFixed(1);
+            html += '<div>Time: ~' + days + ' days</div>';
+        }
+
+        if (xpPerHour !== null && xpPerHour > 0) {
+            html += '<div style="margin-top: 4px;">XP/hr: ' + formatters_js.formatLargeNumber(xpPerHour) + '</div>';
+        }
+        if (totalExpectedXP !== null && totalExpectedXP > 0) {
+            html += '<div>Total XP: ~' + formatters_js.formatLargeNumber(totalExpectedXP) + '</div>';
+        }
+
+        // Target hourly rate / minimum sell price — only when a rate is configured.
+        // The rate is a text setting, so it is read with getSettingValue(); getSetting() only
+        // ever answers with a boolean and would silently parse to 0 here.
+        const hourlyRate = numberParser_js.parseItemCount(config.getSettingValue('itemTooltip_enhancingHourlyRate', ''), 0);
+        if (hourlyRate > 0) {
+            const includeTax = config.getSetting('itemTooltip_enhancingHourlyRateTax');
+            const minSellAsk = calculateMinimumSellPrice(totalAsk, optimalStrategy.totalTime, hourlyRate, includeTax);
+            const minSellBid = calculateMinimumSellPrice(totalBid, optimalStrategy.totalTime, hourlyRate, includeTax);
+
+            const enhancedPrices = marketData_js.getItemPrices(itemHrid, targetLevel);
+            const priceColor = (price, minimum) =>
+                price > 0 ? (price >= minimum ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS) : '';
+            const askColor = priceColor(enhancedPrices?.ask, minSellAsk);
+            const bidColor = priceColor(enhancedPrices?.bid, minSellBid);
+
+            html += '<div style="margin-top: 4px;">Your rate: ' + formatters_js.formatKMB(hourlyRate) + '/hr</div>';
+            html += '<div>Minimum sell: ';
+            html += `<span${askColor ? ` style="color: ${askColor};"` : ''}>${formatters_js.formatKMB(minSellAsk)}</span>(ask)/`;
+            html += `<span${bidColor ? ` style="color: ${bidColor};"` : ''}>${formatters_js.formatKMB(minSellBid)}</span>(bid)`;
+            html += '</div>';
+        }
+
+        // A quiet note, not a warning: these numbers are only as true as the stats behind them,
+        // and a hand-entered stat is the one place they can quietly stop describing this character
+        if (paramsNote) {
+            html += `<div style="margin-top: 4px; font-size: 0.8em; opacity: 0.6;">${paramsNote}</div>`;
+        }
+
+        html += '</div>'; // Close margin-left div
+        html += '</div>'; // Close main container
+
+        return html;
+    }
+
+    /**
+     * Enhancement Tracker
+     * Main tracker class for monitoring enhancement attempts, costs, and statistics
+     */
+
+
+    /**
+     * EnhancementTracker class manages enhancement tracking sessions
+     */
+    class EnhancementTracker {
+        constructor() {
+            this.sessions = {}; // All sessions (keyed by session ID)
+            this.currentSessionId = null; // Currently active session ID
+            this.isInitialized = false;
+            this.pendingSessionStart = false; // Start new session on next action_completed regardless of currentCount
+        }
+
+        /**
+         * Initialize enhancement tracker
+         * @returns {Promise<void>}
+         */
+        async initialize() {
+            if (this.isInitialized) {
+                return;
+            }
+
+            if (!config.getSetting('enhancementTracker')) {
+                return;
+            }
+
+            try {
+                // Load sessions from storage
+                this.sessions = await loadSessions$1();
+                this.currentSessionId = await loadCurrentSessionId();
+
+                // Validate current session still exists
+                if (this.currentSessionId && !this.sessions[this.currentSessionId]) {
+                    this.currentSessionId = null;
+                    await saveCurrentSessionId(null);
+                }
+
+                // Validate all loaded sessions
+                for (const [sessionId, session] of Object.entries(this.sessions)) {
+                    if (!validateSession(session)) {
+                        delete this.sessions[sessionId];
+                    }
+                }
+
+                this.isInitialized = true;
+            } catch (error) {
+                console.error('[EnhancementTracker] Failed to initialize:', error);
+            }
+        }
+
+        /**
+         * Start a new enhancement session
+         * @param {string} itemHrid - Item HRID being enhanced
+         * @param {number} startLevel - Starting enhancement level
+         * @param {number} targetLevel - Target enhancement level
+         * @param {number} protectFrom - Level to start using protection (0 = never)
+         * @returns {Promise<string>} New session ID
+         */
+        async startSession(itemHrid, startLevel, targetLevel, protectFrom = 0) {
+            const gameData = dataManager.getInitClientData();
+            if (!gameData) {
+                throw new Error('Game data not available');
+            }
+
+            // Get item name
+            const itemDetails = gameData.itemDetailMap[itemHrid];
+            if (!itemDetails) {
+                throw new Error(`Item not found: ${itemHrid}`);
+            }
+
+            const itemName = itemDetails.name;
+
+            // Create new session
+            const session = createSession(itemHrid, itemName, startLevel, targetLevel, protectFrom);
+
+            // Calculate predictions
+            const predictions = calculateEnhancementPredictions(itemHrid, startLevel, targetLevel, protectFrom);
+            session.predictions = predictions;
+
+            // Store session
+            this.sessions[session.id] = session;
+            this.currentSessionId = session.id;
+
+            // Save to storage
+            await saveSessions(this.sessions);
+            await saveCurrentSessionId(session.id);
+
+            return session.id;
+        }
+
+        /**
+         * Find a completed session that can be extended
+         * @param {string} itemHrid - Item HRID
+         * @param {number} currentLevel - Current enhancement level
+         * @returns {string|null} Session ID if found, null otherwise
+         */
+        findExtendableSession(itemHrid, currentLevel) {
+            for (const [sessionId, session] of Object.entries(this.sessions)) {
+                if (canExtendSession(session, itemHrid, currentLevel)) {
+                    return sessionId;
+                }
+            }
+
+            return null;
+        }
+
+        /**
+         * Extend a completed session to a new target level
+         * @param {string} sessionId - Session ID to extend
+         * @param {number} newTargetLevel - New target level
+         * @returns {Promise<boolean>} True if extended successfully
+         */
+        async extendSessionTarget(sessionId, newTargetLevel) {
+            if (!this.sessions[sessionId]) {
+                return false;
+            }
+
+            const session = this.sessions[sessionId];
+
+            // Can only extend completed sessions
+            if (session.state !== SessionState.COMPLETED) {
+                return false;
+            }
+
+            extendSession(session, newTargetLevel);
+            this.currentSessionId = sessionId;
+
+            // Recalculate predictions for the new target level
+            const predictions = calculateEnhancementPredictions(
+                session.itemHrid,
+                session.currentLevel,
+                newTargetLevel,
+                session.protectFrom
+            );
+            if (predictions) {
+                session.predictions = predictions;
+            }
+
+            await saveSessions(this.sessions);
+            await saveCurrentSessionId(sessionId);
+
+            return true;
+        }
+
+        /**
+         * Get current active session
+         * @returns {Object|null} Current session or null
+         */
+        getCurrentSession() {
+            if (!this.currentSessionId) return null;
+            return this.sessions[this.currentSessionId] || null;
+        }
+
+        /**
+         * Finalize current session (mark as completed)
+         * @returns {Promise<void>}
+         */
+        async finalizeCurrentSession() {
+            const session = this.getCurrentSession();
+            if (!session) {
+                return;
+            }
+
+            finalizeSession(session);
+            await saveSessions(this.sessions);
+
+            // Clear current session
+            this.currentSessionId = null;
+            await saveCurrentSessionId(null);
+        }
+
+        /**
+         * Record a successful enhancement attempt
+         * @param {number} previousLevel - Level before success
+         * @param {number} newLevel - New level after success
+         * @returns {Promise<void>}
+         */
+        async recordSuccess(previousLevel, newLevel) {
+            const session = this.getCurrentSession();
+            if (!session) {
+                return;
+            }
+
+            recordSuccess(session, previousLevel, newLevel);
+            await saveSessions(this.sessions);
+
+            // Check if target reached
+            if (session.state === SessionState.COMPLETED) {
+                this.currentSessionId = null;
+                await saveCurrentSessionId(null);
+
+                // The run just became one finished draw from the distribution its
+                // prediction quoted; the recorder declines anything that is not
+                // (no distribution stored, target not actually reached). Errors
+                // stay its problem — a calibration ledger must never break a run.
+                try {
+                    await enhancementCalibration.recordCompletion(session);
+                } catch (error) {
+                    console.error('[EnhancementTracker] Recording the calibration observation failed:', error);
+                }
+            }
+        }
+
+        /**
+         * Record a failed enhancement attempt
+         * @param {number} previousLevel - Level that failed
+         * @param {number} newLevel - Actual level after failure
+         * @returns {Promise<void>}
+         */
+        async recordFailure(previousLevel, newLevel) {
+            const session = this.getCurrentSession();
+            if (!session) {
+                return;
+            }
+
+            recordFailure(session, previousLevel, newLevel);
+            await saveSessions(this.sessions);
+        }
+
+        /**
+         * Track material costs for current session
+         * @param {string} itemHrid - Material item HRID
+         * @param {number} count - Quantity used
+         * @returns {Promise<void>}
+         */
+        async trackMaterialCost(itemHrid, count) {
+            const session = this.getCurrentSession();
+            if (!session) return;
+
+            // Same pricing rules the tooltip and XPH calculator use, so a tracked run and its
+            // prediction cost the same materials the same way
+            const unitCost = getEnhancementMaterialPrice(itemHrid, 'ask');
+
+            addMaterialCost(session, itemHrid, count, unitCost);
+            await saveSessions(this.sessions);
+        }
+
+        /**
+         * Track coin cost for current session
+         * @param {number} amount - Coin amount spent
+         * @returns {Promise<void>}
+         */
+        async trackCoinCost(amount) {
+            const session = this.getCurrentSession();
+            if (!session) return;
+
+            addCoinCost(session, amount);
+            await saveSessions(this.sessions);
+        }
+
+        /**
+         * Track protection item cost for current session
+         * @param {string} protectionItemHrid - Protection item HRID
+         * @param {number} cost - Protection item cost
+         * @returns {Promise<void>}
+         */
+        async trackProtectionCost(protectionItemHrid, cost) {
+            const session = this.getCurrentSession();
+            if (!session) return;
+
+            addProtectionCost(session, protectionItemHrid, cost);
+            await saveSessions(this.sessions);
+        }
+
+        /**
+         * Get all sessions
+         * @returns {Object} All sessions
+         */
+        getAllSessions() {
+            return this.sessions;
+        }
+
+        /**
+         * Get session by ID
+         * @param {string} sessionId - Session ID
+         * @returns {Object|null} Session or null
+         */
+        getSession(sessionId) {
+            return this.sessions[sessionId] || null;
+        }
+
+        /**
+         * Save sessions to storage (can be called directly)
+         * @returns {Promise<void>}
+         */
+        async saveSessions() {
+            await saveSessions(this.sessions);
+        }
+
+        /**
+         * Set flag so the next action_completed starts a new session regardless of currentCount.
+         * Used when the tracker is cleared mid-session or when a new action queue is detected.
+         */
+        setPendingStart() {
+            this.pendingSessionStart = true;
+        }
+
+        /**
+         * Clear all sessions and flag that the next attempt should start a new session.
+         * @returns {Promise<void>}
+         */
+        async clearSessions() {
+            this.sessions = {};
+            this.currentSessionId = null;
+            this.pendingSessionStart = true;
+            await saveSessions(this.sessions);
+            await saveCurrentSessionId(null);
+        }
+
+        /**
+         * Disable and cleanup
+         */
+        disable() {
+            // Clear in-memory session data (will be reloaded from storage on next init)
+            this.sessions = {};
+            this.currentSessionId = null;
+            this.isInitialized = false;
+        }
+    }
+
+    const enhancementTracker = new EnhancementTracker();
+
+    /**
+     * Enhancement profit / luck math
+     *
+     * Two readings of an enhancement session, kept as pure functions so the
+     * arithmetic can be tested without a DOM:
+     *
+     *  - cost vs expected (luck): what this run actually paid against what the
+     *    prediction expected it to pay, holding unit prices at this run's own — so
+     *    the gap is attempt/protection luck, not market drift.
+     *  - value vs cost (worth it): the +N item's resale value minus the +0 base you
+     *    gave up minus what you spent — did enhancing it pay off.
+     */
+
+    /**
+     * Cost this run paid vs the prediction's expected cost, at this run's own unit
+     * prices. Whole-session; returns null when it cannot be read honestly:
+     *  - no attempts or no stored prediction,
+     *  - an extended (multi-leg) session, where the prediction covers only the last
+     *    leg but the tracked cost covers every leg.
+     *
+     * @param {Object} session - Live enhancement session
+     * @param {{attempts: number, protections: number}} [leg] - current-leg counters
+     * @returns {{actualCost:number, expectedCost:number, diff:number, factor:number,
+     *   materialActual:number, materialExpected:number, protActual:number,
+     *   protExpected:number, hasProt:boolean}|null}
+     */
+    function costVsExpected(session, leg = null) {
+        const predictions = session?.predictions;
+        const totalAttempts = session?.totalAttempts || 0;
+        if (!predictions || totalAttempts <= 0) return null;
+        // Cost is tracked per session, not per leg — only compare when the whole
+        // session is a single leg, or the expected (one leg) undercounts the actual.
+        if (leg && leg.attempts !== totalAttempts) return null;
+
+        const expAtt = predictions.expectedAttempts || 0;
+        const expProt = predictions.expectedProtections || 0;
+        if (expAtt <= 0) return null;
+
+        const materialActual = Object.values(session.materialCosts || {}).reduce((sum, m) => sum + (m.totalCost || 0), 0);
+        const coinActual = session.coinCost || 0;
+        const protActual = session.protectionCost || 0;
+        const protCount = session.protectionCount || 0;
+
+        // Materials and coins are spent per attempt; protection per protect.
+        const perAttempt = (materialActual + coinActual) / totalAttempts;
+        const protUnit = protCount > 0 ? protActual / protCount : 0;
+
+        const materialExpected = perAttempt * expAtt;
+        const protExpected = protUnit * expProt;
+        const expectedCost = materialExpected + protExpected;
+        const actualCost = materialActual + coinActual + protActual;
+        if (expectedCost <= 0) return null;
+
+        return {
+            actualCost,
+            expectedCost,
+            diff: expectedCost - actualCost, // positive → came in below expected (lucky)
+            factor: actualCost / expectedCost,
+            materialActual: materialActual + coinActual,
+            materialExpected,
+            protActual,
+            protExpected,
+            hasProt: protCount > 0 || expProt > 0,
+        };
+    }
+
+    /** Marketplace sell fee — the cut taken when a listing fills. */
+    const MARKET_SELL_TAX = 0.02;
+
+    /**
+     * Whether the enhanced item is worth more than it cost to make: the +N resale
+     * value (after the market sell fee) minus the +0 base given up minus what was
+     * spent. Answers "was enhancing this worth it vs just selling the base?".
+     *
+     * @param {Object} session - Live enhancement session
+     * @param {(hrid: string, level: number) => ({bid:number, ask:number}|null)} getPrices
+     *   - Market price lookup (injected for testability)
+     * @param {number} [sellTax=MARKET_SELL_TAX] - Fraction taken on a sale
+     * @returns {{level:number, spent:number, valueN:number|null, value0:number|null,
+     *   net:number|null, sellTax:number}|null}
+     */
+    function valueVsCost(session, getPrices, sellTax = MARKET_SELL_TAX) {
+        if (!session?.itemHrid) return null;
+        const level = session.currentLevel || 0;
+        if (level <= 0) return null;
+
+        const spent = session.totalCost || 0;
+        const nPrices = getPrices?.(session.itemHrid, level) || null;
+        const basePrices = getPrices?.(session.itemHrid, 0) || null;
+        const valueN = nPrices?.bid ?? null;
+        const value0 = basePrices?.bid ?? null;
+
+        if (valueN == null) return { level, spent, valueN: null, value0, net: null, sellTax };
+        const keep = 1 - sellTax;
+        return { level, spent, valueN, value0, net: valueN * keep - (value0 || 0) * keep - spent, sellTax };
+    }
+
+    /**
+     * Enhancement Tracker Floating UI
+     * Displays enhancement session statistics in a draggable panel
+     * Based on Ultimate Enhancement Tracker v3.7.9
+     */
+
+
+    // UI Style Constants (matching Ultimate Enhancement Tracker)
+    const STYLE = {
+        colors: {
+            primary: '#00ffe7',
+            border: 'rgba(0, 255, 234, 0.4)',
+            textPrimary: '#e0f7ff',
+            textSecondary: '#9b9bff',
+            accent: '#ff00d4',
+            danger: '#ff0055',
+            success: '#00ff99',
+            headerBg: 'rgba(15, 5, 35, 0.7)',
+            gold: '#FFD700',
+        },
+        borderRadius: {
+            small: '4px',
+            medium: '8px'},
+        transitions: {
+            fast: 'all 0.15s ease'},
+    };
+
+    // Table styling
+    const compactTableStyle = `
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin: 0;
+`;
+
+    const compactHeaderStyle = `
+    padding: 4px 6px;
+    background: ${STYLE.colors.headerBg};
+    border: 1px solid ${STYLE.colors.border};
+    color: ${STYLE.colors.textPrimary};
+    font-weight: bold;
+    text-align: center;
+`;
+
+    const compactCellStyle = `
+    padding: 3px 6px;
+    border: 1px solid rgba(0, 255, 234, 0.2);
+    color: ${STYLE.colors.textPrimary};
+`;
+
+    const mergeChipStyle = `
+    background: none;
+    border: 1px solid ${STYLE.colors.border};
+    color: ${STYLE.colors.textPrimary};
+    cursor: pointer;
+    font-size: 11px;
+    padding: 1px 8px;
+    border-radius: 3px;
+`;
+
+    /**
+     * Enhancement UI Manager
+     */
+    class EnhancementUI {
+        constructor() {
+            this.floatingUI = null;
+            this.currentViewingIndex = -1; // Index in sessions array (-1 = default to latest)
+            this.updateDebounce = null;
+            this.isDragging = false;
+            this.unregisterScreenObserver = null;
+            this.panelRemovalObserver = null;
+            this.settingChangeHandlers = [];
+            this.isOnEnhancingScreen = false;
+            this.isCollapsed = false; // Track collapsed state
+            this.mergeMode = false; // Viewing a combined summary of several sessions
+            this.mergeSelected = new Set(); // Session ids checked for the merge
+            this.screenToggleButton = null; // In-panel show/hide button on the Enhancing screen
+            this.updateInterval = null;
+            this.timerRegistry = timerRegistry_js.createTimerRegistry();
+            this.dragHandle = null;
+            this.dragMouseDownHandler = null;
+            this.dragMoveHandler = null;
+            this.dragUpHandler = null;
+        }
+
+        /**
+         * Initialize the UI
+         */
+        initialize() {
+            this.createFloatingUI();
+            this.updateUI();
+
+            // Set up screen observer for visibility control
+            this.setupScreenObserver();
+
+            // Update UI every second during active sessions
+            this.updateInterval = setInterval(() => {
+                if (document.hidden) return;
+                // The merge view is a snapshot the user is reading and clicking
+                // through; a per-second rebuild would drop its checkbox state.
+                if (this.mergeMode) return;
+                const session = this.getCurrentSession();
+                if (session && session.state === SessionState.TRACKING) {
+                    this.updateUI();
+                }
+            }, 1000);
+            this.timerRegistry.registerInterval(this.updateInterval);
+        }
+
+        /**
+         * Set up screen observer to detect Enhancing screen using centralized observer
+         */
+        setupScreenObserver() {
+            // Check if main feature is enabled
+            const trackerEnabled = config.getSetting('enhancementTracker');
+
+            if (!trackerEnabled) {
+                // Main feature disabled, hide tracker
+                this.hide();
+            } else {
+                // Check if setting is enabled (default to false if undefined)
+                const showOnlyOnEnhancingScreen = config.getSetting('enhancementTracker_showOnlyOnEnhancingScreen');
+
+                if (showOnlyOnEnhancingScreen !== true) {
+                    // Setting is disabled or undefined, always show tracker
+                    this.isOnEnhancingScreen = true;
+                    this.show();
+                } else {
+                    // Setting enabled, check current screen
+                    this.checkEnhancingScreen();
+                    this.updateVisibility();
+                }
+            }
+
+            // Register with centralized DOM observer for enhancing panel detection
+            this.unregisterScreenObserver = domObserver.onClass(
+                'EnhancementUI-ScreenDetection',
+                'EnhancingPanel_enhancingPanel',
+                (panel) => {
+                    this.isOnEnhancingScreen = true;
+                    this.updateVisibility();
+                    // A show/hide button on the Enhancing screen itself, like the
+                    // marketplace's Bulk Sell tab.
+                    this.injectScreenToggleButton(panel);
+                    // Setup removal observer when panel appears
+                    this.setupPanelRemovalObserver(panel);
+                },
+                { debounce: false }
+            );
+
+            // Setup setting change listeners (event-driven, no polling)
+            this.setupSettingChangeListeners();
+
+            // Check if panel already exists and setup removal observer
+            const existingPanel = document.querySelector('[class*="EnhancingPanel_enhancingPanel"]');
+            if (existingPanel) {
+                this.isOnEnhancingScreen = true;
+                this.updateVisibility();
+                this.injectScreenToggleButton(existingPanel);
+                this.setupPanelRemovalObserver(existingPanel);
+            }
+        }
+
+        /**
+         * Setup listeners for setting changes (replaces polling)
+         */
+        setupSettingChangeListeners() {
+            // Listen for main tracker toggle
+            const onTrackerChange = (enabled) => {
+                if (!enabled) {
+                    this.hide();
+                    // The Enhancing-screen toggle belongs to the feature; drop it.
+                    if (this.screenToggleButton) {
+                        this.screenToggleButton.remove();
+                        this.screenToggleButton = null;
+                    }
+                } else {
+                    // Turning the feature on clears any manual command-palette hide.
+                    this.manualHidden = false;
+                    this.updateVisibility();
+                    const panel = document.querySelector('[class*="EnhancingPanel_enhancingPanel"]');
+                    if (panel) this.injectScreenToggleButton(panel);
+                }
+            };
+            config.onSettingChange('enhancementTracker', onTrackerChange);
+            this.settingChangeHandlers.push({ key: 'enhancementTracker', handler: onTrackerChange });
+
+            // Listen for "show only on enhancing screen" toggle
+            const onScreenSettingChange = (enabled) => {
+                if (enabled !== true) {
+                    // Setting disabled - always show (if main tracker enabled)
+                    this.isOnEnhancingScreen = true;
+                } else {
+                    // Setting enabled - check actual screen
+                    this.checkEnhancingScreen();
+                }
+                this.updateVisibility();
+            };
+            config.onSettingChange('enhancementTracker_showOnlyOnEnhancingScreen', onScreenSettingChange);
+            this.settingChangeHandlers.push({
+                key: 'enhancementTracker_showOnlyOnEnhancingScreen',
+                handler: onScreenSettingChange,
+            });
+        }
+
+        /**
+         * Setup observer to detect when enhancing panel is removed from DOM
+         * @param {HTMLElement} panel - The enhancing panel element
+         */
+        setupPanelRemovalObserver(panel) {
+            // Disconnect existing observer if any
+            if (this.panelRemovalObserver) {
+                this.panelRemovalObserver.disconnect();
+            }
+
+            // Find MainPanel_mainPanel (grandparent) - the container itself gets replaced on navigation
+            const subPanelContainer = panel.parentElement;
+            const mainPanel = subPanelContainer?.parentElement;
+
+            if (!mainPanel || !mainPanel.className?.includes?.('MainPanel_mainPanel')) {
+                // Fallback: find by class
+                const fallbackMainPanel = document.querySelector('[class*="MainPanel_mainPanel"]');
+                if (!fallbackMainPanel) {
+                    return;
+                }
+                this.observeMainPanelForNavigation(fallbackMainPanel);
+            } else {
+                this.observeMainPanelForNavigation(mainPanel);
+            }
+        }
+
+        /**
+         * Observe MainPanel_mainPanel for navigation (subPanelContainer removal)
+         * @param {HTMLElement} mainPanel - The main panel element to observe
+         */
+        observeMainPanelForNavigation(mainPanel) {
+            this.panelRemovalObserver = new MutationObserver((mutations) => {
+                for (const mutation of mutations) {
+                    if (mutation.type === 'childList' && mutation.removedNodes.length > 0) {
+                        for (const node of mutation.removedNodes) {
+                            // Check if subPanelContainer was removed (contains the enhancing panel)
+                            if (
+                                node.nodeType === Node.ELEMENT_NODE &&
+                                node.className?.includes?.('MainPanel_subPanelContainer')
+                            ) {
+                                // Check if EnhancingPanel was inside the removed container
+                                const hadEnhancingPanel = node.querySelector('[class*="EnhancingPanel_enhancingPanel"]');
+                                if (hadEnhancingPanel) {
+                                    this.isOnEnhancingScreen = false;
+                                    this.updateVisibility();
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            this.panelRemovalObserver.observe(mainPanel, {
+                childList: true,
+            });
+        }
+
+        /**
+         * Check if currently on Enhancing screen
+         */
+        checkEnhancingScreen() {
+            const enhancingPanel = document.querySelector('[class*="EnhancingPanel_enhancingPanel"]');
+            const wasOnEnhancingScreen = this.isOnEnhancingScreen;
+            this.isOnEnhancingScreen = !!enhancingPanel;
+
+            if (wasOnEnhancingScreen !== this.isOnEnhancingScreen) {
+                this.updateVisibility();
+            }
+        }
+
+        /**
+         * Update visibility based on screen state and settings
+         */
+        updateVisibility() {
+            const trackerEnabled = config.getSetting('enhancementTracker');
+            const showOnlyOnEnhancingScreen = config.getSetting('enhancementTracker_showOnlyOnEnhancingScreen');
+
+            // If main tracker is disabled, always hide
+            if (!trackerEnabled) {
+                this.hide();
+            } else if (this.manualHidden) {
+                // A manual toggle (command palette) wins over the auto-show logic
+                // until the user toggles it back on.
+                this.hide();
+            } else if (showOnlyOnEnhancingScreen !== true) {
+                this.show();
+            } else if (this.isOnEnhancingScreen) {
+                this.show();
+            } else {
+                this.hide();
+            }
+        }
+
+        /**
+         * Get currently viewed session
+         */
+        getCurrentSession() {
+            const sessions = Object.values(enhancementTracker.getAllSessions());
+            if (sessions.length === 0) return null;
+
+            // Default to latest session on first load
+            if (this.currentViewingIndex === -1) {
+                this.currentViewingIndex = sessions.length - 1;
+            }
+
+            // Ensure index is valid
+            if (this.currentViewingIndex >= sessions.length) {
+                this.currentViewingIndex = sessions.length - 1;
+            }
+            if (this.currentViewingIndex < 0) {
+                this.currentViewingIndex = 0;
+            }
+
+            return sessions[this.currentViewingIndex];
+        }
+
+        /**
+         * Switch viewing to a specific session by ID
+         * @param {string} sessionId - Session ID to view
+         */
+        switchToSession(sessionId) {
+            const sessions = Object.values(enhancementTracker.getAllSessions());
+            const index = sessions.findIndex((session) => session.id === sessionId);
+
+            if (index !== -1) {
+                this.currentViewingIndex = index;
+            }
+        }
+
+        /**
+         * Create the floating UI panel
+         */
+        createFloatingUI() {
+            if (this.floatingUI && document.body.contains(this.floatingUI)) {
+                return this.floatingUI;
+            }
+
+            // Main container
+            this.floatingUI = document.createElement('div');
+            this.floatingUI.id = 'enhancementFloatingUI';
+            Object.assign(this.floatingUI.style, {
+                position: 'fixed',
+                top: '50px',
+                right: '50px',
+                zIndex: String(config.Z_FLOATING_PANEL),
+                fontSize: '14px',
+                padding: '0',
+                borderRadius: STYLE.borderRadius.medium,
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
+                overflow: 'hidden',
+                // Clamped so the first open on a phone is not wider than the screen
+                width: 'min(350px, 92vw)',
+                minHeight: 'auto',
+                background: 'rgba(25, 0, 35, 0.92)',
+                backdropFilter: 'blur(12px)',
+                border: `1px solid ${STYLE.colors.primary}`,
+                color: STYLE.colors.textPrimary,
+                display: 'flex',
+                flexDirection: 'column',
+                transition: 'width 0.2s ease',
+            });
+
+            // Create header
+            const header = this.createHeader();
+            this.floatingUI.appendChild(header);
+
+            // Create content area
+            const content = document.createElement('div');
+            content.id = 'enhancementPanelContent';
+            content.style.padding = '15px';
+            content.style.flexGrow = '1';
+            content.style.overflow = 'auto';
+            content.style.transition = 'max-height 0.2s ease, opacity 0.2s ease';
+            content.style.maxHeight = '600px';
+            content.style.opacity = '1';
+            this.floatingUI.appendChild(content);
+
+            // Make draggable
+            this.makeDraggable(header);
+
+            // Add to page
+            document.body.appendChild(this.floatingUI);
+            panelZIndex_js.registerFloatingPanel(this.floatingUI);
+
+            return this.floatingUI;
+        }
+
+        /**
+         * Create header with title and navigation
+         */
+        createHeader() {
+            const header = document.createElement('div');
+            header.id = 'enhancementPanelHeader';
+            Object.assign(header.style, {
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                cursor: 'move',
+                padding: '10px 15px',
+                background: STYLE.colors.headerBg,
+                borderBottom: `1px solid ${STYLE.colors.border}`,
+                userSelect: 'none',
+                flexShrink: '0',
+            });
+
+            // Title with session counter
+            const titleContainer = document.createElement('div');
+            titleContainer.style.display = 'flex';
+            titleContainer.style.alignItems = 'center';
+            titleContainer.style.gap = '10px';
+            titleContainer.style.overflow = 'hidden';
+            titleContainer.style.minWidth = '0';
+            titleContainer.style.textOverflow = 'ellipsis';
+
+            const title = document.createElement('span');
+            title.textContent = 'Enhancement Tracker';
+            title.style.fontWeight = 'bold';
+
+            const sessionCounter = document.createElement('span');
+            sessionCounter.id = 'enhancementSessionCounter';
+            sessionCounter.style.fontSize = '12px';
+            sessionCounter.style.opacity = '0.7';
+            sessionCounter.style.marginLeft = '5px';
+
+            titleContainer.appendChild(title);
+            titleContainer.appendChild(sessionCounter);
+
+            // Navigation container
+            const navContainer = document.createElement('div');
+            Object.assign(navContainer.style, {
+                display: 'flex',
+                gap: '5px',
+                alignItems: 'center',
+                marginLeft: 'auto',
+                flexShrink: '0',
+            });
+
+            // Previous session button
+            const prevButton = this.createNavButton('◀', () => this.navigateSession(-1));
+
+            // Next session button
+            const nextButton = this.createNavButton('▶', () => this.navigateSession(1));
+
+            // Merge button — combine several sessions into one summary
+            const mergeButton = this.createMergeButton();
+
+            // Collapse button
+            const collapseButton = this.createCollapseButton();
+
+            // Clear sessions button
+            const clearButton = this.createClearButton();
+
+            navContainer.appendChild(prevButton);
+            navContainer.appendChild(nextButton);
+            navContainer.appendChild(mergeButton);
+            navContainer.appendChild(collapseButton);
+            navContainer.appendChild(clearButton);
+
+            header.appendChild(titleContainer);
+            header.appendChild(navContainer);
+
+            return header;
+        }
+
+        /**
+         * Create navigation button
+         */
+        createNavButton(text, onClick) {
+            const button = document.createElement('button');
+            button.textContent = text;
+            Object.assign(button.style, {
+                background: 'none',
+                border: 'none',
+                color: STYLE.colors.textPrimary,
+                cursor: 'pointer',
+                fontSize: '14px',
+                padding: '2px 8px',
+                borderRadius: '3px',
+                transition: STYLE.transitions.fast,
+            });
+
+            button.addEventListener('mouseover', () => {
+                button.style.color = STYLE.colors.accent;
+                button.style.background = 'rgba(255, 0, 212, 0.1)';
+            });
+            button.addEventListener('mouseout', () => {
+                button.style.color = STYLE.colors.textPrimary;
+                button.style.background = 'none';
+            });
+            button.addEventListener('click', onClick);
+
+            return button;
+        }
+
+        /**
+         * Create clear sessions button
+         */
+        createClearButton() {
+            const button = document.createElement('button');
+            button.innerHTML = '🗑️';
+            button.title = 'Clear all sessions';
+            Object.assign(button.style, {
+                background: 'none',
+                border: 'none',
+                color: STYLE.colors.textPrimary,
+                cursor: 'pointer',
+                fontSize: '14px',
+                padding: '2px 8px',
+                borderRadius: '3px',
+                transition: STYLE.transitions.fast,
+                marginLeft: '5px',
+            });
+
+            button.addEventListener('mouseover', () => {
+                button.style.color = STYLE.colors.danger;
+                button.style.background = 'rgba(255, 0, 0, 0.1)';
+            });
+            button.addEventListener('mouseout', () => {
+                button.style.color = STYLE.colors.textPrimary;
+                button.style.background = 'none';
+            });
+            button.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (confirm('Clear all enhancement sessions?')) {
+                    this.clearAllSessions();
+                }
+            });
+
+            return button;
+        }
+
+        /**
+         * Create collapse button
+         */
+        createCollapseButton() {
+            const button = document.createElement('button');
+            button.id = 'enhancementCollapseButton';
+            button.innerHTML = '▼';
+            button.title = 'Collapse panel';
+            Object.assign(button.style, {
+                background: 'none',
+                border: 'none',
+                color: STYLE.colors.textPrimary,
+                cursor: 'pointer',
+                fontSize: '14px',
+                padding: '2px 8px',
+                borderRadius: '3px',
+                transition: STYLE.transitions.fast,
+            });
+
+            button.addEventListener('mouseover', () => {
+                button.style.color = STYLE.colors.accent;
+                button.style.background = 'rgba(255, 0, 212, 0.1)';
+            });
+            button.addEventListener('mouseout', () => {
+                button.style.color = STYLE.colors.textPrimary;
+                button.style.background = 'none';
+            });
+            button.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleCollapse();
+            });
+
+            return button;
+        }
+
+        /**
+         * Create the merge-mode button. Toggles a combined view of several sessions.
+         */
+        createMergeButton() {
+            const button = document.createElement('button');
+            button.id = 'enhancementMergeButton';
+            button.innerHTML = '∑';
+            button.title = 'Merge sessions — combine several runs into one summary';
+            Object.assign(button.style, {
+                background: 'none',
+                border: 'none',
+                color: STYLE.colors.textPrimary,
+                cursor: 'pointer',
+                fontSize: '16px',
+                lineHeight: '1',
+                padding: '2px 8px',
+                borderRadius: '3px',
+                transition: STYLE.transitions.fast,
+            });
+
+            button.addEventListener('mouseover', () => {
+                if (this.mergeMode) return;
+                button.style.color = STYLE.colors.accent;
+                button.style.background = 'rgba(255, 0, 212, 0.1)';
+            });
+            button.addEventListener('mouseout', () => {
+                this.styleMergeButton(button);
+            });
+            button.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleMergeMode();
+            });
+
+            this.styleMergeButton(button);
+            return button;
+        }
+
+        /**
+         * Paint the merge button lit or unlit for the current mode.
+         * @param {HTMLElement} [button] - Defaults to the header's merge button
+         */
+        styleMergeButton(button = document.getElementById('enhancementMergeButton')) {
+            if (!button) return;
+            if (this.mergeMode) {
+                button.style.color = STYLE.colors.accent;
+                button.style.background = 'rgba(255, 0, 212, 0.18)';
+            } else {
+                button.style.color = STYLE.colors.textPrimary;
+                button.style.background = 'none';
+            }
+        }
+
+        /**
+         * Enter or leave the combined-summary view.
+         */
+        toggleMergeMode() {
+            this.mergeMode = !this.mergeMode;
+            if (this.mergeMode) {
+                // A merge with nothing chosen defaults to every session of the item
+                // currently in view — the common case of one item split across runs.
+                if (this.mergeSelected.size === 0) {
+                    const current = this.getCurrentSession();
+                    const sessions = Object.values(enhancementTracker.getAllSessions());
+                    const kin = current ? sessions.filter((s) => s.itemHrid === current.itemHrid) : sessions;
+                    for (const session of kin) this.mergeSelected.add(session.id);
+                }
+            }
+            this.styleMergeButton();
+            this.updateUI();
+        }
+
+        /**
+         * Make element draggable
+         */
+        makeDraggable(header) {
+            let offsetX = 0;
+            let offsetY = 0;
+
+            // Pointer events so a finger works too; mousedown never fires on a
+            // touchscreen, and touch-action:none stops the browser claiming the
+            // gesture for scrolling
+            header.style.touchAction = 'none';
+
+            const onPointerMove = (event) => {
+                if (this.isDragging) {
+                    const newLeft = event.clientX - offsetX;
+                    const newTop = event.clientY - offsetY;
+
+                    // Use absolute positioning during drag
+                    this.floatingUI.style.left = `${newLeft}px`;
+                    this.floatingUI.style.right = 'auto';
+                    this.floatingUI.style.top = `${newTop}px`;
+                }
+            };
+
+            const onPointerUp = () => {
+                this.isDragging = false;
+                document.removeEventListener('pointermove', onPointerMove);
+                document.removeEventListener('pointerup', onPointerUp);
+                document.removeEventListener('pointercancel', onPointerUp);
+                this.dragMoveHandler = null;
+                this.dragUpHandler = null;
+            };
+
+            const onPointerDown = (event) => {
+                panelZIndex_js.bringPanelToFront(this.floatingUI);
+                this.isDragging = true;
+
+                // Calculate offset from panel's current screen position
+                const rect = this.floatingUI.getBoundingClientRect();
+                offsetX = event.clientX - rect.left;
+                offsetY = event.clientY - rect.top;
+
+                this.dragMoveHandler = onPointerMove;
+                this.dragUpHandler = onPointerUp;
+
+                document.addEventListener('pointermove', onPointerMove);
+                document.addEventListener('pointerup', onPointerUp);
+                document.addEventListener('pointercancel', onPointerUp);
+            };
+
+            if (this.dragHandle && this.dragMouseDownHandler) {
+                this.dragHandle.removeEventListener('pointerdown', this.dragMouseDownHandler);
+            }
+
+            this.dragHandle = header;
+            this.dragMouseDownHandler = onPointerDown;
+
+            header.addEventListener('pointerdown', onPointerDown);
+        }
+
+        /**
+         * Toggle panel collapse state
+         */
+        toggleCollapse() {
+            this.isCollapsed = !this.isCollapsed;
+            const content = document.getElementById('enhancementPanelContent');
+            const button = document.getElementById('enhancementCollapseButton');
+
+            if (this.isCollapsed) {
+                // Collapsed state
+                content.style.maxHeight = '0px';
+                content.style.opacity = '0';
+                content.style.padding = '0 15px';
+                button.innerHTML = '▶';
+                button.title = 'Expand panel';
+                this.floatingUI.style.width = '250px';
+
+                // Show compact summary after content fades
+                const summaryTimeout = setTimeout(() => {
+                    this.showCollapsedSummary();
+                }, 200);
+                this.timerRegistry.registerTimeout(summaryTimeout);
+            } else {
+                // Expanded state
+                this.hideCollapsedSummary();
+                content.style.maxHeight = '600px';
+                content.style.opacity = '1';
+                content.style.padding = '15px';
+                button.innerHTML = '▼';
+                button.title = 'Collapse panel';
+                this.floatingUI.style.width = '350px';
+            }
+        }
+
+        /**
+         * Show compact summary in collapsed state
+         */
+        showCollapsedSummary() {
+            if (!this.isCollapsed) return;
+
+            const session = this.getCurrentSession();
+            const sessions = Object.values(enhancementTracker.getAllSessions());
+
+            // Remove any existing summary
+            this.hideCollapsedSummary();
+
+            if (sessions.length === 0 || !session) return;
+
+            const gameData = dataManager.getInitClientData();
+            const itemDetails = gameData?.itemDetailMap?.[session.itemHrid];
+            const itemName = itemDetails?.name || 'Unknown Item';
+
+            const totalAttempts = session.totalAttempts;
+            const totalSuccess = session.totalSuccesses;
+            const successRate = totalAttempts > 0 ? Math.floor((totalSuccess / totalAttempts) * 100) : 0;
+            const statusIcon = session.state === SessionState.COMPLETED ? '✅' : '🟢';
+
+            const summary = document.createElement('div');
+            summary.id = 'enhancementCollapsedSummary';
+            Object.assign(summary.style, {
+                padding: '10px 15px',
+                fontSize: '12px',
+                borderTop: `1px solid ${STYLE.colors.border}`,
+                color: STYLE.colors.textPrimary,
+            });
+
+            summary.innerHTML = `
+            <div style="font-weight: bold; margin-bottom: 4px;">${itemName} → +${session.targetLevel}</div>
+            <div style="opacity: 0.8;">${statusIcon} ${totalAttempts} attempts | ${successRate}% rate</div>
+        `;
+
+            this.floatingUI.appendChild(summary);
+        }
+
+        /**
+         * Hide collapsed summary
+         */
+        hideCollapsedSummary() {
+            const summary = document.getElementById('enhancementCollapsedSummary');
+            if (summary) {
+                summary.remove();
+            }
+        }
+
+        /**
+         * Navigate between sessions
+         */
+        navigateSession(direction) {
+            const sessions = Object.values(enhancementTracker.getAllSessions());
+            if (sessions.length === 0) return;
+
+            this.currentViewingIndex += direction;
+
+            // Wrap around
+            if (this.currentViewingIndex < 0) {
+                this.currentViewingIndex = sessions.length - 1;
+            } else if (this.currentViewingIndex >= sessions.length) {
+                this.currentViewingIndex = 0;
+            }
+
+            this.updateUI();
+
+            // Update collapsed summary if in collapsed state
+            if (this.isCollapsed) {
+                this.showCollapsedSummary();
+            }
+        }
+
+        /**
+         * Clear all sessions
+         */
+        async clearAllSessions() {
+            await enhancementTracker.clearSessions();
+
+            this.currentViewingIndex = 0;
+            this.updateUI();
+
+            // Hide collapsed summary if shown
+            if (this.isCollapsed) {
+                this.hideCollapsedSummary();
+            }
+        }
+
+        /**
+         * Update UI content (debounced)
+         */
+        scheduleUpdate() {
+            if (this.updateDebounce) {
+                clearTimeout(this.updateDebounce);
+            }
+            this.updateDebounce = setTimeout(() => this.updateUI(), 100);
+            this.timerRegistry.registerTimeout(this.updateDebounce);
+        }
+
+        /**
+         * Update UI content (immediate)
+         */
+        updateUI() {
+            if (!this.floatingUI || !document.body.contains(this.floatingUI)) {
+                return;
+            }
+
+            const content = document.getElementById('enhancementPanelContent');
+            if (!content) return;
+
+            // Resolve current session index before updating counter
+            // (getCurrentSession resolves the -1 sentinel to the latest index)
+            const session = this.getCurrentSession();
+
+            // Update session counter
+            this.updateSessionCounter();
+
+            const sessions = Object.values(enhancementTracker.getAllSessions());
+
+            // No sessions
+            if (sessions.length === 0) {
+                content.innerHTML = `
+                <div style="text-align: center; padding: 40px 20px; color: ${STYLE.colors.textSecondary};">
+                    <div style="font-size: 32px; margin-bottom: 10px;">✧</div>
+                    <div style="font-size: 14px;">Begin enhancing to populate data</div>
+                </div>
+            `;
+                return;
+            }
+
+            // Merge mode: a checklist of sessions and their combined summary
+            if (this.mergeMode) {
+                this.renderMergeView(content, sessions);
+                return;
+            }
+
+            if (!session) {
+                content.innerHTML = '<div style="text-align: center; color: ${STYLE.colors.danger};">Invalid session</div>';
+                return;
+            }
+
+            // Remember expanded state before updating
+            const detailsId = `cost-details-${session.id}`;
+            const detailsElement = document.getElementById(detailsId);
+            const wasExpanded = detailsElement && detailsElement.style.display !== 'none';
+
+            // Build UI content
+            content.innerHTML = this.generateSessionHTML(session);
+
+            // Restore expanded state after updating
+            if (wasExpanded) {
+                const newDetailsElement = document.getElementById(detailsId);
+                if (newDetailsElement) {
+                    newDetailsElement.style.display = 'block';
+                }
+            }
+
+            // Update collapsed summary if in collapsed state
+            if (this.isCollapsed) {
+                this.showCollapsedSummary();
+            }
+        }
+
+        /**
+         * Update session counter in header
+         */
+        updateSessionCounter() {
+            const counter = document.getElementById('enhancementSessionCounter');
+            if (!counter) return;
+
+            const sessions = Object.values(enhancementTracker.getAllSessions());
+            if (sessions.length === 0) {
+                counter.textContent = '';
+            } else if (this.mergeMode) {
+                counter.textContent = `(merge ${this.mergeSelected.size}/${sessions.length})`;
+            } else {
+                counter.textContent = `(${this.currentViewingIndex + 1}/${sessions.length})`;
+            }
+        }
+
+        /**
+         * Generate HTML for session display
+         */
+        generateSessionHTML(session) {
+            const gameData = dataManager.getInitClientData();
+            const itemDetails = gameData?.itemDetailMap?.[session.itemHrid];
+            const itemName = itemDetails?.name || 'Unknown Item';
+
+            // Calculate stats
+            const totalAttempts = session.totalAttempts;
+            const totalSuccess = session.totalSuccesses;
+            session.totalFailures;
+            totalAttempts > 0 ? formatters_js.formatPercentage(totalSuccess / totalAttempts, 1) : '0.0%';
+
+            const duration = getSessionDuration(session);
+            const durationText = this.formatDuration(duration);
+
+            // Calculate XP/hour if we have enough data (at least 5 seconds + some XP)
+            const xpPerHour = duration >= 5 && session.totalXP > 0 ? Math.floor((session.totalXP / duration) * 3600) : 0;
+
+            // Status display
+            const statusColor = session.state === SessionState.COMPLETED ? STYLE.colors.success : STYLE.colors.accent;
+            const statusText = session.state === SessionState.COMPLETED ? 'Completed' : 'In Progress';
+
+            // Build HTML
+            let html = `
+            <div style="margin-bottom: 10px; font-size: 13px;">
+                <div style="display: flex; justify-content: space-between;">
+                    <span>Item:</span>
+                    <strong>${itemName}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span>Target:</span>
+                    <span>+${session.targetLevel}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between;">
+                    <span>Prot:</span>
+                    <span>+${session.protectFrom}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-top: 5px; color: ${statusColor};">
+                    <span>Status:</span>
+                    <strong>${statusText}</strong>
+                </div>
+            </div>
+        `;
+
+            // Per-level table
+            html += this.generateLevelTable(session);
+
+            // Summary stats
+            html += `
+            <div style="margin-top: 8px;">
+                <div style="display: flex; justify-content: space-between; font-size: 13px;">
+                    <div>
+                        <span>Total Attempts:</span>
+                        <strong> ${totalAttempts}</strong>
+                    </div>
+                    <div>
+                        <span>Prots Used:</span>
+                        <strong> ${session.protectionCount || 0}</strong>
+                    </div>
+                </div>
+            </div>`;
+
+            // Predictions (if available)
+            if (session.predictions) {
+                const predictions = session.predictions;
+                const expAtt = predictions.expectedAttempts || 0;
+                const expProt = predictions.expectedProtections || 0;
+
+                // The prediction describes the current leg of the session. After an extension the
+                // running totals still carry the earlier legs, so diff against the snapshot taken
+                // at extend time — otherwise a +10 → +12 extension looks ten times over budget.
+                const leg = getCurrentLegCounters(session);
+
+                // Calculate factors (like Ultimate Tracker)
+                // Use more precision for small values to avoid showing 0.00x
+                const rawAttFactor = expAtt > 0 ? leg.attempts / expAtt : null;
+                const rawProtFactor = expProt > 0 ? leg.protections / expProt : null;
+
+                // Format with appropriate precision (more decimals for small values)
+                const formatFactor = (val) => {
+                    if (val === null) return null;
+                    if (val < 0.01) return val.toFixed(3);
+                    return val.toFixed(2);
+                };
+
+                const attFactor = formatFactor(rawAttFactor);
+                const protFactor = formatFactor(rawProtFactor);
+
+                html += `
+            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 4px;">
+                <div style="color: ${STYLE.colors.textSecondary};">
+                    <span>Expected Attempts:</span>
+                    <span> ${expAtt}</span>
+                </div>
+                <div style="color: ${STYLE.colors.textSecondary};">
+                    <span>Expected Prots:</span>
+                    <span> ${expProt}</span>
+                </div>
+            </div>`;
+
+                if (attFactor || protFactor) {
+                    html += `
+            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 2px; color: ${STYLE.colors.textSecondary};">
+                <div>
+                    <span>Attempt Factor:</span>
+                    <strong> ${attFactor ? attFactor + 'x' : '—'}</strong>
+                </div>
+                <div>
+                    <span>Prot Factor:</span>
+                    <strong> ${protFactor ? protFactor + 'x' : '—'}</strong>
+                </div>
+            </div>`;
+                }
+
+                // Cost vs expected: what this run paid against what the prediction
+                // expected it to, at this run's own unit prices — so the gap is
+                // attempt/protect luck, not market drift.
+                const cost = costVsExpected(session, leg);
+                if (cost) {
+                    const good = cost.diff >= 0;
+                    const color = good ? STYLE.colors.success : STYLE.colors.danger;
+                    const word = good ? 'below' : 'above';
+                    html += `
+            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 2px; color: ${STYLE.colors.textSecondary};">
+                <div>
+                    <span>Expected Cost:</span>
+                    <span> ${this.formatNumber(cost.expectedCost)}</span>
+                </div>
+                <div>
+                    <span>Cost Factor:</span>
+                    <strong> ${cost.factor.toFixed(2)}x</strong>
+                </div>
+            </div>
+            <div style="font-size: 12px; margin-top: 2px; color: ${color};">
+                💰 ${this.formatNumber(Math.abs(cost.diff))} ${word} expected cost
+            </div>`;
+                }
+
+                // A finished run read as a percentile of the predicted distribution.
+                // The factor above says how far the run strayed; this says how often
+                // a run strays that far, which is the only honest reading of one
+                // draw against a heavy-tailed spread. Only for runs that reached
+                // the target — a hand-stopped session is censored, not finished —
+                // and only when the prediction stored its distribution.
+                if (session.state === SessionState.COMPLETED && session.currentLevel >= session.targetLevel) {
+                    const tail = attemptTailProbability(predictions, leg.attempts);
+                    if (tail !== null) {
+                        html += `
+            <div style="font-size: 11px; margin-top: 2px; color: ${STYLE.colors.textSecondary};">
+                ${describeAttemptOutcome(predictions.expectedAttemptsExact ?? expAtt, leg.attempts, tail)}
+            </div>`;
+                    }
+                }
+
+                // The factors above are only meaningful against a prediction made from this
+                // character's real stats; say so when it was not
+                if (predictions.paramsNote) {
+                    html += `
+            <div style="font-size: 11px; margin-top: 2px; opacity: 0.6; color: ${STYLE.colors.textSecondary};">
+                ${predictions.paramsNote}
+            </div>`;
+                }
+            }
+
+            html += `
+            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
+                <span>Total XP Gained:</span>
+                <strong>${this.formatNumber(session.totalXP)}</strong>
+            </div>
+
+            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
+                <span>Session Duration:</span>
+                <strong>${durationText}</strong>
+            </div>
+
+            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
+                <span>XP/Hour:</span>
+                <strong>${xpPerHour > 0 ? this.formatNumber(xpPerHour) : 'Calculating...'}</strong>
+            </div>
+        `;
+
+            // Material costs
+            html += this.generateMaterialCostsHTML(session);
+
+            // Was it worth it — the +N resale value against what it cost to get there
+            html += this.generateWorthItHTML(session);
+
+            return html;
+        }
+
+        /**
+         * Render the merge view: a checklist of sessions and the combined summary of
+         * the chosen ones.
+         * @param {HTMLElement} content - The panel content element
+         * @param {Array<Object>} sessions - All sessions
+         */
+        renderMergeView(content, sessions) {
+            // Drop any selections whose session has since gone (e.g. cleared)
+            const ids = new Set(sessions.map((session) => session.id));
+            for (const id of [...this.mergeSelected]) {
+                if (!ids.has(id)) this.mergeSelected.delete(id);
+            }
+
+            const chosen = sessions.filter((session) => this.mergeSelected.has(session.id));
+            const merged = mergeSessions(chosen);
+
+            content.innerHTML = this.generateMergeListHTML(sessions) + this.generateMergedSummaryHTML(merged);
+            this.wireMergeControls(content, sessions);
+        }
+
+        /**
+         * The pick-list: one checkable row per session.
+         * @param {Array<Object>} sessions - All sessions
+         * @returns {string} HTML
+         */
+        generateMergeListHTML(sessions) {
+            const gameData = dataManager.getInitClientData();
+            const rows = sessions
+                .map((session, index) => {
+                    const itemName = gameData?.itemDetailMap?.[session.itemHrid]?.name || session.itemName || 'Unknown';
+                    const checked = this.mergeSelected.has(session.id) ? 'checked' : '';
+                    const done = session.state === SessionState.COMPLETED ? '✅' : '🟢';
+                    return `
+                <label style="display: flex; align-items: center; gap: 8px; padding: 4px 2px; cursor: pointer; font-size: 12px; border-bottom: 1px solid ${STYLE.colors.border};">
+                    <input type="checkbox" class="enh-merge-check" data-session-id="${session.id}" ${checked} style="cursor: pointer;" />
+                    <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        ${done} <strong>${itemName}</strong> → +${session.targetLevel}
+                    </span>
+                    <span style="opacity: 0.7;">${session.totalAttempts || 0} att</span>
+                    <span style="opacity: 0.5; font-size: 11px;">#${index + 1}</span>
+                </label>`;
+                })
+                .join('');
+
+            return `
+            <div style="margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <strong style="font-size: 13px;">Merge sessions</strong>
+                    <span style="display: flex; gap: 6px;">
+                        <button class="enh-merge-all" style="${mergeChipStyle}">All</button>
+                        <button class="enh-merge-none" style="${mergeChipStyle}">None</button>
+                    </span>
+                </div>
+                <div style="max-height: 160px; overflow-y: auto; border: 1px solid ${STYLE.colors.border}; border-radius: 4px; padding: 2px 6px;">
+                    ${rows}
+                </div>
+            </div>`;
+        }
+
+        /**
+         * The combined-summary card for the chosen sessions.
+         * @param {Object|null} merged - From {@link mergeSessions}
+         * @returns {string} HTML
+         */
+        generateMergedSummaryHTML(merged) {
+            if (!merged || merged.count === 0) {
+                return `<div style="text-align: center; padding: 20px; color: ${STYLE.colors.textSecondary}; font-size: 13px;">
+                Pick sessions above to combine them.
+            </div>`;
+            }
+
+            const successRate = merged.totalAttempts > 0 ? formatters_js.formatPercentage(merged.successRate, 1) : '0.0%';
+            const durationText = this.formatDuration(merged.durationSeconds);
+            const xpPerHour =
+                merged.durationSeconds >= 5 && merged.totalXP > 0
+                    ? Math.floor((merged.totalXP / merged.durationSeconds) * 3600)
+                    : 0;
+
+            const itemsLabel =
+                merged.itemNames.length === 1
+                    ? merged.itemNames[0]
+                    : `${merged.itemNames.length} items (${merged.itemNames.slice(0, 3).join(', ')}${
+                      merged.itemNames.length > 3 ? '…' : ''
+                  })`;
+
+            let html = `
+            <div style="border-top: 1px solid ${STYLE.colors.border}; padding-top: 8px;">
+                <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px;">
+                    <span>Combined:</span>
+                    <strong>${merged.count} session${merged.count === 1 ? '' : 's'}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 13px;">
+                    <span>Items:</span>
+                    <strong style="max-width: 60%; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${itemsLabel}</strong>
+                </div>
+            </div>`;
+
+            // Per-level table and material breakdown reuse the single-session renderers
+            html += this.generateLevelTable(merged);
+
+            html += `
+            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
+                <div><span>Total Attempts:</span><strong> ${merged.totalAttempts}</strong></div>
+                <div><span>Prots Used:</span><strong> ${merged.protectionCount || 0}</strong></div>
+            </div>
+            <div style="margin-top: 4px; display: flex; justify-content: space-between; font-size: 13px;">
+                <span>Success Rate:</span>
+                <strong>${successRate}</strong>
+            </div>`;
+
+            // A rough attempt factor if every chosen run carried a prediction
+            if (merged.expectedAttempts > 0) {
+                const factor = merged.totalAttempts / merged.expectedAttempts;
+                html += `
+            <div style="margin-top: 4px; display: flex; justify-content: space-between; font-size: 12px; color: ${STYLE.colors.textSecondary};">
+                <div><span>Expected Attempts:</span><span> ${merged.expectedAttempts}</span></div>
+                <div><span>Attempt Factor:</span><strong> ${factor.toFixed(2)}x</strong></div>
+            </div>`;
+            }
+
+            html += `
+            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
+                <span>Total XP Gained:</span>
+                <strong>${this.formatNumber(merged.totalXP)}</strong>
+            </div>
+            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
+                <span>Combined Duration:</span>
+                <strong>${durationText}</strong>
+            </div>
+            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
+                <span>XP/Hour:</span>
+                <strong>${xpPerHour > 0 ? this.formatNumber(xpPerHour) : '—'}</strong>
+            </div>`;
+
+            html += this.generateMaterialCostsHTML(merged);
+
+            return html;
+        }
+
+        /**
+         * Attach listeners for the merge checklist. innerHTML drops any prior ones,
+         * so this runs after every merge-view render.
+         * @param {HTMLElement} content - The panel content element
+         * @param {Array<Object>} sessions - All sessions
+         */
+        wireMergeControls(content, sessions) {
+            for (const box of content.querySelectorAll('.enh-merge-check')) {
+                box.addEventListener('change', (e) => {
+                    const id = e.target.getAttribute('data-session-id');
+                    if (e.target.checked) this.mergeSelected.add(id);
+                    else this.mergeSelected.delete(id);
+                    this.updateSessionCounter();
+                    this.renderMergeView(content, Object.values(enhancementTracker.getAllSessions()));
+                });
+            }
+
+            const all = content.querySelector('.enh-merge-all');
+            if (all) {
+                all.addEventListener('click', () => {
+                    for (const session of sessions) this.mergeSelected.add(session.id);
+                    this.updateSessionCounter();
+                    this.renderMergeView(content, Object.values(enhancementTracker.getAllSessions()));
+                });
+            }
+            const none = content.querySelector('.enh-merge-none');
+            if (none) {
+                none.addEventListener('click', () => {
+                    this.mergeSelected.clear();
+                    this.updateSessionCounter();
+                    this.renderMergeView(content, Object.values(enhancementTracker.getAllSessions()));
+                });
+            }
+        }
+
+        /**
+         * "Worth it" line: the +N item's after-fee resale value minus the +0 base
+         * given up minus what was spent. Shown only once the item has been enhanced;
+         * says so plainly when the +N level has no market price to read.
+         * @param {Object} session
+         * @returns {string} HTML
+         */
+        generateWorthItHTML(session) {
+            const worth = valueVsCost(session, marketData_js.getItemPrices);
+            if (!worth) return '';
+
+            if (worth.valueN == null) {
+                return `
+            <div style="margin-top: 6px; font-size: 12px; opacity: 0.6; color: ${STYLE.colors.textSecondary};">
+                💎 No market price for +${worth.level} — worth-it unknown.
+            </div>`;
+            }
+
+            const color = worth.net >= 0 ? STYLE.colors.success : STYLE.colors.danger;
+            const sign = worth.net >= 0 ? '+' : '−';
+            const detailsId = `worth-details-${session.id}`;
+            const keep = 1 - worth.sellTax;
+            const feePct = (worth.sellTax * 100).toFixed(0);
+
+            // A row of the breakdown: label left, figure right.
+            const row = (label, value, valueColor = STYLE.colors.textPrimary) => `
+            <div style="display: flex; justify-content: space-between; margin-top: 2px; font-size: 12px;">
+                <span style="color: ${STYLE.colors.textSecondary};">${label}</span>
+                <span style="color: ${valueColor};">${value}</span>
+            </div>`;
+
+            let html = '<div style="margin-top: 6px; font-size: 13px;">';
+            html += `
+            <div style="display: flex; justify-content: space-between; cursor: pointer; font-weight: bold; padding: 3px 0;"
+                 onclick="document.getElementById('${detailsId}').style.display = document.getElementById('${detailsId}').style.display === 'none' ? 'block' : 'none'">
+                <span>💎 Worth it (net, click for details)</span>
+                <span style="color: ${color};">${sign}${this.formatNumber(Math.abs(worth.net))}</span>
+            </div>`;
+            html += `<div id="${detailsId}" style="display: none; margin-left: 10px; margin-top: 3px;">`;
+            html += row(`+${worth.level} value (bid)`, this.formatNumber(worth.valueN));
+            html += row(`After ${feePct}% sell fee`, this.formatNumber(worth.valueN * keep));
+            html += row('Base +0 value (after fee)', `− ${this.formatNumber((worth.value0 || 0) * keep)}`);
+            html += row('Spent enhancing', `− ${this.formatNumber(worth.spent)}`);
+            html += row('Net', `${sign}${this.formatNumber(Math.abs(worth.net))}`, color);
+            html += '</div></div>';
+            return html;
+        }
+
+        /**
+         * Generate per-level breakdown table
+         */
+        generateLevelTable(session) {
+            // Get all levels with attempts
+            const levelSet = new Set(Object.keys(session.attemptsPerLevel).map(Number));
+
+            // Always include the current level (even if no attempts yet)
+            if (session.currentLevel > 0) {
+                levelSet.add(session.currentLevel);
+            }
+
+            const levels = Array.from(levelSet).sort((a, b) => b - a);
+
+            if (levels.length === 0) {
+                return '<div style="text-align: center; padding: 20px; color: ${STYLE.colors.textSecondary};">No attempts recorded yet</div>';
+            }
+
+            // Predicted rate per level, so the observed column has something to be read against.
+            // successRates[i] is the chance of going from +i to +i+1, which is how the attempt
+            // rows are keyed.
+            const predictedRates = session.predictions?.successRates || null;
+
+            let rows = '';
+            for (const level of levels) {
+                const levelData = session.attemptsPerLevel[level] || { success: 0, fail: 0, successRate: 0 };
+                const rate = formatters_js.formatPercentage(levelData.successRate, 1);
+                const predicted = predictedRates?.[level]?.actualRate;
+                const predictedText = typeof predicted === 'number' ? formatters_js.formatPercentage(predicted / 100, 1) : '—';
+                const isCurrent = level === session.currentLevel;
+
+                const rowStyle = isCurrent
+                    ? `
+                background: linear-gradient(90deg, rgba(126, 87, 194, 0.25), rgba(0, 242, 255, 0.1));
+                box-shadow: 0 0 12px rgba(126, 87, 194, 0.5), inset 0 0 6px rgba(0, 242, 255, 0.3);
+                border-left: 3px solid ${STYLE.colors.accent};
+                font-weight: bold;
+            `
+                    : '';
+
+                rows += `
+                <tr style="${rowStyle}">
+                    <td style="${compactCellStyle} text-align: center;">${level}</td>
+                    <td style="${compactCellStyle} text-align: right;">${levelData.success}</td>
+                    <td style="${compactCellStyle} text-align: right;">${levelData.fail}</td>
+                    <td style="${compactCellStyle} text-align: right;">${rate}</td>
+                    <td style="${compactCellStyle} text-align: right; color: ${STYLE.colors.textSecondary};">${predictedText}</td>
+                </tr>
+            `;
+            }
+
+            return `
+            <table style="${compactTableStyle}">
+                <thead>
+                    <tr>
+                        <th style="${compactHeaderStyle}">Lvl</th>
+                        <th style="${compactHeaderStyle}">Success</th>
+                        <th style="${compactHeaderStyle}">Fail</th>
+                        <th style="${compactHeaderStyle}">%</th>
+                        <th style="${compactHeaderStyle}">Pred %</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows}
+                </tbody>
+            </table>
+        `;
+        }
+
+        /**
+         * Generate material costs HTML (expandable)
+         */
+        generateMaterialCostsHTML(session) {
+            // Check if there are any costs to display
+            const hasMaterials = session.materialCosts && Object.keys(session.materialCosts).length > 0;
+            const hasCoins = session.coinCost > 0;
+            const hasProtection = session.protectionCost > 0;
+
+            if (!hasMaterials && !hasCoins && !hasProtection) {
+                return '';
+            }
+
+            const gameData = dataManager.getInitClientData();
+            const detailsId = `cost-details-${session.id}`;
+
+            let html = '<div style="margin-top: 12px; font-size: 13px;">';
+
+            // Collapsible header
+            html += `
+            <div style="display: flex; justify-content: space-between; cursor: pointer; font-weight: bold; padding: 5px 0;"
+                 onclick="document.getElementById('${detailsId}').style.display = document.getElementById('${detailsId}').style.display === 'none' ? 'block' : 'none'">
+                <span>💰 Total Cost (click for details)</span>
+                <span style="color: ${STYLE.colors.gold};">${this.formatNumber(session.totalCost)}</span>
+            </div>
+        `;
+
+            // Expandable details section (hidden by default)
+            html += `<div id="${detailsId}" style="display: none; margin-left: 10px; margin-top: 5px;">`;
+
+            // Material costs
+            if (hasMaterials) {
+                html +=
+                    '<div style="margin-bottom: 8px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">';
+                html +=
+                    '<div style="font-weight: bold; margin-bottom: 3px; color: ${STYLE.colors.textSecondary};">Materials:</div>';
+
+                for (const [itemHrid, data] of Object.entries(session.materialCosts)) {
+                    const itemDetails = gameData?.itemDetailMap?.[itemHrid];
+                    const itemName = itemDetails?.name || itemHrid;
+                    const unitCost = Math.floor(data.totalCost / data.count);
+
+                    html += `
+                    <div style="display: flex; justify-content: space-between; margin-top: 2px; font-size: 12px;">
+                        <span>${itemName}</span>
+                        <span>${data.count} × ${this.formatNumber(unitCost)} = <span style="color: ${STYLE.colors.gold};">${this.formatNumber(data.totalCost)}</span></span>
+                    </div>
+                `;
+                }
+                html += '</div>';
+            }
+
+            // Coin costs
+            if (hasCoins) {
+                html += `
+                <div style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">
+                    <span style="font-weight: bold; color: ${STYLE.colors.textSecondary};">Coins (${session.coinCount || 0}×):</span>
+                    <span style="color: ${STYLE.colors.gold};">${this.formatNumber(session.coinCost)}</span>
+                </div>
+            `;
+            }
+
+            // Protection costs
+            if (hasProtection) {
+                const protectionItemName = session.protectionItemHrid
+                    ? gameData?.itemDetailMap?.[session.protectionItemHrid]?.name || 'Protection'
+                    : 'Protection';
+
+                html += `
+                <div style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">
+                    <span style="font-weight: bold; color: ${STYLE.colors.textSecondary};">${protectionItemName} (${session.protectionCount || 0}×):</span>
+                    <span style="color: ${STYLE.colors.gold};">${this.formatNumber(session.protectionCost)}</span>
+                </div>
+            `;
+            }
+
+            html += '</div>'; // Close details
+            html += '</div>'; // Close container
+
+            return html;
+        }
+
+        /**
+         * Format number with commas
+         */
+        formatNumber(num) {
+            return formatters_js.formatLargeNumber(Math.floor(num));
+        }
+
+        /**
+         * Format duration (seconds to h:m:s)
+         */
+        formatDuration(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+
+            if (h > 0) {
+                return `${h}h ${m}m ${s}s`;
+            } else if (m > 0) {
+                return `${m}m ${s}s`;
+            } else {
+                return `${s}s`;
+            }
+        }
+
+        /**
+         * Show the UI
+         */
+        show() {
+            if (this.floatingUI) {
+                this.floatingUI.style.display = 'flex';
+            }
+            this.syncScreenToggleButton();
+        }
+
+        /**
+         * Hide the UI
+         */
+        hide() {
+            if (this.floatingUI) {
+                this.floatingUI.style.display = 'none';
+            }
+            this.syncScreenToggleButton();
+        }
+
+        /**
+         * Add a show/hide button to the Enhancing screen, mirroring the
+         * marketplace's Bulk Sell tab. It rides in the panel's top-right corner and
+         * toggles the tracker exactly as the command-palette entry does — a manual
+         * hide that the auto-show logic then leaves alone.
+         * @param {HTMLElement} panel - The EnhancingPanel element
+         */
+        injectScreenToggleButton(panel) {
+            if (!panel || !config.getSetting('enhancementTracker')) return;
+            // One per panel; a fresh panel gets a fresh button.
+            if (panel.querySelector('#toolashaEnhTrackerToggle')) {
+                this.screenToggleButton = panel.querySelector('#toolashaEnhTrackerToggle');
+                this.syncScreenToggleButton();
+                return;
+            }
+
+            // The button is positioned against the panel, so the panel must be a
+            // positioned ancestor.
+            if (getComputedStyle(panel).position === 'static') {
+                panel.style.position = 'relative';
+            }
+
+            const button = document.createElement('button');
+            button.id = 'toolashaEnhTrackerToggle';
+            button.type = 'button';
+            button.textContent = '∑ Tracker';
+            button.title = 'Show or hide the Enhancement Tracker';
+            Object.assign(button.style, {
+                position: 'absolute',
+                top: '6px',
+                right: '6px',
+                zIndex: '5',
+                background: 'rgba(25, 0, 35, 0.85)',
+                border: `1px solid ${STYLE.colors.primary}`,
+                color: STYLE.colors.textPrimary,
+                cursor: 'pointer',
+                fontSize: '12px',
+                lineHeight: '1',
+                padding: '4px 10px',
+                borderRadius: STYLE.borderRadius.small,
+                transition: STYLE.transitions.fast,
+            });
+            button.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.toggle();
+            });
+
+            panel.appendChild(button);
+            this.screenToggleButton = button;
+            this.syncScreenToggleButton();
+        }
+
+        /**
+         * Paint the Enhancing-screen toggle to match whether the tracker is showing.
+         */
+        syncScreenToggleButton() {
+            const button = this.screenToggleButton;
+            if (!button || !document.body.contains(button)) return;
+            const visible = !!this.floatingUI && this.floatingUI.style.display !== 'none';
+            button.style.opacity = visible ? '1' : '0.6';
+            button.style.boxShadow = visible ? `0 0 8px ${STYLE.colors.primary}` : 'none';
+        }
+
+        /**
+         * Toggle UI visibility. Remembers a manual hide so the auto-show logic does
+         * not immediately bring it back (see updateVisibility). Called from the
+         * command palette.
+         */
+        toggle() {
+            if (!this.floatingUI) return;
+            const isVisible = this.floatingUI.style.display !== 'none';
+            if (isVisible) {
+                this.manualHidden = true;
+                this.hide();
+            } else {
+                this.manualHidden = false;
+                this.show();
+            }
+        }
+
+        /**
+         * Cleanup all UI resources
+         */
+        cleanup() {
+            // Clear any pending update debounces
+            if (this.updateDebounce) {
+                clearTimeout(this.updateDebounce);
+                this.updateDebounce = null;
+            }
+
+            // Disconnect panel removal observer
+            if (this.panelRemovalObserver) {
+                this.panelRemovalObserver.disconnect();
+                this.panelRemovalObserver = null;
+            }
+
+            // Remove the in-panel Enhancing-screen toggle button
+            if (this.screenToggleButton) {
+                this.screenToggleButton.remove();
+                this.screenToggleButton = null;
+            }
+
+            // Unregister setting change listeners
+            for (const { key, handler } of this.settingChangeHandlers) {
+                config.offSettingChange(key, handler);
+            }
+            this.settingChangeHandlers = [];
+
+            if (this.updateInterval) {
+                clearInterval(this.updateInterval);
+                this.updateInterval = null;
+            }
+
+            // Unregister DOM observer
+            if (this.unregisterScreenObserver) {
+                this.unregisterScreenObserver();
+                this.unregisterScreenObserver = null;
+            }
+
+            if (this.dragMoveHandler) {
+                document.removeEventListener('pointermove', this.dragMoveHandler);
+                this.dragMoveHandler = null;
+            }
+
+            if (this.dragUpHandler) {
+                document.removeEventListener('pointerup', this.dragUpHandler);
+                document.removeEventListener('pointercancel', this.dragUpHandler);
+                this.dragUpHandler = null;
+            }
+
+            if (this.dragHandle && this.dragMouseDownHandler) {
+                this.dragHandle.removeEventListener('pointerdown', this.dragMouseDownHandler);
+            }
+
+            this.dragHandle = null;
+            this.dragMouseDownHandler = null;
+
+            this.timerRegistry.clearAll();
+
+            // Remove floating UI from DOM
+            if (this.floatingUI && this.floatingUI.parentNode) {
+                panelZIndex_js.unregisterFloatingPanel(this.floatingUI);
+                this.floatingUI.parentNode.removeChild(this.floatingUI);
+                this.floatingUI = null;
+            }
+
+            // Reset state
+            this.isOnEnhancingScreen = false;
+            this.isCollapsed = false;
+            this.currentViewingIndex = 0;
+            this.isDragging = false;
+        }
+    }
+
+    const enhancementUI = new EnhancementUI();
+
+    /**
      * Command Palette
      *
      * One place that knows where everything is.
@@ -5715,6 +10239,13 @@
             { name: 'Treasure Tracker', hint: 'Chests opened and what came out', target: bundleBridge_js.treasureTracker() },
             { name: 'PFormance', hint: "What the script's own timers say", target: bundleBridge_js.pformancePanel() },
             { name: 'Combat Simulator', hint: 'Simulate a fight', target: bundleBridge_js.combatSimUI() },
+            {
+                name: 'Enhancement Tracker',
+                hint: 'Show or hide the enhancing cost/luck/worth-it panel',
+                // Same UI bundle as the palette, so imported directly rather than
+                // through the bridge; toggle() remembers a manual hide.
+                target: enhancementUI,
+            },
             {
                 name: 'Lab Simulator',
                 hint: 'Simulate a labyrinth run',
@@ -11630,7 +16161,7 @@
      * character the first time it is read.
      */
     const STORE_KEY = 'combatSessionHistory';
-    const STORE_NAME$b = 'combatStats';
+    const STORE_NAME$a = 'combatStats';
 
     /**
      * Which run a snapshot belongs to.
@@ -11650,9 +16181,9 @@
      * Every finished run, newest first.
      * @returns {Promise<Array<Object>>}
      */
-    async function loadSessions$1() {
+    async function loadSessions() {
         try {
-            const saved = await characterKey_js.readScoped(STORE_KEY, STORE_NAME$b, [], { migrate: 'adopt' });
+            const saved = await characterKey_js.readScoped(STORE_KEY, STORE_NAME$a, [], { migrate: 'adopt' });
             return Array.isArray(saved) ? saved : [];
         } catch (error) {
             console.error('[CombatSessionHistory] Reading the session list failed:', error);
@@ -11845,7 +16376,7 @@
      */
     async function refreshSessions() {
         try {
-            sessions = await loadSessions$1();
+            sessions = await loadSessions();
         } catch (error) {
             console.error('[PartyLoot] Reading the session list failed:', error);
         }
@@ -19549,7 +24080,7 @@ ${starCSS}
 
 
     /** Object store the records live in — shared with the guild XP history */
-    const STORE_NAME$a = 'guildHistory';
+    const STORE_NAME$9 = 'guildHistory';
 
     /** Key prefix; the guild name is appended, as `guildXP_<name>` does */
     const KEY_PREFIX$2 = 'guildTrials';
@@ -19911,7 +24442,7 @@ ${starCSS}
         const fresh = () => emptyRecord(weekStart, { guildId, guildName });
 
         try {
-            const record = await storage.get(guildTrialsStorageKey(guildName, characterId), STORE_NAME$a, null);
+            const record = await storage.get(guildTrialsStorageKey(guildName, characterId), STORE_NAME$9, null);
             if (!record || typeof record !== 'object') return fresh();
 
             // A record from a previous week is last week's ladder, not this one's
@@ -19959,7 +24490,7 @@ ${starCSS}
      */
     async function purgeLegacyTrialRecord() {
         try {
-            await storage.delete(`${KEY_PREFIX$2}_default`, STORE_NAME$a);
+            await storage.delete(`${KEY_PREFIX$2}_default`, STORE_NAME$9);
             return true;
         } catch (error) {
             console.error('[GuildTrialsStore] Failed to purge the legacy trial record:', error);
@@ -20060,11 +24591,11 @@ ${starCSS}
     async function clearTrialStorage() {
         const removed = [];
         try {
-            const keys = await storage.getAllKeys(STORE_NAME$a);
+            const keys = await storage.getAllKeys(STORE_NAME$9);
             for (const key of keys || []) {
                 const name = String(key);
                 if (!name.startsWith(KEY_PREFIX$2) && !name.startsWith('guildTrialSession')) continue;
-                await storage.delete(name, STORE_NAME$a);
+                await storage.delete(name, STORE_NAME$9);
                 removed.push(name);
             }
         } catch (error) {
@@ -20088,7 +24619,7 @@ ${starCSS}
                 guildId: record?.guildId ?? guildId ?? null,
                 guildName: record?.guildName ?? guildName ?? null,
             };
-            await storage.set(guildTrialsStorageKey(guildName, characterId), stamped, STORE_NAME$a);
+            await storage.set(guildTrialsStorageKey(guildName, characterId), stamped, STORE_NAME$9);
             return true;
         } catch (error) {
             console.error('[GuildTrialsStore] Failed to save trial samples:', error);
@@ -20123,7 +24654,7 @@ ${starCSS}
      */
     async function loadWorkBases() {
         try {
-            const held = await storage.get(WORK_BASES_KEY, STORE_NAME$a, null);
+            const held = await storage.get(WORK_BASES_KEY, STORE_NAME$9, null);
             return held && typeof held === 'object' && !Array.isArray(held) ? held : {};
         } catch (error) {
             console.error('[GuildTrialsStore] Failed to load the learned work bases:', error);
@@ -20138,7 +24669,7 @@ ${starCSS}
      */
     async function saveWorkBases(bases) {
         try {
-            await storage.set(WORK_BASES_KEY, bases || {}, STORE_NAME$a);
+            await storage.set(WORK_BASES_KEY, bases || {}, STORE_NAME$9);
             return true;
         } catch (error) {
             console.error('[GuildTrialsStore] Failed to save the learned work bases:', error);
@@ -20170,7 +24701,7 @@ ${starCSS}
      */
     async function loadTrialRoster() {
         try {
-            const held = await storage.get(ROSTER_KEY, STORE_NAME$a, null);
+            const held = await storage.get(ROSTER_KEY, STORE_NAME$9, null);
             if (!held || typeof held !== 'object') return null;
             if (!held.roster || typeof held.roster !== 'object') return null;
             return held;
@@ -20187,7 +24718,7 @@ ${starCSS}
      */
     async function saveTrialRoster(entry) {
         try {
-            await storage.set(ROSTER_KEY, entry, STORE_NAME$a);
+            await storage.set(ROSTER_KEY, entry, STORE_NAME$9);
             return true;
         } catch (error) {
             console.error('[GuildTrialsStore] Failed to save the trial roster:', error);
@@ -22434,7 +26965,7 @@ ${starCSS}
      */
 
 
-    const STORE_NAME$9 = 'guildHistory';
+    const STORE_NAME$8 = 'guildHistory';
     /** The guild leaderboard's own refresh cadence, as the panel states */
     const LEADERBOARD_REFRESH_MS = 20 * 60 * 1000;
     const WINDOW_10M$2 = 10 * 60 * 1000;
@@ -22832,14 +27363,14 @@ ${starCSS}
 
             // Load persisted histories
             const endLoad = performanceMonitor.startSpan('bg:guildXPTracker', 'load history');
-            this.guildXPHistory = await storage.get(`guildXP_${guildName}`, STORE_NAME$9, {});
+            this.guildXPHistory = await storage.get(`guildXP_${guildName}`, STORE_NAME$8, {});
             // Histories recorded before repeats were rejected end in two identical
             // readings, which reads as a rate of zero. Heal them on the way in.
             for (const [name, arr] of Object.entries(this.guildXPHistory)) {
                 this.guildXPHistory[name] = dropFlatRepeats(arr);
             }
             if (this.ownGuildID) {
-                this.memberXPHistory = await storage.get(`memberXP_${this.ownGuildID}`, STORE_NAME$9, {});
+                this.memberXPHistory = await storage.get(`memberXP_${this.ownGuildID}`, STORE_NAME$8, {});
                 // Self-heal on the way in. The history map never forgets anybody it
                 // has ever sampled, so a member who left the guild kept their weekly
                 // rate, did nothing all day because they were gone, and sat in the
@@ -22854,7 +27385,7 @@ ${starCSS}
                             `no longer in the guild: ${departed.slice(0, 8).join(', ')}` +
                             `${departed.length > 8 ? `, +${departed.length - 8} more` : ''}`
                     );
-                    storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME$9);
+                    storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME$8);
                 }
             }
             endLoad();
@@ -22882,9 +27413,9 @@ ${starCSS}
             // the actual write is milliseconds, and flushAll on unload covers the
             // tab closing before the timer lands.
             const endSave = performanceMonitor.startSpan('bg:guildXPTracker', 'queue save');
-            storage.set(`guildXP_${guildName}`, this.guildXPHistory, STORE_NAME$9);
+            storage.set(`guildXP_${guildName}`, this.guildXPHistory, STORE_NAME$8);
             if (this.ownGuildID) {
-                storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME$9);
+                storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME$8);
             }
             endSave();
         }
@@ -22921,7 +27452,7 @@ ${starCSS}
 
             const t = Date.now();
             pushXP$2(this.guildXPHistory[name], { t, xp: guild.experience });
-            storage.set(`guildXP_${name}`, this.guildXPHistory, STORE_NAME$9);
+            storage.set(`guildXP_${name}`, this.guildXPHistory, STORE_NAME$8);
         }
 
         /**
@@ -22940,7 +27471,7 @@ ${starCSS}
 
             if (newGuildID && this.ownGuildID && newGuildID !== this.ownGuildID) {
                 // Guild switched — clear stale member data and load fresh from storage
-                this.memberXPHistory = await storage.get(`memberXP_${newGuildID}`, STORE_NAME$9, {});
+                this.memberXPHistory = await storage.get(`memberXP_${newGuildID}`, STORE_NAME$8, {});
                 this.memberMeta = {};
             }
 
@@ -22997,7 +27528,7 @@ ${starCSS}
             }
 
             if (this.ownGuildID) {
-                storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME$9);
+                storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME$8);
             }
         }
 
@@ -23039,7 +27570,7 @@ ${starCSS}
             }
 
             if (this.ownGuildName) {
-                storage.set(`guildXP_${this.ownGuildName}`, this.guildXPHistory, STORE_NAME$9);
+                storage.set(`guildXP_${this.ownGuildName}`, this.guildXPHistory, STORE_NAME$8);
             }
         }
 
@@ -23264,7 +27795,7 @@ ${starCSS}
         async resetMemberData() {
             if (!this.ownGuildID) return;
             this.memberXPHistory = {};
-            await storage.set(`memberXP_${this.ownGuildID}`, {}, STORE_NAME$9);
+            await storage.set(`memberXP_${this.ownGuildID}`, {}, STORE_NAME$8);
         }
 
         /**
@@ -23332,7 +27863,7 @@ ${starCSS}
 
 
     /** Object store the captures live in — shared with the rest of the guild history */
-    const STORE_NAME$8 = 'guildHistory';
+    const STORE_NAME$7 = 'guildHistory';
 
     /** Key prefix; the guild name is appended, as the trial record's key is */
     const KEY_PREFIX$1 = 'guildMemberSkills';
@@ -23599,7 +28130,7 @@ ${starCSS}
         /** @returns {Promise<Object>} The captures, read back from storage */
         async load() {
             try {
-                const stored = await storage.get(memberSkillsStorageKey(this.guildName), STORE_NAME$8, null);
+                const stored = await storage.get(memberSkillsStorageKey(this.guildName), STORE_NAME$7, null);
                 this.captures = stored && typeof stored === 'object' ? stored : {};
             } catch (error) {
                 console.error('[GuildMemberSkills] Failed to read captured profiles:', error);
@@ -23619,7 +28150,7 @@ ${starCSS}
 
                 this.captures = { ...this.captures, [capture.name.toLowerCase()]: capture };
                 storage
-                    .set(memberSkillsStorageKey(this.guildName), this.captures, STORE_NAME$8)
+                    .set(memberSkillsStorageKey(this.guildName), this.captures, STORE_NAME$7)
                     .catch((error) => console.error('[GuildMemberSkills] Failed to store a profile:', error));
             } catch (error) {
                 console.error('[GuildMemberSkills] Reading an opened profile failed:', error);
@@ -23900,7 +28431,7 @@ ${starCSS}
 
 
     /** Object store sessions live in — shared with the rest of the guild history */
-    const STORE_NAME$7 = 'guildHistory';
+    const STORE_NAME$6 = 'guildHistory';
 
     /** Key prefix; the guild name is appended, as the trial record's key is */
     const KEY_PREFIX = 'guildTrialSession';
@@ -24245,7 +28776,7 @@ ${starCSS}
         async _persist() {
             try {
                 if (!this.session) return;
-                await storage.set(trialSessionStorageKey(this.guildName, this.characterId), this.session, STORE_NAME$7);
+                await storage.set(trialSessionStorageKey(this.guildName, this.characterId), this.session, STORE_NAME$6);
             } catch (error) {
                 console.error('[GuildTrialRecorder] Saving the session failed:', error);
             }
@@ -24258,7 +28789,7 @@ ${starCSS}
         async loadSession() {
             if (this.session) return this.session;
             try {
-                return await storage.get(trialSessionStorageKey(this.guildName, this.characterId), STORE_NAME$7, null);
+                return await storage.get(trialSessionStorageKey(this.guildName, this.characterId), STORE_NAME$6, null);
             } catch (error) {
                 console.error('[GuildTrialRecorder] Reading the session failed:', error);
                 return null;
@@ -26218,6 +30749,7 @@ ${starCSS}
         'notifications_otherCharacterIdle',
         'notifications_communityBuffExpiring',
         'notifications_labyrinthRunFinished',
+        'notifications_labyrinthEntryAvailable',
         'notifications_combatDeath',
         'notifications_enhancementTarget',
         'notifications_trialStarting',
@@ -41241,7 +45773,7 @@ ${starCSS}
      */
 
 
-    const STORE_NAME$6 = 'rerollSpending';
+    const STORE_NAME$5 = 'rerollSpending';
 
     /**
      * One record per ISO week.
@@ -41263,8 +45795,8 @@ ${starCSS}
     /** How much history is kept */
     const WINDOW_WEEKS = 8;
     const WINDOW_MS$2 = WINDOW_WEEKS * 7 * 24 * 60 * 60 * 1000;
-    const HOUR_MS$1 = 60 * 60 * 1000;
-    const DAY_MS$1 = 24 * HOUR_MS$1;
+    const HOUR_MS$2 = 60 * 60 * 1000;
+    const DAY_MS$1 = 24 * HOUR_MS$2;
 
     /**
      * The ISO week a timestamp falls in, as a sortable id.
@@ -41430,7 +45962,7 @@ ${starCSS}
                 coins: 0,
             });
 
-        const hours = spanMs / HOUR_MS$1;
+        const hours = spanMs / HOUR_MS$2;
         summary.tokensPerHour = measured.tokens / hours;
         summary.coinsPerHour = measured.coins / hours;
         return summary;
@@ -41478,7 +46010,7 @@ ${starCSS}
             this._pending = null;
 
             this._store = chunkedHistory_js.createChunkedHistory({
-                storeName: STORE_NAME$6,
+                storeName: STORE_NAME$5,
                 prefix: RECORD_PREFIX$1,
                 legacyKey: (charId) => `taskCompletions_${charId}`,
                 groupOf: (entry) => weekChunkId(entry?.completedAt),
@@ -41827,7 +46359,7 @@ ${starCSS}
      */
 
     /** Milliseconds in an hour */
-    const HOUR_MS = 3_600_000;
+    const HOUR_MS$1 = 3_600_000;
 
     /**
      * How many of the character's quests are tasks currently sitting on the board.
@@ -41885,7 +46417,7 @@ ${starCSS}
         // of free slots
         const usedSlots = Math.min(slotCap, unread + active);
         const freeSlots = Math.max(0, slotCap - usedSlots);
-        const cooldownMs = cooldownHours * HOUR_MS;
+        const cooldownMs = cooldownHours * HOUR_MS$1;
 
         const fillsAt = lastTaskAt + freeSlots * cooldownMs;
         const wastesAt = fillsAt + cooldownMs;
@@ -43980,7 +48512,7 @@ ${starCSS}
      */
 
 
-    const STORE_NAME$5 = 'xpHistory';
+    const STORE_NAME$4 = 'xpHistory';
     const WINDOW_10M$1 = 10 * 60 * 1000;
     const WINDOW_1H$1 = 60 * 60 * 1000;
     const WINDOW_1W$1 = 7 * 24 * 60 * 60 * 1000;
@@ -44220,7 +48752,7 @@ ${starCSS}
             this.combatSession = {};
 
             // Load persisted history for this character
-            const stored = await storage.get(`xpHistory_${charId}`, STORE_NAME$5, {});
+            const stored = await storage.get(`xpHistory_${charId}`, STORE_NAME$4, {});
             this.xpHistory = stored;
 
             const t = data.currentTimestamp ? +new Date(data.currentTimestamp) : Date.now();
@@ -44238,7 +48770,7 @@ ${starCSS}
             });
 
             // Don't await — write is fire-and-forget, no need to block initialization
-            storage.set(`xpHistory_${charId}`, this.xpHistory, STORE_NAME$5);
+            storage.set(`xpHistory_${charId}`, this.xpHistory, STORE_NAME$4);
 
             this._updateNavBars();
         }
@@ -44277,7 +48809,7 @@ ${starCSS}
                 }
             });
 
-            storage.set(`xpHistory_${this.characterId}`, this.xpHistory, STORE_NAME$5);
+            storage.set(`xpHistory_${this.characterId}`, this.xpHistory, STORE_NAME$4);
 
             this._updateNavBars();
         }
@@ -46596,7 +51128,7 @@ ${starCSS}
      */
 
 
-    const STORE_NAME$4 = 'lootLogHistory';
+    const STORE_NAME$3 = 'lootLogHistory';
     const MAX_ENTRIES = 500;
 
     /**
@@ -46625,7 +51157,7 @@ ${starCSS}
              * is where it goes to survive a reload.
              */
             this._store = chunkedHistory_js.createChunkedHistory({
-                storeName: STORE_NAME$4,
+                storeName: STORE_NAME$3,
                 prefix: RECORD_PREFIX,
                 legacyKey: (charId) => `lootLog_${charId}`,
                 groupOf: (entry) => chunkedHistory_js.timeChunkId(Date.parse(entry?.startTime), 'hour'),
@@ -46721,6 +51253,285 @@ ${starCSS}
     dataManager.on?.('character_switching', () => lootLogHistory._store.forget());
 
     /**
+     * Enhancing loot summary
+     *
+     * The cost/luck/profit of an enhancing action, reconstructed from a loot-log
+     * entry. A loot-log entry hands us `drops` keyed by enhancement level
+     * (`/items/foo::N`), so the whole run is recoverable from data — no DOM
+     * scraping. The arithmetic is pure and dependency-injected so it can be tested
+     * without the game: the caller passes in the Markov calculator, this character's
+     * enhancing params, a price lookup, and the item's data.
+     *
+     * The reconstruction mirrors the community "Better Loot Tracker": the highest
+     * level present with a count of exactly one is a successful stop at the target;
+     * otherwise the run failed one short of `maxLevel + 1`. Protections are inferred
+     * from the parity of the protect-level drop counts, assuming the cost-optimal
+     * protect-from (the player's real choice is not recorded).
+     */
+
+    /**
+     * Recover the item, target level, success and attempt count from a loot-log
+     * entry's drops.
+     * @param {Object<string, number>} drops - `{ '/items/foo::N': count, ... }`
+     * @param {number} actionCount - The action's attempt count
+     * @returns {{baseHrid:string, levelCounts:Object<number,number>, maxLevel:number,
+     *   targetLevel:number, success:boolean, attempts:number}|null}
+     */
+    function reconstructEnhancingRun(drops, actionCount) {
+        if (!drops || typeof drops !== 'object') return null;
+
+        // Per-level counts for each item that appears with a ::N suffix. Enhancing
+        // essence is a byproduct, not the enhanced item.
+        const byItem = {};
+        for (const [key, count] of Object.entries(drops)) {
+            const match = key.match(/^(.*)::(\d+)$/);
+            if (!match) continue;
+            const hrid = match[1];
+            if (hrid === '/items/enhancing_essence') continue;
+            const level = parseInt(match[2], 10);
+            if (!byItem[hrid]) byItem[hrid] = {};
+            byItem[hrid][level] = (byItem[hrid][level] || 0) + count;
+        }
+
+        // The enhanced item dominates the level-keyed drops.
+        let baseHrid = null;
+        let levelCounts = null;
+        let bestTotal = -1;
+        for (const [hrid, counts] of Object.entries(byItem)) {
+            const total = Object.values(counts).reduce((a, b) => a + b, 0);
+            if (total > bestTotal) {
+                bestTotal = total;
+                baseHrid = hrid;
+                levelCounts = counts;
+            }
+        }
+        if (!baseHrid) return null;
+
+        const levels = Object.keys(levelCounts).map(Number);
+        const maxLevel = Math.max(...levels);
+        const maxCount = levelCounts[maxLevel] || 0;
+
+        let targetLevel;
+        let success;
+        if (maxCount === 1) {
+            targetLevel = maxLevel;
+            success = true;
+        } else {
+            targetLevel = maxLevel + 1;
+            success = false;
+        }
+
+        const summed = Object.values(levelCounts).reduce((a, b) => a + b, 0);
+        const attempts = actionCount || summed;
+        return { baseHrid, levelCounts, maxLevel, targetLevel, success, attempts };
+    }
+
+    /**
+     * How many protections a run used, inferred from the parity of the protect-level
+     * drop counts. Same shape as the reference's calculateActualProtections.
+     * @param {Object<number,number>} levelCounts
+     * @param {number} protectFrom - Level protection starts at (0 = never)
+     * @param {number} targetLevel
+     * @param {boolean} success
+     * @returns {number}
+     */
+    function countProtections(levelCounts, protectFrom, targetLevel, success) {
+        if (!protectFrom || protectFrom < 1) return 0;
+        const parity = protectFrom % 2;
+
+        let count = 0;
+        for (let level = protectFrom; level <= targetLevel; level++) {
+            if (level % 2 !== parity) continue;
+            count += levelCounts[level] || 0;
+        }
+        // A successful climb passes through each protect level once without a reset.
+        if (success) {
+            let passes = 0;
+            for (let level = protectFrom; level <= targetLevel; level++) {
+                if (level % 2 === parity) passes++;
+            }
+            count -= passes;
+        }
+        return Math.max(0, count);
+    }
+
+    /**
+     * The cost/luck/profit of a reconstructed run.
+     *
+     * @param {Object} run - From {@link reconstructEnhancingRun}
+     * @param {Object} deps
+     * @param {(params: Object) => {attempts:number, protectionCount:number}} deps.calculateEnhancement
+     * @param {Object} deps.params - This character's enhancing params (getEnhancingParams shape)
+     * @param {(hrid: string) => number} deps.materialPrice - Per-unit enhancement
+     *   material price, buy side — the same pricing the live tracker uses, with its
+     *   production-cost / NPC fallbacks (an unlisted catalyst is not free). Coins
+     *   must come back as 1.
+     * @param {(baseHrid: string) => number} deps.protectionPrice - Cheapest protection
+     *   unit price for the item (0 when none applies)
+     * @param {(hrid: string, level: number) => number|null} deps.itemValue - Market
+     *   resale (bid) value of the item at a level, or null when unlisted
+     * @param {Object} deps.itemDetails - itemDetailMap entry for the enhanced item
+     * @param {number} [deps.marketTax=0.02] - Sell fee
+     * @returns {Object|null}
+     */
+    function computeEnhancingSummary(run, deps) {
+        const {
+            calculateEnhancement,
+            params,
+            materialPrice,
+            protectionPrice,
+            itemValue,
+            itemDetails,
+            marketTax = 0.02,
+        } = deps || {};
+        if (
+            !run ||
+            !itemDetails ||
+            typeof calculateEnhancement !== 'function' ||
+            !params ||
+            typeof materialPrice !== 'function' ||
+            typeof protectionPrice !== 'function' ||
+            typeof itemValue !== 'function'
+        ) {
+            return null;
+        }
+
+        const itemLevel = itemDetails.itemLevel || 0;
+        const enhancementCosts = itemDetails.enhancementCosts || [];
+
+        // Per-attempt material cost (buy side), priced exactly as the live tracker
+        // does — materialPrice handles coins (1) and the unlisted-material fallbacks.
+        let perAttempt = 0;
+        for (const material of enhancementCosts) {
+            perAttempt += (materialPrice(material.itemHrid) || 0) * (material.count || 0);
+        }
+
+        const protUnit = protectionPrice(run.baseHrid) || 0;
+
+        const runParams = (protectFrom) =>
+            calculateEnhancement({
+                enhancingLevel: params.enhancingLevel,
+                itemLevel,
+                targetLevel: run.targetLevel,
+                protectFrom,
+                toolBonus: params.toolBonus,
+                speedBonus: params.speedBonus,
+                blessedTea: params.teas?.blessed,
+                guzzlingBonus: params.guzzlingBonus,
+                blessedTeaBonus: params.blessedTeaBonus,
+            });
+
+        // Best protect-from by expected total cost — the run's protect-from is not
+        // recorded, so we assume the cost-optimal choice.
+        let best = null;
+        const start = run.targetLevel === 1 ? 1 : 2;
+        for (let protectFrom = start; protectFrom <= run.targetLevel; protectFrom++) {
+            let result;
+            try {
+                result = runParams(protectFrom);
+            } catch {
+                continue;
+            }
+            if (!result) continue;
+            const total = perAttempt * result.attempts + protUnit * (result.protectionCount || 0);
+            if (!best || total < best.total) {
+                best = { protectFrom, expAttempts: result.attempts, expProtects: result.protectionCount || 0, total };
+            }
+        }
+        if (!best) return null;
+
+        const materialExpected = perAttempt * best.expAttempts;
+        const protectExpected = protUnit * best.expProtects;
+        const totalExpected = materialExpected + protectExpected;
+
+        const materialActual = perAttempt * run.attempts;
+        const actualProtects = countProtections(run.levelCounts, best.protectFrom, run.targetLevel, run.success);
+        const protectActual = protUnit * actualProtects;
+        const totalActual = materialActual + protectActual;
+
+        // Worth it: +N resale (after fee) minus base given up (after fee) minus spent.
+        const keep = 1 - marketTax;
+        const baseValue = itemValue(run.baseHrid, 0) || 0;
+        const finalValue = run.success ? (itemValue(run.baseHrid, run.targetLevel) ?? null) : baseValue;
+        const profit = finalValue == null ? null : finalValue * keep - baseValue * keep - totalActual;
+
+        return {
+            protectFrom: best.protectFrom,
+            expectedAttempts: best.expAttempts,
+            expectedProtects: best.expProtects,
+            actualAttempts: run.attempts,
+            actualProtects,
+            materialActual,
+            materialExpected,
+            protectActual,
+            protectExpected,
+            totalActual,
+            totalExpected,
+            diff: totalActual - totalExpected, // positive → above expected (unlucky)
+            finalValue,
+            baseValue,
+            profit,
+            success: run.success,
+            targetLevel: run.targetLevel,
+        };
+    }
+
+    /**
+     * Combine several per-run summaries into one, for merging runs of the same item
+     * that were split across loot-log entries — the real cost and profit of the lot.
+     *
+     * @param {Array<Object>} summaries - From {@link computeEnhancingSummary}
+     * @returns {{runs:number, successes:number, materialActual:number,
+     *   materialExpected:number, protectActual:number, protectExpected:number,
+     *   totalActual:number, totalExpected:number, actualAttempts:number,
+     *   expectedAttempts:number, actualProtects:number, expectedProtects:number,
+     *   diff:number, profit:number|null}|null}
+     */
+    function mergeEnhancingSummaries(summaries) {
+        if (!Array.isArray(summaries) || summaries.length === 0) return null;
+
+        const merged = {
+            runs: 0,
+            successes: 0,
+            materialActual: 0,
+            materialExpected: 0,
+            protectActual: 0,
+            protectExpected: 0,
+            totalActual: 0,
+            totalExpected: 0,
+            actualAttempts: 0,
+            expectedAttempts: 0,
+            actualProtects: 0,
+            expectedProtects: 0,
+            profit: 0,
+        };
+        let profitKnown = true;
+
+        for (const s of summaries) {
+            if (!s) continue;
+            merged.runs += 1;
+            if (s.success) merged.successes += 1;
+            merged.materialActual += s.materialActual || 0;
+            merged.materialExpected += s.materialExpected || 0;
+            merged.protectActual += s.protectActual || 0;
+            merged.protectExpected += s.protectExpected || 0;
+            merged.totalActual += s.totalActual || 0;
+            merged.totalExpected += s.totalExpected || 0;
+            merged.actualAttempts += s.actualAttempts || 0;
+            merged.expectedAttempts += s.expectedAttempts || 0;
+            merged.actualProtects += s.actualProtects || 0;
+            merged.expectedProtects += s.expectedProtects || 0;
+            // One un-priced run makes the merged profit unknowable rather than wrong.
+            if (s.profit == null) profitKnown = false;
+            else merged.profit += s.profit;
+        }
+
+        merged.diff = merged.totalActual - merged.totalExpected;
+        if (!profitKnown) merged.profit = null;
+        return merged;
+    }
+
+    /**
      * Loot Log Statistics Module
      * Adds total value, average time, and daily output statistics to loot logs
      * Port of Edible Tools loot tracker feature, integrated into Toolasha architecture
@@ -46797,6 +51608,10 @@ ${starCSS}
             // Percentiles already worked out, keyed by what they were worked out
             // from — an entry that has not changed costs a lookup, not a transform
             this.luckCache = new Map();
+            // Enhancing-run merge: the computed summary of every enhancing entry seen
+            // (by characterActionId), and which the user has picked to combine.
+            this.enhSummaries = new Map();
+            this.enhSelected = new Set();
         }
 
         /**
@@ -46880,8 +51695,10 @@ ${starCSS}
             const logData = this.extractLogData(lootElem, secondDiv);
             if (!logData) return;
 
-            // Skip enhancement actions
-            if (logData.actionHrid === '/actions/enhancing/enhance') return;
+            const isEnhancing = logData.actionHrid === '/actions/enhancing/enhance';
+            // Enhancing has its own opt-in summary and no drop table. When the summary
+            // is off, return before stamping so turning it on later re-processes.
+            if (isEnhancing && !config.getSetting('lootLogEnhancingCost')) return;
 
             // Skip re-injection only when the matched log entry hasn't changed since last time;
             // ongoing entries keep updating (endTime/actionCount grow) and must be refreshed
@@ -46889,11 +51706,235 @@ ${starCSS}
             if (lootElem.dataset.mwiLootLogStamp === stamp) return;
             lootElem.dataset.mwiLootLogStamp = stamp;
 
+            if (isEnhancing) {
+                this.injectEnhancingSummary(secondDiv, logData);
+                return;
+            }
+
             // Calculate and inject total value
             this.injectTotalValue(secondDiv, logData);
 
             // Calculate and inject average time and daily output
             this.injectTimeAndDailyOutput(thirdDiv, logData);
+        }
+
+        /**
+         * Inject an enhancing cost/luck/profit summary onto an enhancing loot-log
+         * entry. Reconstructs the run from the entry's per-level drops and prices it
+         * through the shared enhancement calculator (reached via the bundle bridge).
+         * @param {HTMLElement} targetDiv - Where to append the summary
+         * @param {Object} logData - The loot-log entry
+         */
+        injectEnhancingSummary(targetDiv, logData) {
+            try {
+                const prior = targetDiv.querySelector('.mwi-loot-log-enhancing');
+                if (prior) prior.remove();
+
+                const run = reconstructEnhancingRun(logData.drops, logData.actionCount);
+                if (!run) return;
+
+                const itemDetails = dataManager.getInitClientData()?.itemDetailMap?.[run.baseHrid];
+                if (!itemDetails) return;
+
+                const calculateEnhancement = bundleBridge_js.enhancementCalculator()?.calculateEnhancement;
+                const params = bundleBridge_js.enhancementConfig()?.getEnhancingParams?.();
+                if (typeof calculateEnhancement !== 'function' || !params) return;
+
+                const summary = computeEnhancingSummary(run, {
+                    calculateEnhancement,
+                    params,
+                    // Same pricing the live Enhancement Tracker uses, so the loot-log
+                    // figures line up with it — getEnhancementMaterialPrice carries the
+                    // production-cost/NPC fallbacks that a raw market lookup lacks.
+                    materialPrice: (hrid) => getEnhancementMaterialPrice(hrid, 'ask') || 0,
+                    protectionPrice: (baseHrid) => getCheapestProtectionPrice(baseHrid)?.price || 0,
+                    itemValue: (hrid, level) => {
+                        const prices = marketData_js.getItemPrices(hrid, level);
+                        return prices ? prices.bid : null;
+                    },
+                    itemDetails,
+                    marketTax: profitConstants_js.MARKET_TAX,
+                });
+                if (!summary) return;
+
+                const div = document.createElement('div');
+                div.className = 'mwi-loot-log-enhancing';
+                div.style.cssText = 'font-size: 13px; margin-top: 4px; line-height: 1.5;';
+                div.innerHTML = this.buildEnhancingSummaryHtml(summary);
+
+                // Remember this run so it can be merged with others of the same item.
+                const id = logData.characterActionId != null ? String(logData.characterActionId) : null;
+                if (id) {
+                    const itemName = itemDetails.name || run.baseHrid.split('/').pop();
+                    this.enhSummaries.set(id, { summary, baseHrid: run.baseHrid, itemName });
+                    div.appendChild(this.buildEnhMergeChip(id));
+                }
+
+                targetDiv.appendChild(div);
+                this.renderEnhMergePanel();
+            } catch (error) {
+                console.error('[LootLogStats] Enhancing summary failed:', error);
+            }
+        }
+
+        /**
+         * A small chip that toggles whether this run is in the merge selection.
+         * @param {string} id - characterActionId
+         * @returns {HTMLElement}
+         */
+        buildEnhMergeChip(id) {
+            const chip = document.createElement('button');
+            chip.className = 'mwi-enh-merge-chip';
+            chip.dataset.enhId = id;
+            this.styleEnhMergeChip(chip, this.enhSelected.has(id));
+            chip.addEventListener('click', (event) => {
+                event.stopPropagation();
+                if (this.enhSelected.has(id)) this.enhSelected.delete(id);
+                else this.enhSelected.add(id);
+                this.styleEnhMergeChip(chip, this.enhSelected.has(id));
+                this.renderEnhMergePanel();
+            });
+            return chip;
+        }
+
+        /**
+         * Paint a merge chip for its selected state.
+         * @param {HTMLElement} chip
+         * @param {boolean} selected
+         */
+        styleEnhMergeChip(chip, selected) {
+            chip.textContent = selected ? '✓ merging' : '+ merge';
+            chip.title = 'Select same-item runs to combine into one profit total';
+            chip.style.cssText =
+                'margin-left: 8px; padding: 0 6px; font-size: 11px; line-height: 1.6; cursor: pointer; ' +
+                'border-radius: 4px; border: 1px solid ' +
+                (selected ? 'rgba(255,165,0,0.7)' : 'rgba(255,255,255,0.25)') +
+                '; background: ' +
+                (selected ? 'rgba(255,165,0,0.25)' : 'transparent') +
+                '; color: ' +
+                (selected ? '#ffcc66' : 'rgba(232,236,245,0.7)') +
+                ';';
+        }
+
+        /**
+         * Draw (or clear) the merged-runs panel at the top of the loot-log list.
+         * Shows when two or more entries are selected; asks for same-item entries
+         * when the picks are mixed.
+         */
+        renderEnhMergePanel() {
+            const container = document.querySelector('.LootLogPanel_actionLoots__3oTid');
+            if (!container) return;
+
+            const existing = container.querySelector('.mwi-enh-merge-panel');
+            if (existing) existing.remove();
+
+            const picks = [...this.enhSelected].filter((id) => this.enhSummaries.has(id));
+            if (picks.length < 2) return;
+
+            const entries = picks.map((id) => this.enhSummaries.get(id));
+            const items = new Set(entries.map((e) => e.baseHrid));
+
+            const panel = document.createElement('div');
+            panel.className = 'mwi-enh-merge-panel';
+            panel.style.cssText =
+                'margin: 6px 0; padding: 7px 10px; font-size: 13px; line-height: 1.5; border-radius: 6px; ' +
+                'background: rgba(255,165,0,0.08); border: 1px solid rgba(255,165,0,0.3); color: #e8ecf5;';
+
+            if (items.size > 1) {
+                panel.innerHTML =
+                    `<span style="color:#ffcc66;">Select runs of the same item to merge</span> ` +
+                    `<span style="color:rgba(232,236,245,0.6);">(${picks.length} picked across ${items.size} items).</span>`;
+            } else {
+                const merged = mergeEnhancingSummaries(entries.map((e) => e.summary));
+                panel.innerHTML = this.buildMergedSummaryHtml(merged, entries[0].itemName);
+            }
+
+            const clear = document.createElement('button');
+            clear.textContent = '✕ clear';
+            clear.style.cssText =
+                'margin-left: 8px; padding: 0 6px; font-size: 11px; line-height: 1.6; cursor: pointer; ' +
+                'border-radius: 4px; border: 1px solid rgba(255,255,255,0.25); background: transparent; color: rgba(232,236,245,0.7);';
+            clear.addEventListener('click', () => this.clearEnhMerge());
+            panel.appendChild(clear);
+
+            container.prepend(panel);
+        }
+
+        /**
+         * Format the merged-runs total.
+         * @param {Object} m - From mergeEnhancingSummaries
+         * @param {string} itemName
+         * @returns {string} HTML
+         */
+        buildMergedSummaryHtml(m, itemName) {
+            const fmt = (n) => formatters_js.formatKMB(Math.round(n));
+            const factor = (a, e) => (e > 0 ? (a / e).toFixed(2) + '×' : '—');
+            const GOOD = '#00c46a';
+            const BAD = '#ff5d6c';
+            const diffColor = m.diff <= 0 ? GOOD : BAD;
+            const diffWord = m.diff <= 0 ? 'below' : 'above';
+
+            let html =
+                `<span style="color:#ffcc66; font-weight:600;">Merged ${m.runs} runs — ${itemName}</span>` +
+                ` <span style="color:rgba(232,236,245,0.6);">(${m.successes}/${m.runs} reached target)</span>`;
+            html += ` · Total ${fmt(m.totalActual)} (${factor(m.totalActual, m.totalExpected)} exp ${fmt(m.totalExpected)})`;
+            html += ` · <span style="color:${diffColor};">${fmt(Math.abs(m.diff))} ${diffWord} exp</span>`;
+            if (m.profit != null) {
+                const profitColor = m.profit >= 0 ? GOOD : BAD;
+                const sign = m.profit >= 0 ? '+' : '−';
+                html += ` · <span style="color:${profitColor}; font-weight:600;">Profit ${sign}${fmt(Math.abs(m.profit))}</span>`;
+            } else {
+                html += ` · <span style="color:rgba(232,236,245,0.6);">Profit: a run has no resale price</span>`;
+            }
+            return html;
+        }
+
+        /** Drop the merge selection and clear its panel. */
+        clearEnhMerge() {
+            this.enhSelected.clear();
+            document.querySelectorAll('.mwi-enh-merge-chip').forEach((chip) => this.styleEnhMergeChip(chip, false));
+            this.renderEnhMergePanel();
+        }
+
+        /**
+         * Format the enhancing summary as a compact colored line.
+         * @param {Object} s - From computeEnhancingSummary
+         * @returns {string} HTML
+         */
+        buildEnhancingSummaryHtml(s) {
+            const fmt = (n) => formatters_js.formatKMB(Math.round(n));
+            const factor = (a, e) => (e > 0 ? (a / e).toFixed(2) + '×' : '—');
+            const GOOD = '#00c46a';
+            const BAD = '#ff5d6c';
+            const DIM = 'rgba(232, 236, 245, 0.6)';
+
+            const status = s.success ? 'Success' : 'Fail';
+            const statusColor = s.success ? GOOD : BAD;
+            const matColor = s.materialActual <= s.materialExpected ? GOOD : BAD;
+            const diffColor = s.diff <= 0 ? GOOD : BAD;
+            const diffWord = s.diff <= 0 ? 'below' : 'above';
+
+            let html = `<span style="color:${statusColor}; font-weight:600;">[${status} +${s.targetLevel}]</span>`;
+            html +=
+                ` <span style="color:${matColor};">Mat ${fmt(s.materialActual)} ` +
+                `(${factor(s.materialActual, s.materialExpected)} exp ${fmt(s.materialExpected)})</span>`;
+            if (s.protectExpected > 0 || s.protectActual > 0) {
+                const protColor = s.protectActual <= s.protectExpected ? GOOD : BAD;
+                html +=
+                    ` · <span style="color:${protColor};">Prot ${fmt(s.protectActual)} ` +
+                    `(${factor(s.protectActual, s.protectExpected)} exp ${fmt(s.protectExpected)})</span>`;
+            }
+            html +=
+                ` · <span style="color:${diffColor};">Total ${fmt(s.totalActual)} — ` +
+                `${fmt(Math.abs(s.diff))} ${diffWord} exp</span>`;
+            if (s.profit != null) {
+                const profitColor = s.profit >= 0 ? GOOD : BAD;
+                const sign = s.profit >= 0 ? '+' : '−';
+                html += ` · <span style="color:${profitColor}; font-weight:600;">Profit ${sign}${fmt(Math.abs(s.profit))}</span>`;
+            } else {
+                html += ` · <span style="color:${DIM};">Profit: no +${s.targetLevel} price</span>`;
+            }
+            return html;
         }
 
         /**
@@ -48087,6 +53128,11 @@ ${starCSS}
             // Remove historical entries section
             const historySection = document.querySelectorAll('.mwi-loot-log-history');
             historySection.forEach((el) => el.remove());
+
+            // Remove the enhancing summaries and merge panel, and drop the selection
+            document.querySelectorAll('.mwi-loot-log-enhancing, .mwi-enh-merge-panel').forEach((el) => el.remove());
+            this.enhSummaries.clear();
+            this.enhSelected.clear();
 
             // Unregister all handlers
             this.unregisterHandlers.forEach((fn) => fn());
@@ -50725,7 +55771,7 @@ ${starCSS}
      * at each read and write, since the user switches characters without reloading.
      * The pre-scoping global values are adopted by the main character once.
      */
-    const STORAGE_KEY$4 = 'treasureTally';
+    const STORAGE_KEY$3 = 'treasureTally';
     const SETTINGS_KEY = 'treasureSettings';
     const ADOPT_LEGACY = { migrate: 'adopt' };
     const PANEL_ID$5 = 'toolasha-treasure-panel';
@@ -50780,7 +55826,7 @@ ${starCSS}
     const CAPE_VALUE_CYCLE = { token: 'mirror', mirror: 'zero', zero: 'token' };
     const CAPE_VALUE_LABEL = { token: 'Token value', mirror: 'Mirror value', zero: 'No value' };
 
-    const MIRROR_HRID$1 = '/items/mirror_of_protection';
+    const MIRROR_HRID = '/items/mirror_of_protection';
     const COWBELL_HRID = '/items/cowbell';
     const COWBELL_BAG_HRID = '/items/bag_of_10_cowbells';
     const COWBELLS_PER_BAG$1 = 10;
@@ -51012,7 +56058,7 @@ ${starCSS}
             if (!config.getSetting('treasureTracker')) return;
             this.isInitialized = true;
 
-            this.tally = (await characterKey_js.readScoped(STORAGE_KEY$4, 'settings', {}, ADOPT_LEGACY)) || {};
+            this.tally = (await characterKey_js.readScoped(STORAGE_KEY$3, 'settings', {}, ADOPT_LEGACY)) || {};
             const saved = await characterKey_js.readScoped(SETTINGS_KEY, 'settings', null, ADOPT_LEGACY);
             if (saved) this.settings = { ...DEFAULT_SETTINGS, ...saved };
 
@@ -51152,7 +56198,7 @@ ${starCSS}
         }
 
         _save() {
-            characterKey_js.writeScoped(STORAGE_KEY$4, this.tally, 'settings').catch((error) => {
+            characterKey_js.writeScoped(STORAGE_KEY$3, this.tally, 'settings').catch((error) => {
                 console.error('[TreasureTracker] Saving the chest tally failed:', error);
             });
         }
@@ -51282,7 +56328,7 @@ ${starCSS}
         _untradableValue(itemHrid) {
             const mode = this.settings.capeValue;
             if (mode === 'zero') return null;
-            if (mode === 'mirror') return marketData_js.getItemPrice(MIRROR_HRID$1, { context: 'profit', side: 'sell' }) || null;
+            if (mode === 'mirror') return marketData_js.getItemPrice(MIRROR_HRID, { context: 'profit', side: 'sell' }) || null;
 
             // Token value: what the tokens it costs would otherwise have bought
             const data = dataManager.getInitClientData();
@@ -58445,7 +63491,7 @@ ${starCSS}
         return overrides;
     }
 
-    var forkChangelog = "## Unreleased — branch `main`\n\n### Fixes: sort defaults, minimize placement, clickable quiet members\n\n- **Combat Sim all-zones and the Upgrade advisor now default to sorting by Score.** The all-zones run was resetting to Profit and the Upgrade table opened on DPS; both now open on Score (best first).\n- **The minimize button sits next to the close ✕ again** on Combat Sim, Lab Sim, and the Trade Ledger — it was landing in the middle of the header (and swapped past close on the Trade Ledger).\n- **Guild Roster: click a \"Gone quiet\" member** to load `/profile <name>` in chat (press Enter to open), the same trick the profile cycler uses.\n\n### Every panel can be minimized without closing it\n\nFloating panels now have a **–** button in the header (beside the close ✕) that folds the panel down to its title strip, leaving it draggable and running — click **□** to bring it back. It works across both shared panel shells (party loot, guild roster, DPS/deaths/profit tiles, and the rest) and the bespoke tool windows (Combat Sim, Lab Sim, Enhancement XP/hr, Consumables, Houses, Goal Planner, and more). The minimized state is remembered per panel across refreshes, alongside its position.\n\n### Combat & Lab Sim: optionally remember upgrade results across refreshes\n\nNew opt-in setting (default off) keeps the last Upgrade-tab results after a page reload — for both Combat Sim and Lab Sim — until you run a new analysis, so a run you waited minutes on is still there when you come back. A quiet banner marks restored results. Off by default because it stores the full result set (one blob per character per sim) in the browser database.\n\n### Combat Sim Results: a ⌖ button targets that zone in Configure\n\nEach row of the all-zones Results table now has a ⌖ button that sets that zone and tier as the Configure target and jumps to the Configure tab (leaving all-zones mode so the single-zone selects reappear) — no more scrolling the zone dropdown to sim a promising row. The table also now defaults to sorting by Score (descending) instead of unsorted.\n\n### Upgrade advisor: path boots (base and refined) are offered and simmed at +7\n\nThe upgrade advisor simmed a proposed gear swap at the current piece's enhancement level, so path boots (Pathbreaker/Pathfinder/Pathseeker) were quoted at whatever your worn boots are (e.g. +10). They're only obtainable at +7, so a swap to them is now always simmed and priced at +7 — the refined variants override the usual +10 refined floor. The refined path boots are now also _offered_: the crafting-chain walk only reaches the base boot (refined is one hop further), so each base path-boot swap now gets a refined sibling in the table, at +7.\n\n### Enhancement XP/hr panel: get a route for any item, even one you don't own\n\nThe enhancing-route (target level, protection plan, cost) was only reachable by hovering an item that's rendered — owned or listed — so an item with no listing at that level showed nothing. The Enhancement XP/hr panel now has an \"Enhance any item\" box: type any enhanceable item, pick a target level, and get its full route. The base-item price falls back to crafting cost when the market is empty, so it works with zero listings.\n\n### Ability hover: optional \"fresh to level\" cost, priced at the level shown\n\nHovering an ability itself (in a loadout, an ability slot, or on another player's profile) can now add a \"Fresh to Lv N: <cost> (<books> books)\" line, priced at the level the tooltip shows — so on someone else's profile it uses their level, not yours. It's identified from the ability tooltip's own name and gated behind a new, default-off setting (\"Show fresh-to-level cost on ability hovers\"), separate from the ability-book tooltip status.\n\n### Enhancement tooltip: the source toggle is discoverable and mobile-friendly\n\nThe \"Yours ⇄ / Pro ⇄\" chip on enhancement tooltips now shows a keycap **P** so the press-to-toggle hotkey is visible, not just buried in the hover title. On touch devices it drops the key (no keyboard), enlarges to a finger-sized tap target, and reads \"tap\" — the chip was already tappable on tap-to-open tooltips, just too small and unlabeled.\n\n### Upgrade advisor: \"Signature only\" is now \"Aura only\"\n\nThe Ability Swaps sub-option that restricted swaps to the aura + signature groups now restricts to just the aura group — the single \"which aura\" decision. Renamed the checkbox to \"Aura only\" with an updated tooltip, and renamed the internal option throughout (`auraOnly` / `auraSwapsOnly`).\n\n### Upgrade advisor: the aura OR-alternative is offered again\n\nAbility Swaps stopped offering the other aura in your archetype's aura group — e.g. running Mystic Aura, it never proposed Critical Aura. The generator was running each guide offer through a style-from-buff-data heuristic that misreads a universal aura (Critical Aura) as another style and vetoed it. The guide's own ability set is style-correct by construction, so on the guide path that heuristic no longer runs; it now only guards the every-ability fallback.\n\n### Sim: Achievements section — toggle your achievement combat buffs\n\nThe sim already applied your completed-achievement combat buffs (e.g. Damage +2%) silently; there was no way to see or change them. A new **Achievements** section on the Configure tab lists the combat buffs your achievements grant, each ticked by default (so results are unchanged) — untick one to sim without it. It reads your real buffs with their exact values; a character with no combat achievement buffs shows no section.\n\n### Sim: the loadout picker is back in the packaged build\n\nThe Combat Sim and Lab Sim loadout dropdown vanished in the released userscript (it still worked in dev): both UIs read the loadout list from their own bundle's copy of the snapshot store, which the websocket never feeds in the multi-bundle build, so the list was always empty and the `<select>` never rendered. Both now read the fed store through the bundle bridge — the same fix the apply path already had — so you can pick a saved loadout to sim as again. A regression test now asserts the picker renders from the bridge store.\n\n### Author credit: full contributor list and code-source attribution\n\nBoth userscript headers now carry the same, tidied `@author` credit. It restores the contributors who were only in the dev header (Shykai, amVoidGuy, vlad, kuganDev, Paradoxian, Maarg, SilkyPanda, MekaPyon, vidonnus) and adds a line crediting the tools this fork borrowed code and ideas from: MWITools (bot7420), MWI Combat Suite (Frotty), JIGS (jigglymoose), the Labyrinth Win Rate Calculator (dakonglong), and the mooket pools (Q7, IOMisaka).\n\n### Author credit leads with Millennium44 (production header too)\n\nThe previous author change only touched the dev header (`userscript-header.txt`); the GreasyFork build takes its header from `library-headers/entrypoint.txt`, which still led with the upstream authors. That production header now leads with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" as well, so the published listing shows the fork maintainer.\n\n### Author credit leads with Millennium44\n\nThe userscript `@author` header now opens with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" instead of leading with the upstream authors, so the GreasyFork listing credits the fork maintainer. The contributor thank-yous are unchanged.\n\n### Task reroll tracker: drop the experimental warning\n\nThe \"Track task reroll costs\" setting no longer warns it is experimental and may freeze the UI — it's stable. Default unchanged (on).\n\n### My Listings: a fresh undercut now shows without opening the item\n\nThe Top Order Price column trusted the last-opened order book, so an undercut stayed hidden behind your own price until you reopened the item. It now surfaces the game snapshot's price when it beats you (a rival's by definition, never your own order) — so undercuts show on their own, without ever displaying your own listing or downgrading a genuinely-fresher book. The age column follows suit.\n\n### Labyrinth: the calibration recorder is now passive and accumulates across runs\n\nNo Record button any more — every combat fight is kept automatically, per character and tagged with the gear it was fought in, pooled into 10-level bands so a monster's scattered random levels still accumulate. Press **Replay** to judge whatever has built up on your current gear; a loadout change starts a fresh pool. Bounded to 500 fights.\n\n### Labyrinth: a fight recorder and a calibration replay\n\nThe Sim accuracy record says _whether_ a room's clear chance is wrong, not _why_ — a timeout and a death are both \"lost\", and the fixes are opposite. This adds the decomposition.\n\n- **Replay** re-sims the recorded rooms and puts your real damage/s, the monster's, the clear rate and the fight length beside the sim's, each with a noise-aware verdict and a one-line diagnosis of which side the sim gets wrong. **Save comparison** downloads the whole check as one file.\n- **Capture** saves the raw tick feed of a fight — stun uptime, ability cadence, per-hit damage — for mechanism-level analysis (previously console-only).\n- Measurement fixes found via real captures: damage measured **gross** (not net of your ~16 HP/s regen, which made monsters look 15–40% weaker than the sim); self-healing monsters (life drain, the Dryad) no longer **split one fight into several**; partial-HP fights are dropped; and the diagnosis names all four over/under directions.\n\n### Labyrinth: full-ability sim calibration (testing), tooltip clear-time, tidier panel bar\n\n- Testing setting to model a monster's **full ability kit** in the sim — the labyrinth otherwise builds every monster at tier 0 and drops its gated abilities (the Cyclops's stun, shred, self-buffs). Off by default; it's part of the cache key, so toggling re-sims.\n- **Est. clear time** on combat/skilling room hover, shown past the tile's \"999+\" cap.\n- Room Logs top bar wraps cleanly; \"Sim accuracy\" tab shortened to \"Accuracy\".\n\n### Labyrinth: stop counting un-fought rooms as clears, and an uncapped sim option\n\n- **Phantom clears removed** — a revealed-but-unfought room (shroud, beacon, floor skip) is marked `isCleared` with no entry; it no longer counts as a win and drags the accuracy record toward \"sim too low\".\n- **Uncapped** toggle lifts the sim's time cap for the next Recompute, so a slow, timeout-heavy room reaches its precision target instead of a wide \"(capped)\" band.\n\n### Labyrinth: Recompute button, honest attempt counts, and a panel that stays put\n\n- **Recompute** throws away cached clear-chance sims and re-runs the visible rooms — a plain equip doesn't always refresh a sim cached under old gear.\n- Room Log shows the server's own attempt count, not just the fights it watched on the combat view: \"Won 0/6 · 26 total\".\n- The panel keeps its scroll position across redraws instead of jumping to the top on every update.\n\n### Undercut alerts finally fire passively, backed by Mooket\n\nThe alert distrusts any price older than 15 minutes, but the game snapshot refreshes only ~hourly — so undercuts on items you weren't watching stayed silent for hours. It now also consults the freshest **Mooket** sighting per listing (refreshed every 15 min), reporting its true age, so it can fire for items you never opened. Rides the Price history panel setting.\n\n### Selectable price-history source: mooket I alongside mooket II\n\nA **Market: Price history data source** setting picks between the Q7 pool (mooket II, default — ask/bid/avg/volume) and IOMisaka's original (mooket I — ask/bid only). On mooket I the chart's third line is a computed \"Mid\", the volume bars vanish, and the goal planner's volume limits switch off (a source with no volume tells us nothing about how fast a thing sells — unknown, not a measured zero). The order books you contribute back follow the selected source.\n\n### \"Mooket Refresh\" button on the My Listings tab\n\nA **Mooket Refresh** button in the My Listings header pulls fresher Top Order Prices for every listed item from the Mooket pool in one click, patching the fresher ones into the price cache the column redraws from — no opening each item by hand. Skips a sighting older than the game's snapshot, and keeps a one-sided sighting's other side. Rides the Price history panel setting.\n\n### My Listings' Top Order Price refreshes when the market moves\n\nThe Top Order Price column on the My Listings tab only redrew when your own listings changed (or, with the age column on, when you re-opened an item's order book), so an undercut fired an alert but left the column showing the stale price. It now subscribes to the same market-data updates the undercut alert uses — a marketplace snapshot refresh or an order-book price patch redraws the column (debounced), so being undercut turns the price red here too.\n\n### Custom Tabs: an enhanced item is no longer double-counted in Unorganized\n\nAn enhanced item is tracked under both its base and its `+level` key, so an unassigned one was collected through both — inflating the \"Unorganized (N)\" count and placing the tile twice. A shared, deduped collector (each physical tile once) now backs both the header count and the lightweight visibility pass (ported from upstream Celasha/Toolasha#627).\n\n### Custom Tabs action buttons heal when the sort-controls row is removed\n\nThe +Tab/Export/Import/Expand group is merged into the game's inventory sort-controls row and isn't tracked with the other injected elements, so when the InventorySort feature removed that row the buttons vanished and didn't return. A direct connectivity check now forces a rebuild when they disconnect (ported from upstream Celasha/Toolasha#632).\n\n### Estimated listing age: a null price no longer suppresses a match\n\nTwo \"your listings beyond the top 20\" match sites used a parsed price without checking for `null` (which the parser returns on empty/invalid text). A null coerces to 0 in the price comparison and can hide a correct match; both sites now skip the row instead (ported from upstream Celasha/Toolasha 2.85.0).\n\n### Character switches are serialized, so rapid switching no longer bleeds settings\n\nA rapid character switch could drop a re-init (leaving the previous character's per-character settings applied) or start a rebuild before the last character's teardown finished. The switch lifecycle now runs through one serialized chain, and each re-init verifies it is still for the current character before it applies — latest character wins, nothing dropped or overlapped (ported from upstream Celasha/Toolasha#622).\n\n### Action Filter's pricing mode resyncs after a character switch\n\nThe persistent Action Filter never re-initializes, and a character switch skips the per-key change callbacks (the cache is cleared first), so its mode/craft buttons and profit rows could keep the previous character's pricing mode. A new `config.onSettingsLoaded` channel fires whenever settings finish loading, so the filter resyncs (ported from upstream Celasha/Toolasha#630).\n\n### The Unorganized tab no longer vanishes mid-character-switch\n\nThe Custom Tabs \"Unorganized\" bucket was gated on `getSettingValue`, which reads `null` while the per-character cache is briefly empty during a switch — hiding the section until it reloaded. It now reads `getSetting`, which falls back to the schema default (ported from upstream Celasha/Toolasha#636).\n\n### Action-bar display no longer risks freezing the tab on a character switch\n\n`setupActionNameObserver` now disconnects any running observer before replacing it, so a character switch can't leak a duplicate watcher that loops on the stats span and freezes the tab (ported from upstream Celasha/Toolasha#623).\n\n### The Sort Tasks button sorts even with a reroll menu open\n\nA direct press now sorts the board immediately, mid-reroll and all. The automatic passes (auto-sort, sort-after-read) still wait for the board to settle so they never yank a pending click.\n\n### The protected/cap task border keeps up again\n\nIt is redrawn right away on a card that is mid-reroll (it used to wait for the menu to close, so the edge looked stuck until you pressed Back), and painted the instant the board opens instead of after a 150 ms delay.\n\n### The task bulk-reroll button is removed\n\nThe game only honours a reroll from a real click that opens the menu, which a userscript can't fake — so the button never worked unless you opened the menu by hand first. Reroll protection and the 🛡️ cap/per-task guards are untouched.\n\n### In Progress payout: leaner, plus a Roster button\n\nDrops the token gold valuation and the \"No Treasury level seen\" nag from the In Progress tab (both kept on the Trials tab), and adds a Roster button that opens the guild roster panel.\n\n### Skilling In Progress panel no longer squashes the game's card off-screen\n\nInjected payout/analysis blocks now take a full-width line above and below the roster+card row instead of shrinking the game's own skilling card to a sliver beside them.\n\n### Skilling trials: no flat projection once slowing is measured, and timestamped readings\n\nDrops the misleadingly-high \"On pace (flat)\" tier once a slowdown is known (it survives in the tooltip), and keeps a downsampled timestamped reading series in the export so the tier forecast can be checked against what was banked.\n\n### Trial scoreboard: honest damage-taken label, and a runaway split is flagged\n\nDamage taken is now labelled pre- vs post-mitigation (the live stream can only read the latter), and a per-player damage split that runs past the bosses' combined health is flagged as over-attributing.\n\n### Dev builds install over a same-numbered release\n\nThe dev build now appends its build timestamp as a fourth version segment, so a reinstall always takes even when the release number hasn't changed.\n\n### Scrolls in the Combat Simulator\n\nThe sim and Upgrade advisor now carry the seven Labyrinth combat scrolls (Damage, Attack Speed, Cast Speed, Critical Rate, Combat Drop, Wisdom, Rare Find): a Scrolls section on Configure to sim with them, and a Scrolls mode on Upgrade to measure what each is worth.\n\n";
+    var forkChangelog = "## Unreleased — branch `main`\n\n### Enhancement Tracker: idle duration fix, session merge, and an on-screen toggle\n\n- **Session Duration no longer runs while idle.** It stopped only when a run reached its target; a session left In Progress counted wall-clock forever. The clock now ends at the last recorded attempt, so it freezes when you stop enhancing (and XP/Hour with it).\n- **Merge sessions (∑).** A new ∑ button in the tracker header opens a checklist of your sessions and shows a combined summary of the ones you pick — per-level tally, attempts, success rate, XP, duration, and total cost — for a target reached across several separate runs. Defaults to every session of the item currently in view.\n- **Show/hide button on the Enhancing screen.** A \"∑ Tracker\" button now sits in the Enhancing panel's corner, like the marketplace's Bulk Sell tab, toggling the tracker on demand (a manual hide sticks).\n\n### Notifications: labyrinth entry regenerated (opt-in)\n\nNew default-off notification \"Notify when a labyrinth entry regenerates\". The Labyrinth holds up to five entries and regenerates one on a cooldown (a couple of days, less with upgrades); this fires when the stock rises or when the projected regeneration instant passes on an open tab — computed from `lastLabyrinthTimestamp + labyrinthCooldownHours` — so an entry doesn't sit wasted at the cap. Uses the existing notification service (toast in-page, browser notification when the tab is hidden).\n\n### Loot Log: enhancing cost, luck and profit (opt-in)\n\nNow prices materials and protection with the same helper the live Enhancement Tracker uses (production-cost/NPC fallbacks for unlisted materials), so the loot-log figures line up with the tracker for the same run instead of collapsing to near-zero when a material has no market listing.\n\nEnhancing loot-log entries can now carry a summary line — material and protection cost against the statistically expected cost (how lucky the run was), and the profit (the finished item's after-fee value minus the base and what you spent). It's reconstructed from the run's own per-level results and priced through Toolasha's enhancement calculator, assuming the cost-optimal protect level. New setting \"Loot Log: Enhancing cost, luck and profit\", **off by default**. The summary text is a readable size.\n\nEach enhancing entry also has a **+ merge** chip: pick two or more runs of the same item and a panel at the top of the loot log sums their real cost, luck and profit into one total — for a target reached across several split runs.\n\n### Enhancement Tracker: cost-vs-expected (luck) and worth-it lines\n\nThe Enhancement Tracker now shows two new readings under the run stats: **Expected Cost + Cost Factor** with how far below/above the expected cost this run landed (the cost twin of the Attempt Factor — pure attempt/protection luck, at this run's own prices), and a **Worth it (net)** line — the +N item's after-fee resale value minus the base you gave up minus what you spent, so you can see whether the enhance actually paid off. Click the Worth-it line to expand a breakdown. (A loot-log version is a planned follow-up.)\n\n### Enhancement Tracker: toggle it from the command palette\n\nThe Enhancement Tracker now appears in the Ctrl/Cmd+K command palette, so you can show or hide it on demand. A manual hide sticks (the auto-show logic won't bring it back until you toggle it on again or re-enable the feature).\n\n### Fixes: sort defaults, minimize placement, clickable quiet members\n\n- **Combat Sim all-zones and the Upgrade advisor now default to sorting by Score.** The all-zones run was resetting to Profit and the Upgrade table opened on DPS; both now open on Score (best first).\n- **The minimize button sits next to the close ✕ again** on Combat Sim, Lab Sim, and the Trade Ledger — it was landing in the middle of the header (and swapped past close on the Trade Ledger).\n- **Guild Roster: click a \"Gone quiet\" member** to load `/profile <name>` in chat (press Enter to open), the same trick the profile cycler uses.\n\n### Every panel can be minimized without closing it\n\nFloating panels now have a **–** button in the header (beside the close ✕) that folds the panel down to its title strip, leaving it draggable and running — click **□** to bring it back. It works across both shared panel shells (party loot, guild roster, DPS/deaths/profit tiles, and the rest) and the bespoke tool windows (Combat Sim, Lab Sim, Enhancement XP/hr, Consumables, Houses, Goal Planner, and more). The minimized state is remembered per panel across refreshes, alongside its position.\n\n### Combat & Lab Sim: optionally remember upgrade results across refreshes\n\nNew opt-in setting (default off) keeps the last Upgrade-tab results after a page reload — for both Combat Sim and Lab Sim — until you run a new analysis, so a run you waited minutes on is still there when you come back. A quiet banner marks restored results. Off by default because it stores the full result set (one blob per character per sim) in the browser database.\n\n### Combat Sim Results: a ⌖ button targets that zone in Configure\n\nEach row of the all-zones Results table now has a ⌖ button that sets that zone and tier as the Configure target and jumps to the Configure tab (leaving all-zones mode so the single-zone selects reappear) — no more scrolling the zone dropdown to sim a promising row. The table also now defaults to sorting by Score (descending) instead of unsorted.\n\n### Upgrade advisor: path boots (base and refined) are offered and simmed at +7\n\nThe upgrade advisor simmed a proposed gear swap at the current piece's enhancement level, so path boots (Pathbreaker/Pathfinder/Pathseeker) were quoted at whatever your worn boots are (e.g. +10). They're only obtainable at +7, so a swap to them is now always simmed and priced at +7 — the refined variants override the usual +10 refined floor. The refined path boots are now also _offered_: the crafting-chain walk only reaches the base boot (refined is one hop further), so each base path-boot swap now gets a refined sibling in the table, at +7.\n\n### Enhancement XP/hr panel: get a route for any item, even one you don't own\n\nThe enhancing-route (target level, protection plan, cost) was only reachable by hovering an item that's rendered — owned or listed — so an item with no listing at that level showed nothing. The Enhancement XP/hr panel now has an \"Enhance any item\" box: type any enhanceable item, pick a target level, and get its full route. The base-item price falls back to crafting cost when the market is empty, so it works with zero listings.\n\n### Ability hover: optional \"fresh to level\" cost, priced at the level shown\n\nHovering an ability itself (in a loadout, an ability slot, or on another player's profile) can now add a \"Fresh to Lv N: <cost> (<books> books)\" line, priced at the level the tooltip shows — so on someone else's profile it uses their level, not yours. It's identified from the ability tooltip's own name and gated behind a new, default-off setting (\"Show fresh-to-level cost on ability hovers\"), separate from the ability-book tooltip status.\n\n### Enhancement tooltip: the source toggle is discoverable and mobile-friendly\n\nThe \"Yours ⇄ / Pro ⇄\" chip on enhancement tooltips now shows a keycap **P** so the press-to-toggle hotkey is visible, not just buried in the hover title. On touch devices it drops the key (no keyboard), enlarges to a finger-sized tap target, and reads \"tap\" — the chip was already tappable on tap-to-open tooltips, just too small and unlabeled.\n\n### Upgrade advisor: \"Signature only\" is now \"Aura only\"\n\nThe Ability Swaps sub-option that restricted swaps to the aura + signature groups now restricts to just the aura group — the single \"which aura\" decision. Renamed the checkbox to \"Aura only\" with an updated tooltip, and renamed the internal option throughout (`auraOnly` / `auraSwapsOnly`).\n\n### Upgrade advisor: the aura OR-alternative is offered again\n\nAbility Swaps stopped offering the other aura in your archetype's aura group — e.g. running Mystic Aura, it never proposed Critical Aura. The generator was running each guide offer through a style-from-buff-data heuristic that misreads a universal aura (Critical Aura) as another style and vetoed it. The guide's own ability set is style-correct by construction, so on the guide path that heuristic no longer runs; it now only guards the every-ability fallback.\n\n### Sim: Achievements section — toggle your achievement combat buffs\n\nThe sim already applied your completed-achievement combat buffs (e.g. Damage +2%) silently; there was no way to see or change them. A new **Achievements** section on the Configure tab lists the combat buffs your achievements grant, each ticked by default (so results are unchanged) — untick one to sim without it. It reads your real buffs with their exact values; a character with no combat achievement buffs shows no section.\n\n### Sim: the loadout picker is back in the packaged build\n\nThe Combat Sim and Lab Sim loadout dropdown vanished in the released userscript (it still worked in dev): both UIs read the loadout list from their own bundle's copy of the snapshot store, which the websocket never feeds in the multi-bundle build, so the list was always empty and the `<select>` never rendered. Both now read the fed store through the bundle bridge — the same fix the apply path already had — so you can pick a saved loadout to sim as again. A regression test now asserts the picker renders from the bridge store.\n\n### Author credit: full contributor list and code-source attribution\n\nBoth userscript headers now carry the same, tidied `@author` credit. It restores the contributors who were only in the dev header (Shykai, amVoidGuy, vlad, kuganDev, Paradoxian, Maarg, SilkyPanda, MekaPyon, vidonnus) and adds a line crediting the tools this fork borrowed code and ideas from: MWITools (bot7420), MWI Combat Suite (Frotty), JIGS (jigglymoose), the Labyrinth Win Rate Calculator (dakonglong), and the mooket pools (Q7, IOMisaka).\n\n### Author credit leads with Millennium44 (production header too)\n\nThe previous author change only touched the dev header (`userscript-header.txt`); the GreasyFork build takes its header from `library-headers/entrypoint.txt`, which still led with the upstream authors. That production header now leads with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" as well, so the published listing shows the fork maintainer.\n\n### Author credit leads with Millennium44\n\nThe userscript `@author` header now opens with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" instead of leading with the upstream authors, so the GreasyFork listing credits the fork maintainer. The contributor thank-yous are unchanged.\n\n### Task reroll tracker: drop the experimental warning\n\nThe \"Track task reroll costs\" setting no longer warns it is experimental and may freeze the UI — it's stable. Default unchanged (on).\n\n### My Listings: a fresh undercut now shows without opening the item\n\nThe Top Order Price column trusted the last-opened order book, so an undercut stayed hidden behind your own price until you reopened the item. It now surfaces the game snapshot's price when it beats you (a rival's by definition, never your own order) — so undercuts show on their own, without ever displaying your own listing or downgrading a genuinely-fresher book. The age column follows suit.\n\n### Labyrinth: the calibration recorder is now passive and accumulates across runs\n\nNo Record button any more — every combat fight is kept automatically, per character and tagged with the gear it was fought in, pooled into 10-level bands so a monster's scattered random levels still accumulate. Press **Replay** to judge whatever has built up on your current gear; a loadout change starts a fresh pool. Bounded to 500 fights.\n\n### Labyrinth: a fight recorder and a calibration replay\n\nThe Sim accuracy record says _whether_ a room's clear chance is wrong, not _why_ — a timeout and a death are both \"lost\", and the fixes are opposite. This adds the decomposition.\n\n- **Replay** re-sims the recorded rooms and puts your real damage/s, the monster's, the clear rate and the fight length beside the sim's, each with a noise-aware verdict and a one-line diagnosis of which side the sim gets wrong. **Save comparison** downloads the whole check as one file.\n- **Capture** saves the raw tick feed of a fight — stun uptime, ability cadence, per-hit damage — for mechanism-level analysis (previously console-only).\n- Measurement fixes found via real captures: damage measured **gross** (not net of your ~16 HP/s regen, which made monsters look 15–40% weaker than the sim); self-healing monsters (life drain, the Dryad) no longer **split one fight into several**; partial-HP fights are dropped; and the diagnosis names all four over/under directions.\n\n### Labyrinth: full-ability sim calibration (testing), tooltip clear-time, tidier panel bar\n\n- Testing setting to model a monster's **full ability kit** in the sim — the labyrinth otherwise builds every monster at tier 0 and drops its gated abilities (the Cyclops's stun, shred, self-buffs). Off by default; it's part of the cache key, so toggling re-sims.\n- **Est. clear time** on combat/skilling room hover, shown past the tile's \"999+\" cap.\n- Room Logs top bar wraps cleanly; \"Sim accuracy\" tab shortened to \"Accuracy\".\n\n### Labyrinth: stop counting un-fought rooms as clears, and an uncapped sim option\n\n- **Phantom clears removed** — a revealed-but-unfought room (shroud, beacon, floor skip) is marked `isCleared` with no entry; it no longer counts as a win and drags the accuracy record toward \"sim too low\".\n- **Uncapped** toggle lifts the sim's time cap for the next Recompute, so a slow, timeout-heavy room reaches its precision target instead of a wide \"(capped)\" band.\n\n### Labyrinth: Recompute button, honest attempt counts, and a panel that stays put\n\n- **Recompute** throws away cached clear-chance sims and re-runs the visible rooms — a plain equip doesn't always refresh a sim cached under old gear.\n- Room Log shows the server's own attempt count, not just the fights it watched on the combat view: \"Won 0/6 · 26 total\".\n- The panel keeps its scroll position across redraws instead of jumping to the top on every update.\n\n### Undercut alerts finally fire passively, backed by Mooket\n\nThe alert distrusts any price older than 15 minutes, but the game snapshot refreshes only ~hourly — so undercuts on items you weren't watching stayed silent for hours. It now also consults the freshest **Mooket** sighting per listing (refreshed every 15 min), reporting its true age, so it can fire for items you never opened. Rides the Price history panel setting.\n\n### Selectable price-history source: mooket I alongside mooket II\n\nA **Market: Price history data source** setting picks between the Q7 pool (mooket II, default — ask/bid/avg/volume) and IOMisaka's original (mooket I — ask/bid only). On mooket I the chart's third line is a computed \"Mid\", the volume bars vanish, and the goal planner's volume limits switch off (a source with no volume tells us nothing about how fast a thing sells — unknown, not a measured zero). The order books you contribute back follow the selected source.\n\n### \"Mooket Refresh\" button on the My Listings tab\n\nA **Mooket Refresh** button in the My Listings header pulls fresher Top Order Prices for every listed item from the Mooket pool in one click, patching the fresher ones into the price cache the column redraws from — no opening each item by hand. Skips a sighting older than the game's snapshot, and keeps a one-sided sighting's other side. Rides the Price history panel setting.\n\n### My Listings' Top Order Price refreshes when the market moves\n\nThe Top Order Price column on the My Listings tab only redrew when your own listings changed (or, with the age column on, when you re-opened an item's order book), so an undercut fired an alert but left the column showing the stale price. It now subscribes to the same market-data updates the undercut alert uses — a marketplace snapshot refresh or an order-book price patch redraws the column (debounced), so being undercut turns the price red here too.\n\n### Custom Tabs: an enhanced item is no longer double-counted in Unorganized\n\nAn enhanced item is tracked under both its base and its `+level` key, so an unassigned one was collected through both — inflating the \"Unorganized (N)\" count and placing the tile twice. A shared, deduped collector (each physical tile once) now backs both the header count and the lightweight visibility pass (ported from upstream Celasha/Toolasha#627).\n\n### Custom Tabs action buttons heal when the sort-controls row is removed\n\nThe +Tab/Export/Import/Expand group is merged into the game's inventory sort-controls row and isn't tracked with the other injected elements, so when the InventorySort feature removed that row the buttons vanished and didn't return. A direct connectivity check now forces a rebuild when they disconnect (ported from upstream Celasha/Toolasha#632).\n\n### Estimated listing age: a null price no longer suppresses a match\n\nTwo \"your listings beyond the top 20\" match sites used a parsed price without checking for `null` (which the parser returns on empty/invalid text). A null coerces to 0 in the price comparison and can hide a correct match; both sites now skip the row instead (ported from upstream Celasha/Toolasha 2.85.0).\n\n### Character switches are serialized, so rapid switching no longer bleeds settings\n\nA rapid character switch could drop a re-init (leaving the previous character's per-character settings applied) or start a rebuild before the last character's teardown finished. The switch lifecycle now runs through one serialized chain, and each re-init verifies it is still for the current character before it applies — latest character wins, nothing dropped or overlapped (ported from upstream Celasha/Toolasha#622).\n\n### Action Filter's pricing mode resyncs after a character switch\n\nThe persistent Action Filter never re-initializes, and a character switch skips the per-key change callbacks (the cache is cleared first), so its mode/craft buttons and profit rows could keep the previous character's pricing mode. A new `config.onSettingsLoaded` channel fires whenever settings finish loading, so the filter resyncs (ported from upstream Celasha/Toolasha#630).\n\n### The Unorganized tab no longer vanishes mid-character-switch\n\nThe Custom Tabs \"Unorganized\" bucket was gated on `getSettingValue`, which reads `null` while the per-character cache is briefly empty during a switch — hiding the section until it reloaded. It now reads `getSetting`, which falls back to the schema default (ported from upstream Celasha/Toolasha#636).\n\n### Action-bar display no longer risks freezing the tab on a character switch\n\n`setupActionNameObserver` now disconnects any running observer before replacing it, so a character switch can't leak a duplicate watcher that loops on the stats span and freezes the tab (ported from upstream Celasha/Toolasha#623).\n\n### The Sort Tasks button sorts even with a reroll menu open\n\nA direct press now sorts the board immediately, mid-reroll and all. The automatic passes (auto-sort, sort-after-read) still wait for the board to settle so they never yank a pending click.\n\n### The protected/cap task border keeps up again\n\nIt is redrawn right away on a card that is mid-reroll (it used to wait for the menu to close, so the edge looked stuck until you pressed Back), and painted the instant the board opens instead of after a 150 ms delay.\n\n### The task bulk-reroll button is removed\n\nThe game only honours a reroll from a real click that opens the menu, which a userscript can't fake — so the button never worked unless you opened the menu by hand first. Reroll protection and the 🛡️ cap/per-task guards are untouched.\n\n### In Progress payout: leaner, plus a Roster button\n\nDrops the token gold valuation and the \"No Treasury level seen\" nag from the In Progress tab ";
 
     var forkOverview = "This is the **Millennium44 fork of Toolasha**. It folds MWI Combat Suite into Toolasha — live DPS tracking, loot and drop tracking, drop-luck analysis, and a full labyrinth simulator — so one script gives you both halves of the game instead of two userscripts.\n\n### Combat & simulators\n\n- Live DPS, hit/crit rate, damage-taken and net-sustain read off your own fights.\n- Loot and drop tracking with drop-luck analysis that judges combat, gathering and production.\n- A combat recorder: record real fights, replay them against the simulator, get a verdict with honest noise bands.\n- A combat simulator whose upgrade picks are costed and ranked on real market and credit costs.\n- Per-character combat stats, sim state and histories — no character reads another's books.\n\n### Market & profit\n\n- One market price API prices almost everything: upgrades, net worth, drop income, guild tokens, every action.\n- Prices capped by the volume the market has actually absorbed, so thin markets stop inflating rankings.\n- Profit lines on the action bar, pinned pages, alchemy rankings and the combat profit panel.\n- Market-history viewer with a live undercut alert that re-checks against a refreshed snapshot.\n- An upgrade advisor that costs and ranks gear and ability candidates against live prices.\n\n### Labyrinth\n\n- A labyrinth simulator with auto-pathing and auto-beaconing planned from the actual run.\n- Multi-target analysis with combined armour swaps and supply-aware torch/shroud/beacon planning.\n- Skilling-sim candidates scoped to the skill you are simming, with the skip level set for you.\n- Upgrade, All-Fights and Skilling analyses, each exportable to CSV.\n\n### Guild\n\n- Live trial measurement: per-player DPS and damage/healing attribution from the fight you watch.\n- Tier read straight off the boss bar, with pace, ETA and payout maths.\n- A trial report your guild can actually read, with honest coverage caveats.\n\n### Quality of life\n\n- A curated overlay of tiles with bundled presets, activity auto-switching, and tiles that open their panels.\n- A Ctrl+K (Cmd+K) command palette over every panel, overlay row, saved layout and setting.\n- Mobile-friendly panels: viewport clamping, reachable close buttons, finger-sized targets, a floating launcher.\n- Notifications for empty queues, community-buff expiry, and finished labyrinth runs.\n- Task tools: measured tokens/hour, net task income, and reroll handling that takes the free MooPass reroll.\n- Equipment Savings (\"eWatch\"): savings goals for gear and ability levels, fed from the simulators.\n- A goal planner that turns \"get me X gold / level N\" into a ranked plan from your real measured rates.\n\n### Data & sync\n\n- Cross-device sync of your whole database through one private GitHub gist you own.\n- Gzip-compressed, optionally AES-256 encrypted, conflict-aware, guarded against overwriting a year of data.\n- Chunked per-period history that survives months, with honest quota handling and per-character backups.\n- Hundreds of bug fixes and a test suite grown from ~2,300 to over 8,500 tests.\n";
 
@@ -59651,7 +64697,7 @@ ${starCSS}
      */
 
 
-    const STORAGE_STORE$1 = 'alchemyHistory';
+    const STORAGE_STORE = 'alchemyHistory';
 
     /**
      * Before login there is no character to scope to, and the pre-scoping trackers
@@ -59669,7 +64715,7 @@ ${starCSS}
      */
     function createAlchemySessionStore(baseKey, label) {
         return chunkedHistory_js.createChunkedHistory({
-            storeName: STORAGE_STORE$1,
+            storeName: STORAGE_STORE,
             // `transmuteSessionsRec_` rather than `transmuteSessions_`, so a record
             // key can never be mistaken for the legacy key of a character whose id
             // happens to start with `Rec`
@@ -59702,13 +64748,13 @@ ${starCSS}
 
     const TRANSMUTE_ACTION_HRID = '/actions/alchemy/transmute';
     const COIN_ITEM_HRID$2 = '/items/coin';
-    const STORAGE_KEY$3 = 'transmuteSessions';
+    const STORAGE_KEY$2 = 'transmuteSessions';
 
     /**
      * The sessions, one record per day rather than one array rewritten per action.
      * See `alchemy-session-store.js` for what that is worth.
      */
-    const sessionStore$2 = createAlchemySessionStore(STORAGE_KEY$3, 'TransmuteHistoryTracker');
+    const sessionStore$2 = createAlchemySessionStore(STORAGE_KEY$2, 'TransmuteHistoryTracker');
 
     class TransmuteHistoryTracker {
         constructor() {
@@ -61558,13 +66604,13 @@ ${starCSS}
     const COIN_ITEM_HRID$1 = '/items/coin';
     const CATALYST_OF_COINIFICATION_HRID$1 = '/items/catalyst_of_coinification';
     const PRIME_CATALYST_HRID$3 = '/items/prime_catalyst';
-    const STORAGE_KEY$2 = 'coinifySessions';
+    const STORAGE_KEY$1 = 'coinifySessions';
 
     /**
      * The sessions, one record per day rather than one array rewritten per action.
      * See `alchemy-session-store.js` for what that is worth.
      */
-    const sessionStore$1 = createAlchemySessionStore(STORAGE_KEY$2, 'CoinifyHistoryTracker');
+    const sessionStore$1 = createAlchemySessionStore(STORAGE_KEY$1, 'CoinifyHistoryTracker');
 
     class CoinifyHistoryTracker {
         constructor() {
@@ -63374,13 +68420,13 @@ ${starCSS}
     const CATALYST_OF_DECOMPOSITION_HRID$1 = '/items/catalyst_of_decomposition';
     const PRIME_CATALYST_HRID$1 = '/items/prime_catalyst';
     const COIN_ITEM_HRID = '/items/coin';
-    const STORAGE_KEY$1 = 'decomposeSessions';
+    const STORAGE_KEY = 'decomposeSessions';
 
     /**
      * The sessions, one record per day rather than one array rewritten per action.
      * See `alchemy-session-store.js` for what that is worth.
      */
-    const sessionStore = createAlchemySessionStore(STORAGE_KEY$1, 'DecomposeHistoryTracker');
+    const sessionStore = createAlchemySessionStore(STORAGE_KEY, 'DecomposeHistoryTracker');
 
     class DecomposeHistoryTracker {
         constructor() {
@@ -65994,3883 +71040,6 @@ ${starCSS}
     };
 
     /**
-     * Enhancement Session Data Structure
-     * Represents a single enhancement tracking session for one item
-     */
-
-    /**
-     * Session states
-     */
-    const SessionState = {
-        TRACKING: 'tracking', // Currently tracking enhancements
-        COMPLETED: 'completed'};
-
-    /**
-     * Create a new enhancement session
-     * @param {string} itemHrid - Item HRID being enhanced
-     * @param {string} itemName - Display name of item
-     * @param {number} startLevel - Starting enhancement level
-     * @param {number} targetLevel - Target enhancement level (1-20)
-     * @param {number} protectFrom - Level to start using protection items (0 = never)
-     * @returns {Object} New session object
-     */
-    function createSession(itemHrid, itemName, startLevel, targetLevel, protectFrom = 0) {
-        const now = Date.now();
-
-        return {
-            // Session metadata
-            id: `session_${now}`,
-            state: SessionState.TRACKING,
-            itemHrid,
-            itemName,
-            startLevel,
-            targetLevel,
-            currentLevel: startLevel,
-            protectFrom,
-
-            // Timestamps
-            startTime: now,
-            lastUpdateTime: now,
-            endTime: null,
-
-            // Last attempt tracking (for detecting success/failure)
-            lastAttempt: {
-                attemptNumber: 0,
-                level: startLevel,
-                timestamp: now,
-            },
-
-            // Attempt tracking (per level)
-            // Format: { 1: { success: 5, fail: 3, successRate: 0.625 }, ... }
-            attemptsPerLevel: {},
-
-            // Cost tracking
-            materialCosts: {}, // Format: { itemHrid: { count: 10, totalCost: 50000 } }
-            coinCost: 0,
-            coinCount: 0, // Track number of times coins were spent
-            protectionCost: 0,
-            protectionCount: 0,
-            protectionItemHrid: null, // Track which protection item is being used
-            totalCost: 0,
-
-            // Statistics
-            totalAttempts: 0,
-            totalSuccesses: 0,
-            totalFailures: 0,
-            totalXP: 0, // Total XP gained from enhancements
-            longestSuccessStreak: 0,
-            longestFailureStreak: 0,
-            currentStreak: { type: null, count: 0 }, // 'success' or 'fail'
-
-            // Milestones reached
-            milestonesReached: [], // [5, 10, 15, 20]
-
-            // Enhancement predictions (optional - calculated at session start)
-            predictions: null, // { expectedAttempts, expectedProtections, ... }
-
-            // Counter values when the session was last extended, so validation factors compare the
-            // current leg against the prediction made for it. { totalAttempts, protectionCount }
-            extensionBaseline: null,
-        };
-    }
-
-    /**
-     * Initialize attempts tracking for a level
-     * @param {Object} session - Session object
-     * @param {number} level - Enhancement level
-     */
-    function initializeLevelTracking(session, level) {
-        if (!session.attemptsPerLevel[level]) {
-            session.attemptsPerLevel[level] = {
-                success: 0,
-                fail: 0,
-                successRate: 0,
-            };
-        }
-    }
-
-    /**
-     * Update success rate for a level
-     * @param {Object} session - Session object
-     * @param {number} level - Enhancement level
-     */
-    function updateSuccessRate(session, level) {
-        const levelData = session.attemptsPerLevel[level];
-        if (!levelData) return;
-
-        const total = levelData.success + levelData.fail;
-        levelData.successRate = total > 0 ? levelData.success / total : 0;
-    }
-
-    /**
-     * Record a successful enhancement attempt
-     * @param {Object} session - Session object
-     * @param {number} previousLevel - Level before enhancement (level that succeeded)
-     * @param {number} newLevel - New level after success
-     */
-    function recordSuccess(session, previousLevel, newLevel) {
-        // Initialize tracking if needed for the level that succeeded
-        initializeLevelTracking(session, previousLevel);
-
-        // Record success at the level we enhanced FROM
-        session.attemptsPerLevel[previousLevel].success++;
-        session.totalAttempts++;
-        session.totalSuccesses++;
-
-        // Update success rate for this level
-        updateSuccessRate(session, previousLevel);
-
-        // Update current level
-        session.currentLevel = newLevel;
-
-        // Update streaks
-        if (session.currentStreak.type === 'success') {
-            session.currentStreak.count++;
-        } else {
-            session.currentStreak = { type: 'success', count: 1 };
-        }
-
-        if (session.currentStreak.count > session.longestSuccessStreak) {
-            session.longestSuccessStreak = session.currentStreak.count;
-        }
-
-        // Check for milestones
-        if ([5, 10, 15, 20].includes(newLevel) && !session.milestonesReached.includes(newLevel)) {
-            session.milestonesReached.push(newLevel);
-        }
-
-        // Update timestamp
-        session.lastUpdateTime = Date.now();
-
-        // Check if target reached
-        if (newLevel >= session.targetLevel) {
-            session.state = SessionState.COMPLETED;
-            session.endTime = Date.now();
-        }
-    }
-
-    /**
-     * Record a failed enhancement attempt
-     * @param {Object} session - Session object
-     * @param {number} previousLevel - Level that failed (level we tried to enhance from)
-     */
-    function recordFailure(session, previousLevel, newLevel) {
-        // Initialize tracking if needed for the level that failed
-        initializeLevelTracking(session, previousLevel);
-
-        // Record failure at the level we enhanced FROM
-        session.attemptsPerLevel[previousLevel].fail++;
-        session.totalAttempts++;
-        session.totalFailures++;
-
-        // Update success rate for this level
-        updateSuccessRate(session, previousLevel);
-
-        // Update current level to actual level after failure
-        session.currentLevel = newLevel;
-
-        // Update streaks
-        if (session.currentStreak.type === 'fail') {
-            session.currentStreak.count++;
-        } else {
-            session.currentStreak = { type: 'fail', count: 1 };
-        }
-
-        if (session.currentStreak.count > session.longestFailureStreak) {
-            session.longestFailureStreak = session.currentStreak.count;
-        }
-
-        // Update timestamp
-        session.lastUpdateTime = Date.now();
-    }
-
-    /**
-     * Add material cost to session
-     * @param {Object} session - Session object
-     * @param {string} itemHrid - Material item HRID
-     * @param {number} count - Quantity used
-     * @param {number} unitCost - Cost per item (from market)
-     */
-    function addMaterialCost(session, itemHrid, count, unitCost) {
-        if (!session.materialCosts[itemHrid]) {
-            session.materialCosts[itemHrid] = {
-                count: 0,
-                totalCost: 0,
-            };
-        }
-
-        session.materialCosts[itemHrid].count += count;
-        session.materialCosts[itemHrid].totalCost += count * unitCost;
-
-        // Update total cost
-        recalculateTotalCost(session);
-    }
-
-    /**
-     * Add coin cost to session
-     * @param {Object} session - Session object
-     * @param {number} amount - Coin amount spent
-     */
-    function addCoinCost(session, amount) {
-        session.coinCost += amount;
-        session.coinCount += 1;
-        recalculateTotalCost(session);
-    }
-
-    /**
-     * Add protection item cost to session
-     * @param {Object} session - Session object
-     * @param {string} protectionItemHrid - Protection item HRID
-     * @param {number} cost - Protection item cost
-     */
-    function addProtectionCost(session, protectionItemHrid, cost) {
-        session.protectionCost += cost;
-        session.protectionCount += 1;
-
-        // Store the protection item HRID if not already set
-        if (!session.protectionItemHrid) {
-            session.protectionItemHrid = protectionItemHrid;
-        }
-
-        recalculateTotalCost(session);
-    }
-
-    /**
-     * Recalculate total cost from all sources
-     * @param {Object} session - Session object
-     */
-    function recalculateTotalCost(session) {
-        const materialTotal = Object.values(session.materialCosts).reduce((sum, m) => sum + m.totalCost, 0);
-
-        session.totalCost = materialTotal + session.coinCost + session.protectionCost;
-    }
-
-    /**
-     * Get session duration in seconds
-     * @param {Object} session - Session object
-     * @returns {number} Duration in seconds
-     */
-    function getSessionDuration(session) {
-        const endTime = session.endTime || Date.now();
-        return Math.floor((endTime - session.startTime) / 1000);
-    }
-
-    /**
-     * Calculate overall success rate
-     * @param {Object} session - Session object
-     * @returns {number} Success rate percentage (0-100)
-     */
-    function getOverallSuccessRate(session) {
-        if (session.totalAttempts === 0) return 0;
-        return (session.totalSuccesses / session.totalAttempts) * 100;
-    }
-
-    /**
-     * Finalize session (mark as completed)
-     * @param {Object} session - Session object
-     */
-    function finalizeSession(session) {
-        session.state = SessionState.COMPLETED;
-        session.endTime = Date.now();
-    }
-
-    /**
-     * Check if a completed session can be extended
-     * @param {Object} session - Session object
-     * @param {string} itemHrid - Item HRID
-     * @param {number} currentLevel - Current enhancement level
-     * @returns {boolean} True if session can be extended
-     */
-    function canExtendSession(session, itemHrid, currentLevel) {
-        // Must be same item
-        if (session.itemHrid !== itemHrid) return false;
-
-        // Must be completed
-        if (session.state !== SessionState.COMPLETED) return false;
-
-        // Current level should match where session ended (or close)
-        const levelDiff = Math.abs(session.currentLevel - currentLevel);
-        if (levelDiff <= 1) {
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * Extend a completed session to a new target level
-     *
-     * The predictions are recomputed for the new leg (+10 → +12, say), but the attempt and
-     * protection counters keep running from the whole session. Comparing one against the other
-     * makes the run look wildly over budget, so snapshot the counters here and let the display
-     * diff against them.
-     *
-     * @param {Object} session - Session object
-     * @param {number} newTargetLevel - New target level
-     */
-    function extendSession(session, newTargetLevel) {
-        session.state = SessionState.TRACKING;
-        session.targetLevel = newTargetLevel;
-        session.endTime = null;
-        session.lastUpdateTime = Date.now();
-        session.extensionBaseline = {
-            totalAttempts: session.totalAttempts || 0,
-            protectionCount: session.protectionCount || 0,
-        };
-    }
-
-    /**
-     * Get attempts and protections accrued since the session was last extended.
-     * A session that was never extended reports its full totals.
-     * @param {Object} session - Session object
-     * @returns {{attempts: number, protections: number}} Counters for the current leg
-     */
-    function getCurrentLegCounters(session) {
-        const baseline = session?.extensionBaseline;
-        const attempts = (session?.totalAttempts || 0) - (baseline?.totalAttempts || 0);
-        const protections = (session?.protectionCount || 0) - (baseline?.protectionCount || 0);
-
-        return {
-            attempts: Math.max(0, attempts),
-            protections: Math.max(0, protections),
-        };
-    }
-
-    /**
-     * Validate session data integrity
-     * @param {Object} session - Session object
-     * @returns {boolean} True if valid
-     */
-    function validateSession(session) {
-        if (!session || typeof session !== 'object') return false;
-
-        // Required fields
-        if (!session.id || !session.itemHrid || !session.itemName) return false;
-        if (typeof session.startLevel !== 'number' || typeof session.targetLevel !== 'number') return false;
-        if (typeof session.currentLevel !== 'number') return false;
-
-        // Validate level ranges
-        if (session.startLevel < 0 || session.startLevel > 20) return false;
-        if (session.targetLevel < 1 || session.targetLevel > 20) return false;
-        if (session.currentLevel < 0 || session.currentLevel > 20) return false;
-
-        // Validate costs are non-negative
-        if (session.totalCost < 0 || session.coinCost < 0 || session.protectionCost < 0) return false;
-
-        return true;
-    }
-
-    /**
-     * Attempt-count percentiles for finished enhancement runs
-     *
-     * A finished run is one draw from a distribution the calculator already models
-     * — mean, variance and physical minimum, all read off the same Markov chain the
-     * "Expected Attempts" figure comes from. One draw against a heavy-tailed
-     * distribution is only honest as a percentile: "took 63 against a predicted 41"
-     * sounds like the model missed, when a run that long or longer happens 8% of
-     * the time and the model said exactly that.
-     *
-     * Nothing here is a new model. The tail is read off the same shifted-gamma fit
-     * `costPercentiles` and `costExceedanceProbability` already use — with a cost of
-     * one coin per attempt, the cost distribution *is* the attempt distribution —
-     * so the percentile shown for a finished run and the p10/p90 quoted before it
-     * started can never disagree about what the spread was.
-     */
-
-
-    /**
-     * The chance a run takes as many attempts as this one did, or more.
-     *
-     * Null rather than a number when the prediction does not carry its variance —
-     * sessions recorded before the distribution was stored have only a mean, and a
-     * percentile computed against today's recomputed chain would be measured
-     * against stats the run was not played with.
-     *
-     * @param {Object} prediction - Session predictions; needs `expectedAttemptsExact`
-     *   (or `expectedAttempts`), `attemptsVariance` and `minAttempts`
-     * @param {number} observedAttempts - Attempts the run actually took
-     * @returns {number|null} P(attempts ≥ observed) in [0, 1], or null when the
-     *   prediction has no distribution to read it from
-     */
-    function attemptTailProbability(prediction, observedAttempts) {
-        const mean = Number(prediction?.expectedAttemptsExact ?? prediction?.expectedAttempts);
-        const variance = Number(prediction?.attemptsVariance);
-        const minimum = Number(prediction?.minAttempts);
-        const observed = Number(observedAttempts);
-
-        if (!Number.isFinite(mean) || !Number.isFinite(variance) || !Number.isFinite(minimum)) return null;
-        if (!Number.isFinite(observed) || observed < 0) return null;
-
-        // One coin per attempt makes the fitted cost distribution the attempt
-        // distribution itself — same shift, same gamma, same tail
-        const distribution = enhancementCalculator_js.costStats(
-            { attempts: mean, attemptsVariance: variance, minAttempts: minimum },
-            {
-                costPerAttempt: 1,
-            }
-        );
-
-        // Every possible run takes at least the physical minimum
-        if (observed <= distribution.minimum) return 1;
-
-        return enhancementCalculator_js.costExceedanceProbability(distribution, observed);
-    }
-
-    /**
-     * A tail probability as words a player can read.
-     * @param {number} tail - P(attempts ≥ observed), in [0, 1]
-     * @returns {string} e.g. `8%`, `<1%`, `>99%`
-     */
-    function formatTailPercent(tail) {
-        const percent = tail * 100;
-        if (percent < 1) return '<1%';
-        if (percent > 99) return '>99%';
-        return `${Math.round(percent)}%`;
-    }
-
-    /**
-     * The whole observation as one sentence.
-     *
-     * Phrased as "runs take that many or more" so it reads honestly from both
-     * sides: an unlucky run gets a small percentage, a lucky one a large one, and
-     * neither is a claim that the prediction was wrong.
-     *
-     * @param {number} expectedAttempts - What the chain predicted, rounded for display
-     * @param {number} observedAttempts - What the run took
-     * @param {number} tail - P(attempts ≥ observed), from {@link attemptTailProbability}
-     * @returns {string}
-     */
-    function describeAttemptOutcome(expectedAttempts, observedAttempts, tail) {
-        return (
-            `Predicted ${Math.round(expectedAttempts)} attempts, took ${Math.round(observedAttempts)} — ` +
-            `${formatTailPercent(tail)} of runs take that many or more.`
-        );
-    }
-
-    /**
-     * Enhancement calibration
-     *
-     * Writes down, for every enhancement session that reached its target, where the
-     * run landed in the distribution the calculator predicted for it.
-     *
-     * The enhancement tracker already keeps both halves: the prediction taken at
-     * session start (mean, variance and physical minimum of the attempt count, all
-     * off one Markov chain) and the attempts the run actually took. Nobody compares
-     * them, so a chain that is quietly wrong about a tier of gear reads exactly
-     * like one that is right. Unlike the profit calibrations, one session is never
-     * "predicted 41, took 63, therefore off by 54%" — the distribution is heavy
-     * tailed and a single draw only means anything as a percentile. That percentile
-     * is what gets stored, and a *pattern* in the percentiles is what would convict
-     * the chain: a calibrated model scatters them evenly, a flattering one piles
-     * them up at the unlucky end.
-     *
-     * ## What counts as an observation
-     *
-     * A session that reached the target it was predicted for, whose prediction
-     * carries its distribution. A session stopped by hand is censored — its attempt
-     * count says where the player gave up, not where the run would have ended — and
-     * a session recorded before the variance was stored has no distribution to be
-     * a percentile of. Neither is an observation; recording them anyway would be
-     * filling the ledger with numbers that mean nothing.
-     *
-     * The observed count is the current leg's — after an extension the prediction
-     * was recomputed from the extension point, so the attempts diffed against it
-     * must start there too.
-     */
-
-
-    /** Shares the calibration pairs' store; the key below is this recorder's own */
-    const STORE_NAME$3 = 'lootLogHistory';
-
-    /** Plenty to see whether the percentiles scatter or pile up */
-    const MAX_RECORDS$1 = 200;
-
-    class EnhancementCalibration {
-        constructor() {
-            this.records = null;
-            /** Serialises writes against each other and against the first load */
-            this.queue = Promise.resolve();
-        }
-
-        /**
-         * Where this character's observations live.
-         * @returns {string|null} Storage key, or null before the character is known
-         */
-        _key() {
-            const charId = dataManager.getCurrentCharacterId();
-            return charId ? `calibrationEnhancing_${charId}` : null;
-        }
-
-        /**
-         * Read the stored observations into memory, once.
-         * @returns {Promise<Array<Object>>} The records
-         */
-        async _load() {
-            if (this.records) return this.records;
-            const key = this._key();
-            if (!key) {
-                this.records = [];
-                return this.records;
-            }
-            try {
-                this.records = await storage.get(key, STORE_NAME$3, []);
-            } catch (error) {
-                console.error('[EnhancementCalibration] Could not read history:', error);
-                this.records = [];
-            }
-            return this.records;
-        }
-
-        /** Persist the observations. */
-        async _save() {
-            const key = this._key();
-            if (!key) return;
-            try {
-                await storage.set(key, this.records, STORE_NAME$3);
-            } catch (error) {
-                console.error('[EnhancementCalibration] Could not save history:', error);
-            }
-        }
-
-        /**
-         * Record a session that just reached its target.
-         *
-         * Safe to call for any session in any state — everything that is not an
-         * observation is declined here rather than at every call site.
-         *
-         * @param {Object} session - An enhancement session (see enhancement-session.js)
-         * @returns {Promise<boolean>} Whether an observation was written
-         */
-        async recordCompletion(session) {
-            if (!config.getSetting('insights_calibration', true)) return false;
-            // Only a run that actually reached its target is a draw from the
-            // predicted distribution; a hand-stopped one is censored at the moment
-            // the player walked away
-            if (!session || session.state !== SessionState.COMPLETED) return false;
-            if (session.currentLevel < session.targetLevel) return false;
-
-            const prediction = session.predictions;
-            const observed = getCurrentLegCounters(session).attempts;
-            if (!(observed > 0)) return false;
-
-            const tail = attemptTailProbability(prediction, observed);
-            // Null means the prediction carries no distribution — an old session,
-            // or one predicted without character stats
-            if (tail === null) return false;
-
-            const record = {
-                // One observation per session and target: an extended session is a
-                // new prediction and may become a second observation
-                id: `${session.id}:${session.targetLevel}`,
-                t: session.endTime || Date.now(),
-                itemHrid: session.itemHrid,
-                itemName: session.itemName,
-                targetLevel: session.targetLevel,
-                protectFrom: session.protectFrom || 0,
-                expectedAttempts: Math.round(prediction.expectedAttemptsExact ?? prediction.expectedAttempts),
-                observedAttempts: observed,
-                /** P(attempts ≥ observed) under the predicted distribution */
-                tailProbability: tail,
-            };
-
-            let written = false;
-            this.queue = this.queue
-                .then(async () => {
-                    await this._load();
-                    if (this.records.some((held) => held.id === record.id)) return;
-                    this.records.push(record);
-                    if (this.records.length > MAX_RECORDS$1) {
-                        this.records.splice(0, this.records.length - MAX_RECORDS$1);
-                    }
-                    await this._save();
-                    written = true;
-                })
-                .catch((error) => {
-                    console.error('[EnhancementCalibration] Recording failed:', error);
-                });
-            await this.queue;
-            return written;
-        }
-
-        // ─── Read API ────────────────────────────────────────────────────────────
-
-        /**
-         * The observations already in memory, for a panel drawing synchronously.
-         * @returns {Array<Object>|null} Records, or null before the first load lands
-         */
-        getCachedRecords() {
-            return this.records;
-        }
-
-        /**
-         * The observations, loading them if this is the first ask.
-         * @returns {Promise<Array<Object>>} Records, oldest first
-         */
-        async getRecords() {
-            return await this._load();
-        }
-
-        /** Forget every observation. */
-        async clear() {
-            this.records = [];
-            await this._save();
-        }
-    }
-
-    const enhancementCalibration = new EnhancementCalibration();
-
-    /**
-     * Enhancement Tracker Storage
-     * Handles persistence of enhancement sessions using IndexedDB
-     *
-     * Sessions belong to the character that ran them: the iron cow's overnight
-     * enhancing run has nothing to do with the market cow's, and a shared key put
-     * both in the same list. Keys are therefore scoped per character and derived at
-     * every read and write — the user switches characters without reloading the
-     * page, so a key resolved once at module load would be the wrong one afterwards.
-     * The legacy global value is adopted by the main character exactly once.
-     */
-
-
-    const STORAGE_KEY = 'enhancementTracker_sessions';
-    const CURRENT_SESSION_KEY = 'enhancementTracker_currentSession';
-    const STORAGE_STORE = 'settings'; // Use existing 'settings' store
-
-    /**
-     * What has been handed to the debounced writer but may not have landed yet.
-     *
-     * Every session update used to write all sessions as one immediate blob into
-     * the settings store — an enhancement run is a write per attempt, of a document
-     * containing every session ever kept. Debouncing coalesces a run into one write,
-     * at the cost of storage lagging memory; these hold the truth in the meantime so
-     * a load during the lag cannot read back a stale blob.
-     */
-    let pendingSessions = null;
-    let pendingCurrentSessionId;
-    let hasPendingCurrentSessionId = false;
-
-    /**
-     * Save all sessions to storage.
-     *
-     * Queued rather than awaited: the debounced write's promise resolves when its
-     * timer fires, so awaiting it would stall every caller for the debounce delay.
-     * `storage.flushAll()` on `beforeunload` is what makes the last one land.
-     * @param {Object} sessions - Sessions object (keyed by session ID)
-     * @returns {Promise<void>}
-     */
-    async function saveSessions(sessions) {
-        pendingSessions = sessions;
-        characterKey_js.writeScoped(STORAGE_KEY, sessions, STORAGE_STORE);
-    }
-
-    /**
-     * Load all sessions from storage
-     * @returns {Promise<Object>} Sessions object (keyed by session ID)
-     */
-    async function loadSessions() {
-        if (pendingSessions !== null) return pendingSessions;
-        try {
-            return await characterKey_js.readScoped(STORAGE_KEY, STORAGE_STORE, {}, { migrate: 'adopt' });
-        } catch (error) {
-            console.error('[EnhancementStorage] Failed to load sessions:', error);
-            return {};
-        }
-    }
-
-    /**
-     * Save current session ID
-     * @param {string|null} sessionId - Current session ID (null if no active session)
-     * @returns {Promise<void>}
-     */
-    async function saveCurrentSessionId(sessionId) {
-        pendingCurrentSessionId = sessionId;
-        hasPendingCurrentSessionId = true;
-        characterKey_js.writeScoped(CURRENT_SESSION_KEY, sessionId, STORAGE_STORE);
-    }
-
-    /**
-     * Load current session ID
-     * @returns {Promise<string|null>} Current session ID or null
-     */
-    async function loadCurrentSessionId() {
-        if (hasPendingCurrentSessionId) return pendingCurrentSessionId;
-        try {
-            return await characterKey_js.readScoped(CURRENT_SESSION_KEY, STORAGE_STORE, null, { migrate: 'adopt' });
-        } catch (error) {
-            console.error('[EnhancementStorage] Failed to load current session ID:', error);
-            return null;
-        }
-    }
-
-    /**
-     * Drop the in-memory mirror of the queued writes — for tests, and for anything
-     * that needs the next load to come from storage.
-     */
-    function resetPendingSessionCache() {
-        pendingSessions = null;
-        pendingCurrentSessionId = undefined;
-        hasPendingCurrentSessionId = false;
-    }
-
-    // The mirror holds one character's sessions. Switching characters without a
-    // reload would otherwise serve the departing character's list to the arriving
-    // one — and, worse, write it back under the arriving character's key.
-    dataManager.on('character_switching', () => resetPendingSessionCache());
-
-    /**
-     * Enhancement XP Calculations
-     * Based on Ultimate Enhancement Tracker formulas
-     */
-
-
-    /**
-     * Get base item level from item HRID
-     * @param {string} itemHrid - Item HRID
-     * @returns {number} Base item level
-     */
-    function getBaseItemLevel(itemHrid) {
-        try {
-            const gameData = dataManager.getInitClientData();
-            const itemData = gameData?.itemDetailMap?.[itemHrid];
-
-            if (itemData?.itemLevel) {
-                return itemData.itemLevel;
-            }
-
-            return 0;
-        } catch {
-            return 0;
-        }
-    }
-
-    /**
-     * Get wisdom buff percentage from all sources
-     * Reads from dataManager.characterData (NOT localStorage)
-     * @returns {number} Wisdom buff as decimal (e.g., 0.20 for 20%)
-     */
-    function getWisdomBuff() {
-        try {
-            // Use dataManager for character data (NOT localStorage)
-            const charData = dataManager.characterData;
-            if (!charData) return 0;
-
-            let totalFlatBoost = 0;
-
-            // 1. Community Buffs
-            const communityEnhancingBuffs = charData.communityActionTypeBuffsMap?.['/action_types/enhancing'];
-            if (Array.isArray(communityEnhancingBuffs)) {
-                communityEnhancingBuffs.forEach((buff) => {
-                    if (buff.typeHrid === '/buff_types/wisdom') {
-                        totalFlatBoost += buff.flatBoost || 0;
-                    }
-                });
-            }
-
-            // 2. Equipment Buffs
-            const equipmentEnhancingBuffs = charData.equipmentActionTypeBuffsMap?.['/action_types/enhancing'];
-            if (Array.isArray(equipmentEnhancingBuffs)) {
-                equipmentEnhancingBuffs.forEach((buff) => {
-                    if (buff.typeHrid === '/buff_types/wisdom') {
-                        totalFlatBoost += buff.flatBoost || 0;
-                    }
-                });
-            }
-
-            // 3. House Buffs
-            const houseEnhancingBuffs = charData.houseActionTypeBuffsMap?.['/action_types/enhancing'];
-            if (Array.isArray(houseEnhancingBuffs)) {
-                houseEnhancingBuffs.forEach((buff) => {
-                    if (buff.typeHrid === '/buff_types/wisdom') {
-                        totalFlatBoost += buff.flatBoost || 0;
-                    }
-                });
-            }
-
-            // 4. Guild Buffs
-            const guildEnhancingBuffs = charData.guildActionTypeBuffsMap?.['/action_types/enhancing'];
-            if (Array.isArray(guildEnhancingBuffs)) {
-                guildEnhancingBuffs.forEach((buff) => {
-                    if (buff.typeHrid === '/buff_types/wisdom') {
-                        totalFlatBoost += buff.flatBoost || 0;
-                    }
-                });
-            }
-
-            // 5. Consumable Buffs (from wisdom tea, etc.)
-            const consumableEnhancingBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
-            if (Array.isArray(consumableEnhancingBuffs)) {
-                consumableEnhancingBuffs.forEach((buff) => {
-                    if (buff.typeHrid === '/buff_types/wisdom') {
-                        totalFlatBoost += buff.flatBoost || 0;
-                    }
-                });
-            }
-
-            // 5. Achievement Buffs
-            totalFlatBoost += dataManager.getAchievementBuffFlatBoost('/action_types/enhancing', '/buff_types/wisdom');
-
-            // Return as decimal (flatBoost is already in decimal form, e.g., 0.2 for 20%)
-            return totalFlatBoost;
-        } catch {
-            return 0;
-        }
-    }
-
-    /**
-     * Calculate XP gained from successful enhancement
-     * Formula: 1.4 × (1 + wisdom) × enhancementMultiplier × (10 + baseItemLevel)
-     * @param {number} previousLevel - Enhancement level before success
-     * @param {string} itemHrid - Item HRID
-     * @returns {number} XP gained
-     */
-    function calculateSuccessXP(previousLevel, itemHrid) {
-        const baseLevel = getBaseItemLevel(itemHrid);
-        const wisdomBuff = getWisdomBuff();
-
-        // Special handling for enhancement level 0 (base items)
-        const enhancementMultiplier =
-            previousLevel === 0
-                ? 1.0 // Base value for unenhanced items
-                : previousLevel + 1; // Normal progression
-
-        return Math.floor(1.4 * (1 + wisdomBuff) * enhancementMultiplier * (10 + baseLevel));
-    }
-
-    /**
-     * Calculate XP gained from failed enhancement
-     * Formula: 10% of success XP
-     * @param {number} previousLevel - Enhancement level that failed
-     * @param {string} itemHrid - Item HRID
-     * @returns {number} XP gained
-     */
-    function calculateFailureXP(previousLevel, itemHrid) {
-        return Math.floor(calculateSuccessXP(previousLevel, itemHrid) * 0.1);
-    }
-
-    /**
-     * Calculate adjusted attempt number from session data
-     * This makes tracking resume-proof (doesn't rely on WebSocket currentCount)
-     * @param {Object} session - Session object
-     * @returns {number} Next attempt number
-     */
-    function calculateAdjustedAttemptCount(session) {
-        let successCount = 0;
-        let failCount = 0;
-
-        // Sum all successes and failures across all levels
-        for (const level in session.attemptsPerLevel) {
-            const levelData = session.attemptsPerLevel[level];
-            successCount += levelData.success || 0;
-            failCount += levelData.fail || 0;
-        }
-
-        // For the first attempt, return 1
-        if (successCount === 0 && failCount === 0) {
-            return 1;
-        }
-
-        // Return total + 1 for the next attempt
-        return successCount + failCount + 1;
-    }
-
-    /**
-     * Calculate enhancing action time from the game's buff maps
-     * Reads the pre-computed action_speed flatBoost values from all buff sources
-     * and adds level advantage, matching the game's actual speed calculation
-     * @param {string} itemHrid - Item HRID being enhanced
-     * @returns {number} Per-action time in seconds
-     */
-    function getEnhancingActionTime(itemHrid) {
-        try {
-            const charData = dataManager.characterData;
-            if (!charData) return 12;
-
-            // Get base time from game data
-            const actionDetails = dataManager.getActionDetails('/actions/enhancing/enhance');
-            const baseTime = actionDetails?.baseTimeCost ? actionDetails.baseTimeCost / 1e9 : 12;
-
-            // Get enhancing skill level
-            const enhancingSkill = charData.characterSkills?.find((s) => s.skillHrid === '/skills/enhancing');
-            const baseLevel = enhancingSkill?.level || 1;
-
-            // Get tea level bonus from consumable buff map
-            let teaLevelBonus = 0;
-            const consumableBuffs = charData.consumableActionTypeBuffsMap?.['/action_types/enhancing'];
-            if (Array.isArray(consumableBuffs)) {
-                for (const buff of consumableBuffs) {
-                    if (buff.typeHrid === '/buff_types/enhancing_level') {
-                        teaLevelBonus = buff.flatBoost || 0;
-                    }
-                }
-            }
-
-            // Sum action_speed flatBoost from ALL buff sources (equipment, house, community, tea)
-            let totalSpeedBuff = 0;
-
-            const buffMaps = [
-                charData.equipmentActionTypeBuffsMap,
-                charData.houseActionTypeBuffsMap,
-                charData.guildActionTypeBuffsMap,
-                charData.communityActionTypeBuffsMap,
-                charData.consumableActionTypeBuffsMap,
-            ];
-
-            for (const buffMap of buffMaps) {
-                const enhancingBuffs = buffMap?.['/action_types/enhancing'];
-                if (!Array.isArray(enhancingBuffs)) continue;
-
-                for (const buff of enhancingBuffs) {
-                    if (buff.typeHrid === '/buff_types/action_speed') {
-                        totalSpeedBuff += buff.flatBoost || 0;
-                    }
-                }
-            }
-
-            // Add personal buffs (Labyrinth seals)
-            totalSpeedBuff += dataManager.getPersonalBuffFlatBoost('/action_types/enhancing', '/buff_types/action_speed');
-
-            // Add level advantage: (effectiveLevel - itemLevel) / 100
-            const effectiveLevel = baseLevel + teaLevelBonus;
-            const itemLevel = getBaseItemLevel(itemHrid);
-            if (effectiveLevel > itemLevel) {
-                totalSpeedBuff += (effectiveLevel - itemLevel) / 100;
-            }
-
-            return Math.max(profitConstants_js.MIN_ACTION_TIME_SECONDS, baseTime / (1 + totalSpeedBuff));
-        } catch {
-            return 12;
-        }
-    }
-
-    /**
-     * Calculate enhancement predictions using character stats
-     * @param {string} itemHrid - Item HRID being enhanced
-     * @param {number} startLevel - Starting enhancement level
-     * @param {number} targetLevel - Target enhancement level
-     * @param {number} protectFrom - Level to start using protection
-     * @returns {Object|null} Prediction data or null if cannot calculate
-     */
-    function calculateEnhancementPredictions(itemHrid, startLevel, targetLevel, protectFrom) {
-        try {
-            // Get item level
-            const itemLevel = getBaseItemLevel(itemHrid);
-
-            // Use getEnhancingParams() for all character stats (level, speed, success, teas, etc.)
-            const params = enhancementConfig_js.getEnhancingParams();
-
-            // Check for blessed tea
-            const hasBlessed = params.teas?.blessed || false;
-
-            // Per-action time from the game's buff maps (authoritative source), handed to the
-            // calculator as an override so the prediction and anything reading result.totalTime
-            // later work off one time base instead of two that can disagree.
-            const perActionTime = getEnhancingActionTime(itemHrid);
-
-            // Calculate predictions (Markov chain for attempts, protections, success rates)
-            const result = enhancementCalculator_js.calculateEnhancement({
-                enhancingLevel: params.enhancingLevel,
-                houseLevel: params.houseLevel,
-                toolBonus: params.toolBonus,
-                speedBonus: params.speedBonus,
-                itemLevel,
-                targetLevel,
-                startLevel,
-                protectFrom,
-                blessedTea: hasBlessed,
-                guzzlingBonus: params.guzzlingBonus,
-                blessedTeaBonus: params.blessedTeaBonus,
-                perActionTimeOverride: perActionTime,
-            });
-
-            if (!result) {
-                return null;
-            }
-
-            return {
-                expectedAttempts: Math.round(result.attemptsRounded),
-                expectedProtections: Math.round(result.protectionCount),
-                // The distribution behind the expectation, kept with it so a finished
-                // run can be read back as a percentile of what was actually predicted
-                // — recomputing the chain later would measure the run against stats
-                // it was not played with. Additive: older sessions simply lack them,
-                // and every reader treats that as "no distribution recorded".
-                expectedAttemptsExact: result.attempts,
-                attemptsVariance: result.attemptsVariance,
-                minAttempts: result.minAttempts,
-                expectedTime: result.totalTime,
-                perActionTime: result.perActionTime,
-                successMultiplier: result.successMultiplier,
-                successRates: result.successRates,
-                // Recorded with the prediction, so a session opened days later still says which
-                // stats it was predicted against
-                paramsNote: enhancementConfig_js.describeParamsSource(params),
-            };
-        } catch {
-            return null;
-        }
-    }
-
-    /**
-     * Which stats an enhancement prediction is quoting.
-     *
-     * The same "+0 → +N" table means two different things depending on whose bench it describes:
-     * what this character would spend, or what a top-end enhancer would. Both are worth seeing —
-     * one is the player's real cost, the other is roughly what the listing in front of them cost
-     * whoever made it — but a number that does not say which one it is is worse than either.
-     *
-     * This module owns that choice: the persisted toggle, the params each side resolves to, and the
-     * chip the tooltip prints so the answer is always on screen next to the numbers.
-     */
-
-
-    /** Setting the toggle persists to. Mirrored in the settings panel under Item Tooltips. */
-    const PRO_RATES_SETTING = 'itemTooltip_enhancementProRates';
-
-    /** Class the delegated click handler looks for, and the marker the chip is found by. */
-    const SOURCE_CHIP_CLASS = 'toolasha-enh-source-chip';
-
-    /** Attribute naming a re-renderable enhancement section, so a toggle can redraw it in place. */
-    const SECTION_ATTR = 'data-toolasha-enh-section';
-
-    /**
-     * Whether enhancement predictions are currently quoting the pro kit rather than the player.
-     * @returns {boolean} True when pro rates are active
-     */
-    function isProRatesActive() {
-        return config.getSetting(PRO_RATES_SETTING) === true;
-    }
-
-    /**
-     * The enhancing parameters a tooltip for this item should be computed with.
-     *
-     * Untradeable items are never somebody else's listing — the player is the only one who can be
-     * enhancing them — so they are always quoted from the character's own stats.
-     *
-     * @param {string} itemHrid - Item the tooltip is describing
-     * @returns {Object} Enhancement parameters, tagged with `paramsSource`
-     */
-    function getTooltipEnhancementParams(itemHrid) {
-        const itemDetails = dataManager.getInitClientData()?.itemDetailMap?.[itemHrid];
-        const isTradeable = itemDetails?.isTradable !== false;
-
-        if (!isTradeable) {
-            return enhancementConfig_js.getAutoDetectedParams();
-        }
-        if (isProRatesActive()) {
-            return enhancementConfig_js.getProRatesParams();
-        }
-        return enhancementConfig_js.getEnhancingParams();
-    }
-
-    /**
-     * Name the source of a set of parameters, for display beside the numbers they produced.
-     * @param {Object} params - Result of getTooltipEnhancementParams() or getEnhancingParams()
-     * @returns {{kind: 'pro'|'manual'|'yours', label: string, detail: string|null}} Chip content
-     */
-    function describeEnhancementSource(params) {
-        if (params?.paramsSource === 'pro') {
-            return {
-                kind: 'pro',
-                label: 'Pro',
-                detail: 'Pro rates: enhancing 140, Observatory 8, ultra + blessed tea, +13 Celestial enhancer, +10 gear',
-            };
-        }
-
-        const overrides = enhancementConfig_js.describeParamsSource(params);
-        if (overrides) {
-            return { kind: 'manual', label: 'Manual', detail: overrides };
-        }
-
-        return { kind: 'yours', label: 'Yours', detail: null };
-    }
-
-    /**
-     * Escape a value for use inside a double-quoted HTML attribute.
-     * @param {*} value - Value to escape
-     * @returns {string} Escaped text
-     */
-    function escapeAttr(value) {
-        return String(value ?? '')
-            .replace(/&/g, '&amp;')
-            .replace(/"/g, '&quot;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-    }
-
-    /**
-     * Build the clickable source chip shown on an enhancement section header.
-     *
-     * Pro rates get a filled, warning-coloured chip: the one mistake worth engineering against is
-     * reading a professional's cost as your own, so that state has to be unmissable rather than
-     * merely legible.
-     *
-     * @param {Object} params - Parameters the section was computed with
-     * @returns {string} HTML for the chip
-     */
-    function buildSourceChipHTML(params) {
-        const source = describeEnhancementSource(params);
-        const isPro = source.kind === 'pro';
-        const proColor = config.COLOR_TOOLTIP_WARNING || '#ffb020';
-        // On a touch device there is no P key and hover tooltips never open, so the
-        // chip carries its own visible affordance: a keycap "P" on desktop, the word
-        // "tap" on a phone, and a finger-sized hit area there.
-        const mobile = mobile_js.isMobileMode();
-        const action = mobile ? 'Tap' : 'Click (or press P)';
-
-        const title = isPro
-            ? `${source.detail}. ${action} to switch back to your own stats.`
-            : source.detail
-              ? `${source.detail}. ${action} to compare against pro rates.`
-              : `Computed from your own enhancing level, gear and teas. ${action} to compare against pro rates.`;
-
-        const style = isPro
-            ? `background: ${proColor}; color: #14181f; border: 1px solid ${proColor};`
-            : 'background: rgba(255,255,255,0.10); color: inherit; border: 1px solid rgba(255,255,255,0.30);';
-        const sizing = mobile ? 'padding: 3px 9px; font-size: 0.85em;' : 'padding: 0 5px; font-size: 0.75em;';
-        const hint = mobile
-            ? ' <span style="opacity: 0.7; font-weight: 600;">tap</span>'
-            : ' <span style="border: 1px solid currentColor; border-radius: 3px; padding: 0 3px; margin-left: 1px;' +
-              ' font-size: 0.85em; opacity: 0.75;">P</span>';
-
-        return (
-            `<span class="${SOURCE_CHIP_CLASS}" role="button" tabindex="0" title="${escapeAttr(title)}" ` +
-            `style="pointer-events: auto; cursor: pointer; margin-left: 6px; border-radius: 8px; ${sizing} ` +
-            `font-weight: 700; letter-spacing: 0.3px; white-space: nowrap; vertical-align: middle; ${style}">` +
-            `${source.label} ⇄${hint}</span>`
-        );
-    }
-
-    /**
-     * Attributes that mark a built section as re-renderable in place after a toggle.
-     * @param {'path'|'milestones'} kind - Which builder produced the section
-     * @param {string} itemHrid - Item the section describes
-     * @param {number} level - Target enhancement level (0 for milestone tables)
-     * @returns {string} Attribute string to splice into the section's root element
-     */
-    function sectionAttributes(kind, itemHrid, level) {
-        return (
-            `${SECTION_ATTR}="${escapeAttr(kind)}" data-toolasha-enh-item="${escapeAttr(itemHrid)}" ` +
-            `data-toolasha-enh-level="${escapeAttr(level)}"`
-        );
-    }
-
-    /**
-     * Enhancement Tooltip Module
-     *
-     * Provides enhancement analysis for item tooltips.
-     * Calculates optimal enhancement path and total costs for reaching current enhancement level.
-     *
-     * This module is part of Phase 2 of Option D (Hybrid Approach):
-     * - Enhancement panel: Shows 20-level enhancement table
-     * - Item tooltips: Shows optimal path to reach current enhancement level
-     */
-
-    const toolashaConfig = config;
-
-    /** What a mirror plan combines its leaves with */
-    const MIRROR_HRID = '/items/philosophers_mirror';
-
-    const _costCache = new Map();
-    const _chainTimeCache = new Map();
-
-    marketAPI.on(() => {
-        _costCache.clear();
-        _chainTimeCache.clear();
-    });
-
-    /**
-     * Calculate optimal enhancement path for an item
-     * Matches Enhancelator's algorithm exactly:
-     * 1. Test all protection strategies for each level
-     * 2. Pick minimum cost for each level (mixed strategies)
-     * 3. Apply mirror optimization to mixed array
-     *
-     * @param {string} itemHrid - Item HRID (e.g., '/items/cheese_sword')
-     * @param {number} currentEnhancementLevel - Current enhancement level (1-20)
-     * @param {Object} config - Enhancement configuration from enhancement-config.js
-     * @returns {Object|null} Enhancement analysis or null if not enhanceable
-     */
-    function calculateEnhancementPath(itemHrid, currentEnhancementLevel, config) {
-        // Validate inputs
-        if (!itemHrid || currentEnhancementLevel < 1 || currentEnhancementLevel > 20) {
-            return null;
-        }
-
-        // Get item details
-        const gameData = dataManager.getInitClientData();
-        if (!gameData) return null;
-
-        const itemDetails = gameData.itemDetailMap[itemHrid];
-        if (!itemDetails) return null;
-
-        // Check if item is enhanceable
-        if (!itemDetails.enhancementCosts || itemDetails.enhancementCosts.length === 0) {
-            return null;
-        }
-
-        const itemLevel = itemDetails.itemLevel || 1;
-
-        // Step 1: Build 2D matrix like Enhancelator (all_results)
-        // For each target level (1 to currentEnhancementLevel)
-        // Test all protection strategies (0, 2, 3, ..., targetLevel)
-        // Result: allResults[targetLevel][protectFrom] = cost data
-
-        const allResults = [];
-
-        for (let targetLevel = 1; targetLevel <= currentEnhancementLevel; targetLevel++) {
-            const resultsForLevel = [];
-
-            // Test "never protect" (0)
-            const neverProtect = calculateCostForStrategy(itemHrid, targetLevel, 0, itemLevel, config);
-            if (neverProtect) {
-                resultsForLevel.push({ protectFrom: 0, ...neverProtect });
-            }
-
-            // Test all "protect from X" strategies (2 through targetLevel)
-            for (let protectFrom = 2; protectFrom <= targetLevel; protectFrom++) {
-                const result = calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel, config);
-                if (result) {
-                    resultsForLevel.push({ protectFrom, ...result });
-                }
-            }
-
-            allResults.push(resultsForLevel);
-        }
-
-        // Step 2: Build target_costs and target_times arrays (minimum cost/time for each level)
-        // Like Enhancelator line 451-453
-        const targetCosts = new Array(currentEnhancementLevel + 1);
-        const targetTimes = new Array(currentEnhancementLevel + 1);
-        const targetAttempts = new Array(currentEnhancementLevel + 1);
-        // Kept alongside the attempts because a mirror plan's protection bill is the sum over the
-        // levels it actually builds, and there is nowhere else that number survives
-        const targetProtections = new Array(currentEnhancementLevel + 1);
-        targetCosts[0] = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost')
-            ? Math.min(getProductionCost(itemHrid) || Infinity, marketData_js.getItemPrices(itemHrid, 0)?.ask || Infinity) ||
-              getRealisticBaseItemPrice(itemHrid)
-            : getRealisticBaseItemPrice(itemHrid); // Level 0: base item
-        targetTimes[0] = 0; // Level 0: no time needed
-        targetAttempts[0] = 0; // Level 0: no attempts needed
-        targetProtections[0] = 0; // Level 0: nothing to protect
-
-        for (let level = 1; level <= currentEnhancementLevel; level++) {
-            const resultsForLevel = allResults[level - 1];
-            // No strategy succeeded for this level (e.g. missing data) — cannot build a path
-            if (resultsForLevel.length === 0) {
-                return null;
-            }
-            // Find the result with minimum cost
-            const minResult = resultsForLevel.reduce((best, curr) => (curr.totalCost < best.totalCost ? curr : best));
-            targetCosts[level] = minResult.totalCost;
-            targetTimes[level] = minResult.totalTime;
-            targetAttempts[level] = minResult.expectedAttempts;
-            targetProtections[level] = minResult.protectionCount || 0;
-        }
-
-        // Snapshot the pre-mirror numbers before the mirror pass rewrites targetCosts in place.
-        // These arrays used to be aliases of the same array, so the "traditional" cost of a level
-        // silently became its mirror cost the moment the pass touched it.
-        const traditionalCosts = [...targetCosts];
-        const traditionalTimes = [...targetTimes];
-        const traditionalAttempts = [...targetAttempts];
-        const traditionalProtections = [...targetProtections];
-
-        // Step 3: Apply Philosopher's Mirror optimization (single pass, in-place)
-        // Like Enhancelator lines 456-465
-        const mirrorPrice = getRealisticBaseItemPrice(MIRROR_HRID);
-        const usedMirror = new Array(currentEnhancementLevel + 1).fill(false);
-
-        if (mirrorPrice > 0) {
-            // +2 is reachable by mirroring a +0 and a +1, so it belongs in the search as well
-            for (let level = 2; level <= currentEnhancementLevel; level++) {
-                const traditionalCost = targetCosts[level];
-                const mirrorCost = targetCosts[level - 2] + targetCosts[level - 1] + mirrorPrice;
-
-                if (mirrorCost < traditionalCost) {
-                    usedMirror[level] = true;
-                    targetCosts[level] = mirrorCost;
-                }
-            }
-        }
-
-        // Step 4: Build final result with breakdown
-        targetCosts[currentEnhancementLevel];
-
-        // Find which protection strategy was optimal for final level (before mirrors)
-        const finalLevelResults = allResults[currentEnhancementLevel - 1];
-        if (finalLevelResults.length === 0) {
-            return null;
-        }
-        const optimalTraditional = finalLevelResults.reduce((best, curr) =>
-            curr.totalCost < best.totalCost ? curr : best
-        );
-
-        // Which levels the finished plan actually mirrors is a question about the path back from
-        // the target, not about the first level where mirroring happened to look cheap. A level
-        // that mirrors but is never reached from the target contributes nothing.
-        const mirrorPlan = expandMirrorPlan(currentEnhancementLevel, usedMirror);
-
-        let optimalStrategy;
-
-        if (mirrorPlan.mirrorCount > 0) {
-            // Mirror was used - build mirror-optimized result
-            optimalStrategy = buildMirrorOptimizedResult(
-                itemHrid,
-                currentEnhancementLevel,
-                mirrorPlan,
-                traditionalCosts,
-                traditionalTimes,
-                traditionalAttempts,
-                traditionalProtections,
-                targetCosts,
-                optimalTraditional,
-                mirrorPrice
-            );
-        } else {
-            // No mirror used - return traditional result
-            optimalStrategy = {
-                protectFrom: optimalTraditional.protectFrom,
-                label: optimalTraditional.protectFrom === 0 ? 'Never' : `+${optimalTraditional.protectFrom}`,
-                expectedAttempts: optimalTraditional.expectedAttempts,
-                totalTime: optimalTraditional.totalTime,
-                baseCost: optimalTraditional.baseCost,
-                baseAskPrice: optimalTraditional.baseAskPrice,
-                baseBidPrice: optimalTraditional.baseBidPrice,
-                baseAskIsCrafted: optimalTraditional.baseAskIsCrafted,
-                baseBidIsCrafted: optimalTraditional.baseBidIsCrafted,
-                materialCost: optimalTraditional.materialCost,
-                materialBreakdown: optimalTraditional.materialBreakdown,
-                protectionCost: optimalTraditional.protectionCost,
-                protectionItemHrid: optimalTraditional.protectionItemHrid,
-                protectionCount: optimalTraditional.protectionCount,
-                protectionAskPrice: optimalTraditional.protectionAskPrice,
-                protectionBidPrice: optimalTraditional.protectionBidPrice,
-                totalCost: optimalTraditional.totalCost,
-                usedMirror: false,
-                mirrorStartLevel: null,
-                materialBill: buildMaterialBill({
-                    materials: optimalTraditional.materialBreakdown,
-                    protectionItemHrid: optimalTraditional.protectionItemHrid,
-                    protectionCount: optimalTraditional.protectionCount,
-                    protectionUnitPrice: optimalTraditional.protectionAskPrice,
-                }),
-            };
-        }
-
-        // Calculate XP/hr for the optimal path
-        let xpPerHour = null;
-        let totalExpectedXP = null;
-        try {
-            const xpCalc = enhancementCalculator_js.calculateEnhancement({
-                enhancingLevel: config.enhancingLevel,
-                houseLevel: config.houseLevel,
-                toolBonus: config.toolBonus || 0,
-                speedBonus: config.speedBonus || 0,
-                itemLevel,
-                targetLevel: currentEnhancementLevel,
-                protectFrom: optimalStrategy.protectFrom,
-                blessedTea: config.teas.blessed,
-                guzzlingBonus: config.guzzlingBonus,
-                blessedTeaBonus: config.blessedTeaBonus,
-            });
-
-            if (xpCalc && xpCalc.visitCounts && xpCalc.totalTime > 0) {
-                // Same XP formula the tracker and the XPH calculator use. The old inline copy read
-                // itemDetails.level, which enhanceable equipment does not have, so it fell through
-                // to a level-requirement lookup and produced a different number for the same item.
-                let totalXP = 0;
-                for (let i = 0; i < currentEnhancementLevel; i++) {
-                    const visits = xpCalc.visitCounts[i];
-                    if (!visits) continue;
-                    const successRate = xpCalc.successRates[i].actualRate / 100;
-                    const successXP = calculateSuccessXP(i, itemHrid);
-                    const failXP = calculateFailureXP(i, itemHrid);
-                    totalXP += visits * (successRate * successXP + (1 - successRate) * failXP);
-                }
-                xpPerHour = Math.round((totalXP / xpCalc.totalTime) * 3600);
-                totalExpectedXP = Math.round(totalXP);
-            }
-        } catch {
-            // XP data is optional; don't let it break the tooltip
-        }
-
-        return {
-            itemHrid,
-            targetLevel: currentEnhancementLevel,
-            itemLevel,
-            optimalStrategy,
-            allStrategies: [optimalStrategy], // Only return optimal
-            xpPerHour,
-            totalExpectedXP,
-            // Carried through so the tooltip can say whose stats these numbers describe: the
-            // character's own, a hand-entered set, or the pro kit
-            enhancementParams: config,
-            paramsNote: describeEnhancementSource(config).detail,
-        };
-    }
-
-    /**
-     * Calculate cost for a single protection strategy to reach a target level
-     * @private
-     */
-    function calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel, config) {
-        try {
-            const params = {
-                enhancingLevel: config.enhancingLevel,
-                houseLevel: config.houseLevel,
-                toolBonus: config.toolBonus || 0,
-                speedBonus: config.speedBonus || 0,
-                itemLevel,
-                targetLevel,
-                protectFrom,
-                blessedTea: config.teas.blessed,
-                guzzlingBonus: config.guzzlingBonus,
-                blessedTeaBonus: config.blessedTeaBonus,
-            };
-
-            // Calculate enhancement statistics. The matrix inversion is the expensive part of a
-            // strategy, and the cost pass needs exactly the same numbers, so it is handed the
-            // result rather than inverting an identical matrix a second time.
-            const result = enhancementCalculator_js.calculateEnhancement(params);
-
-            if (!result || typeof result.attempts !== 'number' || typeof result.totalTime !== 'number') {
-                console.error('[Enhancement Tooltip] Invalid result from calculateEnhancement:', result);
-                return null;
-            }
-
-            // Calculate costs
-            const costs = calculateTotalCost(itemHrid, targetLevel, protectFrom, config, result);
-
-            return {
-                expectedAttempts: result.attempts,
-                totalTime: result.totalTime,
-                ...costs,
-            };
-        } catch (error) {
-            console.error('[Enhancement Tooltip] Strategy calculation error:', error);
-            return null;
-        }
-    }
-
-    /**
-     * Walk the mirror DP back from the target level to the items the plan actually builds.
-     *
-     * The DP decides mirror-or-not level by level, and those decisions are not necessarily a clean
-     * run: +6 can mirror while +5 does not. Assuming a contiguous block from the first mirrored
-     * level and expanding it with Fibonacci quantities invents items the plan never buys. Walking
-     * the decisions backwards from the target instead yields exactly the leaves it does buy.
-     *
-     * @param {number} targetLevel - Level the plan is building
-     * @param {boolean[]} usedMirror - Per-level mirror decisions from the DP
-     * @returns {{leaves: Array<{level: number, quantity: number}>, mirrorCount: number,
-     *   mirrorStartLevel: number|null}} Leaves are levels bought traditionally, highest first
-     * @private
-     */
-    function expandMirrorPlan(targetLevel, usedMirror) {
-        const need = new Array(targetLevel + 1).fill(0);
-        need[targetLevel] = 1;
-
-        let mirrorCount = 0;
-        let mirrorStartLevel = null;
-
-        // High to low: a level is only expanded once every demand for it is known
-        for (let level = targetLevel; level >= 2; level--) {
-            const quantity = need[level];
-            if (!quantity || !usedMirror[level]) continue;
-
-            mirrorCount += quantity;
-            mirrorStartLevel = level; // Lowest mirrored level reached, since we descend
-            need[level - 1] += quantity;
-            need[level - 2] += quantity;
-            need[level] = 0;
-        }
-
-        const leaves = [];
-        for (let level = targetLevel; level >= 0; level--) {
-            if (need[level] > 0) {
-                leaves.push({ level, quantity: need[level] });
-            }
-        }
-
-        return { leaves, mirrorCount, mirrorStartLevel };
-    }
-
-    /**
-     * What a chosen path expects to consume, item by item.
-     *
-     * The path optimiser has always returned totals — so many coins in materials —
-     * which is enough to compare two strategies and not enough to go and buy them.
-     * This is the same arithmetic said as a list, so anything holding a plan can put
-     * it on the marketplace.
-     *
-     * **Every count is an expectation, not a bill.** Enhancing is a Markov chain:
-     * the attempt counts these quantities are multiplied out from are the *expected*
-     * number of attempts along the path, and a real run will take more or fewer.
-     * Buying exactly this list is buying the mean, which is the right order of
-     * magnitude and the wrong number to be surprised by.
-     *
-     * @param {Object} parts - The pieces of a strategy
-     * @param {Array<Object>} [parts.materials] - `materialBreakdown` rows, already multiplied by attempts
-     * @param {number} [parts.materialMultiplier=1] - Scales the rows, for a plan that runs the
-     *   same per-attempt bill a different number of times (a mirror plan's leaves)
-     * @param {string} [parts.protectionItemHrid] - What the plan protects with
-     * @param {number} [parts.protectionCount=0] - Expected protections consumed
-     * @param {number} [parts.protectionUnitPrice=0] - Price of one
-     * @param {number} [parts.mirrorCount=0] - Philosopher's Mirrors the plan combines
-     * @param {number} [parts.mirrorPrice=0] - Price of one
-     * @param {string} [parts.baseItemHrid] - Base item, for a plan that consumes more than the one
-     *   copy its owner is assumed to be holding
-     * @param {number} [parts.baseCount=0] - How many base copies the plan consumes
-     * @param {number} [parts.baseUnitPrice=0] - Price of one
-     * @returns {Array<{itemHrid: string, name: string, count: number, unitPrice: number,
-     *   totalCost: number, kind: string}>} The bill, materials first; `kind` is one of
-     *   `material`, `protection`, `mirror`, `base`
-     * @private
-     */
-    function buildMaterialBill({
-        materials = [],
-        materialMultiplier = 1,
-        protectionItemHrid = null,
-        protectionCount = 0,
-        protectionUnitPrice = 0,
-        mirrorCount = 0,
-        mirrorPrice = 0,
-        baseItemHrid = null,
-        baseCount = 0,
-        baseUnitPrice = 0,
-    } = {}) {
-        const gameData = dataManager.getInitClientData();
-        const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid;
-
-        const bill = [];
-
-        for (const material of materials || []) {
-            const count = (material.totalQuantity || 0) * materialMultiplier;
-            if (!(count > 0)) continue;
-            bill.push({
-                itemHrid: material.itemHrid,
-                name: material.name || nameOf(material.itemHrid),
-                count,
-                unitPrice: material.unitPrice || 0,
-                totalCost: (material.unitPrice || 0) * count,
-                kind: 'material',
-            });
-        }
-
-        if (protectionItemHrid && protectionCount > 0) {
-            bill.push({
-                itemHrid: protectionItemHrid,
-                name: nameOf(protectionItemHrid),
-                count: protectionCount,
-                unitPrice: protectionUnitPrice,
-                totalCost: protectionUnitPrice * protectionCount,
-                kind: 'protection',
-            });
-        }
-
-        if (mirrorCount > 0) {
-            bill.push({
-                itemHrid: MIRROR_HRID,
-                name: nameOf(MIRROR_HRID),
-                count: mirrorCount,
-                unitPrice: mirrorPrice,
-                totalCost: mirrorPrice * mirrorCount,
-                kind: 'mirror',
-            });
-        }
-
-        if (baseItemHrid && baseCount > 0) {
-            bill.push({
-                itemHrid: baseItemHrid,
-                name: nameOf(baseItemHrid),
-                count: baseCount,
-                unitPrice: baseUnitPrice,
-                totalCost: baseUnitPrice * baseCount,
-                kind: 'base',
-            });
-        }
-
-        return bill;
-    }
-
-    /**
-     * Build mirror-optimized result from an expanded plan
-     * @param {string} itemHrid - Item being enhanced
-     * @param {number} targetLevel - Target enhancement level
-     * @param {Object} plan - Result of expandMirrorPlan()
-     * @param {number[]} traditionalCosts - Pre-mirror cost per level
-     * @param {number[]} traditionalTimes - Pre-mirror time per level
-     * @param {number[]} traditionalAttempts - Pre-mirror attempts per level
-     * @param {number[]} traditionalProtections - Pre-mirror protections consumed per level
-     * @param {number[]} targetCosts - Post-mirror cost per level
-     * @param {Object} optimalTraditional - Best non-mirror strategy for the target level
-     * @param {number} mirrorPrice - Price of one Philosopher's Mirror
-     * @private
-     */
-    function buildMirrorOptimizedResult(
-        itemHrid,
-        targetLevel,
-        plan,
-        traditionalCosts,
-        traditionalTimes,
-        traditionalAttempts,
-        traditionalProtections,
-        targetCosts,
-        optimalTraditional,
-        mirrorPrice
-    ) {
-        const { leaves, mirrorCount, mirrorStartLevel } = plan;
-
-        // Every leaf is a level the plan buys outright, so it is priced at its traditional cost
-        const consumedItems = leaves.map(({ level, quantity }) => ({
-            level,
-            quantity,
-            costEach: traditionalCosts[level],
-            totalCost: quantity * traditionalCosts[level],
-        }));
-
-        const consumedItemsCost = consumedItems.reduce((sum, item) => sum + item.totalCost, 0);
-        const totalMirrorsCost = mirrorCount * mirrorPrice;
-
-        // Mirror combinations are instant, so only the leaves cost time and attempts
-        const totalTime = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalTimes[level], 0);
-        const totalAttempts = leaves.reduce((sum, { level, quantity }) => sum + quantity * traditionalAttempts[level], 0);
-        const totalProtections = leaves.reduce(
-            (sum, { level, quantity }) => sum + quantity * (traditionalProtections[level] || 0),
-            0
-        );
-
-        // Every leaf starts from its own base copy — a mirror plan for +10 buys several items and
-        // combines them, which is the fact a totals-only answer hides and a shopping list cannot
-        const totalBaseItems = leaves.reduce((sum, { quantity }) => sum + quantity, 0);
-
-        // The per-attempt material bill is the same at every level, so the target-level strategy's
-        // breakdown (which is already multiplied by *its* attempts) scales to the plan's attempts
-        const materialMultiplier =
-            optimalTraditional.expectedAttempts > 0 ? totalAttempts / optimalTraditional.expectedAttempts : 0;
-
-        // For mirror phase: ONLY consumed items + mirrors
-        // The consumed item costs from targetCosts already include base/materials/protection
-        // NO separate base/materials/protection for main item!
-
-        return {
-            protectFrom: optimalTraditional.protectFrom,
-            label: optimalTraditional.protectFrom === 0 ? 'Never' : `From +${optimalTraditional.protectFrom}`,
-            expectedAttempts: totalAttempts,
-            totalTime: totalTime,
-            baseCost: 0, // Not applicable for mirror phase
-            materialCost: 0, // Not applicable for mirror phase
-            protectionCost: 0, // Not applicable for mirror phase
-            protectionItemHrid: null,
-            protectionCount: 0,
-            consumedItemsCost,
-            philosopherMirrorCost: totalMirrorsCost,
-            totalCost: targetCosts[targetLevel], // Use recursive formula result for consistency
-            mirrorStartLevel: mirrorStartLevel,
-            usedMirror: true,
-            traditionalCost: optimalTraditional.totalCost,
-            consumedItems: consumedItems,
-            mirrorCount: mirrorCount,
-            consumedItemHrid: itemHrid,
-            materialBill: buildMaterialBill({
-                materials: optimalTraditional.materialBreakdown,
-                materialMultiplier,
-                protectionItemHrid: optimalTraditional.protectionItemHrid || getCheapestProtectionPrice(itemHrid)?.itemHrid,
-                protectionCount: totalProtections,
-                protectionUnitPrice:
-                    optimalTraditional.protectionAskPrice || getCheapestProtectionPrice(itemHrid)?.price || 0,
-                mirrorCount,
-                mirrorPrice,
-                baseItemHrid: itemHrid,
-                baseCount: totalBaseItems,
-                baseUnitPrice: traditionalCosts[0],
-            }),
-        };
-    }
-
-    /**
-     * Fixed price for untradeable trainee charms, which have no market listing.
-     */
-    const TRAINEE_CHARM_PRICE = 250000;
-
-    /**
-     * Price one enhancement material.
-     *
-     * Three callers used to each carry their own copy of these rules — trainee charms are
-     * untradeable and priced flat, coins are worth their face value, and a market quote with one
-     * side missing borrows the side that exists — and they had already drifted apart. This is the
-     * single answer all of them ask.
-     *
-     * @param {string} itemHrid - Material item HRID
-     * @param {'ask'|'bid'} [side='ask'] - Which side of the book to price against
-     * @returns {number} Unit price in coins, or 0 when nothing is known about the item
-     */
-    function getEnhancementMaterialPrice(itemHrid, side = 'ask') {
-        if (!itemHrid) return 0;
-
-        // Untradeable: no market listing exists, so use the fixed value on both sides
-        if (itemHrid.startsWith('/items/trainee_')) {
-            return TRAINEE_CHARM_PRICE;
-        }
-        if (itemHrid === '/items/coin') {
-            return 1;
-        }
-
-        const marketPrice = marketData_js.getItemPrices(itemHrid, 0);
-        if (marketPrice) {
-            let ask = marketPrice.ask;
-            let bid = marketPrice.bid;
-
-            // Match MCS behavior: when only one side is quoted, both sides use it
-            if (ask > 0 && bid < 0) bid = ask;
-            if (bid > 0 && ask < 0) ask = bid;
-
-            const price = side === 'bid' ? bid : ask;
-            if (price > 0) return price;
-        }
-
-        // Fallback: production cost, then NPC sell price
-        const gameData = dataManager.getInitClientData();
-        const materialDetail = gameData?.itemDetailMap?.[itemHrid];
-        return getProductionCost(itemHrid, side) || materialDetail?.sellPrice || 0;
-    }
-
-    /**
-     * Calculate total cost for enhancement path
-     * Matches original MWI Tools v25.0 cost calculation
-     * @param {string} itemHrid - Item HRID
-     * @param {number} targetLevel - Target enhancement level
-     * @param {number} protectFrom - Protection threshold
-     * @param {Object} config - Enhancement configuration
-     * @param {Object} pathResult - Markov result for this strategy, already computed by the caller
-     * @private
-     */
-    function calculateTotalCost(itemHrid, targetLevel, protectFrom, config, pathResult) {
-        const gameData = dataManager.getInitClientData();
-        const itemDetails = gameData.itemDetailMap[itemHrid];
-
-        // Calculate per-action material cost (same for all enhancement levels)
-        // enhancementCosts is a flat array of materials needed per attempt
-        let perActionCost = 0;
-        const materialBreakdown = [];
-        if (itemDetails.enhancementCosts) {
-            for (const material of itemDetails.enhancementCosts) {
-                const materialDetail = gameData.itemDetailMap[material.itemHrid];
-                const price = getEnhancementMaterialPrice(material.itemHrid, 'ask');
-                const bidPrice = getEnhancementMaterialPrice(material.itemHrid, 'bid');
-                perActionCost += price * material.count;
-
-                const totalQuantity = material.count * pathResult.attempts;
-                materialBreakdown.push({
-                    itemHrid: material.itemHrid,
-                    name: materialDetail?.name || material.itemHrid,
-                    countPerAction: material.count,
-                    totalQuantity,
-                    unitPrice: price,
-                    bidPrice,
-                    totalCost: price * totalQuantity,
-                });
-            }
-        }
-
-        // Total material cost = per-action cost × total attempts
-        const materialCost = perActionCost * pathResult.attempts;
-
-        // Protection cost = cheapest protection option × protection count
-        let protectionCost = 0;
-        let protectionItemHrid = null;
-        let protectionCount = 0;
-        let protectionAskPrice = 0;
-        let protectionBidPrice = 0;
-        if (protectFrom > 0 && pathResult.protectionCount > 0) {
-            const protectionInfo = getCheapestProtectionPrice(itemHrid);
-            if (protectionInfo.price > 0) {
-                protectionCost = protectionInfo.price * pathResult.protectionCount;
-                protectionItemHrid = protectionInfo.itemHrid;
-                protectionCount = pathResult.protectionCount;
-                protectionAskPrice = protectionInfo.price;
-                const protPrices = marketData_js.getItemPrices(protectionInfo.itemHrid, 0);
-                protectionBidPrice = protPrices?.bid > 0 ? protPrices.bid : protectionInfo.price;
-            }
-        }
-
-        // Base item cost (initial investment) — market price or min(crafting, market) per setting
-        const craftingCostAsk = getProductionCost(itemHrid, 'ask');
-        const craftingCostBid = getProductionCost(itemHrid, 'bid');
-        const baseItemPrices = marketData_js.getItemPrices(itemHrid, 0);
-        const marketAsk = baseItemPrices?.ask > 0 ? baseItemPrices.ask : 0;
-        const marketBid = baseItemPrices?.bid > 0 ? baseItemPrices.bid : 0;
-        const useCraftingCost = toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost');
-        // Ask drives the decision: use crafted if ask is missing OR crafted ask is cheaper
-        const askIsCrafted = useCraftingCost && craftingCostAsk > 0 && (marketAsk === 0 || craftingCostAsk < marketAsk);
-        const baseAskPrice = askIsCrafted ? craftingCostAsk : marketAsk || getRealisticBaseItemPrice(itemHrid);
-        const baseBidPrice = askIsCrafted
-            ? craftingCostBid || craftingCostAsk
-            : marketBid || getProductionCost(itemHrid, 'bid') || getRealisticBaseItemPrice(itemHrid);
-        const baseCost = baseAskPrice;
-        const baseAskIsCrafted = askIsCrafted;
-        const baseBidIsCrafted = askIsCrafted;
-
-        return {
-            baseCost,
-            baseAskPrice,
-            baseBidPrice,
-            baseAskIsCrafted,
-            baseBidIsCrafted,
-            materialCost,
-            materialBreakdown,
-            protectionCost,
-            protectionItemHrid,
-            protectionCount,
-            protectionAskPrice,
-            protectionBidPrice,
-            totalCost: baseCost + materialCost + protectionCost,
-        };
-    }
-
-    /**
-     * Get realistic base item price with production cost fallback
-     * Matches original MWI Tools v25.0 getRealisticBaseItemPrice logic
-     * @private
-     */
-    function getRealisticBaseItemPrice(itemHrid) {
-        const marketPrice = marketData_js.getItemPrices(itemHrid, 0);
-        const ask = marketPrice?.ask > 0 ? marketPrice.ask : 0;
-        const bid = marketPrice?.bid > 0 ? marketPrice.bid : 0;
-
-        // Calculate production cost as fallback
-        const productionCost = getProductionCost(itemHrid);
-
-        // If both ask and bid exist
-        if (ask > 0 && bid > 0) {
-            // If ask is significantly higher than bid (>30% markup), use max(bid, production)
-            if (ask / bid > 1.3) {
-                return Math.max(bid, productionCost);
-            }
-            // Otherwise use ask (normal market)
-            return ask;
-        }
-
-        // If only ask exists
-        if (ask > 0) {
-            // If ask is inflated compared to production, use production
-            if (productionCost > 0 && ask / productionCost > 1.3) {
-                return productionCost;
-            }
-            // Otherwise use max of ask and production
-            return Math.max(ask, productionCost);
-        }
-
-        // If only bid exists, use max(bid, production)
-        if (bid > 0) {
-            return Math.max(bid, productionCost);
-        }
-
-        // No market data - use production cost as fallback
-        return productionCost;
-    }
-
-    /**
-     * Calculate production cost from crafting recipe
-     * Matches original MWI Tools v25.0 getBaseItemProductionCost logic
-     * @param {string} itemHrid
-     * @param {'ask'|'bid'} [mode='ask'] - Pricing side to use for input materials
-     * @private
-     */
-    function getProductionCost(itemHrid, mode = 'ask') {
-        const cacheKey = `${itemHrid}|${mode}`;
-        if (_costCache.has(cacheKey)) return _costCache.get(cacheKey);
-        const result = _computeProductionCost(itemHrid, mode);
-        _costCache.set(cacheKey, result);
-        return result;
-    }
-
-    function _computeProductionCost(itemHrid, mode = 'ask') {
-        const gameData = dataManager.getInitClientData();
-        const itemDetails = gameData.itemDetailMap[itemHrid];
-
-        if (!itemDetails || !itemDetails.name) {
-            return 0;
-        }
-
-        // Find the action that produces this item
-        let actionHrid = null;
-        let outputCount = 1;
-        for (const [hrid, action] of Object.entries(gameData.actionDetailMap)) {
-            if (action.outputItems && action.outputItems.length > 0) {
-                const output = action.outputItems[0];
-                if (output.itemHrid === itemHrid) {
-                    actionHrid = hrid;
-                    outputCount = output.count || 1;
-                    break;
-                }
-            }
-        }
-
-        if (!actionHrid) {
-            return 0;
-        }
-
-        const action = gameData.actionDetailMap[actionHrid];
-        let totalPrice = 0;
-
-        // Compute artisan tea reduction dynamically (same approach as material-calculator.js)
-        let artisanBonus = 0;
-        try {
-            const equipment = dataManager.getEquipment();
-            const itemDetailMap = gameData.itemDetailMap || {};
-            const drinkConcentration = teaParser_js.getDrinkConcentration(equipment, itemDetailMap);
-            const activeDrinks = dataManager.getActionDrinkSlots(action.type);
-            artisanBonus = teaParser_js.parseArtisanBonus(activeDrinks, itemDetailMap, drinkConcentration);
-        } catch {
-            // Fall back to no reduction if data unavailable
-        }
-
-        // Sum up input material costs (artisan tea reduces material quantities, not upgrade items)
-        if (action.inputItems) {
-            for (const input of action.inputItems) {
-                if (input.itemHrid === '/items/coin') {
-                    totalPrice += input.count * (1 - artisanBonus);
-                    continue;
-                }
-                let inputPrice = marketData_js.getItemPrice(input.itemHrid, { mode }) || 0;
-                if (inputPrice === 0) {
-                    inputPrice = getProductionCost(input.itemHrid, mode);
-                }
-                totalPrice += inputPrice * input.count * (1 - artisanBonus);
-            }
-        }
-
-        // Add upgrade item cost if this is an upgrade recipe (not affected by artisan tea)
-        // Use min(market, craft) so refined items reflect the cheapest way to obtain the base item
-        if (action.upgradeItemHrid) {
-            const upgradeMarketPrice = marketData_js.getItemPrice(action.upgradeItemHrid, { mode }) || 0;
-            const upgradeCraftPrice = getProductionCost(action.upgradeItemHrid, mode);
-            let upgradePrice;
-            if (upgradeMarketPrice > 0 && upgradeCraftPrice > 0) {
-                upgradePrice = Math.min(upgradeMarketPrice, upgradeCraftPrice);
-            } else {
-                upgradePrice = upgradeMarketPrice || upgradeCraftPrice;
-            }
-            totalPrice += upgradePrice;
-        }
-
-        return totalPrice / outputCount;
-    }
-
-    /**
-     * Get cheapest protection item price
-     * Tests: item itself, mirror of protection, and specific protection items
-     * @private
-     */
-    function getCheapestProtectionPrice(itemHrid) {
-        const gameData = dataManager.getInitClientData();
-        const itemDetails = gameData.itemDetailMap[itemHrid];
-
-        // Build list of protection options: [item itself, mirror, ...specific items]
-        const protectionOptions = [itemHrid, '/items/mirror_of_protection'];
-
-        // Add specific protection items if they exist
-        if (itemDetails.protectionItemHrids && itemDetails.protectionItemHrids.length > 0) {
-            protectionOptions.push(...itemDetails.protectionItemHrids);
-        }
-
-        // Find cheapest option
-        let cheapestPrice = Infinity;
-        let cheapestItemHrid = null;
-        for (const protectionHrid of protectionOptions) {
-            const price = getRealisticBaseItemPrice(protectionHrid);
-            if (price > 0 && price < cheapestPrice) {
-                cheapestPrice = price;
-                cheapestItemHrid = protectionHrid;
-            }
-        }
-
-        return {
-            price: cheapestPrice === Infinity ? 0 : cheapestPrice,
-            itemHrid: cheapestItemHrid,
-        };
-    }
-
-    /**
-     * Minimum sell price that covers the total cost plus a target hourly rate for the
-     * time the enhancement takes, optionally grossed up for the marketplace seller tax.
-     * @param {number} totalCost - Total cost to reach the level, on one side (ask or bid)
-     * @param {number} totalTimeSeconds - Total enhancing time, in seconds
-     * @param {number} hourlyRate - Target coins/hour for time spent
-     * @param {boolean} includeTax - Whether to gross up for the marketplace seller tax
-     * @returns {number} Minimum sell price
-     */
-    function calculateMinimumSellPrice(totalCost, totalTimeSeconds, hourlyRate, includeTax) {
-        const breakeven = totalCost + hourlyRate * (totalTimeSeconds / 3600);
-        return includeTax ? breakeven / (1 - profitConstants_js.MARKET_TAX) : breakeven;
-    }
-
-    /**
-     * Build HTML for enhancement tooltip section
-     * @param {Object} enhancementData - Enhancement analysis from calculateEnhancementPath()
-     * @returns {string} HTML string
-     */
-    function buildEnhancementTooltipHTML(enhancementData) {
-        if (!enhancementData || !enhancementData.optimalStrategy) {
-            return '';
-        }
-
-        const { itemHrid, targetLevel, optimalStrategy, xpPerHour, totalExpectedXP, paramsNote, enhancementParams } =
-            enhancementData;
-
-        // Validate required fields
-        if (
-            typeof optimalStrategy.expectedAttempts !== 'number' ||
-            typeof optimalStrategy.totalTime !== 'number' ||
-            typeof optimalStrategy.materialCost !== 'number' ||
-            typeof optimalStrategy.totalCost !== 'number'
-        ) {
-            console.error('[Enhancement Tooltip] Missing required fields in optimal strategy:', optimalStrategy);
-            return '';
-        }
-
-        let html =
-            `<div ${sectionAttributes('path', itemHrid, targetLevel)} ` +
-            'style="border-top: 1px solid rgba(255,255,255,0.2); margin-top: 8px; padding-top: 8px;">';
-        html +=
-            '<div style="font-weight: bold; margin-bottom: 4px;">ENHANCEMENT PATH (+0 → +' +
-            targetLevel +
-            ')' +
-            buildSourceChipHTML(enhancementParams) +
-            '</div>';
-        html += '<div style="font-size: 0.9em; margin-left: 8px;">';
-
-        // Optimal strategy
-        if (optimalStrategy.protectFrom === 0) {
-            html += '<div>No protection needed for +' + targetLevel + '</div>';
-        } else {
-            html += '<div>Protect from: ' + optimalStrategy.label + '</div>';
-        }
-
-        // Show Philosopher's Mirror usage if applicable
-        if (optimalStrategy.usedMirror && optimalStrategy.mirrorStartLevel) {
-            html +=
-                '<div style="color: ' +
-                config.COLOR_MIRROR +
-                ';">Uses Philosopher\'s Mirror from +' +
-                optimalStrategy.mirrorStartLevel +
-                '</div>';
-        }
-
-        html += '<div>Expected Attempts: ' + formatters_js.formatLargeNumber(optimalStrategy.expectedAttempts.toFixed(1)) + '</div>';
-
-        // Costs table
-        html += '<div style="margin-top: 8px;">';
-        html += `<table style="width: 100%; border-collapse: collapse; font-size: 0.85em; color: ${config.COLOR_TOOLTIP_INFO};">`;
-
-        // Table header
-        html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
-        html += '<th style="padding: 2px 4px; text-align: left;">Material</th>';
-        html += '<th style="padding: 2px 4px; text-align: center;">Count</th>';
-        html += '<th style="padding: 2px 4px; text-align: right;">Ask</th>';
-        html += '<th style="padding: 2px 4px; text-align: right;">Bid</th>';
-        html += '</tr>';
-
-        // Hoisted so both breakdowns populate them and the minimum-sell section below can read them
-        let totalAsk = 0;
-        let totalBid = 0;
-
-        // Check if using mirror optimization
-        if (optimalStrategy.usedMirror && optimalStrategy.consumedItems && optimalStrategy.consumedItems.length > 0) {
-            // Mirror-optimized breakdown
-            // Calculate totals for mirror path
-
-            // Consumed items (enhanced items at specific levels)
-            const sortedConsumed = [...optimalStrategy.consumedItems]
-                .filter((item) => item.quantity > 0)
-                .sort((a, b) => b.level - a.level);
-
-            const gameData = dataManager.getInitClientData();
-            const consumedHrid = optimalStrategy.consumedItemHrid ?? itemHrid;
-            const baseItemDetails = gameData?.itemDetailMap[consumedHrid];
-            const baseItemName = baseItemDetails?.name || consumedHrid;
-
-            const consumedRows = sortedConsumed.map((item) => {
-                const prices = marketData_js.getItemPrices(consumedHrid, item.level);
-                const askPrice = prices?.ask > 0 ? prices.ask : item.costEach;
-                const bidPrice = prices?.bid > 0 ? prices.bid : item.costEach;
-                totalAsk += askPrice * item.quantity;
-                totalBid += bidPrice * item.quantity;
-                return { name: baseItemName + ' +' + item.level, count: item.quantity, askPrice, bidPrice };
-            });
-
-            // Philosopher's Mirror row
-            if (optimalStrategy.philosopherMirrorCost > 0 && optimalStrategy.mirrorCount > 0) {
-                const mirrorPrices = marketData_js.getItemPrices('/items/philosophers_mirror', 0);
-                const mirrorAsk = mirrorPrices?.ask > 0 ? mirrorPrices.ask : 0;
-                const mirrorBid = mirrorPrices?.bid > 0 ? mirrorPrices.bid : 0;
-                totalAsk += mirrorAsk * optimalStrategy.mirrorCount;
-                totalBid += mirrorBid * optimalStrategy.mirrorCount;
-                consumedRows.push({
-                    name: "Philosopher's Mirror",
-                    count: optimalStrategy.mirrorCount,
-                    askPrice: mirrorAsk,
-                    bidPrice: mirrorBid,
-                });
-            }
-
-            // Color total ask/bid by comparison to market price of enhanced item
-            const enhancedPrices = marketData_js.getItemPrices(itemHrid, targetLevel);
-            const totalAskColor =
-                enhancedPrices?.ask > 0
-                    ? totalAsk < enhancedPrices.ask
-                        ? config.COLOR_TOOLTIP_PROFIT
-                        : config.COLOR_TOOLTIP_LOSS
-                    : '';
-            const totalBidColor =
-                enhancedPrices?.bid > 0
-                    ? totalBid < enhancedPrices.bid
-                        ? config.COLOR_TOOLTIP_PROFIT
-                        : config.COLOR_TOOLTIP_LOSS
-                    : '';
-
-            // Total row
-            html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
-            html += '<td style="padding: 2px 4px; font-weight: bold;">Total</td>';
-            html += '<td style="padding: 2px 4px; text-align: center;"></td>';
-            html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalAskColor ? ' color: ' + totalAskColor + ';' : ''}">${formatters_js.formatKMB(totalAsk)}</td>`;
-            html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalBidColor ? ' color: ' + totalBidColor + ';' : ''}">${formatters_js.formatKMB(totalBid)}</td>`;
-            html += '</tr>';
-
-            // Item rows
-            for (const row of consumedRows) {
-                html += '<tr>';
-                html += `<td style="padding: 2px 4px;">${row.name}</td>`;
-                html += `<td style="padding: 2px 4px; text-align: center;">${formatters_js.formatKMB(row.count)}</td>`;
-                html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.askPrice)}</td>`;
-                html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.bidPrice)}</td>`;
-                html += '</tr>';
-            }
-        } else {
-            // Traditional (non-mirror) breakdown
-            // Calculate totals
-            let totalCount = 1; // Base item counts as 1
-            totalAsk = optimalStrategy.baseAskPrice || optimalStrategy.baseCost;
-            totalBid = optimalStrategy.baseBidPrice || optimalStrategy.baseCost;
-
-            const rows = [];
-
-            // Base item row
-            const baseItemLabel = optimalStrategy.baseAskIsCrafted ? 'Craft Item' : 'Buy Item';
-            rows.push({
-                name: toolashaConfig.isFeatureEnabled('enhanceSim_baseItemCraftingCost') ? baseItemLabel : 'Base Item',
-                count: 1,
-                askPrice: optimalStrategy.baseAskPrice || optimalStrategy.baseCost,
-                bidPrice: optimalStrategy.baseBidPrice || optimalStrategy.baseCost,
-            });
-
-            // Material rows
-            if (optimalStrategy.materialBreakdown && optimalStrategy.materialBreakdown.length > 0) {
-                for (const mat of optimalStrategy.materialBreakdown) {
-                    const count = mat.totalQuantity;
-                    const askPrice = mat.unitPrice;
-                    const bidPrice = mat.bidPrice || mat.unitPrice;
-                    totalCount += count;
-                    totalAsk += askPrice * count;
-                    totalBid += bidPrice * count;
-                    rows.push({ name: mat.name, count, askPrice, bidPrice, isCoin: mat.itemHrid === '/items/coin' });
-                }
-            }
-
-            // Protection row
-            if (optimalStrategy.protectionCost > 0 && optimalStrategy.protectionCount > 0) {
-                const count = optimalStrategy.protectionCount;
-                const askPrice = optimalStrategy.protectionAskPrice || 0;
-                const bidPrice = optimalStrategy.protectionBidPrice || askPrice;
-                totalCount += count;
-                totalAsk += askPrice * count;
-                totalBid += bidPrice * count;
-
-                let protName = 'Protection';
-                if (optimalStrategy.protectionItemHrid) {
-                    const gameData = dataManager.getInitClientData();
-                    const protDetails = gameData?.itemDetailMap[optimalStrategy.protectionItemHrid];
-                    if (protDetails?.name) {
-                        protName = protDetails.name;
-                    }
-                }
-                rows.push({ name: protName, count, askPrice, bidPrice });
-            }
-
-            // Color total ask/bid by comparison to market price of enhanced item
-            const enhancedPrices = marketData_js.getItemPrices(itemHrid, targetLevel);
-            const totalAskColor =
-                enhancedPrices?.ask > 0
-                    ? totalAsk < enhancedPrices.ask
-                        ? config.COLOR_TOOLTIP_PROFIT
-                        : config.COLOR_TOOLTIP_LOSS
-                    : '';
-            const totalBidColor =
-                enhancedPrices?.bid > 0
-                    ? totalBid < enhancedPrices.bid
-                        ? config.COLOR_TOOLTIP_PROFIT
-                        : config.COLOR_TOOLTIP_LOSS
-                    : '';
-
-            // Total row
-            html += `<tr style="border-bottom: 1px solid ${config.COLOR_BORDER};">`;
-            html += '<td style="padding: 2px 4px; font-weight: bold;">Total</td>';
-            html += `<td style="padding: 2px 4px; text-align: center;">${formatters_js.formatKMB(totalCount)}</td>`;
-            html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalAskColor ? ' color: ' + totalAskColor + ';' : ''}">${formatters_js.formatKMB(totalAsk)}</td>`;
-            html += `<td style="padding: 2px 4px; text-align: right; font-weight: bold;${totalBidColor ? ' color: ' + totalBidColor + ';' : ''}">${formatters_js.formatKMB(totalBid)}</td>`;
-            html += '</tr>';
-
-            // Item rows
-            for (const row of rows) {
-                html += '<tr>';
-                html += `<td style="padding: 2px 4px;">${row.name}</td>`;
-                if (row.isCoin) {
-                    html += '<td style="padding: 2px 4px; text-align: center;">—</td>';
-                    html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.count)}</td>`;
-                    html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.count)}</td>`;
-                } else {
-                    html += `<td style="padding: 2px 4px; text-align: center;">${formatters_js.formatKMB(row.count)}</td>`;
-                    html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.askPrice)}</td>`;
-                    html += `<td style="padding: 2px 4px; text-align: right;">${formatters_js.formatKMB(row.bidPrice)}</td>`;
-                }
-                html += '</tr>';
-            }
-        }
-
-        html += '</table>';
-        html += '</div>';
-
-        // Time estimate
-        const totalSeconds = optimalStrategy.totalTime;
-
-        if (totalSeconds < 60) {
-            // Less than 1 minute: show seconds
-            html += '<div>Time: ~' + Math.round(totalSeconds) + ' seconds</div>';
-        } else if (totalSeconds < 3600) {
-            // Less than 1 hour: show minutes
-            const minutes = Math.round(totalSeconds / 60);
-            html += '<div>Time: ~' + minutes + ' minutes</div>';
-        } else if (totalSeconds < 86400) {
-            // Less than 1 day: show hours
-            const hours = (totalSeconds / 3600).toFixed(1);
-            html += '<div>Time: ~' + hours + ' hours</div>';
-        } else {
-            // 1 day or more: show days
-            const days = (totalSeconds / 86400).toFixed(1);
-            html += '<div>Time: ~' + days + ' days</div>';
-        }
-
-        if (xpPerHour !== null && xpPerHour > 0) {
-            html += '<div style="margin-top: 4px;">XP/hr: ' + formatters_js.formatLargeNumber(xpPerHour) + '</div>';
-        }
-        if (totalExpectedXP !== null && totalExpectedXP > 0) {
-            html += '<div>Total XP: ~' + formatters_js.formatLargeNumber(totalExpectedXP) + '</div>';
-        }
-
-        // Target hourly rate / minimum sell price — only when a rate is configured.
-        // The rate is a text setting, so it is read with getSettingValue(); getSetting() only
-        // ever answers with a boolean and would silently parse to 0 here.
-        const hourlyRate = numberParser_js.parseItemCount(config.getSettingValue('itemTooltip_enhancingHourlyRate', ''), 0);
-        if (hourlyRate > 0) {
-            const includeTax = config.getSetting('itemTooltip_enhancingHourlyRateTax');
-            const minSellAsk = calculateMinimumSellPrice(totalAsk, optimalStrategy.totalTime, hourlyRate, includeTax);
-            const minSellBid = calculateMinimumSellPrice(totalBid, optimalStrategy.totalTime, hourlyRate, includeTax);
-
-            const enhancedPrices = marketData_js.getItemPrices(itemHrid, targetLevel);
-            const priceColor = (price, minimum) =>
-                price > 0 ? (price >= minimum ? config.COLOR_TOOLTIP_PROFIT : config.COLOR_TOOLTIP_LOSS) : '';
-            const askColor = priceColor(enhancedPrices?.ask, minSellAsk);
-            const bidColor = priceColor(enhancedPrices?.bid, minSellBid);
-
-            html += '<div style="margin-top: 4px;">Your rate: ' + formatters_js.formatKMB(hourlyRate) + '/hr</div>';
-            html += '<div>Minimum sell: ';
-            html += `<span${askColor ? ` style="color: ${askColor};"` : ''}>${formatters_js.formatKMB(minSellAsk)}</span>(ask)/`;
-            html += `<span${bidColor ? ` style="color: ${bidColor};"` : ''}>${formatters_js.formatKMB(minSellBid)}</span>(bid)`;
-            html += '</div>';
-        }
-
-        // A quiet note, not a warning: these numbers are only as true as the stats behind them,
-        // and a hand-entered stat is the one place they can quietly stop describing this character
-        if (paramsNote) {
-            html += `<div style="margin-top: 4px; font-size: 0.8em; opacity: 0.6;">${paramsNote}</div>`;
-        }
-
-        html += '</div>'; // Close margin-left div
-        html += '</div>'; // Close main container
-
-        return html;
-    }
-
-    /**
-     * Enhancement Tracker
-     * Main tracker class for monitoring enhancement attempts, costs, and statistics
-     */
-
-
-    /**
-     * EnhancementTracker class manages enhancement tracking sessions
-     */
-    class EnhancementTracker {
-        constructor() {
-            this.sessions = {}; // All sessions (keyed by session ID)
-            this.currentSessionId = null; // Currently active session ID
-            this.isInitialized = false;
-            this.pendingSessionStart = false; // Start new session on next action_completed regardless of currentCount
-        }
-
-        /**
-         * Initialize enhancement tracker
-         * @returns {Promise<void>}
-         */
-        async initialize() {
-            if (this.isInitialized) {
-                return;
-            }
-
-            if (!config.getSetting('enhancementTracker')) {
-                return;
-            }
-
-            try {
-                // Load sessions from storage
-                this.sessions = await loadSessions();
-                this.currentSessionId = await loadCurrentSessionId();
-
-                // Validate current session still exists
-                if (this.currentSessionId && !this.sessions[this.currentSessionId]) {
-                    this.currentSessionId = null;
-                    await saveCurrentSessionId(null);
-                }
-
-                // Validate all loaded sessions
-                for (const [sessionId, session] of Object.entries(this.sessions)) {
-                    if (!validateSession(session)) {
-                        delete this.sessions[sessionId];
-                    }
-                }
-
-                this.isInitialized = true;
-            } catch (error) {
-                console.error('[EnhancementTracker] Failed to initialize:', error);
-            }
-        }
-
-        /**
-         * Start a new enhancement session
-         * @param {string} itemHrid - Item HRID being enhanced
-         * @param {number} startLevel - Starting enhancement level
-         * @param {number} targetLevel - Target enhancement level
-         * @param {number} protectFrom - Level to start using protection (0 = never)
-         * @returns {Promise<string>} New session ID
-         */
-        async startSession(itemHrid, startLevel, targetLevel, protectFrom = 0) {
-            const gameData = dataManager.getInitClientData();
-            if (!gameData) {
-                throw new Error('Game data not available');
-            }
-
-            // Get item name
-            const itemDetails = gameData.itemDetailMap[itemHrid];
-            if (!itemDetails) {
-                throw new Error(`Item not found: ${itemHrid}`);
-            }
-
-            const itemName = itemDetails.name;
-
-            // Create new session
-            const session = createSession(itemHrid, itemName, startLevel, targetLevel, protectFrom);
-
-            // Calculate predictions
-            const predictions = calculateEnhancementPredictions(itemHrid, startLevel, targetLevel, protectFrom);
-            session.predictions = predictions;
-
-            // Store session
-            this.sessions[session.id] = session;
-            this.currentSessionId = session.id;
-
-            // Save to storage
-            await saveSessions(this.sessions);
-            await saveCurrentSessionId(session.id);
-
-            return session.id;
-        }
-
-        /**
-         * Find a completed session that can be extended
-         * @param {string} itemHrid - Item HRID
-         * @param {number} currentLevel - Current enhancement level
-         * @returns {string|null} Session ID if found, null otherwise
-         */
-        findExtendableSession(itemHrid, currentLevel) {
-            for (const [sessionId, session] of Object.entries(this.sessions)) {
-                if (canExtendSession(session, itemHrid, currentLevel)) {
-                    return sessionId;
-                }
-            }
-
-            return null;
-        }
-
-        /**
-         * Extend a completed session to a new target level
-         * @param {string} sessionId - Session ID to extend
-         * @param {number} newTargetLevel - New target level
-         * @returns {Promise<boolean>} True if extended successfully
-         */
-        async extendSessionTarget(sessionId, newTargetLevel) {
-            if (!this.sessions[sessionId]) {
-                return false;
-            }
-
-            const session = this.sessions[sessionId];
-
-            // Can only extend completed sessions
-            if (session.state !== SessionState.COMPLETED) {
-                return false;
-            }
-
-            extendSession(session, newTargetLevel);
-            this.currentSessionId = sessionId;
-
-            // Recalculate predictions for the new target level
-            const predictions = calculateEnhancementPredictions(
-                session.itemHrid,
-                session.currentLevel,
-                newTargetLevel,
-                session.protectFrom
-            );
-            if (predictions) {
-                session.predictions = predictions;
-            }
-
-            await saveSessions(this.sessions);
-            await saveCurrentSessionId(sessionId);
-
-            return true;
-        }
-
-        /**
-         * Get current active session
-         * @returns {Object|null} Current session or null
-         */
-        getCurrentSession() {
-            if (!this.currentSessionId) return null;
-            return this.sessions[this.currentSessionId] || null;
-        }
-
-        /**
-         * Finalize current session (mark as completed)
-         * @returns {Promise<void>}
-         */
-        async finalizeCurrentSession() {
-            const session = this.getCurrentSession();
-            if (!session) {
-                return;
-            }
-
-            finalizeSession(session);
-            await saveSessions(this.sessions);
-
-            // Clear current session
-            this.currentSessionId = null;
-            await saveCurrentSessionId(null);
-        }
-
-        /**
-         * Record a successful enhancement attempt
-         * @param {number} previousLevel - Level before success
-         * @param {number} newLevel - New level after success
-         * @returns {Promise<void>}
-         */
-        async recordSuccess(previousLevel, newLevel) {
-            const session = this.getCurrentSession();
-            if (!session) {
-                return;
-            }
-
-            recordSuccess(session, previousLevel, newLevel);
-            await saveSessions(this.sessions);
-
-            // Check if target reached
-            if (session.state === SessionState.COMPLETED) {
-                this.currentSessionId = null;
-                await saveCurrentSessionId(null);
-
-                // The run just became one finished draw from the distribution its
-                // prediction quoted; the recorder declines anything that is not
-                // (no distribution stored, target not actually reached). Errors
-                // stay its problem — a calibration ledger must never break a run.
-                try {
-                    await enhancementCalibration.recordCompletion(session);
-                } catch (error) {
-                    console.error('[EnhancementTracker] Recording the calibration observation failed:', error);
-                }
-            }
-        }
-
-        /**
-         * Record a failed enhancement attempt
-         * @param {number} previousLevel - Level that failed
-         * @param {number} newLevel - Actual level after failure
-         * @returns {Promise<void>}
-         */
-        async recordFailure(previousLevel, newLevel) {
-            const session = this.getCurrentSession();
-            if (!session) {
-                return;
-            }
-
-            recordFailure(session, previousLevel, newLevel);
-            await saveSessions(this.sessions);
-        }
-
-        /**
-         * Track material costs for current session
-         * @param {string} itemHrid - Material item HRID
-         * @param {number} count - Quantity used
-         * @returns {Promise<void>}
-         */
-        async trackMaterialCost(itemHrid, count) {
-            const session = this.getCurrentSession();
-            if (!session) return;
-
-            // Same pricing rules the tooltip and XPH calculator use, so a tracked run and its
-            // prediction cost the same materials the same way
-            const unitCost = getEnhancementMaterialPrice(itemHrid, 'ask');
-
-            addMaterialCost(session, itemHrid, count, unitCost);
-            await saveSessions(this.sessions);
-        }
-
-        /**
-         * Track coin cost for current session
-         * @param {number} amount - Coin amount spent
-         * @returns {Promise<void>}
-         */
-        async trackCoinCost(amount) {
-            const session = this.getCurrentSession();
-            if (!session) return;
-
-            addCoinCost(session, amount);
-            await saveSessions(this.sessions);
-        }
-
-        /**
-         * Track protection item cost for current session
-         * @param {string} protectionItemHrid - Protection item HRID
-         * @param {number} cost - Protection item cost
-         * @returns {Promise<void>}
-         */
-        async trackProtectionCost(protectionItemHrid, cost) {
-            const session = this.getCurrentSession();
-            if (!session) return;
-
-            addProtectionCost(session, protectionItemHrid, cost);
-            await saveSessions(this.sessions);
-        }
-
-        /**
-         * Get all sessions
-         * @returns {Object} All sessions
-         */
-        getAllSessions() {
-            return this.sessions;
-        }
-
-        /**
-         * Get session by ID
-         * @param {string} sessionId - Session ID
-         * @returns {Object|null} Session or null
-         */
-        getSession(sessionId) {
-            return this.sessions[sessionId] || null;
-        }
-
-        /**
-         * Save sessions to storage (can be called directly)
-         * @returns {Promise<void>}
-         */
-        async saveSessions() {
-            await saveSessions(this.sessions);
-        }
-
-        /**
-         * Set flag so the next action_completed starts a new session regardless of currentCount.
-         * Used when the tracker is cleared mid-session or when a new action queue is detected.
-         */
-        setPendingStart() {
-            this.pendingSessionStart = true;
-        }
-
-        /**
-         * Clear all sessions and flag that the next attempt should start a new session.
-         * @returns {Promise<void>}
-         */
-        async clearSessions() {
-            this.sessions = {};
-            this.currentSessionId = null;
-            this.pendingSessionStart = true;
-            await saveSessions(this.sessions);
-            await saveCurrentSessionId(null);
-        }
-
-        /**
-         * Disable and cleanup
-         */
-        disable() {
-            // Clear in-memory session data (will be reloaded from storage on next init)
-            this.sessions = {};
-            this.currentSessionId = null;
-            this.isInitialized = false;
-        }
-    }
-
-    const enhancementTracker = new EnhancementTracker();
-
-    /**
-     * Enhancement Tracker Floating UI
-     * Displays enhancement session statistics in a draggable panel
-     * Based on Ultimate Enhancement Tracker v3.7.9
-     */
-
-
-    // UI Style Constants (matching Ultimate Enhancement Tracker)
-    const STYLE = {
-        colors: {
-            primary: '#00ffe7',
-            border: 'rgba(0, 255, 234, 0.4)',
-            textPrimary: '#e0f7ff',
-            textSecondary: '#9b9bff',
-            accent: '#ff00d4',
-            danger: '#ff0055',
-            success: '#00ff99',
-            headerBg: 'rgba(15, 5, 35, 0.7)',
-            gold: '#FFD700',
-        },
-        borderRadius: {
-            medium: '8px'},
-        transitions: {
-            fast: 'all 0.15s ease'},
-    };
-
-    // Table styling
-    const compactTableStyle = `
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
-    margin: 0;
-`;
-
-    const compactHeaderStyle = `
-    padding: 4px 6px;
-    background: ${STYLE.colors.headerBg};
-    border: 1px solid ${STYLE.colors.border};
-    color: ${STYLE.colors.textPrimary};
-    font-weight: bold;
-    text-align: center;
-`;
-
-    const compactCellStyle = `
-    padding: 3px 6px;
-    border: 1px solid rgba(0, 255, 234, 0.2);
-    color: ${STYLE.colors.textPrimary};
-`;
-
-    /**
-     * Enhancement UI Manager
-     */
-    class EnhancementUI {
-        constructor() {
-            this.floatingUI = null;
-            this.currentViewingIndex = -1; // Index in sessions array (-1 = default to latest)
-            this.updateDebounce = null;
-            this.isDragging = false;
-            this.unregisterScreenObserver = null;
-            this.panelRemovalObserver = null;
-            this.settingChangeHandlers = [];
-            this.isOnEnhancingScreen = false;
-            this.isCollapsed = false; // Track collapsed state
-            this.updateInterval = null;
-            this.timerRegistry = timerRegistry_js.createTimerRegistry();
-            this.dragHandle = null;
-            this.dragMouseDownHandler = null;
-            this.dragMoveHandler = null;
-            this.dragUpHandler = null;
-        }
-
-        /**
-         * Initialize the UI
-         */
-        initialize() {
-            this.createFloatingUI();
-            this.updateUI();
-
-            // Set up screen observer for visibility control
-            this.setupScreenObserver();
-
-            // Update UI every second during active sessions
-            this.updateInterval = setInterval(() => {
-                if (document.hidden) return;
-                const session = this.getCurrentSession();
-                if (session && session.state === SessionState.TRACKING) {
-                    this.updateUI();
-                }
-            }, 1000);
-            this.timerRegistry.registerInterval(this.updateInterval);
-        }
-
-        /**
-         * Set up screen observer to detect Enhancing screen using centralized observer
-         */
-        setupScreenObserver() {
-            // Check if main feature is enabled
-            const trackerEnabled = config.getSetting('enhancementTracker');
-
-            if (!trackerEnabled) {
-                // Main feature disabled, hide tracker
-                this.hide();
-            } else {
-                // Check if setting is enabled (default to false if undefined)
-                const showOnlyOnEnhancingScreen = config.getSetting('enhancementTracker_showOnlyOnEnhancingScreen');
-
-                if (showOnlyOnEnhancingScreen !== true) {
-                    // Setting is disabled or undefined, always show tracker
-                    this.isOnEnhancingScreen = true;
-                    this.show();
-                } else {
-                    // Setting enabled, check current screen
-                    this.checkEnhancingScreen();
-                    this.updateVisibility();
-                }
-            }
-
-            // Register with centralized DOM observer for enhancing panel detection
-            this.unregisterScreenObserver = domObserver.onClass(
-                'EnhancementUI-ScreenDetection',
-                'EnhancingPanel_enhancingPanel',
-                (panel) => {
-                    this.isOnEnhancingScreen = true;
-                    this.updateVisibility();
-                    // Setup removal observer when panel appears
-                    this.setupPanelRemovalObserver(panel);
-                },
-                { debounce: false }
-            );
-
-            // Setup setting change listeners (event-driven, no polling)
-            this.setupSettingChangeListeners();
-
-            // Check if panel already exists and setup removal observer
-            const existingPanel = document.querySelector('[class*="EnhancingPanel_enhancingPanel"]');
-            if (existingPanel) {
-                this.isOnEnhancingScreen = true;
-                this.updateVisibility();
-                this.setupPanelRemovalObserver(existingPanel);
-            }
-        }
-
-        /**
-         * Setup listeners for setting changes (replaces polling)
-         */
-        setupSettingChangeListeners() {
-            // Listen for main tracker toggle
-            const onTrackerChange = (enabled) => {
-                if (!enabled) {
-                    this.hide();
-                } else {
-                    this.updateVisibility();
-                }
-            };
-            config.onSettingChange('enhancementTracker', onTrackerChange);
-            this.settingChangeHandlers.push({ key: 'enhancementTracker', handler: onTrackerChange });
-
-            // Listen for "show only on enhancing screen" toggle
-            const onScreenSettingChange = (enabled) => {
-                if (enabled !== true) {
-                    // Setting disabled - always show (if main tracker enabled)
-                    this.isOnEnhancingScreen = true;
-                } else {
-                    // Setting enabled - check actual screen
-                    this.checkEnhancingScreen();
-                }
-                this.updateVisibility();
-            };
-            config.onSettingChange('enhancementTracker_showOnlyOnEnhancingScreen', onScreenSettingChange);
-            this.settingChangeHandlers.push({
-                key: 'enhancementTracker_showOnlyOnEnhancingScreen',
-                handler: onScreenSettingChange,
-            });
-        }
-
-        /**
-         * Setup observer to detect when enhancing panel is removed from DOM
-         * @param {HTMLElement} panel - The enhancing panel element
-         */
-        setupPanelRemovalObserver(panel) {
-            // Disconnect existing observer if any
-            if (this.panelRemovalObserver) {
-                this.panelRemovalObserver.disconnect();
-            }
-
-            // Find MainPanel_mainPanel (grandparent) - the container itself gets replaced on navigation
-            const subPanelContainer = panel.parentElement;
-            const mainPanel = subPanelContainer?.parentElement;
-
-            if (!mainPanel || !mainPanel.className?.includes?.('MainPanel_mainPanel')) {
-                // Fallback: find by class
-                const fallbackMainPanel = document.querySelector('[class*="MainPanel_mainPanel"]');
-                if (!fallbackMainPanel) {
-                    return;
-                }
-                this.observeMainPanelForNavigation(fallbackMainPanel);
-            } else {
-                this.observeMainPanelForNavigation(mainPanel);
-            }
-        }
-
-        /**
-         * Observe MainPanel_mainPanel for navigation (subPanelContainer removal)
-         * @param {HTMLElement} mainPanel - The main panel element to observe
-         */
-        observeMainPanelForNavigation(mainPanel) {
-            this.panelRemovalObserver = new MutationObserver((mutations) => {
-                for (const mutation of mutations) {
-                    if (mutation.type === 'childList' && mutation.removedNodes.length > 0) {
-                        for (const node of mutation.removedNodes) {
-                            // Check if subPanelContainer was removed (contains the enhancing panel)
-                            if (
-                                node.nodeType === Node.ELEMENT_NODE &&
-                                node.className?.includes?.('MainPanel_subPanelContainer')
-                            ) {
-                                // Check if EnhancingPanel was inside the removed container
-                                const hadEnhancingPanel = node.querySelector('[class*="EnhancingPanel_enhancingPanel"]');
-                                if (hadEnhancingPanel) {
-                                    this.isOnEnhancingScreen = false;
-                                    this.updateVisibility();
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-
-            this.panelRemovalObserver.observe(mainPanel, {
-                childList: true,
-            });
-        }
-
-        /**
-         * Check if currently on Enhancing screen
-         */
-        checkEnhancingScreen() {
-            const enhancingPanel = document.querySelector('[class*="EnhancingPanel_enhancingPanel"]');
-            const wasOnEnhancingScreen = this.isOnEnhancingScreen;
-            this.isOnEnhancingScreen = !!enhancingPanel;
-
-            if (wasOnEnhancingScreen !== this.isOnEnhancingScreen) {
-                this.updateVisibility();
-            }
-        }
-
-        /**
-         * Update visibility based on screen state and settings
-         */
-        updateVisibility() {
-            const trackerEnabled = config.getSetting('enhancementTracker');
-            const showOnlyOnEnhancingScreen = config.getSetting('enhancementTracker_showOnlyOnEnhancingScreen');
-
-            // If main tracker is disabled, always hide
-            if (!trackerEnabled) {
-                this.hide();
-            } else if (showOnlyOnEnhancingScreen !== true) {
-                this.show();
-            } else if (this.isOnEnhancingScreen) {
-                this.show();
-            } else {
-                this.hide();
-            }
-        }
-
-        /**
-         * Get currently viewed session
-         */
-        getCurrentSession() {
-            const sessions = Object.values(enhancementTracker.getAllSessions());
-            if (sessions.length === 0) return null;
-
-            // Default to latest session on first load
-            if (this.currentViewingIndex === -1) {
-                this.currentViewingIndex = sessions.length - 1;
-            }
-
-            // Ensure index is valid
-            if (this.currentViewingIndex >= sessions.length) {
-                this.currentViewingIndex = sessions.length - 1;
-            }
-            if (this.currentViewingIndex < 0) {
-                this.currentViewingIndex = 0;
-            }
-
-            return sessions[this.currentViewingIndex];
-        }
-
-        /**
-         * Switch viewing to a specific session by ID
-         * @param {string} sessionId - Session ID to view
-         */
-        switchToSession(sessionId) {
-            const sessions = Object.values(enhancementTracker.getAllSessions());
-            const index = sessions.findIndex((session) => session.id === sessionId);
-
-            if (index !== -1) {
-                this.currentViewingIndex = index;
-            }
-        }
-
-        /**
-         * Create the floating UI panel
-         */
-        createFloatingUI() {
-            if (this.floatingUI && document.body.contains(this.floatingUI)) {
-                return this.floatingUI;
-            }
-
-            // Main container
-            this.floatingUI = document.createElement('div');
-            this.floatingUI.id = 'enhancementFloatingUI';
-            Object.assign(this.floatingUI.style, {
-                position: 'fixed',
-                top: '50px',
-                right: '50px',
-                zIndex: String(config.Z_FLOATING_PANEL),
-                fontSize: '14px',
-                padding: '0',
-                borderRadius: STYLE.borderRadius.medium,
-                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
-                overflow: 'hidden',
-                // Clamped so the first open on a phone is not wider than the screen
-                width: 'min(350px, 92vw)',
-                minHeight: 'auto',
-                background: 'rgba(25, 0, 35, 0.92)',
-                backdropFilter: 'blur(12px)',
-                border: `1px solid ${STYLE.colors.primary}`,
-                color: STYLE.colors.textPrimary,
-                display: 'flex',
-                flexDirection: 'column',
-                transition: 'width 0.2s ease',
-            });
-
-            // Create header
-            const header = this.createHeader();
-            this.floatingUI.appendChild(header);
-
-            // Create content area
-            const content = document.createElement('div');
-            content.id = 'enhancementPanelContent';
-            content.style.padding = '15px';
-            content.style.flexGrow = '1';
-            content.style.overflow = 'auto';
-            content.style.transition = 'max-height 0.2s ease, opacity 0.2s ease';
-            content.style.maxHeight = '600px';
-            content.style.opacity = '1';
-            this.floatingUI.appendChild(content);
-
-            // Make draggable
-            this.makeDraggable(header);
-
-            // Add to page
-            document.body.appendChild(this.floatingUI);
-            panelZIndex_js.registerFloatingPanel(this.floatingUI);
-
-            return this.floatingUI;
-        }
-
-        /**
-         * Create header with title and navigation
-         */
-        createHeader() {
-            const header = document.createElement('div');
-            header.id = 'enhancementPanelHeader';
-            Object.assign(header.style, {
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                cursor: 'move',
-                padding: '10px 15px',
-                background: STYLE.colors.headerBg,
-                borderBottom: `1px solid ${STYLE.colors.border}`,
-                userSelect: 'none',
-                flexShrink: '0',
-            });
-
-            // Title with session counter
-            const titleContainer = document.createElement('div');
-            titleContainer.style.display = 'flex';
-            titleContainer.style.alignItems = 'center';
-            titleContainer.style.gap = '10px';
-            titleContainer.style.overflow = 'hidden';
-            titleContainer.style.minWidth = '0';
-            titleContainer.style.textOverflow = 'ellipsis';
-
-            const title = document.createElement('span');
-            title.textContent = 'Enhancement Tracker';
-            title.style.fontWeight = 'bold';
-
-            const sessionCounter = document.createElement('span');
-            sessionCounter.id = 'enhancementSessionCounter';
-            sessionCounter.style.fontSize = '12px';
-            sessionCounter.style.opacity = '0.7';
-            sessionCounter.style.marginLeft = '5px';
-
-            titleContainer.appendChild(title);
-            titleContainer.appendChild(sessionCounter);
-
-            // Navigation container
-            const navContainer = document.createElement('div');
-            Object.assign(navContainer.style, {
-                display: 'flex',
-                gap: '5px',
-                alignItems: 'center',
-                marginLeft: 'auto',
-                flexShrink: '0',
-            });
-
-            // Previous session button
-            const prevButton = this.createNavButton('◀', () => this.navigateSession(-1));
-
-            // Next session button
-            const nextButton = this.createNavButton('▶', () => this.navigateSession(1));
-
-            // Collapse button
-            const collapseButton = this.createCollapseButton();
-
-            // Clear sessions button
-            const clearButton = this.createClearButton();
-
-            navContainer.appendChild(prevButton);
-            navContainer.appendChild(nextButton);
-            navContainer.appendChild(collapseButton);
-            navContainer.appendChild(clearButton);
-
-            header.appendChild(titleContainer);
-            header.appendChild(navContainer);
-
-            return header;
-        }
-
-        /**
-         * Create navigation button
-         */
-        createNavButton(text, onClick) {
-            const button = document.createElement('button');
-            button.textContent = text;
-            Object.assign(button.style, {
-                background: 'none',
-                border: 'none',
-                color: STYLE.colors.textPrimary,
-                cursor: 'pointer',
-                fontSize: '14px',
-                padding: '2px 8px',
-                borderRadius: '3px',
-                transition: STYLE.transitions.fast,
-            });
-
-            button.addEventListener('mouseover', () => {
-                button.style.color = STYLE.colors.accent;
-                button.style.background = 'rgba(255, 0, 212, 0.1)';
-            });
-            button.addEventListener('mouseout', () => {
-                button.style.color = STYLE.colors.textPrimary;
-                button.style.background = 'none';
-            });
-            button.addEventListener('click', onClick);
-
-            return button;
-        }
-
-        /**
-         * Create clear sessions button
-         */
-        createClearButton() {
-            const button = document.createElement('button');
-            button.innerHTML = '🗑️';
-            button.title = 'Clear all sessions';
-            Object.assign(button.style, {
-                background: 'none',
-                border: 'none',
-                color: STYLE.colors.textPrimary,
-                cursor: 'pointer',
-                fontSize: '14px',
-                padding: '2px 8px',
-                borderRadius: '3px',
-                transition: STYLE.transitions.fast,
-                marginLeft: '5px',
-            });
-
-            button.addEventListener('mouseover', () => {
-                button.style.color = STYLE.colors.danger;
-                button.style.background = 'rgba(255, 0, 0, 0.1)';
-            });
-            button.addEventListener('mouseout', () => {
-                button.style.color = STYLE.colors.textPrimary;
-                button.style.background = 'none';
-            });
-            button.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (confirm('Clear all enhancement sessions?')) {
-                    this.clearAllSessions();
-                }
-            });
-
-            return button;
-        }
-
-        /**
-         * Create collapse button
-         */
-        createCollapseButton() {
-            const button = document.createElement('button');
-            button.id = 'enhancementCollapseButton';
-            button.innerHTML = '▼';
-            button.title = 'Collapse panel';
-            Object.assign(button.style, {
-                background: 'none',
-                border: 'none',
-                color: STYLE.colors.textPrimary,
-                cursor: 'pointer',
-                fontSize: '14px',
-                padding: '2px 8px',
-                borderRadius: '3px',
-                transition: STYLE.transitions.fast,
-            });
-
-            button.addEventListener('mouseover', () => {
-                button.style.color = STYLE.colors.accent;
-                button.style.background = 'rgba(255, 0, 212, 0.1)';
-            });
-            button.addEventListener('mouseout', () => {
-                button.style.color = STYLE.colors.textPrimary;
-                button.style.background = 'none';
-            });
-            button.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.toggleCollapse();
-            });
-
-            return button;
-        }
-
-        /**
-         * Make element draggable
-         */
-        makeDraggable(header) {
-            let offsetX = 0;
-            let offsetY = 0;
-
-            // Pointer events so a finger works too; mousedown never fires on a
-            // touchscreen, and touch-action:none stops the browser claiming the
-            // gesture for scrolling
-            header.style.touchAction = 'none';
-
-            const onPointerMove = (event) => {
-                if (this.isDragging) {
-                    const newLeft = event.clientX - offsetX;
-                    const newTop = event.clientY - offsetY;
-
-                    // Use absolute positioning during drag
-                    this.floatingUI.style.left = `${newLeft}px`;
-                    this.floatingUI.style.right = 'auto';
-                    this.floatingUI.style.top = `${newTop}px`;
-                }
-            };
-
-            const onPointerUp = () => {
-                this.isDragging = false;
-                document.removeEventListener('pointermove', onPointerMove);
-                document.removeEventListener('pointerup', onPointerUp);
-                document.removeEventListener('pointercancel', onPointerUp);
-                this.dragMoveHandler = null;
-                this.dragUpHandler = null;
-            };
-
-            const onPointerDown = (event) => {
-                panelZIndex_js.bringPanelToFront(this.floatingUI);
-                this.isDragging = true;
-
-                // Calculate offset from panel's current screen position
-                const rect = this.floatingUI.getBoundingClientRect();
-                offsetX = event.clientX - rect.left;
-                offsetY = event.clientY - rect.top;
-
-                this.dragMoveHandler = onPointerMove;
-                this.dragUpHandler = onPointerUp;
-
-                document.addEventListener('pointermove', onPointerMove);
-                document.addEventListener('pointerup', onPointerUp);
-                document.addEventListener('pointercancel', onPointerUp);
-            };
-
-            if (this.dragHandle && this.dragMouseDownHandler) {
-                this.dragHandle.removeEventListener('pointerdown', this.dragMouseDownHandler);
-            }
-
-            this.dragHandle = header;
-            this.dragMouseDownHandler = onPointerDown;
-
-            header.addEventListener('pointerdown', onPointerDown);
-        }
-
-        /**
-         * Toggle panel collapse state
-         */
-        toggleCollapse() {
-            this.isCollapsed = !this.isCollapsed;
-            const content = document.getElementById('enhancementPanelContent');
-            const button = document.getElementById('enhancementCollapseButton');
-
-            if (this.isCollapsed) {
-                // Collapsed state
-                content.style.maxHeight = '0px';
-                content.style.opacity = '0';
-                content.style.padding = '0 15px';
-                button.innerHTML = '▶';
-                button.title = 'Expand panel';
-                this.floatingUI.style.width = '250px';
-
-                // Show compact summary after content fades
-                const summaryTimeout = setTimeout(() => {
-                    this.showCollapsedSummary();
-                }, 200);
-                this.timerRegistry.registerTimeout(summaryTimeout);
-            } else {
-                // Expanded state
-                this.hideCollapsedSummary();
-                content.style.maxHeight = '600px';
-                content.style.opacity = '1';
-                content.style.padding = '15px';
-                button.innerHTML = '▼';
-                button.title = 'Collapse panel';
-                this.floatingUI.style.width = '350px';
-            }
-        }
-
-        /**
-         * Show compact summary in collapsed state
-         */
-        showCollapsedSummary() {
-            if (!this.isCollapsed) return;
-
-            const session = this.getCurrentSession();
-            const sessions = Object.values(enhancementTracker.getAllSessions());
-
-            // Remove any existing summary
-            this.hideCollapsedSummary();
-
-            if (sessions.length === 0 || !session) return;
-
-            const gameData = dataManager.getInitClientData();
-            const itemDetails = gameData?.itemDetailMap?.[session.itemHrid];
-            const itemName = itemDetails?.name || 'Unknown Item';
-
-            const totalAttempts = session.totalAttempts;
-            const totalSuccess = session.totalSuccesses;
-            const successRate = totalAttempts > 0 ? Math.floor((totalSuccess / totalAttempts) * 100) : 0;
-            const statusIcon = session.state === SessionState.COMPLETED ? '✅' : '🟢';
-
-            const summary = document.createElement('div');
-            summary.id = 'enhancementCollapsedSummary';
-            Object.assign(summary.style, {
-                padding: '10px 15px',
-                fontSize: '12px',
-                borderTop: `1px solid ${STYLE.colors.border}`,
-                color: STYLE.colors.textPrimary,
-            });
-
-            summary.innerHTML = `
-            <div style="font-weight: bold; margin-bottom: 4px;">${itemName} → +${session.targetLevel}</div>
-            <div style="opacity: 0.8;">${statusIcon} ${totalAttempts} attempts | ${successRate}% rate</div>
-        `;
-
-            this.floatingUI.appendChild(summary);
-        }
-
-        /**
-         * Hide collapsed summary
-         */
-        hideCollapsedSummary() {
-            const summary = document.getElementById('enhancementCollapsedSummary');
-            if (summary) {
-                summary.remove();
-            }
-        }
-
-        /**
-         * Navigate between sessions
-         */
-        navigateSession(direction) {
-            const sessions = Object.values(enhancementTracker.getAllSessions());
-            if (sessions.length === 0) return;
-
-            this.currentViewingIndex += direction;
-
-            // Wrap around
-            if (this.currentViewingIndex < 0) {
-                this.currentViewingIndex = sessions.length - 1;
-            } else if (this.currentViewingIndex >= sessions.length) {
-                this.currentViewingIndex = 0;
-            }
-
-            this.updateUI();
-
-            // Update collapsed summary if in collapsed state
-            if (this.isCollapsed) {
-                this.showCollapsedSummary();
-            }
-        }
-
-        /**
-         * Clear all sessions
-         */
-        async clearAllSessions() {
-            await enhancementTracker.clearSessions();
-
-            this.currentViewingIndex = 0;
-            this.updateUI();
-
-            // Hide collapsed summary if shown
-            if (this.isCollapsed) {
-                this.hideCollapsedSummary();
-            }
-        }
-
-        /**
-         * Update UI content (debounced)
-         */
-        scheduleUpdate() {
-            if (this.updateDebounce) {
-                clearTimeout(this.updateDebounce);
-            }
-            this.updateDebounce = setTimeout(() => this.updateUI(), 100);
-            this.timerRegistry.registerTimeout(this.updateDebounce);
-        }
-
-        /**
-         * Update UI content (immediate)
-         */
-        updateUI() {
-            if (!this.floatingUI || !document.body.contains(this.floatingUI)) {
-                return;
-            }
-
-            const content = document.getElementById('enhancementPanelContent');
-            if (!content) return;
-
-            // Resolve current session index before updating counter
-            // (getCurrentSession resolves the -1 sentinel to the latest index)
-            const session = this.getCurrentSession();
-
-            // Update session counter
-            this.updateSessionCounter();
-
-            const sessions = Object.values(enhancementTracker.getAllSessions());
-
-            // No sessions
-            if (sessions.length === 0) {
-                content.innerHTML = `
-                <div style="text-align: center; padding: 40px 20px; color: ${STYLE.colors.textSecondary};">
-                    <div style="font-size: 32px; margin-bottom: 10px;">✧</div>
-                    <div style="font-size: 14px;">Begin enhancing to populate data</div>
-                </div>
-            `;
-                return;
-            }
-            if (!session) {
-                content.innerHTML = '<div style="text-align: center; color: ${STYLE.colors.danger};">Invalid session</div>';
-                return;
-            }
-
-            // Remember expanded state before updating
-            const detailsId = `cost-details-${session.id}`;
-            const detailsElement = document.getElementById(detailsId);
-            const wasExpanded = detailsElement && detailsElement.style.display !== 'none';
-
-            // Build UI content
-            content.innerHTML = this.generateSessionHTML(session);
-
-            // Restore expanded state after updating
-            if (wasExpanded) {
-                const newDetailsElement = document.getElementById(detailsId);
-                if (newDetailsElement) {
-                    newDetailsElement.style.display = 'block';
-                }
-            }
-
-            // Update collapsed summary if in collapsed state
-            if (this.isCollapsed) {
-                this.showCollapsedSummary();
-            }
-        }
-
-        /**
-         * Update session counter in header
-         */
-        updateSessionCounter() {
-            const counter = document.getElementById('enhancementSessionCounter');
-            if (!counter) return;
-
-            const sessions = Object.values(enhancementTracker.getAllSessions());
-            if (sessions.length === 0) {
-                counter.textContent = '';
-            } else {
-                counter.textContent = `(${this.currentViewingIndex + 1}/${sessions.length})`;
-            }
-        }
-
-        /**
-         * Generate HTML for session display
-         */
-        generateSessionHTML(session) {
-            const gameData = dataManager.getInitClientData();
-            const itemDetails = gameData?.itemDetailMap?.[session.itemHrid];
-            const itemName = itemDetails?.name || 'Unknown Item';
-
-            // Calculate stats
-            const totalAttempts = session.totalAttempts;
-            const totalSuccess = session.totalSuccesses;
-            session.totalFailures;
-            totalAttempts > 0 ? formatters_js.formatPercentage(totalSuccess / totalAttempts, 1) : '0.0%';
-
-            const duration = getSessionDuration(session);
-            const durationText = this.formatDuration(duration);
-
-            // Calculate XP/hour if we have enough data (at least 5 seconds + some XP)
-            const xpPerHour = duration >= 5 && session.totalXP > 0 ? Math.floor((session.totalXP / duration) * 3600) : 0;
-
-            // Status display
-            const statusColor = session.state === SessionState.COMPLETED ? STYLE.colors.success : STYLE.colors.accent;
-            const statusText = session.state === SessionState.COMPLETED ? 'Completed' : 'In Progress';
-
-            // Build HTML
-            let html = `
-            <div style="margin-bottom: 10px; font-size: 13px;">
-                <div style="display: flex; justify-content: space-between;">
-                    <span>Item:</span>
-                    <strong>${itemName}</strong>
-                </div>
-                <div style="display: flex; justify-content: space-between;">
-                    <span>Target:</span>
-                    <span>+${session.targetLevel}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between;">
-                    <span>Prot:</span>
-                    <span>+${session.protectFrom}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-top: 5px; color: ${statusColor};">
-                    <span>Status:</span>
-                    <strong>${statusText}</strong>
-                </div>
-            </div>
-        `;
-
-            // Per-level table
-            html += this.generateLevelTable(session);
-
-            // Summary stats
-            html += `
-            <div style="margin-top: 8px;">
-                <div style="display: flex; justify-content: space-between; font-size: 13px;">
-                    <div>
-                        <span>Total Attempts:</span>
-                        <strong> ${totalAttempts}</strong>
-                    </div>
-                    <div>
-                        <span>Prots Used:</span>
-                        <strong> ${session.protectionCount || 0}</strong>
-                    </div>
-                </div>
-            </div>`;
-
-            // Predictions (if available)
-            if (session.predictions) {
-                const predictions = session.predictions;
-                const expAtt = predictions.expectedAttempts || 0;
-                const expProt = predictions.expectedProtections || 0;
-
-                // The prediction describes the current leg of the session. After an extension the
-                // running totals still carry the earlier legs, so diff against the snapshot taken
-                // at extend time — otherwise a +10 → +12 extension looks ten times over budget.
-                const leg = getCurrentLegCounters(session);
-
-                // Calculate factors (like Ultimate Tracker)
-                // Use more precision for small values to avoid showing 0.00x
-                const rawAttFactor = expAtt > 0 ? leg.attempts / expAtt : null;
-                const rawProtFactor = expProt > 0 ? leg.protections / expProt : null;
-
-                // Format with appropriate precision (more decimals for small values)
-                const formatFactor = (val) => {
-                    if (val === null) return null;
-                    if (val < 0.01) return val.toFixed(3);
-                    return val.toFixed(2);
-                };
-
-                const attFactor = formatFactor(rawAttFactor);
-                const protFactor = formatFactor(rawProtFactor);
-
-                html += `
-            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 4px;">
-                <div style="color: ${STYLE.colors.textSecondary};">
-                    <span>Expected Attempts:</span>
-                    <span> ${expAtt}</span>
-                </div>
-                <div style="color: ${STYLE.colors.textSecondary};">
-                    <span>Expected Prots:</span>
-                    <span> ${expProt}</span>
-                </div>
-            </div>`;
-
-                if (attFactor || protFactor) {
-                    html += `
-            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 2px; color: ${STYLE.colors.textSecondary};">
-                <div>
-                    <span>Attempt Factor:</span>
-                    <strong> ${attFactor ? attFactor + 'x' : '—'}</strong>
-                </div>
-                <div>
-                    <span>Prot Factor:</span>
-                    <strong> ${protFactor ? protFactor + 'x' : '—'}</strong>
-                </div>
-            </div>`;
-                }
-
-                // A finished run read as a percentile of the predicted distribution.
-                // The factor above says how far the run strayed; this says how often
-                // a run strays that far, which is the only honest reading of one
-                // draw against a heavy-tailed spread. Only for runs that reached
-                // the target — a hand-stopped session is censored, not finished —
-                // and only when the prediction stored its distribution.
-                if (session.state === SessionState.COMPLETED && session.currentLevel >= session.targetLevel) {
-                    const tail = attemptTailProbability(predictions, leg.attempts);
-                    if (tail !== null) {
-                        html += `
-            <div style="font-size: 11px; margin-top: 2px; color: ${STYLE.colors.textSecondary};">
-                ${describeAttemptOutcome(predictions.expectedAttemptsExact ?? expAtt, leg.attempts, tail)}
-            </div>`;
-                    }
-                }
-
-                // The factors above are only meaningful against a prediction made from this
-                // character's real stats; say so when it was not
-                if (predictions.paramsNote) {
-                    html += `
-            <div style="font-size: 11px; margin-top: 2px; opacity: 0.6; color: ${STYLE.colors.textSecondary};">
-                ${predictions.paramsNote}
-            </div>`;
-                }
-            }
-
-            html += `
-            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
-                <span>Total XP Gained:</span>
-                <strong>${this.formatNumber(session.totalXP)}</strong>
-            </div>
-
-            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
-                <span>Session Duration:</span>
-                <strong>${durationText}</strong>
-            </div>
-
-            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
-                <span>XP/Hour:</span>
-                <strong>${xpPerHour > 0 ? this.formatNumber(xpPerHour) : 'Calculating...'}</strong>
-            </div>
-        `;
-
-            // Material costs
-            html += this.generateMaterialCostsHTML(session);
-
-            return html;
-        }
-
-        /**
-         * Generate per-level breakdown table
-         */
-        generateLevelTable(session) {
-            // Get all levels with attempts
-            const levelSet = new Set(Object.keys(session.attemptsPerLevel).map(Number));
-
-            // Always include the current level (even if no attempts yet)
-            if (session.currentLevel > 0) {
-                levelSet.add(session.currentLevel);
-            }
-
-            const levels = Array.from(levelSet).sort((a, b) => b - a);
-
-            if (levels.length === 0) {
-                return '<div style="text-align: center; padding: 20px; color: ${STYLE.colors.textSecondary};">No attempts recorded yet</div>';
-            }
-
-            // Predicted rate per level, so the observed column has something to be read against.
-            // successRates[i] is the chance of going from +i to +i+1, which is how the attempt
-            // rows are keyed.
-            const predictedRates = session.predictions?.successRates || null;
-
-            let rows = '';
-            for (const level of levels) {
-                const levelData = session.attemptsPerLevel[level] || { success: 0, fail: 0, successRate: 0 };
-                const rate = formatters_js.formatPercentage(levelData.successRate, 1);
-                const predicted = predictedRates?.[level]?.actualRate;
-                const predictedText = typeof predicted === 'number' ? formatters_js.formatPercentage(predicted / 100, 1) : '—';
-                const isCurrent = level === session.currentLevel;
-
-                const rowStyle = isCurrent
-                    ? `
-                background: linear-gradient(90deg, rgba(126, 87, 194, 0.25), rgba(0, 242, 255, 0.1));
-                box-shadow: 0 0 12px rgba(126, 87, 194, 0.5), inset 0 0 6px rgba(0, 242, 255, 0.3);
-                border-left: 3px solid ${STYLE.colors.accent};
-                font-weight: bold;
-            `
-                    : '';
-
-                rows += `
-                <tr style="${rowStyle}">
-                    <td style="${compactCellStyle} text-align: center;">${level}</td>
-                    <td style="${compactCellStyle} text-align: right;">${levelData.success}</td>
-                    <td style="${compactCellStyle} text-align: right;">${levelData.fail}</td>
-                    <td style="${compactCellStyle} text-align: right;">${rate}</td>
-                    <td style="${compactCellStyle} text-align: right; color: ${STYLE.colors.textSecondary};">${predictedText}</td>
-                </tr>
-            `;
-            }
-
-            return `
-            <table style="${compactTableStyle}">
-                <thead>
-                    <tr>
-                        <th style="${compactHeaderStyle}">Lvl</th>
-                        <th style="${compactHeaderStyle}">Success</th>
-                        <th style="${compactHeaderStyle}">Fail</th>
-                        <th style="${compactHeaderStyle}">%</th>
-                        <th style="${compactHeaderStyle}">Pred %</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${rows}
-                </tbody>
-            </table>
-        `;
-        }
-
-        /**
-         * Generate material costs HTML (expandable)
-         */
-        generateMaterialCostsHTML(session) {
-            // Check if there are any costs to display
-            const hasMaterials = session.materialCosts && Object.keys(session.materialCosts).length > 0;
-            const hasCoins = session.coinCost > 0;
-            const hasProtection = session.protectionCost > 0;
-
-            if (!hasMaterials && !hasCoins && !hasProtection) {
-                return '';
-            }
-
-            const gameData = dataManager.getInitClientData();
-            const detailsId = `cost-details-${session.id}`;
-
-            let html = '<div style="margin-top: 12px; font-size: 13px;">';
-
-            // Collapsible header
-            html += `
-            <div style="display: flex; justify-content: space-between; cursor: pointer; font-weight: bold; padding: 5px 0;"
-                 onclick="document.getElementById('${detailsId}').style.display = document.getElementById('${detailsId}').style.display === 'none' ? 'block' : 'none'">
-                <span>💰 Total Cost (click for details)</span>
-                <span style="color: ${STYLE.colors.gold};">${this.formatNumber(session.totalCost)}</span>
-            </div>
-        `;
-
-            // Expandable details section (hidden by default)
-            html += `<div id="${detailsId}" style="display: none; margin-left: 10px; margin-top: 5px;">`;
-
-            // Material costs
-            if (hasMaterials) {
-                html +=
-                    '<div style="margin-bottom: 8px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">';
-                html +=
-                    '<div style="font-weight: bold; margin-bottom: 3px; color: ${STYLE.colors.textSecondary};">Materials:</div>';
-
-                for (const [itemHrid, data] of Object.entries(session.materialCosts)) {
-                    const itemDetails = gameData?.itemDetailMap?.[itemHrid];
-                    const itemName = itemDetails?.name || itemHrid;
-                    const unitCost = Math.floor(data.totalCost / data.count);
-
-                    html += `
-                    <div style="display: flex; justify-content: space-between; margin-top: 2px; font-size: 12px;">
-                        <span>${itemName}</span>
-                        <span>${data.count} × ${this.formatNumber(unitCost)} = <span style="color: ${STYLE.colors.gold};">${this.formatNumber(data.totalCost)}</span></span>
-                    </div>
-                `;
-                }
-                html += '</div>';
-            }
-
-            // Coin costs
-            if (hasCoins) {
-                html += `
-                <div style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">
-                    <span style="font-weight: bold; color: ${STYLE.colors.textSecondary};">Coins (${session.coinCount || 0}×):</span>
-                    <span style="color: ${STYLE.colors.gold};">${this.formatNumber(session.coinCost)}</span>
-                </div>
-            `;
-            }
-
-            // Protection costs
-            if (hasProtection) {
-                const protectionItemName = session.protectionItemHrid
-                    ? gameData?.itemDetailMap?.[session.protectionItemHrid]?.name || 'Protection'
-                    : 'Protection';
-
-                html += `
-                <div style="display: flex; justify-content: space-between; margin-top: 2px; padding: 5px; background: rgba(0, 255, 234, 0.05); border-radius: 4px;">
-                    <span style="font-weight: bold; color: ${STYLE.colors.textSecondary};">${protectionItemName} (${session.protectionCount || 0}×):</span>
-                    <span style="color: ${STYLE.colors.gold};">${this.formatNumber(session.protectionCost)}</span>
-                </div>
-            `;
-            }
-
-            html += '</div>'; // Close details
-            html += '</div>'; // Close container
-
-            return html;
-        }
-
-        /**
-         * Format number with commas
-         */
-        formatNumber(num) {
-            return formatters_js.formatLargeNumber(Math.floor(num));
-        }
-
-        /**
-         * Format duration (seconds to h:m:s)
-         */
-        formatDuration(seconds) {
-            const h = Math.floor(seconds / 3600);
-            const m = Math.floor((seconds % 3600) / 60);
-            const s = seconds % 60;
-
-            if (h > 0) {
-                return `${h}h ${m}m ${s}s`;
-            } else if (m > 0) {
-                return `${m}m ${s}s`;
-            } else {
-                return `${s}s`;
-            }
-        }
-
-        /**
-         * Show the UI
-         */
-        show() {
-            if (this.floatingUI) {
-                this.floatingUI.style.display = 'flex';
-            }
-        }
-
-        /**
-         * Hide the UI
-         */
-        hide() {
-            if (this.floatingUI) {
-                this.floatingUI.style.display = 'none';
-            }
-        }
-
-        /**
-         * Toggle UI visibility
-         */
-        toggle() {
-            if (this.floatingUI) {
-                const isVisible = this.floatingUI.style.display !== 'none';
-                if (isVisible) {
-                    this.hide();
-                } else {
-                    this.show();
-                }
-            }
-        }
-
-        /**
-         * Cleanup all UI resources
-         */
-        cleanup() {
-            // Clear any pending update debounces
-            if (this.updateDebounce) {
-                clearTimeout(this.updateDebounce);
-                this.updateDebounce = null;
-            }
-
-            // Disconnect panel removal observer
-            if (this.panelRemovalObserver) {
-                this.panelRemovalObserver.disconnect();
-                this.panelRemovalObserver = null;
-            }
-
-            // Unregister setting change listeners
-            for (const { key, handler } of this.settingChangeHandlers) {
-                config.offSettingChange(key, handler);
-            }
-            this.settingChangeHandlers = [];
-
-            if (this.updateInterval) {
-                clearInterval(this.updateInterval);
-                this.updateInterval = null;
-            }
-
-            // Unregister DOM observer
-            if (this.unregisterScreenObserver) {
-                this.unregisterScreenObserver();
-                this.unregisterScreenObserver = null;
-            }
-
-            if (this.dragMoveHandler) {
-                document.removeEventListener('pointermove', this.dragMoveHandler);
-                this.dragMoveHandler = null;
-            }
-
-            if (this.dragUpHandler) {
-                document.removeEventListener('pointerup', this.dragUpHandler);
-                document.removeEventListener('pointercancel', this.dragUpHandler);
-                this.dragUpHandler = null;
-            }
-
-            if (this.dragHandle && this.dragMouseDownHandler) {
-                this.dragHandle.removeEventListener('pointerdown', this.dragMouseDownHandler);
-            }
-
-            this.dragHandle = null;
-            this.dragMouseDownHandler = null;
-
-            this.timerRegistry.clearAll();
-
-            // Remove floating UI from DOM
-            if (this.floatingUI && this.floatingUI.parentNode) {
-                panelZIndex_js.unregisterFloatingPanel(this.floatingUI);
-                this.floatingUI.parentNode.removeChild(this.floatingUI);
-                this.floatingUI = null;
-            }
-
-            // Reset state
-            this.isOnEnhancingScreen = false;
-            this.isCollapsed = false;
-            this.currentViewingIndex = 0;
-            this.isDragging = false;
-        }
-    }
-
-    const enhancementUI = new EnhancementUI();
-
-    /**
      * Item hashes
      *
      * The game names the item an action is working on with a `::`-joined tuple
@@ -71481,7 +72650,7 @@ ${starCSS}
             const finished = [...this.pending.keys()].filter((key) => key !== this.currentKey);
             if (!finished.length) return;
 
-            const archived = await loadSessions$1();
+            const archived = await loadSessions();
             for (const key of finished) {
                 const session = archived.find((entry) => entry.key === key);
                 if (!session) continue;
@@ -72620,7 +73789,7 @@ ${starCSS}
 
 
     /** Master switch; nothing below it is consulted while this is off */
-    const MASTER_SETTING$5 = 'notifications_communityBuffExpiring';
+    const MASTER_SETTING$6 = 'notifications_communityBuffExpiring';
 
     /** How many minutes before expiry to speak up */
     const LEAD_MINUTES_SETTING = 'notifications_communityBuffLeadMinutes';
@@ -72681,10 +73850,10 @@ ${starCSS}
      * a minute is fine against a lead time measured in tens of minutes and costs a
      * five-element loop.
      */
-    const CHECK_INTERVAL_MS$2 = 30 * 1000;
+    const CHECK_INTERVAL_MS$3 = 30 * 1000;
 
     /** Prefix for the notification service's event keys */
-    const EVENT_KEY_PREFIX$3 = 'community-buff-expiring';
+    const EVENT_KEY_PREFIX$4 = 'community-buff-expiring';
 
     /**
      * Pull the buff list out of a websocket payload, if it carries one.
@@ -72711,14 +73880,14 @@ ${starCSS}
          * @returns {Promise<void>}
          */
         async initialize() {
-            if (!config.getSetting(MASTER_SETTING$5)) {
+            if (!config.getSetting(MASTER_SETTING$6)) {
                 return;
             }
 
             this.seedFromCharacterData();
             this.registerWebSocketListeners();
 
-            this.timers.registerInterval(setInterval(() => this.check(), CHECK_INTERVAL_MS$2));
+            this.timers.registerInterval(setInterval(() => this.check(), CHECK_INTERVAL_MS$3));
 
             this.characterSwitchingHandler = () => {
                 this.disable();
@@ -72790,7 +73959,7 @@ ${starCSS}
          * Announce any enabled buff whose expiry has come inside the lead window.
          */
         check() {
-            if (!config.getSetting(MASTER_SETTING$5)) {
+            if (!config.getSetting(MASTER_SETTING$6)) {
                 return;
             }
 
@@ -72836,7 +74005,7 @@ ${starCSS}
             const name = this.buffName(type);
             const remaining = formatters_js.timeReadable(Math.round(msLeft / 1000));
             const result = notificationService.notify(
-                `${EVENT_KEY_PREFIX$3}:${buff.hrid}:${buff.expireTime}`,
+                `${EVENT_KEY_PREFIX$4}:${buff.hrid}:${buff.expireTime}`,
                 `Community buff ${name} runs out in ${remaining} — donate minutes to keep it going.`,
                 { title: 'Community buff expiring' }
             );
@@ -73082,10 +74251,10 @@ ${starCSS}
 
 
     /** Master switch; nothing below it is consulted while this is off */
-    const MASTER_SETTING$4 = 'notifications_labyrinthRunFinished';
+    const MASTER_SETTING$5 = 'notifications_labyrinthRunFinished';
 
     /** Prefix for the notification service's event keys */
-    const EVENT_KEY_PREFIX$2 = 'labyrinth-run-finished';
+    const EVENT_KEY_PREFIX$3 = 'labyrinth-run-finished';
 
     class LabyrinthRunAlerts {
         constructor() {
@@ -73106,7 +74275,7 @@ ${starCSS}
          * @returns {Promise<void>}
          */
         async initialize() {
-            if (!config.getSetting(MASTER_SETTING$4)) {
+            if (!config.getSetting(MASTER_SETTING$5)) {
                 return;
             }
 
@@ -73153,7 +74322,7 @@ ${starCSS}
          * @param {Object|null} labyrinth - A payload's `labyrinth`, or the character's
          */
         observe(labyrinth) {
-            if (!config.getSetting(MASTER_SETTING$4)) return;
+            if (!config.getSetting(MASTER_SETTING$5)) return;
 
             const state = labyrinthRunState(labyrinth);
             // A payload that says nothing about the run leaves everything standing:
@@ -73178,7 +74347,7 @@ ${starCSS}
             const floor = run.floor;
             const where = floor > 0 ? ` Floor ${floor} was as far as it got.` : '';
             const result = notificationService.notify(
-                `${EVENT_KEY_PREFIX$2}:${run.key}`,
+                `${EVENT_KEY_PREFIX$3}:${run.key}`,
                 `Your labyrinth run has finished.${where}`,
                 { title: 'Labyrinth run finished' }
             );
@@ -73232,6 +74401,236 @@ ${starCSS}
     }
 
     const labyrinthRunAlerts = new LabyrinthRunAlerts();
+
+    /**
+     * When the next Labyrinth entry regenerates.
+     *
+     * The Labyrinth holds a small stock of entries (five), and one regenerates on a
+     * fixed cooldown — the server currently computes it as `labyrinthCooldownHours`
+     * for this character (cooldown upgrades shorten it, and the server re-sends the
+     * value rather than leaving it to be inferred). A regenerated entry is worth
+     * knowing about because entries are the gate on every run, and one sitting
+     * unspent while the stock is full is regeneration wasted.
+     *
+     * ## Where the numbers come from
+     *
+     * All on `characterInfo`, sent with `init_character_data` and re-sent on
+     * `character_info_updated` whenever they move:
+     *
+     * - `labyrinthEntries` — how many entries are in stock right now
+     * - `labyrinthCooldownHours` — the regeneration cadence
+     * - `lastLabyrinthTimestamp` — when the cadence is measured from; the next entry
+     *   arrives one cooldown after it
+     *
+     * The stock cap (five) is not on `characterInfo`, so it is a constant here.
+     *
+     * Nothing reads the panel's "Next Entry" countdown: that string only exists
+     * while the Labyrinth panel is open, and a projection that needs a panel open
+     * cannot tell anybody who is away — which is the whole point of having one.
+     */
+
+    /** Milliseconds in an hour */
+    const HOUR_MS = 3_600_000;
+
+    /** The Labyrinth entry stock cap. Not carried on characterInfo, so a constant. */
+    const LABYRINTH_MAX_ENTRIES = 5;
+
+    /**
+     * When the next Labyrinth entry regenerates, and whether the stock is full.
+     *
+     * @param {Object} input
+     * @param {Object} input.characterInfo - `characterData.characterInfo`
+     * @param {number} [input.maxEntries=LABYRINTH_MAX_ENTRIES] - Stock cap
+     * @param {number} [input.now=Date.now()] - Clock, injectable for tests
+     * @returns {{ok: boolean, reason?: string, entries?: number, maxEntries?: number,
+     *   cooldownHours?: number, cooldownMs?: number, lastEntryAt?: number, isFull?: boolean,
+     *   nextEntryAt?: number|null, msUntilNext?: number|null, available?: boolean}}
+     */
+    function forecastLabyrinthEntries({ characterInfo, maxEntries = LABYRINTH_MAX_ENTRIES, now = Date.now() } = {}) {
+        if (!characterInfo) return { ok: false, reason: 'no character info' };
+
+        const entries = Math.floor(Number(characterInfo.labyrinthEntries));
+        const cooldownHours = Number(characterInfo.labyrinthCooldownHours);
+        const lastEntryAt = Date.parse(characterInfo.lastLabyrinthTimestamp ?? '');
+
+        if (!Number.isFinite(entries) || !Number.isFinite(cooldownHours) || cooldownHours <= 0) {
+            return { ok: false, reason: 'incomplete labyrinth info' };
+        }
+
+        const cooldownMs = cooldownHours * HOUR_MS;
+        const isFull = entries >= maxEntries;
+
+        // A full stock does not regenerate, so there is no next-entry instant to
+        // project — the stored timestamp is stale until an entry is spent.
+        let nextEntryAt = null;
+        let msUntilNext = null;
+        if (!isFull && Number.isFinite(lastEntryAt)) {
+            nextEntryAt = lastEntryAt + cooldownMs;
+            msUntilNext = nextEntryAt - now;
+        }
+
+        return {
+            ok: true,
+            entries,
+            maxEntries,
+            cooldownHours,
+            cooldownMs,
+            lastEntryAt: Number.isFinite(lastEntryAt) ? lastEntryAt : null,
+            isFull,
+            nextEntryAt,
+            msUntilNext,
+            // The projected entry is due when its instant has passed.
+            available: nextEntryAt != null && now >= nextEntryAt,
+        };
+    }
+
+    /**
+     * Labyrinth Entry Alerts
+     *
+     * Says when a Labyrinth entry has regenerated, because entries are the gate on
+     * every run and one that regenerates into a full-but-for-it stock is easy to
+     * leave sitting — the stock only refills to five, and time spent at the cap is
+     * regeneration wasted.
+     *
+     * ## Two ways it can tell
+     *
+     * The projection lives in `labyrinth-entry-forecast.js` and is computed from the
+     * server's own `labyrinthEntries`, `labyrinthCooldownHours` and
+     * `lastLabyrinthTimestamp`. This feature fires on whichever of two things
+     * happens first:
+     *
+     * - the stock rising — the server pushes `character_info_updated` when an entry
+     *   regenerates, so the count going up is the surest signal, and it survives a
+     *   spell away because the higher count is waiting on the page's next message;
+     * - the projected instant passing on an open-but-idle tab, where the count in
+     *   memory has not moved yet — the poll notices the deadline crossed and says so
+     *   rather than waiting for a push that a quiet tab may not get.
+     *
+     * ## Re-arming
+     *
+     * Keyed on the regeneration instant (rounded to the minute), so the same
+     * deadline re-derived a few hundred milliseconds later is one alert, and the
+     * next regeneration — a cooldown later, a different instant — re-arms by itself.
+     * Spending an entry moves `lastLabyrinthTimestamp`, which moves the instant.
+     */
+
+
+    /** Master switch; nothing below it is consulted while this is off */
+    const MASTER_SETTING$4 = 'notifications_labyrinthEntryAvailable';
+
+    /** A minute, against a cooldown measured in days: cheap arithmetic over memory */
+    const CHECK_INTERVAL_MS$2 = 60 * 1000;
+
+    /** Prefix for the notification service's event keys */
+    const EVENT_KEY_PREFIX$2 = 'labyrinth-entry';
+
+    /**
+     * What the alert says.
+     * @param {Object} forecast - From forecastLabyrinthEntries
+     * @returns {string}
+     */
+    function entryMessage(forecast) {
+        const stock = `${forecast.entries}/${forecast.maxEntries}`;
+        return forecast.entries >= forecast.maxEntries
+            ? `Labyrinth entries are full (${stock}) — spend one before the next regenerates and is wasted.`
+            : `A Labyrinth entry has regenerated (${stock} in stock).`;
+    }
+
+    class LabyrinthEntryAlerts {
+        constructor() {
+            /** The stock last seen, so a rise can be told from a redraw */
+            this.lastEntries = null;
+            /** The regeneration instant already announced */
+            this.announcedAt = null;
+            this.timers = timerRegistry_js.createTimerRegistry();
+            this.unregisterHandlers = [];
+            this.characterSwitchingHandler = null;
+        }
+
+        /**
+         * Start watching the entry stock.
+         * @returns {Promise<void>}
+         */
+        async initialize() {
+            if (!config.getSetting(MASTER_SETTING$4)) return;
+
+            const recheck = () => {
+                try {
+                    this.check();
+                } catch (error) {
+                    console.error('[LabyrinthEntryAlerts] Re-checking labyrinth entries failed:', error);
+                }
+            };
+            // Runs after dataManager's own handler, so characterInfo is current.
+            webSocketHook.on('character_info_updated', recheck);
+            this.unregisterHandlers.push(() => webSocketHook.off('character_info_updated', recheck));
+
+            this.timers.registerInterval(setInterval(() => this.check(), CHECK_INTERVAL_MS$2));
+
+            this.characterSwitchingHandler = () => this.disable();
+            dataManager.on('character_switching', this.characterSwitchingHandler);
+
+            // Seed the baseline without firing, so the first observation is a
+            // reference point rather than a spurious "it went up from nothing".
+            this.check({ seed: true });
+        }
+
+        /**
+         * The stock as the server last described it.
+         * @param {number} [now=Date.now()] - Clock, injectable for tests
+         * @returns {Object} From forecastLabyrinthEntries
+         */
+        forecast(now = Date.now()) {
+            return forecastLabyrinthEntries({ characterInfo: dataManager.characterData?.characterInfo, now });
+        }
+
+        /**
+         * Decide whether the entry stock is worth speaking about.
+         * @param {Object} [options]
+         * @param {boolean} [options.seed=false] - Set the baseline without notifying
+         * @param {number} [options.now=Date.now()] - Clock, injectable for tests
+         * @returns {Object|null} What the service did, for tests
+         */
+        check({ seed = false, now = Date.now() } = {}) {
+            if (!config.getSetting(MASTER_SETTING$4)) return null;
+
+            const forecast = this.forecast(now);
+            if (!forecast.ok) return null;
+
+            const rose = this.lastEntries != null && forecast.entries > this.lastEntries;
+            const projectedDue = forecast.available && forecast.entries < forecast.maxEntries;
+            this.lastEntries = forecast.entries;
+
+            if (seed) return null;
+            if (!rose && !projectedDue) return null;
+
+            // Keyed on the regeneration instant so a redraw does not repeat it. When
+            // the count rose without a projected instant (already at cap, or a stale
+            // timestamp), the stock count keys it instead.
+            const instant = forecast.nextEntryAt ?? forecast.lastEntryAt ?? now;
+            const key = `${EVENT_KEY_PREFIX$2}:${Math.round(instant / 60_000)}:${forecast.entries}`;
+            if (this.announcedAt === key) return null;
+
+            const result = notificationService.notify(key, entryMessage(forecast), { title: 'Labyrinth entry ready' });
+            if (result?.fired) this.announcedAt = key;
+            return result;
+        }
+
+        /** Cleanup */
+        disable() {
+            if (this.characterSwitchingHandler) {
+                dataManager.off('character_switching', this.characterSwitchingHandler);
+                this.characterSwitchingHandler = null;
+            }
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
+            this.timers.clearAll();
+            this.lastEntries = null;
+            this.announcedAt = null;
+        }
+    }
+
+    const labyrinthEntryAlerts = new LabyrinthEntryAlerts();
 
     /**
      * Combat Death Alerts
@@ -79111,6 +80510,7 @@ ${starCSS}
         emptyQueueNotification,
         communityBuffAlerts,
         labyrinthRunAlerts,
+        labyrinthEntryAlerts,
         combatDeathAlerts,
         enhancementTargetAlerts,
         taskSlotAlerts,
@@ -79134,4 +80534,4 @@ ${starCSS}
 
     console.log('[Toolasha] UI library loaded');
 
-})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Utils.formatters, Toolasha.Utils.timerRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.dom, Toolasha.Core.storage, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.characterKey, Toolasha.Utils.overlayRows, Toolasha.Utils.opanelConfig, Toolasha.Utils.choiceDialog, Toolasha.Utils.mobile, Toolasha.Utils.overlayLayout, Toolasha.Core, Toolasha.Utils.toast, Toolasha.Utils.bundleBridge, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.marketData, Toolasha.Utils.roomSkills, Toolasha.Core.marketAPI, Toolasha.Utils.numberParser, Toolasha.Utils.pricingHelper, Toolasha.Core.webSocketHook, Toolasha.Utils.simplePanel, Toolasha.Utils.damageAttribution, Toolasha.Combat.combatDPS, Toolasha.Combat.combatStatsDataCollector, Toolasha.Combat.combatStatsCalculator, Toolasha.Combat.damageTracker, Toolasha.Combat.damageTakenTracker, Toolasha.Utils.battlePanelMonsters, Toolasha.Utils.spawnExpectation, Toolasha.Utils.combatDropModel, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.partyLint, Toolasha.Utils.csvExport, Toolasha.Utils.itemNavigation, Toolasha.Utils.efficiency, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.adoptionConsent, Toolasha.Utils.gameText, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.profileCommand, Toolasha.Utils.selectors, Toolasha.Utils.progressEta, Toolasha.Utils.gameServer, Toolasha.Utils.reactInput, Toolasha.Utils.actionPanelHelper, Toolasha.Market.expectedValueCalculator, Toolasha.Market.gatheringProfit, Toolasha.Market.productionProfit, Toolasha.Utils.profitHelpers, Toolasha.Utils.actionCalculator, Toolasha.Utils.equipmentParser, Toolasha.Utils.profitConstants, Toolasha.Sim.combatSimRunner, Toolasha.Sim.combatSimAdapter, Toolasha.Utils.assetManifest, Toolasha.Utils.gameLookups, Toolasha.Utils.chunkedHistory, Toolasha.Utils.skillProgress, Toolasha.Utils.skillHistory, Toolasha.Utils.deferredLoad, Toolasha.Utils.combatLevel, Toolasha.Utils.experienceParser, Toolasha.Utils.dropLuck, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.cleanupRegistry, Toolasha.Core.settingsStorage, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.enhancementConfig, Toolasha.Utils.chestTally, Toolasha.Utils.chestImport, Toolasha.Utils.tokenValuation, Toolasha.Utils.customPriceOverrides, Toolasha.Utils.materialCalculator, Toolasha.Utils.alchemyFees, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.teaParser, Toolasha.Sim.combatSimUI, Toolasha.Utils.tableColumns, Toolasha.Market.marketHistoryAPI, Toolasha.Market.marketHistoryData, Toolasha.Utils.consumableTarget, Toolasha.Utils.consumableForecast, Toolasha.Utils.keyLedger, Toolasha.Utils.orderBook, Toolasha.Utils.shoppingList, Toolasha.Market.alchemyProfitCalculator, Toolasha.Utils.buffParser);
+})(Toolasha.Core.config, Toolasha.Core.dataManager, Toolasha.Core.domObserver, Toolasha.Utils.formatters, Toolasha.Utils.timerRegistry, Toolasha.Utils.domObserverHelpers, Toolasha.Utils.dom, Toolasha.Core.storage, Toolasha.Utils.panelZIndex, Toolasha.Utils.floatingPanel, Toolasha.Utils.panelGeometry, Toolasha.Utils.characterKey, Toolasha.Utils.overlayRows, Toolasha.Utils.opanelConfig, Toolasha.Utils.choiceDialog, Toolasha.Utils.mobile, Toolasha.Utils.overlayLayout, Toolasha.Core, Toolasha.Utils.toast, Toolasha.Utils.enhancementCalculator, Toolasha.Utils.enhancementConfig, Toolasha.Utils.profitConstants, Toolasha.Utils.marketData, Toolasha.Utils.teaParser, Toolasha.Utils.numberParser, Toolasha.Core.marketAPI, Toolasha.Utils.bundleBridge, Toolasha.Utils.houseCostCalculator, Toolasha.Utils.overlayFormat, Toolasha.Utils.marketplaceTabs, Toolasha.Utils.roomSkills, Toolasha.Utils.pricingHelper, Toolasha.Core.webSocketHook, Toolasha.Utils.simplePanel, Toolasha.Utils.damageAttribution, Toolasha.Combat.combatDPS, Toolasha.Combat.combatStatsDataCollector, Toolasha.Combat.combatStatsCalculator, Toolasha.Combat.damageTracker, Toolasha.Combat.damageTakenTracker, Toolasha.Utils.battlePanelMonsters, Toolasha.Utils.spawnExpectation, Toolasha.Utils.combatDropModel, Toolasha.Utils.allZonesSnapshot, Toolasha.Utils.partyLint, Toolasha.Utils.csvExport, Toolasha.Utils.itemNavigation, Toolasha.Utils.efficiency, Toolasha.Utils.guildCreditPricing, Toolasha.Utils.adoptionConsent, Toolasha.Utils.gameText, Toolasha.Core.performanceMonitor, Toolasha.Utils.backgroundWork, Toolasha.Utils.profileCommand, Toolasha.Utils.selectors, Toolasha.Utils.progressEta, Toolasha.Utils.gameServer, Toolasha.Utils.reactInput, Toolasha.Utils.actionPanelHelper, Toolasha.Market.expectedValueCalculator, Toolasha.Market.gatheringProfit, Toolasha.Market.productionProfit, Toolasha.Utils.profitHelpers, Toolasha.Utils.actionCalculator, Toolasha.Utils.equipmentParser, Toolasha.Sim.combatSimRunner, Toolasha.Sim.combatSimAdapter, Toolasha.Utils.assetManifest, Toolasha.Utils.gameLookups, Toolasha.Utils.chunkedHistory, Toolasha.Utils.skillProgress, Toolasha.Utils.skillHistory, Toolasha.Utils.deferredLoad, Toolasha.Utils.combatLevel, Toolasha.Utils.experienceParser, Toolasha.Utils.dropLuck, Toolasha.Utils.marketplaceAutofill, Toolasha.Utils.cleanupRegistry, Toolasha.Core.settingsStorage, Toolasha.Utils.scrollBuffValues, Toolasha.Utils.chestTally, Toolasha.Utils.chestImport, Toolasha.Utils.tokenValuation, Toolasha.Utils.customPriceOverrides, Toolasha.Utils.materialCalculator, Toolasha.Utils.alchemyFees, Toolasha.Sim.combatSimUI, Toolasha.Utils.tableColumns, Toolasha.Market.marketHistoryAPI, Toolasha.Market.marketHistoryData, Toolasha.Utils.consumableTarget, Toolasha.Utils.consumableForecast, Toolasha.Utils.keyLedger, Toolasha.Utils.orderBook, Toolasha.Utils.shoppingList, Toolasha.Market.alchemyProfitCalculator, Toolasha.Utils.buffParser);
