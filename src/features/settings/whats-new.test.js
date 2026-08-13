@@ -117,7 +117,7 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     bringPanelToFront: () => {},
 }));
 
-const { default: whatsNew, renderForkMarkdown, COPY_FROM_CHARACTER } = await import('./whats-new.js');
+const { default: whatsNew, renderForkMarkdown, COPY_FROM_CHARACTER, NO_CHANGE } = await import('./whats-new.js');
 const { SETTING_PRESETS, DEFAULT_PRESET_ID } = await import('./setting-presets.js');
 const { conservativeOverrides } = await import('./whats-new-core.js');
 
@@ -271,32 +271,46 @@ describe('the popup shows the overview only to newcomers', () => {
     });
 });
 
-describe('the fresh-install picker is unchanged', () => {
-    test('it offers only presets, Defaults is primary, and there is no keepCurrent', async () => {
+describe('the fresh-install picker', () => {
+    test('Defaults comes first and is primary, No change follows, then the other presets', async () => {
         mocks.answer = DEFAULT_PRESET_ID;
         await whatsNew._offerFirstRunPreset(CURRENT);
 
         const choices = mocks.lastChoiceOptions.choices;
         const values = choices.map((choice) => choice.value);
-        expect(values).toEqual(SETTING_PRESETS.map((preset) => preset.id));
-        expect(values).not.toContain('keepCurrent');
+        const otherPresets = SETTING_PRESETS.filter((preset) => preset.id !== DEFAULT_PRESET_ID).map((p) => p.id);
+        expect(values).toEqual([DEFAULT_PRESET_ID, NO_CHANGE, ...otherPresets]);
 
         const primary = choices.filter((choice) => choice.tone === 'primary').map((choice) => choice.value);
         expect(primary).toEqual([DEFAULT_PRESET_ID]);
 
-        // A fresh install has nothing to keep, so a preset is always applied
+        // Choosing Defaults explicitly applies it
         expect(mocks.appliedPresets).toEqual([DEFAULT_PRESET_ID]);
+    });
+
+    test('No change applies nothing and touches no setting', async () => {
+        mocks.answer = NO_CHANGE;
+        await whatsNew._offerFirstRunPreset(CURRENT);
+        expect(mocks.appliedPresets).toEqual([]);
+        expect(mocks.written).toEqual([]);
+    });
+
+    test('dismissal (null) is No change — never a settings reset', async () => {
+        mocks.answer = null;
+        await whatsNew._offerFirstRunPreset(CURRENT);
+        expect(mocks.appliedPresets).toEqual([]);
+        expect(mocks.written).toEqual([]);
     });
 });
 
 describe('copy from another character', () => {
-    test('the fresh-install picker offers copy first when a source exists', async () => {
+    test('the fresh-install picker offers copy after Defaults and No change', async () => {
         mocks.answer = DEFAULT_PRESET_ID;
         await whatsNew._offerFirstRunPreset(CURRENT, true);
 
         const values = mocks.lastChoiceOptions.choices.map((choice) => choice.value);
-        expect(values[0]).toBe(COPY_FROM_CHARACTER);
-        expect(values.slice(1)).toEqual(SETTING_PRESETS.map((preset) => preset.id));
+        const otherPresets = SETTING_PRESETS.filter((preset) => preset.id !== DEFAULT_PRESET_ID).map((p) => p.id);
+        expect(values).toEqual([DEFAULT_PRESET_ID, NO_CHANGE, COPY_FROM_CHARACTER, ...otherPresets]);
     });
 
     test('the returning-user picker offers copy after keepCurrent, before the presets', async () => {
@@ -333,7 +347,7 @@ describe('copy from another character', () => {
         expect(whatsNew._pending.headline).toContain('Alt');
     });
 
-    test('cancelling the pick falls through to the default preset (fresh install)', async () => {
+    test('cancelling the pick is No change — no preset, no writes (fresh install)', async () => {
         mocks.candidates = [{ id: 'main', name: 'Main' }];
         mocks.answer = COPY_FROM_CHARACTER;
         whatsNew._pickSourceCharacter = async () => null; // cancelled
@@ -341,7 +355,8 @@ describe('copy from another character', () => {
         await whatsNew._offerFirstRunPreset(CURRENT, true);
 
         expect(mocks.copiedFrom).toBeNull();
-        expect(mocks.appliedPresets).toEqual([DEFAULT_PRESET_ID]);
+        expect(mocks.appliedPresets).toEqual([]);
+        expect(mocks.written).toEqual([]);
     });
 
     test('cancelling the pick keeps current settings (returning user)', async () => {
@@ -357,14 +372,15 @@ describe('copy from another character', () => {
         expect(Object.fromEntries(mocks.written).whatsNew_newDefaultsOff).toBe(true);
     });
 
-    test('copy is a no-op and falls back when no other character has settings', async () => {
+    test('copy is a no-op leaving settings untouched when no character has settings', async () => {
         mocks.candidates = [];
         mocks.answer = COPY_FROM_CHARACTER;
 
         await whatsNew._offerFirstRunPreset(CURRENT, true);
 
         expect(mocks.copiedFrom).toBeNull();
-        expect(mocks.appliedPresets).toEqual([DEFAULT_PRESET_ID]);
+        expect(mocks.appliedPresets).toEqual([]);
+        expect(mocks.written).toEqual([]);
     });
 
     test('the copy-only prompt copies when asked and no-ops on keep', async () => {
