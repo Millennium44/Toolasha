@@ -1511,6 +1511,17 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays the total market value of all items in each inventory category',
             },
+            networth_valueSource: {
+                id: 'networth_valueSource',
+                label: 'Net worth value source',
+                type: 'select',
+                default: 'orderBook',
+                options: [
+                    { value: 'orderBook', label: 'Order book (ask/bid, by pricing mode below)' },
+                    { value: 'officialValue', label: "Game's market value (matches inventory tooltip)" },
+                ],
+                help: "Order book prices your items from the live ask/bid using the pricing mode below. Game's market value uses the value the game itself publishes (behind the inventory's Total Market Value) — a single estimate per item, refreshed every ~10 min, so it stays fresher than the market feed and makes the net-worth total match the game. Only takes effect once the marketplace update is live.",
+            },
             networth_pricingMode: {
                 id: 'networth_pricingMode',
                 label: 'Net worth pricing mode',
@@ -1520,7 +1531,7 @@ export const settingsGroups = {
                     { value: 'ask', label: 'Ask price (patient sell value)' },
                     { value: 'bid', label: 'Bid price (instant liquidation value)' },
                 ],
-                help: 'Ask shows what you could get by listing patiently. Bid shows what you could get by selling instantly.',
+                help: "Ask shows what you could get by listing patiently. Bid shows what you could get by selling instantly. Ignored when the value source above is set to the game's market value.",
             },
             networth_highEnhancementUseCost: {
                 id: 'networth_highEnhancementUseCost',

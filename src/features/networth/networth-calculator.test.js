@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
     dungeonTokenValues: {},
     shopCosts: {},
     unpricedAbilities: new Set(),
+    marketValues: null, // { marketValuesVersion, marketItemValues } for getMarketItemValues()
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -30,6 +31,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => mocks.initData,
         getItemDetails: (hrid) => mocks.itemDetails[hrid] ?? null,
+        getMarketItemValues: () => mocks.marketValues,
     },
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: (hrid) => mocks.itemPrices[hrid] ?? null } }));
@@ -89,6 +91,7 @@ vi.mock('../../utils/guild-credit-pricing.js', () => ({
 
 const { calculateItemValue, calculateAllHousesCost, calculateAllAbilitiesCost, calculateGuildShrinesCost } =
     await import('./networth-calculator.js');
+const { _resetMarketValues } = await import('../../utils/market-values.js');
 
 beforeEach(() => {
     mocks.settings = {};
@@ -100,6 +103,8 @@ beforeEach(() => {
     mocks.dungeonTokenValues = {};
     mocks.shopCosts = {};
     mocks.unpricedAbilities = new Set();
+    mocks.marketValues = null;
+    _resetMarketValues();
 });
 
 describe('calculateItemValue', () => {
@@ -186,6 +191,27 @@ describe('calculateItemValue', () => {
         mocks.shopCosts['/items/shop_item'] = 250;
         const value = await calculateItemValue({ itemHrid: '/items/shop_item', enhancementLevel: 0, count: 3 });
         expect(value).toBe(750);
+    });
+
+    test("value source 'officialValue' prices from the game's market value, ignoring the order book", async () => {
+        mocks.settings.networth_valueSource = 'officialValue';
+        mocks.settings.networth_pricingMode = 'bid';
+        mocks.itemPrices['/items/sword'] = { ask: 999, bid: 1 }; // order book ignored
+        mocks.marketValues = { marketValuesVersion: 1, marketItemValues: { '/items/sword': { 3: 5000 } } };
+
+        const value = await calculateItemValue({ itemHrid: '/items/sword', enhancementLevel: 3, count: 2 });
+        expect(value).toBe(10000);
+    });
+
+    test("value source 'orderBook' clamps a stale order-book price into the tradable range", async () => {
+        mocks.settings.networth_valueSource = 'orderBook';
+        mocks.settings.networth_pricingMode = 'ask';
+        // Stale ask five times the value; band max is value * 1.1
+        mocks.itemPrices['/items/wood'] = { ask: 5000, bid: 900 };
+        mocks.marketValues = { marketValuesVersion: 1, marketItemValues: { '/items/wood': { 0: 1000 } } };
+
+        const value = await calculateItemValue({ itemHrid: '/items/wood', enhancementLevel: 0, count: 1 });
+        expect(value).toBeCloseTo(1100, 6); // 1000 * 1.1, not 5000
     });
 });
 

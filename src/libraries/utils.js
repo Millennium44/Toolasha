@@ -27,6 +27,7 @@ import * as selectors from '../utils/selectors.js';
 import * as houseEfficiency from '../utils/house-efficiency.js';
 import * as experienceCalculator from '../utils/experience-calculator.js';
 import * as marketData from '../utils/market-data.js';
+import * as marketValues from '../utils/market-values.js';
 import * as abilityCalc from '../utils/ability-cost-calculator.js';
 import * as equipmentParser from '../utils/equipment-parser.js';
 import * as uiComponents from '../utils/ui-components.js';
@@ -146,6 +147,7 @@ toolashaRoot.Utils = {
     houseEfficiency,
     experienceCalculator,
     marketData,
+    marketValues,
     abilityCalc,
     equipmentParser,
     uiComponents,
