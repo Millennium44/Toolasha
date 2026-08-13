@@ -2985,6 +2985,14 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## Upstream Changelog
 
+## [2.102.0](https://github.com/Millennium44/Toolasha/compare/v2.101.0...v2.102.0) (2026-08-13)
+
+
+### Features
+
+* **settings:** copy first-run settings from another character, recoverably ([5281e30](https://github.com/Millennium44/Toolasha/commit/5281e30f80db7a423298e8b31bc55071cadcee28))
+* **settings:** defaults-first welcome, a no-change option, safe dismissal ([f189596](https://github.com/Millennium44/Toolasha/commit/f189596e1df3829a0c4b60b5e70a085f30dcc9b0))
+
 ## [2.101.0](https://github.com/Millennium44/Toolasha/compare/v2.100.0...v2.101.0) (2026-08-13)
 
 ### Features
