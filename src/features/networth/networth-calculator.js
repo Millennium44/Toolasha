@@ -22,6 +22,7 @@ import expectedValueCalculator from '../market/expected-value-calculator.js';
 import config from '../../core/config.js';
 import networthCache from './networth-cache.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
+import { refreshMarketValues, marketValueFor, reconcileBook } from '../../utils/market-values.js';
 import { calculateItemValueBatch } from '../../utils/networth-worker-manager.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
@@ -106,6 +107,47 @@ export async function calculateItemValue(item, priceCache = null) {
 }
 
 /**
+ * The prices net worth should use for one item at one enhancement level.
+ *
+ * Honors the "Net worth value source" setting and reconciles the raw order book
+ * against the game's official market value:
+ *   - officialValue: the game's own published value (a single estimate), when it
+ *     has one — the figure behind the inventory's Total Market Value.
+ *   - orderBook: the live ask/bid, with a stale price clamped into the tradable
+ *     range and an empty book filled from the value.
+ * A pass-through to the raw order book until the marketplace patch is live.
+ *
+ * @param {string} itemHrid - Item HRID
+ * @param {number} enhancementLevel - Enhancement level
+ * @param {Map|null} priceCache - Batch cache from getPricesBatch(), or null to fetch
+ * @returns {{ask:number|null, bid:number|null, average:number|null}|number|null}
+ */
+function resolveNetworthPrices(itemHrid, enhancementLevel, priceCache = null) {
+    const raw = priceCache
+        ? priceCache.get(`${itemHrid}:${enhancementLevel}`)
+        : getItemPrices(itemHrid, enhancementLevel);
+
+    refreshMarketValues();
+    const valueSource = config.getSettingValue('networth_valueSource') || 'orderBook';
+    if (valueSource === 'officialValue') {
+        const official = marketValueFor(itemHrid, enhancementLevel);
+        if (official !== null) {
+            return { ask: official, bid: official, average: official };
+        }
+    }
+
+    if (raw && typeof raw === 'object') {
+        const { ask, bid } = reconcileBook(raw.ask ?? null, raw.bid ?? null, itemHrid, enhancementLevel);
+        if (ask === null && bid === null) {
+            return null;
+        }
+        return { ask, bid, average: ask !== null && bid !== null ? (ask + bid) / 2 : null };
+    }
+
+    return raw ?? null;
+}
+
+/**
  * Get market price for an item
  * @param {string} itemHrid - Item HRID
  * @param {number} enhancementLevel - Enhancement level
@@ -122,18 +164,11 @@ function getMarketPrice(itemHrid, enhancementLevel, priceCache = null) {
     // Determine which price field to use based on networth pricing mode
     const pricingMode = config.getSettingValue('networth_pricingMode') || 'ask';
 
-    let prices;
-
-    // Use cache if provided, otherwise fetch directly
-    if (priceCache) {
-        const key = `${itemHrid}:${enhancementLevel}`;
-        prices = priceCache.get(key);
-    } else {
-        prices = getItemPrices(itemHrid, enhancementLevel);
-    }
+    // Reconciled against the official market value and the value-source setting
+    const prices = resolveNetworthPrices(itemHrid, enhancementLevel, priceCache);
 
     // Try selected pricing mode first
-    const price = prices?.[pricingMode];
+    const price = typeof prices === 'number' ? prices : prices?.[pricingMode];
     if (price && price > 0) {
         return price;
     }
@@ -506,11 +541,12 @@ async function calculateItemValuesParallel(items, priceCache, gameData) {
             } else {
                 // Check if the configured pricing mode's price is missing — valuation
                 // uses that mode, so classifying on ask alone would run the expensive
-                // enhancement-path fallback synchronously on the main thread
-                const priceKey = `${item.itemHrid}:${enhancementLevel}`;
-                const prices = priceCache ? priceCache.get(priceKey) : null;
+                // enhancement-path fallback synchronously on the main thread. Resolve
+                // the same way getMarketPrice will, so an item the official value can
+                // price (or a book the value can fill) is not sent to the worker.
+                const resolved = resolveNetworthPrices(item.itemHrid, enhancementLevel, priceCache);
                 const hasMarketPrice =
-                    prices && ((typeof prices === 'number' && prices > 0) || prices[pricingMode] > 0);
+                    resolved && (typeof resolved === 'number' ? resolved > 0 : resolved[pricingMode] > 0);
 
                 if (!hasMarketPrice) {
                     needsWorker = true;

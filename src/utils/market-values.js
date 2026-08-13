@@ -46,6 +46,7 @@ let lastRefresh = 0;
 export function refreshMarketValues(now = Date.now()) {
     if (!isMarketplacePatchLive()) return cache.values;
     if (cache.values && now - lastRefresh < REFRESH_INTERVAL_MS) return cache.values;
+    if (typeof dataManager.getMarketItemValues !== 'function') return cache.values;
     lastRefresh = now;
     try {
         const payload = dataManager.getMarketItemValues();
