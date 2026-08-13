@@ -590,7 +590,7 @@ class LootLogStats {
         const inputCost = this.calculateInputCost(logData.actionHrid, logData.actionCount);
         if (!inputCost) return null;
 
-        // Revenue after the 2% marketplace tax (coins are untaxed face value)
+        // Revenue after the marketplace tax (coins are untaxed face value)
         let askRevenue = 0;
         let bidRevenue = 0;
         for (const [hrid, count] of Object.entries(logData.drops)) {

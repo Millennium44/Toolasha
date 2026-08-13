@@ -11,6 +11,8 @@
  *    gave up minus what you spent — did enhancing it pay off.
  */
 
+import { MARKET_TAX } from '../../utils/profit-constants.js';
+
 /**
  * Cost this run paid vs the prediction's expected cost, at this run's own unit
  * prices. Whole-session; returns null when it cannot be read honestly:
@@ -65,7 +67,7 @@ export function costVsExpected(session, leg = null) {
 }
 
 /** Marketplace sell fee — the cut taken when a listing fills. */
-export const MARKET_SELL_TAX = 0.02;
+export const MARKET_SELL_TAX = MARKET_TAX;
 
 /**
  * Whether the enhanced item is worth more than it cost to make: the +N resale

@@ -12,6 +12,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { formatKMB } from '../../utils/formatters.js';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 import webSocketHook from '../../core/websocket.js';
 import {
     navigateToMarketplace,
@@ -593,7 +594,7 @@ class GuildCreditValue {
         }
 
         // Calculate sell → rebuy scenario
-        const SELLER_TAX = 0.02;
+        const SELLER_TAX = MARKET_TAX;
         const sellPrice = selectedRow.buyPrice; // bid price = what market will buy at
         const directCredits = batches * selectedRow.creditCount;
 
@@ -619,7 +620,7 @@ class GuildCreditValue {
 
         advisor.style.borderColor = creditDiff > 0 ? 'rgba(74,222,128,0.3)' : 'rgba(255,107,107,0.3)';
         advisor.innerHTML = `
-            <div style="color:#9ca3af; margin-bottom:6px; font-size:11px;">Sell → rebuy best item (2% tax)</div>
+            <div style="color:#9ca3af; margin-bottom:6px; font-size:11px;">Sell → rebuy best item (${Math.round(MARKET_TAX * 100)}% tax)</div>
             <div style="display:flex; justify-content:space-between; margin-bottom:3px;">
                 <span style="color:#aaa;">Direct exchange</span>
                 <span style="color:#e0e0e0; font-weight:600;">${directCredits.toLocaleString()} credits</span>

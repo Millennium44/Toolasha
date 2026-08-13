@@ -12,6 +12,7 @@
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import { explainAbilityCost } from '../../utils/ability-cost-calculator.js';
+import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { calculateHouseBuildCost } from '../../utils/house-cost-calculator.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
@@ -853,8 +854,8 @@ export async function calculateNetworth() {
 
         if (listing.isSell) {
             // Selling: value is locked in listing + unclaimed coins
-            // Apply marketplace fee (2% for normal items, 18% for cowbells)
-            const fee = listing.itemHrid === '/items/bag_of_10_cowbells' ? 0.18 : 0.02;
+            // Apply marketplace fee (cowbells are taxed higher than everything else)
+            const fee = listing.itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
 
             const value = await calculateItemValue(
                 { itemHrid: listing.itemHrid, enhancementLevel, count: quantity },

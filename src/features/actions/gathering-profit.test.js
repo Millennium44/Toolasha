@@ -14,6 +14,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 
 const game = vi.hoisted(() => ({
     initClientData: null,
@@ -172,16 +173,16 @@ describe('calculateGatheringProfit — baseline drop table math', () => {
         // 3600 / 10s              = 360 actions/hour
         // avg count (1+1)/2       = 1 milk per action
         // items/hour  360 × 1 × 1 = 360
-        // revenue     360 × 100   = 36,000
-        // tax (2%)                = 720
-        // profit      36,000-720  = 35,280
+        // revenue     360 × 100         = 36,000
+        // tax                           = 36,000 × MARKET_TAX
+        // profit      36,000 − tax
         const result = await calculateGatheringProfit(COW);
 
         expect(result.actionsPerHour).toBe(360);
         expect(result.revenuePerHour).toBe(36000);
-        expect(result.profitPerHour).toBeCloseTo(35280, 6);
-        expect(result.profitPerDay).toBeCloseTo(35280 * 24, 6); // 846,720
-        expect(result.profitPerAction).toBeCloseTo(98, 6); // 35,280 / 360
+        expect(result.profitPerHour).toBeCloseTo(36000 * (1 - MARKET_TAX), 6);
+        expect(result.profitPerDay).toBeCloseTo(36000 * (1 - MARKET_TAX) * 24, 6);
+        expect(result.profitPerAction).toBeCloseTo((36000 * (1 - MARKET_TAX)) / 360, 6);
         expect(result.drinkCostPerHour).toBe(0);
         expect(result.hasMissingPrices).toBe(false);
     });
@@ -210,16 +211,16 @@ describe('calculateGatheringProfit — baseline drop table math', () => {
             efficiencyBreakdown: { totalEfficiency: 150, levelEfficiency: 120 },
         });
 
-        // items/hour 360 × 1 × 2.5 = 900 → revenue 90,000 → tax 1,800 → profit 88,200
+        // items/hour 360 × 1 × 2.5 = 900 → revenue 90,000 → tax 90,000 × MARKET_TAX → profit
         const result = await calculateGatheringProfit(COW);
 
         expect(result.actionsPerHour).toBe(360); // base rate is reported un-multiplied
         expect(result.totalEfficiency).toBe(150);
         expect(result.efficiencyMultiplier).toBe(2.5);
         expect(result.baseOutputs[0].itemsPerHour).toBe(900);
-        expect(result.profitPerHour).toBeCloseTo(88200, 6);
-        // profit/action divides by the EFFECTIVE rate 360 × 2.5 = 900 → 98
-        expect(result.profitPerAction).toBeCloseTo(98, 6);
+        expect(result.profitPerHour).toBeCloseTo(90000 * (1 - MARKET_TAX), 6);
+        // profit/action divides by the EFFECTIVE rate 360 × 2.5 = 900
+        expect(result.profitPerAction).toBeCloseTo((90000 * (1 - MARKET_TAX)) / 900, 6);
     });
 
     test('gathering quantity scales the average drop count', async () => {
@@ -235,11 +236,11 @@ describe('calculateGatheringProfit — baseline drop table math', () => {
         });
 
         // avg count 1 × 1.25 = 1.25 → 360 × 1.25 = 450/hour → 45,000 revenue
-        // tax 900 → profit 44,100
+        // tax 45,000 × MARKET_TAX → profit
         const result = await calculateGatheringProfit(COW);
 
         expect(result.baseOutputs[0].itemsPerHour).toBeCloseTo(450, 6);
-        expect(result.profitPerHour).toBeCloseTo(44100, 6);
+        expect(result.profitPerHour).toBeCloseTo(45000 * (1 - MARKET_TAX), 6);
         expect(result.totalGathering).toBe(0.25);
         expect(result.gatheringQuantity).toBe(0.25);
         expect(result.gatheringTea).toBe(0.05);
@@ -255,14 +256,14 @@ describe('calculateGatheringProfit — baseline drop table math', () => {
         ];
 
         // rare line: avg (1+3)/2 = 2 → 360 × 0.002 × 2 = 1.44/hour @ 250 = 360/hour
-        // total revenue 36,000 + 360 = 36,360 → tax 727.2 → profit 35,632.8
+        // total revenue 36,000 + 360 = 36,360 → tax 36,360 × MARKET_TAX → profit
         const result = await calculateGatheringProfit(COW);
         const rare = result.baseOutputs[1];
 
         expect(rare.itemsPerHour).toBeCloseTo(1.44, 10);
         expect(rare.revenuePerHour).toBeCloseTo(360, 10);
         expect(result.revenuePerHour).toBeCloseTo(36360, 6);
-        expect(result.profitPerHour).toBeCloseTo(35632.8, 6);
+        expect(result.profitPerHour).toBeCloseTo(36360 * (1 - MARKET_TAX), 6);
     });
 });
 
@@ -275,7 +276,7 @@ describe('calculateGatheringProfit — drink costs', () => {
         });
 
         // 12/hour each: 500 × 12 = 6,000 and 300 × 12 = 3,600 → 9,600/hour
-        // revenue 36,000 − tax 720 − drinks 9,600 = 25,680
+        // revenue 36,000 − tax (36,000 × MARKET_TAX) − drinks 9,600
         const result = await calculateGatheringProfit(COW);
 
         expect(result.drinkCostPerHour).toBeCloseTo(9600, 6);
@@ -287,7 +288,7 @@ describe('calculateGatheringProfit — drink costs', () => {
             costPerHour: 6000,
             missingPrice: false,
         });
-        expect(result.profitPerHour).toBeCloseTo(25680, 6);
+        expect(result.profitPerHour).toBeCloseTo(36000 * (1 - MARKET_TAX) - 9600, 6);
     });
 
     test('drink concentration raises consumption', async () => {
@@ -302,7 +303,7 @@ describe('calculateGatheringProfit — drink costs', () => {
 
         expect(result.drinkCosts[0].drinksPerHour).toBeCloseTo(13.8, 10);
         expect(result.drinkCostPerHour).toBeCloseTo(6900, 6);
-        expect(result.profitPerHour).toBeCloseTo(36000 - 720 - 6900, 6); // 28,380
+        expect(result.profitPerHour).toBeCloseTo(36000 - 36000 * MARKET_TAX - 6900, 6);
     });
 
     test('an unpriced tea costs nothing but flags missing prices', async () => {
@@ -329,14 +330,14 @@ describe('calculateGatheringProfit — Processing Tea', () => {
         // value gain each    = cheese 250 − 1 × milk 100 = 150
         // processing revenue = 54 × 150 = 8,100
         // base revenue still counts all the raw milk: 360 × 100 = 36,000
-        // revenue 44,100 → tax 882 → profit 43,218
+        // revenue 44,100 → tax 44,100 × MARKET_TAX → profit
         const result = await calculateGatheringProfit(COW);
 
         expect(result.processingBonus).toBe(0.15);
         expect(result.processingRevenueBonus).toBeCloseTo(8100, 6);
         expect(result.processingRevenueBonusPerAction).toBeCloseTo(22.5, 10); // 0.15 × 150
         expect(result.revenuePerHour).toBeCloseTo(44100, 6);
-        expect(result.profitPerHour).toBeCloseTo(43218, 6);
+        expect(result.profitPerHour).toBeCloseTo(44100 * (1 - MARKET_TAX), 6);
 
         const conversion = result.processingConversions[0];
         expect(conversion).toMatchObject({
@@ -383,14 +384,14 @@ describe('calculateGatheringProfit — Gourmet bonus', () => {
         buffs.context = efficiencyContext({ gourmetBonus: 10 });
 
         // bonus/action = 1 raw × 0.10 = 0.1 → 360 × 0.1 = 36/hour @ 100 = 3,600
-        // revenue 36,000 + 3,600 = 39,600 → tax 792 → profit 38,808
+        // revenue 36,000 + 3,600 = 39,600 → tax 39,600 × MARKET_TAX → profit
         const result = await calculateGatheringProfit(COW);
 
         expect(result.gourmetRevenueBonus).toBeCloseTo(3600, 6);
         expect(result.gourmetRevenueBonusPerAction).toBeCloseTo(10, 10);
         expect(result.gourmetBonuses[0].itemsPerHour).toBeCloseTo(36, 10);
         expect(result.revenuePerHour).toBeCloseTo(39600, 6);
-        expect(result.profitPerHour).toBeCloseTo(38808, 6);
+        expect(result.profitPerHour).toBeCloseTo(39600 * (1 - MARKET_TAX), 6);
     });
 
     test('prices gourmet duplicates at the raw/processed weighted average', async () => {
@@ -415,11 +416,11 @@ describe('calculateGatheringProfit — bonus revenue and edge cases', () => {
         });
 
         // base 360 × 2 × 100 = 72,000 + bonus 1,000 × 2 = 2,000 → 74,000
-        // tax 1,480 → profit 72,520
+        // tax 74,000 × MARKET_TAX → profit
         const result = await calculateGatheringProfit(COW);
 
         expect(result.revenuePerHour).toBeCloseTo(74000, 6);
-        expect(result.profitPerHour).toBeCloseTo(72520, 6);
+        expect(result.profitPerHour).toBeCloseTo(74000 * (1 - MARKET_TAX), 6);
     });
 
     test('missing bonus-drop prices propagate to hasMissingPrices', async () => {
@@ -489,8 +490,8 @@ describe('formatProfitDisplay', () => {
         const profitable = await calculateGatheringProfit(COW);
         const html = formatProfitDisplay(profitable);
 
-        expect(html).toContain('35,280/hour');
-        expect(html).toContain('846,720/day');
+        expect(html).toContain('34,200/hour');
+        expect(html).toContain('820,800/day');
         expect(html).toContain('Actions: 360.0/hour');
         expect(html).toContain('Milk (Base)');
 

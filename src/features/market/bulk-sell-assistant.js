@@ -19,6 +19,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 import marketAPI from '../../api/marketplace.js';
 import {
     loadConfig as loadTabConfig,
@@ -894,7 +895,7 @@ class BulkSellAssistant {
         const wouldInsta = minListingValue > 0 && stackValue < minListingValue;
         const referencePrice = (wouldInsta ? (bid ?? ask) : (ask ?? bid)) || 0;
         if (referencePrice <= 0) return false;
-        const marketNet = Math.floor(referencePrice * 0.98);
+        const marketNet = Math.floor(referencePrice * (1 - MARKET_TAX));
         if (vendorPrice < marketNet) return false;
         return this._openVendorSell(vendorPrice, marketNet);
     }

@@ -117,7 +117,7 @@ export function countProtections(levelCounts, protectFrom, targetLevel, success)
  * @param {(hrid: string, level: number) => number|null} deps.itemValue - Market
  *   resale (bid) value of the item at a level, or null when unlisted
  * @param {Object} deps.itemDetails - itemDetailMap entry for the enhanced item
- * @param {number} [deps.marketTax=0.02] - Sell fee
+ * @param {number} [deps.marketTax=0.05] - Sell fee (see profit-constants MARKET_TAX)
  * @returns {Object|null}
  */
 export function computeEnhancingSummary(run, deps) {
@@ -128,7 +128,7 @@ export function computeEnhancingSummary(run, deps) {
         protectionPrice,
         itemValue,
         itemDetails,
-        marketTax = 0.02,
+        marketTax = 0.05,
     } = deps || {};
     if (
         !run ||

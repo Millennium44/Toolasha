@@ -1,4 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 
 const PHILO_HRID = '/items/philosophers_stone';
 const WIDGET_HRID = '/items/test_widget';
@@ -115,10 +116,10 @@ describe('revenue', () => {
     test('every sold drop pays market tax; the self-return does not', () => {
         const row = calc.calculateRow(WIDGET_HRID, widget());
 
-        // Stones and shards are sold (2% tax); the returned widget goes straight
+        // Stones and shards are sold (market tax); the returned widget goes straight
         // back into the transmuter, so it is credited at its full cost basis.
-        const stones = 0.5 * 0.01 * 1 * (4_000_000 * 0.98);
-        const shards = 0.5 * 0.25 * 2 * (100 * 0.98);
+        const stones = 0.5 * 0.01 * 1 * (4_000_000 * (1 - MARKET_TAX));
+        const shards = 0.5 * 0.25 * 2 * (100 * (1 - MARKET_TAX));
         const selfReturn = 0.5 * 0.5 * 1 * 1000;
 
         expect(row.ev).toBeCloseTo(stones + shards + selfReturn, 6);
@@ -137,7 +138,7 @@ describe('revenue', () => {
         // Bonus drops are taxed like the rest; the ordinary drop rows the
         // alchemy calculator also reports are already counted here and must
         // not be added twice.
-        expect(calc.calculateRow(WIDGET_HRID, widget()).ev).toBeCloseTo(without + 150 * 0.98, 6);
+        expect(calc.calculateRow(WIDGET_HRID, widget()).ev).toBeCloseTo(without + 150 * (1 - MARKET_TAX), 6);
     });
 });
 
@@ -252,8 +253,8 @@ describe('cost basis', () => {
 
         // A +2 listing is not what the transmuter hands back — the return is
         // credited at the base item's own price, not the enhanced ask
-        const stones = 0.5 * 0.01 * 1 * (4_000_000 * 0.98);
-        const shards = 0.5 * 0.25 * 2 * (100 * 0.98);
+        const stones = 0.5 * 0.01 * 1 * (4_000_000 * (1 - MARKET_TAX));
+        const shards = 0.5 * 0.25 * 2 * (100 * (1 - MARKET_TAX));
         expect(row.ev).toBeCloseTo(stones + shards + 0.5 * 0.5 * 900, 6);
     });
 
@@ -304,7 +305,7 @@ describe('pricing mode', () => {
         // Conservative mode sells into bids, so the headline figure is instant
         expect(row.profitPerPhilo).toBeCloseTo(row.profitPerPhiloInstant, 6);
         expect(row.evPatient - row.evInstant).toBeCloseTo(
-            0.5 * 0.01 * (5_000_000 - 4_000_000) * 0.98 + 0.5 * 0.25 * 2 * (200 - 100) * 0.98,
+            0.5 * 0.01 * (5_000_000 - 4_000_000) * (1 - MARKET_TAX) + 0.5 * 0.25 * 2 * (200 - 100) * (1 - MARKET_TAX),
             6
         );
     });
@@ -314,7 +315,7 @@ describe('pricing mode', () => {
         calc._manualPhiloPrice = true;
 
         const row = calc.calculateRow(WIDGET_HRID, widget());
-        expect(row.evInstant).toBeCloseTo(row.evPatient - 0.5 * 0.25 * 2 * (200 - 100) * 0.98, 6);
+        expect(row.evInstant).toBeCloseTo(row.evPatient - 0.5 * 0.25 * 2 * (200 - 100) * (1 - MARKET_TAX), 6);
         expect(row.pricingMode).toBe('conservative');
     });
 });

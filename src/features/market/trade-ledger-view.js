@@ -28,7 +28,7 @@ const PANEL_KEY = 'tradeLedgerModal';
 
 const BASIS_TOOLTIP =
     'Average-cost basis: each sell is matched against the average price of buys recorded in this ledger ' +
-    'for the same item + enhancement level. Sell proceeds are always net of the 2% market tax. ' +
+    'for the same item + enhancement level. Sell proceeds are always net of the market tax. ' +
     'Sells of items never bought through the ledger are shown as revenue with cost "—", not as profit.';
 
 class TradeLedgerView {
@@ -429,7 +429,7 @@ class TradeLedgerView {
             { label: 'Item' },
             { label: 'Enh' },
             { label: 'Bought' },
-            { label: 'Sold (net)', title: 'Quantity @ average proceeds per unit, after the 2% market tax' },
+            { label: 'Sold (net)', title: 'Quantity @ average proceeds per unit, after the market tax' },
             { label: 'Realized', title: BASIS_TOOLTIP },
             { label: 'Last Activity' },
         ];

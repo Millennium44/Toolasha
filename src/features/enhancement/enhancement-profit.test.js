@@ -83,8 +83,8 @@ describe('valueVsCost', () => {
     test('subtracts the base value given up', () => {
         const getPrices = (hrid, level) => (level === 0 ? { bid: 1000 } : { bid: 10000 });
         const v = valueVsCost(session({ totalCost: 2000 }), getPrices);
-        // (10000 − 1000) × 0.98 − 2000 = 6820.
-        expect(v.net).toBeCloseTo(9000 * 0.98 - 2000, 5);
+        // (10000 − 1000) after fee − 2000.
+        expect(v.net).toBeCloseTo(9000 * (1 - MARKET_SELL_TAX) - 2000, 5);
     });
 
     test('net is null when the +N level has no market price', () => {
