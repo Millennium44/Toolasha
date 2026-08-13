@@ -69,6 +69,14 @@ const ALLOWLIST = new Map([
         'constants only; core loads before utils and must carry its own copy',
     ],
     [
+        'src/utils/loadout-scraper.js',
+        // Pure DOM/string helpers (sprite-href parsing, equipment/ability
+        // scraping) plus one lookup constant — no module-level state. Used by the
+        // actions bundle and now by the market bundle (ability tooltip status), so
+        // each carries an identical, stateless copy.
+        'stateless DOM/string helpers and a lookup table; duplicate copies are identical',
+    ],
+    [
         'src/utils/bundle-bridge.js',
         // Null-safe accessors over window.Toolasha with no state of their own —
         // every call reads the live namespace, so each copy gives identical
