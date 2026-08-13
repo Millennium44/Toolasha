@@ -1,7 +1,7 @@
 /**
  * Toolasha Combat Library
  * Combat, abilities, and combat stats features
- * Version: 2.98.0
+ * Version: 2.99.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -48990,13 +48990,24 @@
             if (quiet.length) {
                 const card = simplePanel_js.panelCard(body, `Gone quiet (${quiet.length})`, overlayFormat_js.ROW_COLORS.bad);
                 for (const member of quiet) {
-                    card.appendChild(
-                        simplePanel_js.panelLine(
-                            memberLabel(member),
-                            `${xp(member.dayRate)}/h today vs ${xp(member.weekRate)}/h this week`,
-                            overlayFormat_js.ROW_COLORS.bad
-                        )
+                    const line = simplePanel_js.panelLine(
+                        memberLabel(member),
+                        `${xp(member.dayRate)}/h today vs ${xp(member.weekRate)}/h this week`,
+                        overlayFormat_js.ROW_COLORS.bad
                     );
+                    // Click a quiet member to load /profile <name> in chat (Enter to
+                    // send) — the same one-keypress trick the profile cycler uses,
+                    // handy for checking on someone who dropped off.
+                    if (member.name && profileCommand_js.VALID_PLAYER_NAME_RE.test(member.name)) {
+                        line.style.cursor = 'pointer';
+                        line.title = `Click to load /profile ${member.name} in chat — press Enter to open it.`;
+                        line.addEventListener('click', () => {
+                            if (!profileCommand_js.fillProfileCommand(member.name, null, 'GuildRoster')) {
+                                line.title = 'Open the chat panel first — that is how a profile is asked for.';
+                            }
+                        });
+                    }
+                    card.appendChild(line);
                 }
             }
 

@@ -1,7 +1,7 @@
 /**
  * Toolasha UI Library
  * UI enhancements, tasks, skills, and misc features
- * Version: 2.98.0
+ * Version: 2.99.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -6401,6 +6401,172 @@
     const commandPalette = new CommandPalette();
 
     /**
+     * Panel minimize
+     *
+     * A minimize control every floating panel can share.
+     *
+     * "Minimize" here is collapse-in-place: the window stays open and stays where it
+     * is, but its body folds away so only the draggable header strip remains. It is
+     * the answer to a screen with four panels up — you want the profit tile out of
+     * the way for a moment without losing the tile, its position, or its running
+     * refresh. The collapsed state is remembered per panel (in the shared geometry
+     * record), so a panel left minimized reopens minimized after a refresh.
+     *
+     * The header, body, and close button differ per panel shell, so the caller hands
+     * those in; everything else — the button, the fold, the persistence — is here.
+     */
+
+
+    /** Shown on the button when the panel is open (click to fold it away). */
+    const MINIMIZE_GLYPH = '–'; // en dash
+    /** Shown when the panel is minimized (click to bring the body back). */
+    const RESTORE_GLYPH = '□'; // white square
+
+    /**
+     * Give a panel a minimize button that folds it to its header.
+     *
+     * @param {Object} options
+     * @param {HTMLElement} options.panel - The floating window
+     * @param {HTMLElement} options.header - The header/drag strip (stays visible)
+     * @param {HTMLElement|HTMLElement[]} options.body - The content region(s) to fold
+     *   away. Panels with a single body pass the element; panels whose header and
+     *   content are siblings (no wrapper) pass every non-header child as an array.
+     * @param {string} options.panelKey - Stable key for persisting collapsed state
+     * @param {HTMLElement} [options.beforeEl] - Insert the button before this header
+     *   child (usually the close button); appended to the header otherwise
+     * @param {number} [options.defaultHeight] - Expanded height to spring back to
+     *   when there is no remembered size (e.g. reopened already-minimized)
+     * @param {string} [options.accent] - Button ink
+     * @param {Function} [options.onToggle] - Called with the new collapsed boolean
+     * @param {boolean} [options.restore=true] - Restore the persisted collapsed
+     *   state on attach. Pass false for a panel that manages its own open lifecycle.
+     * @returns {{button: HTMLElement, collapsed: boolean, setCollapsed: Function, destroy: Function}}
+     */
+    function attachMinimize({
+        panel,
+        header,
+        body,
+        panelKey,
+        beforeEl = null,
+        defaultHeight = null,
+        accent = '#e8ecf5',
+        onToggle = null,
+        restore = true,
+    }) {
+        let collapsed = false;
+        // The height to return to. Captured when folding an expanded panel, so a
+        // panel resized before minimizing springs back to the size it was resized to.
+        let expandedHeight = null;
+        // Some panels set a CSS min-height inline; leaving it in place keeps a folded
+        // panel that tall with an empty gap below the header. Neutralize it while
+        // collapsed and put it back on expand.
+        let expandedMinHeight = null;
+
+        // One body or several sibling contents.
+        const bodies = (Array.isArray(body) ? body : [body]).filter(Boolean);
+        // Captured at collapse time, not attach time: a tabbed panel changes which of
+        // its content siblings is visible as you use it, so expanding must restore the
+        // visibility it had the moment it was folded — not the tab it opened on.
+        let savedDisplays = null;
+
+        const button = document.createElement('button');
+        button.className = 'toolasha-minimize-btn';
+        button.textContent = MINIMIZE_GLYPH;
+        button.title = 'Minimize';
+        Object.assign(button.style, {
+            background: 'none',
+            border: 'none',
+            color: accent,
+            cursor: 'pointer',
+            fontSize: '15px',
+            lineHeight: '1',
+            padding: '2px 4px',
+            marginRight: '2px',
+        });
+
+        function grips() {
+            return panel.querySelectorAll('.toolasha-resize-grip');
+        }
+
+        function apply(next, { persist = true } = {}) {
+            collapsed = Boolean(next);
+            const gs = grips();
+            if (collapsed) {
+                if (expandedHeight == null) {
+                    expandedHeight = panel.style.height || (defaultHeight != null ? `${defaultHeight}px` : '');
+                }
+                if (expandedMinHeight == null) expandedMinHeight = panel.style.minHeight || '';
+                savedDisplays = bodies.map((el) => el.style.display || '');
+                bodies.forEach((el) => (el.style.display = 'none'));
+                gs.forEach((g) => (g.style.display = 'none'));
+                // A resize grip on a header-height strip is a handle to resize
+                // nothing; the fixed height and any min-height also have to give way
+                // or the folded panel keeps its full height with an empty gap under
+                // the header.
+                panel.style.height = 'auto';
+                panel.style.minHeight = '0';
+                button.textContent = RESTORE_GLYPH;
+                button.title = 'Restore';
+            } else {
+                bodies.forEach((el, i) => (el.style.display = savedDisplays ? savedDisplays[i] : ''));
+                savedDisplays = null;
+                gs.forEach((g) => (g.style.display = ''));
+                const back = expandedHeight || (defaultHeight != null ? `${defaultHeight}px` : '');
+                if (back) panel.style.height = back;
+                if (expandedMinHeight != null) panel.style.minHeight = expandedMinHeight;
+                expandedHeight = null;
+                expandedMinHeight = null;
+                button.textContent = MINIMIZE_GLYPH;
+                button.title = 'Minimize';
+            }
+            panel.dataset.minimized = collapsed ? 'true' : 'false';
+            if (persist && panelKey) panelGeometry_js.saveCollapsed(panelKey, collapsed);
+            if (onToggle) onToggle(collapsed);
+        }
+
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            apply(!collapsed);
+        });
+
+        // Place the button immediately left of the close button, in whatever
+        // container the close button actually lives in — some headers keep their
+        // close inside a right-aligned sub-group, not as a direct header child.
+        if (beforeEl && beforeEl.parentNode) {
+            beforeEl.parentNode.insertBefore(button, beforeEl);
+        } else {
+            header.appendChild(button);
+        }
+
+        if (restore && panelKey) {
+            // Fire-and-forget: reading storage has no business holding up the panel's
+            // first paint. If it was left minimized, fold it a moment later — which is
+            // what a remembered minimized panel looks like anyway. Seed expandedHeight
+            // from the stored size so the first un-minimize springs to the right height.
+            (async () => {
+                try {
+                    if (!(await panelGeometry_js.wasCollapsed(panelKey))) return;
+                    if (!panel.isConnected) return;
+                    const size = await panelGeometry_js.savedSize(panelKey);
+                    if (size?.height) expandedHeight = `${size.height}px`;
+                    apply(true, { persist: false });
+                } catch (error) {
+                    console.error('[PanelMinimize] Restoring minimized state failed:', error);
+                }
+            })();
+        }
+
+        return {
+            button,
+            get collapsed() {
+                return collapsed;
+            },
+            setCollapsed: (value) => apply(Boolean(value)),
+            destroy: () => button.remove(),
+        };
+    }
+
+    /**
      * House affordability
      *
      * How many house upgrades your coins currently cover, and what the cheapest one
@@ -6810,6 +6976,15 @@
             panelZIndex_js.registerFloatingPanel(this.panel);
             panelGeometry_js.restoreGeometry(this.panel, GEOMETRY_KEY$3, { width: 380, height: 200 });
 
+            this.minimizeCtl = attachMinimize({
+                panel: this.panel,
+                header,
+                body,
+                panelKey: GEOMETRY_KEY$3,
+                beforeEl: header.lastElementChild,
+                accent: COLORS$8.text,
+            });
+
             this._render();
             // Costs move with the market, and coins move as you play
             this.refreshId = setInterval(() => {
@@ -7104,6 +7279,8 @@
             this.detachDrag = null;
             this.detachResize?.();
             this.detachResize = null;
+            this.minimizeCtl?.destroy();
+            this.minimizeCtl = null;
             if (!this.panel) return;
             panelZIndex_js.unregisterFloatingPanel(this.panel);
             this.panel.remove();
@@ -9780,6 +9957,8 @@
             this.detachResize?.();
             this.detachDrag = null;
             this.detachResize = null;
+            this.minimizeCtl?.destroy();
+            this.minimizeCtl = null;
 
             if (!this.panel) return;
             panelZIndex_js.unregisterFloatingPanel(this.panel);
@@ -9868,6 +10047,16 @@
                 fontVariantNumeric: 'tabular-nums',
             });
             this.panel.appendChild(this.bodyEl);
+
+            this.minimizeCtl = attachMinimize({
+                panel: this.panel,
+                header,
+                body: this.bodyEl,
+                panelKey: this.id,
+                beforeEl: close,
+                defaultHeight: this.size.height,
+                accent: COLORS$7.text,
+            });
 
             this.detachDrag = floatingPanel_js.makeDraggable(this.panel, header, (position) => {
                 panelGeometry_js.saveGeometry(this.id, { left: parseFloat(position.left), top: parseFloat(position.top) });
@@ -25916,13 +26105,24 @@ ${starCSS}
             if (quiet.length) {
                 const card = simplePanel_js.panelCard(body, `Gone quiet (${quiet.length})`, overlayFormat_js.ROW_COLORS.bad);
                 for (const member of quiet) {
-                    card.appendChild(
-                        simplePanel_js.panelLine(
-                            memberLabel(member),
-                            `${xp(member.dayRate)}/h today vs ${xp(member.weekRate)}/h this week`,
-                            overlayFormat_js.ROW_COLORS.bad
-                        )
+                    const line = simplePanel_js.panelLine(
+                        memberLabel(member),
+                        `${xp(member.dayRate)}/h today vs ${xp(member.weekRate)}/h this week`,
+                        overlayFormat_js.ROW_COLORS.bad
                     );
+                    // Click a quiet member to load /profile <name> in chat (Enter to
+                    // send) — the same one-keypress trick the profile cycler uses,
+                    // handy for checking on someone who dropped off.
+                    if (member.name && profileCommand_js.VALID_PLAYER_NAME_RE.test(member.name)) {
+                        line.style.cursor = 'pointer';
+                        line.title = `Click to load /profile ${member.name} in chat — press Enter to open it.`;
+                        line.addEventListener('click', () => {
+                            if (!profileCommand_js.fillProfileCommand(member.name, null, 'GuildRoster')) {
+                                line.title = 'Open the chat panel first — that is how a profile is asked for.';
+                            }
+                        });
+                    }
+                    card.appendChild(line);
                 }
             }
 
@@ -44930,6 +45130,15 @@ ${starCSS}
             panelZIndex_js.registerFloatingPanel(this.panel);
             panelGeometry_js.restoreGeometry(this.panel, GEOMETRY_KEY$2, { width: 420, height: 240 });
 
+            this.minimizeCtl = attachMinimize({
+                panel: this.panel,
+                header: this.headerEl,
+                body: this.bodyEl,
+                panelKey: GEOMETRY_KEY$2,
+                beforeEl: this.headerEl.lastElementChild,
+                accent: COLORS$6.text,
+            });
+
             this._render();
             this.refreshId = setInterval(() => {
                 if (document.hidden) return;
@@ -45967,6 +46176,8 @@ ${starCSS}
             this.detachDrag = null;
             this.detachResize?.();
             this.detachResize = null;
+            this.minimizeCtl?.destroy();
+            this.minimizeCtl = null;
 
             if (!this.panel) return;
             panelZIndex_js.unregisterFloatingPanel(this.panel);
@@ -51298,6 +51509,15 @@ ${starCSS}
                 onResize: (size) => panelGeometry_js.saveGeometry(POPUP_GEOMETRY_KEY, size),
             });
 
+            this.popupMinimizeCtl = attachMinimize({
+                panel: popup,
+                header,
+                body,
+                panelKey: POPUP_GEOMETRY_KEY,
+                beforeEl: closeBtn,
+                accent: COLORS$4.text,
+            });
+
             // Dismissed by clicking away from it, the way the game's own loot dialog
             // and MCS's treasure pane both behave. Deferred by a tick so the click
             // that *opened* it does not immediately close it again.
@@ -51419,6 +51639,8 @@ ${starCSS}
             this._detachPopupDrag = null;
             this._detachPopupResize?.();
             this._detachPopupResize = null;
+            this.popupMinimizeCtl?.destroy();
+            this.popupMinimizeCtl = null;
             if (!this.popup) return;
             panelZIndex_js.unregisterFloatingPanel(this.popup);
             this.popup.remove();
@@ -51468,6 +51690,16 @@ ${starCSS}
             // to, so a 420 that no phone can honour is a minimum that hands the
             // panel back wider than the screen
             panelGeometry_js.restoreGeometry(this.panel, PANEL_GEOMETRY_KEY, MIN_PANEL);
+
+            this.minimizeCtl = attachMinimize({
+                panel: this.panel,
+                header: this.headerEl,
+                body: this.contentEl,
+                panelKey: PANEL_GEOMETRY_KEY,
+                beforeEl: this.headerEl.lastElementChild,
+                accent: COLORS$4.text,
+            });
+
             this._render();
         }
 
@@ -51963,6 +52195,8 @@ ${starCSS}
             this._detachDrag = null;
             this._detachResize?.();
             this._detachResize = null;
+            this.minimizeCtl?.destroy();
+            this.minimizeCtl = null;
             if (!this.panel) return;
             panelZIndex_js.unregisterFloatingPanel(this.panel);
             this.panel.remove();
@@ -58211,7 +58445,7 @@ ${starCSS}
         return overrides;
     }
 
-    var forkChangelog = "## Unreleased — branch `main`\n\n### Combat Sim Results: a ⌖ button targets that zone in Configure\n\nEach row of the all-zones Results table now has a ⌖ button that sets that zone and tier as the Configure target and jumps to the Configure tab (leaving all-zones mode so the single-zone selects reappear) — no more scrolling the zone dropdown to sim a promising row. The table also now defaults to sorting by Score (descending) instead of unsorted.\n\n### Upgrade advisor: path boots (base and refined) are offered and simmed at +7\n\nThe upgrade advisor simmed a proposed gear swap at the current piece's enhancement level, so path boots (Pathbreaker/Pathfinder/Pathseeker) were quoted at whatever your worn boots are (e.g. +10). They're only obtainable at +7, so a swap to them is now always simmed and priced at +7 — the refined variants override the usual +10 refined floor. The refined path boots are now also _offered_: the crafting-chain walk only reaches the base boot (refined is one hop further), so each base path-boot swap now gets a refined sibling in the table, at +7.\n\n### Enhancement XP/hr panel: get a route for any item, even one you don't own\n\nThe enhancing-route (target level, protection plan, cost) was only reachable by hovering an item that's rendered — owned or listed — so an item with no listing at that level showed nothing. The Enhancement XP/hr panel now has an \"Enhance any item\" box: type any enhanceable item, pick a target level, and get its full route. The base-item price falls back to crafting cost when the market is empty, so it works with zero listings.\n\n### Ability hover: optional \"fresh to level\" cost, priced at the level shown\n\nHovering an ability itself (in a loadout, an ability slot, or on another player's profile) can now add a \"Fresh to Lv N: <cost> (<books> books)\" line, priced at the level the tooltip shows — so on someone else's profile it uses their level, not yours. It's identified from the ability tooltip's own name and gated behind a new, default-off setting (\"Show fresh-to-level cost on ability hovers\"), separate from the ability-book tooltip status.\n\n### Enhancement tooltip: the source toggle is discoverable and mobile-friendly\n\nThe \"Yours ⇄ / Pro ⇄\" chip on enhancement tooltips now shows a keycap **P** so the press-to-toggle hotkey is visible, not just buried in the hover title. On touch devices it drops the key (no keyboard), enlarges to a finger-sized tap target, and reads \"tap\" — the chip was already tappable on tap-to-open tooltips, just too small and unlabeled.\n\n### Upgrade advisor: \"Signature only\" is now \"Aura only\"\n\nThe Ability Swaps sub-option that restricted swaps to the aura + signature groups now restricts to just the aura group — the single \"which aura\" decision. Renamed the checkbox to \"Aura only\" with an updated tooltip, and renamed the internal option throughout (`auraOnly` / `auraSwapsOnly`).\n\n### Upgrade advisor: the aura OR-alternative is offered again\n\nAbility Swaps stopped offering the other aura in your archetype's aura group — e.g. running Mystic Aura, it never proposed Critical Aura. The generator was running each guide offer through a style-from-buff-data heuristic that misreads a universal aura (Critical Aura) as another style and vetoed it. The guide's own ability set is style-correct by construction, so on the guide path that heuristic no longer runs; it now only guards the every-ability fallback.\n\n### Sim: Achievements section — toggle your achievement combat buffs\n\nThe sim already applied your completed-achievement combat buffs (e.g. Damage +2%) silently; there was no way to see or change them. A new **Achievements** section on the Configure tab lists the combat buffs your achievements grant, each ticked by default (so results are unchanged) — untick one to sim without it. It reads your real buffs with their exact values; a character with no combat achievement buffs shows no section.\n\n### Sim: the loadout picker is back in the packaged build\n\nThe Combat Sim and Lab Sim loadout dropdown vanished in the released userscript (it still worked in dev): both UIs read the loadout list from their own bundle's copy of the snapshot store, which the websocket never feeds in the multi-bundle build, so the list was always empty and the `<select>` never rendered. Both now read the fed store through the bundle bridge — the same fix the apply path already had — so you can pick a saved loadout to sim as again. A regression test now asserts the picker renders from the bridge store.\n\n### Author credit: full contributor list and code-source attribution\n\nBoth userscript headers now carry the same, tidied `@author` credit. It restores the contributors who were only in the dev header (Shykai, amVoidGuy, vlad, kuganDev, Paradoxian, Maarg, SilkyPanda, MekaPyon, vidonnus) and adds a line crediting the tools this fork borrowed code and ideas from: MWITools (bot7420), MWI Combat Suite (Frotty), JIGS (jigglymoose), the Labyrinth Win Rate Calculator (dakonglong), and the mooket pools (Q7, IOMisaka).\n\n### Author credit leads with Millennium44 (production header too)\n\nThe previous author change only touched the dev header (`userscript-header.txt`); the GreasyFork build takes its header from `library-headers/entrypoint.txt`, which still led with the upstream authors. That production header now leads with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" as well, so the published listing shows the fork maintainer.\n\n### Author credit leads with Millennium44\n\nThe userscript `@author` header now opens with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" instead of leading with the upstream authors, so the GreasyFork listing credits the fork maintainer. The contributor thank-yous are unchanged.\n\n### Task reroll tracker: drop the experimental warning\n\nThe \"Track task reroll costs\" setting no longer warns it is experimental and may freeze the UI — it's stable. Default unchanged (on).\n\n### My Listings: a fresh undercut now shows without opening the item\n\nThe Top Order Price column trusted the last-opened order book, so an undercut stayed hidden behind your own price until you reopened the item. It now surfaces the game snapshot's price when it beats you (a rival's by definition, never your own order) — so undercuts show on their own, without ever displaying your own listing or downgrading a genuinely-fresher book. The age column follows suit.\n\n### Labyrinth: the calibration recorder is now passive and accumulates across runs\n\nNo Record button any more — every combat fight is kept automatically, per character and tagged with the gear it was fought in, pooled into 10-level bands so a monster's scattered random levels still accumulate. Press **Replay** to judge whatever has built up on your current gear; a loadout change starts a fresh pool. Bounded to 500 fights.\n\n### Labyrinth: a fight recorder and a calibration replay\n\nThe Sim accuracy record says _whether_ a room's clear chance is wrong, not _why_ — a timeout and a death are both \"lost\", and the fixes are opposite. This adds the decomposition.\n\n- **Replay** re-sims the recorded rooms and puts your real damage/s, the monster's, the clear rate and the fight length beside the sim's, each with a noise-aware verdict and a one-line diagnosis of which side the sim gets wrong. **Save comparison** downloads the whole check as one file.\n- **Capture** saves the raw tick feed of a fight — stun uptime, ability cadence, per-hit damage — for mechanism-level analysis (previously console-only).\n- Measurement fixes found via real captures: damage measured **gross** (not net of your ~16 HP/s regen, which made monsters look 15–40% weaker than the sim); self-healing monsters (life drain, the Dryad) no longer **split one fight into several**; partial-HP fights are dropped; and the diagnosis names all four over/under directions.\n\n### Labyrinth: full-ability sim calibration (testing), tooltip clear-time, tidier panel bar\n\n- Testing setting to model a monster's **full ability kit** in the sim — the labyrinth otherwise builds every monster at tier 0 and drops its gated abilities (the Cyclops's stun, shred, self-buffs). Off by default; it's part of the cache key, so toggling re-sims.\n- **Est. clear time** on combat/skilling room hover, shown past the tile's \"999+\" cap.\n- Room Logs top bar wraps cleanly; \"Sim accuracy\" tab shortened to \"Accuracy\".\n\n### Labyrinth: stop counting un-fought rooms as clears, and an uncapped sim option\n\n- **Phantom clears removed** — a revealed-but-unfought room (shroud, beacon, floor skip) is marked `isCleared` with no entry; it no longer counts as a win and drags the accuracy record toward \"sim too low\".\n- **Uncapped** toggle lifts the sim's time cap for the next Recompute, so a slow, timeout-heavy room reaches its precision target instead of a wide \"(capped)\" band.\n\n### Labyrinth: Recompute button, honest attempt counts, and a panel that stays put\n\n- **Recompute** throws away cached clear-chance sims and re-runs the visible rooms — a plain equip doesn't always refresh a sim cached under old gear.\n- Room Log shows the server's own attempt count, not just the fights it watched on the combat view: \"Won 0/6 · 26 total\".\n- The panel keeps its scroll position across redraws instead of jumping to the top on every update.\n\n### Undercut alerts finally fire passively, backed by Mooket\n\nThe alert distrusts any price older than 15 minutes, but the game snapshot refreshes only ~hourly — so undercuts on items you weren't watching stayed silent for hours. It now also consults the freshest **Mooket** sighting per listing (refreshed every 15 min), reporting its true age, so it can fire for items you never opened. Rides the Price history panel setting.\n\n### Selectable price-history source: mooket I alongside mooket II\n\nA **Market: Price history data source** setting picks between the Q7 pool (mooket II, default — ask/bid/avg/volume) and IOMisaka's original (mooket I — ask/bid only). On mooket I the chart's third line is a computed \"Mid\", the volume bars vanish, and the goal planner's volume limits switch off (a source with no volume tells us nothing about how fast a thing sells — unknown, not a measured zero). The order books you contribute back follow the selected source.\n\n### \"Mooket Refresh\" button on the My Listings tab\n\nA **Mooket Refresh** button in the My Listings header pulls fresher Top Order Prices for every listed item from the Mooket pool in one click, patching the fresher ones into the price cache the column redraws from — no opening each item by hand. Skips a sighting older than the game's snapshot, and keeps a one-sided sighting's other side. Rides the Price history panel setting.\n\n### My Listings' Top Order Price refreshes when the market moves\n\nThe Top Order Price column on the My Listings tab only redrew when your own listings changed (or, with the age column on, when you re-opened an item's order book), so an undercut fired an alert but left the column showing the stale price. It now subscribes to the same market-data updates the undercut alert uses — a marketplace snapshot refresh or an order-book price patch redraws the column (debounced), so being undercut turns the price red here too.\n\n### Custom Tabs: an enhanced item is no longer double-counted in Unorganized\n\nAn enhanced item is tracked under both its base and its `+level` key, so an unassigned one was collected through both — inflating the \"Unorganized (N)\" count and placing the tile twice. A shared, deduped collector (each physical tile once) now backs both the header count and the lightweight visibility pass (ported from upstream Celasha/Toolasha#627).\n\n### Custom Tabs action buttons heal when the sort-controls row is removed\n\nThe +Tab/Export/Import/Expand group is merged into the game's inventory sort-controls row and isn't tracked with the other injected elements, so when the InventorySort feature removed that row the buttons vanished and didn't return. A direct connectivity check now forces a rebuild when they disconnect (ported from upstream Celasha/Toolasha#632).\n\n### Estimated listing age: a null price no longer suppresses a match\n\nTwo \"your listings beyond the top 20\" match sites used a parsed price without checking for `null` (which the parser returns on empty/invalid text). A null coerces to 0 in the price comparison and can hide a correct match; both sites now skip the row instead (ported from upstream Celasha/Toolasha 2.85.0).\n\n### Character switches are serialized, so rapid switching no longer bleeds settings\n\nA rapid character switch could drop a re-init (leaving the previous character's per-character settings applied) or start a rebuild before the last character's teardown finished. The switch lifecycle now runs through one serialized chain, and each re-init verifies it is still for the current character before it applies — latest character wins, nothing dropped or overlapped (ported from upstream Celasha/Toolasha#622).\n\n### Action Filter's pricing mode resyncs after a character switch\n\nThe persistent Action Filter never re-initializes, and a character switch skips the per-key change callbacks (the cache is cleared first), so its mode/craft buttons and profit rows could keep the previous character's pricing mode. A new `config.onSettingsLoaded` channel fires whenever settings finish loading, so the filter resyncs (ported from upstream Celasha/Toolasha#630).\n\n### The Unorganized tab no longer vanishes mid-character-switch\n\nThe Custom Tabs \"Unorganized\" bucket was gated on `getSettingValue`, which reads `null` while the per-character cache is briefly empty during a switch — hiding the section until it reloaded. It now reads `getSetting`, which falls back to the schema default (ported from upstream Celasha/Toolasha#636).\n\n### Action-bar display no longer risks freezing the tab on a character switch\n\n`setupActionNameObserver` now disconnects any running observer before replacing it, so a character switch can't leak a duplicate watcher that loops on the stats span and freezes the tab (ported from upstream Celasha/Toolasha#623).\n\n### The Sort Tasks button sorts even with a reroll menu open\n\nA direct press now sorts the board immediately, mid-reroll and all. The automatic passes (auto-sort, sort-after-read) still wait for the board to settle so they never yank a pending click.\n\n### The protected/cap task border keeps up again\n\nIt is redrawn right away on a card that is mid-reroll (it used to wait for the menu to close, so the edge looked stuck until you pressed Back), and painted the instant the board opens instead of after a 150 ms delay.\n\n### The task bulk-reroll button is removed\n\nThe game only honours a reroll from a real click that opens the menu, which a userscript can't fake — so the button never worked unless you opened the menu by hand first. Reroll protection and the 🛡️ cap/per-task guards are untouched.\n\n### In Progress payout: leaner, plus a Roster button\n\nDrops the token gold valuation and the \"No Treasury level seen\" nag from the In Progress tab (both kept on the Trials tab), and adds a Roster button that opens the guild roster panel.\n\n### Skilling In Progress panel no longer squashes the game's card off-screen\n\nInjected payout/analysis blocks now take a full-width line above and below the roster+card row instead of shrinking the game's own skilling card to a sliver beside them.\n\n### Skilling trials: no flat projection once slowing is measured, and timestamped readings\n\nDrops the misleadingly-high \"On pace (flat)\" tier once a slowdown is known (it survives in the tooltip), and keeps a downsampled timestamped reading series in the export so the tier forecast can be checked against what was banked.\n\n### Trial scoreboard: honest damage-taken label, and a runaway split is flagged\n\nDamage taken is now labelled pre- vs post-mitigation (the live stream can only read the latter), and a per-player damage split that runs past the bosses' combined health is flagged as over-attributing.\n\n### Dev builds install over a same-numbered release\n\nThe dev build now appends its build timestamp as a fourth version segment, so a reinstall always takes even when the release number hasn't changed.\n\n### Scrolls in the Combat Simulator\n\nThe sim and Upgrade advisor now carry the seven Labyrinth combat scrolls (Damage, Attack Speed, Cast Speed, Critical Rate, Combat Drop, Wisdom, Rare Find): a Scrolls section on Configure to sim with them, and a Scrolls mode on Upgrade to measure what each is worth.\n\n";
+    var forkChangelog = "## Unreleased — branch `main`\n\n### Fixes: sort defaults, minimize placement, clickable quiet members\n\n- **Combat Sim all-zones and the Upgrade advisor now default to sorting by Score.** The all-zones run was resetting to Profit and the Upgrade table opened on DPS; both now open on Score (best first).\n- **The minimize button sits next to the close ✕ again** on Combat Sim, Lab Sim, and the Trade Ledger — it was landing in the middle of the header (and swapped past close on the Trade Ledger).\n- **Guild Roster: click a \"Gone quiet\" member** to load `/profile <name>` in chat (press Enter to open), the same trick the profile cycler uses.\n\n### Every panel can be minimized without closing it\n\nFloating panels now have a **–** button in the header (beside the close ✕) that folds the panel down to its title strip, leaving it draggable and running — click **□** to bring it back. It works across both shared panel shells (party loot, guild roster, DPS/deaths/profit tiles, and the rest) and the bespoke tool windows (Combat Sim, Lab Sim, Enhancement XP/hr, Consumables, Houses, Goal Planner, and more). The minimized state is remembered per panel across refreshes, alongside its position.\n\n### Combat & Lab Sim: optionally remember upgrade results across refreshes\n\nNew opt-in setting (default off) keeps the last Upgrade-tab results after a page reload — for both Combat Sim and Lab Sim — until you run a new analysis, so a run you waited minutes on is still there when you come back. A quiet banner marks restored results. Off by default because it stores the full result set (one blob per character per sim) in the browser database.\n\n### Combat Sim Results: a ⌖ button targets that zone in Configure\n\nEach row of the all-zones Results table now has a ⌖ button that sets that zone and tier as the Configure target and jumps to the Configure tab (leaving all-zones mode so the single-zone selects reappear) — no more scrolling the zone dropdown to sim a promising row. The table also now defaults to sorting by Score (descending) instead of unsorted.\n\n### Upgrade advisor: path boots (base and refined) are offered and simmed at +7\n\nThe upgrade advisor simmed a proposed gear swap at the current piece's enhancement level, so path boots (Pathbreaker/Pathfinder/Pathseeker) were quoted at whatever your worn boots are (e.g. +10). They're only obtainable at +7, so a swap to them is now always simmed and priced at +7 — the refined variants override the usual +10 refined floor. The refined path boots are now also _offered_: the crafting-chain walk only reaches the base boot (refined is one hop further), so each base path-boot swap now gets a refined sibling in the table, at +7.\n\n### Enhancement XP/hr panel: get a route for any item, even one you don't own\n\nThe enhancing-route (target level, protection plan, cost) was only reachable by hovering an item that's rendered — owned or listed — so an item with no listing at that level showed nothing. The Enhancement XP/hr panel now has an \"Enhance any item\" box: type any enhanceable item, pick a target level, and get its full route. The base-item price falls back to crafting cost when the market is empty, so it works with zero listings.\n\n### Ability hover: optional \"fresh to level\" cost, priced at the level shown\n\nHovering an ability itself (in a loadout, an ability slot, or on another player's profile) can now add a \"Fresh to Lv N: <cost> (<books> books)\" line, priced at the level the tooltip shows — so on someone else's profile it uses their level, not yours. It's identified from the ability tooltip's own name and gated behind a new, default-off setting (\"Show fresh-to-level cost on ability hovers\"), separate from the ability-book tooltip status.\n\n### Enhancement tooltip: the source toggle is discoverable and mobile-friendly\n\nThe \"Yours ⇄ / Pro ⇄\" chip on enhancement tooltips now shows a keycap **P** so the press-to-toggle hotkey is visible, not just buried in the hover title. On touch devices it drops the key (no keyboard), enlarges to a finger-sized tap target, and reads \"tap\" — the chip was already tappable on tap-to-open tooltips, just too small and unlabeled.\n\n### Upgrade advisor: \"Signature only\" is now \"Aura only\"\n\nThe Ability Swaps sub-option that restricted swaps to the aura + signature groups now restricts to just the aura group — the single \"which aura\" decision. Renamed the checkbox to \"Aura only\" with an updated tooltip, and renamed the internal option throughout (`auraOnly` / `auraSwapsOnly`).\n\n### Upgrade advisor: the aura OR-alternative is offered again\n\nAbility Swaps stopped offering the other aura in your archetype's aura group — e.g. running Mystic Aura, it never proposed Critical Aura. The generator was running each guide offer through a style-from-buff-data heuristic that misreads a universal aura (Critical Aura) as another style and vetoed it. The guide's own ability set is style-correct by construction, so on the guide path that heuristic no longer runs; it now only guards the every-ability fallback.\n\n### Sim: Achievements section — toggle your achievement combat buffs\n\nThe sim already applied your completed-achievement combat buffs (e.g. Damage +2%) silently; there was no way to see or change them. A new **Achievements** section on the Configure tab lists the combat buffs your achievements grant, each ticked by default (so results are unchanged) — untick one to sim without it. It reads your real buffs with their exact values; a character with no combat achievement buffs shows no section.\n\n### Sim: the loadout picker is back in the packaged build\n\nThe Combat Sim and Lab Sim loadout dropdown vanished in the released userscript (it still worked in dev): both UIs read the loadout list from their own bundle's copy of the snapshot store, which the websocket never feeds in the multi-bundle build, so the list was always empty and the `<select>` never rendered. Both now read the fed store through the bundle bridge — the same fix the apply path already had — so you can pick a saved loadout to sim as again. A regression test now asserts the picker renders from the bridge store.\n\n### Author credit: full contributor list and code-source attribution\n\nBoth userscript headers now carry the same, tidied `@author` credit. It restores the contributors who were only in the dev header (Shykai, amVoidGuy, vlad, kuganDev, Paradoxian, Maarg, SilkyPanda, MekaPyon, vidonnus) and adds a line crediting the tools this fork borrowed code and ideas from: MWITools (bot7420), MWI Combat Suite (Frotty), JIGS (jigglymoose), the Labyrinth Win Rate Calculator (dakonglong), and the mooket pools (Q7, IOMisaka).\n\n### Author credit leads with Millennium44 (production header too)\n\nThe previous author change only touched the dev header (`userscript-header.txt`); the GreasyFork build takes its header from `library-headers/entrypoint.txt`, which still led with the upstream authors. That production header now leads with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" as well, so the published listing shows the fork maintainer.\n\n### Author credit leads with Millennium44\n\nThe userscript `@author` header now opens with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" instead of leading with the upstream authors, so the GreasyFork listing credits the fork maintainer. The contributor thank-yous are unchanged.\n\n### Task reroll tracker: drop the experimental warning\n\nThe \"Track task reroll costs\" setting no longer warns it is experimental and may freeze the UI — it's stable. Default unchanged (on).\n\n### My Listings: a fresh undercut now shows without opening the item\n\nThe Top Order Price column trusted the last-opened order book, so an undercut stayed hidden behind your own price until you reopened the item. It now surfaces the game snapshot's price when it beats you (a rival's by definition, never your own order) — so undercuts show on their own, without ever displaying your own listing or downgrading a genuinely-fresher book. The age column follows suit.\n\n### Labyrinth: the calibration recorder is now passive and accumulates across runs\n\nNo Record button any more — every combat fight is kept automatically, per character and tagged with the gear it was fought in, pooled into 10-level bands so a monster's scattered random levels still accumulate. Press **Replay** to judge whatever has built up on your current gear; a loadout change starts a fresh pool. Bounded to 500 fights.\n\n### Labyrinth: a fight recorder and a calibration replay\n\nThe Sim accuracy record says _whether_ a room's clear chance is wrong, not _why_ — a timeout and a death are both \"lost\", and the fixes are opposite. This adds the decomposition.\n\n- **Replay** re-sims the recorded rooms and puts your real damage/s, the monster's, the clear rate and the fight length beside the sim's, each with a noise-aware verdict and a one-line diagnosis of which side the sim gets wrong. **Save comparison** downloads the whole check as one file.\n- **Capture** saves the raw tick feed of a fight — stun uptime, ability cadence, per-hit damage — for mechanism-level analysis (previously console-only).\n- Measurement fixes found via real captures: damage measured **gross** (not net of your ~16 HP/s regen, which made monsters look 15–40% weaker than the sim); self-healing monsters (life drain, the Dryad) no longer **split one fight into several**; partial-HP fights are dropped; and the diagnosis names all four over/under directions.\n\n### Labyrinth: full-ability sim calibration (testing), tooltip clear-time, tidier panel bar\n\n- Testing setting to model a monster's **full ability kit** in the sim — the labyrinth otherwise builds every monster at tier 0 and drops its gated abilities (the Cyclops's stun, shred, self-buffs). Off by default; it's part of the cache key, so toggling re-sims.\n- **Est. clear time** on combat/skilling room hover, shown past the tile's \"999+\" cap.\n- Room Logs top bar wraps cleanly; \"Sim accuracy\" tab shortened to \"Accuracy\".\n\n### Labyrinth: stop counting un-fought rooms as clears, and an uncapped sim option\n\n- **Phantom clears removed** — a revealed-but-unfought room (shroud, beacon, floor skip) is marked `isCleared` with no entry; it no longer counts as a win and drags the accuracy record toward \"sim too low\".\n- **Uncapped** toggle lifts the sim's time cap for the next Recompute, so a slow, timeout-heavy room reaches its precision target instead of a wide \"(capped)\" band.\n\n### Labyrinth: Recompute button, honest attempt counts, and a panel that stays put\n\n- **Recompute** throws away cached clear-chance sims and re-runs the visible rooms — a plain equip doesn't always refresh a sim cached under old gear.\n- Room Log shows the server's own attempt count, not just the fights it watched on the combat view: \"Won 0/6 · 26 total\".\n- The panel keeps its scroll position across redraws instead of jumping to the top on every update.\n\n### Undercut alerts finally fire passively, backed by Mooket\n\nThe alert distrusts any price older than 15 minutes, but the game snapshot refreshes only ~hourly — so undercuts on items you weren't watching stayed silent for hours. It now also consults the freshest **Mooket** sighting per listing (refreshed every 15 min), reporting its true age, so it can fire for items you never opened. Rides the Price history panel setting.\n\n### Selectable price-history source: mooket I alongside mooket II\n\nA **Market: Price history data source** setting picks between the Q7 pool (mooket II, default — ask/bid/avg/volume) and IOMisaka's original (mooket I — ask/bid only). On mooket I the chart's third line is a computed \"Mid\", the volume bars vanish, and the goal planner's volume limits switch off (a source with no volume tells us nothing about how fast a thing sells — unknown, not a measured zero). The order books you contribute back follow the selected source.\n\n### \"Mooket Refresh\" button on the My Listings tab\n\nA **Mooket Refresh** button in the My Listings header pulls fresher Top Order Prices for every listed item from the Mooket pool in one click, patching the fresher ones into the price cache the column redraws from — no opening each item by hand. Skips a sighting older than the game's snapshot, and keeps a one-sided sighting's other side. Rides the Price history panel setting.\n\n### My Listings' Top Order Price refreshes when the market moves\n\nThe Top Order Price column on the My Listings tab only redrew when your own listings changed (or, with the age column on, when you re-opened an item's order book), so an undercut fired an alert but left the column showing the stale price. It now subscribes to the same market-data updates the undercut alert uses — a marketplace snapshot refresh or an order-book price patch redraws the column (debounced), so being undercut turns the price red here too.\n\n### Custom Tabs: an enhanced item is no longer double-counted in Unorganized\n\nAn enhanced item is tracked under both its base and its `+level` key, so an unassigned one was collected through both — inflating the \"Unorganized (N)\" count and placing the tile twice. A shared, deduped collector (each physical tile once) now backs both the header count and the lightweight visibility pass (ported from upstream Celasha/Toolasha#627).\n\n### Custom Tabs action buttons heal when the sort-controls row is removed\n\nThe +Tab/Export/Import/Expand group is merged into the game's inventory sort-controls row and isn't tracked with the other injected elements, so when the InventorySort feature removed that row the buttons vanished and didn't return. A direct connectivity check now forces a rebuild when they disconnect (ported from upstream Celasha/Toolasha#632).\n\n### Estimated listing age: a null price no longer suppresses a match\n\nTwo \"your listings beyond the top 20\" match sites used a parsed price without checking for `null` (which the parser returns on empty/invalid text). A null coerces to 0 in the price comparison and can hide a correct match; both sites now skip the row instead (ported from upstream Celasha/Toolasha 2.85.0).\n\n### Character switches are serialized, so rapid switching no longer bleeds settings\n\nA rapid character switch could drop a re-init (leaving the previous character's per-character settings applied) or start a rebuild before the last character's teardown finished. The switch lifecycle now runs through one serialized chain, and each re-init verifies it is still for the current character before it applies — latest character wins, nothing dropped or overlapped (ported from upstream Celasha/Toolasha#622).\n\n### Action Filter's pricing mode resyncs after a character switch\n\nThe persistent Action Filter never re-initializes, and a character switch skips the per-key change callbacks (the cache is cleared first), so its mode/craft buttons and profit rows could keep the previous character's pricing mode. A new `config.onSettingsLoaded` channel fires whenever settings finish loading, so the filter resyncs (ported from upstream Celasha/Toolasha#630).\n\n### The Unorganized tab no longer vanishes mid-character-switch\n\nThe Custom Tabs \"Unorganized\" bucket was gated on `getSettingValue`, which reads `null` while the per-character cache is briefly empty during a switch — hiding the section until it reloaded. It now reads `getSetting`, which falls back to the schema default (ported from upstream Celasha/Toolasha#636).\n\n### Action-bar display no longer risks freezing the tab on a character switch\n\n`setupActionNameObserver` now disconnects any running observer before replacing it, so a character switch can't leak a duplicate watcher that loops on the stats span and freezes the tab (ported from upstream Celasha/Toolasha#623).\n\n### The Sort Tasks button sorts even with a reroll menu open\n\nA direct press now sorts the board immediately, mid-reroll and all. The automatic passes (auto-sort, sort-after-read) still wait for the board to settle so they never yank a pending click.\n\n### The protected/cap task border keeps up again\n\nIt is redrawn right away on a card that is mid-reroll (it used to wait for the menu to close, so the edge looked stuck until you pressed Back), and painted the instant the board opens instead of after a 150 ms delay.\n\n### The task bulk-reroll button is removed\n\nThe game only honours a reroll from a real click that opens the menu, which a userscript can't fake — so the button never worked unless you opened the menu by hand first. Reroll protection and the 🛡️ cap/per-task guards are untouched.\n\n### In Progress payout: leaner, plus a Roster button\n\nDrops the token gold valuation and the \"No Treasury level seen\" nag from the In Progress tab (both kept on the Trials tab), and adds a Roster button that opens the guild roster panel.\n\n### Skilling In Progress panel no longer squashes the game's card off-screen\n\nInjected payout/analysis blocks now take a full-width line above and below the roster+card row instead of shrinking the game's own skilling card to a sliver beside them.\n\n### Skilling trials: no flat projection once slowing is measured, and timestamped readings\n\nDrops the misleadingly-high \"On pace (flat)\" tier once a slowdown is known (it survives in the tooltip), and keeps a downsampled timestamped reading series in the export so the tier forecast can be checked against what was banked.\n\n### Trial scoreboard: honest damage-taken label, and a runaway split is flagged\n\nDamage taken is now labelled pre- vs post-mitigation (the live stream can only read the latter), and a per-player damage split that runs past the bosses' combined health is flagged as over-attributing.\n\n### Dev builds install over a same-numbered release\n\nThe dev build now appends its build timestamp as a fourth version segment, so a reinstall always takes even when the release number hasn't changed.\n\n### Scrolls in the Combat Simulator\n\nThe sim and Upgrade advisor now carry the seven Labyrinth combat scrolls (Damage, Attack Speed, Cast Speed, Critical Rate, Combat Drop, Wisdom, Rare Find): a Scrolls section on Configure to sim with them, and a Scrolls mode on Upgrade to measure what each is worth.\n\n";
 
     var forkOverview = "This is the **Millennium44 fork of Toolasha**. It folds MWI Combat Suite into Toolasha — live DPS tracking, loot and drop tracking, drop-luck analysis, and a full labyrinth simulator — so one script gives you both halves of the game instead of two userscripts.\n\n### Combat & simulators\n\n- Live DPS, hit/crit rate, damage-taken and net-sustain read off your own fights.\n- Loot and drop tracking with drop-luck analysis that judges combat, gathering and production.\n- A combat recorder: record real fights, replay them against the simulator, get a verdict with honest noise bands.\n- A combat simulator whose upgrade picks are costed and ranked on real market and credit costs.\n- Per-character combat stats, sim state and histories — no character reads another's books.\n\n### Market & profit\n\n- One market price API prices almost everything: upgrades, net worth, drop income, guild tokens, every action.\n- Prices capped by the volume the market has actually absorbed, so thin markets stop inflating rankings.\n- Profit lines on the action bar, pinned pages, alchemy rankings and the combat profit panel.\n- Market-history viewer with a live undercut alert that re-checks against a refreshed snapshot.\n- An upgrade advisor that costs and ranks gear and ability candidates against live prices.\n\n### Labyrinth\n\n- A labyrinth simulator with auto-pathing and auto-beaconing planned from the actual run.\n- Multi-target analysis with combined armour swaps and supply-aware torch/shroud/beacon planning.\n- Skilling-sim candidates scoped to the skill you are simming, with the skip level set for you.\n- Upgrade, All-Fights and Skilling analyses, each exportable to CSV.\n\n### Guild\n\n- Live trial measurement: per-player DPS and damage/healing attribution from the fight you watch.\n- Tier read straight off the boss bar, with pace, ETA and payout maths.\n- A trial report your guild can actually read, with honest coverage caveats.\n\n### Quality of life\n\n- A curated overlay of tiles with bundled presets, activity auto-switching, and tiles that open their panels.\n- A Ctrl+K (Cmd+K) command palette over every panel, overlay row, saved layout and setting.\n- Mobile-friendly panels: viewport clamping, reachable close buttons, finger-sized targets, a floating launcher.\n- Notifications for empty queues, community-buff expiry, and finished labyrinth runs.\n- Task tools: measured tokens/hour, net task income, and reroll handling that takes the free MooPass reroll.\n- Equipment Savings (\"eWatch\"): savings goals for gear and ability levels, fed from the simulators.\n- A goal planner that turns \"get me X gold / level N\" into a ranked plan from your real measured rates.\n\n### Data & sync\n\n- Cross-device sync of your whole database through one private GitHub gist you own.\n- Gzip-compressed, optionally AES-256 encrypted, conflict-aware, guarded against overwriting a year of data.\n- Chunked per-period history that survives months, with honest quota handling and per-character backups.\n- Hundreds of bug fixes and a test suite grown from ~2,300 to over 8,500 tests.\n";
 
@@ -70494,6 +70728,15 @@ ${starCSS}
 
             this.tableBody = this.panel.querySelector('#mwi-xph-tbody');
 
+            this.minimizeCtl = attachMinimize({
+                panel: this.panel,
+                header,
+                body: [controls, routeSection, tableContainer, status],
+                panelKey: PANEL_ID$4,
+                beforeEl: header.querySelector('#mwi-xph-close'),
+                accent: '#aaa',
+            });
+
             this.panel.querySelector('#mwi-xph-close').addEventListener('click', () => {
                 this.panel.style.display = 'none';
             });
@@ -70715,6 +70958,8 @@ ${starCSS}
             this.unregisterHandlers.forEach((fn) => fn());
             this.unregisterHandlers = [];
             this.timerRegistry.clearAll();
+            this.minimizeCtl?.destroy();
+            this.minimizeCtl = null;
             if (this.panel) {
                 panelZIndex_js.unregisterFloatingPanel(this.panel);
                 this.panel.remove();
@@ -76711,6 +76956,15 @@ ${starCSS}
             panelZIndex_js.registerFloatingPanel(this.panel);
             panelGeometry_js.restoreGeometry(this.panel, GEOMETRY_KEY$1, { width: 380, height: 200 });
 
+            this.minimizeCtl = attachMinimize({
+                panel: this.panel,
+                header,
+                body: this.bodyEl,
+                panelKey: GEOMETRY_KEY$1,
+                beforeEl: header.lastElementChild,
+                accent: COLORS$1.text,
+            });
+
             this._render();
             // Stock and rates both move as you play, and prices move under them
             this.refreshId = setInterval(() => {
@@ -77069,6 +77323,8 @@ ${starCSS}
             this.detachDrag = null;
             this.detachResize?.();
             this.detachResize = null;
+            this.minimizeCtl?.destroy();
+            this.minimizeCtl = null;
 
             if (!this.panel) return;
             panelZIndex_js.unregisterFloatingPanel(this.panel);
@@ -78355,6 +78611,15 @@ ${starCSS}
             panelZIndex_js.registerFloatingPanel(this.panel);
             panelGeometry_js.restoreGeometry(this.panel, GEOMETRY_KEY, { width: 360, height: 220 });
 
+            this.minimizeCtl = attachMinimize({
+                panel: this.panel,
+                header,
+                body: this.bodyEl,
+                panelKey: GEOMETRY_KEY,
+                beforeEl: header.lastElementChild,
+                accent: COLORS.text,
+            });
+
             this._render();
             if (!this.loaded) this.loaded = this.load();
         }
@@ -78364,6 +78629,8 @@ ${starCSS}
             this.detachResize?.();
             this.detachDrag = null;
             this.detachResize = null;
+            this.minimizeCtl?.destroy();
+            this.minimizeCtl = null;
             if (!this.panel) return;
             panelZIndex_js.unregisterFloatingPanel(this.panel);
             this.panel.remove();

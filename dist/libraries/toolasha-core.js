@@ -1,7 +1,7 @@
 /**
  * Toolasha Core Library
  * Core infrastructure and API clients
- * Version: 2.98.0
+ * Version: 2.99.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -3155,6 +3155,13 @@
                     type: 'checkbox',
                     default: true,
                     help: 'Runs the baseline and every candidate on the same random draws, so a small difference reflects the upgrade instead of luck. Turn off to give every sim independent randomness (the old behavior).',
+                },
+                combatSim_rememberUpgradeResults: {
+                    id: 'combatSim_rememberUpgradeResults',
+                    label: 'Combat & Lab Simulator: Remember upgrade results across refreshes',
+                    type: 'checkbox',
+                    default: false,
+                    help: 'Keeps the last Upgrade-tab results (Combat Sim and Lab Sim) after a page reload, until you run a new analysis, so a run you waited on is still there when you come back. Off by default because it stores the full result set (one blob per character per sim) in the browser database.',
                 },
                 combatStats: {
                     id: 'combatStats',

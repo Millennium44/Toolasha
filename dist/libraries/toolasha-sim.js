@@ -1,7 +1,7 @@
 /**
  * Toolasha Combat Simulator Library
  * The battle engine, shared by every feature that simulates a fight
- * Version: 2.98.0
+ * Version: 2.99.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -4375,6 +4375,172 @@
     });
 
     /**
+     * Panel minimize
+     *
+     * A minimize control every floating panel can share.
+     *
+     * "Minimize" here is collapse-in-place: the window stays open and stays where it
+     * is, but its body folds away so only the draggable header strip remains. It is
+     * the answer to a screen with four panels up — you want the profit tile out of
+     * the way for a moment without losing the tile, its position, or its running
+     * refresh. The collapsed state is remembered per panel (in the shared geometry
+     * record), so a panel left minimized reopens minimized after a refresh.
+     *
+     * The header, body, and close button differ per panel shell, so the caller hands
+     * those in; everything else — the button, the fold, the persistence — is here.
+     */
+
+
+    /** Shown on the button when the panel is open (click to fold it away). */
+    const MINIMIZE_GLYPH = '–'; // en dash
+    /** Shown when the panel is minimized (click to bring the body back). */
+    const RESTORE_GLYPH = '□'; // white square
+
+    /**
+     * Give a panel a minimize button that folds it to its header.
+     *
+     * @param {Object} options
+     * @param {HTMLElement} options.panel - The floating window
+     * @param {HTMLElement} options.header - The header/drag strip (stays visible)
+     * @param {HTMLElement|HTMLElement[]} options.body - The content region(s) to fold
+     *   away. Panels with a single body pass the element; panels whose header and
+     *   content are siblings (no wrapper) pass every non-header child as an array.
+     * @param {string} options.panelKey - Stable key for persisting collapsed state
+     * @param {HTMLElement} [options.beforeEl] - Insert the button before this header
+     *   child (usually the close button); appended to the header otherwise
+     * @param {number} [options.defaultHeight] - Expanded height to spring back to
+     *   when there is no remembered size (e.g. reopened already-minimized)
+     * @param {string} [options.accent] - Button ink
+     * @param {Function} [options.onToggle] - Called with the new collapsed boolean
+     * @param {boolean} [options.restore=true] - Restore the persisted collapsed
+     *   state on attach. Pass false for a panel that manages its own open lifecycle.
+     * @returns {{button: HTMLElement, collapsed: boolean, setCollapsed: Function, destroy: Function}}
+     */
+    function attachMinimize({
+        panel,
+        header,
+        body,
+        panelKey,
+        beforeEl = null,
+        defaultHeight = null,
+        accent = '#e8ecf5',
+        onToggle = null,
+        restore = true,
+    }) {
+        let collapsed = false;
+        // The height to return to. Captured when folding an expanded panel, so a
+        // panel resized before minimizing springs back to the size it was resized to.
+        let expandedHeight = null;
+        // Some panels set a CSS min-height inline; leaving it in place keeps a folded
+        // panel that tall with an empty gap below the header. Neutralize it while
+        // collapsed and put it back on expand.
+        let expandedMinHeight = null;
+
+        // One body or several sibling contents.
+        const bodies = (Array.isArray(body) ? body : [body]).filter(Boolean);
+        // Captured at collapse time, not attach time: a tabbed panel changes which of
+        // its content siblings is visible as you use it, so expanding must restore the
+        // visibility it had the moment it was folded — not the tab it opened on.
+        let savedDisplays = null;
+
+        const button = document.createElement('button');
+        button.className = 'toolasha-minimize-btn';
+        button.textContent = MINIMIZE_GLYPH;
+        button.title = 'Minimize';
+        Object.assign(button.style, {
+            background: 'none',
+            border: 'none',
+            color: accent,
+            cursor: 'pointer',
+            fontSize: '15px',
+            lineHeight: '1',
+            padding: '2px 4px',
+            marginRight: '2px',
+        });
+
+        function grips() {
+            return panel.querySelectorAll('.toolasha-resize-grip');
+        }
+
+        function apply(next, { persist = true } = {}) {
+            collapsed = Boolean(next);
+            const gs = grips();
+            if (collapsed) {
+                if (expandedHeight == null) {
+                    expandedHeight = panel.style.height || (defaultHeight != null ? `${defaultHeight}px` : '');
+                }
+                if (expandedMinHeight == null) expandedMinHeight = panel.style.minHeight || '';
+                savedDisplays = bodies.map((el) => el.style.display || '');
+                bodies.forEach((el) => (el.style.display = 'none'));
+                gs.forEach((g) => (g.style.display = 'none'));
+                // A resize grip on a header-height strip is a handle to resize
+                // nothing; the fixed height and any min-height also have to give way
+                // or the folded panel keeps its full height with an empty gap under
+                // the header.
+                panel.style.height = 'auto';
+                panel.style.minHeight = '0';
+                button.textContent = RESTORE_GLYPH;
+                button.title = 'Restore';
+            } else {
+                bodies.forEach((el, i) => (el.style.display = savedDisplays ? savedDisplays[i] : ''));
+                savedDisplays = null;
+                gs.forEach((g) => (g.style.display = ''));
+                const back = expandedHeight || (defaultHeight != null ? `${defaultHeight}px` : '');
+                if (back) panel.style.height = back;
+                if (expandedMinHeight != null) panel.style.minHeight = expandedMinHeight;
+                expandedHeight = null;
+                expandedMinHeight = null;
+                button.textContent = MINIMIZE_GLYPH;
+                button.title = 'Minimize';
+            }
+            panel.dataset.minimized = collapsed ? 'true' : 'false';
+            if (persist && panelKey) panelGeometry_js.saveCollapsed(panelKey, collapsed);
+            if (onToggle) onToggle(collapsed);
+        }
+
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            apply(!collapsed);
+        });
+
+        // Place the button immediately left of the close button, in whatever
+        // container the close button actually lives in — some headers keep their
+        // close inside a right-aligned sub-group, not as a direct header child.
+        if (beforeEl && beforeEl.parentNode) {
+            beforeEl.parentNode.insertBefore(button, beforeEl);
+        } else {
+            header.appendChild(button);
+        }
+
+        if (restore && panelKey) {
+            // Fire-and-forget: reading storage has no business holding up the panel's
+            // first paint. If it was left minimized, fold it a moment later — which is
+            // what a remembered minimized panel looks like anyway. Seed expandedHeight
+            // from the stored size so the first un-minimize springs to the right height.
+            (async () => {
+                try {
+                    if (!(await panelGeometry_js.wasCollapsed(panelKey))) return;
+                    if (!panel.isConnected) return;
+                    const size = await panelGeometry_js.savedSize(panelKey);
+                    if (size?.height) expandedHeight = `${size.height}px`;
+                    apply(true, { persist: false });
+                } catch (error) {
+                    console.error('[PanelMinimize] Restoring minimized state failed:', error);
+                }
+            })();
+        }
+
+        return {
+            button,
+            get collapsed() {
+                return collapsed;
+            },
+            setCollapsed: (value) => apply(Boolean(value)),
+            destroy: () => button.remove(),
+        };
+    }
+
+    /**
      * Enhancement XP Calculations
      * Based on Ultimate Enhancement Tracker formulas
      */
@@ -6475,6 +6641,15 @@
             panelZIndex_js.registerFloatingPanel(this.panel);
             panelGeometry_js.restoreGeometry(this.panel, GEOMETRY_KEY$2, { width: 380, height: 240 });
 
+            this.minimizeCtl = attachMinimize({
+                panel: this.panel,
+                header: this.headerEl,
+                body: this.bodyEl,
+                panelKey: GEOMETRY_KEY$2,
+                beforeEl: this.headerEl.lastElementChild,
+                accent: COLORS.text,
+            });
+
             this._render();
             this.refreshId = setInterval(() => {
                 if (document.hidden) return;
@@ -6883,6 +7058,8 @@
             this.detachDrag = null;
             this.detachResize?.();
             this.detachResize = null;
+            this.minimizeCtl?.destroy();
+            this.minimizeCtl = null;
 
             if (!this.panel) return;
             panelZIndex_js.unregisterFloatingPanel(this.panel);
@@ -6927,6 +7104,66 @@
         },
         onOpen: () => watchlistPanel.toggle(),
     });
+
+    /**
+     * Upgrade-results persistence
+     *
+     * An upgrade analysis is a run people wait on — sometimes minutes — and a reload
+     * three seconds later used to throw it all away. This keeps the last result set
+     * so it is still there after a refresh, until the next run replaces it.
+     *
+     * Opt-in, because the full result set is a sizeable blob and not everyone wants
+     * it living in the database. Character-scoped, because one character's gear
+     * ranking is meaningless for another; stored in the `combatExport` store beside
+     * the all-zones snapshot rather than in a new object store (a new store forces an
+     * IndexedDB version bump). Shared by both the Combat and Lab simulators — each
+     * passes its own key.
+     */
+
+
+    const STORE$1 = 'combatExport';
+    const SETTING = 'combatSim_rememberUpgradeResults';
+
+    /** Whether the user opted into remembering upgrade results. */
+    function rememberUpgradeResultsEnabled() {
+        return Boolean(config.getSetting(SETTING));
+    }
+
+    /**
+     * Persist an upgrade analysis result for this character, if the option is on.
+     * @param {string} key - Unscoped storage key (distinct per sim)
+     * @param {Object} results - The runUpgradeAnalysis return ({ baseline, results, ... })
+     * @param {Object} [meta] - Extra fields to store alongside (e.g. a label)
+     * @returns {Promise<void>}
+     */
+    async function saveUpgradeResults(key, results, meta = {}) {
+        if (!rememberUpgradeResultsEnabled()) return;
+        if (!results?.results?.length) return;
+        try {
+            await characterKey_js.writeScoped(key, { data: results, savedAt: Date.now(), ...meta }, STORE$1, true);
+        } catch (error) {
+            console.error('[UpgradeResultsStore] Persisting upgrade results failed:', error);
+        }
+    }
+
+    /**
+     * Load this character's last upgrade analysis, if the option is on and one was
+     * saved. Discards any legacy global value rather than adopting another
+     * character's gear ranking.
+     * @param {string} key - Unscoped storage key (distinct per sim)
+     * @returns {Promise<{data: Object, savedAt: number}|null>}
+     */
+    async function loadUpgradeResults(key) {
+        if (!rememberUpgradeResultsEnabled()) return null;
+        try {
+            const payload = await characterKey_js.readScoped(key, STORE$1, null, { migrate: 'discard' });
+            if (!payload?.data?.results?.length) return null;
+            return payload;
+        } catch (error) {
+            console.error('[UpgradeResultsStore] Loading upgrade results failed:', error);
+            return null;
+        }
+    }
 
     /**
      * Loadout Snapshot
@@ -34486,6 +34723,8 @@
     /** Storage key for the remembered Upgrade-tab candidate sets */
     const UPGRADE_MODES_KEY = 'combatSimUpgradeModes';
     const UPGRADE_COLUMNS_KEY = 'combatSimUpgradeColumns';
+    /** Storage key for the last Upgrade-tab results, remembered across refreshes (opt-in) */
+    const UPGRADE_RESULTS_KEY = 'combatSimUpgradeResults';
 
     /**
      * Storage key for the Ability Swaps "Aura only" sub-option.
@@ -35902,7 +36141,7 @@
             flex-shrink: 0;
         `;
             header.innerHTML = `
-            <span style="font-weight:700; font-size:14px; color:${ACCENT$2};">Combat Simulator</span>
+            <span style="font-weight:700; font-size:14px; color:${ACCENT$2}; flex:1;">Combat Simulator</span>
             <button id="mwi-csim-close" style="
                 background:none; border:none; color:#aaa; font-size:22px;
                 cursor:pointer; padding:0; line-height:1;">×</button>
@@ -36350,6 +36589,7 @@
             // to make the panel wider; the edges give the whole side as a target.
             const addGrip = (css, axis) => {
                 const grip = document.createElement('div');
+                grip.className = 'toolasha-resize-grip';
                 grip.style.cssText = `position:absolute; z-index:1; ${css}`;
                 this.panel.appendChild(grip);
                 this._setupResize(grip, axis);
@@ -36373,6 +36613,17 @@
 
             document.body.appendChild(this.panel);
             panelZIndex_js.registerFloatingPanel(this.panel);
+
+            // Minimize: fold the whole panel to its header, remembering the state.
+            // Every non-header child is a content sibling to hide.
+            this.minimizeCtl = attachMinimize({
+                panel: this.panel,
+                header,
+                body: [tabBar, configureContent, resultsContent, seekContent, upgradeContent, progressContainer, status],
+                panelKey: GEOMETRY_KEY$1,
+                beforeEl: header.querySelector('#mwi-csim-close'),
+                accent: '#aaa',
+            });
 
             // Event listeners
             this.panel.querySelector('#mwi-csim-close').addEventListener('click', () => this.hide());
@@ -36404,6 +36655,7 @@
             this._restoreSwapAuraOnly();
             this._loadUpgradeColumnPrefs();
             this._loadMaxTierFoodPref();
+            this._restoreUpgradeResults();
             this._restorePanelGeometry();
             this.panel.querySelector('#mwi-csim-ability-targets-toggle').addEventListener('click', () => {
                 const grid = this.panel.querySelector('#mwi-csim-ability-targets');
@@ -37986,7 +38238,7 @@
                     })
                     .filter(Boolean);
 
-                this._allZonesSortCol = 'profit';
+                this._allZonesSortCol = 'score';
                 this._allZonesSortAsc = false;
                 await this._displayAllZonesResults(zoneResults, hours, gameData);
 
@@ -40436,6 +40688,9 @@
                 // measurement, and throwing them away meant a run stopped one short
                 // of the end showed nothing at all
                 const completed = results?.results?.length || 0;
+                // A fresh run supersedes any restored set — drop the "from a previous
+                // run" note before drawing, and remember the new results (opt-in).
+                this._restoredUpgradeAt = null;
                 if (this._upgradeAborted) {
                     if (completed) {
                         this._renderUpgradeResults(results);
@@ -40450,6 +40705,7 @@
                     const foodNote = results.food ? ' Food search complete.' : '';
                     this._setStatus(`Analysis complete. ${completed} upgrades evaluated.${foodNote}`);
                 }
+                if (completed) saveUpgradeResults(UPGRADE_RESULTS_KEY, results);
             } catch (error) {
                 console.error('[CombatSimUI] Upgrade analysis failed:', error);
                 this._setStatus('Analysis failed: ' + error.message);
@@ -40775,7 +41031,7 @@
          * @private
          */
         _renderUpgradeGoldTable(rows, baseline) {
-            if (!this._upgradeSort) this._upgradeSort = { key: 'dps', asc: true };
+            if (!this._upgradeSort) this._upgradeSort = { key: 'score', asc: true };
             const { key: sortKey, asc: sortAsc } = this._upgradeSort;
 
             const columns = this._upgradeColumns(baseline, rows).filter((c) => c.visible);
@@ -41550,6 +41806,41 @@
          * @param {Object} results - { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
          * @private
          */
+        /**
+         * Restore the last Upgrade-tab results after a refresh, when the option is on
+         * and a fresh run has not already drawn its own. Fire-and-forget from panel
+         * open; draws into the (possibly hidden) Upgrade tab so the results are there
+         * when the tab is next shown.
+         * @private
+         */
+        async _restoreUpgradeResults() {
+            try {
+                if (this._upgradeResultsData) return;
+                const payload = await loadUpgradeResults(UPGRADE_RESULTS_KEY);
+                if (!payload || this._upgradeResultsData) return;
+                if (!this.panel?.querySelector('#mwi-csim-upgrade-results')) return;
+                this._restoredUpgradeAt = payload.savedAt || null;
+                this._renderUpgradeResults(payload.data);
+            } catch (error) {
+                console.error('[CombatSimUI] Restoring upgrade results failed:', error);
+            }
+        }
+
+        /**
+         * A quiet banner saying the shown results are remembered from a previous run.
+         * @param {number} savedAt - Epoch ms the results were saved
+         * @returns {string} HTML
+         * @private
+         */
+        _restoredUpgradeNote(savedAt) {
+            const when = savedAt ? new Date(savedAt).toLocaleString() : 'a previous session';
+            return (
+                `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; ` +
+                `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
+                `Showing results remembered from ${when}. Run a new analysis to refresh them.</div>`
+            );
+        }
+
         _renderUpgradeResults(results) {
             const container = this.panel.querySelector('#mwi-csim-upgrade-results');
             if (!container) return;
@@ -41582,6 +41873,7 @@
             const unpricedRows = purchasable.filter((r) => r.cost == null);
 
             let html = foodHtml;
+            if (this._restoredUpgradeAt) html = this._restoredUpgradeNote(this._restoredUpgradeAt) + html;
             if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline);
             if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
             if (levelRows.length) html += this._renderUpgradeLevelTable(levelRows, results.baseline);
@@ -43569,6 +43861,9 @@
      */
     const GEOMETRY_KEY = 'labSimPanel';
 
+    /** Storage key for the last Upgrade-tab results, remembered across refreshes (opt-in) */
+    const LAB_UPGRADE_RESULTS_KEY = 'labSimUpgradeResults';
+
     /** Floor sizes the resize grips will not take the panel below. */
     const MIN_PANEL_WIDTH = 400;
     const MIN_PANEL_HEIGHT = 300;
@@ -44023,7 +44318,7 @@
             flex-shrink: 0;
         `;
             header.innerHTML = `
-            <span style="font-weight:700; font-size:14px; color:${ACCENT};">Lab Simulator</span>
+            <span style="font-weight:700; font-size:14px; color:${ACCENT}; flex:1;">Lab Simulator</span>
             <button id="mwi-labsim-close" style="
                 background:none; border:none; color:#aaa; font-size:22px;
                 cursor:pointer; padding:0; line-height:1;">\u00d7</button>
@@ -44574,6 +44869,7 @@
             // just pushes it off the screen
             const grip = (corner) => {
                 const handle = document.createElement('div');
+                handle.className = 'toolasha-resize-grip';
                 const onLeft = corner === 'left';
                 handle.style.cssText = `
                 position: absolute;
@@ -44596,6 +44892,17 @@
             panelZIndex_js.registerFloatingPanel(this.panel);
             // Over the top-right default above, once storage answers
             this._restorePanelGeometry();
+
+            // Minimize: fold the whole panel to its header, remembering the state.
+            // Every non-header child is a content sibling to hide.
+            this.minimizeCtl = attachMinimize({
+                panel: this.panel,
+                header,
+                body: [tabBar, configureContent, maxLevelContent, upgradeContent, skillingContent, status],
+                panelKey: GEOMETRY_KEY,
+                beforeEl: header.querySelector('#mwi-labsim-close'),
+                accent: '#aaa',
+            });
 
             // Event listeners
             this.panel.querySelector('#mwi-labsim-close').addEventListener('click', () => this.hide());
@@ -44665,6 +44972,7 @@
             });
             void this._restoreUpgradeSelection();
             void this._restoreTokenBuffLevels();
+            void this._restoreUpgradeResults();
             this.panel.querySelector('#mwi-labsim-ability-targets-toggle').addEventListener('click', () => {
                 const grid = this.panel.querySelector('#mwi-labsim-ability-targets');
                 const opening = grid.style.display === 'none';
@@ -46103,7 +46411,11 @@
                     { abortSignal: () => this._upgradeAborted }
                 );
 
+                // A fresh run supersedes any restored set — drop the "from a previous
+                // run" note before drawing, and remember the new results (opt-in).
+                this._restoredUpgradeAt = null;
                 this._renderUpgradeResults(analysisResult, resultsEl);
+                if (analysisResult?.results?.length) saveUpgradeResults(LAB_UPGRADE_RESULTS_KEY, analysisResult);
             } catch (error) {
                 if (error.message !== 'Cancelled' && error.message !== 'Aborted') {
                     console.error('[LabSimUI] Upgrade analysis failed:', error);
@@ -47297,6 +47609,42 @@
         }
 
         /** @private */
+        /**
+         * Restore the last Upgrade-tab results after a refresh, when the option is on
+         * and a fresh run has not already drawn its own. Fire-and-forget from panel
+         * open; draws into the (possibly hidden) Upgrade tab so the results are there
+         * when the tab is next shown.
+         * @private
+         */
+        async _restoreUpgradeResults() {
+            try {
+                const container = this.panel?.querySelector('#mwi-labsim-upgrade-results');
+                if (!container || container.querySelector('table')) return;
+                const payload = await loadUpgradeResults(LAB_UPGRADE_RESULTS_KEY);
+                if (!payload) return;
+                if (!this.panel || container.querySelector('table')) return;
+                this._restoredUpgradeAt = payload.savedAt || null;
+                this._renderUpgradeResults(payload.data, container);
+            } catch (error) {
+                console.error('[LabSimUI] Restoring upgrade results failed:', error);
+            }
+        }
+
+        /**
+         * A quiet banner saying the shown results are remembered from a previous run.
+         * @param {number} savedAt - Epoch ms the results were saved
+         * @returns {string} HTML
+         * @private
+         */
+        _restoredUpgradeNote(savedAt) {
+            const when = savedAt ? new Date(savedAt).toLocaleString() : 'a previous session';
+            return (
+                `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; ` +
+                `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
+                `Showing results remembered from ${when}. Run a new analysis to refresh them.</div>`
+            );
+        }
+
         _renderUpgradeResults(analysisResult, container) {
             const results = analysisResult?.results;
             if (!results || !results.length) {
@@ -47537,6 +47885,7 @@
                 sortRows(goldRows, sortState.gold.key, sortState.gold.dir);
                 sortRows(communityRows, sortState.community.key, sortState.community.dir);
                 let html = '';
+                if (this._restoredUpgradeAt) html += this._restoredUpgradeNote(this._restoredUpgradeAt);
                 if (tokenResults.length > 0) html += renderTokenTable();
                 if (communityResults.length > 0) html += renderCommunityTable();
                 if (goldResults.length > 0) html += renderGoldTable();
@@ -48908,6 +49257,8 @@
             }
             this._detachDrag?.();
             this._detachDrag = null;
+            this.minimizeCtl?.destroy();
+            this.minimizeCtl = null;
             if (this.panel) {
                 panelZIndex_js.unregisterFloatingPanel(this.panel);
                 this.panel.remove();
