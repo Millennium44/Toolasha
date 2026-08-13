@@ -96,11 +96,30 @@ describe('guild shrine score', () => {
         expect(score.breakdown.guildShrines.map((row) => row.name)).toEqual(['Force 1', 'Scholar 1']);
     });
 
-    test('stays out of the combat total, which has to mean the same thing on every card', async () => {
-        const score = await calculateCombatScore(profileWithShrines({ '/guild_buffs/force_combat': 3 }));
+    test('folds into the combat and skiller totals, the same as house and gear', async () => {
+        const score = await calculateCombatScore(
+            profileWithShrines({ '/guild_buffs/force_combat': 3, '/guild_buffs/scholar_skilling': 1 })
+        );
 
-        expect(score.guildShrine).toBeGreaterThan(0);
-        expect(score.total).toBe(score.house + score.ability + score.equipment);
+        expect(score.guildShrineCombat).toBeGreaterThan(0);
+        expect(score.total).toBeCloseTo(score.house + score.ability + score.equipment + score.guildShrineCombat, 10);
+        expect(score.skillerTotal).toBeCloseTo(score.skillerEquipment + score.skillerGuildShrine, 10);
+    });
+
+    test("reads a shared profile's guildBuffLevelMap (bare-number levels) the same as your own map", async () => {
+        // The game now exposes other players' shrine levels on their profile as
+        // { buffHrid: level }, not { buffHrid: { level } }. Both must score.
+        const score = await calculateCombatScore({
+            profile: {
+                guildBuffLevelMap: { '/guild_buffs/force_combat': 2 },
+                equippedAbilities: [],
+                wearableItemMap: {},
+            },
+        });
+
+        expect(score.guildShrineKnown).toBe(true);
+        expect(score.guildShrineCombat).toBeCloseTo(22_500 / 1_000_000, 10);
+        expect(score.total).toBeCloseTo(score.house + score.ability + score.equipment + score.guildShrineCombat, 10);
     });
 
     test('a profile without shrine levels scores none, rather than borrowing yours', async () => {

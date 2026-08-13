@@ -55,6 +55,7 @@ const {
     applyGuildBuffLevel,
     readGuildShrineLevels,
     readGuildShrineSnapshot,
+    buildGuildBuffsFromLevels,
     buildPlayerDTO,
 } = await import('./combat-sim-adapter.js');
 
@@ -142,6 +143,38 @@ describe('guild shrine buff synthesis', () => {
     test('level 0 grants nothing at all', () => {
         expect(synthesizeGuildBuffs(FORCE, 0)).toEqual([]);
         expect(synthesizeGuildBuffs(null, 5)).toEqual([]);
+    });
+
+    describe('buildGuildBuffsFromLevels — a shared profile guildBuffLevelMap', () => {
+        test('keeps every level and synthesizes only the combat shrines', () => {
+            const { guildShrineLevels, guildCombatBuffs } = buildGuildBuffsFromLevels({
+                '/guild_buffs/force_combat': 2,
+                '/guild_buffs/scholar_skilling': 3,
+            });
+
+            // Both levels are kept (the editor shows them)…
+            expect(guildShrineLevels).toEqual({
+                '/guild_buffs/force_combat': 2,
+                '/guild_buffs/scholar_skilling': 3,
+            });
+            // …but only the combat shrine becomes a combat buff.
+            expect(guildCombatBuffs).toHaveLength(1);
+            expect(guildCombatBuffs[0].typeHrid).toBe('/buff_types/damage');
+            expect(guildCombatBuffs[0].ratioBoost).toBeCloseTo(0.006, 10); // 0.003 + (2−1)×0.003
+        });
+
+        test('a zero level is kept in the map but grants no buff', () => {
+            const { guildShrineLevels, guildCombatBuffs } = buildGuildBuffsFromLevels({
+                '/guild_buffs/force_combat': 0,
+            });
+            expect(guildShrineLevels).toEqual({ '/guild_buffs/force_combat': 0 });
+            expect(guildCombatBuffs).toEqual([]);
+        });
+
+        test('a missing or empty map is empty, not a crash', () => {
+            expect(buildGuildBuffsFromLevels(null)).toEqual({ guildShrineLevels: {}, guildCombatBuffs: [] });
+            expect(buildGuildBuffsFromLevels({})).toEqual({ guildShrineLevels: {}, guildCombatBuffs: [] });
+        });
     });
 
     test('applying a level replaces that shrine and leaves the rest of the array alone', () => {

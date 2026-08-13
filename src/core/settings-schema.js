@@ -1874,13 +1874,6 @@ export const settingsGroups = {
                 step: 1,
                 help: 'Upper bound on a single room simulation, in simulated hours. Precision normally ends a run well before this; the ceiling stops a room near a coin toss from running forever',
             },
-            combatSim_labyrinthFullAbilities: {
-                id: 'combatSim_labyrinthFullAbilities',
-                label: 'Labyrinth: Model full monster abilities in combat sim (testing)',
-                type: 'checkbox',
-                default: false,
-                help: 'The labyrinth builds each monster at difficulty tier 0, which drops every tier-gated ability — so a monster like the Cyclops is simulated as a bare auto-attacker with none of its stun, defence shred or self-buffs, and the sim over-predicts your clear chance (it fails in reality as roughly equal deaths and timeouts). With this on, the sim builds the monster with its full ability kit instead. Off by default while it is verified: turn it on, press Recompute, and compare the new clear chances against the Sim accuracy record. Expect combat rooms — especially high-level ones — to read lower and closer to what actually happens.',
-            },
             labyrinthPathClearThreshold: {
                 id: 'labyrinthPathClearThreshold',
                 label: 'Labyrinth: Path clearable threshold (%)',

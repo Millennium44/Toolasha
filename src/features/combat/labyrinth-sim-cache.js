@@ -87,13 +87,14 @@ export const simCacheMethods = {
 
     /**
      * Whether combat sims build the monster with its full ability kit rather
-     * than only the tier-0 subset. Off by default; a testing lever for the
-     * labyrinth calibration fix (a tier-0 monster drops its stun/debuff kit and
-     * the sim over-predicts clears — see Monster).
+     * than only the tier-0 subset. Always on now: a tier-0 monster drops its
+     * stun/debuff kit and the sim over-predicts clears (see Monster), and the
+     * full-ability build was verified to read closer to reality, so the testing
+     * toggle graduated into permanent behavior.
      * @returns {boolean}
      */
     labyrinthFullAbilities() {
-        return config.getSetting('combatSim_labyrinthFullAbilities') === true;
+        return true;
     },
 
     /**
