@@ -24,6 +24,7 @@ import expectedValueCalculator from '../market/expected-value-calculator.js';
 import lootLogHistory from './loot-log-history.js';
 import { reconstructEnhancingRun, computeEnhancingSummary } from './enhancing-loot-summary.js';
 import { enhancementCalculator, enhancementConfig } from '../../utils/bundle-bridge.js';
+import { getEnhancementMaterialPrice, getCheapestProtectionPrice } from '../enhancement/tooltip-enhancement.js';
 
 /** The loot log export, one row per item per logged session */
 export const LOOT_LOG_CSV_COLUMNS = [
@@ -223,16 +224,18 @@ class LootLogStats {
             const params = enhancementConfig()?.getEnhancingParams?.();
             if (typeof calculateEnhancement !== 'function' || !params) return;
 
-            const priceOf = (hrid, level, side) => {
-                const prices = getItemPrices(hrid, level);
-                if (!prices) return 0;
-                return side === 'bid' ? prices.bid : prices.ask;
-            };
-
             const summary = computeEnhancingSummary(run, {
                 calculateEnhancement,
                 params,
-                priceOf,
+                // Same pricing the live Enhancement Tracker uses, so the loot-log
+                // figures line up with it — getEnhancementMaterialPrice carries the
+                // production-cost/NPC fallbacks that a raw market lookup lacks.
+                materialPrice: (hrid) => getEnhancementMaterialPrice(hrid, 'ask') || 0,
+                protectionPrice: (baseHrid) => getCheapestProtectionPrice(baseHrid)?.price || 0,
+                itemValue: (hrid, level) => {
+                    const prices = getItemPrices(hrid, level);
+                    return prices ? prices.bid : null;
+                },
                 itemDetails,
                 marketTax: MARKET_TAX,
             });
