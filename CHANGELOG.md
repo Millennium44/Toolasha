@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Sim Results: a ⌖ button targets that zone in Configure
+
+Each row of the all-zones Results table now has a ⌖ button that sets that zone and tier as the Configure target and jumps to the Configure tab (leaving all-zones mode so the single-zone selects reappear) — no more scrolling the zone dropdown to sim a promising row.
+
+### Upgrade advisor: path boots are simmed at +7
+
+The upgrade advisor simmed a proposed gear swap at the current piece's enhancement level, so path boots (Pathbreaker/Pathfinder/Pathseeker, base and refined) were quoted at whatever your worn boots are (e.g. +10). They're only obtainable at +7, so a swap to them is now always simmed and priced at +7 — the refined variants override the usual +10 refined floor.
+
 ### Enhancement XP/hr panel: get a route for any item, even one you don't own
 
 The enhancing-route (target level, protection plan, cost) was only reachable by hovering an item that's rendered — owned or listed — so an item with no listing at that level showed nothing. The Enhancement XP/hr panel now has an "Enhance any item" box: type any enhanceable item, pick a target level, and get its full route. The base-item price falls back to crafting cost when the market is empty, so it works with zero listings.
