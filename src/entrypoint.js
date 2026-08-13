@@ -1377,6 +1377,15 @@ function registerFeatures() {
             customCheck: () => config.getSetting('notifications_labyrinthRunFinished'),
         },
         {
+            key: 'labyrinthEntryAlerts',
+            name: 'Labyrinth Entry Alerts',
+            category: 'Notifications',
+            module: UI.labyrinthEntryAlerts,
+            async: true,
+            // Schema setting is the only gate; no feature-map entry.
+            customCheck: () => config.getSetting('notifications_labyrinthEntryAvailable'),
+        },
+        {
             key: 'combatDeathAlerts',
             name: 'Combat Death Alerts',
             category: 'Notifications',
