@@ -1605,6 +1605,8 @@ export function generateCandidates(
     }
 
     candidates.forEach(clampRefinedCandidateToMinLevel);
+    // After the refined +10 floor, so refined path boots land at +7, not +10.
+    candidates.forEach(applyPathBootsSimLevel);
     return candidates;
 }
 
@@ -2494,6 +2496,63 @@ function clampRefinedCandidateToMinLevel(candidate) {
     // kept quoting the level the clamp had just moved. Anything without the
     // names to redraw from keeps the tail patch, which is still right for the
     // shape it was written for.
+    if (candidate.swapLabel) {
+        candidate.description = redescribeSwap(candidate);
+        return;
+    }
+
+    const levels = candidate.addedSlots
+        ? Object.values(candidate.addedSlots).map((item) => item.enhancementLevel || 0)
+        : [candidate.upgradeLevel];
+    const unique = [...new Set(levels)];
+    const levelText = unique.length === 1 ? `+${unique[0]}` : levels.map((l) => `+${l}`).join('/');
+    candidate.description = candidate.description.replace(/\(\+\d+\)$/, `(${levelText})`);
+}
+
+/** Path boots are obtainable only at +7, so a proposed swap to them is simmed and priced at +7. */
+const PATH_BOOTS_BASE_HRIDS = new Set([
+    '/items/pathbreaker_boots',
+    '/items/pathfinder_boots',
+    '/items/pathseeker_boots',
+]);
+const PATH_BOOTS_SIM_LEVEL = 7;
+
+/** Whether an item hrid is a path boot (base or refined). */
+function isPathBoot(hrid) {
+    return Boolean(hrid) && PATH_BOOTS_BASE_HRIDS.has(hrid.replace(/_refined$/, ''));
+}
+
+/**
+ * Pin a proposed swap to path boots at +7 — their only obtainable level — rather
+ * than inheriting the worn piece's enhancement level (which the tier candidates
+ * do). Set to exactly +7 whether the current piece is above or below it. Runs
+ * after the refined +10 clamp, so refined path boots override that floor down to
+ * +7. Mirrors clampRefinedCandidateToMinLevel's description redraw.
+ * @param {Object} candidate - Candidate from generateCandidates() (mutated in place)
+ */
+export function applyPathBootsSimLevel(candidate) {
+    let changed = false;
+
+    if (
+        candidate.upgradeHrid !== candidate.currentHrid &&
+        isPathBoot(candidate.upgradeHrid) &&
+        candidate.upgradeLevel !== PATH_BOOTS_SIM_LEVEL
+    ) {
+        candidate.upgradeLevel = PATH_BOOTS_SIM_LEVEL;
+        changed = true;
+    }
+
+    if (candidate.addedSlots) {
+        for (const added of Object.values(candidate.addedSlots)) {
+            if (isPathBoot(added?.hrid) && (added.enhancementLevel || 0) !== PATH_BOOTS_SIM_LEVEL) {
+                added.enhancementLevel = PATH_BOOTS_SIM_LEVEL;
+                changed = true;
+            }
+        }
+    }
+
+    if (!changed) return;
+
     if (candidate.swapLabel) {
         candidate.description = redescribeSwap(candidate);
         return;

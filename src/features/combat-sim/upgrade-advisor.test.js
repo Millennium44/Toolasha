@@ -140,6 +140,7 @@ vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: vi.fn() })
 
 const {
     generateCandidates,
+    applyPathBootsSimLevel,
     runUpgradeAnalysis,
     applyCandidateToDTO,
     calculateUpgradeCost,
@@ -313,6 +314,54 @@ describe('generateCandidates refined-equipment gating', () => {
         expect(enhancement).toBeDefined();
         // Next back-slot breakpoint after +3 is +5, not the refined table's +10
         expect(enhancement.upgradeLevel).toBe(5);
+    });
+});
+
+describe('applyPathBootsSimLevel', () => {
+    const swap = (upgradeHrid, upgradeLevel, extra = {}) => ({
+        type: 'tier',
+        currentHrid: '/items/centaur_boots',
+        upgradeHrid,
+        upgradeLevel,
+        description: `Centaur Boots +10 → X (+${upgradeLevel})`,
+        ...extra,
+    });
+
+    test('pins a base path boot to +7, even when the current piece is higher', () => {
+        const c = swap('/items/pathfinder_boots', 10);
+        applyPathBootsSimLevel(c);
+        expect(c.upgradeLevel).toBe(7);
+        expect(c.description).toBe('Centaur Boots +10 → X (+7)');
+    });
+
+    test('raises a path boot below +7 up to +7 as well', () => {
+        const c = swap('/items/pathbreaker_boots', 3);
+        applyPathBootsSimLevel(c);
+        expect(c.upgradeLevel).toBe(7);
+    });
+
+    test('a refined path boot lands at +7, overriding the refined +10 floor', () => {
+        const c = swap('/items/pathseeker_boots_refined', 10);
+        applyPathBootsSimLevel(c);
+        expect(c.upgradeLevel).toBe(7);
+    });
+
+    test('leaves non-path-boot swaps alone', () => {
+        const c = swap('/items/regal_sword_refined', 10);
+        applyPathBootsSimLevel(c);
+        expect(c.upgradeLevel).toBe(10);
+    });
+
+    test('does not touch an enhancement candidate on an already-worn path boot', () => {
+        const c = {
+            type: 'enhancement',
+            currentHrid: '/items/pathfinder_boots',
+            upgradeHrid: '/items/pathfinder_boots',
+            upgradeLevel: 12,
+            description: 'Pathfinder Boots +10 → +12',
+        };
+        applyPathBootsSimLevel(c);
+        expect(c.upgradeLevel).toBe(12);
     });
 });
 
