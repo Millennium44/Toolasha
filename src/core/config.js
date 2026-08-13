@@ -740,6 +740,43 @@ class Config {
     }
 
     /**
+     * Copy another character's settings onto the current one and apply them live.
+     * @param {string} sourceId - The character to copy from
+     * @returns {Promise<{success: boolean, error?: string}>}
+     */
+    async copySettingsFromCharacter(sourceId) {
+        try {
+            const characterId = dataManager.getCurrentCharacterId();
+            if (!characterId) {
+                return { success: false, error: 'No character ID available' };
+            }
+            settingsStorage.setCharacterId(characterId, dataManager.getCurrentCharacterName());
+            const copied = await settingsStorage.copySettingsFromCharacter(sourceId);
+            if (copied) {
+                await this.loadSettings();
+                this.applyColorSettings();
+            }
+            return { success: copied };
+        } catch (error) {
+            console.error('[Config] Failed to copy settings from character:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * The other characters that have settings worth copying from.
+     * @returns {Promise<Array<{id: string, name: string}>>}
+     */
+    async charactersWithSettings() {
+        try {
+            return await settingsStorage.charactersWithSettings();
+        } catch (error) {
+            console.error('[Config] Failed to list characters with settings:', error);
+            return [];
+        }
+    }
+
+    /**
      * Get list of known characters as [{id, name}] objects.
      * @returns {Promise<Array<{id: string, name: string}>>}
      */

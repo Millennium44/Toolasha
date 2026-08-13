@@ -16,6 +16,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { detectedModeLabel } from '../../utils/mobile.js';
 import scrollSimulatorUI from '../combat/scroll-simulator-ui.js';
+import whatsNew from './whats-new.js';
 import ironCowMode, { IRON_COW_SETTINGS } from './iron-cow-mode.js';
 import { getDetectedGearSettings, getEnhancingParams } from '../../utils/enhancement-config.js';
 import pformancePanel from '../dev/pformance-panel.js';
@@ -1463,6 +1464,17 @@ class SettingsUI {
         syncIronCowBtn.title = 'Copy these settings to the characters Toolasha has seen running an iron cow game mode';
         syncIronCowBtn.addEventListener('click', () => this.handleSyncIronCow());
 
+        // Re-open the first-run setup — the one-shot welcome is easily dismissed
+        // (a click outside counts), and this is the recoverable way back to it,
+        // on this character or any alt. Offers presets and "copy from another
+        // character".
+        const setupBtn = document.createElement('button');
+        setupBtn.textContent = 'First-time setup';
+        setupBtn.className = 'toolasha-utility-button';
+        setupBtn.title =
+            'Re-open the welcome setup for this character — pick a preset or copy settings from another character';
+        setupBtn.addEventListener('click', () => whatsNew.promptSetup());
+
         // Fetch Latest Prices button
         const fetchPricesBtn = document.createElement('button');
         fetchPricesBtn.textContent = '🔄 Fetch Latest Prices';
@@ -1525,6 +1537,7 @@ class SettingsUI {
 
         buttonsDiv.appendChild(syncBtn);
         buttonsDiv.appendChild(syncIronCowBtn);
+        buttonsDiv.appendChild(setupBtn);
         buttonsDiv.appendChild(fetchPricesBtn);
         buttonsDiv.appendChild(allOffBtn);
         buttonsDiv.appendChild(restoreBtn);

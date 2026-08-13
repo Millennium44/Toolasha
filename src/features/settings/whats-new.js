@@ -41,6 +41,13 @@ import forkOverview from 'virtual:fork-overview';
 
 const STATE_KEY_PREFIX = 'whatsNew_state';
 
+/**
+ * The first-run answer that opens the character picker instead of applying a
+ * preset. A sentinel rather than a preset id so `getPreset` never matches it and
+ * the copy path stays distinct from "apply this bundle".
+ */
+export const COPY_FROM_CHARACTER = '__copyFromCharacter';
+
 const COLORS = {
     background: 'rgba(10, 10, 20, 0.98)',
     border: 'rgba(96, 165, 250, 0.5)',
@@ -185,15 +192,23 @@ class WhatsNew {
             // a line of our code.
             if (!stored) {
                 const storedIds = await config.storedSettingIds();
+                // Whether there is another character to copy settings from — the
+                // one-click "make this alt like my main" a fresh character wants.
+                const canCopy = (await config.getKnownCharacterCount()) > 1;
                 if (!storedIds || storedIds.length === 0) {
                     // Nothing saved at all: a genuinely fresh install. Nobody
                     // has opinions yet, so the useful question is not "which of
                     // these 40 new switches" but "what kind of player are you".
-                    await this._offerFirstRunPreset(current);
+                    await this._offerFirstRunPreset(current, canCopy);
                 } else {
                     const inherited = newSettingIds(schemaIds, storedIds);
                     if (inherited.length > 0) {
-                        await this._offerFirstRunChoice(inherited, current);
+                        await this._offerFirstRunChoice(inherited, current, canCopy);
+                    } else if (canCopy) {
+                        // A fresh alt that inherited a complete settings map has
+                        // nothing new to reconcile, but "set me up like my main"
+                        // is still the thing it wants — so offer just that.
+                        await this._offerCopyOnly(current);
                     }
                 }
                 await this._saveState(current, schemaIds);
@@ -250,7 +265,7 @@ class WhatsNew {
      * @param {{fork: string, version: string}} current - This build
      * @private
      */
-    async _offerFirstRunChoice(inherited, current) {
+    async _offerFirstRunChoice(inherited, current, canCopy = false) {
         const conservative = conservativeOverrides(inherited, getSettingDefinition);
         const answer = await askChoice({
             title: `Welcome to ${current.fork}`,
@@ -269,6 +284,7 @@ class WhatsNew {
                         'Change nothing — leave every setting exactly where it is now. New features stay off ' +
                         'until you turn them on.',
                 },
+                ...(canCopy ? [this._copyChoice()] : []),
                 ...SETTING_PRESETS.map((preset) => ({
                     value: preset.id,
                     label: preset.label,
@@ -276,6 +292,13 @@ class WhatsNew {
                 })),
             ],
         });
+
+        // Copying from another character resolves the whole question — the copied
+        // map is the answer, so nothing below runs. A cancelled pick falls
+        // through to the safe "keep current" path.
+        if (answer === COPY_FROM_CHARACTER && (await this._offerCopyFromCharacter(current))) {
+            return;
+        }
 
         // A real preset id — and only a real preset id — takes the preset path.
         // `keepCurrent` and dismissal (null) both fall through to the safe path,
@@ -329,7 +352,7 @@ class WhatsNew {
      * @param {{fork: string, version: string}} current - This build
      * @private
      */
-    async _offerFirstRunPreset(current) {
+    async _offerFirstRunPreset(current, canCopy = false) {
         try {
             const answer = await askChoice({
                 title: `Welcome to ${current.fork}`,
@@ -337,13 +360,23 @@ class WhatsNew {
                     'Toolasha ships several hundred features. Pick a starting point and the rest stay out of your ' +
                     'way — you can change any of it, or apply a different preset, from the Toolasha tab in ' +
                     'Settings.',
-                choices: SETTING_PRESETS.map((preset) => ({
-                    value: preset.id,
-                    label: preset.label,
-                    hint: preset.description,
-                    tone: preset.id === DEFAULT_PRESET_ID ? 'primary' : undefined,
-                })),
+                choices: [
+                    ...(canCopy ? [this._copyChoice()] : []),
+                    ...SETTING_PRESETS.map((preset) => ({
+                        value: preset.id,
+                        label: preset.label,
+                        hint: preset.description,
+                        tone: preset.id === DEFAULT_PRESET_ID ? 'primary' : undefined,
+                    })),
+                ],
             });
+
+            // Copying from another character settles it. A cancelled pick falls
+            // through to the default preset, so the character still boots with a
+            // sane baseline rather than a half-finished setup.
+            if (answer === COPY_FROM_CHARACTER && (await this._offerCopyFromCharacter(current))) {
+                return;
+            }
 
             const chosenId = answer && getPreset(answer) ? answer : DEFAULT_PRESET_ID;
             await applyPreset(chosenId);
@@ -358,6 +391,201 @@ class WhatsNew {
             };
         } catch (error) {
             console.error('[WhatsNew] Offering the first-run preset failed:', error);
+        }
+    }
+
+    /**
+     * The "copy from another character" option, shared by every first-run
+     * prompt.
+     * @private
+     */
+    _copyChoice() {
+        return {
+            value: COPY_FROM_CHARACTER,
+            label: 'Copy from another character',
+            hint: 'Use the settings from one of your other characters — the quickest way to set up an alt.',
+        };
+    }
+
+    /**
+     * Pick a character to copy from, and copy it. A no-op that returns false when
+     * there is nothing to copy or the pick is cancelled, so the caller can fall
+     * back to its own safe answer.
+     *
+     * @param {{fork: string, version: string}} current - This build, for the headline
+     * @returns {Promise<boolean>} True when settings were copied
+     * @private
+     */
+    async _offerCopyFromCharacter(current) {
+        const candidates = await config.charactersWithSettings();
+        if (!candidates.length) {
+            return false;
+        }
+        const sourceId = await this._pickSourceCharacter(candidates);
+        if (!sourceId) {
+            return false;
+        }
+        const result = await config.copySettingsFromCharacter(sourceId);
+        if (!result?.success) {
+            return false;
+        }
+        const source = candidates.find((character) => String(character.id) === String(sourceId));
+        this._pending = {
+            headline: `Set up as ${current.fork} ${current.version} — copied from ${source?.name || sourceId}`,
+            forkChanged: false,
+            newIds: [],
+            turnedOff: new Set(),
+            isNewcomer: true,
+        };
+        return true;
+    }
+
+    /**
+     * The minimal prompt for a fresh alt that already has a full settings map:
+     * keep what it has, or copy from another character.
+     * @param {{fork: string, version: string}} current - This build
+     * @private
+     */
+    async _offerCopyOnly(current) {
+        const answer = await askChoice({
+            title: `Welcome to ${current.fork}`,
+            message: 'Set this character up from one of your other characters, or keep what it has now.',
+            choices: [
+                {
+                    value: 'keep',
+                    label: 'Keep current settings',
+                    tone: 'primary',
+                    hint: 'Leave this character exactly as it is.',
+                },
+                this._copyChoice(),
+            ],
+        });
+        if (answer === COPY_FROM_CHARACTER) {
+            await this._offerCopyFromCharacter(current);
+        }
+    }
+
+    /**
+     * A scrollable list of characters to copy settings from — one row each,
+     * because an account can have well over a hundred and a wall of choice-dialog
+     * buttons would not fit. Resolves to the chosen id, or null on cancel/escape.
+     *
+     * @param {Array<{id: string, name: string}>} candidates
+     * @returns {Promise<string|null>}
+     * @private
+     */
+    _pickSourceCharacter(candidates) {
+        return new Promise((resolve) => {
+            const backdrop = document.createElement('div');
+            Object.assign(backdrop.style, {
+                position: 'fixed',
+                inset: '0',
+                background: 'rgba(0,0,0,0.55)',
+                zIndex: String(config.Z_FLOATING_PANEL + 1),
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+            });
+
+            const dialog = document.createElement('div');
+            Object.assign(dialog.style, {
+                minWidth: '300px',
+                maxWidth: '420px',
+                maxHeight: '70vh',
+                display: 'flex',
+                flexDirection: 'column',
+                background: COLORS.background,
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '8px',
+                color: COLORS.text,
+                fontSize: '13px',
+                padding: '14px 16px 12px',
+            });
+
+            const heading = document.createElement('div');
+            heading.textContent = 'Copy settings from';
+            Object.assign(heading.style, { fontWeight: 'bold', color: COLORS.accent, marginBottom: '8px' });
+            dialog.appendChild(heading);
+
+            let settled = false;
+            const finish = (value) => {
+                if (settled) return;
+                settled = true;
+                document.removeEventListener('keydown', onKeyDown, true);
+                backdrop.remove();
+                resolve(value);
+            };
+            const onKeyDown = (event) => {
+                if (event.key !== 'Escape') return;
+                event.stopPropagation();
+                event.preventDefault();
+                finish(null);
+            };
+
+            const list = document.createElement('div');
+            Object.assign(list.style, { overflowY: 'auto', flex: '1', margin: '0 -2px' });
+            for (const character of candidates) {
+                const row = document.createElement('button');
+                row.textContent = character.name || character.id;
+                Object.assign(row.style, {
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: `1px solid ${COLORS.border}`,
+                    borderRadius: '4px',
+                    color: COLORS.text,
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    padding: '6px 10px',
+                    margin: '3px 2px',
+                });
+                row.addEventListener('click', () => finish(String(character.id)));
+                list.appendChild(row);
+            }
+            dialog.appendChild(list);
+
+            const cancel = document.createElement('button');
+            cancel.textContent = 'Cancel';
+            Object.assign(cancel.style, {
+                marginTop: '10px',
+                alignSelf: 'flex-end',
+                background: 'rgba(255,255,255,0.07)',
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '4px',
+                color: COLORS.text,
+                cursor: 'pointer',
+                padding: '5px 14px',
+            });
+            cancel.addEventListener('click', () => finish(null));
+            dialog.appendChild(cancel);
+
+            backdrop.appendChild(dialog);
+            backdrop.addEventListener('mousedown', (event) => {
+                if (event.target === backdrop) finish(null);
+            });
+            document.addEventListener('keydown', onKeyDown, true);
+            document.body.appendChild(backdrop);
+        });
+    }
+
+    /**
+     * Re-open the first-run setup for the current character, on demand.
+     *
+     * The first-run prompt is one-shot per character, and a stray click outside
+     * it counts as a dismissal — so a button in the settings panel that re-opens
+     * it is the recoverable way back, on this character or any other alt. Offers
+     * the presets and "copy from another character"; the changelog popup that
+     * follows reflects whatever was applied.
+     */
+    async promptSetup() {
+        try {
+            const current = this._identity();
+            const canCopy = (await config.getKnownCharacterCount()) > 1;
+            await this._offerFirstRunPreset(current, canCopy);
+            this.maybeShow();
+        } catch (error) {
+            console.error('[WhatsNew] Manual setup failed:', error);
         }
     }
 
