@@ -6,9 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Marketplace tax raised to 5% (8/13/2026 game update)
+### Marketplace tax raised to 5% (8/13/2026 game update), gated to the test server
 
 The game's market tax went from 2% to 5%. Updated the single `MARKET_TAX` constant and swept out every place that had hardcoded 2% (`0.02`/`0.98`) — networth, order totals, bulk-sell floor, listing value, guild-credit sell→rebuy, profit/hr, enhancement worth-it, EV, tea optimizer — so all profit, net-proceeds and break-even figures use the new rate. Tax labels now derive from the constant instead of a baked-in "2%".
+
+The 5% rate (and the shrine-in-gear-score change below) is **gated to the test server** for now via `isMarketplacePatchLive()` — the live server keeps 2% until the patch reaches it. One line to un-gate everything once it is live everywhere (`server-gate.js`).
 
 ### Profiles: shrine levels count toward gear score and combat sim
 
