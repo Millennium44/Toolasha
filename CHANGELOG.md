@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancement Tracker: idle duration fix, session merge, and an on-screen toggle
+
+- **Session Duration no longer runs while idle.** It stopped only when a run reached its target; a session left In Progress counted wall-clock forever. The clock now ends at the last recorded attempt, so it freezes when you stop enhancing (and XP/Hour with it).
+- **Merge sessions (∑).** A new ∑ button in the tracker header opens a checklist of your sessions and shows a combined summary of the ones you pick — per-level tally, attempts, success rate, XP, duration, and total cost — for a target reached across several separate runs. Defaults to every session of the item currently in view.
+- **Show/hide button on the Enhancing screen.** A "∑ Tracker" button now sits in the Enhancing panel's corner, like the marketplace's Bulk Sell tab, toggling the tracker on demand (a manual hide sticks).
+
 ### Notifications: labyrinth entry regenerated (opt-in)
 
 New default-off notification "Notify when a labyrinth entry regenerates". The Labyrinth holds up to five entries and regenerates one on a cooldown (a couple of days, less with upgrades); this fires when the stock rises or when the projected regeneration instant passes on an open tab — computed from `lastLabyrinthTimestamp + labyrinthCooldownHours` — so an entry doesn't sit wasted at the cap. Uses the existing notification service (toast in-page, browser notification when the tab is hidden).

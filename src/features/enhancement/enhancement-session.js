@@ -259,7 +259,13 @@ function recalculateTotalCost(session) {
  * @returns {number} Duration in seconds
  */
 export function getSessionDuration(session) {
-    const endTime = session.endTime || Date.now();
+    // A live session's clock runs to its last recorded attempt, not to the
+    // wall clock. lastUpdateTime advances only when an attempt lands, so once
+    // enhancing stops — the user walked away, or the run was abandoned short of
+    // its target — the duration freezes instead of counting time nobody spent
+    // enhancing. Before this, only a completed run (which sets endTime) ever
+    // stopped, so an idle In-Progress session ticked up forever.
+    const endTime = session.endTime || session.lastUpdateTime || session.startTime;
     return Math.floor((endTime - session.startTime) / 1000);
 }
 
@@ -412,6 +418,108 @@ export function getCurrentLegCounters(session) {
         attempts: Math.max(0, attempts),
         protections: Math.max(0, protections),
     };
+}
+
+/**
+ * Combine several sessions into one aggregate reading.
+ *
+ * Sums the counters, costs, XP and duration and re-derives the per-level tally
+ * and overall rate, so runs of the same item split across sessions — or a mix of
+ * items — read as one. The result is shaped like a session in the fields the
+ * per-level and cost renderers touch (`id`, `attemptsPerLevel`, `materialCosts`,
+ * the cost fields, `currentLevel`, `predictions`) so those views can be reused
+ * as they are.
+ *
+ * Predictions are not merged: each describes a single leg's distribution and
+ * they do not add, so the aggregate carries expected attempts/protections only
+ * as plain sums for a rough factor, and `predictions` is left null so the
+ * per-level table shows no misleading "Pred %" against a combined run.
+ *
+ * @param {Array<Object>} sessions - Sessions to combine
+ * @returns {Object|null} Aggregate, or null for an empty list
+ */
+export function mergeSessions(sessions) {
+    if (!Array.isArray(sessions) || sessions.length === 0) return null;
+
+    const agg = {
+        id: 'merged',
+        merged: true,
+        count: 0,
+        itemHrids: [],
+        itemNames: [],
+        totalAttempts: 0,
+        totalSuccesses: 0,
+        totalFailures: 0,
+        totalXP: 0,
+        protectionCount: 0,
+        protectionItemHrid: null,
+        coinCost: 0,
+        coinCount: 0,
+        protectionCost: 0,
+        totalCost: 0,
+        durationSeconds: 0,
+        currentLevel: 0,
+        predictions: null,
+        attemptsPerLevel: {},
+        materialCosts: {},
+        expectedAttempts: 0,
+        expectedProtections: 0,
+    };
+    const seenItems = new Set();
+
+    for (const session of sessions) {
+        if (!session) continue;
+        agg.count += 1;
+
+        if (!seenItems.has(session.itemHrid)) {
+            seenItems.add(session.itemHrid);
+            agg.itemHrids.push(session.itemHrid);
+            agg.itemNames.push(session.itemName);
+        }
+
+        agg.totalAttempts += session.totalAttempts || 0;
+        agg.totalSuccesses += session.totalSuccesses || 0;
+        agg.totalFailures += session.totalFailures || 0;
+        agg.totalXP += session.totalXP || 0;
+        agg.protectionCount += session.protectionCount || 0;
+        agg.coinCost += session.coinCost || 0;
+        agg.coinCount += session.coinCount || 0;
+        agg.protectionCost += session.protectionCost || 0;
+        agg.totalCost += session.totalCost || 0;
+        agg.durationSeconds += getSessionDuration(session);
+        if (!agg.protectionItemHrid && session.protectionItemHrid) {
+            agg.protectionItemHrid = session.protectionItemHrid;
+        }
+
+        for (const [level, tally] of Object.entries(session.attemptsPerLevel || {})) {
+            if (!agg.attemptsPerLevel[level]) {
+                agg.attemptsPerLevel[level] = { success: 0, fail: 0, successRate: 0 };
+            }
+            agg.attemptsPerLevel[level].success += tally.success || 0;
+            agg.attemptsPerLevel[level].fail += tally.fail || 0;
+        }
+
+        for (const [hrid, material] of Object.entries(session.materialCosts || {})) {
+            if (!agg.materialCosts[hrid]) {
+                agg.materialCosts[hrid] = { count: 0, totalCost: 0 };
+            }
+            agg.materialCosts[hrid].count += material.count || 0;
+            agg.materialCosts[hrid].totalCost += material.totalCost || 0;
+        }
+
+        if (session.predictions) {
+            agg.expectedAttempts += session.predictions.expectedAttempts || 0;
+            agg.expectedProtections += session.predictions.expectedProtections || 0;
+        }
+    }
+
+    for (const tally of Object.values(agg.attemptsPerLevel)) {
+        const total = tally.success + tally.fail;
+        tally.successRate = total > 0 ? tally.success / total : 0;
+    }
+    agg.successRate = agg.totalAttempts > 0 ? agg.totalSuccesses / agg.totalAttempts : 0;
+
+    return agg;
 }
 
 /**

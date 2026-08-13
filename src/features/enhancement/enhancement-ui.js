@@ -5,7 +5,7 @@
  */
 
 import enhancementTracker from './enhancement-tracker.js';
-import { SessionState, getSessionDuration, getCurrentLegCounters } from './enhancement-session.js';
+import { SessionState, getSessionDuration, getCurrentLegCounters, mergeSessions } from './enhancement-session.js';
 import { attemptTailProbability, describeAttemptOutcome } from './attempt-percentile.js';
 import { costVsExpected, valueVsCost } from './enhancement-profit.js';
 import { getItemPrices } from '../../utils/market-data.js';
@@ -64,6 +64,16 @@ const compactCellStyle = `
     color: ${STYLE.colors.textPrimary};
 `;
 
+const mergeChipStyle = `
+    background: none;
+    border: 1px solid ${STYLE.colors.border};
+    color: ${STYLE.colors.textPrimary};
+    cursor: pointer;
+    font-size: 11px;
+    padding: 1px 8px;
+    border-radius: 3px;
+`;
+
 /**
  * Enhancement UI Manager
  */
@@ -78,6 +88,9 @@ class EnhancementUI {
         this.settingChangeHandlers = [];
         this.isOnEnhancingScreen = false;
         this.isCollapsed = false; // Track collapsed state
+        this.mergeMode = false; // Viewing a combined summary of several sessions
+        this.mergeSelected = new Set(); // Session ids checked for the merge
+        this.screenToggleButton = null; // In-panel show/hide button on the Enhancing screen
         this.updateInterval = null;
         this.timerRegistry = createTimerRegistry();
         this.dragHandle = null;
@@ -99,6 +112,9 @@ class EnhancementUI {
         // Update UI every second during active sessions
         this.updateInterval = setInterval(() => {
             if (document.hidden) return;
+            // The merge view is a snapshot the user is reading and clicking
+            // through; a per-second rebuild would drop its checkbox state.
+            if (this.mergeMode) return;
             const session = this.getCurrentSession();
             if (session && session.state === SessionState.TRACKING) {
                 this.updateUI();
@@ -139,6 +155,9 @@ class EnhancementUI {
             (panel) => {
                 this.isOnEnhancingScreen = true;
                 this.updateVisibility();
+                // A show/hide button on the Enhancing screen itself, like the
+                // marketplace's Bulk Sell tab.
+                this.injectScreenToggleButton(panel);
                 // Setup removal observer when panel appears
                 this.setupPanelRemovalObserver(panel);
             },
@@ -153,6 +172,7 @@ class EnhancementUI {
         if (existingPanel) {
             this.isOnEnhancingScreen = true;
             this.updateVisibility();
+            this.injectScreenToggleButton(existingPanel);
             this.setupPanelRemovalObserver(existingPanel);
         }
     }
@@ -165,10 +185,17 @@ class EnhancementUI {
         const onTrackerChange = (enabled) => {
             if (!enabled) {
                 this.hide();
+                // The Enhancing-screen toggle belongs to the feature; drop it.
+                if (this.screenToggleButton) {
+                    this.screenToggleButton.remove();
+                    this.screenToggleButton = null;
+                }
             } else {
                 // Turning the feature on clears any manual command-palette hide.
                 this.manualHidden = false;
                 this.updateVisibility();
+                const panel = document.querySelector('[class*="EnhancingPanel_enhancingPanel"]');
+                if (panel) this.injectScreenToggleButton(panel);
             }
         };
         config.onSettingChange('enhancementTracker', onTrackerChange);
@@ -436,6 +463,9 @@ class EnhancementUI {
         // Next session button
         const nextButton = this.createNavButton('▶', () => this.navigateSession(1));
 
+        // Merge button — combine several sessions into one summary
+        const mergeButton = this.createMergeButton();
+
         // Collapse button
         const collapseButton = this.createCollapseButton();
 
@@ -444,6 +474,7 @@ class EnhancementUI {
 
         navContainer.appendChild(prevButton);
         navContainer.appendChild(nextButton);
+        navContainer.appendChild(mergeButton);
         navContainer.appendChild(collapseButton);
         navContainer.appendChild(clearButton);
 
@@ -553,6 +584,77 @@ class EnhancementUI {
         });
 
         return button;
+    }
+
+    /**
+     * Create the merge-mode button. Toggles a combined view of several sessions.
+     */
+    createMergeButton() {
+        const button = document.createElement('button');
+        button.id = 'enhancementMergeButton';
+        button.innerHTML = '∑';
+        button.title = 'Merge sessions — combine several runs into one summary';
+        Object.assign(button.style, {
+            background: 'none',
+            border: 'none',
+            color: STYLE.colors.textPrimary,
+            cursor: 'pointer',
+            fontSize: '16px',
+            lineHeight: '1',
+            padding: '2px 8px',
+            borderRadius: '3px',
+            transition: STYLE.transitions.fast,
+        });
+
+        button.addEventListener('mouseover', () => {
+            if (this.mergeMode) return;
+            button.style.color = STYLE.colors.accent;
+            button.style.background = 'rgba(255, 0, 212, 0.1)';
+        });
+        button.addEventListener('mouseout', () => {
+            this.styleMergeButton(button);
+        });
+        button.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleMergeMode();
+        });
+
+        this.styleMergeButton(button);
+        return button;
+    }
+
+    /**
+     * Paint the merge button lit or unlit for the current mode.
+     * @param {HTMLElement} [button] - Defaults to the header's merge button
+     */
+    styleMergeButton(button = document.getElementById('enhancementMergeButton')) {
+        if (!button) return;
+        if (this.mergeMode) {
+            button.style.color = STYLE.colors.accent;
+            button.style.background = 'rgba(255, 0, 212, 0.18)';
+        } else {
+            button.style.color = STYLE.colors.textPrimary;
+            button.style.background = 'none';
+        }
+    }
+
+    /**
+     * Enter or leave the combined-summary view.
+     */
+    toggleMergeMode() {
+        this.mergeMode = !this.mergeMode;
+        if (this.mergeMode) {
+            // A merge with nothing chosen defaults to every session of the item
+            // currently in view — the common case of one item split across runs.
+            if (this.mergeSelected.size === 0) {
+                const current = this.getCurrentSession();
+                const sessions = Object.values(enhancementTracker.getAllSessions());
+                const kin = current ? sessions.filter((s) => s.itemHrid === current.itemHrid) : sessions;
+                for (const session of kin) this.mergeSelected.add(session.id);
+            }
+        }
+        this.styleMergeButton();
+        this.updateUI();
     }
 
     /**
@@ -779,6 +881,13 @@ class EnhancementUI {
             `;
             return;
         }
+
+        // Merge mode: a checklist of sessions and their combined summary
+        if (this.mergeMode) {
+            this.renderMergeView(content, sessions);
+            return;
+        }
+
         if (!session) {
             content.innerHTML = '<div style="text-align: center; color: ${STYLE.colors.danger};">Invalid session</div>';
             return;
@@ -816,6 +925,8 @@ class EnhancementUI {
         const sessions = Object.values(enhancementTracker.getAllSessions());
         if (sessions.length === 0) {
             counter.textContent = '';
+        } else if (this.mergeMode) {
+            counter.textContent = `(merge ${this.mergeSelected.size}/${sessions.length})`;
         } else {
             counter.textContent = `(${this.currentViewingIndex + 1}/${sessions.length})`;
         }
@@ -1011,6 +1122,180 @@ class EnhancementUI {
         html += this.generateWorthItHTML(session);
 
         return html;
+    }
+
+    /**
+     * Render the merge view: a checklist of sessions and the combined summary of
+     * the chosen ones.
+     * @param {HTMLElement} content - The panel content element
+     * @param {Array<Object>} sessions - All sessions
+     */
+    renderMergeView(content, sessions) {
+        // Drop any selections whose session has since gone (e.g. cleared)
+        const ids = new Set(sessions.map((session) => session.id));
+        for (const id of [...this.mergeSelected]) {
+            if (!ids.has(id)) this.mergeSelected.delete(id);
+        }
+
+        const chosen = sessions.filter((session) => this.mergeSelected.has(session.id));
+        const merged = mergeSessions(chosen);
+
+        content.innerHTML = this.generateMergeListHTML(sessions) + this.generateMergedSummaryHTML(merged);
+        this.wireMergeControls(content, sessions);
+    }
+
+    /**
+     * The pick-list: one checkable row per session.
+     * @param {Array<Object>} sessions - All sessions
+     * @returns {string} HTML
+     */
+    generateMergeListHTML(sessions) {
+        const gameData = dataManager.getInitClientData();
+        const rows = sessions
+            .map((session, index) => {
+                const itemName = gameData?.itemDetailMap?.[session.itemHrid]?.name || session.itemName || 'Unknown';
+                const checked = this.mergeSelected.has(session.id) ? 'checked' : '';
+                const done = session.state === SessionState.COMPLETED ? '✅' : '🟢';
+                return `
+                <label style="display: flex; align-items: center; gap: 8px; padding: 4px 2px; cursor: pointer; font-size: 12px; border-bottom: 1px solid ${STYLE.colors.border};">
+                    <input type="checkbox" class="enh-merge-check" data-session-id="${session.id}" ${checked} style="cursor: pointer;" />
+                    <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                        ${done} <strong>${itemName}</strong> → +${session.targetLevel}
+                    </span>
+                    <span style="opacity: 0.7;">${session.totalAttempts || 0} att</span>
+                    <span style="opacity: 0.5; font-size: 11px;">#${index + 1}</span>
+                </label>`;
+            })
+            .join('');
+
+        return `
+            <div style="margin-bottom: 10px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <strong style="font-size: 13px;">Merge sessions</strong>
+                    <span style="display: flex; gap: 6px;">
+                        <button class="enh-merge-all" style="${mergeChipStyle}">All</button>
+                        <button class="enh-merge-none" style="${mergeChipStyle}">None</button>
+                    </span>
+                </div>
+                <div style="max-height: 160px; overflow-y: auto; border: 1px solid ${STYLE.colors.border}; border-radius: 4px; padding: 2px 6px;">
+                    ${rows}
+                </div>
+            </div>`;
+    }
+
+    /**
+     * The combined-summary card for the chosen sessions.
+     * @param {Object|null} merged - From {@link mergeSessions}
+     * @returns {string} HTML
+     */
+    generateMergedSummaryHTML(merged) {
+        if (!merged || merged.count === 0) {
+            return `<div style="text-align: center; padding: 20px; color: ${STYLE.colors.textSecondary}; font-size: 13px;">
+                Pick sessions above to combine them.
+            </div>`;
+        }
+
+        const successRate = merged.totalAttempts > 0 ? formatPercentage(merged.successRate, 1) : '0.0%';
+        const durationText = this.formatDuration(merged.durationSeconds);
+        const xpPerHour =
+            merged.durationSeconds >= 5 && merged.totalXP > 0
+                ? Math.floor((merged.totalXP / merged.durationSeconds) * 3600)
+                : 0;
+
+        const itemsLabel =
+            merged.itemNames.length === 1
+                ? merged.itemNames[0]
+                : `${merged.itemNames.length} items (${merged.itemNames.slice(0, 3).join(', ')}${
+                      merged.itemNames.length > 3 ? '…' : ''
+                  })`;
+
+        let html = `
+            <div style="border-top: 1px solid ${STYLE.colors.border}; padding-top: 8px;">
+                <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px;">
+                    <span>Combined:</span>
+                    <strong>${merged.count} session${merged.count === 1 ? '' : 's'}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; font-size: 13px;">
+                    <span>Items:</span>
+                    <strong style="max-width: 60%; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${itemsLabel}</strong>
+                </div>
+            </div>`;
+
+        // Per-level table and material breakdown reuse the single-session renderers
+        html += this.generateLevelTable(merged);
+
+        html += `
+            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
+                <div><span>Total Attempts:</span><strong> ${merged.totalAttempts}</strong></div>
+                <div><span>Prots Used:</span><strong> ${merged.protectionCount || 0}</strong></div>
+            </div>
+            <div style="margin-top: 4px; display: flex; justify-content: space-between; font-size: 13px;">
+                <span>Success Rate:</span>
+                <strong>${successRate}</strong>
+            </div>`;
+
+        // A rough attempt factor if every chosen run carried a prediction
+        if (merged.expectedAttempts > 0) {
+            const factor = merged.totalAttempts / merged.expectedAttempts;
+            html += `
+            <div style="margin-top: 4px; display: flex; justify-content: space-between; font-size: 12px; color: ${STYLE.colors.textSecondary};">
+                <div><span>Expected Attempts:</span><span> ${merged.expectedAttempts}</span></div>
+                <div><span>Attempt Factor:</span><strong> ${factor.toFixed(2)}x</strong></div>
+            </div>`;
+        }
+
+        html += `
+            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
+                <span>Total XP Gained:</span>
+                <strong>${this.formatNumber(merged.totalXP)}</strong>
+            </div>
+            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
+                <span>Combined Duration:</span>
+                <strong>${durationText}</strong>
+            </div>
+            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
+                <span>XP/Hour:</span>
+                <strong>${xpPerHour > 0 ? this.formatNumber(xpPerHour) : '—'}</strong>
+            </div>`;
+
+        html += this.generateMaterialCostsHTML(merged);
+
+        return html;
+    }
+
+    /**
+     * Attach listeners for the merge checklist. innerHTML drops any prior ones,
+     * so this runs after every merge-view render.
+     * @param {HTMLElement} content - The panel content element
+     * @param {Array<Object>} sessions - All sessions
+     */
+    wireMergeControls(content, sessions) {
+        for (const box of content.querySelectorAll('.enh-merge-check')) {
+            box.addEventListener('change', (e) => {
+                const id = e.target.getAttribute('data-session-id');
+                if (e.target.checked) this.mergeSelected.add(id);
+                else this.mergeSelected.delete(id);
+                this.updateSessionCounter();
+                this.renderMergeView(content, Object.values(enhancementTracker.getAllSessions()));
+            });
+        }
+
+        const all = content.querySelector('.enh-merge-all');
+        if (all) {
+            all.addEventListener('click', () => {
+                for (const session of sessions) this.mergeSelected.add(session.id);
+                this.updateSessionCounter();
+                this.renderMergeView(content, Object.values(enhancementTracker.getAllSessions()));
+            });
+        }
+        const none = content.querySelector('.enh-merge-none');
+        if (none) {
+            none.addEventListener('click', () => {
+                this.mergeSelected.clear();
+                this.updateSessionCounter();
+                this.renderMergeView(content, Object.values(enhancementTracker.getAllSessions()));
+            });
+        }
     }
 
     /**
@@ -1243,6 +1528,7 @@ class EnhancementUI {
         if (this.floatingUI) {
             this.floatingUI.style.display = 'flex';
         }
+        this.syncScreenToggleButton();
     }
 
     /**
@@ -1252,6 +1538,71 @@ class EnhancementUI {
         if (this.floatingUI) {
             this.floatingUI.style.display = 'none';
         }
+        this.syncScreenToggleButton();
+    }
+
+    /**
+     * Add a show/hide button to the Enhancing screen, mirroring the
+     * marketplace's Bulk Sell tab. It rides in the panel's top-right corner and
+     * toggles the tracker exactly as the command-palette entry does — a manual
+     * hide that the auto-show logic then leaves alone.
+     * @param {HTMLElement} panel - The EnhancingPanel element
+     */
+    injectScreenToggleButton(panel) {
+        if (!panel || !config.getSetting('enhancementTracker')) return;
+        // One per panel; a fresh panel gets a fresh button.
+        if (panel.querySelector('#toolashaEnhTrackerToggle')) {
+            this.screenToggleButton = panel.querySelector('#toolashaEnhTrackerToggle');
+            this.syncScreenToggleButton();
+            return;
+        }
+
+        // The button is positioned against the panel, so the panel must be a
+        // positioned ancestor.
+        if (getComputedStyle(panel).position === 'static') {
+            panel.style.position = 'relative';
+        }
+
+        const button = document.createElement('button');
+        button.id = 'toolashaEnhTrackerToggle';
+        button.type = 'button';
+        button.textContent = '∑ Tracker';
+        button.title = 'Show or hide the Enhancement Tracker';
+        Object.assign(button.style, {
+            position: 'absolute',
+            top: '6px',
+            right: '6px',
+            zIndex: '5',
+            background: 'rgba(25, 0, 35, 0.85)',
+            border: `1px solid ${STYLE.colors.primary}`,
+            color: STYLE.colors.textPrimary,
+            cursor: 'pointer',
+            fontSize: '12px',
+            lineHeight: '1',
+            padding: '4px 10px',
+            borderRadius: STYLE.borderRadius.small,
+            transition: STYLE.transitions.fast,
+        });
+        button.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this.toggle();
+        });
+
+        panel.appendChild(button);
+        this.screenToggleButton = button;
+        this.syncScreenToggleButton();
+    }
+
+    /**
+     * Paint the Enhancing-screen toggle to match whether the tracker is showing.
+     */
+    syncScreenToggleButton() {
+        const button = this.screenToggleButton;
+        if (!button || !document.body.contains(button)) return;
+        const visible = !!this.floatingUI && this.floatingUI.style.display !== 'none';
+        button.style.opacity = visible ? '1' : '0.6';
+        button.style.boxShadow = visible ? `0 0 8px ${STYLE.colors.primary}` : 'none';
     }
 
     /**
@@ -1285,6 +1636,12 @@ class EnhancementUI {
         if (this.panelRemovalObserver) {
             this.panelRemovalObserver.disconnect();
             this.panelRemovalObserver = null;
+        }
+
+        // Remove the in-panel Enhancing-screen toggle button
+        if (this.screenToggleButton) {
+            this.screenToggleButton.remove();
+            this.screenToggleButton = null;
         }
 
         // Unregister setting change listeners
