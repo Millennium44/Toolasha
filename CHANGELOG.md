@@ -14,7 +14,9 @@ New default-off notification "Notify when a labyrinth entry regenerates". The La
 
 Now prices materials and protection with the same helper the live Enhancement Tracker uses (production-cost/NPC fallbacks for unlisted materials), so the loot-log figures line up with the tracker for the same run instead of collapsing to near-zero when a material has no market listing.
 
-Enhancing loot-log entries can now carry a summary line — material and protection cost against the statistically expected cost (how lucky the run was), and the profit (the finished item's after-fee value minus the base and what you spent). It's reconstructed from the run's own per-level results and priced through Toolasha's enhancement calculator, assuming the cost-optimal protect level. New setting "Loot Log: Enhancing cost, luck and profit", **off by default**. (Merging split runs into one profit total is a planned follow-up.)
+Enhancing loot-log entries can now carry a summary line — material and protection cost against the statistically expected cost (how lucky the run was), and the profit (the finished item's after-fee value minus the base and what you spent). It's reconstructed from the run's own per-level results and priced through Toolasha's enhancement calculator, assuming the cost-optimal protect level. New setting "Loot Log: Enhancing cost, luck and profit", **off by default**. The summary text is a readable size.
+
+Each enhancing entry also has a **+ merge** chip: pick two or more runs of the same item and a panel at the top of the loot log sums their real cost, luck and profit into one total — for a target reached across several split runs.
 
 ### Enhancement Tracker: cost-vs-expected (luck) and worth-it lines
 

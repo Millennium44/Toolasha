@@ -22,7 +22,7 @@ import {
 } from '../../utils/gathering-drop-model.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import lootLogHistory from './loot-log-history.js';
-import { reconstructEnhancingRun, computeEnhancingSummary } from './enhancing-loot-summary.js';
+import { reconstructEnhancingRun, computeEnhancingSummary, mergeEnhancingSummaries } from './enhancing-loot-summary.js';
 import { enhancementCalculator, enhancementConfig } from '../../utils/bundle-bridge.js';
 import { getEnhancementMaterialPrice, getCheapestProtectionPrice } from '../enhancement/tooltip-enhancement.js';
 
@@ -96,6 +96,10 @@ class LootLogStats {
         // Percentiles already worked out, keyed by what they were worked out
         // from — an entry that has not changed costs a lookup, not a transform
         this.luckCache = new Map();
+        // Enhancing-run merge: the computed summary of every enhancing entry seen
+        // (by characterActionId), and which the user has picked to combine.
+        this.enhSummaries = new Map();
+        this.enhSelected = new Set();
     }
 
     /**
@@ -243,12 +247,141 @@ class LootLogStats {
 
             const div = document.createElement('div');
             div.className = 'mwi-loot-log-enhancing';
-            div.style.cssText = 'font-size: 11px; margin-top: 4px; line-height: 1.5;';
+            div.style.cssText = 'font-size: 13px; margin-top: 4px; line-height: 1.5;';
             div.innerHTML = this.buildEnhancingSummaryHtml(summary);
+
+            // Remember this run so it can be merged with others of the same item.
+            const id = logData.characterActionId != null ? String(logData.characterActionId) : null;
+            if (id) {
+                const itemName = itemDetails.name || run.baseHrid.split('/').pop();
+                this.enhSummaries.set(id, { summary, baseHrid: run.baseHrid, itemName });
+                div.appendChild(this.buildEnhMergeChip(id));
+            }
+
             targetDiv.appendChild(div);
+            this.renderEnhMergePanel();
         } catch (error) {
             console.error('[LootLogStats] Enhancing summary failed:', error);
         }
+    }
+
+    /**
+     * A small chip that toggles whether this run is in the merge selection.
+     * @param {string} id - characterActionId
+     * @returns {HTMLElement}
+     */
+    buildEnhMergeChip(id) {
+        const chip = document.createElement('button');
+        chip.className = 'mwi-enh-merge-chip';
+        chip.dataset.enhId = id;
+        this.styleEnhMergeChip(chip, this.enhSelected.has(id));
+        chip.addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (this.enhSelected.has(id)) this.enhSelected.delete(id);
+            else this.enhSelected.add(id);
+            this.styleEnhMergeChip(chip, this.enhSelected.has(id));
+            this.renderEnhMergePanel();
+        });
+        return chip;
+    }
+
+    /**
+     * Paint a merge chip for its selected state.
+     * @param {HTMLElement} chip
+     * @param {boolean} selected
+     */
+    styleEnhMergeChip(chip, selected) {
+        chip.textContent = selected ? '✓ merging' : '+ merge';
+        chip.title = 'Select same-item runs to combine into one profit total';
+        chip.style.cssText =
+            'margin-left: 8px; padding: 0 6px; font-size: 11px; line-height: 1.6; cursor: pointer; ' +
+            'border-radius: 4px; border: 1px solid ' +
+            (selected ? 'rgba(255,165,0,0.7)' : 'rgba(255,255,255,0.25)') +
+            '; background: ' +
+            (selected ? 'rgba(255,165,0,0.25)' : 'transparent') +
+            '; color: ' +
+            (selected ? '#ffcc66' : 'rgba(232,236,245,0.7)') +
+            ';';
+    }
+
+    /**
+     * Draw (or clear) the merged-runs panel at the top of the loot-log list.
+     * Shows when two or more entries are selected; asks for same-item entries
+     * when the picks are mixed.
+     */
+    renderEnhMergePanel() {
+        const container = document.querySelector('.LootLogPanel_actionLoots__3oTid');
+        if (!container) return;
+
+        const existing = container.querySelector('.mwi-enh-merge-panel');
+        if (existing) existing.remove();
+
+        const picks = [...this.enhSelected].filter((id) => this.enhSummaries.has(id));
+        if (picks.length < 2) return;
+
+        const entries = picks.map((id) => this.enhSummaries.get(id));
+        const items = new Set(entries.map((e) => e.baseHrid));
+
+        const panel = document.createElement('div');
+        panel.className = 'mwi-enh-merge-panel';
+        panel.style.cssText =
+            'margin: 6px 0; padding: 7px 10px; font-size: 13px; line-height: 1.5; border-radius: 6px; ' +
+            'background: rgba(255,165,0,0.08); border: 1px solid rgba(255,165,0,0.3); color: #e8ecf5;';
+
+        if (items.size > 1) {
+            panel.innerHTML =
+                `<span style="color:#ffcc66;">Select runs of the same item to merge</span> ` +
+                `<span style="color:rgba(232,236,245,0.6);">(${picks.length} picked across ${items.size} items).</span>`;
+        } else {
+            const merged = mergeEnhancingSummaries(entries.map((e) => e.summary));
+            panel.innerHTML = this.buildMergedSummaryHtml(merged, entries[0].itemName);
+        }
+
+        const clear = document.createElement('button');
+        clear.textContent = '✕ clear';
+        clear.style.cssText =
+            'margin-left: 8px; padding: 0 6px; font-size: 11px; line-height: 1.6; cursor: pointer; ' +
+            'border-radius: 4px; border: 1px solid rgba(255,255,255,0.25); background: transparent; color: rgba(232,236,245,0.7);';
+        clear.addEventListener('click', () => this.clearEnhMerge());
+        panel.appendChild(clear);
+
+        container.prepend(panel);
+    }
+
+    /**
+     * Format the merged-runs total.
+     * @param {Object} m - From mergeEnhancingSummaries
+     * @param {string} itemName
+     * @returns {string} HTML
+     */
+    buildMergedSummaryHtml(m, itemName) {
+        const fmt = (n) => formatKMB(Math.round(n));
+        const factor = (a, e) => (e > 0 ? (a / e).toFixed(2) + '×' : '—');
+        const GOOD = '#00c46a';
+        const BAD = '#ff5d6c';
+        const diffColor = m.diff <= 0 ? GOOD : BAD;
+        const diffWord = m.diff <= 0 ? 'below' : 'above';
+
+        let html =
+            `<span style="color:#ffcc66; font-weight:600;">Merged ${m.runs} runs — ${itemName}</span>` +
+            ` <span style="color:rgba(232,236,245,0.6);">(${m.successes}/${m.runs} reached target)</span>`;
+        html += ` · Total ${fmt(m.totalActual)} (${factor(m.totalActual, m.totalExpected)} exp ${fmt(m.totalExpected)})`;
+        html += ` · <span style="color:${diffColor};">${fmt(Math.abs(m.diff))} ${diffWord} exp</span>`;
+        if (m.profit != null) {
+            const profitColor = m.profit >= 0 ? GOOD : BAD;
+            const sign = m.profit >= 0 ? '+' : '−';
+            html += ` · <span style="color:${profitColor}; font-weight:600;">Profit ${sign}${fmt(Math.abs(m.profit))}</span>`;
+        } else {
+            html += ` · <span style="color:rgba(232,236,245,0.6);">Profit: a run has no resale price</span>`;
+        }
+        return html;
+    }
+
+    /** Drop the merge selection and clear its panel. */
+    clearEnhMerge() {
+        this.enhSelected.clear();
+        document.querySelectorAll('.mwi-enh-merge-chip').forEach((chip) => this.styleEnhMergeChip(chip, false));
+        this.renderEnhMergePanel();
     }
 
     /**
@@ -1483,6 +1616,11 @@ class LootLogStats {
         // Remove historical entries section
         const historySection = document.querySelectorAll('.mwi-loot-log-history');
         historySection.forEach((el) => el.remove());
+
+        // Remove the enhancing summaries and merge panel, and drop the selection
+        document.querySelectorAll('.mwi-loot-log-enhancing, .mwi-enh-merge-panel').forEach((el) => el.remove());
+        this.enhSummaries.clear();
+        this.enhSelected.clear();
 
         // Unregister all handlers
         this.unregisterHandlers.forEach((fn) => fn());

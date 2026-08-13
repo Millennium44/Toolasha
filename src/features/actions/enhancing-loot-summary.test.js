@@ -1,5 +1,10 @@
 import { describe, test, expect } from 'vitest';
-import { reconstructEnhancingRun, countProtections, computeEnhancingSummary } from './enhancing-loot-summary.js';
+import {
+    reconstructEnhancingRun,
+    countProtections,
+    computeEnhancingSummary,
+    mergeEnhancingSummaries,
+} from './enhancing-loot-summary.js';
 
 describe('reconstructEnhancingRun', () => {
     test('reads item, target, success and attempts from level-keyed drops', () => {
@@ -121,5 +126,44 @@ describe('computeEnhancingSummary', () => {
     test('returns null when a dependency is missing', () => {
         expect(computeEnhancingSummary(run, { params: {}, ...deps, itemDetails })).toBeNull();
         expect(computeEnhancingSummary(null, { calculateEnhancement, params: {}, ...deps, itemDetails })).toBeNull();
+    });
+});
+
+describe('mergeEnhancingSummaries', () => {
+    const s = (over = {}) => ({
+        materialActual: 1000,
+        materialExpected: 800,
+        protectActual: 100,
+        protectExpected: 50,
+        totalActual: 1100,
+        totalExpected: 850,
+        actualAttempts: 19,
+        expectedAttempts: 14,
+        actualProtects: 2,
+        expectedProtects: 1,
+        profit: 500,
+        success: true,
+        ...over,
+    });
+
+    test('sums costs, counts and profit across runs', () => {
+        const m = mergeEnhancingSummaries([s(), s({ profit: 300, success: false })]);
+        expect(m.runs).toBe(2);
+        expect(m.successes).toBe(1);
+        expect(m.totalActual).toBe(2200);
+        expect(m.totalExpected).toBe(1700);
+        expect(m.diff).toBe(500);
+        expect(m.actualAttempts).toBe(38);
+        expect(m.profit).toBe(800);
+    });
+
+    test('one un-priced run makes the merged profit unknown', () => {
+        const m = mergeEnhancingSummaries([s(), s({ profit: null })]);
+        expect(m.profit).toBeNull();
+    });
+
+    test('returns null for an empty list', () => {
+        expect(mergeEnhancingSummaries([])).toBeNull();
+        expect(mergeEnhancingSummaries(null)).toBeNull();
     });
 });

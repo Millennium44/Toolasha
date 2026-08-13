@@ -221,3 +221,58 @@ export function computeEnhancingSummary(run, deps) {
         targetLevel: run.targetLevel,
     };
 }
+
+/**
+ * Combine several per-run summaries into one, for merging runs of the same item
+ * that were split across loot-log entries — the real cost and profit of the lot.
+ *
+ * @param {Array<Object>} summaries - From {@link computeEnhancingSummary}
+ * @returns {{runs:number, successes:number, materialActual:number,
+ *   materialExpected:number, protectActual:number, protectExpected:number,
+ *   totalActual:number, totalExpected:number, actualAttempts:number,
+ *   expectedAttempts:number, actualProtects:number, expectedProtects:number,
+ *   diff:number, profit:number|null}|null}
+ */
+export function mergeEnhancingSummaries(summaries) {
+    if (!Array.isArray(summaries) || summaries.length === 0) return null;
+
+    const merged = {
+        runs: 0,
+        successes: 0,
+        materialActual: 0,
+        materialExpected: 0,
+        protectActual: 0,
+        protectExpected: 0,
+        totalActual: 0,
+        totalExpected: 0,
+        actualAttempts: 0,
+        expectedAttempts: 0,
+        actualProtects: 0,
+        expectedProtects: 0,
+        profit: 0,
+    };
+    let profitKnown = true;
+
+    for (const s of summaries) {
+        if (!s) continue;
+        merged.runs += 1;
+        if (s.success) merged.successes += 1;
+        merged.materialActual += s.materialActual || 0;
+        merged.materialExpected += s.materialExpected || 0;
+        merged.protectActual += s.protectActual || 0;
+        merged.protectExpected += s.protectExpected || 0;
+        merged.totalActual += s.totalActual || 0;
+        merged.totalExpected += s.totalExpected || 0;
+        merged.actualAttempts += s.actualAttempts || 0;
+        merged.expectedAttempts += s.expectedAttempts || 0;
+        merged.actualProtects += s.actualProtects || 0;
+        merged.expectedProtects += s.expectedProtects || 0;
+        // One un-priced run makes the merged profit unknowable rather than wrong.
+        if (s.profit == null) profitKnown = false;
+        else merged.profit += s.profit;
+    }
+
+    merged.diff = merged.totalActual - merged.totalExpected;
+    if (!profitKnown) merged.profit = null;
+    return merged;
+}
