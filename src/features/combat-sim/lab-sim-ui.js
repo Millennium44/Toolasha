@@ -565,7 +565,7 @@ class LabSimUI {
             flex-shrink: 0;
         `;
         header.innerHTML = `
-            <span style="font-weight:700; font-size:14px; color:${ACCENT};">Lab Simulator</span>
+            <span style="font-weight:700; font-size:14px; color:${ACCENT}; flex:1;">Lab Simulator</span>
             <button id="mwi-labsim-close" style="
                 background:none; border:none; color:#aaa; font-size:22px;
                 cursor:pointer; padding:0; line-height:1;">\u00d7</button>

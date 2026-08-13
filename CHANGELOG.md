@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fixes: sort defaults, minimize placement, clickable quiet members
+
+- **Combat Sim all-zones and the Upgrade advisor now default to sorting by Score.** The all-zones run was resetting to Profit and the Upgrade table opened on DPS; both now open on Score (best first).
+- **The minimize button sits next to the close ✕ again** on Combat Sim, Lab Sim, and the Trade Ledger — it was landing in the middle of the header (and swapped past close on the Trade Ledger).
+- **Guild Roster: click a "Gone quiet" member** to load `/profile <name>` in chat (press Enter to open), the same trick the profile cycler uses.
+
 ### Every panel can be minimized without closing it
 
 Floating panels now have a **–** button in the header (beside the close ✕) that folds the panel down to its title strip, leaving it draggable and running — click **□** to bring it back. It works across both shared panel shells (party loot, guild roster, DPS/deaths/profit tiles, and the rest) and the bespoke tool windows (Combat Sim, Lab Sim, Enhancement XP/hr, Consumables, Houses, Goal Planner, and more). The minimized state is remembered per panel across refreshes, alongside its position.
