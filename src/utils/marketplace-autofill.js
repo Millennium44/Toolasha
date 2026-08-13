@@ -14,8 +14,18 @@ import domObserver from '../core/dom-observer.js';
  * @returns {HTMLInputElement|null} Quantity input element or null
  */
 function findQuantityInput(modal) {
-    // Get all number inputs in the modal
-    const allInputs = Array.from(modal.querySelectorAll('input[type="number"]'));
+    // The game's own quantity row settles it, and is the reliable path since the
+    // 8/13/2026 marketplace update made the price and quantity fields typable —
+    // they are `type="text"` now, so the old `input[type="number"]` selector
+    // below matched nothing and the quantity stopped being filled.
+    const rowInput = modal.querySelector('div[class*="MarketplacePanel_quantityInputs"] input');
+    if (rowInput) {
+        return rowInput;
+    }
+
+    // Fallback: read every input (any type — the fields are text now), and tell
+    // the quantity box from the enhancement-level box by its surrounding label.
+    const allInputs = Array.from(modal.querySelectorAll('input'));
 
     if (allInputs.length === 0) {
         return null;
@@ -110,9 +120,18 @@ function handleBuyModal(modal, activeQuantity, pendingCalculation) {
         return;
     }
 
-    // Set the quantity value
+    // Set the quantity value through the prototype setter React does not own
+    const previous = String(quantityInput.value ?? '');
+    const next = quantity.toString();
     const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    nativeInputValueSetter.call(quantityInput, quantity.toString());
+    nativeInputValueSetter.call(quantityInput, next);
+
+    // Rewind React's value tracker so the input event below reads as a real
+    // change. Without it a strictly-controlled input (as the typable marketplace
+    // fields now are) can snap straight back to its own value on the next render.
+    if (previous !== next) {
+        quantityInput._valueTracker?.setValue?.(previous);
+    }
 
     // Trigger input event to notify React
     const inputEvent = new Event('input', { bubbles: true });

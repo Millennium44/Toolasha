@@ -263,7 +263,7 @@ class MarketplaceShortcuts {
      */
     async executeAction(actionType, itemHrid, enhancementLevel = 0) {
         // Read quantity from item submenu input before navigating away
-        const amountInput = document.querySelector('[class*="Item_amountInputContainer"] input[type="number"]');
+        const amountInput = document.querySelector('[class*="Item_amountInputContainer"] input');
         if (amountInput) {
             const qty = parseInt(amountInput.value, 10);
             if (qty > 0) {
@@ -597,7 +597,7 @@ class MarketplaceShortcuts {
 
             // Determine enhancement level from modal (if present)
             let enhancementLevel = 0;
-            const allInputs = modal.querySelectorAll('input[type="number"]');
+            const allInputs = modal.querySelectorAll('input');
             for (const input of allInputs) {
                 const parent = input.closest('div');
                 if (parent?.textContent?.includes('Enhancement Level')) {
@@ -643,7 +643,13 @@ class MarketplaceShortcuts {
      * @returns {HTMLInputElement|null} Quantity input element or null
      */
     findQuantityInput(modal) {
-        const allInputs = Array.from(modal.querySelectorAll('input[type="number"]'));
+        // The game's own quantity row — reliable, and works whether the fields are
+        // number inputs (pre-8/13 marketplace update) or typable text ones (after).
+        const rowInput = modal.querySelector('div[class*="MarketplacePanel_quantityInputs"] input');
+        if (rowInput) return rowInput;
+
+        // Any input, not just number — the fields are text since the update.
+        const allInputs = Array.from(modal.querySelectorAll('input'));
 
         if (allInputs.length === 0) return null;
         if (allInputs.length === 1) return allInputs[0];
@@ -730,7 +736,7 @@ class MarketplaceShortcuts {
             for (const row of [priceRow, quantityRow]) {
                 if (!row) continue;
 
-                const input = row.querySelector('input[type="number"]');
+                const input = row.querySelector('input');
                 if (!input) continue;
 
                 const buttonContainers = row.querySelectorAll('div[class*="MarketplacePanel_buttonContainer"]');
