@@ -2500,6 +2500,7 @@ class CombatSimUI {
 
                 return {
                     zone: r.zone.name,
+                    zoneHrid: r.zone.zoneHrid || r.zone.hrid,
                     tier: r.zone.difficultyTier,
                     encounters,
                     deaths: playerDeaths,
@@ -2623,7 +2624,11 @@ class CombatSimUI {
                             const marks =
                                 (row === best.xp ? badge('best XP', '#8ab4f8') : '') +
                                 (row === best.profit ? badge('best profit', '#4caf50') : '');
-                            display = `${val}${marks}`;
+                            // Set this zone + tier as the Configure target
+                            const targetBtn = row.zoneHrid
+                                ? `<button class="mwi-csim-target-btn" data-hrid="${row.zoneHrid}" data-tier="${row.tier}" title="Set as Configure target" style="margin-left:6px; background:rgba(74,158,255,0.15); border:1px solid rgba(74,158,255,0.4); color:#8ab4f8; border-radius:4px; padding:0 5px; font-size:10px; line-height:1.4; cursor:pointer;">&#9678;</button>`
+                                : '';
+                            display = `${val}${marks}${targetBtn}`;
                             style += ' color:#e0e0e0; text-align:left;';
                         } else if (col.key === 'tier') {
                             display = `T${val}`;
@@ -2737,6 +2742,43 @@ class CombatSimUI {
                 this._displayAllZonesResults(zoneResults, hours, gameData);
             });
         });
+
+        // Each row's ⌖ button sets that zone + tier as the Configure target and
+        // jumps there. Reattached on every re-render, like the sort listeners.
+        container.querySelectorAll('.mwi-csim-target-btn').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._targetZoneFromResults(btn.dataset.hrid, parseInt(btn.dataset.tier, 10) || 0);
+            });
+        });
+    }
+
+    /**
+     * Point the Configure tab at a single zone + tier chosen from the all-zones
+     * Results table, leaving all-zones mode so the single-zone selects show.
+     * @param {string} zoneHrid
+     * @param {number} tier
+     * @private
+     */
+    _targetZoneFromResults(zoneHrid, tier) {
+        if (!zoneHrid) return;
+
+        // The Results table only exists after an all-zones run, which hides the
+        // single-zone selects — clear that mode so they come back.
+        this._allZonesMode = null;
+        const groupBox = this.panel.querySelector('#mwi-csim-allzones-group');
+        const soloBox = this.panel.querySelector('#mwi-csim-allzones-solo');
+        if (groupBox) groupBox.checked = false;
+        if (soloBox) soloBox.checked = false;
+        this._updateAllZonesUI();
+
+        const zoneSelect = this.panel.querySelector('#mwi-csim-zone');
+        const tierSelect = this.panel.querySelector('#mwi-csim-tier');
+        if (zoneSelect) zoneSelect.value = zoneHrid;
+        this._updateTierDropdown();
+        if (tierSelect) tierSelect.value = String(tier);
+
+        this._switchTab('configure');
     }
 
     /**
