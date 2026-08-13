@@ -7,6 +7,8 @@
 import enhancementTracker from './enhancement-tracker.js';
 import { SessionState, getSessionDuration, getCurrentLegCounters } from './enhancement-session.js';
 import { attemptTailProbability, describeAttemptOutcome } from './attempt-percentile.js';
+import { costVsExpected, valueVsCost } from './enhancement-profit.js';
+import { getItemPrices } from '../../utils/market-data.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
@@ -929,6 +931,30 @@ class EnhancementUI {
             </div>`;
             }
 
+            // Cost vs expected: what this run paid against what the prediction
+            // expected it to, at this run's own unit prices — so the gap is
+            // attempt/protect luck, not market drift.
+            const cost = costVsExpected(session, leg);
+            if (cost) {
+                const good = cost.diff >= 0;
+                const color = good ? STYLE.colors.success : STYLE.colors.danger;
+                const word = good ? 'below' : 'above';
+                html += `
+            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 2px; color: ${STYLE.colors.textSecondary};">
+                <div>
+                    <span>Expected Cost:</span>
+                    <span> ${this.formatNumber(cost.expectedCost)}</span>
+                </div>
+                <div>
+                    <span>Cost Factor:</span>
+                    <strong> ${cost.factor.toFixed(2)}x</strong>
+                </div>
+            </div>
+            <div style="font-size: 12px; margin-top: 2px; color: ${color};">
+                💰 ${this.formatNumber(Math.abs(cost.diff))} ${word} expected cost
+            </div>`;
+            }
+
             // A finished run read as a percentile of the predicted distribution.
             // The factor above says how far the run strayed; this says how often
             // a run strays that far, which is the only honest reading of one
@@ -975,7 +1001,41 @@ class EnhancementUI {
         // Material costs
         html += this.generateMaterialCostsHTML(session);
 
+        // Was it worth it — the +N resale value against what it cost to get there
+        html += this.generateWorthItHTML(session);
+
         return html;
+    }
+
+    /**
+     * "Worth it" line: the +N item's after-fee resale value minus the +0 base
+     * given up minus what was spent. Shown only once the item has been enhanced;
+     * says so plainly when the +N level has no market price to read.
+     * @param {Object} session
+     * @returns {string} HTML
+     */
+    generateWorthItHTML(session) {
+        const worth = valueVsCost(session, getItemPrices);
+        if (!worth) return '';
+
+        if (worth.valueN == null) {
+            return `
+            <div style="margin-top: 6px; font-size: 12px; opacity: 0.6; color: ${STYLE.colors.textSecondary};">
+                💎 No market price for +${worth.level} — worth-it unknown.
+            </div>`;
+        }
+
+        const color = worth.net >= 0 ? STYLE.colors.success : STYLE.colors.danger;
+        const sign = worth.net >= 0 ? '+' : '−';
+        const title =
+            `+${worth.level} sell value ${this.formatNumber(worth.valueN)} ` +
+            `(after ${(worth.sellTax * 100).toFixed(0)}% fee) − base +0 value ${this.formatNumber(worth.value0 || 0)} ` +
+            `− spent ${this.formatNumber(worth.spent)}. Net gain from enhancing vs selling the base as-is.`;
+        return `
+            <div style="margin-top: 6px; display: flex; justify-content: space-between; font-size: 13px;" title="${title}">
+                <span>💎 Worth it (net):</span>
+                <strong style="color: ${color};">${sign}${this.formatNumber(Math.abs(worth.net))}</strong>
+            </div>`;
     }
 
     /**
