@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancement XP/hr panel: get a route for any item, even one you don't own
+
+The enhancing-route (target level, protection plan, cost) was only reachable by hovering an item that's rendered — owned or listed — so an item with no listing at that level showed nothing. The Enhancement XP/hr panel now has an "Enhance any item" box: type any enhanceable item, pick a target level, and get its full route. The base-item price falls back to crafting cost when the market is empty, so it works with zero listings.
+
 ### Ability hover: shows the "fresh to level" cost, like the book tooltip
 
 Hovering an ability itself (in a loadout or ability slot) now adds the same "Fresh to Lv N: <cost> (<books> books)" line the ability-book tooltip shows — plus held-book progress when you carry any. It's a compact block (the game already shows level/xp), detected off the ability's own icon, and rides the existing "ability status" tooltip setting.
