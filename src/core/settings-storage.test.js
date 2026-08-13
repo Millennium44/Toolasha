@@ -139,3 +139,45 @@ describe('one-time rewrites of superseded schema defaults', () => {
         expect(stored.get(FLAG)).toBe(true);
     });
 });
+
+describe('SettingsStorage copy-from-character', () => {
+    beforeEach(() => {
+        stored.clear();
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+    });
+
+    test('copies a source character map onto the current character', async () => {
+        const bobMap = { featureX: { isTrue: true }, mode: { value: 'fast' } };
+        stored.set('json:script_settingsMap_bob', bobMap);
+
+        const ok = await settingsStorage.copySettingsFromCharacter('bob');
+
+        expect(ok).toBe(true);
+        expect(stored.get('json:script_settingsMap_alice')).toEqual(bobMap);
+    });
+
+    test('refuses to copy from self, an unknown id, or an empty map', async () => {
+        stored.set('json:script_settingsMap_empty', {});
+
+        expect(await settingsStorage.copySettingsFromCharacter('alice')).toBe(false);
+        expect(await settingsStorage.copySettingsFromCharacter('ghost')).toBe(false);
+        expect(await settingsStorage.copySettingsFromCharacter('empty')).toBe(false);
+        expect(await settingsStorage.copySettingsFromCharacter(null)).toBe(false);
+        expect(stored.get('json:script_settingsMap_alice')).toBeUndefined();
+    });
+
+    test('lists only other characters that actually have settings', async () => {
+        stored.set('json:known_character_ids', [
+            { id: 'alice', name: 'Alice' },
+            { id: 'bob', name: 'Bob' },
+            { id: 'carol', name: 'Carol' },
+        ]);
+        stored.set('json:script_settingsMap_bob', { x: { isTrue: true } });
+        // carol is known but has no settings map; alice is the current character
+
+        const candidates = await settingsStorage.charactersWithSettings();
+
+        expect(candidates).toEqual([{ id: 'bob', name: 'Bob' }]);
+    });
+});

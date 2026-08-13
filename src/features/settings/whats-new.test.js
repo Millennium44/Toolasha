@@ -33,6 +33,11 @@ const mocks = vi.hoisted(() => ({
     // Setting definitions the mocked schema knows about; only their shape
     // matters — conservativeOverrides forces off the checkboxes that ship on.
     definitions: {},
+    // Copy-from-character seams.
+    candidates: [],
+    copiedFrom: null,
+    copySucceeds: true,
+    knownCount: 1,
 }));
 
 vi.mock('../../utils/choice-dialog.js', () => ({
@@ -50,6 +55,12 @@ vi.mock('../../core/config.js', () => ({
         getSetting: () => false,
         getSettingValue: () => 0,
         Z_FLOATING_PANEL: 1000,
+        charactersWithSettings: async () => mocks.candidates,
+        copySettingsFromCharacter: async (id) => {
+            mocks.copiedFrom = id;
+            return { success: mocks.copySucceeds };
+        },
+        getKnownCharacterCount: async () => mocks.knownCount,
     },
 }));
 
@@ -106,7 +117,7 @@ vi.mock('../../utils/panel-z-index.js', () => ({
     bringPanelToFront: () => {},
 }));
 
-const { default: whatsNew, renderForkMarkdown } = await import('./whats-new.js');
+const { default: whatsNew, renderForkMarkdown, COPY_FROM_CHARACTER } = await import('./whats-new.js');
 const { SETTING_PRESETS, DEFAULT_PRESET_ID } = await import('./setting-presets.js');
 const { conservativeOverrides } = await import('./whats-new-core.js');
 
@@ -127,7 +138,12 @@ beforeEach(() => {
     mocks.lastChoiceOptions = null;
     mocks.written = [];
     mocks.appliedPresets = [];
+    mocks.candidates = [];
+    mocks.copiedFrom = null;
+    mocks.copySucceeds = true;
+    mocks.knownCount = 1;
     whatsNew._pending = null;
+    delete whatsNew._pickSourceCharacter; // restore the real method if a test replaced it
     defineSchema();
 });
 
@@ -270,5 +286,104 @@ describe('the fresh-install picker is unchanged', () => {
 
         // A fresh install has nothing to keep, so a preset is always applied
         expect(mocks.appliedPresets).toEqual([DEFAULT_PRESET_ID]);
+    });
+});
+
+describe('copy from another character', () => {
+    test('the fresh-install picker offers copy first when a source exists', async () => {
+        mocks.answer = DEFAULT_PRESET_ID;
+        await whatsNew._offerFirstRunPreset(CURRENT, true);
+
+        const values = mocks.lastChoiceOptions.choices.map((choice) => choice.value);
+        expect(values[0]).toBe(COPY_FROM_CHARACTER);
+        expect(values.slice(1)).toEqual(SETTING_PRESETS.map((preset) => preset.id));
+    });
+
+    test('the returning-user picker offers copy after keepCurrent, before the presets', async () => {
+        mocks.answer = 'keepCurrent';
+        await whatsNew._offerFirstRunChoice(['newFeatureA'], CURRENT, true);
+
+        const values = mocks.lastChoiceOptions.choices.map((choice) => choice.value);
+        expect(values).toEqual(['keepCurrent', COPY_FROM_CHARACTER, ...SETTING_PRESETS.map((preset) => preset.id)]);
+    });
+
+    test('choosing copy in the fresh-install picker copies the picked source, no preset', async () => {
+        mocks.candidates = [{ id: 'main', name: 'Main' }];
+        mocks.answer = COPY_FROM_CHARACTER;
+        whatsNew._pickSourceCharacter = async () => 'main';
+
+        await whatsNew._offerFirstRunPreset(CURRENT, true);
+
+        expect(mocks.copiedFrom).toBe('main');
+        expect(mocks.appliedPresets).toEqual([]);
+        expect(whatsNew._pending.headline).toContain('Main');
+    });
+
+    test('choosing copy in the returning-user picker copies and skips keep/preset', async () => {
+        defineSchema(['newFeatureA'], []);
+        mocks.candidates = [{ id: 'alt', name: 'Alt' }];
+        mocks.answer = COPY_FROM_CHARACTER;
+        whatsNew._pickSourceCharacter = async () => 'alt';
+
+        await whatsNew._offerFirstRunChoice(['newFeatureA'], CURRENT, true);
+
+        expect(mocks.copiedFrom).toBe('alt');
+        expect(mocks.appliedPresets).toEqual([]);
+        expect(mocks.written).toEqual([]); // no conservative policy, no keep writes
+        expect(whatsNew._pending.headline).toContain('Alt');
+    });
+
+    test('cancelling the pick falls through to the default preset (fresh install)', async () => {
+        mocks.candidates = [{ id: 'main', name: 'Main' }];
+        mocks.answer = COPY_FROM_CHARACTER;
+        whatsNew._pickSourceCharacter = async () => null; // cancelled
+
+        await whatsNew._offerFirstRunPreset(CURRENT, true);
+
+        expect(mocks.copiedFrom).toBeNull();
+        expect(mocks.appliedPresets).toEqual([DEFAULT_PRESET_ID]);
+    });
+
+    test('cancelling the pick keeps current settings (returning user)', async () => {
+        defineSchema(['newFeatureA'], []);
+        mocks.candidates = [{ id: 'main', name: 'Main' }];
+        mocks.answer = COPY_FROM_CHARACTER;
+        whatsNew._pickSourceCharacter = async () => null;
+
+        await whatsNew._offerFirstRunChoice(['newFeatureA'], CURRENT, true);
+
+        expect(mocks.copiedFrom).toBeNull();
+        expect(mocks.appliedPresets).toEqual([]);
+        expect(Object.fromEntries(mocks.written).whatsNew_newDefaultsOff).toBe(true);
+    });
+
+    test('copy is a no-op and falls back when no other character has settings', async () => {
+        mocks.candidates = [];
+        mocks.answer = COPY_FROM_CHARACTER;
+
+        await whatsNew._offerFirstRunPreset(CURRENT, true);
+
+        expect(mocks.copiedFrom).toBeNull();
+        expect(mocks.appliedPresets).toEqual([DEFAULT_PRESET_ID]);
+    });
+
+    test('the copy-only prompt copies when asked and no-ops on keep', async () => {
+        mocks.candidates = [{ id: 'alt', name: 'Alt' }];
+
+        mocks.answer = 'keep';
+        await whatsNew._offerCopyOnly(CURRENT);
+        expect(mocks.copiedFrom).toBeNull();
+
+        mocks.answer = COPY_FROM_CHARACTER;
+        whatsNew._pickSourceCharacter = async () => 'alt';
+        await whatsNew._offerCopyOnly(CURRENT);
+        expect(mocks.copiedFrom).toBe('alt');
+    });
+
+    test('no copy option is offered when there is nothing to copy from', async () => {
+        mocks.answer = DEFAULT_PRESET_ID;
+        await whatsNew._offerFirstRunPreset(CURRENT, false);
+        const values = mocks.lastChoiceOptions.choices.map((choice) => choice.value);
+        expect(values).not.toContain(COPY_FROM_CHARACTER);
     });
 });

@@ -1,6 +1,24 @@
 import { defineConfig } from 'vitest/config';
 
+// The production build injects the fork changelog and overview as virtual
+// modules (see changelogPlugin/overviewPlugin in rollup.config.js). Tests have
+// no such plugin, so any file that imports whats-new — directly or transitively
+// — would fail to resolve them. Stub both to an empty string here so resolution
+// works everywhere; the whats-new tests still override the content per-file.
+const forkVirtualsStub = () => ({
+    name: 'fork-virtuals-test-stub',
+    resolveId(id) {
+        if (id === 'virtual:fork-changelog' || id === 'virtual:fork-overview') return '\0' + id;
+        return null;
+    },
+    load(id) {
+        if (id === '\0virtual:fork-changelog' || id === '\0virtual:fork-overview') return 'export default "";';
+        return null;
+    },
+});
+
 export default defineConfig({
+    plugins: [forkVirtualsStub()],
     test: {
         globals: true,
         environment: 'node',

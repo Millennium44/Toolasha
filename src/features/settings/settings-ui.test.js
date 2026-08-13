@@ -100,6 +100,8 @@ vi.mock('../../core/settings-schema.js', () => ({
         }
         return null;
     },
+    // whats-new (pulled in transitively) reads this on load.
+    getAllSettingIds: () => Object.values(schema).flatMap((group) => Object.keys(group.settings)),
 }));
 
 vi.mock('../../core/config.js', () => ({
