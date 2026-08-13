@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Combat Sim Results: a ⌖ button targets that zone in Configure
 
-Each row of the all-zones Results table now has a ⌖ button that sets that zone and tier as the Configure target and jumps to the Configure tab (leaving all-zones mode so the single-zone selects reappear) — no more scrolling the zone dropdown to sim a promising row.
+Each row of the all-zones Results table now has a ⌖ button that sets that zone and tier as the Configure target and jumps to the Configure tab (leaving all-zones mode so the single-zone selects reappear) — no more scrolling the zone dropdown to sim a promising row. The table also now defaults to sorting by Score (descending) instead of unsorted.
 
 ### Upgrade advisor: path boots are simmed at +7
 
@@ -18,9 +18,9 @@ The upgrade advisor simmed a proposed gear swap at the current piece's enhanceme
 
 The enhancing-route (target level, protection plan, cost) was only reachable by hovering an item that's rendered — owned or listed — so an item with no listing at that level showed nothing. The Enhancement XP/hr panel now has an "Enhance any item" box: type any enhanceable item, pick a target level, and get its full route. The base-item price falls back to crafting cost when the market is empty, so it works with zero listings.
 
-### Ability hover: shows the "fresh to level" cost, like the book tooltip
+### Ability hover: optional "fresh to level" cost, priced at the level shown
 
-Hovering an ability itself (in a loadout or ability slot) now adds the same "Fresh to Lv N: <cost> (<books> books)" line the ability-book tooltip shows — plus held-book progress when you carry any. It's a compact block (the game already shows level/xp), identified from the ability tooltip's own name, and rides the existing "ability status" tooltip setting.
+Hovering an ability itself (in a loadout, an ability slot, or on another player's profile) can now add a "Fresh to Lv N: <cost> (<books> books)" line, priced at the level the tooltip shows — so on someone else's profile it uses their level, not yours. It's identified from the ability tooltip's own name and gated behind a new, default-off setting ("Show fresh-to-level cost on ability hovers"), separate from the ability-book tooltip status.
 
 ### Enhancement tooltip: the source toggle is discoverable and mobile-friendly
 

@@ -346,6 +346,21 @@ describe('applyPathBootsSimLevel', () => {
         expect(c.upgradeLevel).toBe(7);
     });
 
+    test('a refined path boot with a swapLabel redraws its description to +7', () => {
+        const c = {
+            type: 'tier',
+            currentHrid: '/items/pathfinder_boots',
+            currentLevel: 7,
+            upgradeHrid: '/items/pathfinder_boots_refined',
+            upgradeLevel: 10, // as left by the refined +10 clamp
+            swapLabel: { from: 'Pathfinder Boots', to: ['Pathfinder Boots (R)'] },
+            description: 'Pathfinder Boots +7 → Pathfinder Boots (R) +10',
+        };
+        applyPathBootsSimLevel(c);
+        expect(c.upgradeLevel).toBe(7);
+        expect(c.description).toContain('Pathfinder Boots (R) +7');
+    });
+
     test('leaves non-path-boot swaps alone', () => {
         const c = swap('/items/regal_sword_refined', 10);
         applyPathBootsSimLevel(c);
