@@ -1510,7 +1510,7 @@ class CombatSimUI {
             flex-shrink: 0;
         `;
         header.innerHTML = `
-            <span style="font-weight:700; font-size:14px; color:${ACCENT};">Combat Simulator</span>
+            <span style="font-weight:700; font-size:14px; color:${ACCENT}; flex:1;">Combat Simulator</span>
             <button id="mwi-csim-close" style="
                 background:none; border:none; color:#aaa; font-size:22px;
                 cursor:pointer; padding:0; line-height:1;">×</button>
@@ -3607,7 +3607,7 @@ class CombatSimUI {
                 })
                 .filter(Boolean);
 
-            this._allZonesSortCol = 'profit';
+            this._allZonesSortCol = 'score';
             this._allZonesSortAsc = false;
             await this._displayAllZonesResults(zoneResults, hours, gameData);
 
@@ -6400,7 +6400,7 @@ class CombatSimUI {
      * @private
      */
     _renderUpgradeGoldTable(rows, baseline) {
-        if (!this._upgradeSort) this._upgradeSort = { key: 'dps', asc: true };
+        if (!this._upgradeSort) this._upgradeSort = { key: 'score', asc: true };
         const { key: sortKey, asc: sortAsc } = this._upgradeSort;
 
         const columns = this._upgradeColumns(baseline, rows).filter((c) => c.visible);

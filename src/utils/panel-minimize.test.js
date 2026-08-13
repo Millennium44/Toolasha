@@ -146,6 +146,28 @@ describe('attachMinimize', () => {
         expect(bodyEls[0].style.display).toBe('flex');
     });
 
+    test('inserts before the close button even when close is in a sub-container', () => {
+        // Trade-ledger shape: header > [title, headerRight > [export, close]].
+        const panel = document.createElement('div');
+        const header = document.createElement('div');
+        const title = document.createElement('span');
+        const headerRight = document.createElement('div');
+        const exportBtn = document.createElement('button');
+        exportBtn.textContent = 'Export';
+        const close = document.createElement('button');
+        close.textContent = '✕';
+        headerRight.append(exportBtn, close);
+        header.append(title, headerRight);
+        const bodyEl = document.createElement('div');
+        panel.append(header, bodyEl);
+        document.body.appendChild(panel);
+
+        const ctl = attachMinimize({ panel, header, body: bodyEl, panelKey: 'k', beforeEl: close });
+        // Lands inside headerRight, right before close — not appended to header.
+        expect(ctl.button.parentNode).toBe(headerRight);
+        expect(ctl.button.nextSibling).toBe(close);
+    });
+
     test('destroy removes the button', () => {
         const { panel, header, close, bodyEls } = buildPanel();
         const ctl = attachMinimize({ panel, header, body: bodyEls[0], panelKey: 'k', beforeEl: close });

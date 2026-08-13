@@ -39,6 +39,7 @@ import { guildXPTracker } from './guild-xp-tracker.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildMemberSkills from './guild-member-skills.js';
 import { describeLoadoutAge } from './guild-loadouts.js';
+import { fillProfileCommand, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 
 /** How many stat rows of a snapshot the roster panel shows before it stops */
 export const LOADOUT_PREVIEW_ROWS = 6;
@@ -520,13 +521,24 @@ export const guildRosterPanel = createPanel({
         if (quiet.length) {
             const card = panelCard(body, `Gone quiet (${quiet.length})`, ROW_COLORS.bad);
             for (const member of quiet) {
-                card.appendChild(
-                    panelLine(
-                        memberLabel(member),
-                        `${xp(member.dayRate)}/h today vs ${xp(member.weekRate)}/h this week`,
-                        ROW_COLORS.bad
-                    )
+                const line = panelLine(
+                    memberLabel(member),
+                    `${xp(member.dayRate)}/h today vs ${xp(member.weekRate)}/h this week`,
+                    ROW_COLORS.bad
                 );
+                // Click a quiet member to load /profile <name> in chat (Enter to
+                // send) — the same one-keypress trick the profile cycler uses,
+                // handy for checking on someone who dropped off.
+                if (member.name && VALID_PLAYER_NAME_RE.test(member.name)) {
+                    line.style.cursor = 'pointer';
+                    line.title = `Click to load /profile ${member.name} in chat — press Enter to open it.`;
+                    line.addEventListener('click', () => {
+                        if (!fillProfileCommand(member.name, null, 'GuildRoster')) {
+                            line.title = 'Open the chat panel first — that is how a profile is asked for.';
+                        }
+                    });
+                }
+                card.appendChild(line);
             }
         }
 

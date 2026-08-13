@@ -128,8 +128,11 @@ export function attachMinimize({
         apply(!collapsed);
     });
 
-    if (beforeEl && beforeEl.parentNode === header) {
-        header.insertBefore(button, beforeEl);
+    // Place the button immediately left of the close button, in whatever
+    // container the close button actually lives in — some headers keep their
+    // close inside a right-aligned sub-group, not as a direct header child.
+    if (beforeEl && beforeEl.parentNode) {
+        beforeEl.parentNode.insertBefore(button, beforeEl);
     } else {
         header.appendChild(button);
     }
