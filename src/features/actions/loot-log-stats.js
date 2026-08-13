@@ -22,6 +22,8 @@ import {
 } from '../../utils/gathering-drop-model.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import lootLogHistory from './loot-log-history.js';
+import { reconstructEnhancingRun, computeEnhancingSummary } from './enhancing-loot-summary.js';
+import { enhancementCalculator, enhancementConfig } from '../../utils/bundle-bridge.js';
 
 /** The loot log export, one row per item per logged session */
 export const LOOT_LOG_CSV_COLUMNS = [
@@ -176,8 +178,10 @@ class LootLogStats {
         const logData = this.extractLogData(lootElem, secondDiv);
         if (!logData) return;
 
-        // Skip enhancement actions
-        if (logData.actionHrid === '/actions/enhancing/enhance') return;
+        const isEnhancing = logData.actionHrid === '/actions/enhancing/enhance';
+        // Enhancing has its own opt-in summary and no drop table. When the summary
+        // is off, return before stamping so turning it on later re-processes.
+        if (isEnhancing && !config.getSetting('lootLogEnhancingCost')) return;
 
         // Skip re-injection only when the matched log entry hasn't changed since last time;
         // ongoing entries keep updating (endTime/actionCount grow) and must be refreshed
@@ -185,11 +189,104 @@ class LootLogStats {
         if (lootElem.dataset.mwiLootLogStamp === stamp) return;
         lootElem.dataset.mwiLootLogStamp = stamp;
 
+        if (isEnhancing) {
+            this.injectEnhancingSummary(secondDiv, logData);
+            return;
+        }
+
         // Calculate and inject total value
         this.injectTotalValue(secondDiv, logData);
 
         // Calculate and inject average time and daily output
         this.injectTimeAndDailyOutput(thirdDiv, logData);
+    }
+
+    /**
+     * Inject an enhancing cost/luck/profit summary onto an enhancing loot-log
+     * entry. Reconstructs the run from the entry's per-level drops and prices it
+     * through the shared enhancement calculator (reached via the bundle bridge).
+     * @param {HTMLElement} targetDiv - Where to append the summary
+     * @param {Object} logData - The loot-log entry
+     */
+    injectEnhancingSummary(targetDiv, logData) {
+        try {
+            const prior = targetDiv.querySelector('.mwi-loot-log-enhancing');
+            if (prior) prior.remove();
+
+            const run = reconstructEnhancingRun(logData.drops, logData.actionCount);
+            if (!run) return;
+
+            const itemDetails = dataManager.getInitClientData()?.itemDetailMap?.[run.baseHrid];
+            if (!itemDetails) return;
+
+            const calculateEnhancement = enhancementCalculator()?.calculateEnhancement;
+            const params = enhancementConfig()?.getEnhancingParams?.();
+            if (typeof calculateEnhancement !== 'function' || !params) return;
+
+            const priceOf = (hrid, level, side) => {
+                const prices = getItemPrices(hrid, level);
+                if (!prices) return 0;
+                return side === 'bid' ? prices.bid : prices.ask;
+            };
+
+            const summary = computeEnhancingSummary(run, {
+                calculateEnhancement,
+                params,
+                priceOf,
+                itemDetails,
+                marketTax: MARKET_TAX,
+            });
+            if (!summary) return;
+
+            const div = document.createElement('div');
+            div.className = 'mwi-loot-log-enhancing';
+            div.style.cssText = 'font-size: 11px; margin-top: 4px; line-height: 1.5;';
+            div.innerHTML = this.buildEnhancingSummaryHtml(summary);
+            targetDiv.appendChild(div);
+        } catch (error) {
+            console.error('[LootLogStats] Enhancing summary failed:', error);
+        }
+    }
+
+    /**
+     * Format the enhancing summary as a compact colored line.
+     * @param {Object} s - From computeEnhancingSummary
+     * @returns {string} HTML
+     */
+    buildEnhancingSummaryHtml(s) {
+        const fmt = (n) => formatKMB(Math.round(n));
+        const factor = (a, e) => (e > 0 ? (a / e).toFixed(2) + '×' : '—');
+        const GOOD = '#00c46a';
+        const BAD = '#ff5d6c';
+        const DIM = 'rgba(232, 236, 245, 0.6)';
+
+        const status = s.success ? 'Success' : 'Fail';
+        const statusColor = s.success ? GOOD : BAD;
+        const matColor = s.materialActual <= s.materialExpected ? GOOD : BAD;
+        const diffColor = s.diff <= 0 ? GOOD : BAD;
+        const diffWord = s.diff <= 0 ? 'below' : 'above';
+
+        let html = `<span style="color:${statusColor}; font-weight:600;">[${status} +${s.targetLevel}]</span>`;
+        html +=
+            ` <span style="color:${matColor};">Mat ${fmt(s.materialActual)} ` +
+            `(${factor(s.materialActual, s.materialExpected)} exp ${fmt(s.materialExpected)})</span>`;
+        if (s.protectExpected > 0 || s.protectActual > 0) {
+            const protColor = s.protectActual <= s.protectExpected ? GOOD : BAD;
+            html +=
+                ` · <span style="color:${protColor};">Prot ${fmt(s.protectActual)} ` +
+                `(${factor(s.protectActual, s.protectExpected)} exp ${fmt(s.protectExpected)})</span>`;
+        }
+        html +=
+            ` · <span style="color:${diffColor};">Total ${fmt(s.totalActual)} — ` +
+            `${fmt(Math.abs(s.diff))} ${diffWord} exp</span>`;
+        if (s.profit != null) {
+            const profitColor = s.profit >= 0 ? GOOD : BAD;
+            const sign = s.profit >= 0 ? '+' : '−';
+            html += ` · <span style="color:${profitColor}; font-weight:600;">Profit ${sign}${fmt(Math.abs(s.profit))}</span>`;
+        } else {
+            html += ` · <span style="color:${DIM};">Profit: no +${s.targetLevel} price</span>`;
+        }
+        return html;
     }
 
     /**

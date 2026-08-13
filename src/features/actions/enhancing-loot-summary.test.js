@@ -1,0 +1,125 @@
+import { describe, test, expect } from 'vitest';
+import { reconstructEnhancingRun, countProtections, computeEnhancingSummary } from './enhancing-loot-summary.js';
+
+describe('reconstructEnhancingRun', () => {
+    test('reads item, target, success and attempts from level-keyed drops', () => {
+        // The Advanced Intelligence Charm run: 13 at +0, 5 at +1, 1 at +3.
+        const drops = {
+            '/items/advanced_intelligence_charm::0': 13,
+            '/items/advanced_intelligence_charm::1': 5,
+            '/items/advanced_intelligence_charm::3': 1,
+            '/items/enhancing_essence': 4,
+            '/items/coin': 100,
+        };
+        const run = reconstructEnhancingRun(drops, 19);
+        expect(run.baseHrid).toBe('/items/advanced_intelligence_charm');
+        expect(run.maxLevel).toBe(3);
+        expect(run.targetLevel).toBe(3);
+        expect(run.success).toBe(true);
+        expect(run.attempts).toBe(19);
+    });
+
+    test('a highest level with count > 1 means it failed one short', () => {
+        const run = reconstructEnhancingRun({ '/items/foo::0': 10, '/items/foo::2': 3 }, 13);
+        expect(run.maxLevel).toBe(2);
+        expect(run.targetLevel).toBe(3);
+        expect(run.success).toBe(false);
+    });
+
+    test('ignores enhancing essence and unleveled items', () => {
+        const run = reconstructEnhancingRun(
+            { '/items/foo::0': 5, '/items/foo::1': 1, '/items/enhancing_essence': 99 },
+            6
+        );
+        expect(run.baseHrid).toBe('/items/foo');
+    });
+
+    test('falls back to summed counts when actionCount is missing', () => {
+        const run = reconstructEnhancingRun({ '/items/foo::0': 4, '/items/foo::1': 1 }, 0);
+        expect(run.attempts).toBe(5);
+    });
+
+    test('returns null without level-keyed drops', () => {
+        expect(reconstructEnhancingRun({ '/items/coin': 100 }, 5)).toBeNull();
+        expect(reconstructEnhancingRun(null, 5)).toBeNull();
+    });
+});
+
+describe('countProtections', () => {
+    test('zero when never protecting', () => {
+        expect(countProtections({ 5: 3 }, 0, 7, true)).toBe(0);
+    });
+
+    test('sums protect-parity levels, less the successful passes', () => {
+        // protectFrom 5, target 7 (parity odd): count +5 and +7 drops, minus 2 passes on success.
+        expect(countProtections({ 5: 3, 6: 1, 7: 1 }, 5, 7, true)).toBe(3 + 1 - 2);
+    });
+
+    test('no pass subtraction on a failed run', () => {
+        expect(countProtections({ 5: 3, 7: 0 }, 5, 7, false)).toBe(3);
+    });
+
+    test('never negative', () => {
+        expect(countProtections({ 5: 0 }, 5, 5, true)).toBe(0);
+    });
+});
+
+describe('computeEnhancingSummary', () => {
+    const itemDetails = {
+        itemLevel: 10,
+        enhancementCosts: [{ itemHrid: '/items/prime_catalyst', count: 1 }],
+        protectionItemHrids: ['/items/mirror_of_protection'],
+    };
+    // Prime catalyst 1000 to buy; +0 charm sells 500; +3 charm sells 100000.
+    const priceOf = (hrid, level, side) => {
+        if (hrid === '/items/prime_catalyst') return 1000;
+        if (hrid === '/items/mirror_of_protection') return 5000;
+        if (hrid === '/items/advanced_intelligence_charm') return level >= 3 ? 100000 : side === 'bid' ? 500 : 800;
+        return 0;
+    };
+    // Fake Markov: 10 expected attempts, 0 protects, regardless of protectFrom.
+    const calculateEnhancement = () => ({ attempts: 10, protectionCount: 0 });
+
+    const run = {
+        baseHrid: '/items/advanced_intelligence_charm',
+        levelCounts: { 0: 13, 1: 5, 3: 1 },
+        maxLevel: 3,
+        targetLevel: 3,
+        success: true,
+        attempts: 19,
+    };
+
+    test('computes expected vs actual material cost and the luck diff', () => {
+        const s = computeEnhancingSummary(run, { calculateEnhancement, params: {}, priceOf, itemDetails });
+        expect(s.materialExpected).toBe(10 * 1000); // 10 expected attempts × 1000
+        expect(s.materialActual).toBe(19 * 1000); // 19 actual attempts × 1000
+        expect(s.totalExpected).toBe(10000);
+        expect(s.totalActual).toBe(19000);
+        expect(s.diff).toBe(9000); // above expected (unlucky)
+    });
+
+    test('worth-it profit = +N value after fee − base after fee − spent', () => {
+        const s = computeEnhancingSummary(run, {
+            calculateEnhancement,
+            params: {},
+            priceOf,
+            itemDetails,
+            marketTax: 0.02,
+        });
+        // 100000×0.98 − 500×0.98 − 19000 = 98000 − 490 − 19000.
+        expect(s.finalValue).toBe(100000);
+        expect(s.profit).toBeCloseTo(100000 * 0.98 - 500 * 0.98 - 19000, 3);
+    });
+
+    test('a failed run values the item at the base price', () => {
+        const failed = { ...run, success: false, targetLevel: 4, maxLevel: 3, levelCounts: { 0: 15, 3: 4 } };
+        const s = computeEnhancingSummary(failed, { calculateEnhancement, params: {}, priceOf, itemDetails });
+        expect(s.finalValue).toBe(500); // base bid
+        expect(s.success).toBe(false);
+    });
+
+    test('returns null when a dependency is missing', () => {
+        expect(computeEnhancingSummary(run, { params: {}, priceOf, itemDetails })).toBeNull();
+        expect(computeEnhancingSummary(null, { calculateEnhancement, params: {}, priceOf, itemDetails })).toBeNull();
+    });
+});
