@@ -368,12 +368,14 @@ class XPHCalculator {
         const name = (this.panel.querySelector('#mwi-xph-item')?.value || '').trim().toLowerCase();
         const hrid = this._itemsByName?.get(name);
         if (!hrid) {
-            out.innerHTML =
-                '<div style="color:#888;">Type an enhanceable item name and pick it from the list.</div>';
+            out.innerHTML = '<div style="color:#888;">Type an enhanceable item name and pick it from the list.</div>';
             return;
         }
 
-        const target = Math.max(1, Math.min(20, parseInt(this.panel.querySelector('#mwi-xph-item-target')?.value, 10) || 1));
+        const target = Math.max(
+            1,
+            Math.min(20, parseInt(this.panel.querySelector('#mwi-xph-item-target')?.value, 10) || 1)
+        );
         let data = null;
         try {
             data = calculateEnhancementPath(hrid, target, getTooltipEnhancementParams(hrid));

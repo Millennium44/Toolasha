@@ -2921,28 +2921,25 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## [2.98.0](https://github.com/Millennium44/Toolasha/compare/v2.97.0...v2.98.0) (2026-08-13)
 
-
 ### Features
 
-* **combat-sim:** add a target button to each Results row ([8072c70](https://github.com/Millennium44/Toolasha/commit/8072c704b2a4205f060d5f82be6f81f4ed4b2d43))
-* **combat-sim:** make the guide swap option aura-only instead of aura+signature ([7b4a6eb](https://github.com/Millennium44/Toolasha/commit/7b4a6eb24a2bb767949b2330b4cb707f74d3c5ef))
-* **combat-sim:** sim proposed path boots at +7, not the worn level ([a5336c9](https://github.com/Millennium44/Toolasha/commit/a5336c9e8d72446114760899fe46bfa65d290d34))
-* **enhancement:** make the pro/yours source toggle discoverable and mobile-friendly ([aa365e6](https://github.com/Millennium44/Toolasha/commit/aa365e698c41e2f8e380eeb74a1ffa3c71a1cc92))
-* **enhancement:** route any item from the XP/hr panel, even unowned ([a764b85](https://github.com/Millennium44/Toolasha/commit/a764b853705b71b94b7c1e23763794131cbeaeb4))
-* **sim:** offer refined path boots as upgrade candidates at +7 ([01c81ae](https://github.com/Millennium44/Toolasha/commit/01c81ae5ec7525f6a381f99568e37c66f9aec6af))
-* **sim:** viewed-level ability fresh-cost, default score sort, path-boot swap test ([dc47759](https://github.com/Millennium44/Toolasha/commit/dc47759f6177e968ce34569a9f276fcdb6198441))
-* **tooltips:** show fresh-to-level cost when hovering an ability itself ([bcd99b2](https://github.com/Millennium44/Toolasha/commit/bcd99b2ebd1b2f46a4227a20144ae724e4126dda))
-
+- **combat-sim:** add a target button to each Results row ([8072c70](https://github.com/Millennium44/Toolasha/commit/8072c704b2a4205f060d5f82be6f81f4ed4b2d43))
+- **combat-sim:** make the guide swap option aura-only instead of aura+signature ([7b4a6eb](https://github.com/Millennium44/Toolasha/commit/7b4a6eb24a2bb767949b2330b4cb707f74d3c5ef))
+- **combat-sim:** sim proposed path boots at +7, not the worn level ([a5336c9](https://github.com/Millennium44/Toolasha/commit/a5336c9e8d72446114760899fe46bfa65d290d34))
+- **enhancement:** make the pro/yours source toggle discoverable and mobile-friendly ([aa365e6](https://github.com/Millennium44/Toolasha/commit/aa365e698c41e2f8e380eeb74a1ffa3c71a1cc92))
+- **enhancement:** route any item from the XP/hr panel, even unowned ([a764b85](https://github.com/Millennium44/Toolasha/commit/a764b853705b71b94b7c1e23763794131cbeaeb4))
+- **sim:** offer refined path boots as upgrade candidates at +7 ([01c81ae](https://github.com/Millennium44/Toolasha/commit/01c81ae5ec7525f6a381f99568e37c66f9aec6af))
+- **sim:** viewed-level ability fresh-cost, default score sort, path-boot swap test ([dc47759](https://github.com/Millennium44/Toolasha/commit/dc47759f6177e968ce34569a9f276fcdb6198441))
+- **tooltips:** show fresh-to-level cost when hovering an ability itself ([bcd99b2](https://github.com/Millennium44/Toolasha/commit/bcd99b2ebd1b2f46a4227a20144ae724e4126dda))
 
 ### Bug Fixes
 
-* **combat-sim:** offer the aura group's OR-alternative in Ability Swaps ([9614959](https://github.com/Millennium44/Toolasha/commit/961495996346abcde22ff18f0a353153a1801631))
-* **tooltips:** detect the ability tooltip by name, not a sprite ([166e2b1](https://github.com/Millennium44/Toolasha/commit/166e2b1b2a17c6167d4cf93fafeaf142933ec5e7))
-
+- **combat-sim:** offer the aura group's OR-alternative in Ability Swaps ([9614959](https://github.com/Millennium44/Toolasha/commit/961495996346abcde22ff18f0a353153a1801631))
+- **tooltips:** detect the ability tooltip by name, not a sprite ([166e2b1](https://github.com/Millennium44/Toolasha/commit/166e2b1b2a17c6167d4cf93fafeaf142933ec5e7))
 
 ### Build System
 
-* allowlist stateless loadout-scraper across the market bundle ([ef779a0](https://github.com/Millennium44/Toolasha/commit/ef779a0ce6031fc4fac7c3f5e45c454320a05661))
+- allowlist stateless loadout-scraper across the market bundle ([ef779a0](https://github.com/Millennium44/Toolasha/commit/ef779a0ce6031fc4fac7c3f5e45c454320a05661))
 
 ## [2.97.0](https://github.com/Millennium44/Toolasha/compare/v2.96.5...v2.97.0) (2026-08-12)
 
