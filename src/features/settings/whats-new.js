@@ -48,6 +48,9 @@ const STATE_KEY_PREFIX = 'whatsNew_state';
  */
 export const COPY_FROM_CHARACTER = '__copyFromCharacter';
 
+/** The first-run answer that leaves every setting exactly as it is. */
+export const NO_CHANGE = '__noChange';
+
 const COLORS = {
     background: 'rgba(10, 10, 20, 0.98)',
     border: 'rgba(96, 165, 250, 0.5)',
@@ -345,15 +348,19 @@ class WhatsNew {
      *
      * Awaited before features initialise for the same reason the inherited-
      * settings question is: a feature switched off after startup has already
-     * run once. Dismissing the dialog — Escape, or clicking away — is the same
-     * as choosing "Defaults", which is what a fresh install would have
-     * done anyway, so nothing here can leave a person stuck.
+     * run once. Dismissing the dialog — Escape, or clicking away — is "No
+     * change": every setting is left exactly as it is. That is the safe answer
+     * both for a fresh install (whose defaults are already what "no change"
+     * means) and for a character that reached this from the settings-panel
+     * button with settings worth keeping.
      *
      * @param {{fork: string, version: string}} current - This build
+     * @param {boolean} [canCopy=false] - Whether another character can be copied from
      * @private
      */
     async _offerFirstRunPreset(current, canCopy = false) {
         try {
+            const defaults = getPreset(DEFAULT_PRESET_ID);
             const answer = await askChoice({
                 title: `Welcome to ${current.fork}`,
                 message:
@@ -361,29 +368,45 @@ class WhatsNew {
                     'way — you can change any of it, or apply a different preset, from the Toolasha tab in ' +
                     'Settings.',
                 choices: [
+                    { value: DEFAULT_PRESET_ID, label: defaults.label, hint: defaults.description, tone: 'primary' },
+                    {
+                        value: NO_CHANGE,
+                        label: 'No change',
+                        hint: 'Close without changing anything — leave every setting exactly as it is now.',
+                    },
                     ...(canCopy ? [this._copyChoice()] : []),
-                    ...SETTING_PRESETS.map((preset) => ({
+                    ...SETTING_PRESETS.filter((preset) => preset.id !== DEFAULT_PRESET_ID).map((preset) => ({
                         value: preset.id,
                         label: preset.label,
                         hint: preset.description,
-                        tone: preset.id === DEFAULT_PRESET_ID ? 'primary' : undefined,
                     })),
                 ],
             });
 
-            // Copying from another character settles it. A cancelled pick falls
-            // through to the default preset, so the character still boots with a
-            // sane baseline rather than a half-finished setup.
-            if (answer === COPY_FROM_CHARACTER && (await this._offerCopyFromCharacter(current))) {
+            // Copying from another character settles it, whether or not it
+            // succeeds — a cancelled pick means "no change", not "reset me".
+            if (answer === COPY_FROM_CHARACTER) {
+                await this._offerCopyFromCharacter(current);
                 return;
             }
 
-            const chosenId = answer && getPreset(answer) ? answer : DEFAULT_PRESET_ID;
-            await applyPreset(chosenId);
+            const chosen = getPreset(answer);
+            if (chosen) {
+                await applyPreset(chosen.id);
+                this._pending = {
+                    headline: `Installed ${current.fork} ${current.version} — ${chosen.label} preset`,
+                    forkChanged: false,
+                    newIds: [],
+                    turnedOff: new Set(),
+                    isNewcomer: true,
+                };
+                return;
+            }
 
-            const chosen = getPreset(chosenId);
+            // "No change", or a dismissal: apply nothing. The overview still
+            // follows for a first-timer, but not one setting is touched.
             this._pending = {
-                headline: `Installed ${current.fork} ${current.version} — ${chosen.label} preset`,
+                headline: `${current.fork} ${current.version}`,
                 forkChanged: false,
                 newIds: [],
                 turnedOff: new Set(),
