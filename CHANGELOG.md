@@ -2933,6 +2933,18 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ## Upstream Changelog
 
+## [2.99.0](https://github.com/Millennium44/Toolasha/compare/v2.98.0...v2.99.0) (2026-08-13)
+
+
+### Features
+
+* **ui:** minimize any panel; remember Combat/Lab upgrade results (opt-in) ([79b05ee](https://github.com/Millennium44/Toolasha/commit/79b05ee969d816cc430880baea5a863737e894d1))
+
+
+### Bug Fixes
+
+* **ui:** default sims to Score sort, fix minimize placement, clickable quiet members ([9b88c54](https://github.com/Millennium44/Toolasha/commit/9b88c5447c169d2f7b881a88dbac02a72791729d))
+
 ## [2.98.0](https://github.com/Millennium44/Toolasha/compare/v2.97.0...v2.98.0) (2026-08-13)
 
 ### Features
