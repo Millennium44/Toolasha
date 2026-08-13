@@ -83,6 +83,9 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 
 vi.mock('../../utils/panel-geometry.js', () => ({
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
     restoreGeometry: () => {},
     saveGeometry: () => {},
     saveOpenState: async () => {},

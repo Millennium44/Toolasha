@@ -45,6 +45,7 @@ import {
     normaliseWatchlist,
 } from './market-watchlist.js';
 import { readScoped, writeScoped } from '../../../utils/character-key.js';
+import { attachMinimize } from '../../../utils/panel-minimize.js';
 
 const PANEL_ID = 'mwi-market-history-panel';
 const TAB_ID = 'mwi-market-history-tab';
@@ -156,6 +157,8 @@ class MarketHistoryPanel {
     disable() {
         this.chart?.destroy();
         this.chart = null;
+        this.minimizeCtl?.destroy();
+        this.minimizeCtl = null;
         this.panel?.remove();
         this.panel = null;
         this.overlay?.remove();
@@ -244,6 +247,15 @@ class MarketHistoryPanel {
         this.makeDraggable(panel);
         document.body.appendChild(panel);
         this.panel = panel;
+
+        this.minimizeCtl = attachMinimize({
+            panel,
+            header: toolbar,
+            body: [this.chipRow, this.canvas],
+            panelKey: PANEL_ID,
+            beforeEl: this.closeButton,
+            accent: '#e7e7e7',
+        });
 
         this.applyOpenState();
         this.renderChips();
@@ -338,7 +350,7 @@ class MarketHistoryPanel {
             return element;
         };
 
-        button('\u2715', 'Close the panel. Reopen it from the History tab.', () => {
+        this.closeButton = button('\u2715', 'Close the panel. Reopen it from the History tab.', () => {
             this.prefs.open = false;
             this.applyOpenState();
             this.savePrefs();

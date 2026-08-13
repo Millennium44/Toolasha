@@ -25,6 +25,9 @@ vi.mock('../../utils/mobile.js', () => ({
 /** Where the launcher was left, and what it wrote when it was dragged */
 const geometry = vi.hoisted(() => ({ saved: {}, written: null }));
 vi.mock('../../utils/panel-geometry.js', () => ({
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
     restoreGeometry: async (element, key) => {
         const spot = geometry.saved[key];
         if (!spot) return;

@@ -29,6 +29,9 @@ vi.mock('../../utils/mobile.js', () => ({
 }));
 // Geometry lives in IndexedDB and is never what these tests are about
 vi.mock('../../utils/panel-geometry.js', () => ({
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
     restoreGeometry: async () => {},
     saveGeometry: () => {},
     clearPosition: () => {},

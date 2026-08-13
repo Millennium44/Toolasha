@@ -232,6 +232,54 @@ export async function clearPosition(panelKey) {
 }
 
 /**
+ * Remember whether a panel was left minimized (collapsed to its header).
+ *
+ * Stored in the same shared geometry record as position and size — a panel you
+ * minimize to get it out of the way should stay that way through a refresh, the
+ * same as where you dragged it. Shared across characters for the same reason
+ * geometry is.
+ *
+ * @param {string} panelKey - Which panel
+ * @param {boolean} collapsed - Whether it is minimized now
+ * @returns {Promise<void>}
+ */
+export async function saveCollapsed(panelKey, collapsed) {
+    await saveGeometry(panelKey, { collapsed: Boolean(collapsed) });
+}
+
+/**
+ * @param {string} panelKey - Which panel
+ * @returns {Promise<boolean>} Whether it was left minimized
+ */
+export async function wasCollapsed(panelKey) {
+    try {
+        const all = await allGeometry();
+        return Boolean(all[panelKey]?.collapsed);
+    } catch (error) {
+        console.error('[PanelGeometry] Reading whether a panel was minimized failed:', error);
+        return false;
+    }
+}
+
+/**
+ * The saved size of a panel, if any — so a panel reopened already-minimized
+ * knows how tall to spring back to without waiting for a resize.
+ * @param {string} panelKey - Which panel
+ * @returns {Promise<{width?: number, height?: number}|null>}
+ */
+export async function savedSize(panelKey) {
+    try {
+        const all = await allGeometry();
+        const rec = all[panelKey];
+        if (!rec) return null;
+        return { width: rec.width, height: rec.height };
+    } catch (error) {
+        console.error('[PanelGeometry] Reading a saved panel size failed:', error);
+        return null;
+    }
+}
+
+/**
  * Put a panel back where it was left.
  *
  * Applied after the panel is on screen rather than before, because the geometry

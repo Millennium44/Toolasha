@@ -39,6 +39,7 @@ import { formatLargeNumber } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
+import { attachMinimize } from '../../utils/panel-minimize.js';
 import { shortDuration, itemIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { currentTarget, cycleTarget, loadTarget } from '../../utils/consumable-target.js';
@@ -345,6 +346,15 @@ class ConsumablesPanel {
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
         restoreGeometry(this.panel, GEOMETRY_KEY, { width: 380, height: 200 });
+
+        this.minimizeCtl = attachMinimize({
+            panel: this.panel,
+            header,
+            body: this.bodyEl,
+            panelKey: GEOMETRY_KEY,
+            beforeEl: header.lastElementChild,
+            accent: COLORS.text,
+        });
 
         this._render();
         // Stock and rates both move as you play, and prices move under them
@@ -704,6 +714,8 @@ class ConsumablesPanel {
         this.detachDrag = null;
         this.detachResize?.();
         this.detachResize = null;
+        this.minimizeCtl?.destroy();
+        this.minimizeCtl = null;
 
         if (!this.panel) return;
         unregisterFloatingPanel(this.panel);

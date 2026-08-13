@@ -84,6 +84,8 @@ import {
     watchTabForAcquisition,
 } from '../../utils/marketplace-tabs.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
+import { attachMinimize } from '../../utils/panel-minimize.js';
+import { saveUpgradeResults, loadUpgradeResults } from './upgrade-results-store.js';
 import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
@@ -105,6 +107,9 @@ const PANEL_ID = 'mwi-lab-sim-panel';
  * left open is a panel you were using, and closing it says so.
  */
 const GEOMETRY_KEY = 'labSimPanel';
+
+/** Storage key for the last Upgrade-tab results, remembered across refreshes (opt-in) */
+const LAB_UPGRADE_RESULTS_KEY = 'labSimUpgradeResults';
 
 /** Floor sizes the resize grips will not take the panel below. */
 const MIN_PANEL_WIDTH = 400;
@@ -1111,6 +1116,7 @@ class LabSimUI {
         // just pushes it off the screen
         const grip = (corner) => {
             const handle = document.createElement('div');
+            handle.className = 'toolasha-resize-grip';
             const onLeft = corner === 'left';
             handle.style.cssText = `
                 position: absolute;
@@ -1133,6 +1139,17 @@ class LabSimUI {
         registerFloatingPanel(this.panel);
         // Over the top-right default above, once storage answers
         this._restorePanelGeometry();
+
+        // Minimize: fold the whole panel to its header, remembering the state.
+        // Every non-header child is a content sibling to hide.
+        this.minimizeCtl = attachMinimize({
+            panel: this.panel,
+            header,
+            body: [tabBar, configureContent, maxLevelContent, upgradeContent, skillingContent, status],
+            panelKey: GEOMETRY_KEY,
+            beforeEl: header.querySelector('#mwi-labsim-close'),
+            accent: '#aaa',
+        });
 
         // Event listeners
         this.panel.querySelector('#mwi-labsim-close').addEventListener('click', () => this.hide());
@@ -1202,6 +1219,7 @@ class LabSimUI {
         });
         void this._restoreUpgradeSelection();
         void this._restoreTokenBuffLevels();
+        void this._restoreUpgradeResults();
         this.panel.querySelector('#mwi-labsim-ability-targets-toggle').addEventListener('click', () => {
             const grid = this.panel.querySelector('#mwi-labsim-ability-targets');
             const opening = grid.style.display === 'none';
@@ -2640,7 +2658,11 @@ class LabSimUI {
                 { abortSignal: () => this._upgradeAborted }
             );
 
+            // A fresh run supersedes any restored set — drop the "from a previous
+            // run" note before drawing, and remember the new results (opt-in).
+            this._restoredUpgradeAt = null;
             this._renderUpgradeResults(analysisResult, resultsEl);
+            if (analysisResult?.results?.length) saveUpgradeResults(LAB_UPGRADE_RESULTS_KEY, analysisResult);
         } catch (error) {
             if (error.message !== 'Cancelled' && error.message !== 'Aborted') {
                 console.error('[LabSimUI] Upgrade analysis failed:', error);
@@ -3834,6 +3856,42 @@ class LabSimUI {
     }
 
     /** @private */
+    /**
+     * Restore the last Upgrade-tab results after a refresh, when the option is on
+     * and a fresh run has not already drawn its own. Fire-and-forget from panel
+     * open; draws into the (possibly hidden) Upgrade tab so the results are there
+     * when the tab is next shown.
+     * @private
+     */
+    async _restoreUpgradeResults() {
+        try {
+            const container = this.panel?.querySelector('#mwi-labsim-upgrade-results');
+            if (!container || container.querySelector('table')) return;
+            const payload = await loadUpgradeResults(LAB_UPGRADE_RESULTS_KEY);
+            if (!payload) return;
+            if (!this.panel || container.querySelector('table')) return;
+            this._restoredUpgradeAt = payload.savedAt || null;
+            this._renderUpgradeResults(payload.data, container);
+        } catch (error) {
+            console.error('[LabSimUI] Restoring upgrade results failed:', error);
+        }
+    }
+
+    /**
+     * A quiet banner saying the shown results are remembered from a previous run.
+     * @param {number} savedAt - Epoch ms the results were saved
+     * @returns {string} HTML
+     * @private
+     */
+    _restoredUpgradeNote(savedAt) {
+        const when = savedAt ? new Date(savedAt).toLocaleString() : 'a previous session';
+        return (
+            `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; ` +
+            `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
+            `Showing results remembered from ${when}. Run a new analysis to refresh them.</div>`
+        );
+    }
+
     _renderUpgradeResults(analysisResult, container) {
         const results = analysisResult?.results;
         if (!results || !results.length) {
@@ -4074,6 +4132,7 @@ class LabSimUI {
             sortRows(goldRows, sortState.gold.key, sortState.gold.dir);
             sortRows(communityRows, sortState.community.key, sortState.community.dir);
             let html = '';
+            if (this._restoredUpgradeAt) html += this._restoredUpgradeNote(this._restoredUpgradeAt);
             if (tokenResults.length > 0) html += renderTokenTable();
             if (communityResults.length > 0) html += renderCommunityTable();
             if (goldResults.length > 0) html += renderGoldTable();
@@ -5445,6 +5504,8 @@ class LabSimUI {
         }
         this._detachDrag?.();
         this._detachDrag = null;
+        this.minimizeCtl?.destroy();
+        this.minimizeCtl = null;
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();

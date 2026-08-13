@@ -33,6 +33,7 @@ import { formatKMB, formatPercentage, formatWithSeparator } from '../../utils/fo
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
+import { attachMinimize } from '../../utils/panel-minimize.js';
 import { deriveStages, isIronCowMode, readCharacterState } from './ironcow-plan.js';
 import { calculateStarfruitLoop, cowbellPricing, loopWarnings, offlineWindow } from './starfruit-loop.js';
 import { loadOverrides, loadSnapshot, saveSnapshot, setOverride } from './ironcow-store.js';
@@ -344,6 +345,15 @@ class IronCowFarmPanel {
         registerFloatingPanel(this.panel);
         restoreGeometry(this.panel, GEOMETRY_KEY, { width: 360, height: 220 });
 
+        this.minimizeCtl = attachMinimize({
+            panel: this.panel,
+            header,
+            body: this.bodyEl,
+            panelKey: GEOMETRY_KEY,
+            beforeEl: header.lastElementChild,
+            accent: COLORS.text,
+        });
+
         this._render();
         if (!this.loaded) this.loaded = this.load();
     }
@@ -353,6 +363,8 @@ class IronCowFarmPanel {
         this.detachResize?.();
         this.detachDrag = null;
         this.detachResize = null;
+        this.minimizeCtl?.destroy();
+        this.minimizeCtl = null;
         if (!this.panel) return;
         unregisterFloatingPanel(this.panel);
         this.panel.remove();

@@ -34,6 +34,9 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100 } }));
 vi.mock('../../utils/panel-geometry.js', () => ({
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
     restoreGeometry: () => {},
     saveGeometry: () => {},
     saveOpenState: async () => {},

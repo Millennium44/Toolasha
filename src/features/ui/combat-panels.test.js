@@ -79,6 +79,9 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 vi.mock('../../utils/panel-geometry.js', () => ({
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
     restoreGeometry: (panel, id, fallback) => {
         panel.style.width = `${geometry.width ?? fallback.width}px`;
     },

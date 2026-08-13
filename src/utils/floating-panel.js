@@ -111,6 +111,7 @@ export function makeDraggable(panel, handle, onDrop) {
  */
 export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize } = {}) {
     const grip = document.createElement('div');
+    grip.className = 'toolasha-resize-grip';
     grip.title = 'Drag to resize';
     Object.assign(grip.style, {
         position: 'absolute',

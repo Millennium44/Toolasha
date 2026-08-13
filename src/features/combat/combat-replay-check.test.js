@@ -71,6 +71,9 @@ vi.mock('../combat-sim/combat-sim-runner.js', () => ({
     },
 }));
 vi.mock('../../utils/panel-geometry.js', () => ({
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
     clampGeometry: (geometry) => geometry,
     allGeometry: async () => ({}),
     saveGeometry: async () => {},

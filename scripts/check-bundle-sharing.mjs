@@ -76,6 +76,15 @@ const ALLOWLIST = new Map([
         // utils bundle, so the copy in core is unavoidable.
         'stateless accessors over the live namespace; core loads before utils and must carry its own copy',
     ],
+    [
+        'src/utils/panel-minimize.js',
+        // attachMinimize is a pure factory: all its state is per-call closure
+        // state on the panel it is given, and the only persistence goes through
+        // panel-geometry (itself a shared external, so one source of truth). No
+        // module-level mutable state, no import-time side effects. Imported by
+        // panels across every bundle, so a copy in each is only weight.
+        'stateless factory; persistence delegated to the shared panel-geometry global',
+    ],
 ]);
 
 /** Import suffixes handled by custom rollup plugins; their targets are not part of the shared JS graph */

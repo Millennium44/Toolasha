@@ -9,6 +9,9 @@ vi.mock('./panel-geometry.js', () => ({
     saveOpenState: async () => {},
     wasOpen: async () => false,
     reopenIfLeftOpen: async () => {},
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
 }));
 
 vi.mock('./panel-z-index.js', () => ({
@@ -119,7 +122,7 @@ describe('createPanel', () => {
         const panel = createPanel({ id: 'close', title: 'Close', size: SIZE, draw: () => {} });
         panel.show();
 
-        panel.panel.querySelector('button').click();
+        [...panel.panel.querySelectorAll('button')].find((b) => b.textContent === '✕').click();
         expect(document.getElementById('toolasha-close-panel')).toBeNull();
     });
 

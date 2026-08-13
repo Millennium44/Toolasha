@@ -48,6 +48,7 @@ vi.mock('../../core/config.js', () => ({
     default: {
         Z_FLOATING_PANEL: 100,
         getSettingValue: (_key, fallback) => fallback,
+        getSetting: (_key, fallback = false) => fallback,
         getPricingModeLabel: () => 'Hybrid',
     },
 }));
@@ -172,6 +173,9 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     reopenIfLeftOpen: async (panelKey, reopen) => {
         if (mocks.wasOpen) reopen();
     },
+    saveCollapsed: async () => {},
+    wasCollapsed: async () => false,
+    savedSize: async () => null,
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({
