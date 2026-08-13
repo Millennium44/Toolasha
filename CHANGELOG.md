@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Marketplace tax raised to 5% (8/13/2026 game update)
+
+The game's market tax went from 2% to 5%. Updated the single `MARKET_TAX` constant and swept out every place that had hardcoded 2% (`0.02`/`0.98`) — networth, order totals, bulk-sell floor, listing value, guild-credit sell→rebuy, profit/hr, enhancement worth-it, EV, tea optimizer — so all profit, net-proceeds and break-even figures use the new rate. Tax labels now derive from the constant instead of a baked-in "2%".
+
 ### Profiles: shrine levels count toward gear score and combat sim
 
 The game now shares each player's shrine levels on their profile (`guildBuffLevelMap`). Toolasha reads them and folds their value into the **Combat and Skiller scores** (combat shrines into combat, skilling into skiller) instead of leaving them off other players' cards — the "+ Guild Shrine" line now shows for everyone. **Sim Character** (and party-member sims) also carries the viewed player's shrine buffs into the combat sim, so an imported character fights with its shrines rather than without.

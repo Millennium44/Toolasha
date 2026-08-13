@@ -13,6 +13,7 @@ import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import estimatedListingAge from './estimated-listing-age.js';
 import listingMarkers, { markerStateFor } from './listing-markers.js';
+import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 
 /** Rows here are live orders, most of them still working. Markers are told so. */
 const MY_LISTINGS_SURFACE = { surface: 'myListings' };
@@ -1034,7 +1035,7 @@ class ListingPriceDisplay {
         if (filledQuantity === orderQuantity) {
             return isSell ? unclaimedCoinCount : unclaimedItemCount * price;
         }
-        const taxRate = isSell ? (itemHrid === '/items/bag_of_10_cowbells' ? 0.18 : 0.02) : 0;
+        const taxRate = isSell ? (itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX) : 0;
         return (orderQuantity - filledQuantity) * Math.floor(calculatePriceAfterTax(price, taxRate));
     }
 

@@ -4,6 +4,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 
 const mocks = vi.hoisted(() => ({ listings: [] }));
 
@@ -36,7 +37,7 @@ describe('calculateTotals', () => {
         expect(marketOrderTotals.calculateTotals().buyOrders).toBe(5000);
     });
 
-    test('sell orders are the remaining quantity at price after the 2% tax, floored per unit', () => {
+    test('sell orders are the remaining quantity at price after the market tax, floored per unit', () => {
         mocks.listings = [
             {
                 isSell: true,
@@ -47,11 +48,11 @@ describe('calculateTotals', () => {
                 itemHrid: '/items/plank',
             },
         ];
-        // floor(101 * 0.98) = 98, times remaining 7
-        expect(marketOrderTotals.calculateTotals().sellOrders).toBe(98 * 7);
+        // floor(101 * (1 - MARKET_TAX)), times remaining 7
+        expect(marketOrderTotals.calculateTotals().sellOrders).toBe(Math.floor(101 * (1 - MARKET_TAX)) * 7);
     });
 
-    test('cowbell bag sell orders use the 18% tax rate instead of 2%', () => {
+    test('cowbell bag sell orders use the 18% tax rate instead of the standard tax', () => {
         mocks.listings = [
             {
                 isSell: true,

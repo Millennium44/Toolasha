@@ -7,6 +7,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 
 const mocks = vi.hoisted(() => ({
     settings: { expectedValue_includeCowbells: true },
@@ -126,8 +127,8 @@ describe('calculateSingleContainer', () => {
     test('sums each drop after tax, except coin which is untaxed', () => {
         const ev = expectedValueCalculator.calculateSingleContainer(CHEST_HRID, mocks.initData);
 
-        const gemValue = 0.5 * 1 * 1000 * 0.98; // 50% chance, taxed
-        const junkValue = 1 * 3 * 50 * 0.98; // avg count 3, taxed (junk is tradable per isTradable check... wait untradable)
+        const gemValue = 0.5 * 1 * 1000 * (1 - MARKET_TAX); // 50% chance, taxed
+        const junkValue = 1 * 3 * 50 * (1 - MARKET_TAX); // avg count 3, taxed (junk is tradable per isTradable check... wait untradable)
         const coinValue = 1 * 100 * 1; // untaxed
 
         // Junk is isTradable: false, so it is NOT taxed
@@ -146,7 +147,7 @@ describe('calculateSingleContainer', () => {
         delete mocks.prices[JUNK_HRID];
         const withMissing = expectedValueCalculator.calculateSingleContainer(CHEST_HRID, mocks.initData);
 
-        const gemValue = 0.5 * 1 * 1000 * 0.98;
+        const gemValue = 0.5 * 1 * 1000 * (1 - MARKET_TAX);
         const coinValue = 100;
         expect(withMissing).toBeCloseTo(gemValue + coinValue, 6);
     });

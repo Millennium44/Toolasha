@@ -10,6 +10,7 @@ import { calculateDungeonTokenValue } from '../../utils/token-valuation.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { calculateEVBatch, terminateEVWorkerPool } from '../../utils/ev-worker-manager.js';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 
 /**
  * ExpectedValueCalculator class handles EV calculations for openable containers
@@ -17,7 +18,7 @@ import { calculateEVBatch, terminateEVWorkerPool } from '../../utils/ev-worker-m
 class ExpectedValueCalculator {
     constructor() {
         // Constants
-        this.MARKET_TAX = 0.02; // 2% marketplace tax
+        this.MARKET_TAX = MARKET_TAX; // marketplace tax (see profit-constants)
         this.CONVERGENCE_ITERATIONS = 4; // Nested container convergence
 
         // Cache for container EVs

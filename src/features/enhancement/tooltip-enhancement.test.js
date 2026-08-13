@@ -9,6 +9,7 @@
 
 import { describe, test, expect, beforeAll, beforeEach, vi } from 'vitest';
 import * as mathjs from 'mathjs';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 
 const ITEM = '/items/test_sword';
 const MATERIAL = '/items/test_material';
@@ -289,8 +290,11 @@ describe('calculateMinimumSellPrice', () => {
         expect(calculateMinimumSellPrice(5_000_000, 1800, 10_000_000, false)).toBe(10_000_000);
     });
 
-    test('grosses up by the 2% seller tax so the rate survives the sale', () => {
-        expect(calculateMinimumSellPrice(5_000_000, 3600, 10_000_000, true)).toBeCloseTo(15_000_000 / 0.98, 5);
+    test('grosses up by the seller tax so the rate survives the sale', () => {
+        expect(calculateMinimumSellPrice(5_000_000, 3600, 10_000_000, true)).toBeCloseTo(
+            15_000_000 / (1 - MARKET_TAX),
+            5
+        );
     });
 
     test('with no rate or no time it is just the cost', () => {

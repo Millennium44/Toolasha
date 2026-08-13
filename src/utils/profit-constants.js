@@ -4,9 +4,11 @@
  */
 
 /**
- * Marketplace tax rate (2%)
+ * Marketplace tax rate. Raised from 2% to 5% in the 8/13/2026 marketplace update.
+ * This is the single source of truth — read it here rather than hardcoding a
+ * percentage, so the next rate change is one line.
  */
-export const MARKET_TAX = 0.02;
+export const MARKET_TAX = 0.05;
 
 /**
  * Bag of 10 Cowbells item HRID (subject to 18% market tax)

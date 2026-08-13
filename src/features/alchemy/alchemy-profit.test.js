@@ -18,6 +18,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { MARKET_TAX } from '../../utils/profit-constants.js';
 
 const game = vi.hoisted(() => ({
     initClientData: null,
@@ -440,31 +441,36 @@ describe('calculateDecompositionValue', () => {
     });
 
     test('pins the decomposition results plus the enhancing essence formula', () => {
-        // results: 3 milk @ 120 ask = 360, after 2% tax = 352.8
+        // results: 3 milk @ 120 ask = 360, after market tax
         // essence: round(2 × (0.5 + 0.1 × 1.05^10) × 2^2)
         //        = round(2 × (0.5 + 0.16288946...) × 4) = round(5.3031...) = 5
-        // 5 × 200 ask = 1,000, after 2% tax = 980
-        // total 1,332.8
+        // 5 × 200 ask = 1,000, after market tax
         const value = alchemyProfit.calculateDecompositionValue(CHEESE, 2, 'ask');
 
-        expect(value).toBeCloseTo(1332.8, 6);
+        expect(value).toBeCloseTo(360 * (1 - MARKET_TAX) + 1000 * (1 - MARKET_TAX), 6);
     });
 
     test('essence recovered doubles with every enhancement level', () => {
         // At +3 the same formula gives round(2 × 0.66288946 × 8) = round(10.606...) = 11
-        // 11 × 200 = 2,200 after tax = 2,156; plus 352.8 of milk = 2,508.8
-        expect(alchemyProfit.calculateDecompositionValue(CHEESE, 3, 'ask')).toBeCloseTo(2508.8, 6);
+        // essence 11 × 200 plus milk 3 × 120, each after market tax
+        expect(alchemyProfit.calculateDecompositionValue(CHEESE, 3, 'ask')).toBeCloseTo(
+            2200 * (1 - MARKET_TAX) + 360 * (1 - MARKET_TAX),
+            6
+        );
     });
 
     test('uses bid prices when asked for the instant-sell side', () => {
-        // milk 3 × 100 = 300 → 294 after tax; essence 5 × 180 = 900 → 882
-        expect(alchemyProfit.calculateDecompositionValue(CHEESE, 2, 'bid')).toBeCloseTo(1176, 6);
+        // milk 3 × 100 = 300 and essence 5 × 180 = 900, each after market tax
+        expect(alchemyProfit.calculateDecompositionValue(CHEESE, 2, 'bid')).toBeCloseTo(
+            300 * (1 - MARKET_TAX) + 900 * (1 - MARKET_TAX),
+            6
+        );
     });
 
     test('skips unpriced essence instead of producing NaN', () => {
         delete market.prices[ESSENCE];
 
-        expect(alchemyProfit.calculateDecompositionValue(CHEESE, 2, 'ask')).toBeCloseTo(352.8, 6);
+        expect(alchemyProfit.calculateDecompositionValue(CHEESE, 2, 'ask')).toBeCloseTo(360 * (1 - MARKET_TAX), 6);
     });
 
     test('returns zero for an unknown item or missing game data', () => {

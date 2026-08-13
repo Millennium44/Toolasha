@@ -201,7 +201,7 @@ class ProfitCalculator {
         const outputPriceEstimated = outputPriceMissing && craftingFallback > 0;
         const outputPrice = outputPriceMissing ? craftingFallback : rawOutputPrice;
 
-        // Apply market tax (2% tax on sales)
+        // Apply market tax on sales
         const priceAfterTax = calculatePriceAfterTax(outputPrice);
 
         // Cost per item (without efficiency scaling)
@@ -236,7 +236,7 @@ class ProfitCalculator {
         // Apply efficiency multiplier to bonus revenue (efficiency repeats the action, including bonus rolls)
         const efficiencyBoostedBonusRevenue = (bonusRevenue?.totalBonusRevenue || 0) * efficiencyMultiplier;
 
-        // Calculate market tax (2% of gross revenue including bonus revenue)
+        // Calculate market tax of gross revenue including bonus revenue
         const marketTax = (revenuePerHour + efficiencyBoostedBonusRevenue) * MARKET_TAX;
 
         // Total costs per hour (materials + teas + market tax)
