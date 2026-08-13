@@ -98,6 +98,7 @@ import leaderboardXPDisplay from '../features/leaderboard/leaderboard-xp-display
 import emptyQueueNotification from '../features/notifications/empty-queue-notification.js';
 import communityBuffAlerts from '../features/notifications/community-buff-alerts.js';
 import labyrinthRunAlerts from '../features/notifications/labyrinth-run-alerts.js';
+import labyrinthEntryAlerts from '../features/notifications/labyrinth-entry-alerts.js';
 import combatDeathAlerts from '../features/notifications/combat-death-alerts.js';
 import enhancementTargetAlerts from '../features/notifications/enhancement-target-alerts.js';
 import taskSlotAlerts from '../features/notifications/task-slot-alerts.js';
@@ -197,6 +198,7 @@ toolashaRoot.UI = {
     emptyQueueNotification,
     communityBuffAlerts,
     labyrinthRunAlerts,
+    labyrinthEntryAlerts,
     combatDeathAlerts,
     enhancementTargetAlerts,
     taskSlotAlerts,

@@ -2939,6 +2939,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Keys on the run going from active to not active, as the server reports it — so it covers every ending: cleared out, ended on a lost fight, or exited on purpose. It does not say which, because the payload does not: there is no outcome or reason field on a labyrinth message, so the alert reports the deepest floor the run reached and leaves it at that. Once per run.',
             },
+            notifications_labyrinthEntryAvailable: {
+                id: 'notifications_labyrinthEntryAvailable',
+                label: 'Notify when a labyrinth entry regenerates',
+                type: 'checkbox',
+                default: false,
+                help: 'The Labyrinth holds up to five entries and regenerates one on a cooldown (a couple of days, less with cooldown upgrades). Fires when the stock rises — the server pushes the new count — or when the projected regeneration instant passes on an open tab, computed from lastLabyrinthTimestamp + labyrinthCooldownHours. Once per regeneration; a full stock is announced once so a regenerated entry does not sit wasted at the cap.',
+            },
             notifications_combatDeath: {
                 id: 'notifications_combatDeath',
                 label: 'Notify when you die in combat',
