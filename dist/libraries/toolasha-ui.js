@@ -1,7 +1,7 @@
 /**
  * Toolasha UI Library
  * UI enhancements, tasks, skills, and misc features
- * Version: 2.101.0
+ * Version: 2.102.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -54750,6 +54750,1481 @@ ${starCSS}
     };
 
     /**
+     * Setting presets — a whole configuration in one button.
+     *
+     * Toolasha ships several hundred switches. Somebody who has just installed it,
+     * or who plays one part of the game and not the others, does not want to make
+     * several hundred decisions before the script is useful; they want to say
+     * "I fight things" and have the market machinery stay out of their way. A
+     * preset is that sentence, written as data.
+     *
+     * ## Why only checkboxes
+     *
+     * A preset says which *features* are on. It deliberately does not touch
+     * numbers, dropdowns, colours or the enhancement-simulator gear table: those
+     * are tunings a person arrived at deliberately, and a bundle that reset a
+     * carefully entered enhancing level because you clicked "Combat" would be a
+     * trap. This is the same set of settings `All Off` writes, and the snapshot the
+     * two share means `Restore` undoes either one.
+     *
+     * ## Why "Defaults" is the schema defaults, not every switch true
+     *
+     * Several switches are hides and warnings that start off on purpose, and
+     * turning them all on would be a configuration nobody has ever run. "Defaults"
+     * means the way the script behaves out of the box, which is what a person
+     * dismissing the first-run question is asking to keep.
+     */
+
+
+    const SNAPSHOT_KEY_PREFIX = 'toolasha_allOffSnapshot';
+
+    /**
+     * Settings a bulk write must never touch.
+     *
+     * Iron Cow mode is a mode, not a feature: it owns its own snapshot of every
+     * market setting, and a preset flipping it would either strand that snapshot or
+     * force-disable half of what the preset just enabled.
+     */
+    const PRESET_EXCLUDED_IDS = new Set(['ironCow_enabled']);
+
+    /**
+     * Core quality-of-life: the things that make the game easier to read without
+     * calculating a price, simulating a fight or tracking a history.
+     */
+    const ESSENTIALS = [
+        // General
+        'whatsNew_showPopup',
+        'chatCommands',
+        'chat_mentionTracker',
+        'chat_profileLink',
+        'chatHistoryExtender',
+        'altClickNavigation',
+        'collectionNavigation',
+        // Action bar
+        'actionBar_enabled',
+        'actionBar_showQueueCount',
+        'actionBar_showActionDuration',
+        'actionBar_showTimeRemaining',
+        'actionBar_showRecycleTime',
+        // Skill page & tiles
+        'actionPanel_showFilter',
+        'actionPanel_showSort',
+        'actionPanel_showExpPerHour_gathering',
+        'actionPanel_showExpPerHour_production',
+        'inventoryCountDisplay',
+        'actions_pinnedPage',
+        // Action panel
+        'actionPanel_totalTime_quickInputs',
+        'actionPanel_outputTotals',
+        'actionPanel_maxProduceable',
+        'actionPanel_showLevelProgress',
+        'actionPanel_showSpeedTime',
+        'requiredMaterials',
+        'actionPanel_enhanceMatLimitProtections',
+        'actionQueue',
+        // Tooltips that describe the item rather than price it
+        'showConsumTips',
+        'itemTooltip_gathering',
+        'itemTooltip_gatheringRareDrops',
+        'itemTooltip_abilityStatus',
+        // Inventory
+        'invSort',
+        'autoAllButton',
+        'autoAllButton_excludeSeals',
+        'inventoryTabs',
+        'inventoryTabs_showUnorganized',
+        'inventoryTabs_topTabPriority',
+        // Skills
+        'xpTracker',
+        'xpTracker_timeTillLevel',
+        'skillRemainingXP',
+        'skillRemainingXP_blackBorder',
+        'skillbook',
+        'drinkTimer',
+        'skillingOptimizer',
+        // UI
+        'overlayPanel',
+        'overlayTabButton',
+        'draggableModals',
+        'ui_externalLinks',
+        'panelSizeMemory',
+        'tabReorder',
+        'expPercentage',
+        'itemIconLevel',
+        'showsKeyInfoInIcon',
+        'mapIndex',
+        'loadoutEnhancementDisplay',
+        // Tasks — reading the board, not valuing it
+        'taskMapIndex',
+        'taskIcons',
+        'taskQueuedIndicator',
+        'taskMaterialsIndicator',
+        'taskGoMerge',
+        // Collections
+        'collectionFilters',
+        'collectionFavorites',
+        'collectionFavoritesSection',
+        'collectionFilters_skillingBadges',
+        // House
+        'houseUpgradeCosts',
+    ];
+
+    /** Everything the combat side of the game wants, on top of the essentials. */
+    const COMBAT_EXTRAS = [
+        'damageTracker',
+        'damageTakenTracker',
+        'combatScore',
+        'combatStats',
+        'combatBattleCounter',
+        'combatSummary',
+        'combatDropLuck',
+        'combatDps',
+        'abilitiesTriggers',
+        'abilities_dictionaryButton',
+        'characterCard',
+        'loadoutSnapshot',
+        'manaTracker',
+        'lootLogStats',
+        'lootLogHistory',
+        'treasureTracker',
+        'treasureTracker_popup',
+        'watchlist',
+        'watchlist_inventoryDots',
+        'dungeonTracker',
+        'dungeonTrackerUI',
+        'dungeonTrackerChatAnnotations',
+        'labyrinthTracker',
+        'labyrinthClearRate',
+        'labyrinthLiveProgress',
+        'labyrinthLiveCombatSim',
+        'labyrinthRoomLogs',
+        // Simulators
+        'combatSim',
+        'labSim',
+        'combatSim_sharedSeed',
+        'labSim_keepReplacedGear',
+    ];
+
+    /** Everything that needs a price to be worth anything. */
+    const MARKET_EXTRAS = [
+        // Marketplace screen
+        'sellQueue',
+        'networkAlert',
+        'marketFilter',
+        'marketSort',
+        'fillMarketOrderPrice',
+        'market_autoClickMax',
+        'market_quickInputButtons',
+        'market_multiplierButtons',
+        'market_showOwnedInBuyModal',
+        'market_marketplaceShortcuts',
+        'market_visibleItemCount',
+        'market_visibleItemCountIncludeEquipped',
+        'market_showListingPrices',
+        'market_listingRefreshNavigator',
+        'market_tradeHistory',
+        'market_showEstimatedListingAge',
+        'market_showOrderTotals',
+        'market_showHistoryViewer',
+        'market_showPhiloCalculator',
+        'market_showQueueLength',
+        'market_milkywayMarketLink',
+        // Pricing & profit
+        'profitCalc_craftUpgradeItems',
+        'actionPanel_showPricingMode',
+        'actionPanel_showCraftToggle',
+        'actionPanel_showProfitPerHour_gathering',
+        'actionPanel_showProfitPerHour_production',
+        'actionPanel_showProfitDetail',
+        'actionPanel_foragingTotal',
+        'actionQueue_showValue',
+        // Priced tooltips
+        'itemTooltip_prices',
+        'itemTooltip_artisanPrices',
+        'itemTooltip_profit',
+        'itemTooltip_expectedValue',
+        'expectedValue_respectPricingMode',
+        'expectedValue_includeCowbells',
+        'itemTooltip_enhancementPath',
+        'dungeonTokenTooltips',
+        'itemDictionary_transmuteRates',
+        'itemDictionary_transmuteIncludeBaseRate',
+        // Inventory value & net worth
+        'networth',
+        'networth_highEnhancementUseCost',
+        'networth_includeTaskTokens',
+        'networth_historyChart',
+        'invWorth',
+        'invSort_showBadges',
+        'invBadgePrices',
+        'invCategoryTotals',
+        // Alchemy & crafting economics
+        'alchemy_profitDisplay',
+        'alchemy_bestItems',
+        'alchemyItemPins',
+        'alchemyItemDimming',
+        'alchemy_transmuteHistory',
+        'alchemy_coinifyHistory',
+        'alchemy_decomposeHistory',
+        'alchemy_actionProtection',
+        'actionPanelLayout',
+        'actions_missingMaterialsButton',
+        'actions_budgetCalculator',
+        'actions_costSummary',
+        'actionPanel_bestCraftingPlan',
+        // Tasks, valued
+        'taskProfitCalculator',
+        'taskEfficiencyRating',
+        // Guild economy
+        'guildCreditValue',
+        'guildCreditExchangeAdvisor',
+    ];
+
+    /** The preset picked when somebody dismisses the question rather than answering it. */
+    const DEFAULT_PRESET_ID = 'everything';
+
+    /**
+     * The bundles, in the order they are offered.
+     *
+     * A preset either lists the settings it wants on — everything else goes off —
+     * or sets `useDefaults`, meaning every switch returns to what the schema ships.
+     *
+     * @type {Array<{id: string, label: string, description: string, settings?: string[], useDefaults?: boolean}>}
+     */
+    const SETTING_PRESETS = [
+        {
+            id: 'essentials',
+            label: 'Essentials',
+            description:
+                'Core quality of life only — action timers, XP rates, inventory sorting, tooltips that describe items. ' +
+                'No prices, no simulators, no trackers.',
+            settings: ESSENTIALS,
+        },
+        {
+            id: 'combat',
+            label: 'Combat',
+            description:
+                'The essentials plus the combat side: damage and drop tracking, dungeon and labyrinth tools, and the ' +
+                'combat and labyrinth simulators. Marketplace extras stay off.',
+            settings: [...ESSENTIALS, ...COMBAT_EXTRAS],
+        },
+        {
+            id: 'market',
+            label: 'Market & trading',
+            description:
+                'The essentials plus everything that needs a price: profit calculators, listing tools, net worth, ' +
+                'inventory values and crafting economics.',
+            settings: [...ESSENTIALS, ...MARKET_EXTRAS],
+        },
+        {
+            id: DEFAULT_PRESET_ID,
+            label: 'Defaults',
+            description: 'Every feature reset to its shipped default — how Toolasha behaves out of the box.',
+            useDefaults: true,
+        },
+    ];
+
+    /**
+     * The modes offered alongside the presets — and why they are a separate list.
+     *
+     * A preset is a sentence in the past tense: it flips a few hundred switches once
+     * and is then over, which is why `Restore` can undo it. Iron Cow is a sentence
+     * in the present tense: it stays on, keeps its own snapshot of every market
+     * setting, and force-disables them for as long as it is on. The two compose —
+     * you can be an Iron Cow *and* want the Combat bundle — so they sit in the same
+     * row of the settings panel, but a mode is drawn as a pressed-in chip rather
+     * than a button, because "on" is a thing it can be and a preset never is.
+     *
+     * Their ids live in `PRESET_EXCLUDED_IDS` for exactly that reason: a one-shot
+     * sweep must not flip a mode on its way past.
+     *
+     * @type {Array<{id: string, kind: string, settingId: string, label: string, icon: string,
+     *   description: string, activeNote: string}>}
+     */
+    const MODE_PRESETS = [
+        {
+            id: 'ironCow',
+            kind: 'mode',
+            settingId: 'ironCow_enabled',
+            label: 'Iron Cow Mode',
+            icon: '🐄',
+            description:
+                'Disable all market & profit features for a no-marketplace playthrough. Unlike a preset this stays ' +
+                'on until you turn it off, and the settings it owns stay locked while it is.',
+            activeNote: 'ACTIVE — market features locked.',
+        },
+    ];
+
+    /**
+     * Find a preset by id.
+     * @param {string} presetId
+     * @returns {Object|null}
+     */
+    function getPreset(presetId) {
+        return SETTING_PRESETS.find((preset) => preset.id === presetId) || null;
+    }
+
+    /**
+     * Whether a schema type is one a bulk write is allowed to touch.
+     * @param {string} [type]
+     * @returns {boolean}
+     */
+    function isBulkWritable(type) {
+        const kind = type || 'checkbox';
+        return kind === 'checkbox' || kind === 'checkboxWithButton';
+    }
+
+    /**
+     * Every setting id a preset (or All Off) may write, in schema order.
+     *
+     * The single definition of "which settings does a bulk write own" — presets,
+     * All Off, Restore and the checkbox re-sync all read it, so the three can never
+     * disagree about what they are writing.
+     *
+     * @param {Object} [groups] - Schema groups, injectable for tests
+     * @returns {string[]}
+     */
+    function presetTargetIds(groups = settingsSchema_js.settingsGroups) {
+        const ids = [];
+        for (const group of Object.values(groups)) {
+            for (const [id, definition] of Object.entries(group.settings)) {
+                if (!isBulkWritable(definition.type)) continue;
+                if (PRESET_EXCLUDED_IDS.has(id)) continue;
+                ids.push(id);
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * The schema defaults for every bulk-writable setting.
+     * @param {Object} [groups] - Schema groups, injectable for tests
+     * @returns {Object<string, boolean>}
+     */
+    function defaultCheckboxValues(groups = settingsSchema_js.settingsGroups) {
+        const values = {};
+        for (const group of Object.values(groups)) {
+            for (const [id, definition] of Object.entries(group.settings)) {
+                if (!isBulkWritable(definition.type)) continue;
+                if (PRESET_EXCLUDED_IDS.has(id)) continue;
+                values[id] = definition.default ?? false;
+            }
+        }
+        return values;
+    }
+
+    /**
+     * What a preset means, expressed as a value for every setting it owns.
+     *
+     * Pure — no config, no storage — because "what does Combat mean" is the part
+     * that has to stay right as the schema grows, and it is the part worth testing.
+     *
+     * @param {Object} preset - From `SETTING_PRESETS`
+     * @param {Object} [groups] - Schema groups, injectable for tests
+     * @returns {Object<string, boolean>} id → value
+     */
+    function resolvePresetValues(preset, groups = settingsSchema_js.settingsGroups) {
+        if (!preset) return {};
+        if (preset.useDefaults) return defaultCheckboxValues(groups);
+
+        const wanted = new Set(preset.settings || []);
+        const values = {};
+        for (const id of presetTargetIds(groups)) {
+            values[id] = wanted.has(id);
+        }
+        return values;
+    }
+
+    /**
+     * The per-character key the bulk-write snapshot lives under.
+     *
+     * Shared with All Off deliberately: there is one "before the last bulk write"
+     * state, and Restore should undo whichever bulk write happened last.
+     *
+     * @returns {string}
+     */
+    function bulkSnapshotKey() {
+        const characterId = dataManager.getCurrentCharacterId?.();
+        return characterId ? `${SNAPSHOT_KEY_PREFIX}_${characterId}` : SNAPSHOT_KEY_PREFIX;
+    }
+
+    /**
+     * Record every bulk-writable setting's current value, so Restore has something
+     * to put back.
+     * @returns {Promise<Object<string, boolean>>} The snapshot that was saved
+     */
+    async function saveBulkSnapshot() {
+        const snapshot = {};
+        for (const id of presetTargetIds()) {
+            const entry = config.settingsMap[id];
+            if (!entry) continue;
+            snapshot[id] = entry.isTrue ?? false;
+        }
+        await storage.setJSON(bulkSnapshotKey(), snapshot, 'settings', true);
+        return snapshot;
+    }
+
+    /**
+     * The saved snapshot, or null when no bulk write has happened.
+     * @returns {Promise<Object<string, boolean>|null>}
+     */
+    async function loadBulkSnapshot() {
+        return storage.getJSON(bulkSnapshotKey(), 'settings', null);
+    }
+
+    /**
+     * Forget the snapshot — after Restore has used it.
+     * @returns {Promise<void>}
+     */
+    async function clearBulkSnapshot() {
+        await storage.delete(bulkSnapshotKey(), 'settings');
+    }
+
+    /**
+     * Write a map of setting values through config, firing the usual change
+     * callbacks so live features react without a reload.
+     *
+     * Settings already holding the wanted value are skipped: every `setSetting`
+     * persists the entire settings map, so writing three hundred of them at boot to
+     * change none of them is three hundred pointless round trips through IndexedDB
+     * — and "Defaults" on a fresh install is exactly that case.
+     *
+     * @param {Object<string, boolean>} values - id → value
+     * @returns {string[]} The ids that were actually written
+     */
+    function writeCheckboxValues(values) {
+        const written = [];
+        for (const [id, value] of Object.entries(values || {})) {
+            if (PRESET_EXCLUDED_IDS.has(id)) continue;
+            const entry = config.settingsMap[id];
+            if (!entry) continue;
+            if ((entry.isTrue ?? false) === value) continue;
+            config.setSetting(id, value);
+            written.push(id);
+        }
+        return written;
+    }
+
+    /**
+     * Apply a named preset.
+     *
+     * Snapshots first, so the Restore button can undo it exactly the way it undoes
+     * All Off — a preset is a large change, and a large change a person cannot walk
+     * back is one they will not risk making.
+     *
+     * @param {string} presetId - An id from `SETTING_PRESETS`
+     * @returns {Promise<Object<string, boolean>|null>} The values written, or null
+     *   when the preset is unknown
+     */
+    async function applyPreset(presetId) {
+        try {
+            const preset = getPreset(presetId);
+            if (!preset) {
+                console.error(`[SettingPresets] Unknown preset: ${presetId}`);
+                return null;
+            }
+
+            const values = resolvePresetValues(preset);
+            await saveBulkSnapshot();
+            writeCheckboxValues(values);
+            return values;
+        } catch (error) {
+            console.error('[SettingPresets] Applying a preset failed:', error);
+            return null;
+        }
+    }
+
+    /**
+     * What changed between the build you had and the build you have.
+     *
+     * The interesting decision is what counts as "new". Version numbers cannot be
+     * trusted for it: this is a fork, forks share numbering with upstream, and two
+     * scripts both calling themselves 2.88.0 can be entirely different code. So the
+     * version string only decides *whether* to speak; **the settings schema itself
+     * decides what to say**. The stored list of setting IDs the user has already
+     * been shown is diffed against the schema that just loaded, and whatever was
+     * never shown before is new — whichever fork it arrived from, whatever number
+     * it wore.
+     *
+     * Pure functions, because the popup is the least interesting part of this and
+     * the diff is the part that must be right.
+     */
+
+    /**
+     * Which fork+version this build is, as one comparable identity.
+     *
+     * The pair rather than the version alone: upstream and this fork share version
+     * numbers, so "2.88.0 → 2.88.0" can still be a different script. A change in
+     * either half is an update worth announcing.
+     *
+     * @param {{fork?: string, version?: string}} [source] - Usually `window.Toolasha`
+     * @returns {{fork: string, version: string}}
+     */
+    function buildIdentity(source = {}) {
+        return {
+            fork: String(source.fork || 'unknown-fork'),
+            version: String(source.version || '0.0.0'),
+        };
+    }
+
+    /**
+     * Whether the build changed since the state was last saved.
+     *
+     * @param {{fork: string, version: string}|null} stored - From storage; null on first run
+     * @param {{fork: string, version: string}} current - From `buildIdentity`
+     * @returns {boolean}
+     */
+    function identityChanged(stored, current) {
+        if (!stored) return false;
+        return stored.fork !== current.fork || stored.version !== current.version;
+    }
+
+    /**
+     * The update, described the way a person would ask about it.
+     *
+     * A same-fork bump reads as an update; a fork change is called out as one,
+     * because "switched from Celasha/Toolasha 2.88.0" answers a question that
+     * "updated to 2.88.0" would actively hide — the number may not even change.
+     *
+     * @param {{fork: string, version: string}|null} stored - Previous identity
+     * @param {{fork: string, version: string}} current - This build
+     * @returns {string} e.g. `Updated 2.88.0 → 2.89.0` or
+     *   `Switched from Celasha/Toolasha 2.88.0`
+     */
+    function describeUpdate(stored, current) {
+        if (!stored) return `Version ${current.version}`;
+        if (stored.fork !== current.fork) {
+            return `Switched from ${stored.fork} ${stored.version} (now ${current.fork} ${current.version})`;
+        }
+        return `Updated ${stored.version} → ${current.version}`;
+    }
+
+    /**
+     * The setting IDs this user has never been shown.
+     *
+     * @param {Array<string>} schemaIds - Every ID in the current schema
+     * @param {Array<string>} knownIds - Every ID the user has been shown before
+     * @returns {Array<string>} New since last time, in schema order
+     */
+    function newSettingIds(schemaIds, knownIds) {
+        const known = new Set(knownIds || []);
+        return (schemaIds || []).filter((id) => !known.has(id));
+    }
+
+    /**
+     * Which of the new settings should be forced off, under the conservative policy.
+     *
+     * Only switches that arrive **on**: a new checkbox defaulting to true is the
+     * update changing behaviour unasked, which is precisely what the policy exists
+     * to stop. Numbers and dropdowns keep their defaults — a number has to be
+     * something, and a default value is not a feature switching itself on.
+     *
+     * Never applied without a baseline: on a first run every setting in the schema
+     * is "new", and forcing the lot off would disable the whole script on install.
+     *
+     * @param {Array<string>} newIds - From `newSettingIds`
+     * @param {Function} lookup - id → schema entry ({type, default, ...}) or null
+     * @returns {Array<string>} IDs to persist as off
+     */
+    function conservativeOverrides(newIds, lookup) {
+        const overrides = [];
+        for (const id of newIds || []) {
+            const entry = lookup(id);
+            if (!entry) continue;
+            const type = entry.type || 'checkbox';
+            if (type === 'checkbox' && entry.default === true) overrides.push(id);
+        }
+        return overrides;
+    }
+
+    var forkChangelog = "## Unreleased — branch `main`\n\n### First-run setup: copy from another character, and a way back to it\n\nThe welcome prompt now offers **\"Copy from another character\"** — pick one of your other characters and its settings are copied onto this one, the one-click way to set up a fresh alt (especially an Iron Cow) instead of only offering generic presets. Added to both first-run pickers, and to a new **\"First-time setup\"** button in the Toolasha settings tab so the one-shot prompt is recoverable: a stray click that dismissed it (or a character already past it) can re-open it any time, on any character. Defaults now leads the picker, a **No change** option sits beside it, and dismissing the dialog is \"no change\" rather than a reset — so re-opening it on a configured character can no longer wipe settings by accident.\n\n### Fix: marketplace autofill after the typable-price update\n\nThe 8/13/2026 update made the marketplace Price/Quantity fields typable text inputs (`type=\"text\"`), which broke every Toolasha selector that looked for `input[type=\"number\"]` — most visibly the missing-material autofill no longer filled the quantity. Now targets the game's own `MarketplacePanel_quantityInputs` row (falling back to reading all inputs by label), and rewinds React's value tracker on write so a strictly-controlled field can't snap back. Works on both the old (number) and new (text) inputs, so it needs no server gate. Flip Finder's autofill was already class-based and unaffected.\n\nThe game's market tax went from 2% to 5%. Updated the single `MARKET_TAX` constant and swept out every place that had hardcoded 2% (`0.02`/`0.98`) — networth, order totals, bulk-sell floor, listing value, guild-credit sell→rebuy, profit/hr, enhancement worth-it, EV, tea optimizer — so all profit, net-proceeds and break-even figures use the new rate. Tax labels now derive from the constant instead of a baked-in \"2%\".\n\nThe 5% rate (and the shrine-in-gear-score change below) is **gated to the test server** for now via `isMarketplacePatchLive()` — the live server keeps 2% until the patch reaches it. One line to un-gate everything once it is live everywhere (`server-gate.js`).\n\n### Prices reconciled against the game's official market values\n\nThe 8/13/2026 update publishes an estimated value for every item and enhancement level (`localStorageUtil.getMarketItemValues()`, the figure behind the inventory's \"Total Market Value\"). Toolasha now reads it (cached, version-guarded) and reconciles every ask/bid at the shared price choke point (`getItemPrice`/`getItemPrices`): a stale price is **clamped into the ±10% tradable range** the game now enforces, and an item with an empty book is **valued the way the game values it** instead of collapsing to crafting cost. This flows through to networth/inventory value and the profit calculators at once. Gated to the test server (a pass-through until the patch is live). Combat-loot valuation, which reads the market API directly, is unchanged this pass.\n\nNew setting **\"Net worth value source\"** (Order book / Game's market value, default Order book). The game's value refreshes every ~10 min — far fresher than the ~hourly market feed — so switching to it makes the net-worth total match the game's own inventory total. It also reaches the batched net-worth path (via `getPricesBatch` → `getMarketPrice`), which the choke-point reconcile above did not, so the clamp/fallback now applies to the full net-worth sweep too. Gated to the test server.\n\n### Profiles: shrine levels count toward gear score and combat sim\n\nThe game now shares each player's shrine levels on their profile (`guildBuffLevelMap`). Toolasha reads them and folds their value into the **Combat and Skiller scores** (combat shrines into combat, skilling into skiller) instead of leaving them off other players' cards — the \"+ Guild Shrine\" line now shows for everyone. **Sim Character** (and party-member sims) also carries the viewed player's shrine buffs into the combat sim, so an imported character fights with its shrines rather than without.\n\n### Labyrinth: full monster abilities always modelled\n\nRemoved the \"Model full monster abilities in combat sim (testing)\" toggle — the verified behaviour is now permanent. The sim builds each labyrinth monster with its full ability kit (stuns, shreds, self-buffs) rather than the tier-0 subset, so combat-room clear chances read closer to reality.\n\n### Enhancement Tracker: idle duration fix, session merge, and an on-screen toggle\n\n- **Session Duration no longer runs while idle.** It stopped only when a run reached its target; a session left In Progress counted wall-clock forever. The clock now ends at the last recorded attempt, so it freezes when you stop enhancing (and XP/Hour with it).\n- **Merge sessions (∑).** A new ∑ button in the tracker header opens a checklist of your sessions and shows a combined summary of the ones you pick — per-level tally, attempts, success rate, XP, duration, and total cost — for a target reached across several separate runs. Defaults to every session of the item currently in view.\n- **Show/hide button on the Enhancing screen.** A \"∑ Tracker\" button now sits in the Enhancing panel's corner, like the marketplace's Bulk Sell tab, toggling the tracker on demand (a manual hide sticks).\n\n### Notifications: labyrinth entry regenerated (opt-in)\n\nNew default-off notification \"Notify when a labyrinth entry regenerates\". The Labyrinth holds up to five entries and regenerates one on a cooldown (a couple of days, less with upgrades); this fires when the stock rises or when the projected regeneration instant passes on an open tab — computed from `lastLabyrinthTimestamp + labyrinthCooldownHours` — so an entry doesn't sit wasted at the cap. Uses the existing notification service (toast in-page, browser notification when the tab is hidden).\n\n### Loot Log: enhancing cost, luck and profit (opt-in)\n\nNow prices materials and protection with the same helper the live Enhancement Tracker uses (production-cost/NPC fallbacks for unlisted materials), so the loot-log figures line up with the tracker for the same run instead of collapsing to near-zero when a material has no market listing.\n\nEnhancing loot-log entries can now carry a summary line — material and protection cost against the statistically expected cost (how lucky the run was), and the profit (the finished item's after-fee value minus the base and what you spent). It's reconstructed from the run's own per-level results and priced through Toolasha's enhancement calculator, assuming the cost-optimal protect level. New setting \"Loot Log: Enhancing cost, luck and profit\", **off by default**. The summary text is a readable size.\n\nEach enhancing entry also has a **+ merge** chip: pick two or more runs of the same item and a panel at the top of the loot log sums their real cost, luck and profit into one total — for a target reached across several split runs.\n\n### Enhancement Tracker: cost-vs-expected (luck) and worth-it lines\n\nThe Enhancement Tracker now shows two new readings under the run stats: **Expected Cost + Cost Factor** with how far below/above the expected cost this run landed (the cost twin of the Attempt Factor — pure attempt/protection luck, at this run's own prices), and a **Worth it (net)** line — the +N item's after-fee resale value minus the base you gave up minus what you spent, so you can see whether the enhance actually paid off. Click the Worth-it line to expand a breakdown. (A loot-log version is a planned follow-up.)\n\n### Enhancement Tracker: toggle it from the command palette\n\nThe Enhancement Tracker now appears in the Ctrl/Cmd+K command palette, so you can show or hide it on demand. A manual hide sticks (the auto-show logic won't bring it back until you toggle it on again or re-enable the feature).\n\n### Fixes: sort defaults, minimize placement, clickable quiet members\n\n- **Combat Sim all-zones and the Upgrade advisor now default to sorting by Score.** The all-zones run was resetting to Profit and the Upgrade table opened on DPS; both now open on Score (best first).\n- **The minimize button sits next to the close ✕ again** on Combat Sim, Lab Sim, and the Trade Ledger — it was landing in the middle of the header (and swapped past close on the Trade Ledger).\n- **Guild Roster: click a \"Gone quiet\" member** to load `/profile <name>` in chat (press Enter to open), the same trick the profile cycler uses.\n\n### Every panel can be minimized without closing it\n\nFloating panels now have a **–** button in the header (beside the close ✕) that folds the panel down to its title strip, leaving it draggable and running — click **□** to bring it back. It works across both shared panel shells (party loot, guild roster, DPS/deaths/profit tiles, and the rest) and the bespoke tool windows (Combat Sim, Lab Sim, Enhancement XP/hr, Consumables, Houses, Goal Planner, and more). The minimized state is remembered per panel across refreshes, alongside its position.\n\n### Combat & Lab Sim: optionally remember upgrade results across refreshes\n\nNew opt-in setting (default off) keeps the last Upgrade-tab results after a page reload — for both Combat Sim and Lab Sim — until you run a new analysis, so a run you waited minutes on is still there when you come back. A quiet banner marks restored results. Off by default because it stores the full result set (one blob per character per sim) in the browser database.\n\n### Combat Sim Results: a ⌖ button targets that zone in Configure\n\nEach row of the all-zones Results table now has a ⌖ button that sets that zone and tier as the Configure target and jumps to the Configure tab (leaving all-zones mode so the single-zone selects reappear) — no more scrolling the zone dropdown to sim a promising row. The table also now defaults to sorting by Score (descending) instead of unsorted.\n\n### Upgrade advisor: path boots (base and refined) are offered and simmed at +7\n\nThe upgrade advisor simmed a proposed gear swap at the current piece's enhancement level, so path boots (Pathbreaker/Pathfinder/Pathseeker) were quoted at whatever your worn boots are (e.g. +10). They're only obtainable at +7, so a swap to them is now always simmed and priced at +7 — the refined variants override the usual +10 refined floor. The refined path boots are now also _offered_: the crafting-chain walk only reaches the base boot (refined is one hop further), so each base path-boot swap now gets a refined sibling in the table, at +7.\n\n### Enhancement XP/hr panel: get a route for any item, even one you don't own\n\nThe enhancing-route (target level, protection plan, cost) was only reachable by hovering an item that's rendered — owned or listed — so an item with no listing at that level showed nothing. The Enhancement XP/hr panel now has an \"Enhance any item\" box: type any enhanceable item, pick a target level, and get its full route. The base-item price falls back to crafting cost when the market is empty, so it works with zero listings.\n\n### Ability hover: optional \"fresh to level\" cost, priced at the level shown\n\nHovering an ability itself (in a loadout, an ability slot, or on another player's profile) can now add a \"Fresh to Lv N: <cost> (<books> books)\" line, priced at the level the tooltip shows — so on someone else's profile it uses their level, not yours. It's identified from the ability tooltip's own name and gated behind a new, default-off setting (\"Show fresh-to-level cost on ability hovers\"), separate from the ability-book tooltip status.\n\n### Enhancement tooltip: the source toggle is discoverable and mobile-friendly\n\nThe \"Yours ⇄ / Pro ⇄\" chip on enhancement tooltips now shows a keycap **P** so the press-to-toggle hotkey is visible, not just buried in the hover title. On touch devices it drops the key (no keyboard), enlarges to a finger-sized tap target, and reads \"tap\" — the chip was already tappable on tap-to-open tooltips, just too small and unlabeled.\n\n### Upgrade advisor: \"Signature only\" is now \"Aura only\"\n\nThe Ability Swaps sub-option that restricted swaps to the aura + signature groups now restricts to just the aura group — the single \"which aura\" decision. Renamed the checkbox to \"Aura only\" with an updated tooltip, and renamed the internal option throughout (`auraOnly` / `auraSwapsOnly`).\n\n### Upgrade advisor: the aura OR-alternative is offered again\n\nAbility Swaps stopped offering the other aura in your archetype's aura group — e.g. running Mystic Aura, it never proposed Critical Aura. The generator was running each guide offer through a style-from-buff-data heuristic that misreads a universal aura (Critical Aura) as another style and vetoed it. The guide's own ability set is style-correct by construction, so on the guide path that heuristic no longer runs; it now only guards the every-ability fallback.\n\n### Sim: Achievements section — toggle your achievement combat buffs\n\nThe sim already applied your completed-achievement combat buffs (e.g. Damage +2%) silently; there was no way to see or change them. A new **Achievements** section on the Configure tab lists the combat buffs your achievements grant, each ticked by default (so results are unchanged) — untick one to sim without it. It reads your real buffs with their exact values; a character with no combat achievement buffs shows no section.\n\n### Sim: the loadout picker is back in the packaged build\n\nThe Combat Sim and Lab Sim loadout dropdown vanished in the released userscript (it still worked in dev): both UIs read the loadout list from their own bundle's copy of the snapshot store, which the websocket never feeds in the multi-bundle build, so the list was always empty and the `<select>` never rendered. Both now read the fed store through the bundle bridge — the same fix the apply path already had — so you can pick a saved loadout to sim as again. A regression test now asserts the picker renders from the bridge store.\n\n### Author credit: full contributor list and code-source attribution\n\nBoth userscript headers now carry the same, tidied `@author` credit. It restores the contributors who were only in the dev header (Shykai, amVoidGuy, vlad, kuganDev, Paradoxian, Maarg, SilkyPanda, MekaPyon, vidonnus) and adds a line crediting the tools this fork borrowed code and ideas from: MWITools (bot7420), MWI Combat Suite (Frotty), JIGS (jigglymoose), the Labyrinth Win Rate Calculator (dakonglong), and the mooket pools (Q7, IOMisaka).\n\n### Author credit leads with Millennium44 (production header too)\n\nThe previous author change only touched the dev header (`userscript-header.txt`); the GreasyFork build takes its header from `library-headers/entrypoint.txt`, which still led with the upstream authors. That production header now leads with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" as well, so the published listing shows the fork maintainer.\n\n### Author credit leads with Millennium44\n\nThe userscript `@author` header now opens with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" instead of leading with the upstream authors, so the GreasyFork listing credits the fork maintainer. The contributor thank-yous are unchanged.\n\n### Task reroll tracker: drop the experimental warning\n\nThe \"Track task reroll costs\" setting no longer warns it is experimental and may freeze the UI — it's stable. Default unchanged (on).\n\n### My Listings: a fresh undercut now shows without opening the item\n\nThe Top Order Price column trusted the last-opened order book, so an undercut stayed hidden behind your own price until you reopened the item. It now surfaces the game snapshot's price when it beats you (a rival's by definition, never your own order) — so undercuts show on their own, without ever displaying your own listing or downgrading a genuinely-fresher book. The age column follows suit.\n\n### Labyrinth: the calibration recorder is now passive and accumulates across runs\n\nNo Record button any more — every combat fight is kept automatically, per character and tagged with the gear it was fought in, pooled into 10-level bands so a monster's scattered random levels still accumulate. Press **Replay** to judge whatever has built up on your current gear; a loadout change starts a fresh pool. Bounded to 500 fights.\n\n### Labyrinth: a fight recorder and a calibration replay\n\nThe Sim accuracy record says _whether_ a room's clear chance is wrong, not _why_ — a timeout and a death are both \"lost\", and the fixes are opposite. This adds the decomposition.\n\n- **Replay** re-sims the recorded rooms and puts your real damage/s, the monster's, the clear rate and the fight length beside the sim's, each with a noise-aware verdict and a one-line diagnosis of which side the sim gets wrong. **Save comparison** downloads the whole check as one file.\n- **Capture** saves the raw tick feed of a fight — stun uptime, ability cadence, per-hit damage — for mechanism-level analysis (previously console-only).\n- Measurement fixes found via real captures: damage measured **gross** (not net of your ~16 HP/s regen, which made monsters look 15–40% weaker than the sim); self-healing monsters (life drain, the Dryad) no longer **split one fight into several**; partial-HP fights are dropped; and the diagnosis names all four over/under directions.\n\n### Labyrinth: full-ability sim calibration (testing), tooltip clear-time, tidier panel bar\n\n- Testing setting to model a monster's **full ability kit** in the sim — the labyrinth otherwise builds every monster at tier 0 and drops its gated abilities (the Cyclops's stun, shred, self-buffs). Off by default; it's part of the cache key, so toggling re-sims.\n- **Est. clear time** on combat/skilling room hover, shown past the tile's \"999+\" cap.\n- Room Logs top bar wraps cleanly; \"Sim accuracy\" tab shortened to \"Accuracy\".\n\n### Labyrinth: stop counting un-fought rooms as clears, and an uncapped sim option\n\n- **Phantom clears removed** — a revealed-but-unfought room (shroud, beacon, floor skip) is marked `isCleared` with no entry; it no longer counts as a win and drags the accuracy record toward \"sim too low\".\n- **Uncapped** toggle lifts the sim's time cap for the next Recompute, so a slow, timeout-heavy room reaches its precision target instead of a wide \"(capped)\" band.\n\n### Labyrinth: Recompute button, honest attempt counts, and a panel that stays put\n\n- **Recompute** throws away cached clear-chance sims and re-runs the visible rooms — a plain equip doesn't always refresh a sim cached under old gear.\n- Room Log shows the server's own attempt count, not just the fights it watched on the combat view: \"Won 0/6 · 26 total\".\n- The panel keeps its scroll position across redraws instead of jumping to the top on every update.\n\n### Undercut alerts finally fire passively, backed by Mooket\n\nThe alert distrusts any price older than 15 minutes, but the game snapshot refreshes only ~hourly — so undercuts on items you weren't watching stayed silent for hours. It now also consults the freshest **Mooket** sighting per listing (refreshed every 15 min), reporting its true age, so it can fire for items you never opened. Rides the Price history panel setting.\n\n### Selectable price-history source: mooket I alongside mooket II\n\nA **Market: Price history data source** setting picks between the Q7 pool (mooket II, default — ask/bid/avg/volume) and IOMisaka's original (mooket I — ask/bid only). On mooket I the chart's third line is a computed \"Mid\", the volume bars vanish, and the goal planner's volume limits switch off (a source with no volume tells us nothing about how fast a thing sells — unknown, not a measured zero). The order books you contribute back follow the selected source.\n\n### \"Mooket Refresh\" button on the My Listings tab\n\nA **Mooket Refresh** button in the My Listings header pulls fresher Top Order Prices for every listed item from the Mooket pool in one click, patching the fresher ones into the price cache the column redraws from — no opening each item by hand. Skips a sighting older than the game's snapshot, and keeps a one-sided sighting's other side. Ri";
+
+    var forkOverview = "This is the **Millennium44 fork of Toolasha**. It folds MWI Combat Suite into Toolasha — live DPS tracking, loot and drop tracking, drop-luck analysis, and a full labyrinth simulator — so one script gives you both halves of the game instead of two userscripts.\n\n### Combat & simulators\n\n- Live DPS, hit/crit rate, damage-taken and net-sustain read off your own fights.\n- Loot and drop tracking with drop-luck analysis that judges combat, gathering and production.\n- A combat recorder: record real fights, replay them against the simulator, get a verdict with honest noise bands.\n- A combat simulator whose upgrade picks are costed and ranked on real market and credit costs.\n- Per-character combat stats, sim state and histories — no character reads another's books.\n\n### Market & profit\n\n- One market price API prices almost everything: upgrades, net worth, drop income, guild tokens, every action.\n- Prices capped by the volume the market has actually absorbed, so thin markets stop inflating rankings.\n- Profit lines on the action bar, pinned pages, alchemy rankings and the combat profit panel.\n- Market-history viewer with a live undercut alert that re-checks against a refreshed snapshot.\n- An upgrade advisor that costs and ranks gear and ability candidates against live prices.\n\n### Labyrinth\n\n- A labyrinth simulator with auto-pathing and auto-beaconing planned from the actual run.\n- Multi-target analysis with combined armour swaps and supply-aware torch/shroud/beacon planning.\n- Skilling-sim candidates scoped to the skill you are simming, with the skip level set for you.\n- Upgrade, All-Fights and Skilling analyses, each exportable to CSV.\n\n### Guild\n\n- Live trial measurement: per-player DPS and damage/healing attribution from the fight you watch.\n- Tier read straight off the boss bar, with pace, ETA and payout maths.\n- A trial report your guild can actually read, with honest coverage caveats.\n\n### Quality of life\n\n- A curated overlay of tiles with bundled presets, activity auto-switching, and tiles that open their panels.\n- A Ctrl+K (Cmd+K) command palette over every panel, overlay row, saved layout and setting.\n- Mobile-friendly panels: viewport clamping, reachable close buttons, finger-sized targets, a floating launcher.\n- Notifications for empty queues, community-buff expiry, and finished labyrinth runs.\n- Task tools: measured tokens/hour, net task income, and reroll handling that takes the free MooPass reroll.\n- Equipment Savings (\"eWatch\"): savings goals for gear and ability levels, fed from the simulators.\n- A goal planner that turns \"get me X gold / level N\" into a ranked plan from your real measured rates.\n\n### Data & sync\n\n- Cross-device sync of your whole database through one private GitHub gist you own.\n- Gzip-compressed, optionally AES-256 encrypted, conflict-aware, guarded against overwriting a year of data.\n- Chunked per-period history that survives months, with honest quota handling and per-character backups.\n- Hundreds of bug fixes and a test suite grown from ~2,300 to over 8,500 tests.\n";
+
+    /**
+     * What's New — the once-per-update popup, and the conservative-defaults policy.
+     *
+     * Two jobs that share one piece of bookkeeping. The bookkeeping is a stored
+     * record of which build spoke last and which setting IDs the user has already
+     * been shown; the popup announces whatever is new since, and the policy — for
+     * people who would rather their script never changed itself — forces any newly
+     * arrived on-by-default switch off before the features read it.
+     *
+     * ## Why the policy runs before features initialise
+     *
+     * A switch turned off *after* startup has already run once. The whole promise
+     * of "new settings start off" is that the new thing never happens, so the
+     * entrypoint calls `applyPolicy()` between loading settings and initialising
+     * features, and `maybeShow()` only after the page is up.
+     *
+     * ## Why the state is per character
+     *
+     * Settings themselves are per character, so "which settings have you been
+     * shown" has to be too — a policy applied for one character and assumed for
+     * another would leave the second character's new switches on.
+     */
+
+
+    const STATE_KEY_PREFIX = 'whatsNew_state';
+
+    /**
+     * The first-run answer that opens the character picker instead of applying a
+     * preset. A sentinel rather than a preset id so `getPreset` never matches it and
+     * the copy path stays distinct from "apply this bundle".
+     */
+    const COPY_FROM_CHARACTER = '__copyFromCharacter';
+
+    /** The first-run answer that leaves every setting exactly as it is. */
+    const NO_CHANGE = '__noChange';
+
+    const COLORS$5 = {
+        background: 'rgba(10, 10, 20, 0.98)',
+        border: 'rgba(96, 165, 250, 0.5)',
+        accent: '#60a5fa',
+        text: '#e0e0e0',
+        dim: '#888',
+    };
+
+    /**
+     * Decode the handful of HTML entities the changelog carries. The source is
+     * markdown that occasionally escapes angle brackets and quotes (e.g. the
+     * "&lt;name&gt; has …" announcement shape), and this popup shows it as plain
+     * text, so the escapes have to come back to the characters they stand for.
+     * `&amp;` is decoded last so an escaped entity like `&amp;lt;` does not become
+     * `<`.
+     * @param {string} text
+     * @returns {string}
+     */
+    function decodeEntities(text) {
+        return String(text)
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/&#34;/g, '"')
+            .replace(/&quot;/g, '"')
+            .replace(/&#39;/g, "'")
+            .replace(/&amp;/g, '&');
+    }
+
+    /**
+     * Append one line's worth of inline-formatted content to a parent node, built
+     * as real DOM nodes rather than injected HTML. `**bold**` becomes a bold span,
+     * `` `code` `` is shown as its inner text with the backticks stripped, and HTML
+     * entities are decoded. The changelog is build-embedded and therefore trusted,
+     * but nodes are constructed anyway so no markdown is ever parsed as HTML.
+     * @param {Node} parent
+     * @param {string} text
+     * @private
+     */
+    function appendInline(parent, text) {
+        const pattern = /\*\*([^*]+?)\*\*|`([^`]+?)`/g;
+        let lastIndex = 0;
+        let match;
+        while ((match = pattern.exec(text)) !== null) {
+            if (match.index > lastIndex) {
+                parent.appendChild(document.createTextNode(decodeEntities(text.slice(lastIndex, match.index))));
+            }
+            if (match[1] !== undefined) {
+                const strong = document.createElement('span');
+                strong.style.fontWeight = '700';
+                strong.textContent = decodeEntities(match[1]);
+                parent.appendChild(strong);
+            } else {
+                parent.appendChild(document.createTextNode(decodeEntities(match[2])));
+            }
+            lastIndex = pattern.lastIndex;
+        }
+        if (lastIndex < text.length) {
+            parent.appendChild(document.createTextNode(decodeEntities(text.slice(lastIndex))));
+        }
+    }
+
+    /**
+     * Render a slice of the embedded fork markdown into `root` as readable DOM.
+     *
+     * A tiny, dependency-free markdown-to-DOM pass: `##` section headings are
+     * skipped (the "Unreleased — branch …" line is not for the reader), `###`
+     * becomes an accented heading, `-` becomes a bullet, anything else non-blank is
+     * a paragraph, and every text run is inline-formatted through `appendInline`.
+     * Shared by the changelog and the newcomer overview.
+     * @param {Node} root - Container to append rendered nodes to
+     * @param {string} markdown - The embedded markdown to render
+     */
+    function renderForkMarkdown(root, markdown) {
+        const lines = String(markdown).split('\n');
+        for (const raw of lines) {
+            const line = raw.replace(/\s+$/, '');
+            if (!line.trim()) continue; // spacing comes from element margins
+            if (/^##\s/.test(line)) continue; // the "Unreleased — branch …" heading is not shown
+            const heading = line.match(/^###\s+(.+)/);
+            if (heading) {
+                const el = document.createElement('div');
+                Object.assign(el.style, {
+                    fontWeight: '700',
+                    color: COLORS$5.accent,
+                    margin: '10px 0 4px',
+                    fontSize: '12.5px',
+                });
+                appendInline(el, heading[1]);
+                root.appendChild(el);
+                continue;
+            }
+            const bullet = line.match(/^-\s+(.+)/);
+            if (bullet) {
+                const el = document.createElement('div');
+                Object.assign(el.style, { margin: '2px 0', color: '#bbb', lineHeight: '1.4' });
+                el.appendChild(document.createTextNode('• '));
+                appendInline(el, bullet[1]);
+                root.appendChild(el);
+                continue;
+            }
+            const paragraph = document.createElement('div');
+            Object.assign(paragraph.style, { margin: '4px 0', color: '#bbb', lineHeight: '1.4' });
+            appendInline(paragraph, line);
+            root.appendChild(paragraph);
+        }
+    }
+
+    class WhatsNew {
+        constructor() {
+            this.panel = null;
+            this._pending = null;
+            this._keyHandler = null;
+        }
+
+        /** @private */
+        _stateKey() {
+            return `${STATE_KEY_PREFIX}_${dataManager.getCurrentCharacterId() || 'default'}`;
+        }
+
+        /** @private */
+        _identity() {
+            return buildIdentity(bundleBridge_js.toolashaRoot() || {});
+        }
+
+        /**
+         * Reconcile the stored record with this build. Runs before features
+         * initialise, because the conservative policy has to land before anything
+         * reads the settings it changes.
+         */
+        async applyPolicy() {
+            try {
+                const current = this._identity();
+                const schemaIds = settingsSchema_js.getAllSettingIds();
+                const stored = await storage.getJSON(this._stateKey(), 'settings', null);
+
+                // First run of the what's-new system. Two very different people
+                // land here: a genuinely fresh install, and somebody arriving from
+                // another build of Toolasha — usually the upstream fork, which
+                // saves its settings under the same keys. The saved map's keys are
+                // a fingerprint of the schema that wrote it, so the settings this
+                // fork added are computable even though the other script never ran
+                // a line of our code.
+                if (!stored) {
+                    const storedIds = await config.storedSettingIds();
+                    // Whether there is another character to copy settings from — the
+                    // one-click "make this alt like my main" a fresh character wants.
+                    const canCopy = (await config.getKnownCharacterCount()) > 1;
+                    if (!storedIds || storedIds.length === 0) {
+                        // Nothing saved at all: a genuinely fresh install. Nobody
+                        // has opinions yet, so the useful question is not "which of
+                        // these 40 new switches" but "what kind of player are you".
+                        await this._offerFirstRunPreset(current, canCopy);
+                    } else {
+                        const inherited = newSettingIds(schemaIds, storedIds);
+                        if (inherited.length > 0) {
+                            await this._offerFirstRunChoice(inherited, current, canCopy);
+                        } else if (canCopy) {
+                            // A fresh alt that inherited a complete settings map has
+                            // nothing new to reconcile, but "set me up like my main"
+                            // is still the thing it wants — so offer just that.
+                            await this._offerCopyOnly(current);
+                        }
+                    }
+                    await this._saveState(current, schemaIds);
+                    return;
+                }
+
+                const fresh = newSettingIds(schemaIds, stored.knownIds || []);
+                const changed = identityChanged(stored, current);
+                if (!changed && fresh.length === 0) return;
+
+                let turnedOff = [];
+                if (fresh.length > 0 && config.getSetting('whatsNew_newDefaultsOff')) {
+                    turnedOff = conservativeOverrides(fresh, settingsSchema_js.getSettingDefinition);
+                    for (const id of turnedOff) config.setSetting(id, false);
+                }
+
+                this._pending = {
+                    headline: describeUpdate(stored, current),
+                    forkChanged: Boolean(stored.fork && stored.fork !== current.fork),
+                    newIds: fresh,
+                    turnedOff: new Set(turnedOff),
+                    isNewcomer: false,
+                };
+
+                // Recorded now rather than after the popup, so a closed tab cannot
+                // re-run the policy and flip a switch the user turned back on
+                await this._saveState(current, schemaIds);
+            } catch (error) {
+                console.error('[WhatsNew] Reconciling the update state failed:', error);
+            }
+        }
+
+        /**
+         * The one-time choice for someone arriving with another build's settings.
+         *
+         * A returning user already has opinions saved, so the safe answer is to
+         * touch nothing — "Keep my current settings" is the default and the primary
+         * button. The presets follow it, for the person who would rather start from
+         * a known configuration than reconcile a fork's worth of new switches by
+         * hand. The two kinds of answer are not symmetric, and the message says so:
+         * keeping changes nothing, whereas a preset overwrites what is there — which
+         * is why `applyPreset` snapshots first, so Restore in the Toolasha tab can
+         * walk it back.
+         *
+         * Awaited before features initialise, deliberately: "keep my current
+         * settings" is only true if the new features never run — a feature switched
+         * off after startup has already announced itself. The page underneath is the
+         * game, which works fine while this waits; closing the dialog counts as
+         * keeping things as they were, because the person who dismisses a dialog
+         * unread is exactly the person who did not ask for new behaviour.
+         *
+         * @param {Array<string>} inherited - Setting IDs this fork adds over the
+         *   build whose settings were found
+         * @param {{fork: string, version: string}} current - This build
+         * @private
+         */
+        async _offerFirstRunChoice(inherited, current, canCopy = false) {
+            const conservative = conservativeOverrides(inherited, settingsSchema_js.getSettingDefinition);
+            const answer = await choiceDialog_js.askChoice({
+                title: `Welcome to ${current.fork}`,
+                message:
+                    `This build has ${inherited.length} setting${inherited.length === 1 ? '' : 's'} that did not exist ` +
+                    `in the version your settings came from. ${conservative.length} of them switch new behaviour on by ` +
+                    'default.\n\n' +
+                    'Keeping your settings changes nothing. A preset replaces your current settings — you can undo it ' +
+                    'later with Restore in the Toolasha tab.',
+                choices: [
+                    {
+                        value: 'keepCurrent',
+                        label: 'Keep my current settings',
+                        tone: 'primary',
+                        hint:
+                            'Change nothing — leave every setting exactly where it is now. New features stay off ' +
+                            'until you turn them on.',
+                    },
+                    ...(canCopy ? [this._copyChoice()] : []),
+                    ...SETTING_PRESETS.map((preset) => ({
+                        value: preset.id,
+                        label: preset.label,
+                        hint: preset.description,
+                    })),
+                ],
+            });
+
+            // Copying from another character resolves the whole question — the copied
+            // map is the answer, so nothing below runs. A cancelled pick falls
+            // through to the safe "keep current" path.
+            if (answer === COPY_FROM_CHARACTER && (await this._offerCopyFromCharacter(current))) {
+                return;
+            }
+
+            // A real preset id — and only a real preset id — takes the preset path.
+            // `keepCurrent` and dismissal (null) both fall through to the safe path,
+            // because the user asked for either "no change" or nothing at all.
+            const chosenPreset = getPreset(answer);
+            if (chosenPreset) {
+                await applyPreset(chosenPreset.id);
+                this._pending = {
+                    headline: `Switched to ${current.fork} ${current.version} — ${chosenPreset.label} preset`,
+                    forkChanged: true,
+                    newIds: [],
+                    turnedOff: new Set(),
+                    isNewcomer: true,
+                };
+                return;
+            }
+
+            // The safe path: keep every current value, and hold the conservative
+            // policy so genuinely-new on-by-default switches stay off until asked
+            // for. Dismissal lands here too — the person who closes a dialog unread
+            // is exactly the person who least wants their config touched.
+            config.setSetting('whatsNew_newDefaultsOff', true);
+            for (const id of conservative) config.setSetting(id, false);
+
+            // The full popup still follows after startup, live switches and all —
+            // the choice was wholesale, and the list is where it gets refined
+            this._pending = {
+                headline: `Switched to ${current.fork} ${current.version}`,
+                forkChanged: true,
+                newIds: inherited,
+                turnedOff: new Set(conservative),
+                isNewcomer: true,
+            };
+        }
+
+        /**
+         * The first thing a brand-new install is asked.
+         *
+         * On a fresh install every switch is at its default, which is very nearly
+         * "everything on" — hundreds of features arriving at once for somebody who
+         * has not yet decided which parts of the game they play. A preset is a
+         * one-click answer to that, and the settings panel keeps the same buttons
+         * for whenever they change their mind.
+         *
+         * Awaited before features initialise for the same reason the inherited-
+         * settings question is: a feature switched off after startup has already
+         * run once. Dismissing the dialog — Escape, or clicking away — is "No
+         * change": every setting is left exactly as it is. That is the safe answer
+         * both for a fresh install (whose defaults are already what "no change"
+         * means) and for a character that reached this from the settings-panel
+         * button with settings worth keeping.
+         *
+         * @param {{fork: string, version: string}} current - This build
+         * @param {boolean} [canCopy=false] - Whether another character can be copied from
+         * @private
+         */
+        async _offerFirstRunPreset(current, canCopy = false) {
+            try {
+                const defaults = getPreset(DEFAULT_PRESET_ID);
+                const answer = await choiceDialog_js.askChoice({
+                    title: `Welcome to ${current.fork}`,
+                    message:
+                        'Toolasha ships several hundred features. Pick a starting point and the rest stay out of your ' +
+                        'way — you can change any of it, or apply a different preset, from the Toolasha tab in ' +
+                        'Settings.',
+                    choices: [
+                        { value: DEFAULT_PRESET_ID, label: defaults.label, hint: defaults.description, tone: 'primary' },
+                        {
+                            value: NO_CHANGE,
+                            label: 'No change',
+                            hint: 'Close without changing anything — leave every setting exactly as it is now.',
+                        },
+                        ...(canCopy ? [this._copyChoice()] : []),
+                        ...SETTING_PRESETS.filter((preset) => preset.id !== DEFAULT_PRESET_ID).map((preset) => ({
+                            value: preset.id,
+                            label: preset.label,
+                            hint: preset.description,
+                        })),
+                    ],
+                });
+
+                // Copying from another character settles it, whether or not it
+                // succeeds — a cancelled pick means "no change", not "reset me".
+                if (answer === COPY_FROM_CHARACTER) {
+                    await this._offerCopyFromCharacter(current);
+                    return;
+                }
+
+                const chosen = getPreset(answer);
+                if (chosen) {
+                    await applyPreset(chosen.id);
+                    this._pending = {
+                        headline: `Installed ${current.fork} ${current.version} — ${chosen.label} preset`,
+                        forkChanged: false,
+                        newIds: [],
+                        turnedOff: new Set(),
+                        isNewcomer: true,
+                    };
+                    return;
+                }
+
+                // "No change", or a dismissal: apply nothing. The overview still
+                // follows for a first-timer, but not one setting is touched.
+                this._pending = {
+                    headline: `${current.fork} ${current.version}`,
+                    forkChanged: false,
+                    newIds: [],
+                    turnedOff: new Set(),
+                    isNewcomer: true,
+                };
+            } catch (error) {
+                console.error('[WhatsNew] Offering the first-run preset failed:', error);
+            }
+        }
+
+        /**
+         * The "copy from another character" option, shared by every first-run
+         * prompt.
+         * @private
+         */
+        _copyChoice() {
+            return {
+                value: COPY_FROM_CHARACTER,
+                label: 'Copy from another character',
+                hint: 'Use the settings from one of your other characters — the quickest way to set up an alt.',
+            };
+        }
+
+        /**
+         * Pick a character to copy from, and copy it. A no-op that returns false when
+         * there is nothing to copy or the pick is cancelled, so the caller can fall
+         * back to its own safe answer.
+         *
+         * @param {{fork: string, version: string}} current - This build, for the headline
+         * @returns {Promise<boolean>} True when settings were copied
+         * @private
+         */
+        async _offerCopyFromCharacter(current) {
+            const candidates = await config.charactersWithSettings();
+            if (!candidates.length) {
+                return false;
+            }
+            const sourceId = await this._pickSourceCharacter(candidates);
+            if (!sourceId) {
+                return false;
+            }
+            const result = await config.copySettingsFromCharacter(sourceId);
+            if (!result?.success) {
+                return false;
+            }
+            const source = candidates.find((character) => String(character.id) === String(sourceId));
+            this._pending = {
+                headline: `Set up as ${current.fork} ${current.version} — copied from ${source?.name || sourceId}`,
+                forkChanged: false,
+                newIds: [],
+                turnedOff: new Set(),
+                isNewcomer: true,
+            };
+            return true;
+        }
+
+        /**
+         * The minimal prompt for a fresh alt that already has a full settings map:
+         * keep what it has, or copy from another character.
+         * @param {{fork: string, version: string}} current - This build
+         * @private
+         */
+        async _offerCopyOnly(current) {
+            const answer = await choiceDialog_js.askChoice({
+                title: `Welcome to ${current.fork}`,
+                message: 'Set this character up from one of your other characters, or keep what it has now.',
+                choices: [
+                    {
+                        value: 'keep',
+                        label: 'Keep current settings',
+                        tone: 'primary',
+                        hint: 'Leave this character exactly as it is.',
+                    },
+                    this._copyChoice(),
+                ],
+            });
+            if (answer === COPY_FROM_CHARACTER) {
+                await this._offerCopyFromCharacter(current);
+            }
+        }
+
+        /**
+         * A scrollable list of characters to copy settings from — one row each,
+         * because an account can have well over a hundred and a wall of choice-dialog
+         * buttons would not fit. Resolves to the chosen id, or null on cancel/escape.
+         *
+         * @param {Array<{id: string, name: string}>} candidates
+         * @returns {Promise<string|null>}
+         * @private
+         */
+        _pickSourceCharacter(candidates) {
+            return new Promise((resolve) => {
+                const backdrop = document.createElement('div');
+                Object.assign(backdrop.style, {
+                    position: 'fixed',
+                    inset: '0',
+                    background: 'rgba(0,0,0,0.55)',
+                    zIndex: String(config.Z_FLOATING_PANEL + 1),
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                });
+
+                const dialog = document.createElement('div');
+                Object.assign(dialog.style, {
+                    minWidth: '300px',
+                    maxWidth: '420px',
+                    maxHeight: '70vh',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    background: COLORS$5.background,
+                    border: `1px solid ${COLORS$5.border}`,
+                    borderRadius: '8px',
+                    color: COLORS$5.text,
+                    fontSize: '13px',
+                    padding: '14px 16px 12px',
+                });
+
+                const heading = document.createElement('div');
+                heading.textContent = 'Copy settings from';
+                Object.assign(heading.style, { fontWeight: 'bold', color: COLORS$5.accent, marginBottom: '8px' });
+                dialog.appendChild(heading);
+
+                let settled = false;
+                const finish = (value) => {
+                    if (settled) return;
+                    settled = true;
+                    document.removeEventListener('keydown', onKeyDown, true);
+                    backdrop.remove();
+                    resolve(value);
+                };
+                const onKeyDown = (event) => {
+                    if (event.key !== 'Escape') return;
+                    event.stopPropagation();
+                    event.preventDefault();
+                    finish(null);
+                };
+
+                const list = document.createElement('div');
+                Object.assign(list.style, { overflowY: 'auto', flex: '1', margin: '0 -2px' });
+                for (const character of candidates) {
+                    const row = document.createElement('button');
+                    row.textContent = character.name || character.id;
+                    Object.assign(row.style, {
+                        display: 'block',
+                        width: '100%',
+                        textAlign: 'left',
+                        background: 'rgba(255,255,255,0.05)',
+                        border: `1px solid ${COLORS$5.border}`,
+                        borderRadius: '4px',
+                        color: COLORS$5.text,
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        padding: '6px 10px',
+                        margin: '3px 2px',
+                    });
+                    row.addEventListener('click', () => finish(String(character.id)));
+                    list.appendChild(row);
+                }
+                dialog.appendChild(list);
+
+                const cancel = document.createElement('button');
+                cancel.textContent = 'Cancel';
+                Object.assign(cancel.style, {
+                    marginTop: '10px',
+                    alignSelf: 'flex-end',
+                    background: 'rgba(255,255,255,0.07)',
+                    border: `1px solid ${COLORS$5.border}`,
+                    borderRadius: '4px',
+                    color: COLORS$5.text,
+                    cursor: 'pointer',
+                    padding: '5px 14px',
+                });
+                cancel.addEventListener('click', () => finish(null));
+                dialog.appendChild(cancel);
+
+                backdrop.appendChild(dialog);
+                backdrop.addEventListener('mousedown', (event) => {
+                    if (event.target === backdrop) finish(null);
+                });
+                document.addEventListener('keydown', onKeyDown, true);
+                document.body.appendChild(backdrop);
+            });
+        }
+
+        /**
+         * Re-open the first-run setup for the current character, on demand.
+         *
+         * The first-run prompt is one-shot per character, and a stray click outside
+         * it counts as a dismissal — so a button in the settings panel that re-opens
+         * it is the recoverable way back, on this character or any other alt. Offers
+         * the presets and "copy from another character"; the changelog popup that
+         * follows reflects whatever was applied.
+         */
+        async promptSetup() {
+            try {
+                const current = this._identity();
+                const canCopy = (await config.getKnownCharacterCount()) > 1;
+                await this._offerFirstRunPreset(current, canCopy);
+                this.maybeShow();
+            } catch (error) {
+                console.error('[WhatsNew] Manual setup failed:', error);
+            }
+        }
+
+        /** @private */
+        async _saveState(identity, schemaIds) {
+            await storage.setJSON(this._stateKey(), { ...identity, knownIds: schemaIds, seenAt: Date.now() }, 'settings');
+        }
+
+        /** Show the popup, where there is something to show and it is wanted. */
+        maybeShow() {
+            if (!this._pending) return;
+            if (!config.getSetting('whatsNew_showPopup', true)) return;
+            try {
+                this._buildPanel(this._pending);
+            } catch (error) {
+                console.error('[WhatsNew] Building the update popup failed:', error);
+            }
+            this._pending = null;
+        }
+
+        /** @private */
+        _buildPanel({ headline, forkChanged, newIds, turnedOff, isNewcomer }) {
+            this.close();
+
+            const panel = document.createElement('div');
+            panel.id = 'toolasha-whats-new';
+            Object.assign(panel.style, {
+                position: 'fixed',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                zIndex: config.Z_FLOATING_PANEL,
+                width: 'min(560px, 92vw)',
+                maxHeight: '82vh',
+                display: 'flex',
+                flexDirection: 'column',
+                background: COLORS$5.background,
+                border: `2px solid ${COLORS$5.border}`,
+                borderRadius: '10px',
+                color: COLORS$5.text,
+                fontFamily: "'Segoe UI', sans-serif",
+                fontSize: '13px',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+            });
+
+            const header = document.createElement('div');
+            Object.assign(header.style, {
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '10px 14px',
+                borderBottom: `1px solid ${COLORS$5.border}`,
+            });
+            const title = document.createElement('div');
+            title.innerHTML =
+                `<span style="font-weight:700; font-size:14px; color:${COLORS$5.accent};">Toolasha — what's new</span>` +
+                `<div style="font-size:11px; color:${forkChanged ? '#ffa500' : COLORS$5.dim}; margin-top:2px;">${headline}</div>`;
+            const close = document.createElement('button');
+            close.textContent = '×';
+            Object.assign(close.style, {
+                background: 'none',
+                border: 'none',
+                color: '#aaa',
+                fontSize: '22px',
+                cursor: 'pointer',
+                lineHeight: '1',
+            });
+            close.addEventListener('click', () => this.close());
+            header.appendChild(title);
+            header.appendChild(close);
+            panel.appendChild(header);
+
+            const body = document.createElement('div');
+            Object.assign(body.style, { overflowY: 'auto', padding: '10px 14px', flex: '1' });
+
+            if (newIds.length > 0) {
+                const section = document.createElement('div');
+                section.innerHTML = `<div style="font-weight:700; color:${COLORS$5.accent}; margin-bottom:6px;">New settings</div>`;
+                if (turnedOff.size > 0) {
+                    const note = document.createElement('div');
+                    note.textContent =
+                        `${turnedOff.size} of these would normally start on, and start off because ` +
+                        `"New settings start turned off" is enabled.`;
+                    Object.assign(note.style, { fontSize: '11px', color: '#ffa500', marginBottom: '6px' });
+                    section.appendChild(note);
+                }
+                for (const id of newIds) {
+                    const row = this._settingRow(id, turnedOff.has(id));
+                    if (row) section.appendChild(row);
+                }
+                body.appendChild(section);
+            }
+
+            // A fresh install, or someone arriving from another build (upstream
+            // Toolasha included), gets the at-a-glance tour before the changelog —
+            // the changelog answers "what changed", which means nothing to someone
+            // who has not seen the thing it changed.
+            if ((isNewcomer || forkChanged) && forkOverview?.trim()) {
+                const overview = document.createElement('div');
+                const heading = document.createElement('div');
+                Object.assign(heading.style, {
+                    fontWeight: '700',
+                    color: COLORS$5.accent,
+                    margin: '4px 0 6px',
+                    fontSize: '14px',
+                });
+                heading.textContent = 'Toolasha — at a glance';
+                overview.appendChild(heading);
+                const box = document.createElement('div');
+                Object.assign(box.style, {
+                    fontSize: '12px',
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid #222',
+                    borderRadius: '6px',
+                    padding: '8px 10px',
+                    marginBottom: '12px',
+                });
+                renderForkMarkdown(box, forkOverview.trim());
+                overview.appendChild(box);
+                body.appendChild(overview);
+            }
+
+            if (forkChangelog?.trim()) {
+                const log = document.createElement('div');
+                const heading = document.createElement('div');
+                Object.assign(heading.style, {
+                    fontWeight: '700',
+                    color: COLORS$5.accent,
+                    margin: '10px 0 6px',
+                    fontSize: '14px',
+                });
+                heading.textContent = 'Changelog';
+                log.appendChild(heading);
+                const box = document.createElement('div');
+                Object.assign(box.style, {
+                    fontSize: '12px',
+                    color: '#bbb',
+                    background: 'rgba(255,255,255,0.03)',
+                    border: '1px solid #222',
+                    borderRadius: '6px',
+                    padding: '8px 10px',
+                });
+                renderForkMarkdown(box, forkChangelog.trim());
+                log.appendChild(box);
+                body.appendChild(log);
+            }
+
+            panel.appendChild(body);
+
+            const footer = document.createElement('div');
+            Object.assign(footer.style, {
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '8px 14px',
+                borderTop: `1px solid ${COLORS$5.border}`,
+                fontSize: '11px',
+                color: COLORS$5.dim,
+            });
+            // The opt-out lives on the popup itself: the moment someone decides
+            // they never want to see it again is the moment it is on screen
+            const optOut = document.createElement('label');
+            optOut.style.cursor = 'pointer';
+            const optOutBox = document.createElement('input');
+            optOutBox.type = 'checkbox';
+            optOutBox.checked = !config.getSetting('whatsNew_showPopup', true);
+            optOutBox.style.marginRight = '5px';
+            optOutBox.addEventListener('change', () => config.setSetting('whatsNew_showPopup', !optOutBox.checked));
+            optOut.appendChild(optOutBox);
+            optOut.appendChild(document.createTextNode("Don't show this after updates"));
+            const ok = document.createElement('button');
+            ok.textContent = 'Close';
+            Object.assign(ok.style, {
+                background: 'rgba(96, 165, 250, 0.15)',
+                border: `1px solid ${COLORS$5.border}`,
+                borderRadius: '4px',
+                color: COLORS$5.accent,
+                padding: '4px 14px',
+                cursor: 'pointer',
+            });
+            ok.addEventListener('click', () => this.close());
+            footer.appendChild(optOut);
+            footer.appendChild(ok);
+            panel.appendChild(footer);
+
+            document.body.appendChild(panel);
+            panelZIndex_js.registerFloatingPanel(panel);
+            panelZIndex_js.bringPanelToFront(panel);
+            this.panel = panel;
+
+            // Escape closes it, captured because the game listens for Escape too
+            // and would close whatever is behind this as well
+            this._keyHandler = (event) => {
+                if (event.key !== 'Escape') return;
+                event.stopPropagation();
+                event.preventDefault();
+                this.close();
+            };
+            document.addEventListener('keydown', this._keyHandler, true);
+
+            // Focused so Enter and Tab work from the keyboard, and so the popup
+            // takes focus away from whatever was behind it
+            ok.focus();
+        }
+
+        /**
+         * One new setting, with its real control — flipping it here is flipping it,
+         * not a preview of somewhere else it could be flipped.
+         * @private
+         */
+        _settingRow(id, wasTurnedOff) {
+            const definition = settingsSchema_js.getSettingDefinition(id);
+            if (!definition) return null;
+
+            const row = document.createElement('div');
+            Object.assign(row.style, {
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '5px 0',
+                borderBottom: '1px solid #1a1a2e',
+            });
+
+            const label = document.createElement('div');
+            label.innerHTML =
+                `<div>${definition.label}${wasTurnedOff ? ' <span style="color:#ffa500; font-size:10px;">(kept off)</span>' : ''}</div>` +
+                (definition.help ? `<div style="font-size:11px; color:${COLORS$5.dim};">${definition.help}</div>` : '');
+            label.style.flex = '1';
+            row.appendChild(label);
+
+            const type = definition.type || 'checkbox';
+            let control = null;
+            if (type === 'checkbox') {
+                control = document.createElement('input');
+                control.type = 'checkbox';
+                control.checked = Boolean(config.getSetting(id, definition.default ?? false));
+                control.addEventListener('change', () => config.setSetting(id, control.checked));
+            } else if (type === 'number') {
+                control = document.createElement('input');
+                control.type = 'number';
+                if (definition.min !== undefined) control.min = definition.min;
+                if (definition.max !== undefined) control.max = definition.max;
+                control.value = config.getSettingValue(id, definition.default ?? 0);
+                control.style.width = '70px';
+                control.addEventListener('change', () => config.setSetting(id, Number(control.value)));
+            } else if (type === 'select' && Array.isArray(definition.options)) {
+                control = document.createElement('select');
+                for (const option of definition.options) {
+                    const el = document.createElement('option');
+                    el.value = option.value ?? option;
+                    el.textContent = option.label ?? option;
+                    control.appendChild(el);
+                }
+                control.value = config.getSettingValue(id, definition.default ?? '');
+                control.addEventListener('change', () => config.setSetting(id, control.value));
+            } else {
+                control = document.createElement('span');
+                control.textContent = 'in Settings';
+                control.style.color = COLORS$5.dim;
+                control.style.fontSize = '11px';
+            }
+            if (control.tagName !== 'SPAN') {
+                Object.assign(control.style, {
+                    background: '#1a1a2e',
+                    color: COLORS$5.text,
+                    border: '1px solid #444',
+                    borderRadius: '3px',
+                });
+            }
+            row.appendChild(control);
+            return row;
+        }
+
+        close() {
+            if (this._keyHandler) {
+                document.removeEventListener('keydown', this._keyHandler, true);
+                this._keyHandler = null;
+            }
+            if (this.panel) {
+                panelZIndex_js.unregisterFloatingPanel(this.panel);
+                this.panel.remove();
+                this.panel = null;
+            }
+        }
+    }
+
+    const whatsNew = new WhatsNew();
+
+    /**
      * Iron Cow Mode
      * Force-disables and locks all market/profit-related settings for players
      * who have no marketplace access.
@@ -55176,7 +56651,7 @@ ${starCSS}
         if (monitor) monitor.enabled = enabled;
     }
 
-    const COLORS$5 = {
+    const COLORS$4 = {
         background: 'rgba(5, 5, 15, 0.95)',
         headerBg: 'rgba(15, 5, 35, 0.7)',
         border: 'rgba(0, 255, 234, 0.4)',
@@ -55251,12 +56726,12 @@ ${starCSS}
                 zIndex: String(config.Z_FLOATING_PANEL),
                 // Clamped so the first open on a phone is not wider than the screen
                 width: 'min(380px, 92vw)',
-                background: COLORS$5.background,
-                border: `1px solid ${COLORS$5.border}`,
+                background: COLORS$4.background,
+                border: `1px solid ${COLORS$4.border}`,
                 borderRadius: '8px',
                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
                 backdropFilter: 'blur(12px)',
-                color: COLORS$5.text,
+                color: COLORS$4.text,
                 fontSize: '13px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -55287,8 +56762,8 @@ ${starCSS}
                 alignItems: 'center',
                 cursor: 'move',
                 padding: '8px 12px',
-                background: COLORS$5.headerBg,
-                borderBottom: `1px solid ${COLORS$5.border}`,
+                background: COLORS$4.headerBg,
+                borderBottom: `1px solid ${COLORS$4.border}`,
                 userSelect: 'none',
             });
             this.headerEl = header;
@@ -55296,7 +56771,7 @@ ${starCSS}
             const title = document.createElement('span');
             title.textContent = 'PFormance';
             title.style.fontWeight = 'bold';
-            title.style.color = COLORS$5.accent;
+            title.style.color = COLORS$4.accent;
 
             const buttons = document.createElement('div');
             buttons.style.display = 'flex';
@@ -55334,7 +56809,7 @@ ${starCSS}
             Object.assign(btn.style, {
                 background: 'none',
                 border: 'none',
-                color: COLORS$5.text,
+                color: COLORS$4.text,
                 cursor: 'pointer',
                 fontSize: '14px',
                 padding: '2px 6px',
@@ -55488,17 +56963,17 @@ ${starCSS}
                 justifyContent: 'space-between',
                 cursor: 'pointer',
                 padding: '4px 6px',
-                background: COLORS$5.headerBg,
+                background: COLORS$4.headerBg,
                 borderRadius: '4px',
                 marginBottom: this.startupCollapsed ? '0' : '4px',
                 userSelect: 'none',
             });
             const label = document.createElement('span');
             label.textContent = `${this.startupCollapsed ? '▶' : '▼'} Startup`;
-            Object.assign(label.style, { fontWeight: 'bold', fontSize: '12px', color: COLORS$5.accent });
+            Object.assign(label.style, { fontWeight: 'bold', fontSize: '12px', color: COLORS$4.accent });
             const total = document.createElement('span');
             total.textContent = `${(summary.span / 1000).toFixed(1)}s`;
-            Object.assign(total.style, { fontSize: '11px', color: COLORS$5.textDim });
+            Object.assign(total.style, { fontSize: '11px', color: COLORS$4.textDim });
             header.appendChild(label);
             header.appendChild(total);
             header.addEventListener('click', () => {
@@ -55512,7 +56987,7 @@ ${starCSS}
             blurb.textContent =
                 `${(summary.blocking / 1000).toFixed(1)}s of features held the page up, ` +
                 `${(summary.background / 1000).toFixed(1)}s ran after it drew`;
-            Object.assign(blurb.style, { padding: '2px 6px', fontSize: '11px', color: COLORS$5.textDim });
+            Object.assign(blurb.style, { padding: '2px 6px', fontSize: '11px', color: COLORS$4.textDim });
             section.appendChild(blurb);
 
             const table = document.createElement('table');
@@ -55520,7 +56995,7 @@ ${starCSS}
             const tbody = document.createElement('tbody');
             for (const row of rows) {
                 const tr = document.createElement('tr');
-                if (row.kind === 'gap') tr.style.color = COLORS$5.warning;
+                if (row.kind === 'gap') tr.style.color = COLORS$4.warning;
                 tr.appendChild(this._cell(row.kind === 'gap' ? `waited  ${row.name}` : row.name, 'left'));
                 tr.appendChild(this._cell(`${(row.at / 1000).toFixed(2)}s`, 'right'));
                 tbody.appendChild(tr);
@@ -55602,7 +57077,7 @@ ${starCSS}
                 alignItems: 'center',
                 cursor: 'pointer',
                 padding: '4px 6px',
-                background: COLORS$5.headerBg,
+                background: COLORS$4.headerBg,
                 borderRadius: '4px',
                 marginBottom: collapsed ? '0' : '4px',
                 userSelect: 'none',
@@ -55612,12 +57087,12 @@ ${starCSS}
             label.textContent = `${collapsed ? '▶' : '▼'} ${title}`;
             label.style.fontWeight = 'bold';
             label.style.fontSize = '12px';
-            label.style.color = COLORS$5.accent;
+            label.style.color = COLORS$4.accent;
 
             const count = document.createElement('span');
             count.textContent = `${entries.length}`;
             count.style.fontSize = '11px';
-            count.style.color = COLORS$5.textDim;
+            count.style.color = COLORS$4.textDim;
 
             header.appendChild(label);
             header.appendChild(count);
@@ -55634,7 +57109,7 @@ ${starCSS}
                 const empty = document.createElement('div');
                 empty.textContent = 'No data';
                 empty.style.padding = '4px 6px';
-                empty.style.color = COLORS$5.textDim;
+                empty.style.color = COLORS$4.textDim;
                 empty.style.fontSize = '11px';
                 section.appendChild(empty);
                 return section;
@@ -55658,8 +57133,8 @@ ${starCSS}
                 Object.assign(th.style, {
                     padding: '3px 5px',
                     textAlign: col === 'Name' ? 'left' : 'right',
-                    borderBottom: `1px solid ${COLORS$5.borderDim}`,
-                    color: COLORS$5.textDim,
+                    borderBottom: `1px solid ${COLORS$4.borderDim}`,
+                    color: COLORS$4.textDim,
                     fontWeight: 'normal',
                 });
                 headRow.appendChild(th);
@@ -55675,7 +57150,7 @@ ${starCSS}
                     row.appendChild(this._cell(entry.name, 'left'));
                     row.appendChild(this._cell((entry.startedAt / 1000).toFixed(1) + 's', 'right'));
                     row.appendChild(this._cell(entry.totalMs.toFixed(1), 'right'));
-                    if (entry.background) row.style.color = COLORS$5.textDim;
+                    if (entry.background) row.style.color = COLORS$4.textDim;
                 } else {
                     const callsPerSec = (entry.calls / ((getPerformanceMonitor$1()?.windowMs || 5000) / 1000)).toFixed(1);
                     row.appendChild(this._cell(entry.name, 'left'));
@@ -55689,7 +57164,7 @@ ${starCSS}
                 // What the six seconds were spent on, where anybody has said
                 for (const part of entry.parts || []) {
                     const partRow = document.createElement('tr');
-                    partRow.style.color = COLORS$5.textDim;
+                    partRow.style.color = COLORS$4.textDim;
                     partRow.appendChild(this._cell(`   └ ${part.part}`, 'left'));
                     partRow.appendChild(this._cell('', 'right'));
                     partRow.appendChild(this._cell(part.duration.toFixed(1), 'right'));
@@ -55708,7 +57183,7 @@ ${starCSS}
             Object.assign(td.style, {
                 padding: '2px 5px',
                 textAlign: align,
-                borderBottom: `1px solid ${COLORS$5.borderDim}`,
+                borderBottom: `1px solid ${COLORS$4.borderDim}`,
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -55723,16 +57198,16 @@ ${starCSS}
             Object.assign(td.style, {
                 padding: '2px 5px',
                 textAlign: 'right',
-                borderBottom: `1px solid ${COLORS$5.borderDim}`,
+                borderBottom: `1px solid ${COLORS$4.borderDim}`,
                 fontWeight: 'bold',
             });
 
             if (percent > 5) {
-                td.style.color = COLORS$5.danger;
+                td.style.color = COLORS$4.danger;
             } else if (percent > 1) {
-                td.style.color = COLORS$5.warning;
+                td.style.color = COLORS$4.warning;
             } else {
-                td.style.color = COLORS$5.success;
+                td.style.color = COLORS$4.success;
             }
 
             return td;
@@ -55801,7 +57276,7 @@ ${starCSS}
     const DIALOG_TRIES = 12;
     const DIALOG_RETRY_MS = 60;
 
-    const COLORS$4 = {
+    const COLORS$3 = {
         background: 'rgba(8, 10, 20, 0.96)',
         headerBg: 'rgba(30, 22, 8, 0.8)',
         border: 'rgba(255, 207, 92, 0.35)',
@@ -55848,15 +57323,15 @@ ${starCSS}
      * @returns {{text: string, color: string}}
      */
     function formatReturn(ratio) {
-        if (ratio === null || ratio === undefined) return { text: '—', color: COLORS$4.textDim };
+        if (ratio === null || ratio === undefined) return { text: '—', color: COLORS$3.textDim };
 
         const percent = (ratio - 1) * 100;
         const sign = percent >= 0 ? '+' : '';
         const text = `${sign}${percent.toFixed(1)}%`;
 
-        if (percent > NOTABLE_RATIO * 100) return { text, color: COLORS$4.good };
-        if (percent < -NOTABLE_RATIO * 100) return { text, color: COLORS$4.bad };
-        return { text, color: COLORS$4.textDim };
+        if (percent > NOTABLE_RATIO * 100) return { text, color: COLORS$3.good };
+        if (percent < -NOTABLE_RATIO * 100) return { text, color: COLORS$3.bad };
+        return { text, color: COLORS$3.textDim };
     }
 
     /**
@@ -56409,11 +57884,11 @@ ${starCSS}
                 right: '40px',
                 zIndex: String(config.Z_FLOATING_PANEL),
                 width: '288px',
-                background: COLORS$4.background,
-                border: `1px solid ${COLORS$4.border}`,
+                background: COLORS$3.background,
+                border: `1px solid ${COLORS$3.border}`,
                 borderRadius: '8px',
                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
-                color: COLORS$4.text,
+                color: COLORS$3.text,
                 fontSize: '11px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -56436,15 +57911,15 @@ ${starCSS}
                 // outside the flow below
                 paddingRight: `${touch ? CLOSE_GUTTER.touch : CLOSE_GUTTER.pointer}px`,
                 position: 'relative',
-                background: COLORS$4.headerBg,
-                borderBottom: `1px solid ${COLORS$4.border}`,
+                background: COLORS$3.headerBg,
+                borderBottom: `1px solid ${COLORS$3.border}`,
                 cursor: 'move',
                 userSelect: 'none',
             });
             const title = document.createElement('span');
             title.textContent = `Treasure — ${itemName(chestHrid)}`;
             title.style.fontWeight = 'bold';
-            title.style.color = COLORS$4.accent;
+            title.style.color = COLORS$3.accent;
             header.appendChild(title);
 
             // Out of the flow entirely and pinned to the popup's top right corner,
@@ -56470,7 +57945,7 @@ ${starCSS}
 
             const subtitle = document.createElement('div');
             subtitle.textContent = `Last opening (×${opening.opened})`;
-            subtitle.style.color = COLORS$4.accent;
+            subtitle.style.color = COLORS$3.accent;
             subtitle.style.marginBottom = '3px';
             body.appendChild(subtitle);
 
@@ -56487,7 +57962,7 @@ ${starCSS}
             paid.style.color = verdict.color;
             const basis = document.createElement('span');
             basis.textContent = ` ${pricingBasis()}`;
-            basis.style.color = COLORS$4.textDim;
+            basis.style.color = COLORS$3.textDim;
             basis.title =
                 'Which side of the market these values are taken from. ' +
                 'Set by the profit pricing mode in Toolasha’s settings.';
@@ -56505,7 +57980,7 @@ ${starCSS}
             Object.assign(total.style, {
                 display: 'flex',
                 justifyContent: 'space-between',
-                borderTop: `1px solid ${COLORS$4.border}`,
+                borderTop: `1px solid ${COLORS$3.border}`,
                 marginTop: '7px',
                 paddingTop: '6px',
             });
@@ -56526,9 +58001,9 @@ ${starCSS}
                 width: '100%',
                 padding: '5px',
                 background: 'rgba(255, 207, 92, 0.12)',
-                border: `1px solid ${COLORS$4.border}`,
+                border: `1px solid ${COLORS$3.border}`,
                 borderRadius: '4px',
-                color: COLORS$4.accent,
+                color: COLORS$3.accent,
                 cursor: 'pointer',
                 fontSize: '12px',
             });
@@ -56562,7 +58037,7 @@ ${starCSS}
                 body,
                 panelKey: POPUP_GEOMETRY_KEY,
                 beforeEl: closeBtn,
-                accent: COLORS$4.text,
+                accent: COLORS$3.text,
             });
 
             // Dismissed by clicking away from it, the way the game's own loot dialog
@@ -56632,7 +58107,7 @@ ${starCSS}
             // came out and is not counted"; a zero would say the chest gave you
             // something worthless, which is a different and wrong claim.
             actualValue.textContent = item.unpriced ? '—' : formatters_js.formatLargeNumber(Math.round(item.actualValue));
-            actualValue.style.color = item.unpriced ? COLORS$4.textDim : COLORS$4.good;
+            actualValue.style.color = item.unpriced ? COLORS$3.textDim : COLORS$3.good;
             actualValue.style.marginLeft = 'auto';
             const diff = document.createElement('span');
             diff.textContent = verdict.text;
@@ -56648,7 +58123,7 @@ ${starCSS}
                 display: 'flex',
                 justifyContent: 'space-between',
                 gap: '6px',
-                color: COLORS$4.textDim,
+                color: COLORS$3.textDim,
             });
             const expectedCount = document.createElement('span');
             // Small expectations are the interesting ones — a rare owed 0.02 of
@@ -56657,7 +58132,7 @@ ${starCSS}
                 item.expectedCount < 10 ? item.expectedCount.toFixed(2) : formatters_js.formatLargeNumber(Math.round(item.expectedCount));
             const expectedValue = document.createElement('span');
             expectedValue.textContent = item.unpriced ? 'no price' : formatters_js.formatLargeNumber(Math.round(item.expectedValue));
-            if (item.unpriced) expectedValue.style.color = COLORS$4.textDim;
+            if (item.unpriced) expectedValue.style.color = COLORS$3.textDim;
             expectedValue.style.marginLeft = 'auto';
             const word = document.createElement('span');
             word.textContent = 'expected';
@@ -56705,11 +58180,11 @@ ${starCSS}
                 // Clamped so the first open on a phone is not wider than the screen
                 width: `min(${DEFAULT_PANEL$2.width}px, 92vw)`,
                 height: `min(${DEFAULT_PANEL$2.height}px, 80vh)`,
-                background: COLORS$4.background,
-                border: `1px solid ${COLORS$4.border}`,
+                background: COLORS$3.background,
+                border: `1px solid ${COLORS$3.border}`,
                 borderRadius: '8px',
                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
-                color: COLORS$4.text,
+                color: COLORS$3.text,
                 fontSize: '13px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -56744,7 +58219,7 @@ ${starCSS}
                 body: this.contentEl,
                 panelKey: PANEL_GEOMETRY_KEY,
                 beforeEl: this.headerEl.lastElementChild,
-                accent: COLORS$4.text,
+                accent: COLORS$3.text,
             });
 
             this._render();
@@ -56768,8 +58243,8 @@ ${starCSS}
                 // outside the flow below
                 paddingRight: `${touch ? CLOSE_GUTTER.touch : CLOSE_GUTTER.pointer}px`,
                 position: 'relative',
-                background: COLORS$4.headerBg,
-                borderBottom: `1px solid ${COLORS$4.border}`,
+                background: COLORS$3.headerBg,
+                borderBottom: `1px solid ${COLORS$3.border}`,
                 userSelect: 'none',
             });
             this.headerEl = header;
@@ -56777,7 +58252,7 @@ ${starCSS}
             const title = document.createElement('span');
             title.textContent = 'Treasure';
             title.style.fontWeight = 'bold';
-            title.style.color = COLORS$4.accent;
+            title.style.color = COLORS$3.accent;
             title.style.marginRight = '4px';
 
             // Both toggles change what every figure in the panel means, so they sit
@@ -56857,9 +58332,9 @@ ${starCSS}
                 'the alphabet answers "where is the one I am looking for".';
             Object.assign(picker.style, {
                 background: 'rgba(255, 255, 255, 0.06)',
-                border: `1px solid ${COLORS$4.border}`,
+                border: `1px solid ${COLORS$3.border}`,
                 borderRadius: '3px',
-                color: COLORS$4.textDim,
+                color: COLORS$3.textDim,
                 cursor: 'pointer',
                 fontSize: '10px',
                 padding: '2px 4px',
@@ -56904,9 +58379,9 @@ ${starCSS}
             button.title = title;
             Object.assign(button.style, {
                 background: 'rgba(255, 255, 255, 0.06)',
-                border: `1px solid ${COLORS$4.border}`,
+                border: `1px solid ${COLORS$3.border}`,
                 borderRadius: '3px',
-                color: COLORS$4.textDim,
+                color: COLORS$3.textDim,
                 cursor: 'pointer',
                 fontSize: '10px',
                 padding: '2px 7px',
@@ -56928,7 +58403,7 @@ ${starCSS}
                 // Dimmed when the setting means "count this as nothing", so the
                 // panel says at a glance that something is being left out
                 const counting = !/zero|No value/.test(button.textContent);
-                button.style.color = counting ? COLORS$4.accent : COLORS$4.textDim;
+                button.style.color = counting ? COLORS$3.accent : COLORS$3.textDim;
                 button.style.opacity = counting ? '1' : '0.7';
             }
 
@@ -56952,13 +58427,13 @@ ${starCSS}
                 padding: '7px 8px',
                 marginBottom: '6px',
                 background: 'rgba(255, 207, 92, 0.07)',
-                border: `1px solid ${COLORS$4.border}`,
+                border: `1px solid ${COLORS$3.border}`,
                 borderRadius: '4px',
             });
 
             const hint = document.createElement('div');
             hint.textContent = 'Click 👁 to show or hide a chest. Hidden chests are still tracked.';
-            hint.style.color = COLORS$4.accent;
+            hint.style.color = COLORS$3.accent;
             hint.style.marginBottom = '6px';
             hint.style.fontSize = '11px';
             section.appendChild(hint);
@@ -57018,7 +58493,7 @@ ${starCSS}
                 this._save();
                 this._render();
             });
-            wipe.style.color = COLORS$4.bad;
+            wipe.style.color = COLORS$3.bad;
             wipe.style.marginLeft = 'auto';
             buttons.appendChild(wipe);
 
@@ -57036,9 +58511,9 @@ ${starCSS}
             button.textContent = text;
             Object.assign(button.style, {
                 background: 'rgba(255, 255, 255, 0.06)',
-                border: `1px solid ${COLORS$4.border}`,
+                border: `1px solid ${COLORS$3.border}`,
                 borderRadius: '3px',
-                color: COLORS$4.text,
+                color: COLORS$3.text,
                 cursor: 'pointer',
                 fontSize: '11px',
                 padding: '3px 8px',
@@ -57221,7 +58696,7 @@ ${starCSS}
             Object.assign(button.style, {
                 background: 'none',
                 border: 'none',
-                color: COLORS$4.text,
+                color: COLORS$3.text,
                 cursor: 'pointer',
                 fontSize: '14px',
                 padding: '2px 6px',
@@ -57263,7 +58738,7 @@ ${starCSS}
             const { rows, totals } = this._summary();
             if (!rows.length) {
                 const empty = document.createElement('div');
-                empty.style.color = COLORS$4.textDim;
+                empty.style.color = COLORS$3.textDim;
                 empty.style.padding = '8px 2px';
                 // Reached only before the game's data has loaded — the list is
                 // every chest in the game, not only the ones you have opened
@@ -57323,7 +58798,7 @@ ${starCSS}
                 display: 'flex',
                 justifyContent: 'space-between',
                 padding: '6px 4px 8px',
-                borderBottom: `1px solid ${COLORS$4.border}`,
+                borderBottom: `1px solid ${COLORS$3.border}`,
                 marginBottom: '6px',
                 fontWeight: 'bold',
             });
@@ -57372,7 +58847,7 @@ ${starCSS}
 
             const isExpanded = this.expanded.has(row.chestHrid);
             const caret = this._span(isExpanded ? '−' : '+');
-            caret.style.color = COLORS$4.accent;
+            caret.style.color = COLORS$3.accent;
             caret.style.width = '9px';
 
             const name = document.createElement('span');
@@ -57381,12 +58856,12 @@ ${starCSS}
             // What one chest is worth on average, beside its name — the figure the
             // rest of the row is measured against
             const ev = this._span(`(${formatters_js.formatLargeNumber(Math.round(row.perChestValue))})`);
-            ev.style.color = COLORS$4.textDim;
+            ev.style.color = COLORS$3.textDim;
             ev.style.fontWeight = 'normal';
             name.appendChild(ev);
 
             const count = this._span(row.opened ? `×${row.opened}` : '');
-            count.style.color = COLORS$4.textDim;
+            count.style.color = COLORS$3.textDim;
             count.style.marginLeft = 'auto';
 
             const verdict = formatReturn(row.ratio);
@@ -57399,9 +58874,9 @@ ${starCSS}
             reset.textContent = 'Reset';
             Object.assign(reset.style, {
                 background: 'rgba(255, 255, 255, 0.06)',
-                border: `1px solid ${COLORS$4.border}`,
+                border: `1px solid ${COLORS$3.border}`,
                 borderRadius: '3px',
-                color: COLORS$4.textDim,
+                color: COLORS$3.textDim,
                 cursor: 'pointer',
                 fontSize: '10px',
                 padding: '1px 6px',
@@ -57461,7 +58936,7 @@ ${starCSS}
             button.title = isHidden ? 'Show this chest in the list' : 'Hide this chest from the list';
             Object.assign(button.style, {
                 background: isHidden ? 'rgba(120, 60, 60, 0.35)' : 'rgba(60, 140, 90, 0.35)',
-                border: `1px solid ${COLORS$4.border}`,
+                border: `1px solid ${COLORS$3.border}`,
                 borderRadius: '3px',
                 cursor: 'pointer',
                 fontSize: '11px',
@@ -57545,7 +59020,7 @@ ${starCSS}
             const band = this._threeColumns();
             Object.assign(band.style, {
                 fontSize: '11px',
-                borderBottom: `1px solid ${COLORS$4.border}`,
+                borderBottom: `1px solid ${COLORS$3.border}`,
                 paddingBottom: '4px',
                 marginBottom: '3px',
             });
@@ -57559,7 +59034,7 @@ ${starCSS}
                 const verdict = formatReturn(ratio);
                 const cell = document.createElement('div');
                 cell.style.textAlign = 'center';
-                cell.style.color = ratio === null ? COLORS$4.textDim : verdict.color;
+                cell.style.color = ratio === null ? COLORS$3.textDim : verdict.color;
                 cell.textContent =
                     ratio === null
                         ? formatters_js.formatLargeNumber(Math.round(value))
@@ -57624,7 +59099,7 @@ ${starCSS}
             const verdict = formatReturn(ratio);
             const countEl = this._span(formatters_js.formatLargeNumber(count));
             const valueEl = this._span(value > 0 ? formatters_js.formatLargeNumber(Math.round(value)) : '');
-            valueEl.style.color = COLORS$4.good;
+            valueEl.style.color = COLORS$3.good;
             valueEl.style.textAlign = 'right';
             const diffEl = this._span(ratio === null ? '' : verdict.text);
             diffEl.style.color = verdict.color;
@@ -57646,7 +59121,7 @@ ${starCSS}
                 gridTemplateColumns: '1fr 1fr 8px 1fr 1fr',
                 gap: '4px',
                 alignItems: 'center',
-                color: COLORS$4.textDim,
+                color: COLORS$3.textDim,
             });
 
             const perChest = this._span(smallCount(item.expectedPerChest));
@@ -59319,491 +60794,6 @@ ${starCSS}
     const syncManager = new SyncManager();
 
     /**
-     * Setting presets — a whole configuration in one button.
-     *
-     * Toolasha ships several hundred switches. Somebody who has just installed it,
-     * or who plays one part of the game and not the others, does not want to make
-     * several hundred decisions before the script is useful; they want to say
-     * "I fight things" and have the market machinery stay out of their way. A
-     * preset is that sentence, written as data.
-     *
-     * ## Why only checkboxes
-     *
-     * A preset says which *features* are on. It deliberately does not touch
-     * numbers, dropdowns, colours or the enhancement-simulator gear table: those
-     * are tunings a person arrived at deliberately, and a bundle that reset a
-     * carefully entered enhancing level because you clicked "Combat" would be a
-     * trap. This is the same set of settings `All Off` writes, and the snapshot the
-     * two share means `Restore` undoes either one.
-     *
-     * ## Why "Defaults" is the schema defaults, not every switch true
-     *
-     * Several switches are hides and warnings that start off on purpose, and
-     * turning them all on would be a configuration nobody has ever run. "Defaults"
-     * means the way the script behaves out of the box, which is what a person
-     * dismissing the first-run question is asking to keep.
-     */
-
-
-    const SNAPSHOT_KEY_PREFIX = 'toolasha_allOffSnapshot';
-
-    /**
-     * Settings a bulk write must never touch.
-     *
-     * Iron Cow mode is a mode, not a feature: it owns its own snapshot of every
-     * market setting, and a preset flipping it would either strand that snapshot or
-     * force-disable half of what the preset just enabled.
-     */
-    const PRESET_EXCLUDED_IDS = new Set(['ironCow_enabled']);
-
-    /**
-     * Core quality-of-life: the things that make the game easier to read without
-     * calculating a price, simulating a fight or tracking a history.
-     */
-    const ESSENTIALS = [
-        // General
-        'whatsNew_showPopup',
-        'chatCommands',
-        'chat_mentionTracker',
-        'chat_profileLink',
-        'chatHistoryExtender',
-        'altClickNavigation',
-        'collectionNavigation',
-        // Action bar
-        'actionBar_enabled',
-        'actionBar_showQueueCount',
-        'actionBar_showActionDuration',
-        'actionBar_showTimeRemaining',
-        'actionBar_showRecycleTime',
-        // Skill page & tiles
-        'actionPanel_showFilter',
-        'actionPanel_showSort',
-        'actionPanel_showExpPerHour_gathering',
-        'actionPanel_showExpPerHour_production',
-        'inventoryCountDisplay',
-        'actions_pinnedPage',
-        // Action panel
-        'actionPanel_totalTime_quickInputs',
-        'actionPanel_outputTotals',
-        'actionPanel_maxProduceable',
-        'actionPanel_showLevelProgress',
-        'actionPanel_showSpeedTime',
-        'requiredMaterials',
-        'actionPanel_enhanceMatLimitProtections',
-        'actionQueue',
-        // Tooltips that describe the item rather than price it
-        'showConsumTips',
-        'itemTooltip_gathering',
-        'itemTooltip_gatheringRareDrops',
-        'itemTooltip_abilityStatus',
-        // Inventory
-        'invSort',
-        'autoAllButton',
-        'autoAllButton_excludeSeals',
-        'inventoryTabs',
-        'inventoryTabs_showUnorganized',
-        'inventoryTabs_topTabPriority',
-        // Skills
-        'xpTracker',
-        'xpTracker_timeTillLevel',
-        'skillRemainingXP',
-        'skillRemainingXP_blackBorder',
-        'skillbook',
-        'drinkTimer',
-        'skillingOptimizer',
-        // UI
-        'overlayPanel',
-        'overlayTabButton',
-        'draggableModals',
-        'ui_externalLinks',
-        'panelSizeMemory',
-        'tabReorder',
-        'expPercentage',
-        'itemIconLevel',
-        'showsKeyInfoInIcon',
-        'mapIndex',
-        'loadoutEnhancementDisplay',
-        // Tasks — reading the board, not valuing it
-        'taskMapIndex',
-        'taskIcons',
-        'taskQueuedIndicator',
-        'taskMaterialsIndicator',
-        'taskGoMerge',
-        // Collections
-        'collectionFilters',
-        'collectionFavorites',
-        'collectionFavoritesSection',
-        'collectionFilters_skillingBadges',
-        // House
-        'houseUpgradeCosts',
-    ];
-
-    /** Everything the combat side of the game wants, on top of the essentials. */
-    const COMBAT_EXTRAS = [
-        'damageTracker',
-        'damageTakenTracker',
-        'combatScore',
-        'combatStats',
-        'combatBattleCounter',
-        'combatSummary',
-        'combatDropLuck',
-        'combatDps',
-        'abilitiesTriggers',
-        'abilities_dictionaryButton',
-        'characterCard',
-        'loadoutSnapshot',
-        'manaTracker',
-        'lootLogStats',
-        'lootLogHistory',
-        'treasureTracker',
-        'treasureTracker_popup',
-        'watchlist',
-        'watchlist_inventoryDots',
-        'dungeonTracker',
-        'dungeonTrackerUI',
-        'dungeonTrackerChatAnnotations',
-        'labyrinthTracker',
-        'labyrinthClearRate',
-        'labyrinthLiveProgress',
-        'labyrinthLiveCombatSim',
-        'labyrinthRoomLogs',
-        // Simulators
-        'combatSim',
-        'labSim',
-        'combatSim_sharedSeed',
-        'labSim_keepReplacedGear',
-    ];
-
-    /** Everything that needs a price to be worth anything. */
-    const MARKET_EXTRAS = [
-        // Marketplace screen
-        'sellQueue',
-        'networkAlert',
-        'marketFilter',
-        'marketSort',
-        'fillMarketOrderPrice',
-        'market_autoClickMax',
-        'market_quickInputButtons',
-        'market_multiplierButtons',
-        'market_showOwnedInBuyModal',
-        'market_marketplaceShortcuts',
-        'market_visibleItemCount',
-        'market_visibleItemCountIncludeEquipped',
-        'market_showListingPrices',
-        'market_listingRefreshNavigator',
-        'market_tradeHistory',
-        'market_showEstimatedListingAge',
-        'market_showOrderTotals',
-        'market_showHistoryViewer',
-        'market_showPhiloCalculator',
-        'market_showQueueLength',
-        'market_milkywayMarketLink',
-        // Pricing & profit
-        'profitCalc_craftUpgradeItems',
-        'actionPanel_showPricingMode',
-        'actionPanel_showCraftToggle',
-        'actionPanel_showProfitPerHour_gathering',
-        'actionPanel_showProfitPerHour_production',
-        'actionPanel_showProfitDetail',
-        'actionPanel_foragingTotal',
-        'actionQueue_showValue',
-        // Priced tooltips
-        'itemTooltip_prices',
-        'itemTooltip_artisanPrices',
-        'itemTooltip_profit',
-        'itemTooltip_expectedValue',
-        'expectedValue_respectPricingMode',
-        'expectedValue_includeCowbells',
-        'itemTooltip_enhancementPath',
-        'dungeonTokenTooltips',
-        'itemDictionary_transmuteRates',
-        'itemDictionary_transmuteIncludeBaseRate',
-        // Inventory value & net worth
-        'networth',
-        'networth_highEnhancementUseCost',
-        'networth_includeTaskTokens',
-        'networth_historyChart',
-        'invWorth',
-        'invSort_showBadges',
-        'invBadgePrices',
-        'invCategoryTotals',
-        // Alchemy & crafting economics
-        'alchemy_profitDisplay',
-        'alchemy_bestItems',
-        'alchemyItemPins',
-        'alchemyItemDimming',
-        'alchemy_transmuteHistory',
-        'alchemy_coinifyHistory',
-        'alchemy_decomposeHistory',
-        'alchemy_actionProtection',
-        'actionPanelLayout',
-        'actions_missingMaterialsButton',
-        'actions_budgetCalculator',
-        'actions_costSummary',
-        'actionPanel_bestCraftingPlan',
-        // Tasks, valued
-        'taskProfitCalculator',
-        'taskEfficiencyRating',
-        // Guild economy
-        'guildCreditValue',
-        'guildCreditExchangeAdvisor',
-    ];
-
-    /** The preset picked when somebody dismisses the question rather than answering it. */
-    const DEFAULT_PRESET_ID = 'everything';
-
-    /**
-     * The bundles, in the order they are offered.
-     *
-     * A preset either lists the settings it wants on — everything else goes off —
-     * or sets `useDefaults`, meaning every switch returns to what the schema ships.
-     *
-     * @type {Array<{id: string, label: string, description: string, settings?: string[], useDefaults?: boolean}>}
-     */
-    const SETTING_PRESETS = [
-        {
-            id: 'essentials',
-            label: 'Essentials',
-            description:
-                'Core quality of life only — action timers, XP rates, inventory sorting, tooltips that describe items. ' +
-                'No prices, no simulators, no trackers.',
-            settings: ESSENTIALS,
-        },
-        {
-            id: 'combat',
-            label: 'Combat',
-            description:
-                'The essentials plus the combat side: damage and drop tracking, dungeon and labyrinth tools, and the ' +
-                'combat and labyrinth simulators. Marketplace extras stay off.',
-            settings: [...ESSENTIALS, ...COMBAT_EXTRAS],
-        },
-        {
-            id: 'market',
-            label: 'Market & trading',
-            description:
-                'The essentials plus everything that needs a price: profit calculators, listing tools, net worth, ' +
-                'inventory values and crafting economics.',
-            settings: [...ESSENTIALS, ...MARKET_EXTRAS],
-        },
-        {
-            id: DEFAULT_PRESET_ID,
-            label: 'Defaults',
-            description: 'Every feature reset to its shipped default — how Toolasha behaves out of the box.',
-            useDefaults: true,
-        },
-    ];
-
-    /**
-     * The modes offered alongside the presets — and why they are a separate list.
-     *
-     * A preset is a sentence in the past tense: it flips a few hundred switches once
-     * and is then over, which is why `Restore` can undo it. Iron Cow is a sentence
-     * in the present tense: it stays on, keeps its own snapshot of every market
-     * setting, and force-disables them for as long as it is on. The two compose —
-     * you can be an Iron Cow *and* want the Combat bundle — so they sit in the same
-     * row of the settings panel, but a mode is drawn as a pressed-in chip rather
-     * than a button, because "on" is a thing it can be and a preset never is.
-     *
-     * Their ids live in `PRESET_EXCLUDED_IDS` for exactly that reason: a one-shot
-     * sweep must not flip a mode on its way past.
-     *
-     * @type {Array<{id: string, kind: string, settingId: string, label: string, icon: string,
-     *   description: string, activeNote: string}>}
-     */
-    const MODE_PRESETS = [
-        {
-            id: 'ironCow',
-            kind: 'mode',
-            settingId: 'ironCow_enabled',
-            label: 'Iron Cow Mode',
-            icon: '🐄',
-            description:
-                'Disable all market & profit features for a no-marketplace playthrough. Unlike a preset this stays ' +
-                'on until you turn it off, and the settings it owns stay locked while it is.',
-            activeNote: 'ACTIVE — market features locked.',
-        },
-    ];
-
-    /**
-     * Find a preset by id.
-     * @param {string} presetId
-     * @returns {Object|null}
-     */
-    function getPreset(presetId) {
-        return SETTING_PRESETS.find((preset) => preset.id === presetId) || null;
-    }
-
-    /**
-     * Whether a schema type is one a bulk write is allowed to touch.
-     * @param {string} [type]
-     * @returns {boolean}
-     */
-    function isBulkWritable(type) {
-        const kind = type || 'checkbox';
-        return kind === 'checkbox' || kind === 'checkboxWithButton';
-    }
-
-    /**
-     * Every setting id a preset (or All Off) may write, in schema order.
-     *
-     * The single definition of "which settings does a bulk write own" — presets,
-     * All Off, Restore and the checkbox re-sync all read it, so the three can never
-     * disagree about what they are writing.
-     *
-     * @param {Object} [groups] - Schema groups, injectable for tests
-     * @returns {string[]}
-     */
-    function presetTargetIds(groups = settingsSchema_js.settingsGroups) {
-        const ids = [];
-        for (const group of Object.values(groups)) {
-            for (const [id, definition] of Object.entries(group.settings)) {
-                if (!isBulkWritable(definition.type)) continue;
-                if (PRESET_EXCLUDED_IDS.has(id)) continue;
-                ids.push(id);
-            }
-        }
-        return ids;
-    }
-
-    /**
-     * The schema defaults for every bulk-writable setting.
-     * @param {Object} [groups] - Schema groups, injectable for tests
-     * @returns {Object<string, boolean>}
-     */
-    function defaultCheckboxValues(groups = settingsSchema_js.settingsGroups) {
-        const values = {};
-        for (const group of Object.values(groups)) {
-            for (const [id, definition] of Object.entries(group.settings)) {
-                if (!isBulkWritable(definition.type)) continue;
-                if (PRESET_EXCLUDED_IDS.has(id)) continue;
-                values[id] = definition.default ?? false;
-            }
-        }
-        return values;
-    }
-
-    /**
-     * What a preset means, expressed as a value for every setting it owns.
-     *
-     * Pure — no config, no storage — because "what does Combat mean" is the part
-     * that has to stay right as the schema grows, and it is the part worth testing.
-     *
-     * @param {Object} preset - From `SETTING_PRESETS`
-     * @param {Object} [groups] - Schema groups, injectable for tests
-     * @returns {Object<string, boolean>} id → value
-     */
-    function resolvePresetValues(preset, groups = settingsSchema_js.settingsGroups) {
-        if (!preset) return {};
-        if (preset.useDefaults) return defaultCheckboxValues(groups);
-
-        const wanted = new Set(preset.settings || []);
-        const values = {};
-        for (const id of presetTargetIds(groups)) {
-            values[id] = wanted.has(id);
-        }
-        return values;
-    }
-
-    /**
-     * The per-character key the bulk-write snapshot lives under.
-     *
-     * Shared with All Off deliberately: there is one "before the last bulk write"
-     * state, and Restore should undo whichever bulk write happened last.
-     *
-     * @returns {string}
-     */
-    function bulkSnapshotKey() {
-        const characterId = dataManager.getCurrentCharacterId?.();
-        return characterId ? `${SNAPSHOT_KEY_PREFIX}_${characterId}` : SNAPSHOT_KEY_PREFIX;
-    }
-
-    /**
-     * Record every bulk-writable setting's current value, so Restore has something
-     * to put back.
-     * @returns {Promise<Object<string, boolean>>} The snapshot that was saved
-     */
-    async function saveBulkSnapshot() {
-        const snapshot = {};
-        for (const id of presetTargetIds()) {
-            const entry = config.settingsMap[id];
-            if (!entry) continue;
-            snapshot[id] = entry.isTrue ?? false;
-        }
-        await storage.setJSON(bulkSnapshotKey(), snapshot, 'settings', true);
-        return snapshot;
-    }
-
-    /**
-     * The saved snapshot, or null when no bulk write has happened.
-     * @returns {Promise<Object<string, boolean>|null>}
-     */
-    async function loadBulkSnapshot() {
-        return storage.getJSON(bulkSnapshotKey(), 'settings', null);
-    }
-
-    /**
-     * Forget the snapshot — after Restore has used it.
-     * @returns {Promise<void>}
-     */
-    async function clearBulkSnapshot() {
-        await storage.delete(bulkSnapshotKey(), 'settings');
-    }
-
-    /**
-     * Write a map of setting values through config, firing the usual change
-     * callbacks so live features react without a reload.
-     *
-     * Settings already holding the wanted value are skipped: every `setSetting`
-     * persists the entire settings map, so writing three hundred of them at boot to
-     * change none of them is three hundred pointless round trips through IndexedDB
-     * — and "Defaults" on a fresh install is exactly that case.
-     *
-     * @param {Object<string, boolean>} values - id → value
-     * @returns {string[]} The ids that were actually written
-     */
-    function writeCheckboxValues(values) {
-        const written = [];
-        for (const [id, value] of Object.entries(values || {})) {
-            if (PRESET_EXCLUDED_IDS.has(id)) continue;
-            const entry = config.settingsMap[id];
-            if (!entry) continue;
-            if ((entry.isTrue ?? false) === value) continue;
-            config.setSetting(id, value);
-            written.push(id);
-        }
-        return written;
-    }
-
-    /**
-     * Apply a named preset.
-     *
-     * Snapshots first, so the Restore button can undo it exactly the way it undoes
-     * All Off — a preset is a large change, and a large change a person cannot walk
-     * back is one they will not risk making.
-     *
-     * @param {string} presetId - An id from `SETTING_PRESETS`
-     * @returns {Promise<Object<string, boolean>|null>} The values written, or null
-     *   when the preset is unknown
-     */
-    async function applyPreset(presetId) {
-        try {
-            const preset = getPreset(presetId);
-            if (!preset) {
-                console.error(`[SettingPresets] Unknown preset: ${presetId}`);
-                return null;
-            }
-
-            const values = resolvePresetValues(preset);
-            await saveBulkSnapshot();
-            writeCheckboxValues(values);
-            return values;
-        } catch (error) {
-            console.error('[SettingPresets] Applying a preset failed:', error);
-            return null;
-        }
-    }
-
-    /**
      * Questions you can ask about the settings schema and the values against it.
      *
      * Two of them, both used by the settings panel and both pure so they can be
@@ -61449,6 +62439,17 @@ ${starCSS}
             syncIronCowBtn.title = 'Copy these settings to the characters Toolasha has seen running an iron cow game mode';
             syncIronCowBtn.addEventListener('click', () => this.handleSyncIronCow());
 
+            // Re-open the first-run setup — the one-shot welcome is easily dismissed
+            // (a click outside counts), and this is the recoverable way back to it,
+            // on this character or any alt. Offers presets and "copy from another
+            // character".
+            const setupBtn = document.createElement('button');
+            setupBtn.textContent = 'First-time setup';
+            setupBtn.className = 'toolasha-utility-button';
+            setupBtn.title =
+                'Re-open the welcome setup for this character — pick a preset or copy settings from another character';
+            setupBtn.addEventListener('click', () => whatsNew.promptSetup());
+
             // Fetch Latest Prices button
             const fetchPricesBtn = document.createElement('button');
             fetchPricesBtn.textContent = '🔄 Fetch Latest Prices';
@@ -61511,6 +62512,7 @@ ${starCSS}
 
             buttonsDiv.appendChild(syncBtn);
             buttonsDiv.appendChild(syncIronCowBtn);
+            buttonsDiv.appendChild(setupBtn);
             buttonsDiv.appendChild(fetchPricesBtn);
             buttonsDiv.appendChild(allOffBtn);
             buttonsDiv.appendChild(restoreBtn);
@@ -63388,745 +64390,6 @@ ${starCSS}
     }
 
     const settingsUI = new SettingsUI();
-
-    /**
-     * What changed between the build you had and the build you have.
-     *
-     * The interesting decision is what counts as "new". Version numbers cannot be
-     * trusted for it: this is a fork, forks share numbering with upstream, and two
-     * scripts both calling themselves 2.88.0 can be entirely different code. So the
-     * version string only decides *whether* to speak; **the settings schema itself
-     * decides what to say**. The stored list of setting IDs the user has already
-     * been shown is diffed against the schema that just loaded, and whatever was
-     * never shown before is new — whichever fork it arrived from, whatever number
-     * it wore.
-     *
-     * Pure functions, because the popup is the least interesting part of this and
-     * the diff is the part that must be right.
-     */
-
-    /**
-     * Which fork+version this build is, as one comparable identity.
-     *
-     * The pair rather than the version alone: upstream and this fork share version
-     * numbers, so "2.88.0 → 2.88.0" can still be a different script. A change in
-     * either half is an update worth announcing.
-     *
-     * @param {{fork?: string, version?: string}} [source] - Usually `window.Toolasha`
-     * @returns {{fork: string, version: string}}
-     */
-    function buildIdentity(source = {}) {
-        return {
-            fork: String(source.fork || 'unknown-fork'),
-            version: String(source.version || '0.0.0'),
-        };
-    }
-
-    /**
-     * Whether the build changed since the state was last saved.
-     *
-     * @param {{fork: string, version: string}|null} stored - From storage; null on first run
-     * @param {{fork: string, version: string}} current - From `buildIdentity`
-     * @returns {boolean}
-     */
-    function identityChanged(stored, current) {
-        if (!stored) return false;
-        return stored.fork !== current.fork || stored.version !== current.version;
-    }
-
-    /**
-     * The update, described the way a person would ask about it.
-     *
-     * A same-fork bump reads as an update; a fork change is called out as one,
-     * because "switched from Celasha/Toolasha 2.88.0" answers a question that
-     * "updated to 2.88.0" would actively hide — the number may not even change.
-     *
-     * @param {{fork: string, version: string}|null} stored - Previous identity
-     * @param {{fork: string, version: string}} current - This build
-     * @returns {string} e.g. `Updated 2.88.0 → 2.89.0` or
-     *   `Switched from Celasha/Toolasha 2.88.0`
-     */
-    function describeUpdate(stored, current) {
-        if (!stored) return `Version ${current.version}`;
-        if (stored.fork !== current.fork) {
-            return `Switched from ${stored.fork} ${stored.version} (now ${current.fork} ${current.version})`;
-        }
-        return `Updated ${stored.version} → ${current.version}`;
-    }
-
-    /**
-     * The setting IDs this user has never been shown.
-     *
-     * @param {Array<string>} schemaIds - Every ID in the current schema
-     * @param {Array<string>} knownIds - Every ID the user has been shown before
-     * @returns {Array<string>} New since last time, in schema order
-     */
-    function newSettingIds(schemaIds, knownIds) {
-        const known = new Set(knownIds || []);
-        return (schemaIds || []).filter((id) => !known.has(id));
-    }
-
-    /**
-     * Which of the new settings should be forced off, under the conservative policy.
-     *
-     * Only switches that arrive **on**: a new checkbox defaulting to true is the
-     * update changing behaviour unasked, which is precisely what the policy exists
-     * to stop. Numbers and dropdowns keep their defaults — a number has to be
-     * something, and a default value is not a feature switching itself on.
-     *
-     * Never applied without a baseline: on a first run every setting in the schema
-     * is "new", and forcing the lot off would disable the whole script on install.
-     *
-     * @param {Array<string>} newIds - From `newSettingIds`
-     * @param {Function} lookup - id → schema entry ({type, default, ...}) or null
-     * @returns {Array<string>} IDs to persist as off
-     */
-    function conservativeOverrides(newIds, lookup) {
-        const overrides = [];
-        for (const id of newIds || []) {
-            const entry = lookup(id);
-            if (!entry) continue;
-            const type = entry.type || 'checkbox';
-            if (type === 'checkbox' && entry.default === true) overrides.push(id);
-        }
-        return overrides;
-    }
-
-    var forkChangelog = "## Unreleased — branch `main`\n\n### Fix: marketplace autofill after the typable-price update\n\nThe 8/13/2026 update made the marketplace Price/Quantity fields typable text inputs (`type=\"text\"`), which broke every Toolasha selector that looked for `input[type=\"number\"]` — most visibly the missing-material autofill no longer filled the quantity. Now targets the game's own `MarketplacePanel_quantityInputs` row (falling back to reading all inputs by label), and rewinds React's value tracker on write so a strictly-controlled field can't snap back. Works on both the old (number) and new (text) inputs, so it needs no server gate. Flip Finder's autofill was already class-based and unaffected.\n\nThe game's market tax went from 2% to 5%. Updated the single `MARKET_TAX` constant and swept out every place that had hardcoded 2% (`0.02`/`0.98`) — networth, order totals, bulk-sell floor, listing value, guild-credit sell→rebuy, profit/hr, enhancement worth-it, EV, tea optimizer — so all profit, net-proceeds and break-even figures use the new rate. Tax labels now derive from the constant instead of a baked-in \"2%\".\n\nThe 5% rate (and the shrine-in-gear-score change below) is **gated to the test server** for now via `isMarketplacePatchLive()` — the live server keeps 2% until the patch reaches it. One line to un-gate everything once it is live everywhere (`server-gate.js`).\n\n### Prices reconciled against the game's official market values\n\nThe 8/13/2026 update publishes an estimated value for every item and enhancement level (`localStorageUtil.getMarketItemValues()`, the figure behind the inventory's \"Total Market Value\"). Toolasha now reads it (cached, version-guarded) and reconciles every ask/bid at the shared price choke point (`getItemPrice`/`getItemPrices`): a stale price is **clamped into the ±10% tradable range** the game now enforces, and an item with an empty book is **valued the way the game values it** instead of collapsing to crafting cost. This flows through to networth/inventory value and the profit calculators at once. Gated to the test server (a pass-through until the patch is live). Combat-loot valuation, which reads the market API directly, is unchanged this pass.\n\nNew setting **\"Net worth value source\"** (Order book / Game's market value, default Order book). The game's value refreshes every ~10 min — far fresher than the ~hourly market feed — so switching to it makes the net-worth total match the game's own inventory total. It also reaches the batched net-worth path (via `getPricesBatch` → `getMarketPrice`), which the choke-point reconcile above did not, so the clamp/fallback now applies to the full net-worth sweep too. Gated to the test server.\n\n### Profiles: shrine levels count toward gear score and combat sim\n\nThe game now shares each player's shrine levels on their profile (`guildBuffLevelMap`). Toolasha reads them and folds their value into the **Combat and Skiller scores** (combat shrines into combat, skilling into skiller) instead of leaving them off other players' cards — the \"+ Guild Shrine\" line now shows for everyone. **Sim Character** (and party-member sims) also carries the viewed player's shrine buffs into the combat sim, so an imported character fights with its shrines rather than without.\n\n### Labyrinth: full monster abilities always modelled\n\nRemoved the \"Model full monster abilities in combat sim (testing)\" toggle — the verified behaviour is now permanent. The sim builds each labyrinth monster with its full ability kit (stuns, shreds, self-buffs) rather than the tier-0 subset, so combat-room clear chances read closer to reality.\n\n### Enhancement Tracker: idle duration fix, session merge, and an on-screen toggle\n\n- **Session Duration no longer runs while idle.** It stopped only when a run reached its target; a session left In Progress counted wall-clock forever. The clock now ends at the last recorded attempt, so it freezes when you stop enhancing (and XP/Hour with it).\n- **Merge sessions (∑).** A new ∑ button in the tracker header opens a checklist of your sessions and shows a combined summary of the ones you pick — per-level tally, attempts, success rate, XP, duration, and total cost — for a target reached across several separate runs. Defaults to every session of the item currently in view.\n- **Show/hide button on the Enhancing screen.** A \"∑ Tracker\" button now sits in the Enhancing panel's corner, like the marketplace's Bulk Sell tab, toggling the tracker on demand (a manual hide sticks).\n\n### Notifications: labyrinth entry regenerated (opt-in)\n\nNew default-off notification \"Notify when a labyrinth entry regenerates\". The Labyrinth holds up to five entries and regenerates one on a cooldown (a couple of days, less with upgrades); this fires when the stock rises or when the projected regeneration instant passes on an open tab — computed from `lastLabyrinthTimestamp + labyrinthCooldownHours` — so an entry doesn't sit wasted at the cap. Uses the existing notification service (toast in-page, browser notification when the tab is hidden).\n\n### Loot Log: enhancing cost, luck and profit (opt-in)\n\nNow prices materials and protection with the same helper the live Enhancement Tracker uses (production-cost/NPC fallbacks for unlisted materials), so the loot-log figures line up with the tracker for the same run instead of collapsing to near-zero when a material has no market listing.\n\nEnhancing loot-log entries can now carry a summary line — material and protection cost against the statistically expected cost (how lucky the run was), and the profit (the finished item's after-fee value minus the base and what you spent). It's reconstructed from the run's own per-level results and priced through Toolasha's enhancement calculator, assuming the cost-optimal protect level. New setting \"Loot Log: Enhancing cost, luck and profit\", **off by default**. The summary text is a readable size.\n\nEach enhancing entry also has a **+ merge** chip: pick two or more runs of the same item and a panel at the top of the loot log sums their real cost, luck and profit into one total — for a target reached across several split runs.\n\n### Enhancement Tracker: cost-vs-expected (luck) and worth-it lines\n\nThe Enhancement Tracker now shows two new readings under the run stats: **Expected Cost + Cost Factor** with how far below/above the expected cost this run landed (the cost twin of the Attempt Factor — pure attempt/protection luck, at this run's own prices), and a **Worth it (net)** line — the +N item's after-fee resale value minus the base you gave up minus what you spent, so you can see whether the enhance actually paid off. Click the Worth-it line to expand a breakdown. (A loot-log version is a planned follow-up.)\n\n### Enhancement Tracker: toggle it from the command palette\n\nThe Enhancement Tracker now appears in the Ctrl/Cmd+K command palette, so you can show or hide it on demand. A manual hide sticks (the auto-show logic won't bring it back until you toggle it on again or re-enable the feature).\n\n### Fixes: sort defaults, minimize placement, clickable quiet members\n\n- **Combat Sim all-zones and the Upgrade advisor now default to sorting by Score.** The all-zones run was resetting to Profit and the Upgrade table opened on DPS; both now open on Score (best first).\n- **The minimize button sits next to the close ✕ again** on Combat Sim, Lab Sim, and the Trade Ledger — it was landing in the middle of the header (and swapped past close on the Trade Ledger).\n- **Guild Roster: click a \"Gone quiet\" member** to load `/profile <name>` in chat (press Enter to open), the same trick the profile cycler uses.\n\n### Every panel can be minimized without closing it\n\nFloating panels now have a **–** button in the header (beside the close ✕) that folds the panel down to its title strip, leaving it draggable and running — click **□** to bring it back. It works across both shared panel shells (party loot, guild roster, DPS/deaths/profit tiles, and the rest) and the bespoke tool windows (Combat Sim, Lab Sim, Enhancement XP/hr, Consumables, Houses, Goal Planner, and more). The minimized state is remembered per panel across refreshes, alongside its position.\n\n### Combat & Lab Sim: optionally remember upgrade results across refreshes\n\nNew opt-in setting (default off) keeps the last Upgrade-tab results after a page reload — for both Combat Sim and Lab Sim — until you run a new analysis, so a run you waited minutes on is still there when you come back. A quiet banner marks restored results. Off by default because it stores the full result set (one blob per character per sim) in the browser database.\n\n### Combat Sim Results: a ⌖ button targets that zone in Configure\n\nEach row of the all-zones Results table now has a ⌖ button that sets that zone and tier as the Configure target and jumps to the Configure tab (leaving all-zones mode so the single-zone selects reappear) — no more scrolling the zone dropdown to sim a promising row. The table also now defaults to sorting by Score (descending) instead of unsorted.\n\n### Upgrade advisor: path boots (base and refined) are offered and simmed at +7\n\nThe upgrade advisor simmed a proposed gear swap at the current piece's enhancement level, so path boots (Pathbreaker/Pathfinder/Pathseeker) were quoted at whatever your worn boots are (e.g. +10). They're only obtainable at +7, so a swap to them is now always simmed and priced at +7 — the refined variants override the usual +10 refined floor. The refined path boots are now also _offered_: the crafting-chain walk only reaches the base boot (refined is one hop further), so each base path-boot swap now gets a refined sibling in the table, at +7.\n\n### Enhancement XP/hr panel: get a route for any item, even one you don't own\n\nThe enhancing-route (target level, protection plan, cost) was only reachable by hovering an item that's rendered — owned or listed — so an item with no listing at that level showed nothing. The Enhancement XP/hr panel now has an \"Enhance any item\" box: type any enhanceable item, pick a target level, and get its full route. The base-item price falls back to crafting cost when the market is empty, so it works with zero listings.\n\n### Ability hover: optional \"fresh to level\" cost, priced at the level shown\n\nHovering an ability itself (in a loadout, an ability slot, or on another player's profile) can now add a \"Fresh to Lv N: <cost> (<books> books)\" line, priced at the level the tooltip shows — so on someone else's profile it uses their level, not yours. It's identified from the ability tooltip's own name and gated behind a new, default-off setting (\"Show fresh-to-level cost on ability hovers\"), separate from the ability-book tooltip status.\n\n### Enhancement tooltip: the source toggle is discoverable and mobile-friendly\n\nThe \"Yours ⇄ / Pro ⇄\" chip on enhancement tooltips now shows a keycap **P** so the press-to-toggle hotkey is visible, not just buried in the hover title. On touch devices it drops the key (no keyboard), enlarges to a finger-sized tap target, and reads \"tap\" — the chip was already tappable on tap-to-open tooltips, just too small and unlabeled.\n\n### Upgrade advisor: \"Signature only\" is now \"Aura only\"\n\nThe Ability Swaps sub-option that restricted swaps to the aura + signature groups now restricts to just the aura group — the single \"which aura\" decision. Renamed the checkbox to \"Aura only\" with an updated tooltip, and renamed the internal option throughout (`auraOnly` / `auraSwapsOnly`).\n\n### Upgrade advisor: the aura OR-alternative is offered again\n\nAbility Swaps stopped offering the other aura in your archetype's aura group — e.g. running Mystic Aura, it never proposed Critical Aura. The generator was running each guide offer through a style-from-buff-data heuristic that misreads a universal aura (Critical Aura) as another style and vetoed it. The guide's own ability set is style-correct by construction, so on the guide path that heuristic no longer runs; it now only guards the every-ability fallback.\n\n### Sim: Achievements section — toggle your achievement combat buffs\n\nThe sim already applied your completed-achievement combat buffs (e.g. Damage +2%) silently; there was no way to see or change them. A new **Achievements** section on the Configure tab lists the combat buffs your achievements grant, each ticked by default (so results are unchanged) — untick one to sim without it. It reads your real buffs with their exact values; a character with no combat achievement buffs shows no section.\n\n### Sim: the loadout picker is back in the packaged build\n\nThe Combat Sim and Lab Sim loadout dropdown vanished in the released userscript (it still worked in dev): both UIs read the loadout list from their own bundle's copy of the snapshot store, which the websocket never feeds in the multi-bundle build, so the list was always empty and the `<select>` never rendered. Both now read the fed store through the bundle bridge — the same fix the apply path already had — so you can pick a saved loadout to sim as again. A regression test now asserts the picker renders from the bridge store.\n\n### Author credit: full contributor list and code-source attribution\n\nBoth userscript headers now carry the same, tidied `@author` credit. It restores the contributors who were only in the dev header (Shykai, amVoidGuy, vlad, kuganDev, Paradoxian, Maarg, SilkyPanda, MekaPyon, vidonnus) and adds a line crediting the tools this fork borrowed code and ideas from: MWITools (bot7420), MWI Combat Suite (Frotty), JIGS (jigglymoose), the Labyrinth Win Rate Calculator (dakonglong), and the mooket pools (Q7, IOMisaka).\n\n### Author credit leads with Millennium44 (production header too)\n\nThe previous author change only touched the dev header (`userscript-header.txt`); the GreasyFork build takes its header from `library-headers/entrypoint.txt`, which still led with the upstream authors. That production header now leads with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" as well, so the published listing shows the fork maintainer.\n\n### Author credit leads with Millennium44\n\nThe userscript `@author` header now opens with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" instead of leading with the upstream authors, so the GreasyFork listing credits the fork maintainer. The contributor thank-yous are unchanged.\n\n### Task reroll tracker: drop the experimental warning\n\nThe \"Track task reroll costs\" setting no longer warns it is experimental and may freeze the UI — it's stable. Default unchanged (on).\n\n### My Listings: a fresh undercut now shows without opening the item\n\nThe Top Order Price column trusted the last-opened order book, so an undercut stayed hidden behind your own price until you reopened the item. It now surfaces the game snapshot's price when it beats you (a rival's by definition, never your own order) — so undercuts show on their own, without ever displaying your own listing or downgrading a genuinely-fresher book. The age column follows suit.\n\n### Labyrinth: the calibration recorder is now passive and accumulates across runs\n\nNo Record button any more — every combat fight is kept automatically, per character and tagged with the gear it was fought in, pooled into 10-level bands so a monster's scattered random levels still accumulate. Press **Replay** to judge whatever has built up on your current gear; a loadout change starts a fresh pool. Bounded to 500 fights.\n\n### Labyrinth: a fight recorder and a calibration replay\n\nThe Sim accuracy record says _whether_ a room's clear chance is wrong, not _why_ — a timeout and a death are both \"lost\", and the fixes are opposite. This adds the decomposition.\n\n- **Replay** re-sims the recorded rooms and puts your real damage/s, the monster's, the clear rate and the fight length beside the sim's, each with a noise-aware verdict and a one-line diagnosis of which side the sim gets wrong. **Save comparison** downloads the whole check as one file.\n- **Capture** saves the raw tick feed of a fight — stun uptime, ability cadence, per-hit damage — for mechanism-level analysis (previously console-only).\n- Measurement fixes found via real captures: damage measured **gross** (not net of your ~16 HP/s regen, which made monsters look 15–40% weaker than the sim); self-healing monsters (life drain, the Dryad) no longer **split one fight into several**; partial-HP fights are dropped; and the diagnosis names all four over/under directions.\n\n### Labyrinth: full-ability sim calibration (testing), tooltip clear-time, tidier panel bar\n\n- Testing setting to model a monster's **full ability kit** in the sim — the labyrinth otherwise builds every monster at tier 0 and drops its gated abilities (the Cyclops's stun, shred, self-buffs). Off by default; it's part of the cache key, so toggling re-sims.\n- **Est. clear time** on combat/skilling room hover, shown past the tile's \"999+\" cap.\n- Room Logs top bar wraps cleanly; \"Sim accuracy\" tab shortened to \"Accuracy\".\n\n### Labyrinth: stop counting un-fought rooms as clears, and an uncapped sim option\n\n- **Phantom clears removed** — a revealed-but-unfought room (shroud, beacon, floor skip) is marked `isCleared` with no entry; it no longer counts as a win and drags the accuracy record toward \"sim too low\".\n- **Uncapped** toggle lifts the sim's time cap for the next Recompute, so a slow, timeout-heavy room reaches its precision target instead of a wide \"(capped)\" band.\n\n### Labyrinth: Recompute button, honest attempt counts, and a panel that stays put\n\n- **Recompute** throws away cached clear-chance sims and re-runs the visible rooms — a plain equip doesn't always refresh a sim cached under old gear.\n- Room Log shows the server's own attempt count, not just the fights it watched on the combat view: \"Won 0/6 · 26 total\".\n- The panel keeps its scroll position across redraws instead of jumping to the top on every update.\n\n### Undercut alerts finally fire passively, backed by Mooket\n\nThe alert distrusts any price older than 15 minutes, but the game snapshot refreshes only ~hourly — so undercuts on items you weren't watching stayed silent for hours. It now also consults the freshest **Mooket** sighting per listing (refreshed every 15 min), reporting its true age, so it can fire for items you never opened. Rides the Price history panel setting.\n\n### Selectable price-history source: mooket I alongside mooket II\n\nA **Market: Price history data source** setting picks between the Q7 pool (mooket II, default — ask/bid/avg/volume) and IOMisaka's original (mooket I — ask/bid only). On mooket I the chart's third line is a computed \"Mid\", the volume bars vanish, and the goal planner's volume limits switch off (a source with no volume tells us nothing about how fast a thing sells — unknown, not a measured zero). The order books you contribute back follow the selected source.\n\n### \"Mooket Refresh\" button on the My Listings tab\n\nA **Mooket Refresh** button in the My Listings header pulls fresher Top Order Prices for every listed item from the Mooket pool in one click, patching the fresher ones into the price cache the column redraws from — no opening each item by hand. Skips a sighting older than the game's snapshot, and keeps a one-sided sighting's other side. Rides the Price history panel setting.\n\n### My Listings' Top Order Price refreshes when the market moves\n\nThe Top Order Price column on the My Listings tab only redrew when your own listings changed (or, with the age column on, when you re-opened an item's order book), so an undercut fired an alert but left the column showing the stale price. It now subscribes to the same market-data updates the undercut alert uses — a marketplace snapshot refresh or an order-book price patch redraws the column (debounced), so being undercut turns the price red here too.\n\n### Custom Tabs: an enhanced item is no longer double-counted in Unorganized\n\nAn enhanced item is tracked under both its base and its `+level` key, so an unassigned one was collected through both — inflating the \"Unorganized (N)\" co";
-
-    var forkOverview = "This is the **Millennium44 fork of Toolasha**. It folds MWI Combat Suite into Toolasha — live DPS tracking, loot and drop tracking, drop-luck analysis, and a full labyrinth simulator — so one script gives you both halves of the game instead of two userscripts.\n\n### Combat & simulators\n\n- Live DPS, hit/crit rate, damage-taken and net-sustain read off your own fights.\n- Loot and drop tracking with drop-luck analysis that judges combat, gathering and production.\n- A combat recorder: record real fights, replay them against the simulator, get a verdict with honest noise bands.\n- A combat simulator whose upgrade picks are costed and ranked on real market and credit costs.\n- Per-character combat stats, sim state and histories — no character reads another's books.\n\n### Market & profit\n\n- One market price API prices almost everything: upgrades, net worth, drop income, guild tokens, every action.\n- Prices capped by the volume the market has actually absorbed, so thin markets stop inflating rankings.\n- Profit lines on the action bar, pinned pages, alchemy rankings and the combat profit panel.\n- Market-history viewer with a live undercut alert that re-checks against a refreshed snapshot.\n- An upgrade advisor that costs and ranks gear and ability candidates against live prices.\n\n### Labyrinth\n\n- A labyrinth simulator with auto-pathing and auto-beaconing planned from the actual run.\n- Multi-target analysis with combined armour swaps and supply-aware torch/shroud/beacon planning.\n- Skilling-sim candidates scoped to the skill you are simming, with the skip level set for you.\n- Upgrade, All-Fights and Skilling analyses, each exportable to CSV.\n\n### Guild\n\n- Live trial measurement: per-player DPS and damage/healing attribution from the fight you watch.\n- Tier read straight off the boss bar, with pace, ETA and payout maths.\n- A trial report your guild can actually read, with honest coverage caveats.\n\n### Quality of life\n\n- A curated overlay of tiles with bundled presets, activity auto-switching, and tiles that open their panels.\n- A Ctrl+K (Cmd+K) command palette over every panel, overlay row, saved layout and setting.\n- Mobile-friendly panels: viewport clamping, reachable close buttons, finger-sized targets, a floating launcher.\n- Notifications for empty queues, community-buff expiry, and finished labyrinth runs.\n- Task tools: measured tokens/hour, net task income, and reroll handling that takes the free MooPass reroll.\n- Equipment Savings (\"eWatch\"): savings goals for gear and ability levels, fed from the simulators.\n- A goal planner that turns \"get me X gold / level N\" into a ranked plan from your real measured rates.\n\n### Data & sync\n\n- Cross-device sync of your whole database through one private GitHub gist you own.\n- Gzip-compressed, optionally AES-256 encrypted, conflict-aware, guarded against overwriting a year of data.\n- Chunked per-period history that survives months, with honest quota handling and per-character backups.\n- Hundreds of bug fixes and a test suite grown from ~2,300 to over 8,500 tests.\n";
-
-    /**
-     * What's New — the once-per-update popup, and the conservative-defaults policy.
-     *
-     * Two jobs that share one piece of bookkeeping. The bookkeeping is a stored
-     * record of which build spoke last and which setting IDs the user has already
-     * been shown; the popup announces whatever is new since, and the policy — for
-     * people who would rather their script never changed itself — forces any newly
-     * arrived on-by-default switch off before the features read it.
-     *
-     * ## Why the policy runs before features initialise
-     *
-     * A switch turned off *after* startup has already run once. The whole promise
-     * of "new settings start off" is that the new thing never happens, so the
-     * entrypoint calls `applyPolicy()` between loading settings and initialising
-     * features, and `maybeShow()` only after the page is up.
-     *
-     * ## Why the state is per character
-     *
-     * Settings themselves are per character, so "which settings have you been
-     * shown" has to be too — a policy applied for one character and assumed for
-     * another would leave the second character's new switches on.
-     */
-
-
-    const STATE_KEY_PREFIX = 'whatsNew_state';
-
-    const COLORS$3 = {
-        background: 'rgba(10, 10, 20, 0.98)',
-        border: 'rgba(96, 165, 250, 0.5)',
-        accent: '#60a5fa',
-        text: '#e0e0e0',
-        dim: '#888',
-    };
-
-    /**
-     * Decode the handful of HTML entities the changelog carries. The source is
-     * markdown that occasionally escapes angle brackets and quotes (e.g. the
-     * "&lt;name&gt; has …" announcement shape), and this popup shows it as plain
-     * text, so the escapes have to come back to the characters they stand for.
-     * `&amp;` is decoded last so an escaped entity like `&amp;lt;` does not become
-     * `<`.
-     * @param {string} text
-     * @returns {string}
-     */
-    function decodeEntities(text) {
-        return String(text)
-            .replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&#34;/g, '"')
-            .replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'")
-            .replace(/&amp;/g, '&');
-    }
-
-    /**
-     * Append one line's worth of inline-formatted content to a parent node, built
-     * as real DOM nodes rather than injected HTML. `**bold**` becomes a bold span,
-     * `` `code` `` is shown as its inner text with the backticks stripped, and HTML
-     * entities are decoded. The changelog is build-embedded and therefore trusted,
-     * but nodes are constructed anyway so no markdown is ever parsed as HTML.
-     * @param {Node} parent
-     * @param {string} text
-     * @private
-     */
-    function appendInline(parent, text) {
-        const pattern = /\*\*([^*]+?)\*\*|`([^`]+?)`/g;
-        let lastIndex = 0;
-        let match;
-        while ((match = pattern.exec(text)) !== null) {
-            if (match.index > lastIndex) {
-                parent.appendChild(document.createTextNode(decodeEntities(text.slice(lastIndex, match.index))));
-            }
-            if (match[1] !== undefined) {
-                const strong = document.createElement('span');
-                strong.style.fontWeight = '700';
-                strong.textContent = decodeEntities(match[1]);
-                parent.appendChild(strong);
-            } else {
-                parent.appendChild(document.createTextNode(decodeEntities(match[2])));
-            }
-            lastIndex = pattern.lastIndex;
-        }
-        if (lastIndex < text.length) {
-            parent.appendChild(document.createTextNode(decodeEntities(text.slice(lastIndex))));
-        }
-    }
-
-    /**
-     * Render a slice of the embedded fork markdown into `root` as readable DOM.
-     *
-     * A tiny, dependency-free markdown-to-DOM pass: `##` section headings are
-     * skipped (the "Unreleased — branch …" line is not for the reader), `###`
-     * becomes an accented heading, `-` becomes a bullet, anything else non-blank is
-     * a paragraph, and every text run is inline-formatted through `appendInline`.
-     * Shared by the changelog and the newcomer overview.
-     * @param {Node} root - Container to append rendered nodes to
-     * @param {string} markdown - The embedded markdown to render
-     */
-    function renderForkMarkdown(root, markdown) {
-        const lines = String(markdown).split('\n');
-        for (const raw of lines) {
-            const line = raw.replace(/\s+$/, '');
-            if (!line.trim()) continue; // spacing comes from element margins
-            if (/^##\s/.test(line)) continue; // the "Unreleased — branch …" heading is not shown
-            const heading = line.match(/^###\s+(.+)/);
-            if (heading) {
-                const el = document.createElement('div');
-                Object.assign(el.style, {
-                    fontWeight: '700',
-                    color: COLORS$3.accent,
-                    margin: '10px 0 4px',
-                    fontSize: '12.5px',
-                });
-                appendInline(el, heading[1]);
-                root.appendChild(el);
-                continue;
-            }
-            const bullet = line.match(/^-\s+(.+)/);
-            if (bullet) {
-                const el = document.createElement('div');
-                Object.assign(el.style, { margin: '2px 0', color: '#bbb', lineHeight: '1.4' });
-                el.appendChild(document.createTextNode('• '));
-                appendInline(el, bullet[1]);
-                root.appendChild(el);
-                continue;
-            }
-            const paragraph = document.createElement('div');
-            Object.assign(paragraph.style, { margin: '4px 0', color: '#bbb', lineHeight: '1.4' });
-            appendInline(paragraph, line);
-            root.appendChild(paragraph);
-        }
-    }
-
-    class WhatsNew {
-        constructor() {
-            this.panel = null;
-            this._pending = null;
-            this._keyHandler = null;
-        }
-
-        /** @private */
-        _stateKey() {
-            return `${STATE_KEY_PREFIX}_${dataManager.getCurrentCharacterId() || 'default'}`;
-        }
-
-        /** @private */
-        _identity() {
-            return buildIdentity(bundleBridge_js.toolashaRoot() || {});
-        }
-
-        /**
-         * Reconcile the stored record with this build. Runs before features
-         * initialise, because the conservative policy has to land before anything
-         * reads the settings it changes.
-         */
-        async applyPolicy() {
-            try {
-                const current = this._identity();
-                const schemaIds = settingsSchema_js.getAllSettingIds();
-                const stored = await storage.getJSON(this._stateKey(), 'settings', null);
-
-                // First run of the what's-new system. Two very different people
-                // land here: a genuinely fresh install, and somebody arriving from
-                // another build of Toolasha — usually the upstream fork, which
-                // saves its settings under the same keys. The saved map's keys are
-                // a fingerprint of the schema that wrote it, so the settings this
-                // fork added are computable even though the other script never ran
-                // a line of our code.
-                if (!stored) {
-                    const storedIds = await config.storedSettingIds();
-                    if (!storedIds || storedIds.length === 0) {
-                        // Nothing saved at all: a genuinely fresh install. Nobody
-                        // has opinions yet, so the useful question is not "which of
-                        // these 40 new switches" but "what kind of player are you".
-                        await this._offerFirstRunPreset(current);
-                    } else {
-                        const inherited = newSettingIds(schemaIds, storedIds);
-                        if (inherited.length > 0) {
-                            await this._offerFirstRunChoice(inherited, current);
-                        }
-                    }
-                    await this._saveState(current, schemaIds);
-                    return;
-                }
-
-                const fresh = newSettingIds(schemaIds, stored.knownIds || []);
-                const changed = identityChanged(stored, current);
-                if (!changed && fresh.length === 0) return;
-
-                let turnedOff = [];
-                if (fresh.length > 0 && config.getSetting('whatsNew_newDefaultsOff')) {
-                    turnedOff = conservativeOverrides(fresh, settingsSchema_js.getSettingDefinition);
-                    for (const id of turnedOff) config.setSetting(id, false);
-                }
-
-                this._pending = {
-                    headline: describeUpdate(stored, current),
-                    forkChanged: Boolean(stored.fork && stored.fork !== current.fork),
-                    newIds: fresh,
-                    turnedOff: new Set(turnedOff),
-                    isNewcomer: false,
-                };
-
-                // Recorded now rather than after the popup, so a closed tab cannot
-                // re-run the policy and flip a switch the user turned back on
-                await this._saveState(current, schemaIds);
-            } catch (error) {
-                console.error('[WhatsNew] Reconciling the update state failed:', error);
-            }
-        }
-
-        /**
-         * The one-time choice for someone arriving with another build's settings.
-         *
-         * A returning user already has opinions saved, so the safe answer is to
-         * touch nothing — "Keep my current settings" is the default and the primary
-         * button. The presets follow it, for the person who would rather start from
-         * a known configuration than reconcile a fork's worth of new switches by
-         * hand. The two kinds of answer are not symmetric, and the message says so:
-         * keeping changes nothing, whereas a preset overwrites what is there — which
-         * is why `applyPreset` snapshots first, so Restore in the Toolasha tab can
-         * walk it back.
-         *
-         * Awaited before features initialise, deliberately: "keep my current
-         * settings" is only true if the new features never run — a feature switched
-         * off after startup has already announced itself. The page underneath is the
-         * game, which works fine while this waits; closing the dialog counts as
-         * keeping things as they were, because the person who dismisses a dialog
-         * unread is exactly the person who did not ask for new behaviour.
-         *
-         * @param {Array<string>} inherited - Setting IDs this fork adds over the
-         *   build whose settings were found
-         * @param {{fork: string, version: string}} current - This build
-         * @private
-         */
-        async _offerFirstRunChoice(inherited, current) {
-            const conservative = conservativeOverrides(inherited, settingsSchema_js.getSettingDefinition);
-            const answer = await choiceDialog_js.askChoice({
-                title: `Welcome to ${current.fork}`,
-                message:
-                    `This build has ${inherited.length} setting${inherited.length === 1 ? '' : 's'} that did not exist ` +
-                    `in the version your settings came from. ${conservative.length} of them switch new behaviour on by ` +
-                    'default.\n\n' +
-                    'Keeping your settings changes nothing. A preset replaces your current settings — you can undo it ' +
-                    'later with Restore in the Toolasha tab.',
-                choices: [
-                    {
-                        value: 'keepCurrent',
-                        label: 'Keep my current settings',
-                        tone: 'primary',
-                        hint:
-                            'Change nothing — leave every setting exactly where it is now. New features stay off ' +
-                            'until you turn them on.',
-                    },
-                    ...SETTING_PRESETS.map((preset) => ({
-                        value: preset.id,
-                        label: preset.label,
-                        hint: preset.description,
-                    })),
-                ],
-            });
-
-            // A real preset id — and only a real preset id — takes the preset path.
-            // `keepCurrent` and dismissal (null) both fall through to the safe path,
-            // because the user asked for either "no change" or nothing at all.
-            const chosenPreset = getPreset(answer);
-            if (chosenPreset) {
-                await applyPreset(chosenPreset.id);
-                this._pending = {
-                    headline: `Switched to ${current.fork} ${current.version} — ${chosenPreset.label} preset`,
-                    forkChanged: true,
-                    newIds: [],
-                    turnedOff: new Set(),
-                    isNewcomer: true,
-                };
-                return;
-            }
-
-            // The safe path: keep every current value, and hold the conservative
-            // policy so genuinely-new on-by-default switches stay off until asked
-            // for. Dismissal lands here too — the person who closes a dialog unread
-            // is exactly the person who least wants their config touched.
-            config.setSetting('whatsNew_newDefaultsOff', true);
-            for (const id of conservative) config.setSetting(id, false);
-
-            // The full popup still follows after startup, live switches and all —
-            // the choice was wholesale, and the list is where it gets refined
-            this._pending = {
-                headline: `Switched to ${current.fork} ${current.version}`,
-                forkChanged: true,
-                newIds: inherited,
-                turnedOff: new Set(conservative),
-                isNewcomer: true,
-            };
-        }
-
-        /**
-         * The first thing a brand-new install is asked.
-         *
-         * On a fresh install every switch is at its default, which is very nearly
-         * "everything on" — hundreds of features arriving at once for somebody who
-         * has not yet decided which parts of the game they play. A preset is a
-         * one-click answer to that, and the settings panel keeps the same buttons
-         * for whenever they change their mind.
-         *
-         * Awaited before features initialise for the same reason the inherited-
-         * settings question is: a feature switched off after startup has already
-         * run once. Dismissing the dialog — Escape, or clicking away — is the same
-         * as choosing "Defaults", which is what a fresh install would have
-         * done anyway, so nothing here can leave a person stuck.
-         *
-         * @param {{fork: string, version: string}} current - This build
-         * @private
-         */
-        async _offerFirstRunPreset(current) {
-            try {
-                const answer = await choiceDialog_js.askChoice({
-                    title: `Welcome to ${current.fork}`,
-                    message:
-                        'Toolasha ships several hundred features. Pick a starting point and the rest stay out of your ' +
-                        'way — you can change any of it, or apply a different preset, from the Toolasha tab in ' +
-                        'Settings.',
-                    choices: SETTING_PRESETS.map((preset) => ({
-                        value: preset.id,
-                        label: preset.label,
-                        hint: preset.description,
-                        tone: preset.id === DEFAULT_PRESET_ID ? 'primary' : undefined,
-                    })),
-                });
-
-                const chosenId = answer && getPreset(answer) ? answer : DEFAULT_PRESET_ID;
-                await applyPreset(chosenId);
-
-                const chosen = getPreset(chosenId);
-                this._pending = {
-                    headline: `Installed ${current.fork} ${current.version} — ${chosen.label} preset`,
-                    forkChanged: false,
-                    newIds: [],
-                    turnedOff: new Set(),
-                    isNewcomer: true,
-                };
-            } catch (error) {
-                console.error('[WhatsNew] Offering the first-run preset failed:', error);
-            }
-        }
-
-        /** @private */
-        async _saveState(identity, schemaIds) {
-            await storage.setJSON(this._stateKey(), { ...identity, knownIds: schemaIds, seenAt: Date.now() }, 'settings');
-        }
-
-        /** Show the popup, where there is something to show and it is wanted. */
-        maybeShow() {
-            if (!this._pending) return;
-            if (!config.getSetting('whatsNew_showPopup', true)) return;
-            try {
-                this._buildPanel(this._pending);
-            } catch (error) {
-                console.error('[WhatsNew] Building the update popup failed:', error);
-            }
-            this._pending = null;
-        }
-
-        /** @private */
-        _buildPanel({ headline, forkChanged, newIds, turnedOff, isNewcomer }) {
-            this.close();
-
-            const panel = document.createElement('div');
-            panel.id = 'toolasha-whats-new';
-            Object.assign(panel.style, {
-                position: 'fixed',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-                zIndex: config.Z_FLOATING_PANEL,
-                width: 'min(560px, 92vw)',
-                maxHeight: '82vh',
-                display: 'flex',
-                flexDirection: 'column',
-                background: COLORS$3.background,
-                border: `2px solid ${COLORS$3.border}`,
-                borderRadius: '10px',
-                color: COLORS$3.text,
-                fontFamily: "'Segoe UI', sans-serif",
-                fontSize: '13px',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
-            });
-
-            const header = document.createElement('div');
-            Object.assign(header.style, {
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '10px 14px',
-                borderBottom: `1px solid ${COLORS$3.border}`,
-            });
-            const title = document.createElement('div');
-            title.innerHTML =
-                `<span style="font-weight:700; font-size:14px; color:${COLORS$3.accent};">Toolasha — what's new</span>` +
-                `<div style="font-size:11px; color:${forkChanged ? '#ffa500' : COLORS$3.dim}; margin-top:2px;">${headline}</div>`;
-            const close = document.createElement('button');
-            close.textContent = '×';
-            Object.assign(close.style, {
-                background: 'none',
-                border: 'none',
-                color: '#aaa',
-                fontSize: '22px',
-                cursor: 'pointer',
-                lineHeight: '1',
-            });
-            close.addEventListener('click', () => this.close());
-            header.appendChild(title);
-            header.appendChild(close);
-            panel.appendChild(header);
-
-            const body = document.createElement('div');
-            Object.assign(body.style, { overflowY: 'auto', padding: '10px 14px', flex: '1' });
-
-            if (newIds.length > 0) {
-                const section = document.createElement('div');
-                section.innerHTML = `<div style="font-weight:700; color:${COLORS$3.accent}; margin-bottom:6px;">New settings</div>`;
-                if (turnedOff.size > 0) {
-                    const note = document.createElement('div');
-                    note.textContent =
-                        `${turnedOff.size} of these would normally start on, and start off because ` +
-                        `"New settings start turned off" is enabled.`;
-                    Object.assign(note.style, { fontSize: '11px', color: '#ffa500', marginBottom: '6px' });
-                    section.appendChild(note);
-                }
-                for (const id of newIds) {
-                    const row = this._settingRow(id, turnedOff.has(id));
-                    if (row) section.appendChild(row);
-                }
-                body.appendChild(section);
-            }
-
-            // A fresh install, or someone arriving from another build (upstream
-            // Toolasha included), gets the at-a-glance tour before the changelog —
-            // the changelog answers "what changed", which means nothing to someone
-            // who has not seen the thing it changed.
-            if ((isNewcomer || forkChanged) && forkOverview?.trim()) {
-                const overview = document.createElement('div');
-                const heading = document.createElement('div');
-                Object.assign(heading.style, {
-                    fontWeight: '700',
-                    color: COLORS$3.accent,
-                    margin: '4px 0 6px',
-                    fontSize: '14px',
-                });
-                heading.textContent = 'Toolasha — at a glance';
-                overview.appendChild(heading);
-                const box = document.createElement('div');
-                Object.assign(box.style, {
-                    fontSize: '12px',
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid #222',
-                    borderRadius: '6px',
-                    padding: '8px 10px',
-                    marginBottom: '12px',
-                });
-                renderForkMarkdown(box, forkOverview.trim());
-                overview.appendChild(box);
-                body.appendChild(overview);
-            }
-
-            if (forkChangelog?.trim()) {
-                const log = document.createElement('div');
-                const heading = document.createElement('div');
-                Object.assign(heading.style, {
-                    fontWeight: '700',
-                    color: COLORS$3.accent,
-                    margin: '10px 0 6px',
-                    fontSize: '14px',
-                });
-                heading.textContent = 'Changelog';
-                log.appendChild(heading);
-                const box = document.createElement('div');
-                Object.assign(box.style, {
-                    fontSize: '12px',
-                    color: '#bbb',
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid #222',
-                    borderRadius: '6px',
-                    padding: '8px 10px',
-                });
-                renderForkMarkdown(box, forkChangelog.trim());
-                log.appendChild(box);
-                body.appendChild(log);
-            }
-
-            panel.appendChild(body);
-
-            const footer = document.createElement('div');
-            Object.assign(footer.style, {
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                padding: '8px 14px',
-                borderTop: `1px solid ${COLORS$3.border}`,
-                fontSize: '11px',
-                color: COLORS$3.dim,
-            });
-            // The opt-out lives on the popup itself: the moment someone decides
-            // they never want to see it again is the moment it is on screen
-            const optOut = document.createElement('label');
-            optOut.style.cursor = 'pointer';
-            const optOutBox = document.createElement('input');
-            optOutBox.type = 'checkbox';
-            optOutBox.checked = !config.getSetting('whatsNew_showPopup', true);
-            optOutBox.style.marginRight = '5px';
-            optOutBox.addEventListener('change', () => config.setSetting('whatsNew_showPopup', !optOutBox.checked));
-            optOut.appendChild(optOutBox);
-            optOut.appendChild(document.createTextNode("Don't show this after updates"));
-            const ok = document.createElement('button');
-            ok.textContent = 'Close';
-            Object.assign(ok.style, {
-                background: 'rgba(96, 165, 250, 0.15)',
-                border: `1px solid ${COLORS$3.border}`,
-                borderRadius: '4px',
-                color: COLORS$3.accent,
-                padding: '4px 14px',
-                cursor: 'pointer',
-            });
-            ok.addEventListener('click', () => this.close());
-            footer.appendChild(optOut);
-            footer.appendChild(ok);
-            panel.appendChild(footer);
-
-            document.body.appendChild(panel);
-            panelZIndex_js.registerFloatingPanel(panel);
-            panelZIndex_js.bringPanelToFront(panel);
-            this.panel = panel;
-
-            // Escape closes it, captured because the game listens for Escape too
-            // and would close whatever is behind this as well
-            this._keyHandler = (event) => {
-                if (event.key !== 'Escape') return;
-                event.stopPropagation();
-                event.preventDefault();
-                this.close();
-            };
-            document.addEventListener('keydown', this._keyHandler, true);
-
-            // Focused so Enter and Tab work from the keyboard, and so the popup
-            // takes focus away from whatever was behind it
-            ok.focus();
-        }
-
-        /**
-         * One new setting, with its real control — flipping it here is flipping it,
-         * not a preview of somewhere else it could be flipped.
-         * @private
-         */
-        _settingRow(id, wasTurnedOff) {
-            const definition = settingsSchema_js.getSettingDefinition(id);
-            if (!definition) return null;
-
-            const row = document.createElement('div');
-            Object.assign(row.style, {
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                gap: '10px',
-                padding: '5px 0',
-                borderBottom: '1px solid #1a1a2e',
-            });
-
-            const label = document.createElement('div');
-            label.innerHTML =
-                `<div>${definition.label}${wasTurnedOff ? ' <span style="color:#ffa500; font-size:10px;">(kept off)</span>' : ''}</div>` +
-                (definition.help ? `<div style="font-size:11px; color:${COLORS$3.dim};">${definition.help}</div>` : '');
-            label.style.flex = '1';
-            row.appendChild(label);
-
-            const type = definition.type || 'checkbox';
-            let control = null;
-            if (type === 'checkbox') {
-                control = document.createElement('input');
-                control.type = 'checkbox';
-                control.checked = Boolean(config.getSetting(id, definition.default ?? false));
-                control.addEventListener('change', () => config.setSetting(id, control.checked));
-            } else if (type === 'number') {
-                control = document.createElement('input');
-                control.type = 'number';
-                if (definition.min !== undefined) control.min = definition.min;
-                if (definition.max !== undefined) control.max = definition.max;
-                control.value = config.getSettingValue(id, definition.default ?? 0);
-                control.style.width = '70px';
-                control.addEventListener('change', () => config.setSetting(id, Number(control.value)));
-            } else if (type === 'select' && Array.isArray(definition.options)) {
-                control = document.createElement('select');
-                for (const option of definition.options) {
-                    const el = document.createElement('option');
-                    el.value = option.value ?? option;
-                    el.textContent = option.label ?? option;
-                    control.appendChild(el);
-                }
-                control.value = config.getSettingValue(id, definition.default ?? '');
-                control.addEventListener('change', () => config.setSetting(id, control.value));
-            } else {
-                control = document.createElement('span');
-                control.textContent = 'in Settings';
-                control.style.color = COLORS$3.dim;
-                control.style.fontSize = '11px';
-            }
-            if (control.tagName !== 'SPAN') {
-                Object.assign(control.style, {
-                    background: '#1a1a2e',
-                    color: COLORS$3.text,
-                    border: '1px solid #444',
-                    borderRadius: '3px',
-                });
-            }
-            row.appendChild(control);
-            return row;
-        }
-
-        close() {
-            if (this._keyHandler) {
-                document.removeEventListener('keydown', this._keyHandler, true);
-                this._keyHandler = null;
-            }
-            if (this.panel) {
-                panelZIndex_js.unregisterFloatingPanel(this.panel);
-                this.panel.remove();
-                this.panel = null;
-            }
-        }
-    }
-
-    const whatsNew = new WhatsNew();
 
     /**
      * Transmute Rates Module

@@ -1,7 +1,7 @@
 /**
  * Toolasha Core Library
  * Core infrastructure and API clients
- * Version: 2.101.0
+ * Version: 2.102.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -4725,6 +4725,47 @@
         }
 
         /**
+         * Copy another character's whole settings map onto the current character.
+         *
+         * The inverse of the sync buttons: they push this character's settings out,
+         * this pulls another character's settings in — the one-click "make this new
+         * alt like my main" a fresh character wants. The map is written whole, the
+         * same shape a normal save uses, so the caller only has to reload config.
+         *
+         * @param {string} sourceId - The character to copy settings from
+         * @returns {Promise<boolean>} True when a map was found and written
+         */
+        async copySettingsFromCharacter(sourceId) {
+            if (!sourceId || !this.currentCharacterId || String(sourceId) === String(this.currentCharacterId)) {
+                return false;
+            }
+            const sourceMap = await storage.getJSON(`${this.storageKey}_${sourceId}`, this.storageArea, null);
+            if (!sourceMap || typeof sourceMap !== 'object' || Object.keys(sourceMap).length === 0) {
+                return false;
+            }
+            await storage.setJSON(this.getCharacterStorageKey(), sourceMap, this.storageArea, true);
+            return true;
+        }
+
+        /**
+         * The known characters, other than the current one, that actually have
+         * settings saved — the only ones worth offering as a copy source.
+         * @returns {Promise<Array<{id: string, name: string}>>}
+         */
+        async charactersWithSettings() {
+            const known = await this.getKnownCharacters();
+            const withSettings = [];
+            for (const character of known) {
+                if (String(character.id) === String(this.currentCharacterId)) continue;
+                const map = await storage.getJSON(`${this.storageKey}_${character.id}`, this.storageArea, null);
+                if (map && typeof map === 'object' && Object.keys(map).length > 0) {
+                    withSettings.push(character);
+                }
+            }
+            return withSettings;
+        }
+
+        /**
          * Get a single setting value
          * @param {string} settingId - Setting ID
          * @param {*} defaultValue - Default value if not found
@@ -8282,6 +8323,43 @@
             } catch (error) {
                 console.error('[Config] Failed to sync settings:', error);
                 return { success: false, count: 0, error: error.message };
+            }
+        }
+
+        /**
+         * Copy another character's settings onto the current one and apply them live.
+         * @param {string} sourceId - The character to copy from
+         * @returns {Promise<{success: boolean, error?: string}>}
+         */
+        async copySettingsFromCharacter(sourceId) {
+            try {
+                const characterId = dataManager.getCurrentCharacterId();
+                if (!characterId) {
+                    return { success: false, error: 'No character ID available' };
+                }
+                settingsStorage.setCharacterId(characterId, dataManager.getCurrentCharacterName());
+                const copied = await settingsStorage.copySettingsFromCharacter(sourceId);
+                if (copied) {
+                    await this.loadSettings();
+                    this.applyColorSettings();
+                }
+                return { success: copied };
+            } catch (error) {
+                console.error('[Config] Failed to copy settings from character:', error);
+                return { success: false, error: error.message };
+            }
+        }
+
+        /**
+         * The other characters that have settings worth copying from.
+         * @returns {Promise<Array<{id: string, name: string}>>}
+         */
+        async charactersWithSettings() {
+            try {
+                return await settingsStorage.charactersWithSettings();
+            } catch (error) {
+                console.error('[Config] Failed to list characters with settings:', error);
+                return [];
             }
         }
 
