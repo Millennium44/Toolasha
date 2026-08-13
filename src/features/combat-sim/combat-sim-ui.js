@@ -1446,8 +1446,8 @@ class CombatSimUI {
         // All Zones state
         this._allZonesMode = null; // null = off, 'group' or 'solo'
         this._allZonesResults = null; // Array of {zone, simResult, revenue}
-        this._allZonesSortCol = null;
-        this._allZonesSortAsc = true;
+        this._allZonesSortCol = 'score'; // default the Results table to score, descending
+        this._allZonesSortAsc = false;
         this._earlyExitEnabled = true; // default on
         this._maxTierFoodEnabled = false; // sim all zones on the best food of each kind you run
         // What the displayed results were actually run on, so a re-sort keeps
