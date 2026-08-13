@@ -173,6 +173,39 @@ export function readGuildShrineSnapshot() {
 }
 
 /**
+ * Turn a shared profile's `guildBuffLevelMap` (buffHrid → level) into the two DTO
+ * fields the sim needs: the level map the editor renders, and the synthesized
+ * combat buff array the engine applies.
+ *
+ * The server pre-computes `guildCombatBuffs` for your own character, but a shared
+ * profile carries only the levels, so the combat halves are synthesized here the
+ * same way the upgrade advisor does when it explores a level. Skilling shrines
+ * are kept in the level map (so the editor shows them) but not synthesized — a
+ * combat sim has no use for them.
+ *
+ * @param {Object} levelMap - buffHrid → level (a bare number, as the profile sends)
+ * @returns {{guildShrineLevels: Object, guildCombatBuffs: Array<Object>}}
+ */
+export function buildGuildBuffsFromLevels(levelMap) {
+    const guildShrineLevels = {};
+    let guildCombatBuffs = [];
+    if (!levelMap || typeof levelMap !== 'object') {
+        return { guildShrineLevels, guildCombatBuffs };
+    }
+
+    const detailMap = getGuildBuffDetailMap();
+    for (const [buffHrid, rawLevel] of Object.entries(levelMap)) {
+        const level = Math.max(0, Math.floor(Number(rawLevel) || 0));
+        guildShrineLevels[buffHrid] = level;
+        const detail = detailMap[buffHrid];
+        if (detail?.isCombat && level > 0) {
+            guildCombatBuffs = [...guildCombatBuffs, ...synthesizeGuildBuffs(detail, level)];
+        }
+    }
+    return { guildShrineLevels, guildCombatBuffs };
+}
+
+/**
  * Build a player DTO from the current character data.
  * Outputs the format expected by Player.createFromDTO():
  *   { staminaLevel, ..., equipment: { '/equipment_types/head': {hrid, enhancementLevel}, ... },
@@ -578,6 +611,8 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
         drinks: [],
         abilities: [],
         houseRooms: {},
+        guildShrineLevels: {},
+        guildCombatBuffs: [],
     };
 
     // Extract skill levels
@@ -690,6 +725,16 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
         for (const house of Object.values(profile.profile.characterHouseRoomMap)) {
             dto.houseRooms[house.houseRoomHrid] = house.level;
         }
+    }
+
+    // Guild shrine levels — the game now shares each player's shrine levels on
+    // their profile (guildBuffLevelMap). The server does not pre-compute their
+    // combat buffs the way it does for your own character, so synthesize them so
+    // an imported character fights with its shrines, not without.
+    if (profile.profile?.guildBuffLevelMap) {
+        const { guildShrineLevels, guildCombatBuffs } = buildGuildBuffsFromLevels(profile.profile.guildBuffLevelMap);
+        dto.guildShrineLevels = guildShrineLevels;
+        dto.guildCombatBuffs = guildCombatBuffs;
     }
 
     return dto;

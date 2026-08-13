@@ -302,17 +302,15 @@ function combatSections(score) {
         },
     ];
 
-    // Only your own character has shrine levels to show, and only a shrine that
-    // was actually bought is worth a line
+    // Shrine levels are shared on every profile now, so a bought shrine is worth
+    // a line — and it is counted in the combat total above, like everything else.
     if (score.guildShrineKnown && score.guildShrineCombat > 0) {
         sections.push({
             id: 'combat-shrines',
             title: 'Guild shrines',
             score: score.guildShrineCombat,
             rows: score.breakdown?.guildShrinesCombat || [],
-            note:
-                `Outside the combat total, since no other player's card can carry it. ` +
-                `${formatWithSeparator(score.guildShrineCombatTokens || 0)} guild tokens also spent, which have no price.`,
+            note: `${formatWithSeparator(score.guildShrineCombatTokens || 0)} guild tokens also spent, which have no price.`,
         });
     }
 

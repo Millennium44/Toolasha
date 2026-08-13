@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Profiles: shrine levels count toward gear score and combat sim
+
+The game now shares each player's shrine levels on their profile (`guildBuffLevelMap`). Toolasha reads them and folds their value into the **Combat and Skiller scores** (combat shrines into combat, skilling into skiller) instead of leaving them off other players' cards — the "+ Guild Shrine" line now shows for everyone. **Sim Character** (and party-member sims) also carries the viewed player's shrine buffs into the combat sim, so an imported character fights with its shrines rather than without.
+
+### Labyrinth: full monster abilities always modelled
+
+Removed the "Model full monster abilities in combat sim (testing)" toggle — the verified behaviour is now permanent. The sim builds each labyrinth monster with its full ability kit (stuns, shreds, self-buffs) rather than the tier-0 subset, so combat-room clear chances read closer to reality.
+
 ### Enhancement Tracker: idle duration fix, session merge, and an on-screen toggle
 
 - **Session Duration no longer runs while idle.** It stopped only when a run reached its target; a session left In Progress counted wall-clock forever. The clock now ends at the last recorded attempt, so it freezes when you stop enhancing (and XP/Hour with it).

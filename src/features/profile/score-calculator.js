@@ -126,8 +126,14 @@ export async function calculateCombatScore(profileData) {
         // 4. Calculate Skiller Equipment Score (async - runs after combat completes)
         const skillerEquipmentResult = await calculateEquipmentScore(profileData, 'skiller');
 
-        const combatTotalScore = houseResult.score + abilityResult.score + combatEquipmentResult.score;
-        const skillerTotalScore = skillerEquipmentResult.score;
+        // Shrine levels are now shared on every profile, so a shrine's value
+        // belongs in the score the same way house/ability/equipment do — combat
+        // shrines in the combat total, skilling shrines in the skiller total.
+        // (They used to be known only for your own character and were kept on a
+        // separate line so your score stayed comparable with everybody else's.)
+        const combatTotalScore =
+            houseResult.score + abilityResult.score + combatEquipmentResult.score + guildShrineResult.combat.score;
+        const skillerTotalScore = skillerEquipmentResult.score + guildShrineResult.skilling.score;
 
         return {
             // Combat score (house + ability + combat equipment)
@@ -135,13 +141,14 @@ export async function calculateCombatScore(profileData) {
             house: houseResult.score,
             ability: abilityResult.score,
             equipment: combatEquipmentResult.score,
-            // Its own line, deliberately outside `total`: shrine levels are only
-            // ever known for your own character, so folding them in would make
-            // your score incomparable with everybody else's
+            // Now folded into `total`/`skillerTotal` above (combat and skilling
+            // halves respectively). Kept as its own field too, so a breakdown can
+            // still show the shrine line and its unpriced token count.
             guildShrine: guildShrineResult.score,
             guildShrineTokens: guildShrineResult.tokens,
-            // False for every profile that is not your own — the display leaves
-            // the line out rather than printing a zero for what it cannot see
+            // True whenever the profile carried shrine levels — your own always,
+            // and now any shared profile the game exposes them on. False leaves
+            // the line out rather than printing a zero for what cannot be seen.
             guildShrineKnown: guildShrineResult.known,
             guildShrineCombat: guildShrineResult.combat.score,
             guildShrineCombatTokens: guildShrineResult.combat.tokens,
@@ -367,7 +374,13 @@ function calculateGuildShrineScore(profileData) {
     const emptyBucket = () => ({ score: 0, tokens: 0, breakdown: [] });
     const unknown = { known: false, ...emptyBucket(), combat: emptyBucket(), skilling: emptyBucket() };
 
-    const buffMap = profileData?.profile?.characterGuildBuffMap;
+    // Your own profile carries `characterGuildBuffMap` ({ hrid: { level } }); a
+    // shared profile now carries `guildBuffLevelMap` ({ hrid: level }) — the game
+    // exposes every player's shrine levels on their profile. Either is a real
+    // reading; the level is normalised out of both shapes in the loop below.
+    const ownMap = profileData?.profile?.characterGuildBuffMap;
+    const sharedMap = profileData?.profile?.guildBuffLevelMap;
+    const buffMap = ownMap && Object.keys(ownMap).length > 0 ? ownMap : sharedMap;
     const gameData = dataManager.getInitClientData();
     const detailMap = gameData?.guildBuffDetailMap;
     // An empty map is not a reading: shrine levels ride on guild traffic that
@@ -384,7 +397,7 @@ function calculateGuildShrineScore(profileData) {
     const skilling = { cost: 0, tokens: 0, breakdown: [] };
 
     for (const [buffHrid, entry] of Object.entries(buffMap)) {
-        const level = Math.max(0, Math.floor(Number(entry?.level) || 0));
+        const level = Math.max(0, Math.floor(Number(typeof entry === 'number' ? entry : entry?.level) || 0));
         const detail = detailMap[buffHrid];
         if (!detail || level <= 0) continue;
 
