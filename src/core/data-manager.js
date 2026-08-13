@@ -167,6 +167,28 @@ class DataManager {
     }
 
     /**
+     * The game's official market-value map, decompressed by the game's own util.
+     *
+     * Published since the 8/13/2026 update: an estimated value for every item and
+     * enhancement level — the figure behind the inventory's "Total Market Value"
+     * and the tradable range. Raw reader only; caching and band derivation live in
+     * utils/market-values.js. Absent on the live server until the patch lands, so
+     * a missing util is a normal no-data, not an error.
+     * @returns {{marketValuesVersion: number, marketItemValues: Object}|null}
+     */
+    getMarketItemValues() {
+        try {
+            if (typeof localStorageUtil !== 'undefined' && typeof localStorageUtil.getMarketItemValues === 'function') {
+                return localStorageUtil.getMarketItemValues();
+            }
+            return null;
+        } catch (error) {
+            console.error('[Data Manager] Failed to read market item values:', error);
+            return null;
+        }
+    }
+
+    /**
      * Setup WebSocket message handlers
      * Listens for game data updates
      */

@@ -14,6 +14,10 @@ The game's market tax went from 2% to 5%. Updated the single `MARKET_TAX` consta
 
 The 5% rate (and the shrine-in-gear-score change below) is **gated to the test server** for now via `isMarketplacePatchLive()` — the live server keeps 2% until the patch reaches it. One line to un-gate everything once it is live everywhere (`server-gate.js`).
 
+### Prices reconciled against the game's official market values
+
+The 8/13/2026 update publishes an estimated value for every item and enhancement level (`localStorageUtil.getMarketItemValues()`, the figure behind the inventory's "Total Market Value"). Toolasha now reads it (cached, version-guarded) and reconciles every ask/bid at the shared price choke point (`getItemPrice`/`getItemPrices`): a stale price is **clamped into the ±10% tradable range** the game now enforces, and an item with an empty book is **valued the way the game values it** instead of collapsing to crafting cost. This flows through to networth/inventory value and the profit calculators at once. Gated to the test server (a pass-through until the patch is live). Combat-loot valuation, which reads the market API directly, is unchanged this pass.
+
 ### Profiles: shrine levels count toward gear score and combat sim
 
 The game now shares each player's shrine levels on their profile (`guildBuffLevelMap`). Toolasha reads them and folds their value into the **Combat and Skiller scores** (combat shrines into combat, skilling into skiller) instead of leaving them off other players' cards — the "+ Guild Shrine" line now shows for everyone. **Sim Character** (and party-member sims) also carries the viewed player's shrine buffs into the combat sim, so an imported character fights with its shrines rather than without.
