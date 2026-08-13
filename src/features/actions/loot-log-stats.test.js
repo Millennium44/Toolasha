@@ -43,6 +43,16 @@ vi.mock('../market/expected-value-calculator.js', () => ({
 vi.mock('./loot-log-history.js', () => ({
     default: { mergeAndSave: vi.fn(), getHistoricalEntries: vi.fn() },
 }));
+// The enhancing summary only needs two pricing functions from here; mock them so
+// the test does not pull the whole enhancement bundle's transitive imports.
+vi.mock('../enhancement/tooltip-enhancement.js', () => ({
+    getEnhancementMaterialPrice: () => 0,
+    getCheapestProtectionPrice: () => ({ price: 0 }),
+}));
+vi.mock('../../utils/bundle-bridge.js', () => ({
+    enhancementCalculator: () => null,
+    enhancementConfig: () => null,
+}));
 
 describe('LootLogStats.calculateExpectedRunValue', () => {
     let stats;

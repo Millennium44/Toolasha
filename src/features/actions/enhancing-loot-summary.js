@@ -108,19 +108,36 @@ export function countProtections(levelCounts, protectFrom, targetLevel, success)
  * @param {Object} deps
  * @param {(params: Object) => {attempts:number, protectionCount:number}} deps.calculateEnhancement
  * @param {Object} deps.params - This character's enhancing params (getEnhancingParams shape)
- * @param {(hrid: string, level: number, side: 'ask'|'bid') => number} deps.priceOf
+ * @param {(hrid: string) => number} deps.materialPrice - Per-unit enhancement
+ *   material price, buy side — the same pricing the live tracker uses, with its
+ *   production-cost / NPC fallbacks (an unlisted catalyst is not free). Coins
+ *   must come back as 1.
+ * @param {(baseHrid: string) => number} deps.protectionPrice - Cheapest protection
+ *   unit price for the item (0 when none applies)
+ * @param {(hrid: string, level: number) => number|null} deps.itemValue - Market
+ *   resale (bid) value of the item at a level, or null when unlisted
  * @param {Object} deps.itemDetails - itemDetailMap entry for the enhanced item
  * @param {number} [deps.marketTax=0.02] - Sell fee
  * @returns {Object|null}
  */
 export function computeEnhancingSummary(run, deps) {
-    const { calculateEnhancement, params, priceOf, itemDetails, marketTax = 0.02 } = deps || {};
+    const {
+        calculateEnhancement,
+        params,
+        materialPrice,
+        protectionPrice,
+        itemValue,
+        itemDetails,
+        marketTax = 0.02,
+    } = deps || {};
     if (
         !run ||
         !itemDetails ||
         typeof calculateEnhancement !== 'function' ||
         !params ||
-        typeof priceOf !== 'function'
+        typeof materialPrice !== 'function' ||
+        typeof protectionPrice !== 'function' ||
+        typeof itemValue !== 'function'
     ) {
         return null;
     }
@@ -128,21 +145,14 @@ export function computeEnhancingSummary(run, deps) {
     const itemLevel = itemDetails.itemLevel || 0;
     const enhancementCosts = itemDetails.enhancementCosts || [];
 
-    // Per-attempt material cost (buy side); coins are worth one each.
+    // Per-attempt material cost (buy side), priced exactly as the live tracker
+    // does — materialPrice handles coins (1) and the unlisted-material fallbacks.
     let perAttempt = 0;
     for (const material of enhancementCosts) {
-        const price = material.itemHrid === '/items/coin' ? 1 : priceOf(material.itemHrid, 0, 'ask') || 0;
-        perAttempt += price * (material.count || 0);
+        perAttempt += (materialPrice(material.itemHrid) || 0) * (material.count || 0);
     }
 
-    // Cheapest protection option.
-    const protectionOptions = [run.baseHrid, '/items/mirror_of_protection', ...(itemDetails.protectionItemHrids || [])];
-    let protUnit = Infinity;
-    for (const hrid of protectionOptions) {
-        const price = priceOf(hrid, 0, 'ask') || 0;
-        if (price > 0 && price < protUnit) protUnit = price;
-    }
-    if (!isFinite(protUnit)) protUnit = 0;
+    const protUnit = protectionPrice(run.baseHrid) || 0;
 
     const runParams = (protectFrom) =>
         calculateEnhancement({
@@ -187,8 +197,8 @@ export function computeEnhancingSummary(run, deps) {
 
     // Worth it: +N resale (after fee) minus base given up (after fee) minus spent.
     const keep = 1 - marketTax;
-    const baseValue = priceOf(run.baseHrid, 0, 'bid') || 0;
-    const finalValue = run.success ? (priceOf(run.baseHrid, run.targetLevel, 'bid') ?? null) : baseValue;
+    const baseValue = itemValue(run.baseHrid, 0) || 0;
+    const finalValue = run.success ? (itemValue(run.baseHrid, run.targetLevel) ?? null) : baseValue;
     const profit = finalValue == null ? null : finalValue * keep - baseValue * keep - totalActual;
 
     return {

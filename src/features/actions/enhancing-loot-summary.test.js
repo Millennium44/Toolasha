@@ -70,13 +70,13 @@ describe('computeEnhancingSummary', () => {
         enhancementCosts: [{ itemHrid: '/items/prime_catalyst', count: 1 }],
         protectionItemHrids: ['/items/mirror_of_protection'],
     };
-    // Prime catalyst 1000 to buy; +0 charm sells 500; +3 charm sells 100000.
-    const priceOf = (hrid, level, side) => {
-        if (hrid === '/items/prime_catalyst') return 1000;
-        if (hrid === '/items/mirror_of_protection') return 5000;
-        if (hrid === '/items/advanced_intelligence_charm') return level >= 3 ? 100000 : side === 'bid' ? 500 : 800;
-        return 0;
-    };
+    // Prime catalyst 1000/unit; cheapest protection 5000; +0 charm sells 500,
+    // +3 sells 100000.
+    const materialPrice = (hrid) => (hrid === '/items/prime_catalyst' ? 1000 : hrid === '/items/coin' ? 1 : 0);
+    const protectionPrice = () => 5000;
+    const itemValue = (hrid, level) =>
+        hrid === '/items/advanced_intelligence_charm' ? (level >= 3 ? 100000 : 500) : 0;
+    const deps = { materialPrice, protectionPrice, itemValue };
     // Fake Markov: 10 expected attempts, 0 protects, regardless of protectFrom.
     const calculateEnhancement = () => ({ attempts: 10, protectionCount: 0 });
 
@@ -90,7 +90,7 @@ describe('computeEnhancingSummary', () => {
     };
 
     test('computes expected vs actual material cost and the luck diff', () => {
-        const s = computeEnhancingSummary(run, { calculateEnhancement, params: {}, priceOf, itemDetails });
+        const s = computeEnhancingSummary(run, { calculateEnhancement, params: {}, ...deps, itemDetails });
         expect(s.materialExpected).toBe(10 * 1000); // 10 expected attempts × 1000
         expect(s.materialActual).toBe(19 * 1000); // 19 actual attempts × 1000
         expect(s.totalExpected).toBe(10000);
@@ -102,7 +102,7 @@ describe('computeEnhancingSummary', () => {
         const s = computeEnhancingSummary(run, {
             calculateEnhancement,
             params: {},
-            priceOf,
+            ...deps,
             itemDetails,
             marketTax: 0.02,
         });
@@ -113,13 +113,13 @@ describe('computeEnhancingSummary', () => {
 
     test('a failed run values the item at the base price', () => {
         const failed = { ...run, success: false, targetLevel: 4, maxLevel: 3, levelCounts: { 0: 15, 3: 4 } };
-        const s = computeEnhancingSummary(failed, { calculateEnhancement, params: {}, priceOf, itemDetails });
+        const s = computeEnhancingSummary(failed, { calculateEnhancement, params: {}, ...deps, itemDetails });
         expect(s.finalValue).toBe(500); // base bid
         expect(s.success).toBe(false);
     });
 
     test('returns null when a dependency is missing', () => {
-        expect(computeEnhancingSummary(run, { params: {}, priceOf, itemDetails })).toBeNull();
-        expect(computeEnhancingSummary(null, { calculateEnhancement, params: {}, priceOf, itemDetails })).toBeNull();
+        expect(computeEnhancingSummary(run, { params: {}, ...deps, itemDetails })).toBeNull();
+        expect(computeEnhancingSummary(null, { calculateEnhancement, params: {}, ...deps, itemDetails })).toBeNull();
     });
 });
