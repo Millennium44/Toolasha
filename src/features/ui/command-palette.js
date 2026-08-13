@@ -40,6 +40,7 @@ import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { registeredRows } from '../../utils/overlay-rows.js';
 import { showToast } from '../../utils/toast.js';
 import overlayPanel from './overlay-panel.js';
+import enhancementUI from '../enhancement/enhancement-ui.js';
 import {
     goalPlanner,
     ironCowFarmPanel,
@@ -211,6 +212,13 @@ function panelCommands() {
         { name: 'Treasure Tracker', hint: 'Chests opened and what came out', target: treasureTracker() },
         { name: 'PFormance', hint: "What the script's own timers say", target: pformancePanel() },
         { name: 'Combat Simulator', hint: 'Simulate a fight', target: combatSimUI() },
+        {
+            name: 'Enhancement Tracker',
+            hint: 'Show or hide the enhancing cost/luck/worth-it panel',
+            // Same UI bundle as the palette, so imported directly rather than
+            // through the bridge; toggle() remembers a manual hide.
+            target: enhancementUI,
+        },
         {
             name: 'Lab Simulator',
             hint: 'Simulate a labyrinth run',

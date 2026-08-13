@@ -8,7 +8,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Enhancement Tracker: cost-vs-expected (luck) and worth-it lines
 
-The Enhancement Tracker now shows two new readings under the run stats: **Expected Cost + Cost Factor** with how far below/above the expected cost this run landed (the cost twin of the Attempt Factor — pure attempt/protection luck, at this run's own prices), and a **Worth it (net)** line — the +N item's after-fee resale value minus the base you gave up minus what you spent, so you can see whether the enhance actually paid off. (A loot-log version is a planned follow-up.)
+The Enhancement Tracker now shows two new readings under the run stats: **Expected Cost + Cost Factor** with how far below/above the expected cost this run landed (the cost twin of the Attempt Factor — pure attempt/protection luck, at this run's own prices), and a **Worth it (net)** line — the +N item's after-fee resale value minus the base you gave up minus what you spent, so you can see whether the enhance actually paid off. Click the Worth-it line to expand a breakdown. (A loot-log version is a planned follow-up.)
+
+### Enhancement Tracker: toggle it from the command palette
+
+The Enhancement Tracker now appears in the Ctrl/Cmd+K command palette, so you can show or hide it on demand. A manual hide sticks (the auto-show logic won't bring it back until you toggle it on again or re-enable the feature).
 
 ### Fixes: sort defaults, minimize placement, clickable quiet members
 
