@@ -12,7 +12,7 @@ The enhancing-route (target level, protection plan, cost) was only reachable by 
 
 ### Ability hover: shows the "fresh to level" cost, like the book tooltip
 
-Hovering an ability itself (in a loadout or ability slot) now adds the same "Fresh to Lv N: <cost> (<books> books)" line the ability-book tooltip shows — plus held-book progress when you carry any. It's a compact block (the game already shows level/xp), detected off the ability's own icon, and rides the existing "ability status" tooltip setting.
+Hovering an ability itself (in a loadout or ability slot) now adds the same "Fresh to Lv N: <cost> (<books> books)" line the ability-book tooltip shows — plus held-book progress when you carry any. It's a compact block (the game already shows level/xp), identified from the ability tooltip's own name, and rides the existing "ability status" tooltip setting.
 
 ### Enhancement tooltip: the source toggle is discoverable and mobile-friendly
 

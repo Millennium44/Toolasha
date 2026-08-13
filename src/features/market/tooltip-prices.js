@@ -19,7 +19,6 @@ import {
     uninstallEnhancementSourceToggle,
 } from '../enhancement/tooltip-enhancement.js';
 import { getTooltipEnhancementParams } from '../enhancement/enhancement-params-source.js';
-import { abilityHridFromUseHref } from '../../utils/loadout-scraper.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
 import {
     numberFormatter,
@@ -200,14 +199,14 @@ class TooltipPrices {
 
         // Hovering an ability itself (in a loadout / ability slot), not its book
         // item: the game's tooltip shows level and description but not what the
-        // level cost. Add the same "Fresh to Lv" status the book tooltip gives,
-        // detected by the ability sprite the popper carries. This runs on its own
-        // setting, independent of the item-price gates below.
-        if (!isCollectionTooltip && !isItemTooltip && config.getSetting('itemTooltip_abilityStatus')) {
-            const use = tooltipElement.querySelector('use');
-            const abilityHrid = abilityHridFromUseHref(
-                use?.getAttribute('href') || use?.getAttribute('xlink:href') || ''
-            );
+        // level cost. Add the same "Fresh to Lv" status the book tooltip gives.
+        // The ability tooltip is text-only (no icon), so it is identified by its
+        // container class and the name it prints, mapped back to an ability. This
+        // runs on its own setting, independent of the item-price gates below.
+        const abilityTooltip = tooltipElement.querySelector('[class*="Ability_abilityTooltip"]');
+        if (!isCollectionTooltip && !isItemTooltip && abilityTooltip && config.getSetting('itemTooltip_abilityStatus')) {
+            const abilityName = abilityTooltip.querySelector('[class*="Ability_name"]')?.textContent?.trim();
+            const abilityHrid = this.abilityHridFromName(abilityName);
             if (abilityHrid) {
                 this.handleAbilityTooltip(tooltipElement, abilityHrid);
             }
@@ -1501,6 +1500,22 @@ class TooltipPrices {
      * @param {HTMLElement} tooltipElement - The MuiTooltip popper
      * @param {string} abilityHrid - e.g. '/abilities/precision'
      */
+    /**
+     * Map an ability's display name (as the tooltip prints it) back to its hrid.
+     * @param {string} name - e.g. 'Berserk'
+     * @returns {string|null} e.g. '/abilities/berserk', or null if unknown
+     */
+    abilityHridFromName(name) {
+        if (!name) return null;
+        const map = dataManager.getInitClientData()?.abilityDetailMap;
+        if (!map) return null;
+        const wanted = name.toLowerCase();
+        for (const [hrid, detail] of Object.entries(map)) {
+            if ((detail?.name || '').toLowerCase() === wanted) return hrid;
+        }
+        return null;
+    }
+
     handleAbilityTooltip(tooltipElement, abilityHrid) {
         if (tooltipElement.dataset.abilityStatusProcessed === abilityHrid) {
             return;
