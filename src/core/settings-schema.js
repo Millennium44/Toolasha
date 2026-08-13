@@ -624,6 +624,13 @@ export const settingsGroups = {
                 default: true,
                 help: "Places a run's drop value in the distribution of everything those actions could have paid — 50 is typical, 5 means nineteen runs in twenty do better. Only for actions with their own drop table (gathering); combat has its own verdict and production rolls nothing",
             },
+            lootLogEnhancingCost: {
+                id: 'lootLogEnhancingCost',
+                label: 'Loot Log: Enhancing cost, luck and profit',
+                type: 'checkbox',
+                default: false,
+                help: 'Adds a summary to enhancing loot-log entries: material and protection cost vs the statistically expected cost (how lucky the run was), and the profit — the finished item’s after-fee value minus the base and what you spent. Reconstructed from the run’s per-level results, assuming the cost-optimal protect level.',
+            },
         },
     },
 

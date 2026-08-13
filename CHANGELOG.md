@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Loot Log: enhancing cost, luck and profit (opt-in)
+
+Enhancing loot-log entries can now carry a summary line — material and protection cost against the statistically expected cost (how lucky the run was), and the profit (the finished item's after-fee value minus the base and what you spent). It's reconstructed from the run's own per-level results and priced through Toolasha's enhancement calculator, assuming the cost-optimal protect level. New setting "Loot Log: Enhancing cost, luck and profit", **off by default**. (Merging split runs into one profit total is a planned follow-up.)
+
 ### Enhancement Tracker: cost-vs-expected (luck) and worth-it lines
 
 The Enhancement Tracker now shows two new readings under the run stats: **Expected Cost + Cost Factor** with how far below/above the expected cost this run landed (the cost twin of the Attempt Factor — pure attempt/protection luck, at this run's own prices), and a **Worth it (net)** line — the +N item's after-fee resale value minus the base you gave up minus what you spent, so you can see whether the enhance actually paid off. Click the Worth-it line to expand a breakdown. (A loot-log version is a planned follow-up.)
