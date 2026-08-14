@@ -145,27 +145,24 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.5.0](https://github.com/Millennium44/Toolasha/compare/v3.4.0...v3.5.0) (2026-08-14)
 
-
 ### Features
 
-* capture the game's end-of-trial stats to check the measurement ([7d0932d](https://github.com/Millennium44/Toolasha/commit/7d0932d5bc6b9680ba83ecb169d101ea4c16a9d5))
-* labyrinth mobile — fit tile badges, add quick-calc and auto-calc buttons ([27de49d](https://github.com/Millennium44/Toolasha/commit/27de49da4d2ca0e1fc8b4aeebfb9a1361c8cff19))
-* on-screen trial stats comparison + mobile lab-sim tab access ([edc2362](https://github.com/Millennium44/Toolasha/commit/edc23625564cb6a1f271e6edfd26c8b582912678))
-
+- capture the game's end-of-trial stats to check the measurement ([7d0932d](https://github.com/Millennium44/Toolasha/commit/7d0932d5bc6b9680ba83ecb169d101ea4c16a9d5))
+- labyrinth mobile — fit tile badges, add quick-calc and auto-calc buttons ([27de49d](https://github.com/Millennium44/Toolasha/commit/27de49da4d2ca0e1fc8b4aeebfb9a1361c8cff19))
+- on-screen trial stats comparison + mobile lab-sim tab access ([edc2362](https://github.com/Millennium44/Toolasha/commit/edc23625564cb6a1f271e6edfd26c8b582912678))
 
 ### Bug Fixes
 
-* apply the live spectator tier on the In Progress fight view ([9d7980b](https://github.com/Millennium44/Toolasha/commit/9d7980b6953c4d9670576cd295a392774a8b7517))
-* count guild partial-tier credit on live, not just test server ([fe650e1](https://github.com/Millennium44/Toolasha/commit/fe650e18be19cef97a02c6c671d928a222832362))
-* drop personal combat from the spectated trial DPS split ([5045a60](https://github.com/Millennium44/Toolasha/commit/5045a6012720f6ff8ea7ee736aaadbfbf10d90ed))
-* re-home any trial block stuck in a squashing row, not just the forecast ([2f7631d](https://github.com/Millennium44/Toolasha/commit/2f7631dc2c3b2ae948e3cde45446c9814a66ec2e))
-* skilling trial forecast block no longer squashes the unit icon ([f7bce95](https://github.com/Millennium44/Toolasha/commit/f7bce95efa5acfadefa75e1e163a4dc8d00a5889))
-* trim guild trial payout notes and forecast text ([4c9c2bc](https://github.com/Millennium44/Toolasha/commit/4c9c2bc430d0901e8bc56f6d84dbeaa4115c0c40))
-
+- apply the live spectator tier on the In Progress fight view ([9d7980b](https://github.com/Millennium44/Toolasha/commit/9d7980b6953c4d9670576cd295a392774a8b7517))
+- count guild partial-tier credit on live, not just test server ([fe650e1](https://github.com/Millennium44/Toolasha/commit/fe650e18be19cef97a02c6c671d928a222832362))
+- drop personal combat from the spectated trial DPS split ([5045a60](https://github.com/Millennium44/Toolasha/commit/5045a6012720f6ff8ea7ee736aaadbfbf10d90ed))
+- re-home any trial block stuck in a squashing row, not just the forecast ([2f7631d](https://github.com/Millennium44/Toolasha/commit/2f7631dc2c3b2ae948e3cde45446c9814a66ec2e))
+- skilling trial forecast block no longer squashes the unit icon ([f7bce95](https://github.com/Millennium44/Toolasha/commit/f7bce95efa5acfadefa75e1e163a4dc8d00a5889))
+- trim guild trial payout notes and forecast text ([4c9c2bc](https://github.com/Millennium44/Toolasha/commit/4c9c2bc430d0901e8bc56f6d84dbeaa4115c0c40))
 
 ### Performance Improvements
 
-* anchor party Profile button on role=tablist, not a document sweep ([176bb61](https://github.com/Millennium44/Toolasha/commit/176bb610c15b7e00e2d62ae6bd80dcdadf3d78b9))
+- anchor party Profile button on role=tablist, not a document sweep ([176bb61](https://github.com/Millennium44/Toolasha/commit/176bb610c15b7e00e2d62ae6bd80dcdadf3d78b9))
 
 ## [3.4.0](https://github.com/Millennium44/Toolasha/compare/v3.3.0...v3.4.0) (2026-08-14)
 
