@@ -44,10 +44,9 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.1.1](https://github.com/Millennium44/Toolasha/compare/v3.1.0...v3.1.1) (2026-08-14)
 
-
 ### Bug Fixes
 
-* draw item tooltip sections even when market prices are off ([0280879](https://github.com/Millennium44/Toolasha/commit/0280879175265eb4c4ddcd46a2aadfdadef78c5d))
+- draw item tooltip sections even when market prices are off ([0280879](https://github.com/Millennium44/Toolasha/commit/0280879175265eb4c4ddcd46a2aadfdadef78c5d))
 
 ## [3.1.0](https://github.com/Millennium44/Toolasha/compare/v3.0.1...v3.1.0) (2026-08-14)
 
