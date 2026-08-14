@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fix: skilling trial forecast no longer squashes the unit icon (In Progress tab)
+
+On the skilling In Progress tab the forecast block could land inside the non-wrapping `challengeArea` row beside the unit card, stealing its width and squashing the unit icon to ~42px (reported by Ana, tailoring). It was placed there by the pre-styles fallback and never re-placed, because the re-anchor check read a block buried inside an ancestor of the row as still anchored. The check now keys on the block's own parent — a full-width block is never at home inside a non-wrapping flex row — so the next render lifts it out onto its own line below the units.
+
 ### Perf: party Profile button detection no longer scans the whole document
 
 The battle-unit popup detection was sweeping `[class*="tab"] > *` across the entire page (~4.7ms) on every DOM change, even with no popup open — the priciest probe in the startup trace. It now anchors on the ARIA `role="tablist"` the game's tab strip carries (stable and sparse), so the check is near-free when no popup is present. Opt-in feature, so only affected users who enabled it, but it was the one avoidable hotspot.

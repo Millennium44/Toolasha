@@ -1610,6 +1610,16 @@ function trialBlockHeading(name) {
  */
 function blockNearAnchor(block, anchor, root = null) {
     if (!anchor?.isConnected) return true; // nothing to re-anchor against
+    // A full-width block that has ended up *inside* a non-wrapping flex row is
+    // stealing that row's width and squashing the card beside it — seen on the
+    // skilling In Progress tab, where the block was placed by the pre-styles
+    // fallback (the game's flex had not computed yet) and never re-placed,
+    // because the anchor was an ancestor of the whole row and the old
+    // `anchor.contains(block)` test below read that as still anchored. Keyed on
+    // the block's own parent, this catches the squash whatever the anchor is and
+    // forces a re-place once the styles are up. Its correct homes — after a
+    // squashing row, in a grid cell, or after a wrapping row — are never one.
+    if (block.parentElement && isSquashingRow(block.parentElement)) return false;
     if (root) {
         const escaped = escapeSquashingRows(root, anchor);
         // Nested in a squashing row: the block belongs after that row, full width
@@ -3392,4 +3402,4 @@ export default {
     cleanup: () => guildTrials.cleanup(),
 };
 
-export { guildTrials };
+export { guildTrials, blockNearAnchor };
