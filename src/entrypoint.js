@@ -1605,6 +1605,11 @@ if (isCombatSimulatorPage()) {
                 const initFailures = await featureRegistry.initializeFeatures();
                 performanceMonitor.mark('startup:complete');
 
+                // Offer a full backup before the What's New popup can change any
+                // settings, so a first-time fork user keeps a restore point of
+                // their pre-fork state. Awaited so the two popups never overlap.
+                await UI.forkBackupPrompt.maybeShow();
+
                 UI.whatsNew.maybeShow();
 
                 // Health check after initialization
