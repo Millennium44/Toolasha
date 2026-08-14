@@ -6,9 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Lab Simulator: "Max Level" tab renamed to "Single Sim", with uncappable run limits
+### Lab Simulator: "Max Level" → "Single Sim", per-tab run caps with an Uncapped toggle
 
-The tab that sims one selected monster is now called **Single Sim**. Its run row gains two controls next to Precision: **Max fights** (the trial cap, previously hardcoded at 20000) and **Max hrs** (the simulated-time ceiling for this tab) — each **0 = unlimited**, so a run can be told to keep going until the precision target is met. Both persist as settings and only affect the Single Sim tab; the live labyrinth tile calculator and the Upgrade tab keep their own ceilings.
+The tab that sims one selected monster is now called **Single Sim**. Both the Single Sim and Upgrade tabs now carry their own run caps on their control row:
+
+- **Single Sim**: **Max fights** (the trial cap, previously hardcoded at 20000), **Max hrs** (simulated-time ceiling, default 24), and an **Uncapped** checkbox that ignores both numbers (they stay in the field) and runs to the precision target.
+- **Upgrade**: **Max hrs** (default 24) and its own **Uncapped** checkbox. This replaces the old shared "Hours" box on the Configure tab, which is removed.
+
+All four persist as settings and are scoped to their tab; the live labyrinth tile calculator keeps its own ceiling.
 
 ### Fix: item tooltip went fully blank when "market prices" was turned off
 
