@@ -22,7 +22,7 @@ import { wilsonInterval } from '../combat-sim/engine/wilson.js';
 import Monster from '../combat-sim/engine/monster.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import loadoutSnapshot from './loadout-snapshot.js';
-import { hasCoarsePointer } from '../../utils/mobile.js';
+import { hasCoarsePointer, isMobileMode } from '../../utils/mobile.js';
 import { formatRelativeTime, formatKMB } from '../../utils/formatters.js';
 import { itemIcon, itemSpriteUrl } from '../../utils/overlay-format.js';
 import { combatLevel as computeCombatLevel, COMBAT_SKILLS } from '../../utils/combat-level.js';
@@ -2367,6 +2367,36 @@ class LabyrinthClearRate {
             'width:0%; height:100%; background:linear-gradient(90deg, #57d08a 0%, #8ed447 100%); transition:width 0.08s linear;';
         track.appendChild(bar);
         container.appendChild(track);
+
+        // Collapsible: wrapped across several rows the control bar is tall, and on
+        // a phone that eats most of the labyrinth panel. Fold every control behind
+        // a toggle — the body keeps `display:contents` so the pieces still flow in
+        // the container's flex row when open, and folds to nothing when closed.
+        // Default collapsed on mobile, open on desktop; the choice sticks across
+        // redraws within the session.
+        const body = document.createElement('span');
+        body.style.cssText = 'display:contents;';
+        Array.from(container.children).forEach((child) => body.appendChild(child));
+
+        const toggle = document.createElement('button');
+        toggle.className = `${TILE_CONTROLS_CLASS}-toggle`;
+        toggle.style.cssText =
+            'flex:0 0 auto; padding:0 8px; height:20px; border:0; border-radius:5px; background:rgba(120,134,160,0.85); ' +
+            'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
+        if (this._tileControlsCollapsed === undefined) this._tileControlsCollapsed = isMobileMode();
+        const applyCollapsed = () => {
+            const collapsed = this._tileControlsCollapsed;
+            body.style.display = collapsed ? 'none' : 'contents';
+            toggle.textContent = collapsed ? '▸ Labyrinth' : '▾ Labyrinth';
+            toggle.title = collapsed ? 'Show labyrinth controls' : 'Hide labyrinth controls';
+        };
+        toggle.addEventListener('click', () => {
+            this._tileControlsCollapsed = !this._tileControlsCollapsed;
+            applyCollapsed();
+        });
+        container.appendChild(toggle);
+        container.appendChild(body);
+        applyCollapsed();
 
         if (host) {
             container.style.margin = '2px 0 2px 12px';
