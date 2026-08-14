@@ -6,9 +6,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Fix: skilling trial forecast no longer squashes the unit icon (In Progress tab)
+### Fix: skilling trial panels no longer squash the unit icon (In Progress tab)
 
-On the skilling In Progress tab the forecast block could land inside the non-wrapping `challengeArea` row beside the unit card, stealing its width and squashing the unit icon to ~42px (reported by Ana, tailoring). It was placed there by the pre-styles fallback and never re-placed, because the re-anchor check read a block buried inside an ancestor of the row as still anchored. The check now keys on the block's own parent — a full-width block is never at home inside a non-wrapping flex row — so the next render lifts it out onto its own line below the units.
+On the skilling In Progress tab our injected blocks (the forecast and the payout) could land inside the non-wrapping `challengeArea` row beside the unit card, stealing its width and squashing the unit icon to ~42px (reported by Ana, tailoring). They were placed there by the pre-styles fallback and not re-placed, since each block's own anchor test read a block buried inside an ancestor row as still anchored. `_placeBlock` now re-homes **any** block that ends up inside a non-wrapping flex row — no full-width block belongs in one — so every panel lifts out onto its own line once the game's flex styles compute.
 
 ### Perf: party Profile button detection no longer scans the whole document
 
