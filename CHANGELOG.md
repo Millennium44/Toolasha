@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fix: minify the @require bundles so they install under Steam's 2 MB limit
+
+The production library bundles shipped unminified, so `sim`, `combat` and `ui` (2.6–3.5 MB) exceeded the ~2 MB per-`@require` limit in the Steam Extension Manager and failed to install there. Wiring terser into the production build (keeping function/class names, since the code reads them at runtime) drops every bundle well under 2 MB — sim 1.06, combat 0.80, ui 1.15 MB. Also adds an opt-in `MINIFY=1 npm run build:dev` for smoke-testing the minified output before release.
+
 ### CI: harden the release publish so large release notes can't break it
 
 The release workflow read the version's notes out of `CHANGELOG.md` with an `awk` that only stopped at the next `## [x.y.z]`, so the whole Fork Changelog (which sits above the version entries) bled into 3.0.0's notes — ~240 KB — and `git commit -m "$notes"` overflowed the OS argument limit, failing the publish to GreasyFork. The notes now stop at the next `##` or the first non-release-please `###`, and the userscript commit is written with `git commit -F` (a file) so notes of any size are safe. Added a `workflow_dispatch` `publish_version` input to re-publish a specific version through the same pipeline without cutting a new release.

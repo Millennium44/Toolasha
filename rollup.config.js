@@ -1,5 +1,6 @@
 import resolve from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
+import terser from '@rollup/plugin-terser';
 import { rollup } from 'rollup';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -448,6 +449,19 @@ const devConfig = {
             preferBuiltins: false,
         }),
         commonjs(),
+        // Opt-in: `MINIFY=1 npm run build:dev` produces a minified standalone,
+        // the same terser settings the production bundles use, so the minified
+        // code can be smoke-tested in-game before a release ships it. Off by
+        // default so ordinary dev builds stay readable.
+        ...(process.env.MINIFY
+            ? [
+                  terser({
+                      keep_classnames: true,
+                      keep_fnames: true,
+                      format: { comments: /License|@preserve|@license/i },
+                  }),
+              ]
+            : []),
     ],
 };
 
@@ -590,6 +604,20 @@ const prodConfig = [
                     preferBuiltins: false,
                 }),
                 commonjs(),
+                // Minify the @require library bundles. The Steam Extension
+                // Manager refuses to fetch a single @require larger than ~2 MB,
+                // which the unminified sim/combat/ui bundles exceeded. keep the
+                // function and class names — the codebase reads them at runtime
+                // (React-fiber traversal, feature-registry lookups, error labels)
+                // — and let terser only strip whitespace/comments and shorten the
+                // local scope.
+                terser({
+                    keep_classnames: true,
+                    keep_fnames: true,
+                    // Keep the library's own license/attribution banner (CC-BY-NC-SA),
+                    // drop every other comment.
+                    format: { comments: /License|@preserve|@license/i },
+                }),
             ],
         };
     }),
