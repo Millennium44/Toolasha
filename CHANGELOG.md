@@ -6,9 +6,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Item tooltip: option to flatten the materials breakdown to the direct recipe
+### Item tooltip: option to cost profit from the direct recipe only
 
-New setting "Materials breakdown: direct recipe only (no sub-craft chain)" (off by default). When on, the detailed profit breakdown prices each recipe ingredient at its own market Ask/Bid and stops there, instead of recursing into how each craftable ingredient is itself made — so a Holy Brush shows Rainbow Brush / Holy Cheese / Arcane Log at market, not the whole brush chain. Display-only; the Net profit line still follows "Use crafting cost for upgrade items if cheaper".
+New setting "Profit: direct recipe only (buy base items, no sub-craft chain)" (off by default). When on, each recipe ingredient is costed at its own market Ask/Bid and the calc stops there, instead of recursing into how a craftable ingredient is itself made — so a Holy Brush is figured as Rainbow Brush / Holy Cheese / Arcane Log bought at market, not the whole brush chain. Applies to both the detailed breakdown table **and** the profit/hr (no upgrade-item craft cost or chain time), so the two stay consistent. Overrides "Use crafting cost for upgrade items if cheaper" while on.
 
 ### Combat lab sim: precision is now adjustable from the sim panel
 
