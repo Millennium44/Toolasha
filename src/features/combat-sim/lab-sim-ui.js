@@ -804,11 +804,20 @@ class LabSimUI {
                 ${LAB_MODE_OPTIONS[dimension.key] || ''}
             </span>`
             ).join('')}
+            <label style="display:flex; align-items:center; gap:4px; color:#888;" title="How tightly to pin each comparison's win rate down before its baseline sim stops, in percentage points. Lower is more accurate but slower. Shared with the Single Sim tab and Settings.">
+                Precision ±
+                <input id="mwi-labsim-upgrade-precision" type="number" min="0.1" max="10" step="0.5" value="${Math.min(10, Math.max(0.1, Number(config.getSettingValue('labyrinthSimPrecision', 1))))}" style="width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
+                <span style="font-size:12px;">%</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:4px; color:#888;" title="Cap the baseline sim's fight count for each comparison, whatever the precision. Tick Uncapped to ignore this.">
+                Max fights
+                <input id="mwi-labsim-upgrade-maxfights" type="number" min="1" step="1000" value="${Math.max(1, parseInt(config.getSettingValue('labyrinthUpgradeMaxTrials', 20000)) || 20000)}" style="width:64px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
+            </label>
             <label style="display:flex; align-items:center; gap:4px; color:#888;" title="Simulated-time ceiling for each comparison sim, in hours. Precision usually ends it first. Tick Uncapped to ignore this.">
                 Max hrs
                 <input id="mwi-labsim-upgrade-maxhours" type="number" min="1" step="1" value="${Math.max(1, parseInt(config.getSettingValue('labyrinthUpgradeMaxHours', 24)) || 24)}" style="width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
             </label>
-            <label style="display:flex; align-items:center; gap:4px; color:#888; cursor:pointer;" title="Ignore the time ceiling above (the number stays put) and run each comparison to the precision target.">
+            <label style="display:flex; align-items:center; gap:4px; color:#888; cursor:pointer;" title="Ignore the max-fights and time-ceiling numbers above (they stay put) and run each comparison's baseline to the precision target.">
                 <input type="checkbox" id="mwi-labsim-upgrade-uncapped" style="margin:0; cursor:pointer;"${config.getSettingValue('labyrinthUpgradeUncapped', false) ? ' checked' : ''}>
                 Uncapped
             </label>
@@ -1244,6 +1253,19 @@ class LabSimUI {
 
         // Upgrade listeners
         this.panel.querySelector('#mwi-labsim-upgrade-run').addEventListener('click', () => this._onUpgradeAnalyze());
+        this.panel.querySelector('#mwi-labsim-upgrade-precision').addEventListener('change', (e) => {
+            const n = Math.min(10, Math.max(0.1, Number(e.target.value) || 1));
+            e.target.value = String(n);
+            config.setSettingValue('labyrinthSimPrecision', n);
+            // Keep the Single Sim tab's precision box in step — they share one setting
+            const twin = this.panel.querySelector('#mwi-labsim-precision');
+            if (twin) twin.value = String(n);
+        });
+        this.panel.querySelector('#mwi-labsim-upgrade-maxfights').addEventListener('change', (e) => {
+            const n = Math.max(1, parseInt(e.target.value) || 20000);
+            e.target.value = String(n);
+            config.setSettingValue('labyrinthUpgradeMaxTrials', n);
+        });
         this.panel.querySelector('#mwi-labsim-upgrade-maxhours').addEventListener('change', (e) => {
             const n = Math.max(1, parseInt(e.target.value) || 24);
             e.target.value = String(n);
@@ -2470,15 +2492,28 @@ class LabSimUI {
     async _onUpgradeAnalyze() {
         const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
         const monsterHrid = this.panel.querySelector('#mwi-labsim-monster')?.value;
-        // "Uncapped" ignores the Max hrs number (it stays in the field) and lets
-        // each comparison run to the precision target; the finite sentinel keeps
-        // progress/ETA math well-defined.
+        // "Uncapped" ignores the Max fights / Max hrs numbers (they stay in the
+        // fields) and lets each comparison's baseline run to the precision
+        // target; the finite sentinels keep progress/ETA math well-defined.
         const upgradeUncapped = this.panel.querySelector('#mwi-labsim-upgrade-uncapped')?.checked;
         const upgradeMaxHours = Math.max(
             1,
             parseInt(this.panel.querySelector('#mwi-labsim-upgrade-maxhours')?.value) || 24
         );
+        const upgradeMaxFights = Math.max(
+            1,
+            parseInt(this.panel.querySelector('#mwi-labsim-upgrade-maxfights')?.value) || 20000
+        );
         const hours = upgradeUncapped ? 1e6 : upgradeMaxHours;
+        // Bounds the baseline sim each comparison is paired against: it stops at
+        // the precision target, the fight cap, or the time ceiling — whichever
+        // first. Candidates then inherit the baseline's fight count (paired).
+        const precision = {
+            targetHalfWidth:
+                Math.min(10, Math.max(0.1, Number(config.getSettingValue('labyrinthSimPrecision', 1)))) / 100,
+            minTrials: 100,
+            maxTrials: upgradeUncapped ? Number.MAX_SAFE_INTEGER : upgradeMaxFights,
+        };
 
         // The checked candidate sets and the chosen fights, resolved into the
         // one analysis they describe
@@ -2627,6 +2662,7 @@ class LabSimUI {
                         fights,
                         crates,
                         hours,
+                        precision,
                         communityBuffs,
                         labyrinthCombatBuffs,
                         abilityTargetLevel,
@@ -2678,6 +2714,7 @@ class LabSimUI {
                     roomLevel,
                     crates,
                     hours,
+                    precision,
                     communityBuffs,
                     labyrinthCombatBuffs,
                     upgradeMode: plan.upgradeMode,

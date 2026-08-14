@@ -1926,6 +1926,16 @@ export const settingsGroups = {
                 default: false,
                 help: 'When on, the Single Sim tab ignores both the max-fights and time-ceiling numbers (they stay in place) and runs until the precision target is met. Can be slow for a near-coin-toss room.',
             },
+            labyrinthUpgradeMaxTrials: {
+                id: 'labyrinthUpgradeMaxTrials',
+                label: 'Labyrinth: Upgrade-sim max fights',
+                type: 'number',
+                default: 20000,
+                min: 1,
+                max: 10000000,
+                step: 1000,
+                help: 'Cap on the baseline sim\'s fight count for each Upgrade tab comparison (every candidate is paired to that count). Tick the Upgrade "Uncapped" box to ignore this and the time ceiling.',
+            },
             labyrinthUpgradeMaxHours: {
                 id: 'labyrinthUpgradeMaxHours',
                 label: 'Labyrinth: Upgrade-sim time ceiling (hours)',

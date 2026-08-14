@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Simulator: Upgrade tab gets the full run-cap controls
+
+The Upgrade tab now carries the same run controls as Single Sim — **Precision** (shared with the Single Sim tab and Settings), **Max fights**, **Max hrs**, and **Uncapped**. They bound the baseline sim each comparison is paired against (it stops at the precision target, the fight cap, or the time ceiling), and every candidate inherits the baseline's fight count so comparisons stay paired. Uncapped ignores both numeric caps and runs the baseline to precision.
+
 ### Combat: "Profile" button on party members (opt-in)
 
 New setting "Combat: Profile button on party members" (off by default). When on, clicking another player's unit in group/party/dungeon combat adds a **Profile** button to the battle-unit popup's tab row (next to Battle Info / Stats) that opens their profile via the `/profile` chat command — so you no longer have to detour through "My Party". Shown for other players only; needs the chat window open. The popup is located by its tab labels and the player by the "name - Lv.N" header (hashed classes aren't relied on).
