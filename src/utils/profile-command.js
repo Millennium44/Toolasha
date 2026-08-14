@@ -38,6 +38,62 @@ export function findChatInput() {
 }
 
 /**
+ * The game's core component instance, found by walking the React fiber for the
+ * `handleViewProfile` handler — the same object the chat commands reach for
+ * `handleGoToMarketplace`. Null before the game has mounted.
+ *
+ * @returns {Object|null}
+ */
+export function getGameCore() {
+    if (typeof document === 'undefined') return null;
+    const root = document.getElementById('root');
+    const fiber = root?._reactRootContainer?.current || root?._reactRootContainer?._internalRoot?.current;
+    const find = (node) => {
+        if (!node) return null;
+        if (typeof node.stateNode?.handleViewProfile === 'function') return node.stateNode;
+        return find(node.child) || find(node.sibling);
+    };
+    return find(fiber);
+}
+
+/**
+ * Open a player's profile.
+ *
+ * Preferred path: call the game's own `handleViewProfile(name)` directly, which
+ * opens the profile modal with no chat involvement — so it works whether or not
+ * the chat panel is open. Falls back to filling `/profile <name>` in chat and
+ * pressing Enter when that handler is missing.
+ *
+ * @param {string} name - Player name
+ * @param {Object} [options]
+ * @param {string} [options.logPrefix] - Module name for error logs
+ * @returns {boolean} True when an open was triggered (direct or via chat)
+ */
+export function openPlayerProfile(name, { logPrefix = 'ProfileCommand' } = {}) {
+    if (!name) return false;
+
+    try {
+        const game = getGameCore();
+        if (game && typeof game.handleViewProfile === 'function') {
+            game.handleViewProfile(name);
+            return true;
+        }
+    } catch (error) {
+        console.error(`[${logPrefix}] handleViewProfile failed; falling back to chat:`, error);
+    }
+
+    const input = findChatInput();
+    if (!input || !fillProfileCommand(name, input, logPrefix)) return false;
+
+    // Send on the next tick so React has processed the fill's input event first.
+    setTimeout(() => {
+        input.focus();
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+    }, 0);
+    return true;
+}
+
+/**
  * Put `/profile <name>` in the chat box, focused and ready to send.
  *
  * @param {string} name - Player name

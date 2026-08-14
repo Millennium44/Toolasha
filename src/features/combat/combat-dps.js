@@ -33,7 +33,7 @@ import { damageBreakdown } from './damage-tracker.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import { rows, blank, ROW_COLORS } from '../../utils/overlay-format.js';
-import { fillProfileCommand, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
+import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 import { dpsPanel } from '../../utils/bundle-bridge.js';
 
 /** Accuracy in its own colour, so it does not read as part of the damage figure */
@@ -238,7 +238,7 @@ function drawPerPlayer(container, breakdown) {
         nameCell.title = `Fill "/profile ${name}" into chat`;
         nameCell.addEventListener('click', (event) => {
             event.stopPropagation();
-            fillProfileCommand(name);
+            openPlayerProfile(name, { logPrefix: 'CombatDps' });
         });
         // Stopped too, or two quick clicks on a name would also toggle the
         // panel the tile opens on double-click

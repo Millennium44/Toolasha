@@ -26,7 +26,7 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { addStyles } from '../../utils/dom.js';
 import { PARTY_STATUS_PHRASES } from '../../utils/game-text.js';
-import { fillProfileCommand, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
+import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 
 const NAME_CLASS = 'mwi-chat-profile-name';
 // "<Name> has <verb> …" announcements; names are single tokens in MWI.
@@ -78,7 +78,7 @@ class ChatProfileLink {
             if (!target) return;
             const name = target.dataset.mwiProfileName;
             if (!name) return;
-            fillProfileCommand(name);
+            openPlayerProfile(name, { logPrefix: 'ChatProfileLink' });
         };
         document.addEventListener('click', this.delegatedClickHandler);
     }

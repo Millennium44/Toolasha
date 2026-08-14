@@ -7,7 +7,7 @@ import dungeonTrackerStorage, { filterRunsForCharacter, currentCharacter } from 
 import storage from '../../core/storage.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { formatDateTime } from '../../utils/formatters.js';
-import { fillProfileCommand, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
+import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 
 /** The run-history export, one row per run. */
 export const DUNGEON_RUN_CSV_COLUMNS = [
@@ -423,7 +423,7 @@ class DungeonTrackerUIHistory {
         runList.querySelectorAll('.mwi-dt-player-name').forEach((el) => {
             el.addEventListener('click', (event) => {
                 event.stopPropagation();
-                fillProfileCommand(el.dataset.playerName);
+                openPlayerProfile(el.dataset.playerName, { logPrefix: 'DungeonHistory' });
             });
         });
 

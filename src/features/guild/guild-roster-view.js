@@ -39,7 +39,7 @@ import { guildXPTracker } from './guild-xp-tracker.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildMemberSkills from './guild-member-skills.js';
 import { describeLoadoutAge } from './guild-loadouts.js';
-import { fillProfileCommand, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
+import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 
 /** How many stat rows of a snapshot the roster panel shows before it stops */
 export const LOADOUT_PREVIEW_ROWS = 6;
@@ -531,10 +531,10 @@ export const guildRosterPanel = createPanel({
                 // handy for checking on someone who dropped off.
                 if (member.name && VALID_PLAYER_NAME_RE.test(member.name)) {
                     line.style.cursor = 'pointer';
-                    line.title = `Click to load /profile ${member.name} in chat — press Enter to open it.`;
+                    line.title = `Click to open ${member.name}'s profile.`;
                     line.addEventListener('click', () => {
-                        if (!fillProfileCommand(member.name, null, 'GuildRoster')) {
-                            line.title = 'Open the chat panel first — that is how a profile is asked for.';
+                        if (!openPlayerProfile(member.name, { logPrefix: 'GuildRoster' })) {
+                            line.title = 'Could not open the profile — open the chat panel and try again.';
                         }
                     });
                 }

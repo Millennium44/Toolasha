@@ -28,7 +28,7 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
-import { fillProfileCommand, findChatInput, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
+import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 
 const BUTTON_ID = 'toolasha-party-profile-button';
 const OBSERVER_KEY = 'PartyProfileButton';
@@ -159,63 +159,20 @@ function injectButton(row, sampleTab, name) {
 }
 
 /**
- * The game's core component instance, found by walking the React fiber for the
- * `handleViewProfile` handler — the same object the chat commands reach for
- * `handleGoToMarketplace`. Null when the game has not finished mounting.
- * @returns {Object|null}
- */
-function getGameCore() {
-    const root = typeof document !== 'undefined' ? document.getElementById('root') : null;
-    const fiber = root?._reactRootContainer?.current || root?._reactRootContainer?._internalRoot?.current;
-    const find = (node) => {
-        if (!node) return null;
-        if (typeof node.stateNode?.handleViewProfile === 'function') return node.stateNode;
-        return find(node.child) || find(node.sibling);
-    };
-    return find(fiber);
-}
-
-/**
- * Open a player's profile.
- *
- * Preferred path: call the game's own `handleViewProfile` directly (reached via
- * the React fiber), which opens the profile modal without touching chat — so it
- * works whether or not the chat panel is open. Falls back to the `/profile
- * <name>` chat command when the handler is not present.
+ * Open a player's profile via the shared helper (direct `handleViewProfile`,
+ * chat fallback). Shows brief "Open chat" feedback when neither path fires.
  *
  * @param {string} name - Player name
  * @param {HTMLElement} button - Button, for transient feedback
  */
 function openProfile(name, button) {
-    try {
-        const game = getGameCore();
-        if (game && typeof game.handleViewProfile === 'function') {
-            game.handleViewProfile(name);
-            return;
-        }
-    } catch (error) {
-        console.error('[PartyProfileButton] handleViewProfile failed; falling back to chat:', error);
-    }
+    if (openPlayerProfile(name, { logPrefix: 'PartyProfileButton' })) return;
 
-    // Fallback: the /profile chat command, which needs the chat input visible.
-    const chatInput = findChatInput();
-    if (!chatInput) {
-        const original = button.textContent;
-        button.textContent = 'Open chat';
-        setTimeout(() => {
-            button.textContent = original;
-        }, 1500);
-        return;
-    }
-
-    if (!fillProfileCommand(name, chatInput, 'PartyProfileButton')) return;
-
-    // Send on the next tick so React has processed the input event first,
-    // mirroring the chat pop-out's send path.
+    const original = button.textContent;
+    button.textContent = 'Open chat';
     setTimeout(() => {
-        chatInput.focus();
-        chatInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
-    }, 0);
+        button.textContent = original;
+    }, 1500);
 }
 
 export default {
