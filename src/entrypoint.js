@@ -507,14 +507,23 @@ function registerFeatures() {
             category: 'Inventory',
             module: Market.inventoryBadgeManager,
             async: false,
-            // The manager's job is to price every item container it can see; the
-            // dataset it writes is set even for a worthless item, so its absence
-            // on a drawn inventory means it never ran
-            healthCheck: () =>
-                injectedInto(
-                    '[class*="Inventory_items"] [class*="Item_itemContainer"]',
+            // The manager prices item containers, but only when a badge provider
+            // drives a render — which is asynchronous, throttled, and may not
+            // have run (or the price-badge provider may be off entirely) by the
+            // time the health pass fires. A drawn-but-unpriced inventory is
+            // "not yet", not "broken", so this confirms health when a priced
+            // container exists and otherwise stands down — it must never report
+            // `false`, or it cries wolf on every marketplace/mobile open. The
+            // real badge output is health-checked by inventoryBadgePrices, which
+            // handles the not-yet case the same way.
+            healthCheck: () => {
+                if (!document.querySelector('[class*="Inventory_items"] [class*="Item_itemContainer"]')) return null;
+                return document.querySelector(
                     '[class*="Inventory_items"] [class*="Item_itemContainer"][data-ask-value]'
-                ),
+                )
+                    ? true
+                    : null;
+            },
         },
         {
             key: 'treasureTracker',
