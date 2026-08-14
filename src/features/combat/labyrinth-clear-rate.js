@@ -1833,6 +1833,8 @@ class LabyrinthClearRate {
         }
         if (this._fight && !this.inLabyrinthFight()) this._fight = null;
         this._liveCombatDrawnAt = 0;
+        // The next fight's readout starts sizing itself from scratch.
+        this._liveNodeMaxWidth = 0;
         document.querySelectorAll(`.${LIVE_COMBAT_CLASS}`).forEach((el) => el.remove());
     }
 
@@ -1853,11 +1855,25 @@ class LabyrinthClearRate {
         if (!node) {
             node = document.createElement('span');
             node.className = LIVE_COMBAT_CLASS;
-            node.style.cssText = 'color:#fff; font-size:0.875rem;';
+            // inline-block + never-shrinking min-width so the readout keeps a
+            // stable footprint: the clear band flipping between "75–100%?" and
+            // "100%" (and the seconds ticking down) otherwise changes this
+            // element's width every second and reflows the whole centered
+            // header — most visibly on mobile.
+            node.style.cssText =
+                'color:#fff; font-size:0.875rem; display:inline-block; text-align:left; white-space:nowrap;';
             host.appendChild(node);
         }
         node.textContent = text;
         node.title = tooltipLines.join('\n');
+
+        // Grow the reserved width to the widest content seen this fight, and
+        // never shrink it — measured at min-width:0, then pinned to the max, so
+        // a narrower reading leaves the layout where the widest one put it.
+        node.style.minWidth = '0px';
+        const widest = Math.max(this._liveNodeMaxWidth || 0, node.scrollWidth);
+        this._liveNodeMaxWidth = widest;
+        node.style.minWidth = `${widest}px`;
     }
 
     /**

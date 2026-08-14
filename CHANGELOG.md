@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fix: live clear-chance readout no longer shifts the fight header (mobile)
+
+The in-fight clear-chance readout in the game header changed width every second — the band flipping between "Clear 75–100%?" and "Clear 100%", plus the ticking seconds — which reflowed the whole centered header, most jarring on mobile (reported by Ana). The readout now reserves the widest footprint it has shown during the fight and never shrinks, so a narrower reading leaves the layout put. The reservation resets when the fight ends.
+
 ### CI: publish stamps @version from package.json so a release can't ship mislabelled
 
 3.2.0 first published with `@version 3.1.1` because the merge raced the Format Release Please stamp, so the built userscript carried the previous version and wouldn't register as an update. The publish workflow now runs `version:sync` (which stamps `@version` from package.json, the version release-please owns) immediately before building, as a backstop that guarantees the artifact matches the version being published. 3.2.0's assets were re-published with the correct version.
