@@ -16,6 +16,8 @@ import bundledExpectedValueCalculator from '../market/expected-value-calculator.
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
 import { COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
+import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
+import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 
 /**
  * The combat scrolls the player currently has active.
@@ -1225,9 +1227,17 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
         if (total <= 0) continue;
         let unitValue = itemHrid === '/items/coin' ? 1 : getSellPrice(marketAPI.getPrice(itemHrid));
         if (unitValue === 0) {
+            // The EV fallback already nets the sale tax (see expected-value-calculator),
+            // so it is taken as-is rather than taxed again below.
             const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
             const ev = evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
             if (ev !== null && ev > 0) unitValue = ev;
+        } else if (itemHrid !== '/items/coin') {
+            // Drops are sold on the market, so the sale tax comes off what they
+            // fetch — the sim was valuing them gross. Coin is not sold and is
+            // left untaxed; cowbell bags carry their own higher rate.
+            const taxRate = itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
+            unitValue = calculatePriceAfterTax(unitValue, taxRate);
         }
         const perHour = (total / hours) * unitValue;
         revenuePerHour += perHour;
