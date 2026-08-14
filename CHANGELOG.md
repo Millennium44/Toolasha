@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fix: personal combat no longer leaks into the trial DPS split
+
+While spectating a trial from the In Progress tab, the client's own side-combat (farming a zone) was being folded into the trial's per-player damage — a local build could read ~7× the boss's health and dominate the split (reported with a member farming a Chameleon zone during a Chameleon trial). The trial only ever streams over `guild_battle_updated`, so a `battle_updated` arriving while that spectator stream is live is now recognised as personal combat and dropped. This is the same separation KikiMeter (ZhuLiMoon) uses — credited in the code.
+
 ### Fix: skilling trial panels no longer squash the unit icon (In Progress tab)
 
 On the skilling In Progress tab our injected blocks (the forecast and the payout) could land inside the non-wrapping `challengeArea` row beside the unit card, stealing its width and squashing the unit icon to ~42px (reported by Ana, tailoring). They were placed there by the pre-styles fallback and not re-placed, since each block's own anchor test read a block buried inside an ancestor row as still anchored. `_placeBlock` now re-homes **any** block that ends up inside a non-wrapping flex row — no full-width block belongs in one — so every panel lifts out onto its own line once the game's flex styles compute.

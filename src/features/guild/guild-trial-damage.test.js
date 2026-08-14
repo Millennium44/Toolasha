@@ -1317,6 +1317,83 @@ describe('only your own damage is measured', () => {
     });
 });
 
+describe('personal combat does not leak into a spectated trial', () => {
+    const at = new Date('2026-08-14T16:00:00Z').getTime();
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.clientData = {};
+        game.loadouts = [];
+        game.ownName = 'MillenniumTest';
+        game.storedRoster = null;
+        guildTrialDamage.storedRoster = null;
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+        // This week's trial is the Chameleon, so a personal fight against a
+        // Chameleon would otherwise be mistaken for the trial by name alone.
+        guildTrialDamage.setTrialNames(['Trial Chameleon']);
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+    });
+
+    // A spectated tick — enough to arm the stream and stamp `spectator.lastAt`.
+    const guildTick = (hp) => ({
+        type: 'guild_battle_updated',
+        battleId: 7,
+        tier: 2,
+        pMap: { 3: { cHP: 1620, mHP: 1620, cMP: 1929, mMP: 1929 } },
+        mMap: { 0: { cHP: hp, mHP: 618_000 } },
+    });
+
+    test('a member farming while watching In Progress is not folded into the split', () => {
+        // Spectating.
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](guildTick(618_000));
+        vi.setSystemTime(at + 250);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](guildTick(617_000));
+
+        // Meanwhile the client is farming a Chameleon zone — a personal fight
+        // whose monster name matches the trial, exactly the case that used to be
+        // mistaken for it. Its 50,000 of damage must not reach the trial: with the
+        // spectator stream live, `battle_updated` is dropped as personal combat.
+        vi.setSystemTime(at + 500);
+        game.wsHandlers.new_battle({
+            battleId: 999,
+            monsters: [{ name: 'Chameleon', currentHitpoints: 100_000, maxHitpoints: 100_000 }],
+            players: { 0: { character: { name: 'MillenniumTest' } } },
+        });
+        vi.setSystemTime(at + 750);
+        game.wsHandlers.battle_updated({
+            battleId: 999,
+            pMap: { 0: { cHP: 3000, mHP: 3000, cMP: 500, mMP: 500, atkCounter: 1, isAutoAtk: true } },
+            mMap: { 0: { cHP: 50_000, mHP: 100_000, dmgCounter: 1, critCounter: 0 } },
+        });
+
+        const report = guildTrialDamage.breakdown();
+        // The personal 50,000 never lands, and the module stays a spectator.
+        expect(report.totalDamage).toBe(0);
+        expect(report.source).toBe('spectated');
+        expect(report.players.some((row) => row.name === 'MillenniumTest')).toBe(false);
+    });
+
+    test('once the spectator stream goes quiet, a real solo fight counts again', () => {
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](guildTick(618_000));
+
+        // Long after the last spectated tick — the stream has stopped — a genuine
+        // solo-participant fight against the trial is measured as before.
+        vi.setSystemTime(at + 30_000);
+        game.wsHandlers.new_battle({
+            battleId: 42,
+            monsters: [{ name: 'Chameleon', currentHitpoints: 100_000, maxHitpoints: 100_000 }],
+            players: { 0: { character: { name: 'MillenniumTest' } } },
+        });
+        expect(guildTrialDamage.breakdown().active).toBe(true);
+    });
+});
+
 describe('per-name history is immutable across wave boundaries', () => {
     // The live regression: at "1 fight watched" NPD ranked with 156.2K; 32
     // seconds and one tier rollover later NPD read 24.3K while Caicedo gained

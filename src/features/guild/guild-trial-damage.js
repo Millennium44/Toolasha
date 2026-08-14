@@ -149,6 +149,16 @@ export const END_GUILD_BATTLE_MESSAGE = 'end_guild_battle';
 const MAX_TICK_GAP_MS = 2000;
 
 /**
+ * How long after the last spectated (`guild_battle_updated`) tick the trial
+ * stream still counts as live. The stream is a firehose (~2/s), so a gap this
+ * wide only ever spans a wave transition — comfortably long enough that a
+ * personal `battle_updated` arriving mid-spectate is recognised as side-combat,
+ * short enough that genuine solo-participant `battle_updated` resumes counting
+ * soon after the spectator view closes.
+ */
+const SPECTATOR_LIVE_WINDOW_MS = 8000;
+
+/**
  * Which of the five encounters a name is, if any.
  *
  * Hrids as well as display names: `/monsters/trial_chameleon` and "Trial
@@ -1249,11 +1259,33 @@ class GuildTrialDamage {
     }
 
     /**
+     * Whether the spectated trial stream is currently live — a
+     * `guild_battle_updated` tick has landed within the last
+     * {@link SPECTATOR_LIVE_WINDOW_MS}.
+     * @param {number} [now=Date.now()] - Clock, injectable for tests
+     * @returns {boolean}
+     */
+    _spectatorStreamLive(now = Date.now()) {
+        return this.spectator.lastAt > 0 && now - this.spectator.lastAt < SPECTATOR_LIVE_WINDOW_MS;
+    }
+
+    /**
      * A fight started. Decide whether it is the trial's.
      * @param {Object} data - `new_battle` payload
      */
     _onNewBattle(data) {
         try {
+            // While the spectator stream is live, the client's own `battle_updated`
+            // (and the `new_battle` that opens it) is a *personal* fight running
+            // beside the trial — farming a zone while watching In Progress — never
+            // the trial itself, which only ever streams over `guild_battle_updated`.
+            // Counting it is what let a member's side-combat pile onto the trial's
+            // damage split (a local build reading ~7x the boss's health). Drop it,
+            // the way KikiMeter (ZhuLiMoon) drops `battle_updated` whenever a guild
+            // battle is active — the two streams are the game's own separation of
+            // personal combat from the trial.
+            if (this._spectatorStreamLive()) return;
+
             const monsterNames = battleMonsterNames(data);
             const verdict = isTrialBattle({ monsterNames, trialNames: this.trialNames });
             this.monsterNames = monsterNames;
@@ -1308,6 +1340,12 @@ class GuildTrialDamage {
      */
     _onBattleUpdated(data) {
         try {
+            // Personal side-combat while spectating the trial — dropped for the
+            // same reason as in `_onNewBattle`: the live `guild_battle_updated`
+            // stream is the trial's only true source, so a `battle_updated` during
+            // it is the client's own fight, not the trial's.
+            if (this._spectatorStreamLive()) return;
+
             // A battle this module never saw announced cannot be shown to be the
             // trial's, so it is not counted. That is the reload-mid-trial case,
             // and measuring nothing there is the honest outcome
