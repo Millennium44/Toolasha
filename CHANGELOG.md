@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Perf: party Profile button detection no longer scans the whole document
+
+The battle-unit popup detection was sweeping `[class*="tab"] > *` across the entire page (~4.7ms) on every DOM change, even with no popup open — the priciest probe in the startup trace. It now anchors on the ARIA `role="tablist"` the game's tab strip carries (stable and sparse), so the check is near-free when no popup is present. Opt-in feature, so only affected users who enabled it, but it was the one avoidable hotspot.
+
 ### Guild trials: partial-tier credit now counts on live (was test-server only)
 
 The partial-tier payout rule (an unfinished tier pays 0.5% per 1% of progress, up to 50%) went live with the guild patch, but the on-pace math still gated it to the test server — so live guilds were **undercounting** their projected points by up to half a tier. It now counts everywhere, and the tooltip wording dropped its "on the test server" framing and is much shorter.

@@ -53,20 +53,25 @@ function cleanup() {
 /**
  * The battle-unit popup's tab row, found by its labels.
  *
- * Requires BOTH a "Battle Info" and a "Stats" tab in the same row — a player's
- * popup has both, which keeps the button off popups that only carry one (and
- * off most monster popups).
+ * Anchored on the ARIA `role="tablist"` the game's MUI tab strip carries — a
+ * stable, un-hashed attribute, and a sparse one (only a handful of open tab
+ * groups exist at once), so this is cheap enough to run on every DOM change
+ * without scanning the whole document the way a `[class*="tab"] > *` sweep would.
+ *
+ * Requires BOTH a "Battle Info" and a "Stats" tab in the row — a player's popup
+ * has both, which keeps the button off tab strips elsewhere (the guild panel,
+ * the marketplace) and off most monster popups.
  *
  * @returns {{row: Element, battleInfoTab: Element}|null}
  */
 function findPopupTabRow() {
-    const clickable = document.querySelectorAll('button, [role="tab"], [class*="Tab"] > *, [class*="tab"] > *');
-    for (const el of clickable) {
-        if (el.textContent.trim().toLowerCase() !== 'battle info') continue;
-        const row = el.parentElement;
-        if (!row) continue;
-        const hasStats = Array.from(row.children).some((child) => child.textContent.trim().toLowerCase() === 'stats');
-        if (hasStats) return { row, battleInfoTab: el };
+    const rows = document.querySelectorAll('[role="tablist"]');
+    for (const row of rows) {
+        const tabs = Array.from(row.children);
+        const battleInfoTab = tabs.find((tab) => tab.textContent.trim().toLowerCase() === 'battle info');
+        if (!battleInfoTab) continue;
+        const hasStats = tabs.some((tab) => tab.textContent.trim().toLowerCase() === 'stats');
+        if (hasStats) return { row, battleInfoTab };
     }
     return null;
 }
