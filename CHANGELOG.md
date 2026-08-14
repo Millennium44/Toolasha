@@ -38,6 +38,18 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.1.0](https://github.com/Millennium44/Toolasha/compare/v3.0.1...v3.1.0) (2026-08-14)
+
+### Features
+
+- direct-recipe-only setting now drives the global profit math ([1d381ad](https://github.com/Millennium44/Toolasha/commit/1d381ad24e105d6401f746f89ea890c20d7e6520))
+- expose combat lab sim precision control in the sim panel ([6a78ca9](https://github.com/Millennium44/Toolasha/commit/6a78ca9d6f8bd55eda3f45e4b8051754850b6f39))
+- flatten item-tooltip materials breakdown to the direct recipe ([12d917e](https://github.com/Millennium44/Toolasha/commit/12d917ed8b93ad178811f4fffeb9751ddf439b44))
+
+### Bug Fixes
+
+- **inventory:** stop the Inventory Badge Manager health-check false alarm ([1af6290](https://github.com/Millennium44/Toolasha/commit/1af629037fc6bd8d6d7fc804792a3a14183fda53))
+
 ## [3.0.1](https://github.com/Millennium44/Toolasha/compare/v3.0.0...v3.0.1) (2026-08-14)
 
 ### Bug Fixes
