@@ -42,6 +42,29 @@ const REGEX_ENHANCEMENT_LEVEL = /\+(\d+)$/;
 const REGEX_ENHANCEMENT_STRIP = /\s*\+\d+$/;
 const REGEX_REFINED_STAR = /\s*★/g;
 
+// Every section this module injects has its own toggle, but they all share one
+// DOM observer and the same "anything to do?" guards. Init and those guards key
+// off this list so that enabling any one feature — even with prices off — still
+// draws it, instead of a blank tooltip because the observer never started.
+const TOOLTIP_FEATURE_SETTINGS = [
+    'itemTooltip_prices',
+    'itemTooltip_pinTop',
+    'itemTooltip_expectedValue',
+    'itemTooltip_profit',
+    'itemTooltip_multiActionProfit',
+    'itemTooltip_gathering',
+    'itemTooltip_gatheringRareDrops',
+    'itemTooltip_abilityStatus',
+    'itemTooltip_abilityFreshCost',
+    'itemTooltip_enhancementPath',
+    'itemTooltip_enhancementMilestones',
+];
+
+/** Whether any tooltip-injection feature is enabled. */
+function anyTooltipFeatureEnabled() {
+    return TOOLTIP_FEATURE_SETTINGS.some((id) => config.getSetting(id));
+}
+
 /**
  * Get the items sprite URL from the DOM (matches pattern used across other display modules)
  * @returns {string|null} Sprite URL or null if not found
@@ -98,20 +121,21 @@ class TooltipPrices {
             return;
         }
 
-        const pricesEnabled = config.getSetting('itemTooltip_prices');
-        const pinTopEnabled = config.getSetting('itemTooltip_pinTop');
-
-        if (!pricesEnabled && !pinTopEnabled) {
+        if (!anyTooltipFeatureEnabled()) {
             return;
         }
 
         this.isInitialized = true;
 
-        if (pricesEnabled) {
-            // Wait for market data to load
-            if (!marketAPI.isLoaded()) {
-                await marketAPI.fetch(true); // Force fresh fetch on init
-            }
+        // Every section except pin-to-top and ability-book status reads market
+        // prices (prices, profit, expected value, enhancement costs, gathering
+        // value), so load market data unless those two are the only things on.
+        const needsMarketData = TOOLTIP_FEATURE_SETTINGS.filter(
+            (id) => id !== 'itemTooltip_pinTop' && id !== 'itemTooltip_abilityStatus'
+        ).some((id) => config.getSetting(id));
+
+        if (needsMarketData && !marketAPI.isLoaded()) {
+            await marketAPI.fetch(true); // Force fresh fetch on init
         }
 
         // Add CSS to prevent tooltip cutoff
@@ -220,11 +244,7 @@ class TooltipPrices {
         }
 
         // Skip if no tooltip features are enabled
-        if (
-            !config.getSetting('itemTooltip_prices') &&
-            !config.getSetting('itemTooltip_pinTop') &&
-            !config.getSetting('itemTooltip_expectedValue')
-        ) {
+        if (!anyTooltipFeatureEnabled()) {
             return;
         }
 
@@ -248,8 +268,13 @@ class TooltipPrices {
             dom.fixTooltipOverflow(tooltipElement, { forceTop: true });
         }
 
-        // Skip all injection if no relevant features are enabled
-        if (!config.getSetting('itemTooltip_prices') && !config.getSetting('itemTooltip_expectedValue')) {
+        // Skip all injection if no injecting feature is enabled. Pin-to-top is
+        // excluded here — it was already applied just above and draws nothing —
+        // so a pin-only tooltip still short-circuits before the name lookup.
+        const anyInjectingFeature = TOOLTIP_FEATURE_SETTINGS.filter((id) => id !== 'itemTooltip_pinTop').some((id) =>
+            config.getSetting(id)
+        );
+        if (!anyInjectingFeature) {
             return;
         }
 

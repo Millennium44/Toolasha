@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fix: item tooltip went fully blank when "market prices" was turned off
+
+The whole tooltip module (prices, profit, expected value, enhancement path/milestones, ability status, gathering) was gated at startup on only `itemTooltip_prices` or pin-to-top being on, so anyone who turned market prices off but left profit/EV/enhancement on got a bare game tooltip with none of the Toolasha sections — the DOM observer never started. Init and the two "anything to do?" guards now key off _any_ enabled tooltip feature, and market data loads whenever a price-consuming section is on. Turning prices off now hides just the price line, as intended.
+
 ### Item tooltip: option to cost profit from the direct recipe only
 
 New setting "Profit: direct recipe only (buy base items, no sub-craft chain)" (off by default). When on, each recipe ingredient is costed at its own market Ask/Bid and the calc stops there, instead of recursing into how a craftable ingredient is itself made — so a Holy Brush is figured as Rainbow Brush / Holy Cheese / Arcane Log bought at market, not the whole brush chain. Applies to both the detailed breakdown table **and** the profit/hr (no upgrade-item craft cost or chain time), so the two stay consistent. Overrides "Use crafting cost for upgrade items if cheaper" while on.
