@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### CI: publish stamps @version from package.json so a release can't ship mislabelled
+
+3.2.0 first published with `@version 3.1.1` because the merge raced the Format Release Please stamp, so the built userscript carried the previous version and wouldn't register as an update. The publish workflow now runs `version:sync` (which stamps `@version` from package.json, the version release-please owns) immediately before building, as a backstop that guarantees the artifact matches the version being published. 3.2.0's assets were re-published with the correct version.
+
 ### Profiles open directly everywhere, not just filled into chat
 
 Added a shared `openPlayerProfile()` that opens a player's profile through the game's own `handleViewProfile` (no chat needed), falling back to the `/profile` chat command only if that handler is missing. Every place that used to fill `/profile <name>` into chat and wait for Enter now opens the profile directly: clickable chat names, the combat DPS/portrait names, dungeon-history player names, the guild roster, and the guild member-skills cycler. The party-member Profile button uses the same helper. Their hover tooltips now read "Open <name>'s profile" instead of "Fill …into chat".
@@ -69,21 +73,19 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.2.0](https://github.com/Millennium44/Toolasha/compare/v3.1.1...v3.2.0) (2026-08-14)
 
-
 ### Features
 
-* add opt-in Profile button to combat battle-unit popup ([54ce2ba](https://github.com/Millennium44/Toolasha/commit/54ce2ba4ba817a3a56ba38f1ca9bfd5621048915))
-* add per-tab run caps and Uncapped toggle to Lab Simulator ([0d11cad](https://github.com/Millennium44/Toolasha/commit/0d11cad9447f945815ff1603ae619a0065c4b99f))
-* add precision and max-fights controls to Lab Upgrade tab ([268db82](https://github.com/Millennium44/Toolasha/commit/268db82092a6fa0a40ed542c06b1e5bd3b197d1b))
-* add uncappable fight/time limits to Lab Simulator Single Sim tab ([9077ebf](https://github.com/Millennium44/Toolasha/commit/9077ebf4728161690607c23a71b5d7bb3d048db4))
-* open party profile directly via handleViewProfile ([9f6a5e4](https://github.com/Millennium44/Toolasha/commit/9f6a5e432f47cb0b5188341c2c562febf6a41b31))
-* open profiles directly via shared helper across all /profile sites ([20d10cf](https://github.com/Millennium44/Toolasha/commit/20d10cf8e4ad2b03f786a9c73721a317193d828b))
-* reword profile-link tooltips to "Open &lt;name&gt;'s profile" ([8cd3add](https://github.com/Millennium44/Toolasha/commit/8cd3add8532c4ee349348648fa77b50489020faf))
-
+- add opt-in Profile button to combat battle-unit popup ([54ce2ba](https://github.com/Millennium44/Toolasha/commit/54ce2ba4ba817a3a56ba38f1ca9bfd5621048915))
+- add per-tab run caps and Uncapped toggle to Lab Simulator ([0d11cad](https://github.com/Millennium44/Toolasha/commit/0d11cad9447f945815ff1603ae619a0065c4b99f))
+- add precision and max-fights controls to Lab Upgrade tab ([268db82](https://github.com/Millennium44/Toolasha/commit/268db82092a6fa0a40ed542c06b1e5bd3b197d1b))
+- add uncappable fight/time limits to Lab Simulator Single Sim tab ([9077ebf](https://github.com/Millennium44/Toolasha/commit/9077ebf4728161690607c23a71b5d7bb3d048db4))
+- open party profile directly via handleViewProfile ([9f6a5e4](https://github.com/Millennium44/Toolasha/commit/9f6a5e432f47cb0b5188341c2c562febf6a41b31))
+- open profiles directly via shared helper across all /profile sites ([20d10cf](https://github.com/Millennium44/Toolasha/commit/20d10cf8e4ad2b03f786a9c73721a317193d828b))
+- reword profile-link tooltips to "Open &lt;name&gt;'s profile" ([8cd3add](https://github.com/Millennium44/Toolasha/commit/8cd3add8532c4ee349348648fa77b50489020faf))
 
 ### Bug Fixes
 
-* start tooltip feature when any tooltip section is enabled ([af2debc](https://github.com/Millennium44/Toolasha/commit/af2debced7d8cc28b5010c76b503673a1ab33258))
+- start tooltip feature when any tooltip section is enabled ([af2debc](https://github.com/Millennium44/Toolasha/commit/af2debced7d8cc28b5010c76b503673a1ab33258))
 
 ## [3.1.1](https://github.com/Millennium44/Toolasha/compare/v3.1.0...v3.1.1) (2026-08-14)
 
