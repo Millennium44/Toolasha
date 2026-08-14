@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Profit: "Tax" button renamed to "Moopass", plus a real sale-tax toggle
+
+The panel's "Tax" toggle was actually the weekly **MooPass** cowbell cost, so it's renamed to match (the button and the "Pay the MooPass" card). A new **"Tax"** toggle now subtracts the **market sale tax** from combat income — netted at the source (`calculateIncome`, coin untaxed / cowbell 18% / else 5%), so the Daily Income stat, the Combat Profit panel, and the sim-vs-measured calibration all read post-tax. On by default; a remembered choice under the old "Tax" name migrates to Moopass.
+
 ### Fix: "auto-click max" was maxing the price, not the quantity
 
 The 8/13 marketplace layout gave the price row its own "Max" button and put it ahead of the quantity row, so the auto-click-max feature grabbed the first "Max"/"All" in the modal — the price one — which slammed the sell price to the top of the tradable range **and** left the quantity un-maxed (both halves of the reported "fills the max price, no longer maxes items"). It now scopes the search to the quantity inputs and excludes the price row, so it maxes the amount and leaves the price alone.

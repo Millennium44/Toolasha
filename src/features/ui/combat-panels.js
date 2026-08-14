@@ -30,6 +30,7 @@ import storage from '../../core/storage.js';
 import combatDPS from '../../features/combat/combat-dps.js';
 import combatStatsDataCollector from '../../features/combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../../features/combat-stats/combat-stats-calculator.js';
+import { salesTaxNetted, setSalesTaxNetted } from '../../features/combat-stats/sales-tax-view.js';
 import {
     damageBreakdown,
     actionLabel,
@@ -1605,7 +1606,7 @@ function drawEncountersAndKills(body, encounters) {
  */
 const PROFIT_SETTINGS_KEY = 'combatProfitView';
 
-const profitView = { mode: 'mid', costsOn: true, taxOn: false };
+const profitView = { mode: 'mid', costsOn: true, moopassOn: false };
 
 // This runs at module scope, long before the database opens — reading without
 // waiting on storage.ready returned the default every load and the remembered
@@ -1615,6 +1616,12 @@ async function loadProfitView() {
         await storage.ready;
         const saved = await storage.getJSON(PROFIT_SETTINGS_KEY, 'settings', null);
         if (saved) Object.assign(profitView, saved);
+        // `taxOn` was this toggle's old name, back when the MooPass weekly cost
+        // was labelled "Tax"; carry a remembered choice across the rename.
+        if ('taxOn' in profitView) {
+            if (profitView.moopassOn === undefined) profitView.moopassOn = profitView.taxOn;
+            delete profitView.taxOn;
+        }
     } catch (error) {
         console.error('[CombatPanels] Reading the profit view failed:', error);
     }
@@ -1660,7 +1667,7 @@ function profitBox(body, scenario, tax = 0) {
 
     const rule = document.createElement('div');
     rule.textContent =
-        (profitView.costsOn ? scenario.equation : scenario.equation.split(' - ')[0]) + (tax ? ' - Tax' : '');
+        (profitView.costsOn ? scenario.equation : scenario.equation.split(' - ')[0]) + (tax ? ' - MooPass' : '');
     Object.assign(rule.style, { color: COLORS.textDim, fontSize: '11px' });
 
     const terms = [formatKMB(scenario.revenue)];
@@ -1793,7 +1800,7 @@ export function combatProfitView(stats) {
     const cases = profitCases(stats);
     const headline = cases.find((scenario) => scenario.key === profitView.mode) || cases[1];
     const cost = profitView.costsOn ? headline.cost : 0;
-    const tax = profitView.taxOn ? cowbellTax().perDay : 0;
+    const tax = profitView.moopassOn ? cowbellTax().perDay : 0;
 
     return { title: headline.title, revenue: headline.revenue, cost, tax, profit: headline.revenue - cost - tax };
 }
@@ -1816,9 +1823,19 @@ export const profitPanel = new CombatPanel({
         // The MooPass is a real weekly cost, and a profit figure that ignores it
         // is a profit figure that has not paid the rent
         bar.appendChild(
-            toggleButton(profitView.taxOn ? 'Tax On' : 'Tax Off', profitView.taxOn, () => {
-                profitView.taxOn = !profitView.taxOn;
+            toggleButton(profitView.moopassOn ? 'Moopass On' : 'Moopass Off', profitView.moopassOn, () => {
+                profitView.moopassOn = !profitView.moopassOn;
                 saveProfitView();
+            })
+        );
+
+        // The market sale tax comes off what a drop actually sells for. Netted
+        // at the source (`calculateIncome`), so flipping it re-reads income on
+        // the next draw — refresh rather than a display-time subtraction.
+        bar.appendChild(
+            toggleButton(salesTaxNetted() ? 'Tax On' : 'Tax Off', salesTaxNetted(), () => {
+                setSalesTaxNetted(!salesTaxNetted());
+                profitPanel.refresh();
             })
         );
 
@@ -1845,7 +1862,7 @@ export const profitPanel = new CombatPanel({
 
         const cases = profitCases(stats);
         const headline = cases.find((scenario) => scenario.key === profitView.mode) || cases[1];
-        const tax = profitView.taxOn ? cowbellTax().perDay : 0;
+        const tax = profitView.moopassOn ? cowbellTax().perDay : 0;
 
         // The header sum HWhat carries: revenue, cost and what is left, in one
         // line, so the panel answers its own question before it is scrolled
@@ -1950,7 +1967,7 @@ function cowbellTax() {
  */
 function taxCard(stats) {
     const holder = document.createElement('div');
-    const block = card(holder, profitView.taxOn ? 'Paying the Tax' : 'Pay the Tax');
+    const block = card(holder, profitView.moopassOn ? 'Paying the MooPass' : 'Pay the MooPass');
 
     const tax = cowbellTax();
     if (!tax.bagPrice) {
@@ -1972,14 +1989,16 @@ function taxCard(stats) {
             'This run covers it',
             profit >= tax.perDay ? 'yes' : 'no',
             profit >= tax.perDay ? ROW_COLORS.good : ROW_COLORS.bad,
-            'Daily profit at bid against the daily cost of the weekly tax.'
+            'Daily profit at bid against the daily cost of the weekly MooPass.'
         )
     );
     if (profit > 0) {
-        block.appendChild(line('Days of profit per week of tax', (tax.perWeek / profit).toFixed(1), ROW_COLORS.accent));
+        block.appendChild(
+            line('Days of profit per week of MooPass', (tax.perWeek / profit).toFixed(1), ROW_COLORS.accent)
+        );
     }
-    if (!profitView.taxOn) {
-        block.appendChild(note('Not counted against the figures above — press Tax in the header to include it.'));
+    if (!profitView.moopassOn) {
+        block.appendChild(note('Not counted against the figures above — press Moopass in the header to include it.'));
     }
     return holder;
 }

@@ -144,6 +144,7 @@ vi.mock('../../features/combat/damage-taken-tracker.js', () => ({
 }));
 
 const { dpsPanel, deathsPanel, profitPanel, combatProfitView } = await import('./combat-panels.js');
+const { salesTaxNetted, setSalesTaxNetted } = await import('../../features/combat-stats/sales-tax-view.js');
 
 const panels = () => [dpsPanel, deathsPanel, profitPanel];
 const FAILED = 'could not be drawn';
@@ -625,7 +626,7 @@ describe('what the panels add over their tiles', () => {
         profitPanel.show();
         const text = profitPanel.panel.textContent;
 
-        expect(text).toContain('Pay the Tax');
+        expect(text).toContain('Pay the MooPass');
         expect(text).toContain('25 bags');
     });
 
@@ -691,20 +692,38 @@ describe('what the panels add over their tiles', () => {
         expect(profitPanel.panel.textContent).toContain('15 of 25 bags');
     });
 
-    test('Tax On subtracts it from every case', () => {
+    test('Moopass On subtracts it from every case', () => {
         profitPanel.show();
         const before = profitPanel.panel.textContent;
-        expect(before).toContain('Tax Off');
+        expect(before).toContain('Moopass Off');
 
-        [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Tax Off').click();
+        [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Moopass Off').click();
         const after = profitPanel.panel.textContent;
 
-        expect(after).toContain('Tax On');
-        expect(after).toContain('Paying the Tax');
+        expect(after).toContain('Moopass On');
+        expect(after).toContain('Paying the MooPass');
         // Three terms in the sum now, not two
         expect(after).toMatch(/-?[\d.]+[KMB]? - -?[\d.]+[KMB]? - -?[\d.]+[KMB]? = -?[\d.]+[KMB]?/);
 
-        [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Tax On').click();
+        [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Moopass On').click();
+    });
+
+    test('the Tax button flips whether income is netted of the market sale tax', () => {
+        const wasNetted = salesTaxNetted();
+        try {
+            setSalesTaxNetted(true);
+            profitPanel.show();
+            expect(profitPanel.panel.textContent).toContain('Tax On');
+
+            [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Tax On').click();
+            expect(salesTaxNetted()).toBe(false);
+            expect(profitPanel.panel.textContent).toContain('Tax Off');
+
+            [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Tax Off').click();
+            expect(salesTaxNetted()).toBe(true);
+        } finally {
+            setSalesTaxNetted(wasNetted);
+        }
     });
 
     test('the tile is told which reading the panel is showing', () => {
@@ -729,10 +748,10 @@ describe('what the panels add over their tiles', () => {
         profitPanel.show();
         expect(combatProfitView(state.stats).tax).toBe(0);
 
-        [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Tax Off').click();
+        [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Moopass Off').click();
         expect(combatProfitView(state.stats).tax).toBeGreaterThan(0);
 
-        [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Tax On').click();
+        [...profitPanel.panel.querySelectorAll('button')].find((b) => b.textContent === 'Moopass On').click();
     });
 
     test('Profit lists every character, not only you', () => {
