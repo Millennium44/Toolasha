@@ -47,6 +47,10 @@ vi.mock('../combat/loadout-snapshot.js', () => ({ default: {} }));
 vi.mock('../../api/marketplace.js', () => ({ default: {} }));
 vi.mock('../market/expected-value-calculator.js', () => ({ default: {} }));
 vi.mock('../../utils/dungeon-level-gap.js', () => ({ partyLevelGaps: () => ({}) }));
+// The adapter now reaches profit-helpers for the drop-sale tax, which pulls in
+// these market-touching modules at load; stub them so the import graph is inert.
+vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 0, getItemPrices: () => ({}) }));
+vi.mock('../enhancement/tooltip-enhancement.js', () => ({ getProductionCost: () => 0 }));
 
 const {
     getGuildBuffDetailMap,

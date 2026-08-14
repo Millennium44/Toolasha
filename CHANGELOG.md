@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat sim nets the market sale tax off drop revenue
+
+The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. It now nets the tax off each non-coin drop (cowbell bags at their own 18%), so Profit/day reflects post-tax proceeds. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
+
 ### 8/13/2026 marketplace patch un-gated (now live on www too)
 
 The patch reached the live server, so `isMarketplacePatchLive()` now returns `true` everywhere. Every gated behaviour — 5% market tax across all profit/net-worth math, the game's official market-value reconciliation, and shrine levels folded into gear score and the combat sim — is now in effect on both servers, not just test. The gate is kept as a one-line function so a future server-staged change can re-gate from the same place.
