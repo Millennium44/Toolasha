@@ -73,10 +73,9 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.2.1](https://github.com/Millennium44/Toolasha/compare/v3.2.0...v3.2.1) (2026-08-14)
 
-
 ### Miscellaneous Chores
 
-* sync [@version](https://github.com/version) to 3.2.0 and stamp version at publish time ([1a376fe](https://github.com/Millennium44/Toolasha/commit/1a376fe5928dde25e32b6e8dacf5baf6cf783d17))
+- sync [@version](https://github.com/version) to 3.2.0 and stamp version at publish time ([1a376fe](https://github.com/Millennium44/Toolasha/commit/1a376fe5928dde25e32b6e8dacf5baf6cf783d17))
 
 ## [3.2.0](https://github.com/Millennium44/Toolasha/compare/v3.1.1...v3.2.0) (2026-08-14)
 
