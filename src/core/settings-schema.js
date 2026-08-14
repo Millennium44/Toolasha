@@ -137,7 +137,7 @@ export const settingsGroups = {
                 label: 'Action bar: Compact width (800px limit)',
                 type: 'checkbox',
                 default: false,
-                help: 'Limits action bar width to 800px. Useful for wide monitors.',
+                help: 'Limits action bar width to 800px and clips instead of wrapping. Useful for wide monitors. Always on in mobile mode, where clipping the long stats line keeps it from overflowing the narrow header.',
             },
             actionBar_showQueueCount: {
                 id: 'actionBar_showQueueCount',

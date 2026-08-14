@@ -24,6 +24,7 @@ import { getAlchemyCoinCost, getAlchemyTypeFromActionHrid } from '../../utils/al
 import { timeReadable, formatWithSeparator, formatDateTime } from '../../utils/formatters.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
+import { isMobileMode } from '../../utils/mobile.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import {
     parseArtisanBonus,
@@ -1323,7 +1324,7 @@ class ActionTimeDisplay {
         const materialTime = materialLimit !== null ? materialLimit * perActionTime : null;
 
         // Apply CSS overrides for non-combat display
-        const enhCompact = config.getSetting('actionBar_compactWidth');
+        const enhCompact = config.getSetting('actionBar_compactWidth') || isMobileMode();
         if (enhCompact) {
             actionNameElement.style.setProperty('max-width', '800px', 'important');
             actionNameElement.style.setProperty('overflow', 'hidden', 'important');
@@ -1526,7 +1527,7 @@ class ActionTimeDisplay {
      */
     applyActionBarWidth(actionNameElement, isCombat) {
         if (!actionNameElement) return;
-        const compact = config.getSetting('actionBar_compactWidth');
+        const compact = config.getSetting('actionBar_compactWidth') || isMobileMode();
         const parent1 = actionNameElement.parentElement;
         const parent2 = parent1?.parentElement;
         const SIZING = ['overflow', 'text-overflow', 'white-space', 'max-width', 'width', 'min-width'];
@@ -1691,7 +1692,7 @@ class ActionTimeDisplay {
         statsSpan.className = 'mwi-appended-stats';
 
         // Check compact width toggle
-        const compactWidth = config.getSetting('actionBar_compactWidth');
+        const compactWidth = config.getSetting('actionBar_compactWidth') || isMobileMode();
 
         if (compactWidth) {
             // COMPACT MODE: Truncate stats if too long

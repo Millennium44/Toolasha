@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth tile controls: collapsible, folded by default on mobile
+
+The labyrinth calculator's control bar now folds behind a **▸ Labyrinth** toggle. On a phone it starts collapsed so it no longer eats most of the labyrinth panel (reported by Ana); on desktop it stays open. The choice sticks across redraws within the session, and open/closed is one tap.
+
+### Action bar: compact width on by default in mobile mode
+
+The compact-width action bar (clips the stats line instead of wrapping it) now turns on automatically in mobile mode, where the long "…actions/hr (… items/hr)" line was overflowing the narrow game header. Still a manual toggle on desktop; the setting note explains the mobile default.
+
 ### Docs: note the tradable-range band is a ~±10% approximation
 
 Documented that the market-value band clamp is a multiplicative ~±10% and runs one price increment tighter than the game's real range on each side (the 8/14 hotfix widened it by one increment) — an intentional, bounded approximation, since the game publishes only values, not range bounds, and the plugin has no increment-tier table. Audited the rest of the 8/13 + 8/14 marketplace/guild patches (hourly market updates, 1T max price, compact prices, game-provided values, shrine buff rates): all already handled or read from game data, no change needed.
