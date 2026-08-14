@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trials: partial-tier credit now counts on live (was test-server only)
+
+The partial-tier payout rule (an unfinished tier pays 0.5% per 1% of progress, up to 50%) went live with the guild patch, but the on-pace math still gated it to the test server — so live guilds were **undercounting** their projected points by up to half a tier. It now counts everywhere, and the tooltip wording dropped its "on the test server" framing and is much shorter.
+
 ### Labyrinth tile controls: collapsible, folded by default on mobile
 
 The labyrinth calculator's control bar now folds behind a **▸ Labyrinth** toggle. On a phone it starts collapsed so it no longer eats most of the labyrinth panel (reported by Ana); on desktop it stays open. The choice sticks across redraws within the session, and open/closed is one tap.

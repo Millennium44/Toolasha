@@ -1229,7 +1229,7 @@ describe('interpretCardPoints', () => {
         expect(reading.interpretation).toBe('disagrees');
     });
 
-    test('on the test server, whole tiers plus a partial next tier reads as partial-tier, not a disagreement', () => {
+    test('whole tiers plus a partial next tier reads as partial-tier, not a disagreement', () => {
         // The live case: 6 skilling tiers = 700 base ×1.2 = 840, and the trial
         // ended 36.7% into tier 7 → +0.5×0.367×100 base ×1.2 = 22, so 862.
         const args = { type: 'skilling', tier: 6, statedPoints: 862, buildersHallBonus: 0.2 };
@@ -1350,7 +1350,7 @@ describe('trialBankedBasePoints', () => {
         expect(banked.basePoints).toBeCloseTo(700, 6);
     });
 
-    test('on the test server a partial-tier card is used as stated, not flagged as a disagreement', () => {
+    test('a partial-tier card is used as stated, not flagged as a disagreement', () => {
         const banked = trialBankedBasePoints({
             type: 'skilling',
             bankedTiers: 6,
