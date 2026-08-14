@@ -649,7 +649,7 @@ export const settingsGroups = {
                 label: 'Show effective (after-tax) prices',
                 type: 'checkbox',
                 default: false,
-                help: 'Shows what you actually receive after the 2% marketplace tax next to ask/bid prices in item tooltips',
+                help: 'Shows what you actually receive after the 5% marketplace tax next to ask/bid prices in item tooltips',
             },
             itemTooltip_artisanPrices: {
                 id: 'itemTooltip_artisanPrices',
@@ -788,7 +788,7 @@ export const settingsGroups = {
                 label: 'Include marketplace tax in minimum sell price',
                 type: 'checkbox',
                 default: false,
-                help: 'Accounts for the 2% marketplace seller tax so listing at minimum sell still nets your target rate after tax',
+                help: 'Accounts for the 5% marketplace seller tax so listing at minimum sell still nets your target rate after tax',
             },
             itemTooltip_pinTop: {
                 id: 'itemTooltip_pinTop',
@@ -1239,7 +1239,7 @@ export const settingsGroups = {
                 label: 'Market: Bulk sell to vendor when market is no better',
                 type: 'checkbox',
                 default: true,
-                help: 'When the game vendor pays at least as much per item as the market would net after the 2% tax (e.g. vendor 48 vs ask 49 → 48 net), the Bulk Sell Assistant opens the item\'s inventory menu with "All" selected so one click on "Sell For … Coins" vendors the whole stack instead. Only applies to unenhanced items.',
+                help: 'When the game vendor pays at least as much per item as the market would net after the 5% tax (e.g. vendor 96 vs ask 100 → 95 net), the Bulk Sell Assistant opens the item\'s inventory menu with "All" selected so one click on "Sell For … Coins" vendors the whole stack instead. Only applies to unenhanced items.',
             },
             market_bulkSellMinListingValue: {
                 id: 'market_bulkSellMinListingValue',
@@ -1272,7 +1272,7 @@ export const settingsGroups = {
                 label: 'Market: Record trade ledger (realized flip profit)',
                 type: 'checkbox',
                 default: true,
-                help: 'Passively records every fill on your own listings (partial fills included) and adds a "Ledger" tab to the marketplace showing per-item realized profit — sells matched against your average recorded buy cost, proceeds net of the 2% market tax — with weekly totals and CSV export.',
+                help: 'Passively records every fill on your own listings (partial fills included) and adds a "Ledger" tab to the marketplace showing per-item realized profit — sells matched against your average recorded buy cost, proceeds net of the 5% market tax — with weekly totals and CSV export.',
             },
             market_listingPricePrecision: {
                 id: 'market_listingPricePrecision',
@@ -2891,7 +2891,7 @@ export const settingsGroups = {
                 label: 'Guild Shop: Show exchange advisor (sell → rebuy comparison)',
                 type: 'checkbox',
                 default: true,
-                help: 'When the selected item is not the cheapest option, shows whether selling it and rebuying the best item would yield more credits (accounts for 2% seller tax).',
+                help: 'When the selected item is not the cheapest option, shows whether selling it and rebuying the best item would yield more credits (accounts for 5% seller tax).',
             },
             guildShrineUpgradePlanner: {
                 id: 'guildShrineUpgradePlanner',
