@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fix: In Progress tab knows its tier right after a mid-trial refresh
+
+On the In Progress fight view, the trial's stated tier is now taken straight from the live spectator stream, so a mid-trial refresh no longer drops the card to "tier 1 / banked nothing" until you visit the Trials tab. The stream states the tier outright; it's applied as a floor (tiers only climb, so it can only raise the count) and, being this render's reading of a currently-flowing stream, can't go stale the way the persisted tier could. Previously the fight-view card ignored it because it already carried the boss bars, and fell back to the lagging badge.
+
 ### Guild trials: drop the partial-tier payout notes, shorten the forecast text
 
 The two partial-tier explanation paragraphs on the In Progress payout card ("Includes partial-tier credit…" and "… states N pts at T12 …") are gone — the credit still counts, it just isn't spelled out. Trimmed the wordiest forecast values too: "no data — only trials you join can be measured" → "only trials you join", "needs one tier's total to anchor the ladder" → "awaits a full tier", "nothing yet — tier N in progress" → "nothing yet · tier N". Full detail stays on hover.

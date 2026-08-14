@@ -261,7 +261,14 @@ const DEFAULT_WORK_BASES = {
  */
 export function analyseTrial(
     record,
-    { participants = 0, timeLeftMs = null, buildersHallBonus = null, phase = null, workBase = null } = {}
+    {
+        participants = 0,
+        timeLeftMs = null,
+        buildersHallBonus = null,
+        phase = null,
+        workBase = null,
+        liveTierFloor = null,
+    } = {}
 ) {
     const samples = Array.isArray(record?.samples) ? record.samples : [];
     const kind = record?.kind === 'combat' ? 'combat' : 'skilling';
@@ -412,6 +419,20 @@ export function analyseTrial(
         // a trial provably on tier one, whatever the rule would like to assume
         tier = FIRST_TIER;
         tierSource = 'first-tier-rule';
+    }
+
+    // The tier the spectator stream is stating *right now*, if the fight view is
+    // open on this encounter. Unlike the persisted `liveTier` — which passes
+    // through the staleness gate above because it may be hours old — this is
+    // this render's own reading of a stream that is currently flowing, so it
+    // cannot be stale: the game is saying, this instant, which tier is being
+    // fought. It is applied as a floor (tiers only climb, so it can only raise
+    // the count), which is what lets the In Progress fight view state the tier
+    // after a refresh without waiting for a Trials-tab visit — the badge on that
+    // tab is what the analysis otherwise falls back to, and it lags by a scrape.
+    if (!completed && Number.isFinite(liveTierFloor) && (tier === null || liveTierFloor > tier)) {
+        tier = liveTierFloor;
+        tierSource = 'socket';
     }
 
     // What it has finished, which is what the payout is about. A trial climbs
@@ -2178,7 +2199,8 @@ class GuildTrials {
             // and every observer burst paid for the whole arithmetic twice.
             const analyses = new Map();
             const analysisFor = (key, record, participants, phase) => {
-                const cacheKey = `${key}|${phase ?? ''}|${participants}`;
+                const liveTierFloor = this._liveTierFloor(record);
+                const cacheKey = `${key}|${phase ?? ''}|${participants}|${liveTierFloor ?? ''}`;
                 if (!analyses.has(cacheKey)) {
                     analyses.set(
                         cacheKey,
@@ -2188,6 +2210,7 @@ class GuildTrials {
                             buildersHallBonus: bonuses.buildersHall.bonus,
                             phase,
                             workBase: this._workBase(record),
+                            liveTierFloor,
                         })
                     );
                 }
@@ -3038,6 +3061,26 @@ class GuildTrials {
         if (!pool || !Number.isFinite(pool.current) || !Number.isFinite(pool.max)) return null;
         if (!Number.isFinite(pool.at) || now - pool.at > SPECTATED_POOL_FRESH_MS) return null;
         return pool;
+    }
+
+    /**
+     * The tier the currently-flowing spectator stream states for a trial, or null.
+     *
+     * `_withSpectatedPool` only grafts the stream's *reading* onto a card that has
+     * no bar of its own (the Trials tab), so on the In Progress fight view — where
+     * the card carries the boss bars — the stream's stated tier never reached the
+     * analysis, and the card fell back to the badge (a scrape behind) or the work
+     * ladder (blind on an unseeded encounter). This hands `analyseTrial` the fresh
+     * tier directly, as a floor: it is this render's reading of a live stream, so
+     * unlike the persisted `liveTier` it cannot be stale.
+     *
+     * @param {Object} record - A trial's record, for its encounter
+     * @returns {number|null}
+     */
+    _liveTierFloor(record) {
+        const watched = this.watchedPool;
+        if (!watched || !watched.encounter || !Number.isFinite(watched.tier)) return null;
+        return encounterOf(record?.name) === watched.encounter ? watched.tier : null;
     }
 
     /**

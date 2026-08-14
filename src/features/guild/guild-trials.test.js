@@ -2756,6 +2756,53 @@ describe('zero is a claim, and usually the wrong one', () => {
         expect(html).not.toContain('0 tiers');
     });
 
+    test('a live spectator tier floors the count past a stale badge (In Progress after refresh)', () => {
+        // The reported case: mid-trial refresh with the fight view open. The
+        // persisted badge is a scrape behind (T1, 0 pts → earned false), the
+        // encounter is unseeded so the work ladder is blind, and the card read
+        // "tier 1, banked nothing" until a Trials-tab visit. The stream is stating
+        // tier 2 this instant — that floors both the tier and the banked count.
+        const record = {
+            name: 'Trial Hedgehog',
+            kind: 'combat',
+            tier: 1,
+            points: 0,
+            samples: [
+                {
+                    t: now,
+                    readings: [
+                        { current: 300_000, max: 494_400 },
+                        { current: 400_000, max: 480_000 },
+                    ],
+                },
+            ],
+            tiers: [],
+        };
+
+        const stale = analyseTrial(record, { timeLeftMs: 20 * 60_000 });
+        expect(stale.tier).toBe(1);
+        expect(stale.tiersClearedSoFar).toBe(0);
+
+        const live = analyseTrial(record, { timeLeftMs: 20 * 60_000, liveTierFloor: 2 });
+        expect(live.tier).toBe(2);
+        expect(live.tierSource).toBe('socket');
+        expect(live.tiersClearedSoFar).toBe(1);
+    });
+
+    test('the live tier floor only raises, never lowers, the tier', () => {
+        // A card already reading T5 is not dragged down by a lagging stream tier.
+        const record = {
+            name: 'Trial Hedgehog',
+            kind: 'combat',
+            tier: 5,
+            points: 4_000,
+            samples: [{ t: now, readings: [{ current: 300_000, max: 900_000 }] }],
+            tiers: [],
+        };
+        const analysis = analyseTrial(record, { timeLeftMs: 20 * 60_000, liveTierFloor: 2 });
+        expect(analysis.tier).toBeGreaterThanOrEqual(5);
+    });
+
     test('the first tier in progress says so rather than reading as a failure', () => {
         // Pre-badge: a trial on its first tier has banked nothing, and the badge
         // that would say otherwise has not appeared yet
