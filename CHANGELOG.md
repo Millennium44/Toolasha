@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### 8/13/2026 marketplace patch un-gated (now live on www too)
+
+The patch reached the live server, so `isMarketplacePatchLive()` now returns `true` everywhere. Every gated behaviour — 5% market tax across all profit/net-worth math, the game's official market-value reconciliation, and shrine levels folded into gear score and the combat sim — is now in effect on both servers, not just test. The gate is kept as a one-line function so a future server-staged change can re-gate from the same place.
+
+### Overlay: reworked default tile set + a "Reset to default tiles" button
+
+The curated overlay default is regrouped into **Wealth** (net worth, coins, inventory value), **Character** (build score, combat level) and **This session** (combat status, XP/hr, profit, DPS, deaths/hr, drop luck, time to level), so the tiles read as clusters instead of a flat row. The session figures are all measurements, which stay hidden until they have data — so a fresh or non-combat character still opens onto a handful of tiles, not a wall. A new **Reset to default tiles** button in ⚙ puts any character back to that set (clearing hand-picked rows and order, leaving positions and sizes alone), undoable like the other bulk layout actions.
+
 ### First-run setup: copy from another character, and a way back to it
 
 The welcome prompt now offers **"Copy from another character"** — pick one of your other characters and its settings are copied onto this one, the one-click way to set up a fresh alt (especially an Iron Cow) instead of only offering generic presets. Added to both first-run pickers, and to a new **"First-time setup"** button in the Toolasha settings tab so the one-shot prompt is recoverable: a stray click that dismissed it (or a character already past it) can re-open it any time, on any character. Defaults now leads the picker, a **No change** option sits beside it, and dismissing the dialog is "no change" rather than a reset — so re-opening it on a configured character can no longer wipe settings by accident.
