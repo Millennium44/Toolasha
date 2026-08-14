@@ -61,7 +61,9 @@ const {
     readGuildShrineSnapshot,
     buildGuildBuffsFromLevels,
     buildPlayerDTO,
+    taxedDropValue,
 } = await import('./combat-sim-adapter.js');
+const { MARKET_TAX, COWBELL_BAG_TAX } = await import('../../utils/profit-constants.js');
 
 const FORCE = {
     hrid: '/guild_buffs/force_combat',
@@ -297,5 +299,25 @@ describe('the scrolls a player DTO starts from', () => {
     test('are empty when the game never sent a scroll map', () => {
         mocks.personalActionTypeBuffsMap = null;
         expect(buildPlayerDTO().scrollBuffs).toEqual([]);
+    });
+});
+
+describe('taxedDropValue', () => {
+    // The suite's global setup mocks the marketplace-patch gate on, so MARKET_TAX is 5%.
+    test('nets the market tax off an ordinary drop', () => {
+        expect(taxedDropValue('/items/cheese', 1000)).toBeCloseTo(1000 * (1 - MARKET_TAX), 9);
+    });
+
+    test('taxes a cowbell bag at its own higher rate', () => {
+        expect(taxedDropValue('/items/bag_of_10_cowbells', 1000)).toBeCloseTo(1000 * (1 - COWBELL_BAG_TAX), 9);
+        expect(COWBELL_BAG_TAX).toBeGreaterThan(MARKET_TAX);
+    });
+
+    test('leaves coin whole — it is not sold', () => {
+        expect(taxedDropValue('/items/coin', 1)).toBe(1);
+    });
+
+    test('passes a zero straight through, so an EV fallback still runs and is not re-taxed', () => {
+        expect(taxedDropValue('/items/cheese', 0)).toBe(0);
     });
 });

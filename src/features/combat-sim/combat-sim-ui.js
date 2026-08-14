@@ -45,6 +45,7 @@ import {
     calculateExpectedDrops,
     calculateDungeonKeyCosts,
     calculateSimRevenue,
+    taxedDropValue,
     getZonesThatDropItem,
     getGuildBuffDetailMap,
     guildBuffMaxLevel,
@@ -3941,8 +3942,8 @@ class CombatSimUI {
                 .filter(([, total]) => total > 0)
                 .map(([itemHrid, total]) => {
                     const price = marketAPI.getPrice(itemHrid);
-                    // Revenue: use sell price based on pricing mode
-                    let unitValue = this._getSellPrice(price);
+                    // Revenue: sell price for the pricing mode, net of the sale tax
+                    let unitValue = taxedDropValue(itemHrid, this._getSellPrice(price));
                     if (unitValue === 0 && itemHrid === '/items/coin') {
                         unitValue = 1;
                     }
@@ -4775,7 +4776,7 @@ class CombatSimUI {
             for (const [itemHrid, total] of dropMap.entries()) {
                 if (total <= 0) continue;
                 const price = marketAPI.getPrice(itemHrid);
-                let unitValue = this._getSellPrice(price);
+                let unitValue = taxedDropValue(itemHrid, this._getSellPrice(price));
                 if (unitValue === 0 && itemHrid === '/items/coin') unitValue = 1;
                 if (unitValue === 0) {
                     const evData = (expectedValueCalculator() || bundledExpectedValueCalculator).calculateExpectedValue(
