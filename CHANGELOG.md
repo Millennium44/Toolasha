@@ -89,17 +89,15 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.3.0](https://github.com/Millennium44/Toolasha/compare/v3.2.1...v3.3.0) (2026-08-14)
 
-
 ### Features
 
-* offer a full backup on first fork run ([2ae30b3](https://github.com/Millennium44/Toolasha/commit/2ae30b3180fc7f486d03e1a624a381ba151a5e6d))
-
+- offer a full backup on first fork run ([2ae30b3](https://github.com/Millennium44/Toolasha/commit/2ae30b3180fc7f486d03e1a624a381ba151a5e6d))
 
 ### Bug Fixes
 
-* default Lab Upgrade tab to own character and keep the player pick ([f58df8c](https://github.com/Millennium44/Toolasha/commit/f58df8c4e61545ed795304fd4858c49fc88d511e))
-* group labyrinth tile controls so they wrap tidily on mobile ([da34895](https://github.com/Millennium44/Toolasha/commit/da34895088ab9f9c9c5573c65db88735a7573d00))
-* stop the live clear-chance readout reflowing the fight header ([60bfb5f](https://github.com/Millennium44/Toolasha/commit/60bfb5fbb418e258973456a8506454b3f8f75c13))
+- default Lab Upgrade tab to own character and keep the player pick ([f58df8c](https://github.com/Millennium44/Toolasha/commit/f58df8c4e61545ed795304fd4858c49fc88d511e))
+- group labyrinth tile controls so they wrap tidily on mobile ([da34895](https://github.com/Millennium44/Toolasha/commit/da34895088ab9f9c9c5573c65db88735a7573d00))
+- stop the live clear-chance readout reflowing the fight header ([60bfb5f](https://github.com/Millennium44/Toolasha/commit/60bfb5fbb418e258973456a8506454b3f8f75c13))
 
 ## [3.2.1](https://github.com/Millennium44/Toolasha/compare/v3.2.0...v3.2.1) (2026-08-14)
 
