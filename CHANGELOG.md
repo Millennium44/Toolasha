@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fix: "auto-click max" was maxing the price, not the quantity
+
+The 8/13 marketplace layout gave the price row its own "Max" button and put it ahead of the quantity row, so the auto-click-max feature grabbed the first "Max"/"All" in the modal — the price one — which slammed the sell price to the top of the tradable range **and** left the quantity un-maxed (both halves of the reported "fills the max price, no longer maxes items"). It now scopes the search to the quantity inputs and excludes the price row, so it maxes the amount and leaves the price alone.
+
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. It now nets the tax off each non-coin drop (cowbell bags at their own 18%), so Profit/day reflects post-tax proceeds. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
