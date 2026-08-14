@@ -2394,7 +2394,44 @@ class LabyrinthClearRate {
             this._tileControlsCollapsed = !this._tileControlsCollapsed;
             applyCollapsed();
         });
+
+        // A one-tap floor calc beside the toggle, so a collapsed bar on a phone
+        // can still recalculate without being expanded. Only when auto-calc is
+        // off — with it on the floor recomputes itself and the button is noise.
+        const autoCalcOn = () => !!config.getSetting('labyrinthAutoCalcTiles');
+        const calcButton = document.createElement('button');
+        calcButton.className = `${TILE_CONTROLS_CLASS}-quick-calc`;
+        calcButton.textContent = 'Calc';
+        calcButton.title = 'Calculate this floor now';
+        calcButton.style.cssText =
+            'flex:0 0 auto; padding:0 8px; height:20px; border:0; border-radius:5px; background:#3a88ff; ' +
+            'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
+        calcButton.addEventListener('click', () => this.runTileCalculation());
+
+        // In the expanded controls: flip auto-calc on, and the quick button
+        // steps aside. Reflects the current setting so it reads right on open.
+        const autoButton = document.createElement('button');
+        autoButton.className = `${TILE_CONTROLS_CLASS}-auto-toggle`;
+        autoButton.style.cssText =
+            'flex:0 0 auto; padding:0 8px; height:20px; border:0; border-radius:5px; ' +
+            'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
+        const syncAuto = () => {
+            const on = autoCalcOn();
+            autoButton.textContent = on ? 'Auto-calc: on' : 'Enable auto-calc';
+            autoButton.style.background = on ? 'rgba(60,180,120,0.85)' : 'rgba(120,134,160,0.85)';
+            calcButton.style.display = on ? 'none' : '';
+        };
+        autoButton.addEventListener('click', () => {
+            const next = !autoCalcOn();
+            config.setSettingValue('labyrinthAutoCalcTiles', next);
+            syncAuto();
+            if (next) this.runTileCalculation({ auto: true });
+        });
+        body.appendChild(autoButton);
+        syncAuto();
+
         container.appendChild(toggle);
+        container.appendChild(calcButton);
         container.appendChild(body);
         applyCollapsed();
 
@@ -3435,20 +3472,28 @@ class LabyrinthClearRate {
         const chance = Math.min(1, Math.max(0, result.clearChance ?? 0));
         const pct = Math.round(chance * 100);
 
+        // On mobile the tiles are small and the browser inflates tiny fonts
+        // (text-size-adjust), so "100% 19s" grew wider than the badge and spilled
+        // out of its coloured box past the tile edge. Pin the inflation off,
+        // shrink the fonts a step on a phone, and let the badge size to its text
+        // (max-width capped the box but not the nowrap text inside it) so the
+        // colour always wraps the whole reading and it stays within the tile.
+        const mobile = isMobileMode();
         const badge = document.createElement('div');
         badge.className = TILE_BADGE_CLASS;
         badge.style.cssText =
             'position:absolute; right:1px; bottom:1px; z-index:9; max-width:calc(100% - 2px); padding:1px 3px; ' +
             'border-radius:3px; box-sizing:border-box; display:flex; align-items:baseline; justify-content:flex-end; gap:2px; ' +
-            'white-space:nowrap; color:#fff; text-shadow:0 1px 1px rgba(0,0,0,0.55); pointer-events:auto; ' +
+            'white-space:nowrap; overflow:hidden; color:#fff; text-shadow:0 1px 1px rgba(0,0,0,0.55); pointer-events:auto; ' +
+            '-webkit-text-size-adjust:100%; text-size-adjust:100%; ' +
             `background:${this.getTileBadgeColor(chance)};`;
 
         const chanceSpan = document.createElement('span');
-        chanceSpan.style.cssText = 'font-size:9px; font-weight:700; line-height:1;';
+        chanceSpan.style.cssText = `font-size:${mobile ? 8 : 9}px; font-weight:700; line-height:1; flex:0 0 auto;`;
         chanceSpan.textContent = `${pct}%`;
 
         const etaSpan = document.createElement('span');
-        etaSpan.style.cssText = 'font-size:8px; font-weight:600; line-height:1; opacity:0.95;';
+        etaSpan.style.cssText = `font-size:${mobile ? 7 : 8}px; font-weight:600; line-height:1; opacity:0.95; flex:0 1 auto; overflow:hidden; text-overflow:ellipsis;`;
         etaSpan.textContent = this.formatEtaSeconds(result.expectedSeconds ?? result.avgFightSeconds, pct);
 
         badge.appendChild(chanceSpan);

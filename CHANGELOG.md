@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth: tile badges fit on mobile, plus quick-calc and auto-calc buttons
+
+The clear-chance tile badge ("100% 19s") no longer spills out of its coloured box on a phone — mobile font inflation is pinned off and the fonts step down a size so the reading stays inside the tile. The collapsible control bar gains a **Calc** button beside the toggle (a one-tap floor calc when auto-calc is off, so a folded bar still recalculates without expanding) and an **Enable auto-calc** button in the expanded controls that flips the setting and recomputes.
+
 ### Guild trials: capture the game's own end-of-trial stats to check the measurement
 
 Toolasha now reads the game's authoritative per-member totals off the wire (`guild_trial_stats_updated` — exact damage, healing and pre-mitigation damage taken) and keeps them beside its own live measurement so the two can be compared. The comparison is persisted per encounter and survives a refresh until the week's ladder rolls over, and it rides along in the Export (`statsComparison`: measured vs reported, with the delta). Members are named through a character-id map accumulated across every tier, so the stats are still attributable after the per-wave roster has re-dealt.
