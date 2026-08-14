@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Profiles open directly everywhere, not just filled into chat
 
-Added a shared `openPlayerProfile()` that opens a player's profile through the game's own `handleViewProfile` (no chat needed), falling back to the `/profile` chat command only if that handler is missing. Every place that used to fill `/profile <name>` into chat and wait for Enter now opens the profile directly: clickable chat names, the combat DPS/portrait names, dungeon-history player names, the guild roster, and the guild member-skills cycler. The party-member Profile button uses the same helper.
+Added a shared `openPlayerProfile()` that opens a player's profile through the game's own `handleViewProfile` (no chat needed), falling back to the `/profile` chat command only if that handler is missing. Every place that used to fill `/profile <name>` into chat and wait for Enter now opens the profile directly: clickable chat names, the combat DPS/portrait names, dungeon-history player names, the guild roster, and the guild member-skills cycler. The party-member Profile button uses the same helper. Their hover tooltips now read "Open <name>'s profile" instead of "Fill …into chat".
 
 ### Lab Simulator: Upgrade tab gets the full run-cap controls
 

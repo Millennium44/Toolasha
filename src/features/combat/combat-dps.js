@@ -235,7 +235,7 @@ function drawPerPlayer(container, breakdown) {
             textDecoration: 'underline dotted',
             textUnderlineOffset: '2px',
         });
-        nameCell.title = `Fill "/profile ${name}" into chat`;
+        nameCell.title = `Open ${name}'s profile`;
         nameCell.addEventListener('click', (event) => {
             event.stopPropagation();
             openPlayerProfile(name, { logPrefix: 'CombatDps' });

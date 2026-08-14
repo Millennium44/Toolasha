@@ -166,7 +166,7 @@ export function markAsProfileLink(el, name) {
     chatProfileLink._ensureActive();
     el.classList.add(NAME_CLASS);
     el.dataset.mwiProfileName = name;
-    if (!el.title) el.title = `Fill "/profile ${name}" into chat`;
+    if (!el.title) el.title = `Open ${name}'s profile`;
     return true;
 }
 
