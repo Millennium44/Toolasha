@@ -808,8 +808,13 @@ class TooltipPrices {
 
                 if (material.isUpgradeItem) {
                     const craftEnabled = config.getSetting('profitCalc_craftUpgradeItems');
-                    const craftAsk = craftEnabled ? getProductionCost(material.itemHrid, 'ask') : 0;
-                    const craftBid = craftEnabled ? getProductionCost(material.itemHrid, 'bid') : 0;
+                    // Flat mode: price each ingredient at market and stop, instead
+                    // of recursing into how a craftable ingredient is itself made.
+                    // Zeroing the craft cost makes isCrafted false, so the row is a
+                    // plain "Buy X" at market with no sub-rows.
+                    const expandChain = craftEnabled && !config.getSetting('itemTooltip_detailedProfitFlat');
+                    const craftAsk = expandChain ? getProductionCost(material.itemHrid, 'ask') : 0;
+                    const craftBid = expandChain ? getProductionCost(material.itemHrid, 'bid') : 0;
                     const isCrafted = craftAsk > 0 && (askPrice === 0 || craftAsk < askPrice);
                     if (isCrafted) {
                         // Split: show only direct inputs cost on this row, sub-rows handle deeper chain
