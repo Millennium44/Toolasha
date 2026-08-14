@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fix: stop the "Inventory Badge Manager failed to start" false alarm
+
+Its health check reported failure whenever the inventory was on screen but not yet priced — a normal "not yet" (the price badges render asynchronously, and don't render at all if the price-badge provider is off), most visible on a marketplace/mobile open. It now confirms health only when a priced container exists and otherwise stands down, never reporting failure (the real badge output is already health-checked by Inventory Badge Prices). No behaviour change to the badges themselves; just no more spurious startup notice.
+
 ### Fix: minify the @require bundles so they install under Steam's 2 MB limit
 
 The production library bundles shipped unminified, so `sim`, `combat` and `ui` (2.6–3.5 MB) exceeded the ~2 MB per-`@require` limit in the Steam Extension Manager and failed to install there. Wiring terser into the production build (keeping function/class names, since the code reads them at runtime) drops every bundle well under 2 MB — sim 1.06, combat 0.80, ui 1.15 MB. Also adds an opt-in `MINIFY=1 npm run build:dev` for smoke-testing the minified output before release.
