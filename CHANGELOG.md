@@ -18,6 +18,26 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.0.0](https://github.com/Millennium44/Toolasha/compare/v2.102.0...v3.0.0) (2026-08-14)
+
+
+### Features
+
+* **combat-profit:** rename MooPass toggle, add a real sale-tax toggle ([5ac07cb](https://github.com/Millennium44/Toolasha/commit/5ac07cbeba825f31a42a86b160d13a82efd6acca))
+* **combat-sim:** net the market sale tax off drop revenue ([e867855](https://github.com/Millennium44/Toolasha/commit/e867855d2f2ac5f5900c38db3e8bb2a62e033910))
+* **overlay:** rework curated default tiles, add reset button; un-gate 8/13 patch ([c84ca7d](https://github.com/Millennium44/Toolasha/commit/c84ca7dfb23e20fadecdaeb7071d7bf595c0c72d))
+
+
+### Bug Fixes
+
+* **combat-sim:** apply the drop sale tax on the Results panel too ([175e291](https://github.com/Millennium44/Toolasha/commit/175e291f5c9b7ba2a9dc7e01bed103dddc1833d5))
+* **market:** auto-click-max was maxing the price, not the quantity ([b6c074e](https://github.com/Millennium44/Toolasha/commit/b6c074e77c8d53af120d2ad86b453e0116650f7b))
+
+
+### Miscellaneous Chores
+
+* release Toolasha 3.0.0 ([452196e](https://github.com/Millennium44/Toolasha/commit/452196ed8835d2192b3699bed4875eb2a59b23fb))
+
 ### 8/13/2026 marketplace patch un-gated (now live on www too)
 
 The patch reached the live server, so `isMarketplacePatchLive()` now returns `true` everywhere. Every gated behaviour — 5% market tax across all profit/net-worth math, the game's official market-value reconciliation, and shrine levels folded into gear score and the combat sim — is now in effect on both servers, not just test. The gate is kept as a one-line function so a future server-staged change can re-gate from the same place.
