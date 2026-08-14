@@ -15,12 +15,14 @@
  * "Battle Info" / "Stats" tabs and the player by the "<name> - Lv.N" header —
  * the same selector-canary reasoning the rest of the combat features use.
  *
- * ## Why the profile opens through chat
+ * ## How the profile opens
  *
- * There is no game fiber handler that opens an arbitrary player's profile (only
- * marketplace/action/dictionary handlers exist). The game *does* open a profile
- * from the `/profile <name>` chat command, so this fills that command and
- * dispatches Enter — which needs the chat input to be present and visible.
+ * The game's core component exposes `handleViewProfile(name)` — the handler
+ * behind clicking a player, reachable on the same fiber object as
+ * `handleGoToMarketplace`. Calling it directly opens the profile modal with no
+ * chat involved, so it works whether or not the chat panel is open. If a build
+ * ever lacks that handler, this falls back to the `/profile <name>` chat command
+ * (fill + Enter), which does need the chat input present and visible.
  */
 
 import config from '../../core/config.js';
@@ -157,14 +159,45 @@ function injectButton(row, sampleTab, name) {
 }
 
 /**
- * Open a player's profile via the `/profile <name>` chat command: fill the box
- * (native value setter + input event), then dispatch Enter once React has seen
- * the change. Needs the chat input present and visible.
+ * The game's core component instance, found by walking the React fiber for the
+ * `handleViewProfile` handler — the same object the chat commands reach for
+ * `handleGoToMarketplace`. Null when the game has not finished mounting.
+ * @returns {Object|null}
+ */
+function getGameCore() {
+    const root = typeof document !== 'undefined' ? document.getElementById('root') : null;
+    const fiber = root?._reactRootContainer?.current || root?._reactRootContainer?._internalRoot?.current;
+    const find = (node) => {
+        if (!node) return null;
+        if (typeof node.stateNode?.handleViewProfile === 'function') return node.stateNode;
+        return find(node.child) || find(node.sibling);
+    };
+    return find(fiber);
+}
+
+/**
+ * Open a player's profile.
+ *
+ * Preferred path: call the game's own `handleViewProfile` directly (reached via
+ * the React fiber), which opens the profile modal without touching chat — so it
+ * works whether or not the chat panel is open. Falls back to the `/profile
+ * <name>` chat command when the handler is not present.
  *
  * @param {string} name - Player name
  * @param {HTMLElement} button - Button, for transient feedback
  */
 function openProfile(name, button) {
+    try {
+        const game = getGameCore();
+        if (game && typeof game.handleViewProfile === 'function') {
+            game.handleViewProfile(name);
+            return;
+        }
+    } catch (error) {
+        console.error('[PartyProfileButton] handleViewProfile failed; falling back to chat:', error);
+    }
+
+    // Fallback: the /profile chat command, which needs the chat input visible.
     const chatInput = findChatInput();
     if (!chatInput) {
         const original = button.textContent;
