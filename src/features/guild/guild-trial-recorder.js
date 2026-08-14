@@ -41,7 +41,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import guildTrialDamage from './guild-trial-damage.js';
+import guildTrialDamage, { compareTrialStats } from './guild-trial-damage.js';
 import guildTrialSkilling from './guild-trial-skilling.js';
 import guildTrialStatsModal from './guild-trial-stats-modal.js';
 import { loadLoadouts } from './guild-loadouts.js';
@@ -462,6 +462,13 @@ export async function buildTrialExport({ guildName = null } = {}) {
         // The game's own post-trial Stats modal, per combat trial, where it has
         // been opened — the authoritative per-member damage/healing/damage-taken
         trialStatsModal: guildTrialStatsModal.snapshot?.() ?? {},
+        // The game's own end-of-trial stats off the wire (`guild_trial_stats_updated`)
+        // paired with the live measurement, per player: what we measured vs what
+        // the server credited, and how far apart. Survives a refresh for the week.
+        statsComparison: compareTrialStats({
+            reported: trialDamage?.reported,
+            measured: trialDamage?.reportedMeasured,
+        }),
     };
 }
 

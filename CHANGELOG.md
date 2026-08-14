@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trials: capture the game's own end-of-trial stats to check the measurement
+
+Toolasha now reads the game's authoritative per-member totals off the wire (`guild_trial_stats_updated` — exact damage, healing and pre-mitigation damage taken) and keeps them beside its own live measurement so the two can be compared. The comparison is persisted per encounter and survives a refresh until the week's ladder rolls over, and it rides along in the Export (`statsComparison`: measured vs reported, with the delta). Members are named through a character-id map accumulated across every tier, so the stats are still attributable after the per-wave roster has re-dealt.
+
 ### Fix: In Progress tab knows its tier right after a mid-trial refresh
 
 On the In Progress fight view, the trial's stated tier is now taken straight from the live spectator stream, so a mid-trial refresh no longer drops the card to "tier 1 / banked nothing" until you visit the Trials tab. The stream states the tier outright; it's applied as a floor (tiers only climb, so it can only raise the count) and, being this render's reading of a currently-flowing stream, can't go stale the way the persisted tier could. Previously the fight-view card ignored it because it already carried the boss bars, and fell back to the lagging badge.

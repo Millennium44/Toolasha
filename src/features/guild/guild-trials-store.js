@@ -702,6 +702,50 @@ export async function saveTrialRoster(entry) {
     }
 }
 
+// ─── Measured-vs-reported trial stats ───────────────────────────────────────
+
+/**
+ * Where the week's measured-vs-game-reported comparison is kept.
+ *
+ * Under the `guildTrials` prefix, so {@link clearTrialStorage} takes it too, and
+ * week-guarded on the way in exactly as {@link loadTrialRecord} is: a blob from a
+ * previous week is last week's trial, and the comparison resets with the ladder.
+ */
+const STATS_KEY = `${KEY_PREFIX}Stats`;
+
+/**
+ * Read the week's saved measured-vs-reported trial stats.
+ * @param {number} [now=Date.now()] - Clock, in ms
+ * @returns {Promise<{weekStart: number, trials: Object}>} The blob, or a fresh one
+ */
+export async function loadTrialStats(now = Date.now()) {
+    const weekStart = trialWeekStart(now);
+    const fresh = { weekStart, trials: {} };
+    try {
+        const held = await storage.get(STATS_KEY, STORE_NAME, null);
+        if (!held || typeof held !== 'object' || held.weekStart !== weekStart) return fresh;
+        return { weekStart, trials: held.trials && typeof held.trials === 'object' ? held.trials : {} };
+    } catch (error) {
+        console.error('[GuildTrialsStore] Failed to load trial stats:', error);
+        return fresh;
+    }
+}
+
+/**
+ * Write the week's measured-vs-reported trial stats.
+ * @param {{weekStart: number, trials: Object}} blob - The comparison, keyed by encounter
+ * @returns {Promise<boolean>} True when the write was queued
+ */
+export async function saveTrialStats(blob) {
+    try {
+        await storage.set(STATS_KEY, blob, STORE_NAME);
+        return true;
+    } catch (error) {
+        console.error('[GuildTrialsStore] Failed to save trial stats:', error);
+        return false;
+    }
+}
+
 // ─── Building bonuses ───────────────────────────────────────────────────────
 
 /**
