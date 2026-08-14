@@ -114,6 +114,17 @@ class TooltipPrices {
     }
 
     /**
+     * Whether the feature registry should start this feature. True when any
+     * tooltip section is enabled — not just prices/pin-to-top — so the registry
+     * doesn't skip the feature (and never call initialize) for someone running
+     * only profit, expected value, or the enhancement sections.
+     * @returns {boolean}
+     */
+    shouldEnable() {
+        return anyTooltipFeatureEnabled();
+    }
+
+    /**
      * Initialize the tooltip prices feature
      */
     async initialize() {

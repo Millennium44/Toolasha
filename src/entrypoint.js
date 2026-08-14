@@ -326,7 +326,10 @@ function registerFeatures() {
             category: 'Market',
             module: Market.tooltipPrices,
             async: true,
-            customCheck: () => config.getSetting('itemTooltip_prices') || config.getSetting('itemTooltip_pinTop'),
+            // Start the feature when ANY tooltip section is on, not just
+            // prices/pin-to-top — otherwise the registry skips it and never
+            // calls initialize for a profit/EV/enhancement-only setup.
+            customCheck: () => Market.tooltipPrices.shouldEnable(),
         },
         {
             key: 'expectedValueCalculator',
