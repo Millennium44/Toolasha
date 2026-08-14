@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Simulator Upgrade tab: default to your own character, and remember the pick
+
+The Upgrade tab's Player dropdown defaulted to whichever party member was listed first and reset every time you switched tabs. It now defaults to your own character and remembers the chosen player (by name) across tab switches, so the sim stops jumping to someone else.
+
 ### First-run: offer a full backup before switching to the fork
 
 The first time the fork runs on a browser that already carries Toolasha data, it now offers a one-time **full backup** before the What's New popup can touch any settings — so anyone switching from upstream (or who fumbles a settings import) keeps a clean restore point of their pre-fork state. Shown once, only for existing users (a fresh install has nothing to back up), and it's still available any time from Settings → Back Up Everything.

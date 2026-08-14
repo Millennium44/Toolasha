@@ -1253,6 +1253,12 @@ class LabSimUI {
 
         // Upgrade listeners
         this.panel.querySelector('#mwi-labsim-upgrade-run').addEventListener('click', () => this._onUpgradeAnalyze());
+        // Remember the chosen player by name so a tab switch (which rebuilds the
+        // dropdown) restores it instead of snapping back to the first entry.
+        this.panel.querySelector('#mwi-labsim-upgrade-player').addEventListener('change', (e) => {
+            const opt = e.target.selectedOptions?.[0];
+            this._upgradePlayerName = opt?.dataset?.name || opt?.textContent || null;
+        });
         this.panel.querySelector('#mwi-labsim-upgrade-precision').addEventListener('change', (e) => {
             const n = Math.min(10, Math.max(0.1, Number(e.target.value) || 1));
             e.target.value = String(n);
@@ -1400,6 +1406,7 @@ class LabSimUI {
             const option = document.createElement('option');
             option.value = i;
             option.textContent = p.name || `Player ${i + 1}`;
+            option.dataset.name = p.name || '';
             select.appendChild(option);
         });
 
@@ -1408,7 +1415,20 @@ class LabSimUI {
             option.value = 0;
             option.textContent = 'Player 1';
             select.appendChild(option);
+            return;
         }
+
+        // Restore the remembered pick (so switching tabs does not reset it),
+        // else default to the local character rather than whichever party member
+        // happens to be first, else the first entry.
+        const nameIndex = (name) =>
+            name ? playerInfo.findIndex((p) => (p.name || '').toLowerCase() === String(name).toLowerCase()) : -1;
+        let index = nameIndex(this._upgradePlayerName);
+        if (index < 0) index = nameIndex(dataManager.getCurrentCharacterName?.());
+        if (index < 0) index = 0;
+        select.value = String(index);
+        // Pin what we landed on so the next rebuild keeps it.
+        this._upgradePlayerName = playerInfo[index]?.name || null;
     }
 
     /**
