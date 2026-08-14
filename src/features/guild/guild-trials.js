@@ -132,7 +132,6 @@ import {
     trialBankedBasePoints,
     trialWeekStart,
 } from './guild-trials-math.js';
-import { isTestServer } from '../../utils/game-server.js';
 import guildTrialDamage, { attributionCoverage, encounterOf, encounterOfMonster } from './guild-trial-damage.js';
 import guildTrialSkilling from './guild-trial-skilling.js';
 import guildTrialStatsModal from './guild-trial-stats-modal.js';
@@ -450,8 +449,9 @@ export function analyseTrial(
             bankedTiers: tiersClearedSoFar,
             pointsByTier,
             buildersHallBonus,
-            // Test server only: a card may state whole tiers plus a partial one.
-            allowPartialTier: isTestServer(),
+            // Live rule since the guild patch: a card may state whole tiers plus a
+            // partial one, so read the stated points as such rather than a mismatch.
+            allowPartialTier: true,
         }),
         pointsByTier,
         // Set below for a combat trial whose readings straddle a tier clear
@@ -2674,12 +2674,11 @@ class GuildTrials {
                 const fromCards = trial.points?.source !== 'ladder';
                 const base = trial.points?.basePoints;
                 const stated = trial.points?.guildPoints;
-                // Test-server only: the pace ends part-way into the tier after
-                // `projected`, and that leftover progress now pays out (0.5% per
-                // 1%, capped at 50%). Size it off that tier's marginal points.
-                // Off the test server this is 0, so nothing moves on live.
+                // The pace ends part-way into the tier after `projected`, and that
+                // leftover progress pays out (0.5% per 1%, capped at 50%). Size it
+                // off that tier's marginal points. Live rule since the guild patch.
                 const marginal = tierMarginalPoints(trial.type, (trial.projected ?? 0) + 1) ?? 0;
-                const partialBasePoints = isTestServer() ? partialTierCredit(trial.partialFraction) * marginal : 0;
+                const partialBasePoints = partialTierCredit(trial.partialFraction) * marginal;
                 return {
                     ...trial,
                     tiersCleared: trial.projected,
@@ -2743,14 +2742,13 @@ class GuildTrials {
             line('Tokens, if you took part', participant.value, GOOD, participant.title),
         ];
 
-        // Test server only: the pace now folds in the partial-tier rule, so say
-        // so — the on-pace figure is higher than a whole-tier walk and the reason
-        // should be on screen rather than a silent discrepancy against the game.
-        if (isTestServer() && trials.some((trial) => (trial.partialFraction ?? 0) > 0)) {
+        // The pace folds in the partial-tier rule, so say so — the on-pace figure
+        // is higher than a whole-tier walk and the reason should be on screen
+        // rather than a silent discrepancy against the game.
+        if (trials.some((trial) => (trial.partialFraction ?? 0) > 0)) {
             rows.push(
                 `<div style="color:${DIM}; margin-top:4px;">` +
-                    'On pace includes partial-tier credit: on the test server an unfinished tier pays 0.5% of its ' +
-                    'points per 1% of progress (up to 50%), so the pace counts the tier it ends part-way through.</div>'
+                    'Includes partial-tier credit: an unfinished tier pays 0.5% per 1% of progress (up to 50%).</div>'
             );
         }
 
@@ -2775,18 +2773,18 @@ class GuildTrials {
             );
         }
 
-        // Test server: a card that reads above the whole-tier total by up to half
-        // the next tier's step is the partial-tier rule, not a disagreement. Say
-        // so, so the extra points on the banked line are explained rather than
-        // left to look like a ladder error.
+        // A card that reads above the whole-tier total by up to half the next
+        // tier's step is the partial-tier rule, not a disagreement. Say so, so the
+        // extra points on the banked line are explained rather than left to look
+        // like a ladder error.
         const partialTrial = trials.find((trial) => trial.points?.interpretation === 'partial-tier');
         if (partialTrial?.points?.quoted) {
             const { tier, statedPoints } = partialTrial.points.quoted;
             rows.push(
                 `<div style="color:${DIM}; margin-top:4px;">` +
                     `${partialTrial.name} states ${formatWithSeparator(statedPoints)} pts at T${tier} — the ` +
-                    'whole-tier total plus partial credit for the tier it ended part-way through (test-server ' +
-                    'rule: 0.5% of a tier per 1% of progress, capped at 50%). Used as stated.</div>'
+                    'whole-tier total plus partial credit for the tier it ended part-way through ' +
+                    '(0.5% per 1% of progress, capped at 50%). Used as stated.</div>'
             );
         }
 
