@@ -187,6 +187,10 @@ vi.mock('./combat-sim-adapter.js', () => ({
     calculateExpectedDrops: () => mocks.drops,
     calculateDungeonKeyCosts: () => [],
     calculateSimRevenue: () => ({ netPerHour: 0, costPerHour: 0, revenuePerHour: 0 }),
+    // Faithful to the real one: coin untaxed, cowbell 18%, everything else the
+    // 5% patch-live market rate the suite runs under
+    taxedDropValue: (hrid, v) =>
+        v > 0 && hrid !== '/items/coin' ? v * (1 - (hrid === '/items/bag_of_10_cowbells' ? 0.18 : 0.05)) : v,
     getZonesThatDropItem: () => [],
     getGuildBuffDetailMap: () => mocks.guildBuffDetailMap || {},
     guildBuffMaxLevel: (detail) => detail?.maxLevel ?? 20,

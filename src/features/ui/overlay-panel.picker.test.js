@@ -437,3 +437,32 @@ describe('the popover keeps up with what it is showing', () => {
         expect(overlayPanel.pickerEl.querySelectorAll('[data-overlay-row-chip]').length).toBe(2);
     });
 });
+
+describe('resetting to the default tiles', () => {
+    test('drops a drifted selection back to the curated set, and can be undone', () => {
+        // A character who arranged the overlay under the old every-row-on
+        // defaults: an explicit selection, a hand-set order, and no curated flag
+        registerRow({ key: 'houses', name: 'Houses', render: (el) => (el.textContent = 'houses') });
+        overlayPanel.settings.visible = { dps: false, luck: true, houses: true };
+        overlayPanel.settings.order = ['houses', 'luck', 'dps'];
+        overlayPanel.settings.curatedDefaults = false;
+
+        panelAt({ left: 20, top: 100, width: 400, height: 400 });
+        pickerWants(200);
+        openGear();
+
+        overlayPanel.pickerEl.querySelector('button[title^="Switch the rows back"]').click();
+
+        // Opted into the curated set with the explicit opinions cleared, so the
+        // two curated rows come back on and the non-curated one drops away
+        expect(overlayPanel.settings.curatedDefaults).toBe(true);
+        expect(overlayPanel.settings.visible).toEqual({});
+        expect(chipState()).toEqual({ dps: true, luck: true, houses: false });
+
+        // Reset tiles is a bulk change, so it takes the undo like the rest
+        overlayPanel.pickerEl.querySelector('button[title="Put the layout back to before that"]').click();
+        expect(overlayPanel.settings.curatedDefaults).toBe(false);
+        expect(overlayPanel.settings.visible).toEqual({ dps: false, luck: true, houses: true });
+        expect(chipState()).toEqual({ dps: false, luck: true, houses: true });
+    });
+});

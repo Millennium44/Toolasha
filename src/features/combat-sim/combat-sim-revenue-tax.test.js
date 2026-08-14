@@ -1,0 +1,107 @@
+/**
+ * calculateSimRevenue nets the marketplace sale tax off drop value.
+ *
+ * The sim values a drop at what it sells for, and selling on the market is
+ * taxed — so a drop is worth its price *after* tax, not gross. This was missed
+ * (the sim valued drops gross), so the 8/13 tax rise never moved sim profit.
+ * Coin is not sold and stays whole; cowbell bags carry their own higher rate.
+ *
+ * The suite's global setup mocks the marketplace-patch gate on, so MARKET_TAX
+ * reads 5% here.
+ */
+
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+
+import { MARKET_TAX, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
+
+const mocks = vi.hoisted(() => ({ prices: {} }));
+
+vi.mock('../../core/data-manager.js', () => ({
+    default: { getItemDetails: (hrid) => ({ name: hrid.split('/').pop() }) },
+}));
+vi.mock('../../core/storage.js', () => ({ default: {} }));
+vi.mock('../../core/config.js', () => ({
+    // Default pricing mode → getSellPrice reads the ask
+    default: { getSetting: () => null, getSettingValue: (_key, fallback) => fallback },
+}));
+vi.mock('../combat/loadout-snapshot.js', () => ({ default: {} }));
+vi.mock('../../utils/bundle-bridge.js', () => ({
+    loadoutSnapshot: () => ({}),
+    expectedValueCalculator: () => null,
+}));
+vi.mock('../../api/marketplace.js', () => ({
+    default: { getPrice: (hrid) => mocks.prices[hrid] || null },
+}));
+vi.mock('../market/expected-value-calculator.js', () => ({
+    default: { getCachedValue: () => null, calculateSingleContainer: () => null },
+}));
+vi.mock('../../utils/dungeon-level-gap.js', () => ({ partyLevelGaps: () => ({}) }));
+// profit-helpers pulls these in at load; stub the ones that touch the live
+// market on import. calculatePriceAfterTax itself lives in profit-helpers and
+// stays real, so the tax math under test is the real thing.
+vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 0, getItemPrices: () => ({}) }));
+vi.mock('../enhancement/tooltip-enhancement.js', () => ({ getProductionCost: () => 0 }));
+
+const { calculateSimRevenue } = await import('./combat-sim-adapter.js');
+
+/**
+ * A sim where killing one monster always drops exactly one of `itemHrid`, so the
+ * expected drop count is the kill count and the revenue math is easy to pin.
+ */
+function simDropping(itemHrid, kills, price) {
+    mocks.prices[itemHrid] = { ask: price, bid: price };
+    const simResult = {
+        deaths: { '/monsters/rat': kills, player1: 0 },
+        dropRateMultiplier: { player1: 1 },
+        rareFindMultiplier: { player1: 1 },
+        combatDropQuantity: { player1: 0 },
+        debuffOnLevelGap: { player1: 0 },
+        numberOfPlayers: 1,
+        difficultyTier: 0,
+        isDungeon: false,
+        consumablesUsed: { player1: {} },
+    };
+    const gameData = {
+        combatMonsterDetailMap: {
+            '/monsters/rat': {
+                dropTable: [{ itemHrid, dropRate: 1, minCount: 1, maxCount: 1, minDifficultyTier: 0 }],
+            },
+        },
+    };
+    return { simResult, gameData };
+}
+
+// kills === hours, so (total / hours) is 1 and revenuePerHour is the unit value
+const KILLS = 10;
+const HOURS = 10;
+
+beforeEach(() => {
+    mocks.prices = {};
+});
+
+describe('calculateSimRevenue drop tax', () => {
+    test('an ordinary drop is worth its price net of the market tax', () => {
+        const { simResult, gameData } = simDropping('/items/cheese', KILLS, 1000);
+        const { revenuePerHour } = calculateSimRevenue(simResult, gameData, 'player1', HOURS);
+
+        expect(revenuePerHour).toBeCloseTo(1000 * (1 - MARKET_TAX), 9);
+        // And it is genuinely lower than the gross the sim used to report
+        expect(revenuePerHour).toBeLessThan(1000);
+    });
+
+    test('a cowbell bag is taxed at its own higher rate, not the flat market rate', () => {
+        const { simResult, gameData } = simDropping('/items/bag_of_10_cowbells', KILLS, 1000);
+        const { revenuePerHour } = calculateSimRevenue(simResult, gameData, 'player1', HOURS);
+
+        expect(revenuePerHour).toBeCloseTo(1000 * (1 - COWBELL_BAG_TAX), 9);
+        expect(COWBELL_BAG_TAX).toBeGreaterThan(MARKET_TAX);
+    });
+
+    test('coin is not sold, so it is not taxed', () => {
+        const { simResult, gameData } = simDropping('/items/coin', KILLS, 1);
+        const { revenuePerHour } = calculateSimRevenue(simResult, gameData, 'player1', HOURS);
+
+        // One coin per kill, valued at 1 apiece, untouched by tax
+        expect(revenuePerHour).toBeCloseTo(1, 9);
+    });
+});
