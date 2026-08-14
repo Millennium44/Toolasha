@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat: "Profile" button on party members (opt-in)
+
+New setting "Combat: Profile button on party members" (off by default). When on, clicking another player's unit in group/party/dungeon combat adds a **Profile** button to the battle-unit popup's tab row (next to Battle Info / Stats) that opens their profile via the `/profile` chat command — so you no longer have to detour through "My Party". Shown for other players only; needs the chat window open. The popup is located by its tab labels and the player by the "name - Lv.N" header (hashed classes aren't relied on).
+
 ### Fix: tooltip feature was still skipped at the registry level with prices off
 
 3.1.1 fixed the module's own init guard, but the feature registry had a second gate (`customCheck`) that still required "Show 24-hour average market prices" or pin-to-top to be on — so with those off the registry skipped the feature entirely and never called it. The check now defers to the module (`shouldEnable()` = any tooltip section enabled), so profit / expected value / enhancement tooltips draw with prices off.

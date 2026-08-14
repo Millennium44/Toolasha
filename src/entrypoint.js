@@ -919,6 +919,14 @@ function registerFeatures() {
             module: Combat.portraitDps,
             async: false,
         },
+        {
+            key: 'partyProfileButton',
+            name: 'Party Profile Button',
+            category: 'Combat',
+            module: Combat.partyProfileButton,
+            async: false,
+            customCheck: () => config.getSetting('combatProfileButton'),
+        },
         { key: 'combatStats', name: 'Combat Stats', category: 'Combat', module: Combat.combatStats, async: false },
         {
             key: 'labyrinthTracker',
