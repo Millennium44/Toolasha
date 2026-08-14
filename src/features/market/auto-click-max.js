@@ -76,7 +76,16 @@ class AutoClickMax {
     }
 
     /**
-     * Find and click the Max or All button in the modal
+     * Find and click the quantity Max/All button in the modal.
+     *
+     * Scoped to the quantity row on purpose. The 8/13/2026 layout gave the
+     * *price* row its own "Max" button (jump to the top of the tradable range)
+     * and placed it ahead of the quantity row in the DOM — so a blind search for
+     * the first "Max"/"All" button clicked price-Max, which both slammed the
+     * price to the ceiling and left the quantity un-maxed. This is the whole of
+     * "it fills the max price and no longer maxes the items". So: search only the
+     * quantity inputs, and belt-and-braces exclude anything in the price row.
+     *
      * @param {HTMLElement} modal - Modal container element
      */
     findAndClickMaxButton(modal) {
@@ -84,9 +93,13 @@ class AutoClickMax {
             return;
         }
 
-        // Find Max button (Sell Listing) or All button (Sell Now)
-        const allButtons = modal.querySelectorAll('button');
-        const maxButton = Array.from(allButtons).find((btn) => {
+        // "Max" on a Sell Listing quantity, "All" on a Sell Now quantity
+        const quantityRow = modal.querySelector('div[class*="MarketplacePanel_quantityInputs"]');
+        const priceRow = modal.querySelector('div[class*="MarketplacePanel_priceInputs"]');
+        const scope = quantityRow || modal;
+
+        const maxButton = Array.from(scope.querySelectorAll('button')).find((btn) => {
+            if (priceRow && priceRow.contains(btn)) return false;
             const text = btn.textContent.trim();
             return text === 'Max' || text === 'All';
         });
@@ -100,7 +113,7 @@ class AutoClickMax {
             return;
         }
 
-        // Click the Max/All button
+        // Click the quantity Max/All button
         try {
             maxButton.click();
         } catch (error) {
