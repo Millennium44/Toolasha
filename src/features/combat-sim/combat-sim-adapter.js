@@ -1209,6 +1209,27 @@ function getBuyPrice(priceData) {
 }
 
 /**
+ * A drop's market sell value net of the sale tax.
+ *
+ * The sim reports what drops are worth, and selling on the market is taxed — so
+ * a drop is worth its sell price *after* tax, not gross (which is what the sim
+ * used to report, so the 8/13 rise to 5% never moved it). Coin is not sold and
+ * is left whole; cowbell bags carry their own higher rate. A non-positive gross
+ * passes straight through, so a caller's expected-value fallback still runs on
+ * zero — and that fallback value must not be re-taxed here, since it is already
+ * net.
+ *
+ * @param {string} itemHrid - The dropped item
+ * @param {number} grossValue - The gross market sell price
+ * @returns {number} The value after sale tax
+ */
+export function taxedDropValue(itemHrid, grossValue) {
+    if (!(grossValue > 0) || itemHrid === '/items/coin') return grossValue;
+    const taxRate = itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
+    return calculatePriceAfterTax(grossValue, taxRate);
+}
+
+/**
  * Calculate revenue and consumable costs from a sim result.
  * Respects the user's profitCalc_pricingMode setting.
  * @param {Object} simResult - SimResult from runSimulation()
@@ -1225,19 +1246,14 @@ export function calculateSimRevenue(simResult, gameData, playerHrid, hours) {
     const dropMap = calculateExpectedDrops(simResult, gameData, playerHrid);
     for (const [itemHrid, total] of dropMap.entries()) {
         if (total <= 0) continue;
-        let unitValue = itemHrid === '/items/coin' ? 1 : getSellPrice(marketAPI.getPrice(itemHrid));
+        let unitValue =
+            itemHrid === '/items/coin' ? 1 : taxedDropValue(itemHrid, getSellPrice(marketAPI.getPrice(itemHrid)));
         if (unitValue === 0) {
             // The EV fallback already nets the sale tax (see expected-value-calculator),
-            // so it is taken as-is rather than taxed again below.
+            // so it is taken as-is.
             const evc = expectedValueCalculator() || bundledExpectedValueCalculator;
             const ev = evc.getCachedValue(itemHrid) || evc.calculateSingleContainer(itemHrid);
             if (ev !== null && ev > 0) unitValue = ev;
-        } else if (itemHrid !== '/items/coin') {
-            // Drops are sold on the market, so the sale tax comes off what they
-            // fetch — the sim was valuing them gross. Coin is not sold and is
-            // left untaxed; cowbell bags carry their own higher rate.
-            const taxRate = itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
-            unitValue = calculatePriceAfterTax(unitValue, taxRate);
         }
         const perHour = (total / hours) * unitValue;
         revenuePerHour += perHour;

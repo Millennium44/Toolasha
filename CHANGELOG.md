@@ -12,7 +12,7 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 ### Combat sim nets the market sale tax off drop revenue
 
-The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. It now nets the tax off each non-coin drop (cowbell bags at their own 18%), so Profit/day reflects post-tax proceeds. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
+The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
 ### 8/13/2026 marketplace patch un-gated (now live on www too)
 
