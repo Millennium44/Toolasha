@@ -4,6 +4,11 @@ on:
     push:
         branches: [main]
     workflow_dispatch:
+        inputs:
+            publish_version:
+                description: 'Re-publish this version to the releases branch and upload its assets, without cutting a new release. Leave blank for the normal release-please flow.'
+                required: false
+                default: ''
 
 permissions:
     contents: write
@@ -23,32 +28,49 @@ jobs:
                   manifest-file: .release-please-manifest.json
                   skip-github-pull-request: ${{ startsWith(github.event.head_commit.message, 'Merge pull request') && contains(github.event.head_commit.message, 'release-please--') }}
 
-            # Build and upload assets if a release was created
+            # Publish either when release-please cut a release, or when a version
+            # was passed by hand to re-publish one (e.g. after a transient failure).
+            - name: Decide what to publish
+              id: gate
+              run: |
+                  if [ "${{ steps.release.outputs.release_created }}" = "true" ]; then
+                      echo "should_publish=true" >> "$GITHUB_OUTPUT"
+                      echo "version=${{ steps.release.outputs.version }}" >> "$GITHUB_OUTPUT"
+                      echo "tag=${{ steps.release.outputs.tag_name }}" >> "$GITHUB_OUTPUT"
+                  elif [ -n "${{ github.event.inputs.publish_version }}" ]; then
+                      echo "should_publish=true" >> "$GITHUB_OUTPUT"
+                      echo "version=${{ github.event.inputs.publish_version }}" >> "$GITHUB_OUTPUT"
+                      echo "tag=v${{ github.event.inputs.publish_version }}" >> "$GITHUB_OUTPUT"
+                  else
+                      echo "should_publish=false" >> "$GITHUB_OUTPUT"
+                  fi
+
+            # Build and upload assets if there is a release to publish
             - name: Checkout code
-              if: ${{ steps.release.outputs.release_created }}
+              if: ${{ steps.gate.outputs.should_publish == 'true' }}
               uses: actions/checkout@v6
 
             - name: Setup Node.js
-              if: ${{ steps.release.outputs.release_created }}
+              if: ${{ steps.gate.outputs.should_publish == 'true' }}
               uses: actions/setup-node@v6
               with:
                   node-version: '20'
                   cache: 'npm'
 
             - name: Install dependencies
-              if: ${{ steps.release.outputs.release_created }}
+              if: ${{ steps.gate.outputs.should_publish == 'true' }}
               run: npm ci
 
             - name: Build (production bundles)
-              if: ${{ steps.release.outputs.release_created }}
+              if: ${{ steps.gate.outputs.should_publish == 'true' }}
               run: npm run build
 
             - name: Build (Standalone enhancement library)
-              if: ${{ steps.release.outputs.release_created }}
+              if: ${{ steps.gate.outputs.should_publish == 'true' }}
               run: npm run build:enhancement
 
             - name: Commit built files to releases branch
-              if: ${{ steps.release.outputs.release_created }}
+              if: ${{ steps.gate.outputs.should_publish == 'true' }}
               run: |
                   # Configure git
                   git config user.name "github-actions[bot]"
@@ -59,8 +81,19 @@ jobs:
                   # GreasyFork renders the message of the commit that touches the
                   # userscript as the version's public changelog, so it must carry
                   # the actual changes, not a release stamp.
-                  notes=$(awk -v ver="${{ steps.release.outputs.version }}" '
+                  #
+                  # Grab only release-please's own block for the version: stop at
+                  # the next `## ` heading, and at the first `### ` heading that is
+                  # not one of release-please's sections — the "Fork Changelog"
+                  # lives between the title and the version entries with its own
+                  # `## Unreleased` / `### ...` headings, and must not bleed in
+                  # (it once swept ~240 KB into the notes and overflowed the arg
+                  # list of `git commit -m`).
+                  notes=$(awk -v ver="${{ steps.gate.outputs.version }}" '
+                      BEGIN { split("Features,Bug Fixes,Performance Improvements,Reverts,Documentation,Styles,Miscellaneous Chores,Code Refactoring,Tests,Build System,Continuous Integration,Dependencies", a, ","); for (i in a) known[a[i]] = 1 }
                       /^## \[/ { grab = index($0, "[" ver "]") > 0; next }
+                      grab && /^## / { grab = 0 }
+                      grab && /^### / { h = $0; sub(/^### /, "", h); if (!(h in known)) grab = 0 }
                       grab { print }
                   ' CHANGELOG.md)
                   [ -n "$notes" ] || notes="See CHANGELOG.md for details."
@@ -79,7 +112,7 @@ jobs:
                   mkdir -p dist/libraries
                   cp -R /tmp/libraries/* dist/libraries/
                   git add dist/libraries
-                  git commit --allow-empty -m "chore: release libraries ${{ steps.release.outputs.version }}"
+                  git commit --allow-empty -m "chore: release libraries ${{ steps.gate.outputs.version }}"
 
                   # Pin entrypoint @require URLs to the library commit SHA
                   lib_sha=$(git rev-parse HEAD)
@@ -89,18 +122,23 @@ jobs:
 
                   # The userscript commit — the one GreasyFork reads. Title is the
                   # version, body is the release notes. No attribution trailers:
-                  # this message is public-facing release copy.
+                  # this message is public-facing release copy. Written to a file
+                  # rather than passed with -m, so notes of any size are safe.
                   git add dist/Toolasha.user.js
-                  git commit -m "Toolasha ${{ steps.release.outputs.version }}" -m "$notes"
+                  {
+                      printf '%s\n\n' "Toolasha ${{ steps.gate.outputs.version }}"
+                      printf '%s\n' "$notes"
+                  } > /tmp/release-message.txt
+                  git commit -F /tmp/release-message.txt
 
                   # Push releases branch
                   git push origin releases
 
             - name: Upload userscripts and publish release
-              if: ${{ steps.release.outputs.release_created }}
+              if: ${{ steps.gate.outputs.should_publish == 'true' }}
               uses: softprops/action-gh-release@v2
               with:
-                  tag_name: ${{ steps.release.outputs.tag_name }}
+                  tag_name: ${{ steps.gate.outputs.tag }}
                   files: |
                       dist/Toolasha.user.js
                       dist/libraries/*.js
