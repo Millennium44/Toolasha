@@ -1,7 +1,7 @@
 /**
  * Toolasha Combat Library
  * Combat, abilities, and combat stats features
- * Version: 2.102.0
+ * Version: 3.0.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -15729,7 +15729,7 @@
      * it would flag a difference that is only the difference between two
      * characters.
      */
-    const STORAGE_KEY$1 = 'combatReplayCheck_observations';
+    const STORAGE_KEY$2 = 'combatReplayCheck_observations';
 
     /**
      * Where a recording still in progress is kept, so a refresh does not end it.
@@ -16996,7 +16996,7 @@
             if (this.loaded) return;
             this.loaded = true;
             try {
-                this.observations = (await characterKey_js.readScoped(STORAGE_KEY$1, 'settings', [], DISCARD_LEGACY$1)) || [];
+                this.observations = (await characterKey_js.readScoped(STORAGE_KEY$2, 'settings', [], DISCARD_LEGACY$1)) || [];
                 // Pruned on the way in as well as on the way out: an install left
                 // alone for a month comes back to a table of checks that describe a
                 // character it no longer has
@@ -17059,7 +17059,7 @@
                 // the write, and one failed write per segment rather than a stream
                 if (storage.isQuotaExceeded()) return;
 
-                await characterKey_js.writeScoped(STORAGE_KEY$1, this.observations, 'settings');
+                await characterKey_js.writeScoped(STORAGE_KEY$2, this.observations, 'settings');
             } catch (error) {
                 console.error('[ReplayCheck] Keeping the observation failed:', error);
             }
@@ -17124,7 +17124,7 @@
                     `[ReplayCheck] Recovered ${count} fight${count === 1 ? '' : 's'} from an interrupted recording`
                 );
                 if (storage.isQuotaExceeded()) return;
-                await characterKey_js.writeScoped(STORAGE_KEY$1, this.observations, 'settings');
+                await characterKey_js.writeScoped(STORAGE_KEY$2, this.observations, 'settings');
             } catch (error) {
                 console.error('[ReplayCheck] Recovering the interrupted recording failed:', error);
             }
@@ -17315,7 +17315,7 @@
             this.history = [];
             this.comparison = null;
             this.error = null;
-            await characterKey_js.writeScoped(STORAGE_KEY$1, [], 'settings');
+            await characterKey_js.writeScoped(STORAGE_KEY$2, [], 'settings');
             await characterKey_js.writeScoped(HISTORY_KEY, [], 'settings');
             await this.clearCheckpoint();
         }
@@ -20979,7 +20979,7 @@
      * read and write, since the user switches characters without reloading. The
      * pre-scoping global log is adopted by the main character once.
      */
-    const STORAGE_KEY = 'labyrinthRoomLogs';
+    const STORAGE_KEY$1 = 'labyrinthRoomLogs';
     /** Used when the setting is unreadable; the setting itself is the real bound */
     const DEFAULT_SESSIONS = 120;
     /** However large the log is set, one room cannot fill it */
@@ -21206,7 +21206,7 @@
             if (!config.getSetting('labyrinthRoomLogs')) return;
             this.isInitialized = true;
 
-            const stored = await characterKey_js.readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
+            const stored = await characterKey_js.readScoped(STORAGE_KEY$1, 'settings', null, { migrate: 'adopt' });
             if (Array.isArray(stored?.sessions)) {
                 this.sessions = stored.sessions.slice(0, this.logSize());
             }
@@ -21877,7 +21877,7 @@
                 delete copy.lastSnapshot;
                 return copy;
             });
-            characterKey_js.writeScoped(STORAGE_KEY, { sessions }, 'settings').catch((error) => {
+            characterKey_js.writeScoped(STORAGE_KEY$1, { sessions }, 'settings').catch((error) => {
                 console.error('[LabyrinthRoomLogs] Failed to persist logs:', error);
             });
         }
@@ -34219,6 +34219,41 @@
     }
 
     /**
+     * Whether live combat income is read net of the market sale tax.
+     *
+     * A module of its own, rather than a field on the profit panel that owns the
+     * toggle, because `calculateIncome` reads it to net the tax at the source and
+     * the calculator must not import the UI bundle — that would be an import cycle,
+     * and would copy the whole panel into every bundle that prices loot. Both the
+     * calculator and the panel import this instead.
+     *
+     * On by default: selling a drop always pays the tax, so the honest income is the
+     * net one. The panel's Tax toggle flips it, and the choice is remembered.
+     */
+
+
+    const STORAGE_KEY = 'combatIncomeNetSalesTax';
+    let netted = true;
+
+    /** @returns {boolean} Whether combat income should be shown net of sale tax */
+    function salesTaxNetted() {
+        return netted;
+    }
+
+    // Read the remembered choice once the database is open. Until then the default
+    // stands — the same default a fresh character gets — rather than a flash of the
+    // wrong figure while storage opens.
+    (async () => {
+        try {
+            await storage.ready;
+            const saved = await storage.getJSON(STORAGE_KEY, 'settings', null);
+            if (saved !== null) netted = Boolean(saved);
+        } catch (error) {
+            console.error('[SalesTaxView] Reading the choice failed:', error);
+        }
+    })();
+
+    /**
      * Combat Statistics Calculator
      * Calculates income, profit, consumable costs, and other statistics
      */
@@ -34318,8 +34353,15 @@
                     // Other items: get market price
                     const prices = marketAPI.getPrice(loot.itemHrid);
                     if (prices) {
-                        totalAsk += prices.ask * itemCount;
-                        totalBid += prices.bid * itemCount;
+                        // Drops are sold on the market, so the sale tax comes off
+                        // what they fetch when the reader has asked for net income.
+                        // Coin is handled above (face value, never sold); containers
+                        // use an expected value that is already net of the tax.
+                        const mult = salesTaxNetted()
+                            ? 1 - (loot.itemHrid === profitConstants_js.COWBELL_BAG_HRID ? profitConstants_js.COWBELL_BAG_TAX : profitConstants_js.MARKET_TAX)
+                            : 1;
+                        totalAsk += prices.ask * itemCount * mult;
+                        totalBid += prices.bid * itemCount * mult;
                     }
                 }
             }

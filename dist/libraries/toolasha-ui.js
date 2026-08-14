@@ -1,7 +1,7 @@
 /**
  * Toolasha UI Library
  * UI enhancements, tasks, skills, and misc features
- * Version: 2.102.0
+ * Version: 3.0.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -954,7 +954,7 @@
      */
 
 
-    const STORAGE_KEY$7 = 'panelSizeMemory';
+    const STORAGE_KEY$8 = 'panelSizeMemory';
 
     /** Inline properties a divider plausibly writes; custom properties are kept too */
     const SIZE_PROPERTIES = new Set([
@@ -1072,7 +1072,7 @@
             this.isInitialized = true;
 
             try {
-                this.saved = await storage.get(STORAGE_KEY$7, 'settings', null);
+                this.saved = await storage.get(STORAGE_KEY$8, 'settings', null);
             } catch (error) {
                 console.error('[PanelSizeMemory] Failed to read saved size:', error);
             }
@@ -1133,7 +1133,7 @@
         async persist(entry) {
             this.saved = entry;
             try {
-                await storage.set(STORAGE_KEY$7, entry);
+                await storage.set(STORAGE_KEY$8, entry);
             } catch (error) {
                 console.error('[PanelSizeMemory] Failed to save size:', error);
             }
@@ -1167,7 +1167,7 @@
         async reset() {
             this.saved = null;
             try {
-                await storage.set(STORAGE_KEY$7, null);
+                await storage.set(STORAGE_KEY$8, null);
             } catch (error) {
                 console.error('[PanelSizeMemory] Failed to clear saved size:', error);
             }
@@ -1470,7 +1470,7 @@
      */
 
 
-    const STORAGE_KEY$6 = 'modalPositions3';
+    const STORAGE_KEY$7 = 'modalPositions3';
     const STORE_NAME$c = 'settings';
 
     class DraggableModals {
@@ -1484,7 +1484,7 @@
             if (this.initialized) return;
             if (!config.getSetting('draggableModals', true)) return;
 
-            this.offsets = (await storage.get(STORAGE_KEY$6, STORE_NAME$c, {})) || {};
+            this.offsets = (await storage.get(STORAGE_KEY$7, STORE_NAME$c, {})) || {};
 
             // Watch Modal_modalContent — unique to the inner dialog content element.
             // Its parentElement is Modal_modal (the box we apply transform to).
@@ -1586,7 +1586,7 @@
                 const dx = isNaN(t.m41) ? 0 : t.m41;
                 const dy = isNaN(t.m42) ? 0 : t.m42;
                 this.offsets[title] = { dx, dy };
-                storage.set(STORAGE_KEY$6, this.offsets, STORE_NAME$c);
+                storage.set(STORAGE_KEY$7, this.offsets, STORE_NAME$c);
             };
 
             // A finger works like a cursor, and the bar's gesture is a drag, not a scroll
@@ -2180,7 +2180,7 @@
      * you saved by name is a template, and templates are worth sharing across
      * characters.
      */
-    const STORAGE_KEY$5 = 'overlayPanel';
+    const STORAGE_KEY$6 = 'overlayPanel';
     /** Where the floating panel sits, shared by every character (see panel-geometry) */
     const GEOMETRY_KEY$4 = 'overlayPanel';
     const PANEL_ID$8 = 'toolasha-overlay-panel';
@@ -2458,7 +2458,7 @@
             // Rebuilt from defaults rather than merged onto what is in memory: this
             // runs again after a character switch, and the character switched away
             // from must not leave its tiles behind
-            const saved = await characterKey_js.readScoped(STORAGE_KEY$5, 'settings', null, { migrate: 'adopt' });
+            const saved = await characterKey_js.readScoped(STORAGE_KEY$6, 'settings', null, { migrate: 'adopt' });
             this.settings =
                 saved && typeof saved === 'object'
                     ? // Never spread in from the defaults: a saved layout that predates
@@ -2547,7 +2547,7 @@
         }
 
         _save() {
-            characterKey_js.writeScoped(STORAGE_KEY$5, this.settings, 'settings').catch((error) => {
+            characterKey_js.writeScoped(STORAGE_KEY$6, this.settings, 'settings').catch((error) => {
                 console.error('[OverlayPanel] Saving the layout failed:', error);
             });
         }
@@ -3302,6 +3302,21 @@
             for (const row of resolved) chips.appendChild(this._rowChip(row));
             this.pickerEl.appendChild(chips);
 
+            // Beside the rows it acts on, not down among the layout buttons: this
+            // one is about which tiles are on, which is exactly what the chips above
+            // are for. It only shows tiles/hides them, so it sits apart from Reset
+            // layout, which forgets positions.
+            const tileActions = document.createElement('div');
+            Object.assign(tileActions.style, { display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' });
+            tileActions.appendChild(
+                this._textButton(
+                    'Reset to default tiles',
+                    'Switch the rows back to the curated starting set, in its order. Positions and sizes are left alone.',
+                    () => this._resetTiles()
+                )
+            );
+            this.pickerEl.appendChild(tileActions);
+
             this.pickerEl.appendChild(this._layoutControls());
             this.pickerEl.appendChild(this._namedLayoutBar());
         }
@@ -3969,7 +3984,10 @@
          *
          * Autogrid, Reset and Import each throw away an arrangement that may have
          * taken a while to get right, and none of them can be judged until after it
-         * has happened — you press Autogrid to find out what Autogrid does.
+         * has happened — you press Autogrid to find out what Autogrid does. Reset
+         * tiles throws away a row selection instead of a geometry, so the snapshot
+         * carries the selection too; the geometry-only callers snapshot it unchanged,
+         * which restores as a no-op.
          *
          * @param {string} what - What is about to happen, for the button's label
          */
@@ -3980,6 +3998,9 @@
                 sizes: { ...this.settings.sizes },
                 zoom: { ...this.settings.zoom },
                 textScale: this.settings.textScale,
+                visible: { ...this.settings.visible },
+                order: [...(this.settings.order || [])],
+                curatedDefaults: this.settings.curatedDefaults,
             };
         }
 
@@ -3987,8 +4008,8 @@
         _undo() {
             if (!this.undoState) return;
 
-            const { positions, sizes, zoom, textScale } = this.undoState;
-            this.settings = { ...this.settings, positions, sizes, zoom, textScale };
+            const { positions, sizes, zoom, textScale, visible, order, curatedDefaults } = this.undoState;
+            this.settings = { ...this.settings, positions, sizes, zoom, textScale, visible, order, curatedDefaults };
             this.undoState = null;
             this._save();
             if (this.panel) this.panel.style.fontSize = `${this._baseFontPx()}px`;
@@ -4009,6 +4030,32 @@
                 positions[key] = { x, y };
             }
             this.settings.positions = positions;
+            this._save();
+            this._renderBody();
+            this._renderPicker();
+            this._placePicker();
+        }
+
+        /**
+         * Put this character's rows back to the curated default set.
+         *
+         * The sibling of Reset layout, and deliberately separate from it: that one
+         * forgets *where* tiles sit, this one forgets *which* tiles are on and in
+         * what order. It is the answer to the overlay that has drifted into the
+         * everything-on wall — clearing the explicit visibility map and the saved
+         * order drops both back to what `resolveRows` reads off {@link CURATED_ROWS},
+         * and turning `curatedDefaults` on opts a pre-curated character in, so a
+         * layout arranged before the curated set existed can reach it too.
+         *
+         * Positions and sizes are left alone: a reset that also scattered a
+         * carefully placed layout would be two undos wearing one button.
+         */
+        _resetTiles() {
+            this._snapshot('tile reset');
+            this.settings.visible = {};
+            this.settings.order = [];
+            this.settings.curatedDefaults = true;
+            this.justEnabled.clear();
             this._save();
             this._renderBody();
             this._renderPicker();
@@ -6264,7 +6311,7 @@
      */
 
 
-    const STORAGE_KEY$4 = 'enhancementTracker_sessions';
+    const STORAGE_KEY$5 = 'enhancementTracker_sessions';
     const CURRENT_SESSION_KEY = 'enhancementTracker_currentSession';
     const STORAGE_STORE$1 = 'settings'; // Use existing 'settings' store
 
@@ -6292,7 +6339,7 @@
      */
     async function saveSessions(sessions) {
         pendingSessions = sessions;
-        characterKey_js.writeScoped(STORAGE_KEY$4, sessions, STORAGE_STORE$1);
+        characterKey_js.writeScoped(STORAGE_KEY$5, sessions, STORAGE_STORE$1);
     }
 
     /**
@@ -6302,7 +6349,7 @@
     async function loadSessions$1() {
         if (pendingSessions !== null) return pendingSessions;
         try {
-            return await characterKey_js.readScoped(STORAGE_KEY$4, STORAGE_STORE$1, {}, { migrate: 'adopt' });
+            return await characterKey_js.readScoped(STORAGE_KEY$5, STORAGE_STORE$1, {}, { migrate: 'adopt' });
         } catch (error) {
             console.error('[EnhancementStorage] Failed to load sessions:', error);
             return {};
@@ -12856,6 +12903,52 @@
     });
 
     /**
+     * Whether live combat income is read net of the market sale tax.
+     *
+     * A module of its own, rather than a field on the profit panel that owns the
+     * toggle, because `calculateIncome` reads it to net the tax at the source and
+     * the calculator must not import the UI bundle — that would be an import cycle,
+     * and would copy the whole panel into every bundle that prices loot. Both the
+     * calculator and the panel import this instead.
+     *
+     * On by default: selling a drop always pays the tax, so the honest income is the
+     * net one. The panel's Tax toggle flips it, and the choice is remembered.
+     */
+
+
+    const STORAGE_KEY$4 = 'combatIncomeNetSalesTax';
+    let netted = true;
+
+    /** @returns {boolean} Whether combat income should be shown net of sale tax */
+    function salesTaxNetted() {
+        return netted;
+    }
+
+    /**
+     * Set whether combat income is netted of sale tax, and remember it.
+     * @param {boolean} on - True to subtract the tax
+     */
+    function setSalesTaxNetted(on) {
+        netted = Boolean(on);
+        storage
+            .setJSON(STORAGE_KEY$4, netted, 'settings')
+            .catch((error) => console.error('[SalesTaxView] Saving the choice failed:', error));
+    }
+
+    // Read the remembered choice once the database is open. Until then the default
+    // stands — the same default a fresh character gets — rather than a flash of the
+    // wrong figure while storage opens.
+    (async () => {
+        try {
+            await storage.ready;
+            const saved = await storage.getJSON(STORAGE_KEY$4, 'settings', null);
+            if (saved !== null) netted = Boolean(saved);
+        } catch (error) {
+            console.error('[SalesTaxView] Reading the choice failed:', error);
+        }
+    })();
+
+    /**
      * Combat recorder
      *
      * Capturing the raw combat feed so attribution can be argued about with
@@ -15737,7 +15830,7 @@
      */
     const PROFIT_SETTINGS_KEY = 'combatProfitView';
 
-    const profitView = { mode: 'mid', costsOn: true, taxOn: false };
+    const profitView = { mode: 'mid', costsOn: true, moopassOn: false };
 
     // This runs at module scope, long before the database opens — reading without
     // waiting on storage.ready returned the default every load and the remembered
@@ -15747,6 +15840,12 @@
             await storage.ready;
             const saved = await storage.getJSON(PROFIT_SETTINGS_KEY, 'settings', null);
             if (saved) Object.assign(profitView, saved);
+            // `taxOn` was this toggle's old name, back when the MooPass weekly cost
+            // was labelled "Tax"; carry a remembered choice across the rename.
+            if ('taxOn' in profitView) {
+                if (profitView.moopassOn === undefined) profitView.moopassOn = profitView.taxOn;
+                delete profitView.taxOn;
+            }
         } catch (error) {
             console.error('[CombatPanels] Reading the profit view failed:', error);
         }
@@ -15792,7 +15891,7 @@
 
         const rule = document.createElement('div');
         rule.textContent =
-            (profitView.costsOn ? scenario.equation : scenario.equation.split(' - ')[0]) + (tax ? ' - Tax' : '');
+            (profitView.costsOn ? scenario.equation : scenario.equation.split(' - ')[0]) + (tax ? ' - MooPass' : '');
         Object.assign(rule.style, { color: COLORS$7.textDim, fontSize: '11px' });
 
         const terms = [formatters_js.formatKMB(scenario.revenue)];
@@ -15925,7 +16024,7 @@
         const cases = profitCases(stats);
         const headline = cases.find((scenario) => scenario.key === profitView.mode) || cases[1];
         const cost = profitView.costsOn ? headline.cost : 0;
-        const tax = profitView.taxOn ? cowbellTax().perDay : 0;
+        const tax = profitView.moopassOn ? cowbellTax().perDay : 0;
 
         return { title: headline.title, revenue: headline.revenue, cost, tax, profit: headline.revenue - cost - tax };
     }
@@ -15948,9 +16047,19 @@
             // The MooPass is a real weekly cost, and a profit figure that ignores it
             // is a profit figure that has not paid the rent
             bar.appendChild(
-                toggleButton(profitView.taxOn ? 'Tax On' : 'Tax Off', profitView.taxOn, () => {
-                    profitView.taxOn = !profitView.taxOn;
+                toggleButton(profitView.moopassOn ? 'Moopass On' : 'Moopass Off', profitView.moopassOn, () => {
+                    profitView.moopassOn = !profitView.moopassOn;
                     saveProfitView();
+                })
+            );
+
+            // The market sale tax comes off what a drop actually sells for. Netted
+            // at the source (`calculateIncome`), so flipping it re-reads income on
+            // the next draw — refresh rather than a display-time subtraction.
+            bar.appendChild(
+                toggleButton(salesTaxNetted() ? 'Tax On' : 'Tax Off', salesTaxNetted(), () => {
+                    setSalesTaxNetted(!salesTaxNetted());
+                    profitPanel.refresh();
                 })
             );
 
@@ -15977,7 +16086,7 @@
 
             const cases = profitCases(stats);
             const headline = cases.find((scenario) => scenario.key === profitView.mode) || cases[1];
-            const tax = profitView.taxOn ? cowbellTax().perDay : 0;
+            const tax = profitView.moopassOn ? cowbellTax().perDay : 0;
 
             // The header sum HWhat carries: revenue, cost and what is left, in one
             // line, so the panel answers its own question before it is scrolled
@@ -16082,7 +16191,7 @@
      */
     function taxCard(stats) {
         const holder = document.createElement('div');
-        const block = card$1(holder, profitView.taxOn ? 'Paying the Tax' : 'Pay the Tax');
+        const block = card$1(holder, profitView.moopassOn ? 'Paying the MooPass' : 'Pay the MooPass');
 
         const tax = cowbellTax();
         if (!tax.bagPrice) {
@@ -16104,14 +16213,16 @@
                 'This run covers it',
                 profit >= tax.perDay ? 'yes' : 'no',
                 profit >= tax.perDay ? overlayFormat_js.ROW_COLORS.good : overlayFormat_js.ROW_COLORS.bad,
-                'Daily profit at bid against the daily cost of the weekly tax.'
+                'Daily profit at bid against the daily cost of the weekly MooPass.'
             )
         );
         if (profit > 0) {
-            block.appendChild(line$2('Days of profit per week of tax', (tax.perWeek / profit).toFixed(1), overlayFormat_js.ROW_COLORS.accent));
+            block.appendChild(
+                line$2('Days of profit per week of MooPass', (tax.perWeek / profit).toFixed(1), overlayFormat_js.ROW_COLORS.accent)
+            );
         }
-        if (!profitView.taxOn) {
-            block.appendChild(note('Not counted against the figures above — press Tax in the header to include it.'));
+        if (!profitView.moopassOn) {
+            block.appendChild(note('Not counted against the figures above — press Moopass in the header to include it.'));
         }
         return holder;
     }
@@ -55337,7 +55448,7 @@ ${starCSS}
         return overrides;
     }
 
-    var forkChangelog = "## Unreleased — branch `main`\n\n### First-run setup: copy from another character, and a way back to it\n\nThe welcome prompt now offers **\"Copy from another character\"** — pick one of your other characters and its settings are copied onto this one, the one-click way to set up a fresh alt (especially an Iron Cow) instead of only offering generic presets. Added to both first-run pickers, and to a new **\"First-time setup\"** button in the Toolasha settings tab so the one-shot prompt is recoverable: a stray click that dismissed it (or a character already past it) can re-open it any time, on any character. Defaults now leads the picker, a **No change** option sits beside it, and dismissing the dialog is \"no change\" rather than a reset — so re-opening it on a configured character can no longer wipe settings by accident.\n\n### Fix: marketplace autofill after the typable-price update\n\nThe 8/13/2026 update made the marketplace Price/Quantity fields typable text inputs (`type=\"text\"`), which broke every Toolasha selector that looked for `input[type=\"number\"]` — most visibly the missing-material autofill no longer filled the quantity. Now targets the game's own `MarketplacePanel_quantityInputs` row (falling back to reading all inputs by label), and rewinds React's value tracker on write so a strictly-controlled field can't snap back. Works on both the old (number) and new (text) inputs, so it needs no server gate. Flip Finder's autofill was already class-based and unaffected.\n\nThe game's market tax went from 2% to 5%. Updated the single `MARKET_TAX` constant and swept out every place that had hardcoded 2% (`0.02`/`0.98`) — networth, order totals, bulk-sell floor, listing value, guild-credit sell→rebuy, profit/hr, enhancement worth-it, EV, tea optimizer — so all profit, net-proceeds and break-even figures use the new rate. Tax labels now derive from the constant instead of a baked-in \"2%\".\n\nThe 5% rate (and the shrine-in-gear-score change below) is **gated to the test server** for now via `isMarketplacePatchLive()` — the live server keeps 2% until the patch reaches it. One line to un-gate everything once it is live everywhere (`server-gate.js`).\n\n### Prices reconciled against the game's official market values\n\nThe 8/13/2026 update publishes an estimated value for every item and enhancement level (`localStorageUtil.getMarketItemValues()`, the figure behind the inventory's \"Total Market Value\"). Toolasha now reads it (cached, version-guarded) and reconciles every ask/bid at the shared price choke point (`getItemPrice`/`getItemPrices`): a stale price is **clamped into the ±10% tradable range** the game now enforces, and an item with an empty book is **valued the way the game values it** instead of collapsing to crafting cost. This flows through to networth/inventory value and the profit calculators at once. Gated to the test server (a pass-through until the patch is live). Combat-loot valuation, which reads the market API directly, is unchanged this pass.\n\nNew setting **\"Net worth value source\"** (Order book / Game's market value, default Order book). The game's value refreshes every ~10 min — far fresher than the ~hourly market feed — so switching to it makes the net-worth total match the game's own inventory total. It also reaches the batched net-worth path (via `getPricesBatch` → `getMarketPrice`), which the choke-point reconcile above did not, so the clamp/fallback now applies to the full net-worth sweep too. Gated to the test server.\n\n### Profiles: shrine levels count toward gear score and combat sim\n\nThe game now shares each player's shrine levels on their profile (`guildBuffLevelMap`). Toolasha reads them and folds their value into the **Combat and Skiller scores** (combat shrines into combat, skilling into skiller) instead of leaving them off other players' cards — the \"+ Guild Shrine\" line now shows for everyone. **Sim Character** (and party-member sims) also carries the viewed player's shrine buffs into the combat sim, so an imported character fights with its shrines rather than without.\n\n### Labyrinth: full monster abilities always modelled\n\nRemoved the \"Model full monster abilities in combat sim (testing)\" toggle — the verified behaviour is now permanent. The sim builds each labyrinth monster with its full ability kit (stuns, shreds, self-buffs) rather than the tier-0 subset, so combat-room clear chances read closer to reality.\n\n### Enhancement Tracker: idle duration fix, session merge, and an on-screen toggle\n\n- **Session Duration no longer runs while idle.** It stopped only when a run reached its target; a session left In Progress counted wall-clock forever. The clock now ends at the last recorded attempt, so it freezes when you stop enhancing (and XP/Hour with it).\n- **Merge sessions (∑).** A new ∑ button in the tracker header opens a checklist of your sessions and shows a combined summary of the ones you pick — per-level tally, attempts, success rate, XP, duration, and total cost — for a target reached across several separate runs. Defaults to every session of the item currently in view.\n- **Show/hide button on the Enhancing screen.** A \"∑ Tracker\" button now sits in the Enhancing panel's corner, like the marketplace's Bulk Sell tab, toggling the tracker on demand (a manual hide sticks).\n\n### Notifications: labyrinth entry regenerated (opt-in)\n\nNew default-off notification \"Notify when a labyrinth entry regenerates\". The Labyrinth holds up to five entries and regenerates one on a cooldown (a couple of days, less with upgrades); this fires when the stock rises or when the projected regeneration instant passes on an open tab — computed from `lastLabyrinthTimestamp + labyrinthCooldownHours` — so an entry doesn't sit wasted at the cap. Uses the existing notification service (toast in-page, browser notification when the tab is hidden).\n\n### Loot Log: enhancing cost, luck and profit (opt-in)\n\nNow prices materials and protection with the same helper the live Enhancement Tracker uses (production-cost/NPC fallbacks for unlisted materials), so the loot-log figures line up with the tracker for the same run instead of collapsing to near-zero when a material has no market listing.\n\nEnhancing loot-log entries can now carry a summary line — material and protection cost against the statistically expected cost (how lucky the run was), and the profit (the finished item's after-fee value minus the base and what you spent). It's reconstructed from the run's own per-level results and priced through Toolasha's enhancement calculator, assuming the cost-optimal protect level. New setting \"Loot Log: Enhancing cost, luck and profit\", **off by default**. The summary text is a readable size.\n\nEach enhancing entry also has a **+ merge** chip: pick two or more runs of the same item and a panel at the top of the loot log sums their real cost, luck and profit into one total — for a target reached across several split runs.\n\n### Enhancement Tracker: cost-vs-expected (luck) and worth-it lines\n\nThe Enhancement Tracker now shows two new readings under the run stats: **Expected Cost + Cost Factor** with how far below/above the expected cost this run landed (the cost twin of the Attempt Factor — pure attempt/protection luck, at this run's own prices), and a **Worth it (net)** line — the +N item's after-fee resale value minus the base you gave up minus what you spent, so you can see whether the enhance actually paid off. Click the Worth-it line to expand a breakdown. (A loot-log version is a planned follow-up.)\n\n### Enhancement Tracker: toggle it from the command palette\n\nThe Enhancement Tracker now appears in the Ctrl/Cmd+K command palette, so you can show or hide it on demand. A manual hide sticks (the auto-show logic won't bring it back until you toggle it on again or re-enable the feature).\n\n### Fixes: sort defaults, minimize placement, clickable quiet members\n\n- **Combat Sim all-zones and the Upgrade advisor now default to sorting by Score.** The all-zones run was resetting to Profit and the Upgrade table opened on DPS; both now open on Score (best first).\n- **The minimize button sits next to the close ✕ again** on Combat Sim, Lab Sim, and the Trade Ledger — it was landing in the middle of the header (and swapped past close on the Trade Ledger).\n- **Guild Roster: click a \"Gone quiet\" member** to load `/profile <name>` in chat (press Enter to open), the same trick the profile cycler uses.\n\n### Every panel can be minimized without closing it\n\nFloating panels now have a **–** button in the header (beside the close ✕) that folds the panel down to its title strip, leaving it draggable and running — click **□** to bring it back. It works across both shared panel shells (party loot, guild roster, DPS/deaths/profit tiles, and the rest) and the bespoke tool windows (Combat Sim, Lab Sim, Enhancement XP/hr, Consumables, Houses, Goal Planner, and more). The minimized state is remembered per panel across refreshes, alongside its position.\n\n### Combat & Lab Sim: optionally remember upgrade results across refreshes\n\nNew opt-in setting (default off) keeps the last Upgrade-tab results after a page reload — for both Combat Sim and Lab Sim — until you run a new analysis, so a run you waited minutes on is still there when you come back. A quiet banner marks restored results. Off by default because it stores the full result set (one blob per character per sim) in the browser database.\n\n### Combat Sim Results: a ⌖ button targets that zone in Configure\n\nEach row of the all-zones Results table now has a ⌖ button that sets that zone and tier as the Configure target and jumps to the Configure tab (leaving all-zones mode so the single-zone selects reappear) — no more scrolling the zone dropdown to sim a promising row. The table also now defaults to sorting by Score (descending) instead of unsorted.\n\n### Upgrade advisor: path boots (base and refined) are offered and simmed at +7\n\nThe upgrade advisor simmed a proposed gear swap at the current piece's enhancement level, so path boots (Pathbreaker/Pathfinder/Pathseeker) were quoted at whatever your worn boots are (e.g. +10). They're only obtainable at +7, so a swap to them is now always simmed and priced at +7 — the refined variants override the usual +10 refined floor. The refined path boots are now also _offered_: the crafting-chain walk only reaches the base boot (refined is one hop further), so each base path-boot swap now gets a refined sibling in the table, at +7.\n\n### Enhancement XP/hr panel: get a route for any item, even one you don't own\n\nThe enhancing-route (target level, protection plan, cost) was only reachable by hovering an item that's rendered — owned or listed — so an item with no listing at that level showed nothing. The Enhancement XP/hr panel now has an \"Enhance any item\" box: type any enhanceable item, pick a target level, and get its full route. The base-item price falls back to crafting cost when the market is empty, so it works with zero listings.\n\n### Ability hover: optional \"fresh to level\" cost, priced at the level shown\n\nHovering an ability itself (in a loadout, an ability slot, or on another player's profile) can now add a \"Fresh to Lv N: <cost> (<books> books)\" line, priced at the level the tooltip shows — so on someone else's profile it uses their level, not yours. It's identified from the ability tooltip's own name and gated behind a new, default-off setting (\"Show fresh-to-level cost on ability hovers\"), separate from the ability-book tooltip status.\n\n### Enhancement tooltip: the source toggle is discoverable and mobile-friendly\n\nThe \"Yours ⇄ / Pro ⇄\" chip on enhancement tooltips now shows a keycap **P** so the press-to-toggle hotkey is visible, not just buried in the hover title. On touch devices it drops the key (no keyboard), enlarges to a finger-sized tap target, and reads \"tap\" — the chip was already tappable on tap-to-open tooltips, just too small and unlabeled.\n\n### Upgrade advisor: \"Signature only\" is now \"Aura only\"\n\nThe Ability Swaps sub-option that restricted swaps to the aura + signature groups now restricts to just the aura group — the single \"which aura\" decision. Renamed the checkbox to \"Aura only\" with an updated tooltip, and renamed the internal option throughout (`auraOnly` / `auraSwapsOnly`).\n\n### Upgrade advisor: the aura OR-alternative is offered again\n\nAbility Swaps stopped offering the other aura in your archetype's aura group — e.g. running Mystic Aura, it never proposed Critical Aura. The generator was running each guide offer through a style-from-buff-data heuristic that misreads a universal aura (Critical Aura) as another style and vetoed it. The guide's own ability set is style-correct by construction, so on the guide path that heuristic no longer runs; it now only guards the every-ability fallback.\n\n### Sim: Achievements section — toggle your achievement combat buffs\n\nThe sim already applied your completed-achievement combat buffs (e.g. Damage +2%) silently; there was no way to see or change them. A new **Achievements** section on the Configure tab lists the combat buffs your achievements grant, each ticked by default (so results are unchanged) — untick one to sim without it. It reads your real buffs with their exact values; a character with no combat achievement buffs shows no section.\n\n### Sim: the loadout picker is back in the packaged build\n\nThe Combat Sim and Lab Sim loadout dropdown vanished in the released userscript (it still worked in dev): both UIs read the loadout list from their own bundle's copy of the snapshot store, which the websocket never feeds in the multi-bundle build, so the list was always empty and the `<select>` never rendered. Both now read the fed store through the bundle bridge — the same fix the apply path already had — so you can pick a saved loadout to sim as again. A regression test now asserts the picker renders from the bridge store.\n\n### Author credit: full contributor list and code-source attribution\n\nBoth userscript headers now carry the same, tidied `@author` credit. It restores the contributors who were only in the dev header (Shykai, amVoidGuy, vlad, kuganDev, Paradoxian, Maarg, SilkyPanda, MekaPyon, vidonnus) and adds a line crediting the tools this fork borrowed code and ideas from: MWITools (bot7420), MWI Combat Suite (Frotty), JIGS (jigglymoose), the Labyrinth Win Rate Calculator (dakonglong), and the mooket pools (Q7, IOMisaka).\n\n### Author credit leads with Millennium44 (production header too)\n\nThe previous author change only touched the dev header (`userscript-header.txt`); the GreasyFork build takes its header from `library-headers/entrypoint.txt`, which still led with the upstream authors. That production header now leads with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" as well, so the published listing shows the fork maintainer.\n\n### Author credit leads with Millennium44\n\nThe userscript `@author` header now opens with \"Millennium44 (fork of Celasha and Claude's Toolasha)\" instead of leading with the upstream authors, so the GreasyFork listing credits the fork maintainer. The contributor thank-yous are unchanged.\n\n### Task reroll tracker: drop the experimental warning\n\nThe \"Track task reroll costs\" setting no longer warns it is experimental and may freeze the UI — it's stable. Default unchanged (on).\n\n### My Listings: a fresh undercut now shows without opening the item\n\nThe Top Order Price column trusted the last-opened order book, so an undercut stayed hidden behind your own price until you reopened the item. It now surfaces the game snapshot's price when it beats you (a rival's by definition, never your own order) — so undercuts show on their own, without ever displaying your own listing or downgrading a genuinely-fresher book. The age column follows suit.\n\n### Labyrinth: the calibration recorder is now passive and accumulates across runs\n\nNo Record button any more — every combat fight is kept automatically, per character and tagged with the gear it was fought in, pooled into 10-level bands so a monster's scattered random levels still accumulate. Press **Replay** to judge whatever has built up on your current gear; a loadout change starts a fresh pool. Bounded to 500 fights.\n\n### Labyrinth: a fight recorder and a calibration replay\n\nThe Sim accuracy record says _whether_ a room's clear chance is wrong, not _why_ — a timeout and a death are both \"lost\", and the fixes are opposite. This adds the decomposition.\n\n- **Replay** re-sims the recorded rooms and puts your real damage/s, the monster's, the clear rate and the fight length beside the sim's, each with a noise-aware verdict and a one-line diagnosis of which side the sim gets wrong. **Save comparison** downloads the whole check as one file.\n- **Capture** saves the raw tick feed of a fight — stun uptime, ability cadence, per-hit damage — for mechanism-level analysis (previously console-only).\n- Measurement fixes found via real captures: damage measured **gross** (not net of your ~16 HP/s regen, which made monsters look 15–40% weaker than the sim); self-healing monsters (life drain, the Dryad) no longer **split one fight into several**; partial-HP fights are dropped; and the diagnosis names all four over/under directions.\n\n### Labyrinth: full-ability sim calibration (testing), tooltip clear-time, tidier panel bar\n\n- Testing setting to model a monster's **full ability kit** in the sim — the labyrinth otherwise builds every monster at tier 0 and drops its gated abilities (the Cyclops's stun, shred, self-buffs). Off by default; it's part of the cache key, so toggling re-sims.\n- **Est. clear time** on combat/skilling room hover, shown past the tile's \"999+\" cap.\n- Room Logs top bar wraps cleanly; \"Sim accuracy\" tab shortened to \"Accuracy\".\n\n### Labyrinth: stop counting un-fought rooms as clears, and an uncapped sim option\n\n- **Phantom clears removed** — a revealed-but-unfought room (shroud, beacon, floor skip) is marked `isCleared` with no entry; it no longer counts as a win and drags the accuracy record toward \"sim too low\".\n- **Uncapped** toggle lifts the sim's time cap for the next Recompute, so a slow, timeout-heavy room reaches its precision target instead of a wide \"(capped)\" band.\n\n### Labyrinth: Recompute button, honest attempt counts, and a panel that stays put\n\n- **Recompute** throws away cached clear-chance sims and re-runs the visible rooms — a plain equip doesn't always refresh a sim cached under old gear.\n- Room Log shows the server's own attempt count, not just the fights it watched on the combat view: \"Won 0/6 · 26 total\".\n- The panel keeps its scroll position across redraws instead of jumping to the top on every update.\n\n### Undercut alerts finally fire passively, backed by Mooket\n\nThe alert distrusts any price older than 15 minutes, but the game snapshot refreshes only ~hourly — so undercuts on items you weren't watching stayed silent for hours. It now also consults the freshest **Mooket** sighting per listing (refreshed every 15 min), reporting its true age, so it can fire for items you never opened. Rides the Price history panel setting.\n\n### Selectable price-history source: mooket I alongside mooket II\n\nA **Market: Price history data source** setting picks between the Q7 pool (mooket II, default — ask/bid/avg/volume) and IOMisaka's original (mooket I — ask/bid only). On mooket I the chart's third line is a computed \"Mid\", the volume bars vanish, and the goal planner's volume limits switch off (a source with no volume tells us nothing about how fast a thing sells — unknown, not a measured zero). The order books you contribute back follow the selected source.\n\n### \"Mooket Refresh\" button on the My Listings tab\n\nA **Mooket Refresh** button in the My Listings header pulls fresher Top Order Prices for every listed item from the Mooket pool in one click, patching the fresher ones into the price cache the column redraws from — no opening each item by hand. Skips a sighting older than the game's snapshot, and keeps a one-sided sighting's other side. Ri";
+    var forkChangelog = "## Unreleased — branch `main`\n\n### CI: harden the release publish so large release notes can't break it\n\nThe release workflow read the version's notes out of `CHANGELOG.md` with an `awk` that only stopped at the next `## [x.y.z]`, so the whole Fork Changelog (which sits above the version entries) bled into 3.0.0's notes — ~240 KB — and `git commit -m \"$notes\"` overflowed the OS argument limit, failing the publish to GreasyFork. The notes now stop at the next `##` or the first non-release-please `###`, and the userscript commit is written with `git commit -F` (a file) so notes of any size are safe. Added a `workflow_dispatch` `publish_version` input to re-publish a specific version through the same pipeline without cutting a new release.\n\n### Combat Profit: \"Tax\" button renamed to \"Moopass\", plus a real sale-tax toggle\n\nThe panel's \"Tax\" toggle was actually the weekly **MooPass** cowbell cost, so it's renamed to match (the button and the \"Pay the MooPass\" card). A new **\"Tax\"** toggle now subtracts the **market sale tax** from combat income — netted at the source (`calculateIncome`, coin untaxed / cowbell 18% / else 5%), so the Daily Income stat, the Combat Profit panel, and the sim-vs-measured calibration all read post-tax. On by default; a remembered choice under the old \"Tax\" name migrates to Moopass.\n\n### Fix: \"auto-click max\" was maxing the price, not the quantity\n\nThe 8/13 marketplace layout gave the price row its own \"Max\" button and put it ahead of the quantity row, so the auto-click-max feature grabbed the first \"Max\"/\"All\" in the modal — the price one — which slammed the sell price to the top of the tradable range **and** left the quantity un-maxed (both halves of the reported \"fills the max price, no longer maxes items\"). It now scopes the search to the quantity inputs and excludes the price row, so it maxes the amount and leaves the price alone.\n\n### Combat sim nets the market sale tax off drop revenue\n\nThe simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.\n\n";
 
     var forkOverview = "This is the **Millennium44 fork of Toolasha**. It folds MWI Combat Suite into Toolasha — live DPS tracking, loot and drop tracking, drop-luck analysis, and a full labyrinth simulator — so one script gives you both halves of the game instead of two userscripts.\n\n### Combat & simulators\n\n- Live DPS, hit/crit rate, damage-taken and net-sustain read off your own fights.\n- Loot and drop tracking with drop-luck analysis that judges combat, gathering and production.\n- A combat recorder: record real fights, replay them against the simulator, get a verdict with honest noise bands.\n- A combat simulator whose upgrade picks are costed and ranked on real market and credit costs.\n- Per-character combat stats, sim state and histories — no character reads another's books.\n\n### Market & profit\n\n- One market price API prices almost everything: upgrades, net worth, drop income, guild tokens, every action.\n- Prices capped by the volume the market has actually absorbed, so thin markets stop inflating rankings.\n- Profit lines on the action bar, pinned pages, alchemy rankings and the combat profit panel.\n- Market-history viewer with a live undercut alert that re-checks against a refreshed snapshot.\n- An upgrade advisor that costs and ranks gear and ability candidates against live prices.\n\n### Labyrinth\n\n- A labyrinth simulator with auto-pathing and auto-beaconing planned from the actual run.\n- Multi-target analysis with combined armour swaps and supply-aware torch/shroud/beacon planning.\n- Skilling-sim candidates scoped to the skill you are simming, with the skip level set for you.\n- Upgrade, All-Fights and Skilling analyses, each exportable to CSV.\n\n### Guild\n\n- Live trial measurement: per-player DPS and damage/healing attribution from the fight you watch.\n- Tier read straight off the boss bar, with pace, ETA and payout maths.\n- A trial report your guild can actually read, with honest coverage caveats.\n\n### Quality of life\n\n- A curated overlay of tiles with bundled presets, activity auto-switching, and tiles that open their panels.\n- A Ctrl+K (Cmd+K) command palette over every panel, overlay row, saved layout and setting.\n- Mobile-friendly panels: viewport clamping, reachable close buttons, finger-sized targets, a floating launcher.\n- Notifications for empty queues, community-buff expiry, and finished labyrinth runs.\n- Task tools: measured tokens/hour, net task income, and reroll handling that takes the free MooPass reroll.\n- Equipment Savings (\"eWatch\"): savings goals for gear and ability levels, fed from the simulators.\n- A goal planner that turns \"get me X gold / level N\" into a ranked plan from your real measured rates.\n\n### Data & sync\n\n- Cross-device sync of your whole database through one private GitHub gist you own.\n- Gzip-compressed, optionally AES-256 encrypted, conflict-aware, guarded against overwriting a year of data.\n- Chunked per-period history that survives months, with honest quota handling and per-character backups.\n- Hundreds of bug fixes and a test suite grown from ~2,300 to over 8,500 tests.\n";
 

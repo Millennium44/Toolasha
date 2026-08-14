@@ -1,7 +1,7 @@
 /**
  * Toolasha Utils Library
  * All utility modules
- * Version: 2.102.0
+ * Version: 3.0.0
  * License: CC-BY-NC-SA-4.0
  */
 
@@ -2620,37 +2620,30 @@
      * Marketplace-patch server gate (8/13/2026 update).
      *
      * The 8/13/2026 marketplace update — 5% market tax, shrine levels shared on
-     * profiles, and the rest — is live on the test server and reaches the live
-     * server within hours. Until it is live everywhere, the live server must behave
-     * exactly as it did before, so every patch-dependent behaviour is gated on which
-     * server the script is running on.
+     * profiles, and the rest — is now live on **both** servers, so the gate is open
+     * everywhere and every patch-dependent behaviour uses the patched rule. It was
+     * hostname-gated while the patch was live only on the test server; that window
+     * has closed.
      *
-     * ## Un-gating, in one place
+     * ## Kept as one line
      *
-     * When the patch is live everywhere, change the body of {@link isMarketplacePatchLive}
-     * to `return true;` and ship. Every gated behaviour (the tax rate, the shrine
-     * fold into gear score, anything added later) flips to the patched rule at once,
-     * so there is a single line to flip and nothing to hunt down.
-     *
-     * ## Why hostname
-     *
-     * The userscript matches both `www.milkywayidle.com` and `test.milkywayidle.com`,
-     * so the same build runs on both and the hostname is the only thing that tells
-     * them apart. It is read at load and does not change within a session. In a Web
-     * Worker (spawned from a blob URL) the hostname is not the game's, so anything
-     * that must know the rate inside a worker is passed the value from the main
-     * thread rather than re-deriving it here.
+     * The gate stays a function that every patch-dependent site reads, rather than
+     * being deleted at each call, so there is still a single place to reason about
+     * the patch — and a single place to re-gate the next server-staged change from,
+     * by putting the hostname test back.
      */
 
     /**
      * Whether the 8/13/2026 marketplace patch is in effect on the current server.
+     *
+     * True everywhere now that the patch is live on `www` as well as `test`. Left as
+     * a function so the call sites do not have to change when a future patch needs
+     * staging again.
+     *
      * @returns {boolean}
      */
     function isMarketplacePatchLive() {
-        // Un-gate point: replace the two lines below with `return true;` once the
-        // patch is live on www as well.
-        if (typeof location === 'undefined' || !location || !location.hostname) return false;
-        return location.hostname.includes('test.milkywayidle');
+        return true;
     }
 
     var serverGate = /*#__PURE__*/Object.freeze({
@@ -2666,11 +2659,12 @@
 
     /**
      * Marketplace tax rate. Raised from 2% to 5% in the 8/13/2026 marketplace update,
-     * gated on the server: the test server (patch live) uses 5%, the live server keeps
-     * 2% until the patch reaches it — see {@link isMarketplacePatchLive}. This is the
-     * single source of truth; read it here rather than hardcoding a percentage.
+     * now live on both servers — see {@link isMarketplacePatchLive}, which reads true
+     * everywhere. The gate is kept in the expression so the rate can be re-staged in
+     * one place if a future update needs it. This is the single source of truth; read
+     * it here rather than hardcoding a percentage.
      */
-    const MARKET_TAX = isMarketplacePatchLive() ? 0.05 : 0.02;
+    const MARKET_TAX = 0.05 ;
 
     /**
      * Bag of 10 Cowbells item HRID (subject to 18% market tax)
@@ -3213,7 +3207,6 @@
      * @returns {Object|null} `{ itemHrid: { level: value } }`, or null before any read
      */
     function refreshMarketValues(now = Date.now()) {
-        if (!isMarketplacePatchLive()) return cache$2.values;
         if (cache$2.values && now - lastRefresh < REFRESH_INTERVAL_MS) return cache$2.values;
         if (typeof dataManager$1.getMarketItemValues !== 'function') return cache$2.values;
         lastRefresh = now;
@@ -3268,7 +3261,6 @@
      * @returns {{ask:number|null, bid:number|null}}
      */
     function reconcileBook(ask, bid, itemHrid, enhancementLevel = 0) {
-        if (!isMarketplacePatchLive()) return { ask, bid };
         const value = marketValueFor(itemHrid, enhancementLevel);
         if (value === null) return { ask, bid };
         const band = bandFromValue(value);
@@ -10632,25 +10624,43 @@ self.onmessage = function (e) {
     /**
      * The tiles a character who has never arranged the overlay starts with.
      *
-     * Small on purpose. Every row defaulting to on gave a first open that was a wall
-     * of placeholders with three real figures buried in it, and a panel where
-     * nothing is worth reading is a panel nobody opens twice. These are the ones
-     * that are alive for any character within a minute of playing: what you are
-     * worth, what you are carrying, what you are doing, and what it is earning. The
-     * rest are one click away in ⚙, where a list of switched-off rows reads as a
-     * menu rather than as clutter.
+     * Small on purpose, and grouped on purpose. Every row defaulting to on gave a
+     * first open that was a wall of placeholders with three real figures buried in
+     * it, and a panel where nothing is worth reading is a panel nobody opens twice.
+     * So the set is curated into three clusters, and the order below is the order
+     * they are placed in — left to right and wrapping — so the clusters read as
+     * clusters:
      *
-     * Order is the order they are placed in, left to right and wrapping — so the
-     * two figures that are true the moment the game loads come first.
+     *   - **Wealth**: what you are worth and carrying, true the moment the game
+     *     loads.
+     *   - **Character**: where you stand, also true on load.
+     *   - **This session**: what you are doing and what it is earning.
+     *
+     * The count looks larger than the old eight, but the wall it guarded against is
+     * a wall of *value* tiles — the ones that always draw. The session cluster is
+     * all measurements, and a measurement hides until it has data (see
+     * {@link emptyPolicyFor}). So a fresh or non-combat character sees only the five
+     * value tiles; the combat figures cost nothing until a fight makes them real,
+     * then fill in beside each other rather than scattering. The rest are one click
+     * away in ⚙, where a list of switched-off rows reads as a menu rather than as
+     * clutter — and ⚙ also has a "Reset to default tiles" that puts any character
+     * back to exactly this set.
      */
     const CURATED_ROWS = [
+        // Wealth — true the moment the game loads
         'netWorth',
         'coins',
+        'inventoryValue',
+        // Character — where you stand, also on load
         'buildScore',
+        'combatLevel',
+        // This session — hides until you are fighting, then fills in
         'combatStatus',
-        'battleTimer',
         'experiencePerHour',
         'totalProfit',
+        'dps',
+        'deathsPerHour',
+        'luck',
         'timeToLevel',
     ];
 
