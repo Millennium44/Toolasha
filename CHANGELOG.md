@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Docs: settings notes now say 5% market tax (the calculations already did)
+
+The market tax has been 5% in every calculation since the 8/13 patch went live (`MARKET_TAX` reads the live gate), but several settings descriptions and code comments still said "2%". Updated the effective-price, minimum-sell-tax, bulk-sell vendor-beats-market, trade-ledger, and buy-vs-sell notes to 5% so the text matches the math. No behaviour change.
+
 ### Lab Simulator Upgrade tab: default to your own character, and remember the pick
 
 The Upgrade tab's Player dropdown defaulted to whichever party member was listed first and reset every time you switched tabs. It now defaults to your own character and remembers the chosen player (by name) across tab switches, so the sim stops jumping to someone else.

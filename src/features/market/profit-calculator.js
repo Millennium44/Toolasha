@@ -282,7 +282,7 @@ class ProfitCalculator {
             outputPrice, // Output price before tax (bid or ask based on mode)
             outputPriceMissing,
             outputPriceEstimated, // True when outputPriceMissing but crafting cost fallback resolved a price
-            priceAfterTax, // Output price after 2% tax (bid or ask based on mode)
+            priceAfterTax, // Output price after market tax (bid or ask based on mode)
             revenuePerHour,
             profitPerItem,
             profitPerHour,

@@ -870,7 +870,7 @@ class BulkSellAssistant {
 
     /**
      * Vendor beats the market when its flat price matches or exceeds the
-     * cached market price net of the 2% tax (e.g. ask 49 → 48 net = 48
+     * cached market price net of the 5% tax (e.g. ask 100 → 95 net = 95
      * vendor). Cached prices are plenty accurate for this comparison and let
      * the decision happen without navigating the marketplace.
      * @returns {boolean} True when the vendor flow was opened
@@ -986,7 +986,7 @@ class BulkSellAssistant {
      * "Sell For … Coins" button (the one server action). Falls back to the
      * normal market flow when the inventory tile or menu can't be found.
      * @param {number} vendorPrice - Per-item vendor price
-     * @param {number} marketNet - Per-item market price net of the 2% tax
+     * @param {number} marketNet - Per-item market price net of the 5% tax
      * @returns {boolean} Whether the vendor flow was opened
      */
     _openVendorSell(vendorPrice, marketNet) {

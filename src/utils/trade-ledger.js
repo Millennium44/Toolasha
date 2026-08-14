@@ -11,7 +11,7 @@
  * - A fill is only ever a *delta from an observed baseline*. The first sighting
  *   of a listing establishes state; a listing first seen at 60/100 filled
  *   contributes nothing until it moves.
- * - Sell proceeds are always net of the 2% market tax.
+ * - Sell proceeds are always net of the 5% market tax.
  * - Realized profit uses average-cost matching, and only against buys this
  *   ledger recorded. Sells with no recorded cost stay revenue, never profit.
  */
@@ -38,7 +38,7 @@ const TERMINAL_STATUSES = new Set([
  * Coins a fill moved, from the taker's side of the tax.
  *
  * Buys spend the full `quantity × price` (the game taxes the seller, not the
- * buyer); sells receive `quantity × price` minus the 2% market tax, rounded to
+ * buyer); sells receive `quantity × price` minus the 5% market tax, rounded to
  * whole coins the way every other net-of-tax figure in this codebase is.
  *
  * @param {boolean} isSell - Which side of the trade this fill is
