@@ -32,7 +32,13 @@ vi.mock('../../utils/key-cost.js', () => ({
         },
 }));
 
-vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null } }));
+const market = vi.hoisted(() => ({ prices: {} }));
+vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: (hrid) => market.prices[hrid] || null } }));
+
+// The sale-tax netting is a shared flag; default it off so the existing income
+// tests read gross, and the tax tests below turn it on explicitly.
+const salesTax = vi.hoisted(() => ({ netted: false }));
+vi.mock('./sales-tax-view.js', () => ({ salesTaxNetted: () => salesTax.netted }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: { getItemDetails: (hrid) => ({ name: hrid, isOpenable: hrid.includes('chest') }) },
@@ -59,6 +65,7 @@ globalThis.window.Toolasha = { Market: { treasureTracker: { measuredReturn: () =
 
 const { calculateKeyCosts, calculatePlayerStats, calculateIncome, calculateIncomeBreakdown, describeLuckAdjustment } =
     await import('./combat-stats-calculator.js');
+const { MARKET_TAX, COWBELL_BAG_TAX } = await import('../../utils/profit-constants.js');
 
 const CHIMERICAL_CHEST = '/items/chimerical_chest';
 const CHIMERICAL_REFINEMENT = '/items/chimerical_refinement_chest';
@@ -259,5 +266,45 @@ describe('measured-luck adjustment of a dungeon chest EV', () => {
         expect(describeLuckAdjustment({ itemName: 'Chimerical Chest', ratio: 0.926, chests: 5490 })).toBe(
             'Chimerical Chest EV adjusted by your measured -7.4% return (5,490 opened)'
         );
+    });
+});
+
+describe('income and the market sale tax', () => {
+    const loot = (hrid, count) => ({ [hrid]: { itemHrid: hrid, count } });
+
+    beforeEach(() => {
+        market.prices = {};
+        salesTax.netted = true;
+    });
+
+    afterEach(() => {
+        salesTax.netted = false;
+    });
+
+    test('nets the market tax off an ordinary drop when the toggle is on', () => {
+        market.prices['/items/cheese'] = { ask: 1000, bid: 900 };
+        const income = calculateIncome(loot('/items/cheese', 2));
+        expect(income.ask).toBeCloseTo(2 * 1000 * (1 - MARKET_TAX), 6);
+        expect(income.bid).toBeCloseTo(2 * 900 * (1 - MARKET_TAX), 6);
+    });
+
+    test('leaves income gross when the toggle is off', () => {
+        salesTax.netted = false;
+        market.prices['/items/cheese'] = { ask: 1000, bid: 900 };
+        const income = calculateIncome(loot('/items/cheese', 2));
+        expect(income.ask).toBe(2000);
+        expect(income.bid).toBe(1800);
+    });
+
+    test('taxes a cowbell bag at its own higher rate', () => {
+        market.prices['/items/bag_of_10_cowbells'] = { ask: 1000, bid: 1000 };
+        const income = calculateIncome(loot('/items/bag_of_10_cowbells', 1));
+        expect(income.ask).toBeCloseTo(1000 * (1 - COWBELL_BAG_TAX), 6);
+    });
+
+    test('leaves coin untaxed — it is not sold', () => {
+        const income = calculateIncome(loot('/items/coin', 5000));
+        expect(income.ask).toBe(5000);
+        expect(income.bid).toBe(5000);
     });
 });
