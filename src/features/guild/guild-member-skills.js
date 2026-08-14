@@ -36,7 +36,7 @@ import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
-import { fillProfileCommand, findChatInput } from '../../utils/profile-command.js';
+import { fillProfileCommand, findChatInput, openPlayerProfile } from '../../utils/profile-command.js';
 import { GAME } from '../../utils/selectors.js';
 
 /** Object store the captures live in — shared with the rest of the guild history */
@@ -486,15 +486,13 @@ class GuildMemberSkills {
             return result('row');
         }
 
-        // The chat command is the only route for a skilling trial's
-        // participants — those units were inspected and open nothing — so a
-        // chat box that is not there is worth saying rather than filling
-        // nothing and calling it done
-        const input = this._chatInput();
-        if (!input) return result('no-chat');
-
-        this.requests[name.toLowerCase()] = now;
-        return result(this._fillProfileCommand(name, input) ? 'chat' : 'no-chat');
+        // No row to click — a skilling trial's participants open nothing that
+        // way. handleViewProfile opens the profile without chat; openPlayerProfile
+        // falls back to the /profile command when that handler is missing, and
+        // returns false only when neither route fires (e.g. chat is closed too).
+        const opened = openPlayerProfile(name, { logPrefix: 'GuildMemberSkills' });
+        if (opened) this.requests[name.toLowerCase()] = now;
+        return result(opened ? 'chat' : 'no-chat');
     }
 
     openNext(now = Date.now()) {

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Profiles open directly everywhere, not just filled into chat
+
+Added a shared `openPlayerProfile()` that opens a player's profile through the game's own `handleViewProfile` (no chat needed), falling back to the `/profile` chat command only if that handler is missing. Every place that used to fill `/profile <name>` into chat and wait for Enter now opens the profile directly: clickable chat names, the combat DPS/portrait names, dungeon-history player names, the guild roster, and the guild member-skills cycler. The party-member Profile button uses the same helper.
+
 ### Lab Simulator: Upgrade tab gets the full run-cap controls
 
 The Upgrade tab now carries the same run controls as Single Sim — **Precision** (shared with the Single Sim tab and Settings), **Max fights**, **Max hrs**, and **Uncapped**. They bound the baseline sim each comparison is paired against (it stops at the precision target, the fight cap, or the time ceiling), and every candidate inherits the baseline's fight count so comparisons stay paired. Uncapped ignores both numeric caps and runs the baseline to precision.
