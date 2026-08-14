@@ -673,10 +673,10 @@ export const settingsGroups = {
             },
             itemTooltip_detailedProfitFlat: {
                 id: 'itemTooltip_detailedProfitFlat',
-                label: 'Materials breakdown: direct recipe only (no sub-craft chain)',
+                label: 'Profit: direct recipe only (buy base items, no sub-craft chain)',
                 type: 'checkbox',
                 default: false,
-                help: 'In the detailed materials breakdown, price each recipe ingredient at its own market Ask/Bid and stop there, instead of expanding how each craftable ingredient is itself made. Shows the cost of buying the base items for just this one craft step. Only affects the breakdown table; the Net profit line still follows "Use crafting cost for upgrade items if cheaper".',
+                help: 'Costs each recipe ingredient at its own market Ask/Bid and stops there, instead of recursing into how a craftable ingredient is itself made. The detailed breakdown collapses to the direct ingredients, and the profit/hr is figured for buying the base items and crafting just this one step (no upgrade-item craft cost or chain time). Overrides "Use crafting cost for upgrade items if cheaper" while on.',
             },
             itemTooltip_multiActionProfit: {
                 id: 'itemTooltip_multiActionProfit',

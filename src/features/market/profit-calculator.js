@@ -150,9 +150,13 @@ class ProfitCalculator {
         // Build time breakdown for display
         const timeBreakdown = this.calculateTimeBreakdown(baseTime, equipmentSpeedBonus + personalSpeedBonus);
 
-        // Adjust action time for crafting chain if upgrade item is crafted
+        // Adjust action time for crafting chain if upgrade item is crafted.
+        // "Direct recipe only" buys the upgrade item at market instead of
+        // crafting it, so there is no upgrade chain to add time for.
         let effectiveActionTime = actionTime;
-        if (actionDetails.upgradeItemHrid && config.getSetting('profitCalc_craftUpgradeItems')) {
+        const craftUpgradeItems =
+            config.getSetting('profitCalc_craftUpgradeItems') && !config.getSetting('itemTooltip_detailedProfitFlat');
+        if (actionDetails.upgradeItemHrid && craftUpgradeItems) {
             const upgradeChainTime = getProductionChainTime(actionDetails.upgradeItemHrid);
             if (upgradeChainTime > 0) {
                 const resolved = resolveItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
@@ -474,7 +478,11 @@ class ProfitCalculator {
                 } else {
                     resolved = resolveItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
 
-                    const craftEnabled = config.getSetting('profitCalc_craftUpgradeItems');
+                    // "Direct recipe only" costs the upgrade item at market
+                    // (buy it), rather than recursing into how it is crafted.
+                    const craftEnabled =
+                        config.getSetting('profitCalc_craftUpgradeItems') &&
+                        !config.getSetting('itemTooltip_detailedProfitFlat');
                     const craftCost = craftEnabled ? getProductionCost(actionDetails.upgradeItemHrid, 'ask') : 0;
                     isCrafted = craftCost > 0 && (resolved.price === 0 || craftCost < resolved.price);
                     if (isCrafted) {
