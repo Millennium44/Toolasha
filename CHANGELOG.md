@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth tile controls: tidy wrapping on narrow/mobile panels
+
+The labyrinth calculator's control bar (Calculate / Precision / Path / Clear≥ / Shroud / Beacons / Clear) was one flex row that wrapped item by item, so on a narrow panel labels got orphaned from their inputs and it read as a cramped, uneven column (reported by Ana on mobile). Each control's pieces are now a nowrap group — a label with its input, a button with its field — so the bar wraps _between_ controls into tidy rows and stays a single line when there's room.
+
 ### Fix: live clear-chance readout no longer shifts the fight header (mobile)
 
 The in-fight clear-chance readout in the game header changed width every second — the band flipping between "Clear 75–100%?" and "Clear 100%", plus the ticking seconds — which reflowed the whole centered header, most jarring on mobile (reported by Ana). The readout now reserves the widest footprint it has shown during the fight and never shrinks, so a narrower reading leaves the layout put. The reservation resets when the fight ends.

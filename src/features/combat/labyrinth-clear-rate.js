@@ -2190,6 +2190,19 @@ class LabyrinthClearRate {
             'width:fit-content; max-width:100%; box-sizing:border-box; padding:4px 7px; margin:0 0 6px 0; ' +
             'border-radius:6px; background:rgba(0,0,0,0.62); color:#f0f4ff; box-shadow:0 2px 8px rgba(0,0,0,0.28); user-select:none;';
 
+        // Keep each control's pieces together as one unit: a label and its input,
+        // or a button and its field, live in a nowrap group so the row wraps
+        // between controls, not through the middle of one. On a wide panel it is
+        // one line; on a narrow one (mobile) it wraps into tidy rows instead of
+        // orphaning labels from their inputs.
+        const group = (...els) => {
+            const g = document.createElement('span');
+            g.style.cssText = 'display:inline-flex; align-items:center; gap:4px; flex-wrap:nowrap;';
+            els.forEach((el) => g.appendChild(el));
+            container.appendChild(g);
+            return g;
+        };
+
         const button = document.createElement('button');
         button.className = `${TILE_CONTROLS_CLASS}-button`;
         button.textContent = 'Calculate Labyrinth';
@@ -2206,8 +2219,6 @@ class LabyrinthClearRate {
             'How tightly to pin each room down before its sim stops, in percentage points. ' +
             'A settled room reaches it in a few hundred fights; one near a coin toss needs thousands, ' +
             'so the work goes where the answer is still in doubt.';
-        container.appendChild(precisionLabel);
-
         const precisionInput = document.createElement('input');
         precisionInput.className = `${TILE_CONTROLS_CLASS}-precision`;
         precisionInput.type = 'number';
@@ -2229,7 +2240,7 @@ class LabyrinthClearRate {
             // the persisted mirror the next time anything was written, which
             // cost a session of sims for a knob that was already accounted for.
         });
-        container.appendChild(precisionInput);
+        group(precisionLabel, precisionInput);
 
         const pathButton = document.createElement('button');
         pathButton.className = `${TILE_CONTROLS_CLASS}-path-button`;
@@ -2240,13 +2251,11 @@ class LabyrinthClearRate {
             'min-width:44px; padding:0 10px; height:20px; border:0; border-radius:5px; background:#8e5bd8; ' +
             'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
         pathButton.addEventListener('click', () => this.runPathCalculation());
-        container.appendChild(pathButton);
 
         const pathLabel = document.createElement('span');
         pathLabel.style.cssText = 'font-size:11px; opacity:0.92; white-space:nowrap;';
         pathLabel.textContent = 'Clear ≥';
         pathLabel.title = 'Tiles below this clear chance (%) count as unclearable and cost a shroud on the path';
-        container.appendChild(pathLabel);
 
         const pathInput = document.createElement('input');
         pathInput.className = `${TILE_CONTROLS_CLASS}-path-threshold`;
@@ -2262,7 +2271,6 @@ class LabyrinthClearRate {
             pathInput.value = String(n);
             config.setSettingValue('labyrinthPathClearThreshold', n);
         });
-        container.appendChild(pathInput);
 
         const unknownSelect = document.createElement('select');
         unknownSelect.className = `${TILE_CONTROLS_CLASS}-path-unknown`;
@@ -2284,7 +2292,7 @@ class LabyrinthClearRate {
         unknownSelect.addEventListener('change', () => {
             config.setSettingValue('labyrinthPathUnknownMode', unknownSelect.value);
         });
-        container.appendChild(unknownSelect);
+        group(pathButton, pathLabel, pathInput, unknownSelect);
 
         const beaconButton = document.createElement('button');
         beaconButton.className = `${TILE_CONTROLS_CLASS}-beacon-button`;
@@ -2296,7 +2304,6 @@ class LabyrinthClearRate {
             'min-width:54px; padding:0 10px; height:20px; border:0; border-radius:5px; background:#1d9e83; ' +
             'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
         beaconButton.addEventListener('click', () => this.runBeaconCalculation());
-        container.appendChild(beaconButton);
 
         const beaconInput = document.createElement('input');
         beaconInput.className = `${TILE_CONTROLS_CLASS}-beacon-count`;
@@ -2314,7 +2321,6 @@ class LabyrinthClearRate {
             beaconInput.value = String(n);
             config.setSettingValue('labyrinthBeaconCount', n);
         });
-        container.appendChild(beaconInput);
 
         // One click back to the automatic count, rather than spinning the field
         // down to zero a step at a time
@@ -2326,7 +2332,7 @@ class LabyrinthClearRate {
             'width:20px; height:20px; padding:0; border:0; border-radius:5px; background:rgba(29,158,131,0.6); ' +
             'color:#fff; font-size:12px; font-weight:700; line-height:1; cursor:pointer;';
         beaconAutoButton.addEventListener('click', () => this.resetBeaconCountToAuto(true));
-        container.appendChild(beaconAutoButton);
+        group(beaconButton, beaconInput, beaconAutoButton);
 
         // What is actually in the bag, beside the controls that spend it. The
         // planners read this fresh at plan time; this is only so the numbers a
