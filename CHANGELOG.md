@@ -40,17 +40,15 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.1.0](https://github.com/Millennium44/Toolasha/compare/v3.0.1...v3.1.0) (2026-08-14)
 
-
 ### Features
 
-* direct-recipe-only setting now drives the global profit math ([1d381ad](https://github.com/Millennium44/Toolasha/commit/1d381ad24e105d6401f746f89ea890c20d7e6520))
-* expose combat lab sim precision control in the sim panel ([6a78ca9](https://github.com/Millennium44/Toolasha/commit/6a78ca9d6f8bd55eda3f45e4b8051754850b6f39))
-* flatten item-tooltip materials breakdown to the direct recipe ([12d917e](https://github.com/Millennium44/Toolasha/commit/12d917ed8b93ad178811f4fffeb9751ddf439b44))
-
+- direct-recipe-only setting now drives the global profit math ([1d381ad](https://github.com/Millennium44/Toolasha/commit/1d381ad24e105d6401f746f89ea890c20d7e6520))
+- expose combat lab sim precision control in the sim panel ([6a78ca9](https://github.com/Millennium44/Toolasha/commit/6a78ca9d6f8bd55eda3f45e4b8051754850b6f39))
+- flatten item-tooltip materials breakdown to the direct recipe ([12d917e](https://github.com/Millennium44/Toolasha/commit/12d917ed8b93ad178811f4fffeb9751ddf439b44))
 
 ### Bug Fixes
 
-* **inventory:** stop the Inventory Badge Manager health-check false alarm ([1af6290](https://github.com/Millennium44/Toolasha/commit/1af629037fc6bd8d6d7fc804792a3a14183fda53))
+- **inventory:** stop the Inventory Badge Manager health-check false alarm ([1af6290](https://github.com/Millennium44/Toolasha/commit/1af629037fc6bd8d6d7fc804792a3a14183fda53))
 
 ## [3.0.1](https://github.com/Millennium44/Toolasha/compare/v3.0.0...v3.0.1) (2026-08-14)
 
