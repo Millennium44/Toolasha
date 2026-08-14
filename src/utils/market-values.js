@@ -13,6 +13,16 @@
  *    below it cannot actually fill. A stale snapshot price parked outside the
  *    band would otherwise print an impossible profit or valuation.
  *
+ * The range here is a multiplicative ~±10% approximation. The 8/14/2026 hotfix
+ * widened the game's real range by one price increment on each side (so cheap
+ * items get a proportionally wider band). We do not model that extra increment:
+ * the game does not publish the range bounds — only the value — and the plugin
+ * has no price-increment tier table (it drives the game's own +/- buttons). The
+ * resulting error is bounded to one increment on a boundary price — a few coins
+ * even on cheap items — so the band runs one increment tighter than the game's
+ * on each edge. If the game ever exposes the increment or the range bounds
+ * directly, widen {@link bandFromValue} by one increment each side.
+ *
  * The map is reached through the game's own `localStorageUtil.getMarketItemValues()`
  * (via dataManager), which decompresses the localStorage blob for us — reading it
  * raw yields compressed bytes. The dev's advice was to cache it rather than
