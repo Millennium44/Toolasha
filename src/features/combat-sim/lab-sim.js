@@ -7,6 +7,7 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import labSimUI from './lab-sim-ui.js';
 import { cancelSimulation } from './combat-sim-runner.js';
+import { isMobileMode } from '../../utils/mobile.js';
 
 const BUTTON_CLASS = 'toolasha-lab-sim-btn';
 
@@ -55,6 +56,22 @@ class LabSim {
         });
 
         innerContainer.appendChild(button);
+
+        // On a phone the labyrinth tab bar overflows and the game's MUI scroller
+        // clips it with the scroll arrows hidden, so the tabs past the right edge
+        // — Lab Sim, appended last, among them — cannot be reached. Let the bar
+        // scroll natively on mobile so a swipe brings them into view. Applied to
+        // whichever scroll container the build has, once, and only on mobile.
+        if (isMobileMode()) {
+            for (const selector of ['[class*="MuiTabs-scroller"]', '[class*="TabsComponent_tabsContainer"]']) {
+                const scroller = tabsContainer.querySelector(selector);
+                if (scroller && scroller.dataset.mwiScrollable !== '1') {
+                    scroller.style.overflowX = 'auto';
+                    scroller.style.webkitOverflowScrolling = 'touch';
+                    scroller.dataset.mwiScrollable = '1';
+                }
+            }
+        }
     }
 
     disable() {

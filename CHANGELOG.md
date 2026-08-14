@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trials: the measured-vs-reported comparison, on screen
+
+The Per-player scoreboard now shows the game's authoritative per-member totals (from the wire, so no need to open the Stats modal and it survives a refresh) with each row carrying **meas ±X%** — how far the plugin's own live measurement ran from the game's figure. The wire stats are preferred over the scraped modal where present.
+
+### Labyrinth: lab sim reachable on mobile (tab bar scrolls)
+
+The labyrinth tab bar now scrolls horizontally on mobile, so the tabs past the right edge — Lab Sim among them — can be reached with a swipe instead of being stranded off-screen.
+
 ### Labyrinth: tile badges fit on mobile, plus quick-calc and auto-calc buttons
 
 The clear-chance tile badge ("100% 19s") no longer spills out of its coloured box on a phone — mobile font inflation is pinned off and the fonts step down a size so the reading stays inside the tile. The collapsible control bar gains a **Calc** button beside the toggle (a one-tap floor calc when auto-calc is off, so a folded bar still recalculates without expanding) and an **Enable auto-calc** button in the expanded controls that flips the setting and recomputes.

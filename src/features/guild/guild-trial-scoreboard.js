@@ -129,14 +129,33 @@ export function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
         }));
         const rows = raw.filter((row) => row.value > 0).sort((a, b) => b.value - a.value);
         const total = rows.reduce((sum, row) => sum + row.value, 0);
+
+        // The stream's own measurement of the same figure, so each authoritative
+        // row can say how far the plugin's tick-by-tick estimate ran from it —
+        // the point of capturing the game's numbers in the first place.
+        const measuredSource =
+            tab === 'healing' || tab === 'taken' ? breakdown?.support?.players || [] : breakdown?.players || [];
+        const measuredField = tab === 'healing' ? 'healingDone' : tab === 'taken' ? 'damageTaken' : 'damage';
+        const measuredByName = new Map(
+            measuredSource.filter((row) => row?.name).map((row) => [row.name, Number(row[measuredField]) || 0])
+        );
+
         return {
-            rows: rows.map((row, position) => ({
-                ...row,
-                measured: true,
-                rank: position + 1,
-                perSecond: null,
-                share: total > 0 ? (row.value / total) * 100 : null,
-            })),
+            rows: rows.map((row, position) => {
+                const measuredValue = measuredByName.has(row.name) ? measuredByName.get(row.name) : null;
+                return {
+                    ...row,
+                    measured: true,
+                    measuredValue,
+                    measuredDeltaPct:
+                        measuredValue !== null && row.value > 0
+                            ? ((measuredValue - row.value) / row.value) * 100
+                            : null,
+                    rank: position + 1,
+                    perSecond: null,
+                    share: total > 0 ? (row.value / total) * 100 : null,
+                };
+            }),
             total,
             perSecond: null,
             seconds,
@@ -209,6 +228,20 @@ export function damageOverCeiling(breakdown, total) {
  */
 export function modalStatsForBreakdown(breakdown, modal = guildTrialStatsModal) {
     if (!breakdown?.encounter) return null;
+    // The wire stats (`guild_trial_stats_updated`) are the same authoritative
+    // per-member totals as the game's post-trial modal, but they do not need the
+    // modal opened and they survive a refresh, so they are preferred where
+    // present. The scraped modal is the fallback for a build that has not seen
+    // the message, or a trial watched before this feature existed.
+    const wire = breakdown.reported;
+    if (wire && typeof wire === 'object' && Object.keys(wire).length) {
+        return Object.entries(wire).map(([name, stats]) => ({
+            name,
+            damage: stats?.damage ?? null,
+            healing: stats?.healing ?? null,
+            damageTaken: stats?.taken ?? null,
+        }));
+    }
     const trialName = (breakdown.trialNames || []).find((name) => encounterOf(name) === breakdown.encounter);
     return trialName ? modal.getCombatStats?.(trialName) || null : null;
 }
@@ -808,6 +841,17 @@ class GuildTrialScoreboard {
         // beside it is not, and a table that does not say so is claiming both
         const label = estimated ? 'estimated' : row.measured === false ? `${rate}/s · partial` : `${rate}/s`;
 
+        // On a game-reported row, how far the plugin's own live measurement ran
+        // from it — the comparison, on screen. Omitted when nothing was measured
+        // for this player (the fight view was never open on them).
+        let comparison = '';
+        if (row.measuredValue !== null && row.measuredValue !== undefined) {
+            comparison =
+                row.measuredDeltaPct === null
+                    ? ` · meas ${formatKMB(Math.round(row.measuredValue))}`
+                    : ` · meas ${row.measuredDeltaPct >= 0 ? '+' : '−'}${Math.abs(row.measuredDeltaPct).toFixed(0)}%`;
+        }
+
         return (
             `<div style="position:relative; margin:3px 0; padding:3px 6px; border-radius:3px;` +
             `background:linear-gradient(to right, ${color}44 ${width}%, rgba(255,255,255,0.04) ${width}%);">` +
@@ -817,7 +861,7 @@ class GuildTrialScoreboard {
             `<span style="margin-left:auto; color:${color}; font-weight:600;">${figure}</span>` +
             `</div>` +
             `<div style="display:flex; gap:6px; color:${DIM}; font-size:10px;">` +
-            `<span>${label}</span>` +
+            `<span title="How far the plugin's own live measurement ran from the game's reported figure">${label}${comparison}</span>` +
             `<span style="margin-left:auto;">${row.share === null ? '—' : `${row.share.toFixed(1)}%`}</span>` +
             `</div></div>`
         );
