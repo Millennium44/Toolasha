@@ -22,6 +22,7 @@ const game = vi.hoisted(() => ({
     loadouts: [],
     ownName: null,
     storedRoster: null,
+    storedStats: null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -36,6 +37,11 @@ vi.mock('./guild-trials-store.js', () => ({
     loadTrialRoster: async () => game.storedRoster,
     saveTrialRoster: async (entry) => {
         game.storedRoster = entry;
+        return true;
+    },
+    loadTrialStats: async () => game.storedStats || { weekStart: 0, trials: {} },
+    saveTrialStats: async (blob) => {
+        game.storedStats = blob;
         return true;
     },
 }));
@@ -58,6 +64,7 @@ const {
     attributionCoverage,
     battleMonsterNames,
     bossHpCeiling,
+    compareTrialStats,
     encounterOf,
     encounterOfMonster,
     encounterComponentMap,
@@ -1314,6 +1321,104 @@ describe('only your own damage is measured', () => {
         const row = guildTrialDamage.breakdown().players.find((entry) => entry.name === 'TakoTsubo');
         expect(row.measured).toBe(true);
         expect(row.damage).toBe(1000);
+    });
+});
+
+describe('the game’s own end-of-trial stats, saved for comparison', () => {
+    const at = new Date('2026-08-14T18:00:00Z').getTime();
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.clientData = {};
+        game.loadouts = [];
+        game.ownName = null;
+        game.storedRoster = null;
+        game.storedStats = null;
+        guildTrialDamage.storedRoster = null;
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+    });
+
+    test('reported totals are named through the roster and exposed for comparison', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        guildTrialDamage.encounter = 'badger';
+        game.wsHandlers.guild_trial_stats_updated({
+            guildTrialStatList: [
+                {
+                    characterId: 611244,
+                    trialHrid: '/guild_combat/badger',
+                    damageDealt: 1_000_000,
+                    healingDone: 0,
+                    premitigatedDamageTaken: 50_000,
+                },
+                {
+                    characterId: 173046,
+                    trialHrid: '/guild_combat/badger',
+                    damageDealt: 400_000,
+                    healingDone: 20_000,
+                    premitigatedDamageTaken: 10_000,
+                },
+                // A skilling line and an unknown character id are both dropped.
+                {
+                    characterId: 611244,
+                    trialHrid: '/guild_skilling/crafting',
+                    damageDealt: 999,
+                    healingDone: 0,
+                    premitigatedDamageTaken: 0,
+                },
+                {
+                    characterId: 111111,
+                    trialHrid: '/guild_combat/badger',
+                    damageDealt: 123,
+                    healingDone: 0,
+                    premitigatedDamageTaken: 0,
+                },
+            ],
+        });
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.reported.Duskey).toEqual({ damage: 1_000_000, healing: 0, taken: 50_000 });
+        expect(report.reported.Motricio).toEqual({ damage: 400_000, healing: 20_000, taken: 10_000 });
+        expect(Object.keys(report.reported)).toEqual(['Duskey', 'Motricio']);
+    });
+
+    test('a different trial’s stats do not land on this one', () => {
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        guildTrialDamage.encounter = 'hedgehog';
+        game.wsHandlers.guild_trial_stats_updated({
+            guildTrialStatList: [
+                {
+                    characterId: 611244,
+                    trialHrid: '/guild_combat/badger',
+                    damageDealt: 1,
+                    healingDone: 0,
+                    premitigatedDamageTaken: 0,
+                },
+            ],
+        });
+        expect(guildTrialDamage.breakdown().reported).toBe(null);
+    });
+
+    test('compareTrialStats pairs measured against reported with a delta', () => {
+        const rows = compareTrialStats({
+            reported: {
+                Duskey: { damage: 1000, healing: 0, taken: 100 },
+                Motricio: { damage: 500, healing: 0, taken: 0 },
+            },
+            measured: { Duskey: { damage: 900, healing: 0, taken: 100 } },
+        });
+        // Ordered by reported damage, Duskey first.
+        expect(rows.map((r) => r.name)).toEqual(['Duskey', 'Motricio']);
+        expect(rows[0].damage.deltaPct).toBeCloseTo(-10);
+        expect(rows[0].taken.deltaPct).toBe(0);
+        // Motricio was never measured — 0 vs 500 reads as −100%.
+        expect(rows[1].damage.deltaPct).toBeCloseTo(-100);
     });
 });
 

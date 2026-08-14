@@ -46,6 +46,7 @@ vi.mock('./guild-trial-damage.js', () => ({
         breakdown: () => game.breakdown,
         reset: vi.fn(),
     },
+    compareTrialStats: ({ reported } = {}) => (reported ? Object.keys(reported).map((name) => ({ name })) : []),
 }));
 vi.mock('./guild-loadouts.js', () => ({
     loadLoadouts: async () => game.loadouts,

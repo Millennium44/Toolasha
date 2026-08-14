@@ -111,7 +111,7 @@ import {
     rosterFromBattle,
 } from './guild-trial-units.js';
 import { COMBAT_ENCOUNTERS, TRIAL_ACTIVE_MS, tierFromLevel, trialFromHrid } from './guild-trials-math.js';
-import { loadTrialRoster, saveTrialRoster } from './guild-trials-store.js';
+import { loadTrialRoster, loadTrialStats, saveTrialRoster, saveTrialStats } from './guild-trials-store.js';
 
 /** Below this the per-player rates are one exchange's luck rather than a rate */
 export const MIN_SECONDS = 5;
@@ -144,6 +144,15 @@ export const NEW_GUILD_BATTLE_MESSAGE = 'new_guild_battle';
 
 /** The message that closes a combat trial */
 export const END_GUILD_BATTLE_MESSAGE = 'end_guild_battle';
+
+/**
+ * The game's own end-of-trial per-member totals, keyed by character id:
+ * `guildTrialStatList: [{ characterId, trialHrid, damageDealt, healingDone,
+ * premitigatedDamageTaken }]`. This is the authoritative figure the plugin's
+ * live measurement is estimating — captured so the two can be compared. Arrives
+ * a few seconds after {@link END_GUILD_BATTLE_MESSAGE}.
+ */
+export const GUILD_TRIAL_STATS_MESSAGE = 'guild_trial_stats_updated';
 
 /** A tick further from the last than this is a break, not a slow swing */
 const MAX_TICK_GAP_MS = 2000;
@@ -570,6 +579,36 @@ export function mergeWaveTallies({
     return merged;
 }
 
+/**
+ * Join the game's reported per-member totals against the live measurement.
+ *
+ * Both are `{name: {damage, healing, taken}}`; this pairs them by name and states
+ * how far each measured figure ran from the game's — the accuracy of the
+ * tick-by-tick attribution against the server's own accounting. Rows are ordered
+ * by reported damage, so the biggest contributors read first.
+ *
+ * @param {{reported: Object|null|undefined, measured: Object|null|undefined}} input
+ * @returns {Array<{name: string, damage: Object, healing: Object, taken: Object}>}
+ */
+export function compareTrialStats({ reported, measured } = {}) {
+    if (!reported || typeof reported !== 'object') return [];
+    const mine = measured && typeof measured === 'object' ? measured : {};
+    const deltaPct = (m, g) => (g > 0 ? ((m - g) / g) * 100 : m > 0 ? Infinity : 0);
+    const cell = (m, g) => ({ measured: m, reported: g, deltaPct: deltaPct(m, g) });
+
+    return Object.entries(reported)
+        .map(([name, game]) => {
+            const seen = mine[name] || {};
+            return {
+                name,
+                damage: cell(seen.damage || 0, game.damage || 0),
+                healing: cell(seen.healing || 0, game.healing || 0),
+                taken: cell(seen.taken || 0, game.taken || 0),
+            };
+        })
+        .sort((a, b) => b.damage.reported - a.damage.reported);
+}
+
 class GuildTrialDamage {
     constructor() {
         this.initialized = false;
@@ -583,6 +622,12 @@ class GuildTrialDamage {
          * whether it may be used, not this module's lifecycle.
          */
         this.storedRoster = null;
+        /**
+         * The week's measured-vs-reported comparisons, `{[encounter]: {reported,
+         * measured, at}}`. Survives {@link reset} like the roster does: it spans
+         * every trial of the week, and the store clears it when the week rolls.
+         */
+        this.storedStats = {};
         this.reset();
     }
 
@@ -647,6 +692,24 @@ class GuildTrialDamage {
         this.endedAt = null;
         /** The party size the game stated, which is what the ladders scale by */
         this.participants = null;
+        /**
+         * Character id → name, accumulated across every tier and never wiped per
+         * wave. The game's end-of-trial stats key by character id and land after
+         * the per-tier roster has re-dealt, so this cumulative map is the only
+         * thing left to name them by.
+         */
+        this.characterNames = {};
+        /**
+         * The game's own end-of-trial per-name totals — `{name: {damage, healing,
+         * taken}}` — the authoritative figure the live measurement is estimating,
+         * kept so the two can be compared. Null until the stats message lands.
+         */
+        this.reported = null;
+        /**
+         * The live measurement snapshotted at the instant the reported stats
+         * arrived, so the comparison survives the tally being reset next trial.
+         */
+        this.reportedMeasured = null;
     }
 
     /**
@@ -697,6 +760,9 @@ class GuildTrialDamage {
         // Read back the roster a previous page-load wrote down, so a refresh
         // mid-tier does not lose every name until the next tier restates them
         this._restoreStoredRoster();
+        // …and the week's measured-vs-reported comparisons, so a refresh after a
+        // trial ended still has last fight's figures to show against the game's
+        this._restoreStats();
 
         this.onNewBattle = (data) => this._onNewBattle(data);
         this.onBattleUpdated = (data) => this._onBattleUpdated(data);
@@ -704,12 +770,14 @@ class GuildTrialDamage {
         this.onUnitFetched = (data) => this._onUnitFetched(data);
         this.onNewGuildBattle = (data) => this._onNewGuildBattle(data);
         this.onEndGuildBattle = (data) => this._onEndGuildBattle(data);
+        this.onTrialStats = (data) => this._onTrialStats(data);
         webSocketHook.on('new_battle', this.onNewBattle);
         webSocketHook.on('battle_updated', this.onBattleUpdated);
         webSocketHook.on(GUILD_BATTLE_MESSAGE, this.onGuildBattle);
         webSocketHook.on('battle_unit_fetched', this.onUnitFetched);
         webSocketHook.on(NEW_GUILD_BATTLE_MESSAGE, this.onNewGuildBattle);
         webSocketHook.on(END_GUILD_BATTLE_MESSAGE, this.onEndGuildBattle);
+        webSocketHook.on(GUILD_TRIAL_STATS_MESSAGE, this.onTrialStats);
     }
 
     cleanup() {
@@ -719,12 +787,14 @@ class GuildTrialDamage {
         if (this.onUnitFetched) webSocketHook.off('battle_unit_fetched', this.onUnitFetched);
         if (this.onNewGuildBattle) webSocketHook.off(NEW_GUILD_BATTLE_MESSAGE, this.onNewGuildBattle);
         if (this.onEndGuildBattle) webSocketHook.off(END_GUILD_BATTLE_MESSAGE, this.onEndGuildBattle);
+        if (this.onTrialStats) webSocketHook.off(GUILD_TRIAL_STATS_MESSAGE, this.onTrialStats);
         this.onNewBattle = null;
         this.onBattleUpdated = null;
         this.onGuildBattle = null;
         this.onUnitFetched = null;
         this.onNewGuildBattle = null;
         this.onEndGuildBattle = null;
+        this.onTrialStats = null;
         this.initialized = false;
         this.reset();
     }
@@ -782,6 +852,11 @@ class GuildTrialDamage {
                 for (const [index, entry] of Object.entries(roster)) {
                     this.unitNames[index] = { name: entry.name, source: 'roster', characterId: entry.characterId };
                     this.names[index] = entry.name;
+                    // Never wiped per wave: the end-of-trial stats key by id and
+                    // arrive after the slots have re-dealt, so this is the join.
+                    if (Number.isFinite(entry.characterId) && entry.characterId > 0 && entry.name) {
+                        this.characterNames[entry.characterId] = entry.name;
+                    }
                 }
                 // …and written down with the battle it belongs to. This message
                 // fires once per tier and never again, so a page refresh
@@ -869,6 +944,113 @@ class GuildTrialDamage {
             this.active = false;
         } catch (error) {
             console.error('[GuildTrialDamage] Reading the end of a trial failed:', error);
+        }
+    }
+
+    /**
+     * The game's own per-member totals for the trial that just ended.
+     *
+     * `guildTrialStatList` keys by character id and states the exact damage,
+     * healing and pre-mitigation damage taken the server credited each member —
+     * the authoritative figure this module's live tick-by-tick attribution is
+     * estimating. Captured, named through the cumulative id→name map, and saved
+     * beside a snapshot of the live measurement so the two can be compared, and so
+     * the comparison survives a refresh until the week's ladder rolls over.
+     *
+     * Not gated on `active` or stream liveness: it arrives a few seconds after
+     * `end_guild_battle`, once the fight is already over and the stream quiet.
+     *
+     * @param {Object} data - A `guild_trial_stats_updated` payload
+     */
+    _onTrialStats(data) {
+        try {
+            const list = Array.isArray(data?.guildTrialStatList) ? data.guildTrialStatList : [];
+            if (!list.length) return;
+
+            const reported = {};
+            for (const entry of list) {
+                const trial = trialFromHrid(entry?.trialHrid);
+                // Combat only — a skilling trial's members carry no damage,
+                // healing or damage taken — and only this week's own encounter,
+                // so a second trial's numbers cannot land on this one's card.
+                if (!trial || trial.kind !== 'combat') continue;
+                if (this.encounter && trial.key !== this.encounter) continue;
+                const name = this.characterNames[Number(entry?.characterId)];
+                if (!name) continue;
+                const row = reported[name] || (reported[name] = { damage: 0, healing: 0, taken: 0 });
+                row.damage += Number(entry?.damageDealt) || 0;
+                row.healing += Number(entry?.healingDone) || 0;
+                row.taken += Number(entry?.premitigatedDamageTaken) || 0;
+            }
+            if (!Object.keys(reported).length) return;
+
+            this.reported = reported;
+            this.reportedMeasured = this._measuredByName();
+            const encounter = this.encounter;
+            if (encounter) {
+                this.storedStats = {
+                    ...this.storedStats,
+                    [encounter]: { reported, measured: this.reportedMeasured, at: Date.now() },
+                };
+            }
+            this._persistStats(encounter).catch(() => {});
+        } catch (error) {
+            console.error('[GuildTrialDamage] Reading the trial stats failed:', error);
+        }
+    }
+
+    /**
+     * The live measurement as `{name: {damage, healing, taken}}`, snapshotted so
+     * it can be stored beside the game's figures and outlive the next reset.
+     * @returns {Object}
+     */
+    _measuredByName() {
+        const out = {};
+        let report;
+        try {
+            report = this.breakdown();
+        } catch {
+            return out;
+        }
+        const rowFor = (name) => out[name] || (out[name] = { damage: 0, healing: 0, taken: 0 });
+        for (const player of report?.players || []) {
+            if (player?.name) rowFor(player.name).damage = player.damage || 0;
+        }
+        for (const player of report?.support?.players || []) {
+            if (!player?.name) continue;
+            const row = rowFor(player.name);
+            row.healing = player.healingDone || 0;
+            row.taken = player.damageTaken || 0;
+        }
+        return out;
+    }
+
+    /**
+     * Merge this trial's comparison into the week's saved blob and write it back.
+     * Load-merge-save rather than saving the in-memory copy, so a reset between
+     * trials cannot drop an earlier trial's entry from disk.
+     * @param {string} encounter - The encounter the comparison is for
+     */
+    async _persistStats(encounter) {
+        if (!encounter || !this.reported) return;
+        try {
+            const blob = await loadTrialStats();
+            blob.trials = blob.trials && typeof blob.trials === 'object' ? blob.trials : {};
+            blob.trials[encounter] = { reported: this.reported, measured: this.reportedMeasured || {}, at: Date.now() };
+            this.storedStats = blob.trials;
+            await saveTrialStats(blob);
+        } catch (error) {
+            console.error('[GuildTrialDamage] Saving trial stats failed:', error);
+        }
+    }
+
+    /** Read the week's saved comparisons back after a refresh. */
+    async _restoreStats() {
+        try {
+            const blob = await loadTrialStats();
+            this.storedStats = blob?.trials && typeof blob.trials === 'object' ? blob.trials : {};
+        } catch {
+            this.storedStats = {};
         }
     }
 
@@ -1499,6 +1681,14 @@ class GuildTrialDamage {
             // of what it cannot say — see `guild-trial-support.js`
             support,
             supportCoverage: supportCoverage(),
+            // The game's own end-of-trial per-name totals, and the live
+            // measurement snapshotted beside them, so the panel and the export
+            // can show measured against reported. `reported` is this session's;
+            // `storedStats` carries every trial's comparison saved for the week,
+            // so it survives a refresh after the fight has ended.
+            reported: this.reported ? { ...this.reported } : null,
+            reportedMeasured: this.reportedMeasured ? { ...this.reportedMeasured } : null,
+            storedStats: { ...this.storedStats },
             ...summary,
         };
     }
