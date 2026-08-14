@@ -28,15 +28,13 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.0.1](https://github.com/Millennium44/Toolasha/compare/v3.0.0...v3.0.1) (2026-08-14)
 
-
 ### Bug Fixes
 
-* **build:** minify [@require](https://github.com/require) bundles to fit Steam's 2MB per-require limit ([1ea6e49](https://github.com/Millennium44/Toolasha/commit/1ea6e49ed6e3b72f862916001605b60fd086fa9d))
-
+- **build:** minify [@require](https://github.com/require) bundles to fit Steam's 2MB per-require limit ([1ea6e49](https://github.com/Millennium44/Toolasha/commit/1ea6e49ed6e3b72f862916001605b60fd086fa9d))
 
 ### Continuous Integration
 
-* harden release publish against oversized notes; add manual re-publish ([a71a2b2](https://github.com/Millennium44/Toolasha/commit/a71a2b2cff2c8eff0d1a79daa37482f102ecbcc2))
+- harden release publish against oversized notes; add manual re-publish ([a71a2b2](https://github.com/Millennium44/Toolasha/commit/a71a2b2cff2c8eff0d1a79daa37482f102ecbcc2))
 
 ## [3.0.0](https://github.com/Millennium44/Toolasha/compare/v2.102.0...v3.0.0) (2026-08-14)
 
