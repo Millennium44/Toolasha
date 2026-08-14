@@ -301,7 +301,7 @@ class DungeonTrackerUIHistory {
                 return (
                     `<span class="mwi-dt-player-name" data-player-name="${escaped}" style="cursor: pointer; ` +
                     `text-decoration: underline dotted; text-underline-offset: 2px;" ` +
-                    `title="Fill &quot;/profile ${escaped}&quot; into chat">${escaped}</span>`
+                    `title="Open ${escaped}'s profile">${escaped}</span>`
                 );
             })
             .join(',');
