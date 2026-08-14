@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Docs: note the tradable-range band is a ~±10% approximation
+
+Documented that the market-value band clamp is a multiplicative ~±10% and runs one price increment tighter than the game's real range on each side (the 8/14 hotfix widened it by one increment) — an intentional, bounded approximation, since the game publishes only values, not range bounds, and the plugin has no increment-tier table. Audited the rest of the 8/13 + 8/14 marketplace/guild patches (hourly market updates, 1T max price, compact prices, game-provided values, shrine buff rates): all already handled or read from game data, no change needed.
+
 ### Docs: settings notes now say 5% market tax (the calculations already did)
 
 The market tax has been 5% in every calculation since the 8/13 patch went live (`MARKET_TAX` reads the live gate), but several settings descriptions and code comments still said "2%". Updated the effective-price, minimum-sell-tax, bulk-sell vendor-beats-market, trade-ledger, and buy-vs-sell notes to 5% so the text matches the math. No behaviour change.
