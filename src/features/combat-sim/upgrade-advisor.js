@@ -3084,6 +3084,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         zoneHrid,
         difficultyTier,
         hours,
+        precision = null,
         communityBuffs,
         upgradeModes,
         upgradeMode,
@@ -3177,7 +3178,20 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
     // credit task gear with damage it only deals while that monster is your
     // task — see the caveat attached in generateCandidates().
     const baselineResult = await runSimulation(
-        { gameData, playerDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed, isTaskFight: false },
+        {
+            gameData,
+            playerDTOs,
+            zoneHrid,
+            difficultyTier,
+            hours,
+            communityBuffs,
+            seed: simSeed,
+            isTaskFight: false,
+            // The baseline's fight count is what every candidate is paired to,
+            // so precision/max-fights on the baseline set the whole run's sample
+            // size. Null falls back to the plain time budget (`hours`).
+            ...(precision ? { precision } : {}),
+        },
         null,
         { workers: 1 }
     );
@@ -5050,6 +5064,7 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
         fights,
         crates,
         hours,
+        precision = null,
         communityBuffs,
         labyrinthCombatBuffs = [],
         abilityTargetLevel,
@@ -5227,7 +5242,9 @@ export async function runLabyrinthAllFightsAnalysis(params, onProgress, options 
             roomLevel: fight.roomLevel,
             crates,
             hours: rule ? simHours * PAIRED_TIME_HEADROOM : simHours,
-            precision: rule,
+            // Candidates reuse the fight's paired rule; the baseline pass (rule
+            // null) takes the tab's precision/max-fights so it sets the count.
+            precision: rule || precision,
             communityBuffs,
             // A token buff is not on the loadout, so it arrives here rather than
             // through the DTO — the one candidate set that changes the run
