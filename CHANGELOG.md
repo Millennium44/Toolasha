@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trials: drop the partial-tier payout notes, shorten the forecast text
+
+The two partial-tier explanation paragraphs on the In Progress payout card ("Includes partial-tier credit…" and "… states N pts at T12 …") are gone — the credit still counts, it just isn't spelled out. Trimmed the wordiest forecast values too: "no data — only trials you join can be measured" → "only trials you join", "needs one tier's total to anchor the ladder" → "awaits a full tier", "nothing yet — tier N in progress" → "nothing yet · tier N". Full detail stays on hover.
+
 ### Fix: personal combat no longer leaks into the trial DPS split
 
 While spectating a trial from the In Progress tab, the client's own side-combat (farming a zone) was being folded into the trial's per-player damage — a local build could read ~7× the boss's health and dominate the split (reported with a member farming a Chameleon zone during a Chameleon trial). The trial only ever streams over `guild_battle_updated`, so a `battle_updated` arriving while that spectator stream is live is now recognised as personal combat and dropped. This is the same separation KikiMeter (ZhuLiMoon) uses — credited in the code.

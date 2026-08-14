@@ -888,7 +888,7 @@ function bankedRow(analysis) {
     if (analysis.tiersClearedSoFar === 0) {
         return line(
             'Banked',
-            `nothing yet — tier ${analysis.tier} in progress`,
+            `nothing yet · tier ${analysis.tier}`,
             DIM,
             'A trial starts at tier 1, so nothing is banked until the first tier completes.' + tierProvenance(analysis)
         );
@@ -988,7 +988,7 @@ export function renderTrialBlock(
         rows.push(
             line(
                 'Rate',
-                'no data — only trials you join can be measured',
+                'only trials you join',
                 DIM,
                 'Every figure here is read off the guild panel, and the In Progress tab only ever shows the ' +
                     'trials this character signed up for. Nothing arrives for the others — not from the ' +
@@ -1193,7 +1193,7 @@ export function renderTrialBlock(
             )
         );
     } else if (Number.isFinite(analysis.tier) && analysis.tier < TRIAL_MAX_TIER) {
-        rows.push(line('Next tier', 'needs one tier’s total to anchor the ladder', DIM));
+        rows.push(line('Next tier', 'awaits a full tier', DIM));
     }
 
     rows.push(bankedRow(analysis));
@@ -2751,15 +2751,9 @@ class GuildTrials {
             line('Tokens, if you took part', participant.value, GOOD, participant.title),
         ];
 
-        // The pace folds in the partial-tier rule, so say so — the on-pace figure
-        // is higher than a whole-tier walk and the reason should be on screen
-        // rather than a silent discrepancy against the game.
-        if (trials.some((trial) => (trial.partialFraction ?? 0) > 0)) {
-            rows.push(
-                `<div style="color:${DIM}; margin-top:4px;">` +
-                    'Includes partial-tier credit: an unfinished tier pays 0.5% per 1% of progress (up to 50%).</div>'
-            );
-        }
+        // The partial-tier rule (an unfinished tier paying 0.5% per 1% of
+        // progress) is folded into the pace and banked figures silently now — the
+        // explanatory note it used to print was clutter on the In Progress card.
 
         // Not a mismatch at all: a total banked across a Builder's Hall upgrade.
         // Points bank live, tier by tier, at the bonus in force when each tier
@@ -2783,19 +2777,9 @@ class GuildTrials {
         }
 
         // A card that reads above the whole-tier total by up to half the next
-        // tier's step is the partial-tier rule, not a disagreement. Say so, so the
-        // extra points on the banked line are explained rather than left to look
-        // like a ladder error.
-        const partialTrial = trials.find((trial) => trial.points?.interpretation === 'partial-tier');
-        if (partialTrial?.points?.quoted) {
-            const { tier, statedPoints } = partialTrial.points.quoted;
-            rows.push(
-                `<div style="color:${DIM}; margin-top:4px;">` +
-                    `${partialTrial.name} states ${formatWithSeparator(statedPoints)} pts at T${tier} — the ` +
-                    'whole-tier total plus partial credit for the tier it ended part-way through ' +
-                    '(0.5% per 1% of progress, capped at 50%). Used as stated.</div>'
-            );
-        }
+        // tier's step is the partial-tier rule, not a disagreement — the card is
+        // used exactly as stated, and the note that used to spell that out was
+        // more clutter than help on the In Progress card, so it is not printed.
 
         // A genuine mismatch, which is now a much rarer thing to be. The warning
         // this replaces fired on every card of every week and blamed the ladder,
