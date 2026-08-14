@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Item tooltip: option to flatten the materials breakdown to the direct recipe
+
+New setting "Materials breakdown: direct recipe only (no sub-craft chain)" (off by default). When on, the detailed profit breakdown prices each recipe ingredient at its own market Ask/Bid and stops there, instead of recursing into how each craftable ingredient is itself made — so a Holy Brush shows Rainbow Brush / Holy Cheese / Arcane Log at market, not the whole brush chain. Display-only; the Net profit line still follows "Use crafting cost for upgrade items if cheaper".
+
 ### Combat lab sim: precision is now adjustable from the sim panel
 
 The Monte-Carlo win-rate precision (`labyrinthSimPrecision`) was only reachable from Settings even though it drives the Max Level tab's sim. Added a "Precision ±%" input to the sim's run-control row (0.1–10, same knob the labyrinth tile calculator already exposes) so it can be tuned in place; it reads and writes the one shared setting, so all three stay in step.

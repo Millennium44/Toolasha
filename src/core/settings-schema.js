@@ -671,6 +671,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Shows material costs table with Ask/Bid prices, actions/hour, and profit breakdown',
             },
+            itemTooltip_detailedProfitFlat: {
+                id: 'itemTooltip_detailedProfitFlat',
+                label: 'Materials breakdown: direct recipe only (no sub-craft chain)',
+                type: 'checkbox',
+                default: false,
+                help: 'In the detailed materials breakdown, price each recipe ingredient at its own market Ask/Bid and stop there, instead of expanding how each craftable ingredient is itself made. Shows the cost of buying the base items for just this one craft step. Only affects the breakdown table; the Net profit line still follows "Use crafting cost for upgrade items if cheaper".',
+            },
             itemTooltip_multiActionProfit: {
                 id: 'itemTooltip_multiActionProfit',
                 label: 'Show profit comparison for all item actions',
