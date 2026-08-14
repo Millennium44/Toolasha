@@ -1792,6 +1792,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            combatProfileButton: {
+                id: 'combatProfileButton',
+                label: 'Combat: Profile button on party members',
+                type: 'checkbox',
+                default: false,
+                help: "Adds a 'Profile' button to the battle-unit popup when you click another player in group/party/dungeon combat, opening their profile via the /profile chat command (chat must be open).",
+            },
             abilitiesTriggers: {
                 id: 'abilitiesTriggers',
                 label: 'Profile panel: Show abilities & triggers',
