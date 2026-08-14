@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### First-run: offer a full backup before switching to the fork
+
+The first time the fork runs on a browser that already carries Toolasha data, it now offers a one-time **full backup** before the What's New popup can touch any settings — so anyone switching from upstream (or who fumbles a settings import) keeps a clean restore point of their pre-fork state. Shown once, only for existing users (a fresh install has nothing to back up), and it's still available any time from Settings → Back Up Everything.
+
 ### Labyrinth tile controls: tidy wrapping on narrow/mobile panels
 
 The labyrinth calculator's control bar (Calculate / Precision / Path / Clear≥ / Shroud / Beacons / Clear) was one flex row that wrapped item by item, so on a narrow panel labels got orphaned from their inputs and it read as a cramped, uneven column (reported by Ana on mobile). Each control's pieces are now a nowrap group — a label with its input, a button with its field — so the bar wraps _between_ controls into tidy rows and stays a single line when there's room.

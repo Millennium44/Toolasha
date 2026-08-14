@@ -67,6 +67,7 @@ import housePanelObserver from '../features/house/house-panel-observer.js';
 // Settings UI
 import settingsUI from '../features/settings/settings-ui.js';
 import whatsNew from '../features/settings/whats-new.js';
+import forkBackupPrompt from '../features/settings/fork-backup-prompt.js';
 
 // Dictionary
 import transmuteRates from '../features/dictionary/transmute-rates.js';
@@ -181,6 +182,7 @@ toolashaRoot.UI = {
     housePanelObserver,
     settingsUI,
     whatsNew,
+    forkBackupPrompt,
     transmuteRates,
     viewActionButton,
     transmuteHistoryTracker,
