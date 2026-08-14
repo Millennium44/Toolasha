@@ -6,6 +6,26 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Profit: "Tax" button renamed to "Moopass", plus a real sale-tax toggle
+
+The panel's "Tax" toggle was actually the weekly **MooPass** cowbell cost, so it's renamed to match (the button and the "Pay the MooPass" card). A new **"Tax"** toggle now subtracts the **market sale tax** from combat income — netted at the source (`calculateIncome`, coin untaxed / cowbell 18% / else 5%), so the Daily Income stat, the Combat Profit panel, and the sim-vs-measured calibration all read post-tax. On by default; a remembered choice under the old "Tax" name migrates to Moopass.
+
+### Fix: "auto-click max" was maxing the price, not the quantity
+
+The 8/13 marketplace layout gave the price row its own "Max" button and put it ahead of the quantity row, so the auto-click-max feature grabbed the first "Max"/"All" in the modal — the price one — which slammed the sell price to the top of the tradable range **and** left the quantity un-maxed (both halves of the reported "fills the max price, no longer maxes items"). It now scopes the search to the quantity inputs and excludes the price row, so it maxes the amount and leaves the price alone.
+
+### Combat sim nets the market sale tax off drop revenue
+
+The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
+
+### 8/13/2026 marketplace patch un-gated (now live on www too)
+
+The patch reached the live server, so `isMarketplacePatchLive()` now returns `true` everywhere. Every gated behaviour — 5% market tax across all profit/net-worth math, the game's official market-value reconciliation, and shrine levels folded into gear score and the combat sim — is now in effect on both servers, not just test. The gate is kept as a one-line function so a future server-staged change can re-gate from the same place.
+
+### Overlay: reworked default tile set + a "Reset to default tiles" button
+
+The curated overlay default is regrouped into **Wealth** (net worth, coins, inventory value), **Character** (build score, combat level) and **This session** (combat status, XP/hr, profit, DPS, deaths/hr, drop luck, time to level), so the tiles read as clusters instead of a flat row. The session figures are all measurements, which stay hidden until they have data — so a fresh or non-combat character still opens onto a handful of tiles, not a wall. A new **Reset to default tiles** button in ⚙ puts any character back to that set (clearing hand-picked rows and order, leaving positions and sizes alone), undoable like the other bulk layout actions.
+
 ### First-run setup: copy from another character, and a way back to it
 
 The welcome prompt now offers **"Copy from another character"** — pick one of your other characters and its settings are copied onto this one, the one-click way to set up a fresh alt (especially an Iron Cow) instead of only offering generic presets. Added to both first-run pickers, and to a new **"First-time setup"** button in the Toolasha settings tab so the one-shot prompt is recoverable: a stray click that dismissed it (or a character already past it) can re-open it any time, on any character. Defaults now leads the picker, a **No change** option sits beside it, and dismissing the dialog is "no change" rather than a reset — so re-opening it on a configured character can no longer wipe settings by accident.

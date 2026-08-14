@@ -127,7 +127,9 @@ afterEach(() => {
 
 describe('a character who has never arranged the overlay', () => {
     test('starts with the curated set and nothing else', async () => {
-        game.rows = [...CURATED_ROWS, 'luck', 'dps', 'watchlist', 'houses'].map((key) => row(key, { text: 'x' }));
+        game.rows = [...CURATED_ROWS, 'combatRevenue', 'treasure', 'watchlist', 'houses'].map((key) =>
+            row(key, { text: 'x' })
+        );
 
         await overlayPanel.initialize();
         overlayPanel.show();

@@ -1254,6 +1254,21 @@ class OverlayPanel {
         for (const row of resolved) chips.appendChild(this._rowChip(row));
         this.pickerEl.appendChild(chips);
 
+        // Beside the rows it acts on, not down among the layout buttons: this
+        // one is about which tiles are on, which is exactly what the chips above
+        // are for. It only shows tiles/hides them, so it sits apart from Reset
+        // layout, which forgets positions.
+        const tileActions = document.createElement('div');
+        Object.assign(tileActions.style, { display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' });
+        tileActions.appendChild(
+            this._textButton(
+                'Reset to default tiles',
+                'Switch the rows back to the curated starting set, in its order. Positions and sizes are left alone.',
+                () => this._resetTiles()
+            )
+        );
+        this.pickerEl.appendChild(tileActions);
+
         this.pickerEl.appendChild(this._layoutControls());
         this.pickerEl.appendChild(this._namedLayoutBar());
     }
@@ -1921,7 +1936,10 @@ class OverlayPanel {
      *
      * Autogrid, Reset and Import each throw away an arrangement that may have
      * taken a while to get right, and none of them can be judged until after it
-     * has happened — you press Autogrid to find out what Autogrid does.
+     * has happened — you press Autogrid to find out what Autogrid does. Reset
+     * tiles throws away a row selection instead of a geometry, so the snapshot
+     * carries the selection too; the geometry-only callers snapshot it unchanged,
+     * which restores as a no-op.
      *
      * @param {string} what - What is about to happen, for the button's label
      */
@@ -1932,6 +1950,9 @@ class OverlayPanel {
             sizes: { ...this.settings.sizes },
             zoom: { ...this.settings.zoom },
             textScale: this.settings.textScale,
+            visible: { ...this.settings.visible },
+            order: [...(this.settings.order || [])],
+            curatedDefaults: this.settings.curatedDefaults,
         };
     }
 
@@ -1939,8 +1960,8 @@ class OverlayPanel {
     _undo() {
         if (!this.undoState) return;
 
-        const { positions, sizes, zoom, textScale } = this.undoState;
-        this.settings = { ...this.settings, positions, sizes, zoom, textScale };
+        const { positions, sizes, zoom, textScale, visible, order, curatedDefaults } = this.undoState;
+        this.settings = { ...this.settings, positions, sizes, zoom, textScale, visible, order, curatedDefaults };
         this.undoState = null;
         this._save();
         if (this.panel) this.panel.style.fontSize = `${this._baseFontPx()}px`;
@@ -1961,6 +1982,32 @@ class OverlayPanel {
             positions[key] = { x, y };
         }
         this.settings.positions = positions;
+        this._save();
+        this._renderBody();
+        this._renderPicker();
+        this._placePicker();
+    }
+
+    /**
+     * Put this character's rows back to the curated default set.
+     *
+     * The sibling of Reset layout, and deliberately separate from it: that one
+     * forgets *where* tiles sit, this one forgets *which* tiles are on and in
+     * what order. It is the answer to the overlay that has drifted into the
+     * everything-on wall — clearing the explicit visibility map and the saved
+     * order drops both back to what `resolveRows` reads off {@link CURATED_ROWS},
+     * and turning `curatedDefaults` on opts a pre-curated character in, so a
+     * layout arranged before the curated set existed can reach it too.
+     *
+     * Positions and sizes are left alone: a reset that also scattered a
+     * carefully placed layout would be two undos wearing one button.
+     */
+    _resetTiles() {
+        this._snapshot('tile reset');
+        this.settings.visible = {};
+        this.settings.order = [];
+        this.settings.curatedDefaults = true;
+        this.justEnabled.clear();
         this._save();
         this._renderBody();
         this._renderPicker();

@@ -10,6 +10,8 @@ import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { describeKeyCost, getKeyPricingMode } from '../../utils/key-cost.js';
 import { treasureTracker } from '../../utils/bundle-bridge.js';
+import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
+import { salesTaxNetted } from './sales-tax-view.js';
 
 /**
  * Below this many openings a treasure reading is luck, not a rate.
@@ -105,8 +107,15 @@ export function calculateIncome(lootMap) {
                 // Other items: get market price
                 const prices = marketAPI.getPrice(loot.itemHrid);
                 if (prices) {
-                    totalAsk += prices.ask * itemCount;
-                    totalBid += prices.bid * itemCount;
+                    // Drops are sold on the market, so the sale tax comes off
+                    // what they fetch when the reader has asked for net income.
+                    // Coin is handled above (face value, never sold); containers
+                    // use an expected value that is already net of the tax.
+                    const mult = salesTaxNetted()
+                        ? 1 - (loot.itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX)
+                        : 1;
+                    totalAsk += prices.ask * itemCount * mult;
+                    totalBid += prices.bid * itemCount * mult;
                 }
             }
         }
