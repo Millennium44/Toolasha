@@ -183,6 +183,7 @@ vi.mock('./guild-xp-tracker.js', () => ({
 
 const {
     analyseTrial,
+    blockNearAnchor,
     breakdownFor,
     guildTrials,
     ownParticipation,
@@ -747,6 +748,59 @@ describe('placeTrialBlock', () => {
 
         expect(placeTrialBlock(card, card, block)).toBe('after-card');
         expect(card.contains(block)).toBe(true);
+    });
+});
+
+describe('blockNearAnchor', () => {
+    // The skilling In Progress layout: a column holds a battleArea row, which
+    // holds the roster and a challengeArea row, which holds the unit card.
+    function skillingLayout() {
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__r">' +
+            '<div id="col" style="display:flex; flex-direction:column">' +
+            '<div id="battle" style="display:flex; flex-direction:row">' +
+            '<div id="roster">roster</div>' +
+            '<div id="challenge" style="display:flex; flex-direction:row">' +
+            '<div id="card" class="GuildPanel_tile__a">Tailoring</div>' +
+            '</div></div></div></div>';
+        const block = document.createElement('div');
+        block.className = 'mwi-trial-info';
+        return {
+            root: document.querySelector('[class*="GuildPanel_guildPanel"]'),
+            col: document.getElementById('col'),
+            battle: document.getElementById('battle'),
+            challenge: document.getElementById('challenge'),
+            card: document.getElementById('card'),
+            block,
+        };
+    }
+
+    test('a block stranded inside a non-wrapping flex row reads as displaced', () => {
+        // The reported squash: the pre-styles fallback left the block a sibling of
+        // the card inside the challengeArea row, stealing its width. It must read
+        // as not-anchored so the next render re-places it out of the row.
+        const { root, challenge, card, block } = skillingLayout();
+        challenge.appendChild(block); // beside the card, inside the squashing row
+
+        expect(blockNearAnchor(block, card, root)).toBe(false);
+    });
+
+    test('still displaced even when the anchor is an ancestor of the whole row', () => {
+        // The regression: with the battleArea itself as the anchor, the old
+        // `anchor.contains(block)` fallback read a block buried two rows down as
+        // still anchored, so it was never re-placed.
+        const { root, battle, challenge, block } = skillingLayout();
+        challenge.appendChild(block);
+
+        expect(blockNearAnchor(block, battle, root)).toBe(false);
+    });
+
+    test('a block correctly after the squashing row is anchored', () => {
+        const { root, col, battle, card, block } = skillingLayout();
+        battle.insertAdjacentElement('afterend', block); // in the column, after the row
+        expect(col.contains(block)).toBe(true);
+
+        expect(blockNearAnchor(block, card, root)).toBe(true);
     });
 });
 
