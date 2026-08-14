@@ -10,21 +10,24 @@ afterEach(() => {
 });
 
 describe('isMarketplacePatchLive', () => {
+    // The patch is live on both servers now, so the gate is open regardless of
+    // hostname — and still never throws where there is no location.
+    test('true on the live server', () => {
+        vi.stubGlobal('location', { hostname: 'www.milkywayidle.com' });
+        expect(isMarketplacePatchLive()).toBe(true);
+    });
+
     test('true on the test server', () => {
         vi.stubGlobal('location', { hostname: 'test.milkywayidle.com' });
         expect(isMarketplacePatchLive()).toBe(true);
     });
 
-    test('false on the live server, until the patch reaches it', () => {
-        vi.stubGlobal('location', { hostname: 'www.milkywayidle.com' });
-        expect(isMarketplacePatchLive()).toBe(false);
-    });
-
-    test('false when there is no location at all (e.g. a worker blob), never throws', () => {
+    test('true even with no location at all (e.g. a worker blob), never throws', () => {
         vi.stubGlobal('location', undefined);
-        expect(isMarketplacePatchLive()).toBe(false);
+        expect(() => isMarketplacePatchLive()).not.toThrow();
+        expect(isMarketplacePatchLive()).toBe(true);
 
         vi.stubGlobal('location', {});
-        expect(isMarketplacePatchLive()).toBe(false);
+        expect(isMarketplacePatchLive()).toBe(true);
     });
 });

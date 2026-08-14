@@ -198,25 +198,43 @@ const TILE_CLASSES = {
 /**
  * The tiles a character who has never arranged the overlay starts with.
  *
- * Small on purpose. Every row defaulting to on gave a first open that was a wall
- * of placeholders with three real figures buried in it, and a panel where
- * nothing is worth reading is a panel nobody opens twice. These are the ones
- * that are alive for any character within a minute of playing: what you are
- * worth, what you are carrying, what you are doing, and what it is earning. The
- * rest are one click away in ⚙, where a list of switched-off rows reads as a
- * menu rather than as clutter.
+ * Small on purpose, and grouped on purpose. Every row defaulting to on gave a
+ * first open that was a wall of placeholders with three real figures buried in
+ * it, and a panel where nothing is worth reading is a panel nobody opens twice.
+ * So the set is curated into three clusters, and the order below is the order
+ * they are placed in — left to right and wrapping — so the clusters read as
+ * clusters:
  *
- * Order is the order they are placed in, left to right and wrapping — so the
- * two figures that are true the moment the game loads come first.
+ *   - **Wealth**: what you are worth and carrying, true the moment the game
+ *     loads.
+ *   - **Character**: where you stand, also true on load.
+ *   - **This session**: what you are doing and what it is earning.
+ *
+ * The count looks larger than the old eight, but the wall it guarded against is
+ * a wall of *value* tiles — the ones that always draw. The session cluster is
+ * all measurements, and a measurement hides until it has data (see
+ * {@link emptyPolicyFor}). So a fresh or non-combat character sees only the five
+ * value tiles; the combat figures cost nothing until a fight makes them real,
+ * then fill in beside each other rather than scattering. The rest are one click
+ * away in ⚙, where a list of switched-off rows reads as a menu rather than as
+ * clutter — and ⚙ also has a "Reset to default tiles" that puts any character
+ * back to exactly this set.
  */
 export const CURATED_ROWS = [
+    // Wealth — true the moment the game loads
     'netWorth',
     'coins',
+    'inventoryValue',
+    // Character — where you stand, also on load
     'buildScore',
+    'combatLevel',
+    // This session — hides until you are fighting, then fills in
     'combatStatus',
-    'battleTimer',
     'experiencePerHour',
     'totalProfit',
+    'dps',
+    'deathsPerHour',
+    'luck',
     'timeToLevel',
 ];
 
