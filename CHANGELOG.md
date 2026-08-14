@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fix: tooltip feature was still skipped at the registry level with prices off
+
+3.1.1 fixed the module's own init guard, but the feature registry had a second gate (`customCheck`) that still required "Show 24-hour average market prices" or pin-to-top to be on — so with those off the registry skipped the feature entirely and never called it. The check now defers to the module (`shouldEnable()` = any tooltip section enabled), so profit / expected value / enhancement tooltips draw with prices off.
+
 ### Lab Simulator: "Max Level" → "Single Sim", per-tab run caps with an Uncapped toggle
 
 The tab that sims one selected monster is now called **Single Sim**. Both the Single Sim and Upgrade tabs now carry their own run caps on their control row:
