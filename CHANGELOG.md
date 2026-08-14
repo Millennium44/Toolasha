@@ -105,16 +105,14 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.4.0](https://github.com/Millennium44/Toolasha/compare/v3.3.0...v3.4.0) (2026-08-14)
 
-
 ### Features
 
-* mobile-friendly lab controls and compact action bar ([89ac391](https://github.com/Millennium44/Toolasha/commit/89ac391b44e402707702e8f7c466e7fbf43df659))
-
+- mobile-friendly lab controls and compact action bar ([89ac391](https://github.com/Millennium44/Toolasha/commit/89ac391b44e402707702e8f7c466e7fbf43df659))
 
 ### Documentation
 
-* note tradable-range band is a bounded ~10% approximation ([ac649ab](https://github.com/Millennium44/Toolasha/commit/ac649ab71ece287665d182177f5b0ca1c9b32e10))
-* update stale "2%" market-tax notes to 5% ([cc7e37a](https://github.com/Millennium44/Toolasha/commit/cc7e37a0f276eb63b6685d0002d78267eaccacda))
+- note tradable-range band is a bounded ~10% approximation ([ac649ab](https://github.com/Millennium44/Toolasha/commit/ac649ab71ece287665d182177f5b0ca1c9b32e10))
+- update stale "2%" market-tax notes to 5% ([cc7e37a](https://github.com/Millennium44/Toolasha/commit/cc7e37a0f276eb63b6685d0002d78267eaccacda))
 
 ## [3.3.0](https://github.com/Millennium44/Toolasha/compare/v3.2.1...v3.3.0) (2026-08-14)
 
