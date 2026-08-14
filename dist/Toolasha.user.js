@@ -21,13 +21,13 @@
 // @require      https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js
 // @require      https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js
 // @require      https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0/dist/chartjs-plugin-datalabels.min.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@f437ba096e2fa1fafed66793fd62aa23da78c3e6/dist/libraries/toolasha-core.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@f437ba096e2fa1fafed66793fd62aa23da78c3e6/dist/libraries/toolasha-utils.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@f437ba096e2fa1fafed66793fd62aa23da78c3e6/dist/libraries/toolasha-sim.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@f437ba096e2fa1fafed66793fd62aa23da78c3e6/dist/libraries/toolasha-market.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@f437ba096e2fa1fafed66793fd62aa23da78c3e6/dist/libraries/toolasha-actions.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@f437ba096e2fa1fafed66793fd62aa23da78c3e6/dist/libraries/toolasha-combat.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@f437ba096e2fa1fafed66793fd62aa23da78c3e6/dist/libraries/toolasha-ui.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@a686e6745e33bde8c679ead4226fbf71841cc1a7/dist/libraries/toolasha-core.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@a686e6745e33bde8c679ead4226fbf71841cc1a7/dist/libraries/toolasha-utils.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@a686e6745e33bde8c679ead4226fbf71841cc1a7/dist/libraries/toolasha-sim.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@a686e6745e33bde8c679ead4226fbf71841cc1a7/dist/libraries/toolasha-market.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@a686e6745e33bde8c679ead4226fbf71841cc1a7/dist/libraries/toolasha-actions.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@a686e6745e33bde8c679ead4226fbf71841cc1a7/dist/libraries/toolasha-combat.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@a686e6745e33bde8c679ead4226fbf71841cc1a7/dist/libraries/toolasha-ui.js
 // ==/UserScript==
 // Note: Combat Sim auto-import requires Tampermonkey for cross-domain storage. Not available on Steam (use manual clipboard copy/paste instead).
 
@@ -362,7 +362,10 @@
                 category: 'Market',
                 module: Market.tooltipPrices,
                 async: true,
-                customCheck: () => config.getSetting('itemTooltip_prices') || config.getSetting('itemTooltip_pinTop'),
+                // Start the feature when ANY tooltip section is on, not just
+                // prices/pin-to-top — otherwise the registry skips it and never
+                // calls initialize for a profit/EV/enhancement-only setup.
+                customCheck: () => Market.tooltipPrices.shouldEnable(),
             },
             {
                 key: 'expectedValueCalculator',
@@ -951,6 +954,14 @@
                 category: 'Combat',
                 module: Combat.portraitDps,
                 async: false,
+            },
+            {
+                key: 'partyProfileButton',
+                name: 'Party Profile Button',
+                category: 'Combat',
+                module: Combat.partyProfileButton,
+                async: false,
+                customCheck: () => config.getSetting('combatProfileButton'),
             },
             { key: 'combatStats', name: 'Combat Stats', category: 'Combat', module: Combat.combatStats, async: false },
             {
