@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### CI: harden the release publish so large release notes can't break it
+
+The release workflow read the version's notes out of `CHANGELOG.md` with an `awk` that only stopped at the next `## [x.y.z]`, so the whole Fork Changelog (which sits above the version entries) bled into 3.0.0's notes — ~240 KB — and `git commit -m "$notes"` overflowed the OS argument limit, failing the publish to GreasyFork. The notes now stop at the next `##` or the first non-release-please `###`, and the userscript commit is written with `git commit -F` (a file) so notes of any size are safe. Added a `workflow_dispatch` `publish_version` input to re-publish a specific version through the same pipeline without cutting a new release.
+
 ### Combat Profit: "Tax" button renamed to "Moopass", plus a real sale-tax toggle
 
 The panel's "Tax" toggle was actually the weekly **MooPass** cowbell cost, so it's renamed to match (the button and the "Pay the MooPass" card). A new **"Tax"** toggle now subtracts the **market sale tax** from combat income — netted at the source (`calculateIncome`, coin untaxed / cowbell 18% / else 5%), so the Daily Income stat, the Combat Profit panel, and the sim-vs-measured calibration all read post-tax. On by default; a remembered choice under the old "Tax" name migrates to Moopass.
