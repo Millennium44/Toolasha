@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat lab sim: precision is now adjustable from the sim panel
+
+The Monte-Carlo win-rate precision (`labyrinthSimPrecision`) was only reachable from Settings even though it drives the Max Level tab's sim. Added a "Precision ±%" input to the sim's run-control row (0.1–10, same knob the labyrinth tile calculator already exposes) so it can be tuned in place; it reads and writes the one shared setting, so all three stay in step.
+
 ### Fix: stop the "Inventory Badge Manager failed to start" false alarm
 
 Its health check reported failure whenever the inventory was on screen but not yet priced — a normal "not yet" (the price badges render asynchronously, and don't render at all if the price-badge provider is off), most visible on a marketplace/mobile open. It now confirms health only when a priced container exists and otherwise stands down, never reporting failure (the real badge output is already health-checked by Inventory Badge Prices). No behaviour change to the badges themselves; just no more spurious startup notice.

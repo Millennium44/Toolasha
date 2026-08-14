@@ -727,6 +727,12 @@ class LabSimUI {
             </label>
             <input id="mwi-labsim-threshold" type="number" min="1" max="100" value="${config.getSettingValue('labyrinthRecommendTargetRate', 70)}" style="width:44px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
             <span style="color:#888; font-size:12px;">%</span>
+            <span style="width:1px; height:16px; background:#333; margin:0 2px;"></span>
+            <label style="display:flex; align-items:center; gap:4px; color:#888;" title="How tightly to pin each fight's win rate down before its sim stops, in percentage points. A settled fight reaches it in a few hundred trials; one near a coin toss needs thousands. Lower is more accurate but slower.">
+                Precision ±
+                <input id="mwi-labsim-precision" type="number" min="0.1" max="10" step="0.5" value="${Math.min(10, Math.max(0.1, Number(config.getSettingValue('labyrinthSimPrecision', 1))))}" style="width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
+                <span style="font-size:12px;">%</span>
+            </label>
         `;
 
         const maxLevelProgress = document.createElement('div');
@@ -1191,6 +1197,15 @@ class LabSimUI {
             const levelInput = this.panel.querySelector('#mwi-labsim-level');
             levelInput.disabled = e.target.checked;
             levelInput.style.opacity = e.target.checked ? '0.4' : '1';
+        });
+        // Precision is read live from the setting at sim time (see _onSimulate),
+        // so persisting the input's value is all it takes for the next run — and
+        // the same knob in Settings and the labyrinth tile calculator stays in
+        // step, since all three read and write the one setting.
+        this.panel.querySelector('#mwi-labsim-precision').addEventListener('change', (e) => {
+            const n = Math.min(10, Math.max(0.1, Number(e.target.value) || 1));
+            e.target.value = String(n);
+            config.setSettingValue('labyrinthSimPrecision', n);
         });
 
         // Upgrade listeners
