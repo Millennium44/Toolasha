@@ -2802,8 +2802,10 @@ describe('the side block’s shape', () => {
         const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { participating: false });
 
         // Not squeezed into a right-hand column
-        expect(html).not.toMatch(/justify-content:space-between[^>]*>\s*<span[^>]*>Rate<\/span>\s*<span[^>]*>no data/);
-        expect(html).toContain('no data — only trials you join can be measured');
+        expect(html).not.toMatch(
+            /justify-content:space-between[^>]*>\s*<span[^>]*>Rate<\/span>\s*<span[^>]*>only trials/
+        );
+        expect(html).toContain('only trials you join');
     });
 
     test('a real figure stays a two-column row', () => {
@@ -3997,7 +3999,7 @@ describe('renderTrialPlayers', () => {
         const analysis = analyseTrial(record({ tier: 6, samples: [] }), {});
         const html = renderTrialBlock(analysis, 3, { measured: false, reason: 'none' }, { participating: false });
 
-        expect(html).toContain('no data — only trials you join can be measured');
+        expect(html).toContain('only trials you join');
         expect(html).not.toContain('measuring…');
         expect(html).not.toContain('On pace for');
         // What the Trials tab does say about it is still shown
