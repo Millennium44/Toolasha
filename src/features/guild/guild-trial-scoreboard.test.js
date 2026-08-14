@@ -139,6 +139,30 @@ describe('scoreboardRows', () => {
         expect(scoreboardRows(breakdown(), 'damage').rows.some((row) => row.name === 'Ada')).toBe(false);
     });
 
+    test('game-reported rows carry the measured delta, for the on-screen comparison', () => {
+        // The game credited Tib 500k; the stream measured 600k — 20% over.
+        const modalStats = [
+            { name: 'Tib', damage: 500_000, healing: 0, damageTaken: 0 },
+            { name: 'Moo', damage: 400_000, healing: 0, damageTaken: 0 },
+        ];
+        const { rows, source } = scoreboardRows(breakdown(), 'damage', modalStats);
+        expect(source).toBe('game');
+        const tib = rows.find((row) => row.name === 'Tib');
+        expect(tib.value).toBe(500_000);
+        expect(tib.measuredValue).toBe(600_000);
+        expect(tib.measuredDeltaPct).toBeCloseTo(20, 6);
+    });
+
+    test('the wire stats are preferred over the scraped modal', () => {
+        const report = breakdown({
+            encounter: 'badger',
+            trialNames: ['Trial Badger'],
+            reported: { Tib: { damage: 500_000, healing: 0, taken: 0 } },
+        });
+        const stats = modalStatsForBreakdown(report, { getCombatStats: () => [{ name: 'Ghost', damage: 1 }] });
+        expect(stats).toEqual([{ name: 'Tib', damage: 500_000, healing: 0, damageTaken: 0 }]);
+    });
+
     test('the healing tab is the same shape from the support tally', () => {
         const { rows, total } = scoreboardRows(breakdown(), 'healing');
 
