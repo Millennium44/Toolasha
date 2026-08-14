@@ -12,7 +12,7 @@ The Upgrade tab now carries the same run controls as Single Sim — **Precision*
 
 ### Combat: "Profile" button on party members (opt-in)
 
-New setting "Combat: Profile button on party members" (off by default). When on, clicking another player's unit in group/party/dungeon combat adds a **Profile** button to the battle-unit popup's tab row (next to Battle Info / Stats) that opens their profile via the `/profile` chat command — so you no longer have to detour through "My Party". Shown for other players only; needs the chat window open. The popup is located by its tab labels and the player by the "name - Lv.N" header (hashed classes aren't relied on).
+New setting "Combat: Profile button on party members" (off by default). When on, clicking another player's unit in group/party/dungeon combat adds a **Profile** button to the battle-unit popup's tab row (next to Battle Info / Stats) that opens their profile directly via the game's own `handleViewProfile` handler — so you no longer have to detour through "My Party", and it works whether or not chat is open (falling back to the `/profile` chat command only if that handler is ever missing). Shown for other players only. The popup is located by its tab labels and the player by the "name - Lv.N" header (hashed classes aren't relied on).
 
 ### Fix: tooltip feature was still skipped at the registry level with prices off
 
