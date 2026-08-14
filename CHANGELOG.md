@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Simulator: "Max Level" tab renamed to "Single Sim", with uncappable run limits
+
+The tab that sims one selected monster is now called **Single Sim**. Its run row gains two controls next to Precision: **Max fights** (the trial cap, previously hardcoded at 20000) and **Max hrs** (the simulated-time ceiling for this tab) — each **0 = unlimited**, so a run can be told to keep going until the precision target is met. Both persist as settings and only affect the Single Sim tab; the live labyrinth tile calculator and the Upgrade tab keep their own ceilings.
+
 ### Fix: item tooltip went fully blank when "market prices" was turned off
 
 The whole tooltip module (prices, profit, expected value, enhancement path/milestones, ability status, gathering) was gated at startup on only `itemTooltip_prices` or pin-to-top being on, so anyone who turned market prices off but left profit/EV/enhancement on got a bare game tooltip with none of the Toolasha sections — the DOM observer never started. Init and the two "anything to do?" guards now key off _any_ enabled tooltip feature, and market data loads whenever a price-consuming section is on. Turning prices off now hides just the price line, as intended.

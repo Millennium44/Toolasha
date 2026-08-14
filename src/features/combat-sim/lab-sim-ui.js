@@ -1,7 +1,7 @@
 /**
  * Lab Sim UI
  * Floating panel for configuring and running labyrinth simulations.
- * Four tabs: Configure (editor + crate selectors), Max Level, Upgrade, Skilling.
+ * Four tabs: Configure (editor + crate selectors), Single Sim, Upgrade, Skilling.
  */
 
 import config from '../../core/config.js';
@@ -592,7 +592,7 @@ class LabSimUI {
         `;
         tabBar.innerHTML = `
             <button id="mwi-labsim-tab-configure" style="${tabStyle(true)}">Configure</button>
-            <button id="mwi-labsim-tab-maxlevel" style="${tabStyle(false)}">Max Level</button>
+            <button id="mwi-labsim-tab-maxlevel" style="${tabStyle(false)}">Single Sim</button>
             <button id="mwi-labsim-tab-upgrade" style="${tabStyle(false)}">Upgrade</button>
             <button id="mwi-labsim-tab-skilling" style="${tabStyle(false)}">Skilling</button>
         `;
@@ -732,6 +732,15 @@ class LabSimUI {
                 Precision ±
                 <input id="mwi-labsim-precision" type="number" min="0.1" max="10" step="0.5" value="${Math.min(10, Math.max(0.1, Number(config.getSettingValue('labyrinthSimPrecision', 1))))}" style="width:48px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
                 <span style="font-size:12px;">%</span>
+            </label>
+            <span style="width:1px; height:16px; background:#333; margin:0 2px;"></span>
+            <label style="display:flex; align-items:center; gap:4px; color:#888;" title="Stop the run after at most this many fights, whatever the precision. 0 = unlimited: keep going until precision is met (can be slow for a near-coin-toss room).">
+                Max fights
+                <input id="mwi-labsim-maxfights" type="number" min="0" step="1000" value="${Math.max(0, parseInt(config.getSettingValue('labyrinthSimMaxTrials', 20000)) || 0)}" style="width:64px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
+            </label>
+            <label style="display:flex; align-items:center; gap:4px; color:#888;" title="Simulated-time ceiling for the run, in hours. Precision usually ends it first. 0 = unlimited: only precision and the max-fights cap can stop it.">
+                Max hrs
+                <input id="mwi-labsim-maxhours" type="number" min="0" step="1" value="${Math.max(0, parseInt(config.getSettingValue('labyrinthSimMaxHours', 3)) || 0)}" style="width:52px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 4px; font-size:12px; text-align:center;">
             </label>
         `;
 
@@ -1106,7 +1115,7 @@ class LabSimUI {
         status.id = 'mwi-labsim-status';
         status.style.cssText =
             'padding:6px 14px; color:#555; font-size:11px; border-top:1px solid #1a1a1a; flex-shrink:0; text-align:center;';
-        status.textContent = 'Select a monster in Configure, then use Max Level or Upgrade to simulate.';
+        status.textContent = 'Select a monster in Configure, then use Single Sim or Upgrade to simulate.';
 
         // Assemble
         this.panel.appendChild(header);
@@ -1206,6 +1215,18 @@ class LabSimUI {
             const n = Math.min(10, Math.max(0.1, Number(e.target.value) || 1));
             e.target.value = String(n);
             config.setSettingValue('labyrinthSimPrecision', n);
+        });
+        // Max fights / Max hours are read live at sim time (see _onSimulate);
+        // 0 = unlimited. Persist so the choice survives a refresh.
+        this.panel.querySelector('#mwi-labsim-maxfights').addEventListener('change', (e) => {
+            const n = Math.max(0, parseInt(e.target.value) || 0);
+            e.target.value = String(n);
+            config.setSettingValue('labyrinthSimMaxTrials', n);
+        });
+        this.panel.querySelector('#mwi-labsim-maxhours').addEventListener('change', (e) => {
+            const n = Math.max(0, parseInt(e.target.value) || 0);
+            e.target.value = String(n);
+            config.setSettingValue('labyrinthSimMaxHours', n);
         });
 
         // Upgrade listeners
@@ -2040,10 +2061,16 @@ class LabSimUI {
 
         const monsterHrid = this.panel.querySelector('#mwi-labsim-monster')?.value;
         const roomLevel = parseInt(this.panel.querySelector('#mwi-labsim-level')?.value) || 100;
-        const hours = Math.min(
-            10000,
-            Math.max(1, parseInt(this.panel.querySelector('#mwi-labsim-hours')?.value) || 10)
-        );
+
+        // Single Sim run caps (both 0 = unlimited). The trial cap replaces the
+        // old hardcoded 20000; the time cap replaces the Configure "Hours" input
+        // for this tab. When uncapped, fall back to a ceiling high enough that
+        // only precision (or the other cap) can end the run — a finite sentinel
+        // keeps the engine's stop rule and the progress/ETA math well-defined.
+        const maxFightsCap = Math.max(0, parseInt(this.panel.querySelector('#mwi-labsim-maxfights')?.value) || 0);
+        const maxHoursCap = Math.max(0, parseInt(this.panel.querySelector('#mwi-labsim-maxhours')?.value) || 0);
+        const maxTrials = maxFightsCap > 0 ? maxFightsCap : Number.MAX_SAFE_INTEGER;
+        const hours = maxHoursCap > 0 ? maxHoursCap : 1e6;
 
         if (!monsterHrid) {
             this._setStatus('Select a monster first.');
@@ -2162,7 +2189,8 @@ class LabSimUI {
                         crates,
                         hours,
                         // Same rule as the tile badges: stop once the win rate
-                        // is pinned down, with Hours as the ceiling
+                        // is pinned down, with Max hrs as the time ceiling and
+                        // Max fights as the trial cap (both 0 = unlimited above)
                         precision: {
                             targetHalfWidth:
                                 Math.min(
@@ -2170,7 +2198,7 @@ class LabSimUI {
                                     Math.max(0.1, Number(config.getSettingValue('labyrinthSimPrecision', 1)))
                                 ) / 100,
                             minTrials: 100,
-                            maxTrials: 20000,
+                            maxTrials,
                         },
                         communityBuffs,
                         labyrinthCombatBuffs,
