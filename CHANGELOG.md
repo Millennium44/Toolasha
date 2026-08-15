@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth auto-calc: stop the bar looping, and move the toggle inline
+
+- Auto-calc no longer re-runs the whole floor (refilling the progress bar) every time the game repaints the grid or our own badge draw trips the observer. An auto pass is now gated on a fingerprint of the rooms + gear + precision; when nothing that changes a result has changed, it silently restores any badges a re-render wiped from cache instead of re-simming.
+- The **Auto-calc** toggle now sits inline with the other controls instead of stranded on its own row below the full-width progress bar.
+
 ### Fix: the labyrinth "Enable auto-calc" button actually toggles the setting
 
 The new auto-calc button wrote the setting with `setSettingValue` (which sets `.value`), but `labyrinthAutoCalcTiles` is a checkbox read back as `.isTrue` — so the write never reached the read and the button did nothing. It now uses `setSetting`.
