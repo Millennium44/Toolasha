@@ -103,6 +103,24 @@ describe('describeCraft', () => {
         expect(craft.inputs).toEqual([{ itemHrid: CHEESE, quantityPerUnit: 1.5 }]);
     });
 
+    test('skipProcessing buys processed intermediates instead of making them', () => {
+        // Mark cheese as a material-conversion (processing) action. Left to
+        // itself the planner crafts cheese at 20, so a hat is 3 × 20 / 2 = 30.
+        game.data.actionDetailMap['/actions/cheesesmithing/cheese'].category =
+            '/action_categories/cheesesmithing/material';
+        expect(describeCraft(HAT).unitCost).toBe(30);
+
+        // Directed to buy processed materials, cheese is bought at 100, so the
+        // hat costs 3 × 100 / 2 = 150 — the "direct craft off bought materials".
+        expect(describeCraft(HAT, { skipProcessing: true }).unitCost).toBe(150);
+    });
+
+    test('timeCostPerHour folds crafting time into the unit cost', () => {
+        const free = describeCraft(CHEESE).unitCost;
+        const timed = describeCraft(CHEESE, { timeCostPerHour: 3600 }).unitCost;
+        expect(timed).toBeGreaterThan(free);
+    });
+
     test('efficiency divides the time, and the yield divides it again', () => {
         // 10s at +100% efficiency is 5s an action, two hats an action
         expect(describeCraft(HAT).secondsPerUnit).toBeCloseTo(2.5, 9);
