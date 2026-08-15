@@ -14,6 +14,7 @@
 
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
+import storage from '../../core/storage.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 import { buildGameDataPayload } from '../combat-sim/combat-sim-adapter.js';
@@ -25,8 +26,11 @@ import { downloadFile } from '../../utils/csv-export.js';
 const SETTING_KEY = 'labyrinthMonsterStatCheck';
 const PANEL_ID = 'toolasha-monster-stat-check';
 const PANEL_KEY = 'monsterStatCheck';
-/** Discrepancy records kept per session, deduped by monster+room, oldest evicted. */
+/** Discrepancy records kept, deduped by monster+room, oldest evicted. */
 const MAX_HISTORY = 100;
+/** Where the log persists across refreshes. */
+const STORE_NAME = 'labyrinth';
+const STORE_KEY = 'monsterStatCheckLog';
 
 const VERDICT_STYLE = {
     match: { glyph: '✓', color: '#6fce7f', label: 'match' },
@@ -178,21 +182,52 @@ class MonsterStatCheckPanel {
         while (this.history.size > MAX_HISTORY) {
             this.history.delete(this.history.keys().next().value);
         }
+        this._persist();
     }
 
     /**
-     * Keys in paging order: discrepancies first (newest first), then the clean
-     * views (newest first). So paging surfaces the mismatches before anything
-     * else, and a click still lands wherever its own entry sits.
+     * Keys in paging order: discrepancies first (newest first by capture time),
+     * then the clean views (newest first). So paging surfaces the mismatches
+     * before anything else, and the ordering is by time rather than insertion
+     * order — robust to entries restored from storage arriving out of order.
      * @returns {string[]}
      */
     _orderedKeys() {
         const entries = [...this.history.entries()];
-        const newestFirst = (list) => list.map(([k]) => k).reverse();
-        return [
-            ...newestFirst(entries.filter(([, s]) => s.hasMismatch)),
-            ...newestFirst(entries.filter(([, s]) => !s.hasMismatch)),
-        ];
+        const byTimeDesc = (a, b) => (b[1].recordedAt || 0) - (a[1].recordedAt || 0);
+        const sortedKeys = (predicate) =>
+            entries
+                .filter(([, s]) => predicate(s))
+                .sort(byTimeDesc)
+                .map(([k]) => k);
+        return [...sortedKeys((s) => s.hasMismatch), ...sortedKeys((s) => !s.hasMismatch)];
+    }
+
+    /** Save the log and the store-mode choice so a refresh keeps them. */
+    _persist() {
+        try {
+            const payload = { mode: this.storeMode, entries: [...this.history.values()] };
+            Promise.resolve(storage.set(STORE_KEY, payload, STORE_NAME)).catch(() => {});
+        } catch {
+            /* storage unavailable — the log simply stays in-memory */
+        }
+    }
+
+    /** Restore a persisted log on start, without clobbering anything just clicked. */
+    async _loadPersisted() {
+        try {
+            const saved = await storage.get(STORE_KEY, STORE_NAME, null);
+            if (!saved) return;
+            if (saved.mode === 'all' || saved.mode === 'discrepancies') this.storeMode = saved.mode;
+            for (const entry of saved.entries || []) {
+                if (!entry?.hrid) continue;
+                const key = `${entry.hrid}|${entry.roomLevel}`;
+                if (!this.history.has(key)) this.history.set(key, entry);
+            }
+            if (this.container && this.displayed) this._render();
+        } catch (error) {
+            console.error('[MonsterStatCheck] Failed to load persisted log:', error);
+        }
     }
 
     /** Page through recorded views. dir −1 is previous (Up), +1 is next (Down). */
@@ -208,10 +243,11 @@ class MonsterStatCheckPanel {
         this._render();
     }
 
-    /** Wipe the session log, keeping the current view on screen. */
+    /** Wipe the log, keeping the current view on screen. */
     _clearHistory() {
         this.history.clear();
         this.viewKey = null;
+        this._persist();
         this._render();
     }
 
@@ -223,6 +259,7 @@ class MonsterStatCheckPanel {
                 if (!s.hasMismatch) this.history.delete(k);
             }
         }
+        this._persist();
         this._render();
     }
 
@@ -641,6 +678,9 @@ function initialize() {
         fetchHandler = handleFetched;
         webSocketHook.on('battle_unit_fetched', fetchHandler);
     }
+
+    // Restore the log saved from an earlier session so the panel opens with it.
+    panel._loadPersisted();
 
     // Turning the setting off mid-session should take the panel away without a
     // refresh. Turning it on relies on the registry initialising the feature.
