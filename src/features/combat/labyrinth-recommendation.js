@@ -352,8 +352,12 @@ export const recommendationMethods = {
         const effLevel = this.getEffectiveLevel(roomHrid);
         if (Number.isFinite(effLevel) && Number.isFinite(rec.threshold)) {
             const room = Math.floor(effLevel + rec.threshold - 1);
-            lines.push(`At ${rec.threshold >= 0 ? '+' : ''}${rec.threshold}: room ${room} — the hardest room you still fight`);
-            lines.push(`  a room is skipped once it's ≥${rec.threshold} above you (≥${effLevel + rec.threshold}), so ${room} is the top`);
+            lines.push(
+                `At ${rec.threshold >= 0 ? '+' : ''}${rec.threshold}: room ${room} — the hardest room you still fight`
+            );
+            lines.push(
+                `  a room is skipped once it's ≥${rec.threshold} above you (≥${effLevel + rec.threshold}), so ${room} is the top`
+            );
             const result = room > 0 ? this.computeSkillingClear(roomHrid, room) : null;
             if (result) {
                 const bonus = Number(result.skillLevelBonus) || 0;

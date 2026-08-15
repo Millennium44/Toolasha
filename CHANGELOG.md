@@ -9,7 +9,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 ### Lab Sim combat crates default to equipped too; recommendation & breakdown tooltips spell out the working
 
 - The **combat** sim's tea/coffee/food dropdowns had the same hardcoded-Expert bug as the skilling tab — so a fight was scored with an Expert coffee crate's **+15 combat levels** the character may not own. They now default to the equipped crates (manual pick still opts out), same as skilling.
-- The Automation-tab **recommendation badge** now has a full hover breakdown for skilling rooms — the room the recommended trigger maps to (and *why* it's `trigger − 1` above you), the effective level, the success formula, the clear, and the crate tiers — matching the Lab Sim's row breakdown.
+- The Automation-tab **recommendation badge** now has a full hover breakdown for skilling rooms — the room the recommended trigger maps to (and _why_ it's `trigger − 1` above you), the effective level, the success formula, the clear, and the crate tiers — matching the Lab Sim's row breakdown.
 - Both breakdowns now **name the crate tiers** driving the numbers and explain the `− 1` in words (a room is skipped once it's ≥ trigger above you, so the hardest you still fight is one below).
 
 ### Lab Sim skilling: crates default to what you have equipped, plus a per-row calc breakdown
@@ -173,6 +173,17 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 ### Combat sim nets the market sale tax off drop revenue
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
+
+## [3.6.0](https://github.com/Millennium44/Toolasha/compare/v3.5.2...v3.6.0) (2026-08-15)
+
+### Features
+
+- craft arbitrage adapter forwards skipProcessing and timeCostPerHour ([db197f7](https://github.com/Millennium44/Toolasha/commit/db197f78af8e6ee1cdf3c094cc75955e71633e2c))
+- default combat sim crates to equipped; richer recommendation & breakdown tooltips ([141879b](https://github.com/Millennium44/Toolasha/commit/141879b6ba4d0c17b40675566a0b201d8626fbe2))
+
+### Bug Fixes
+
+- Lab Sim skilling crates default to equipped, add per-row calc breakdown ([dfe4f3a](https://github.com/Millennium44/Toolasha/commit/dfe4f3abb31c66a5d97bd6c8b19713550d6be8a2))
 
 ## [3.5.2](https://github.com/Millennium44/Toolasha/compare/v3.5.1...v3.5.2) (2026-08-15)
 
