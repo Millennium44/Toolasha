@@ -1525,29 +1525,58 @@ function escapeSquashingRows(root, start) {
     return anchor;
 }
 
+/** The shared full-width row that carries a section's forecast boxes beneath its tiles */
+const BOX_ROW_CLASS = 'mwi-trial-box-row';
+
 /**
- * Lay a block out across a multi-column grid it lives in, on its own row.
- *
- * `span N` rather than `1 / -1`: the latter counts explicit tracks only and
- * collapses to a single cell when the game declares none. Grid auto-placement
- * fills by `order` then source order, so `order: 1` defers every box past the
- * order-0 tiles — the tiles keep their row(s) and the boxes stack full-width
- * beneath, rather than a box slotting into the next cell beside its tile.
- *
- * @param {Element} parent - The grid the block is (or will be) a child of
- * @param {Element} block - The block to lay out
- * @returns {number} Columns spanned, or 0 when the parent is not a multi-column grid
+ * Column count of a multi-column grid, or 0 when the element is not one.
+ * @param {Element} el - The candidate grid
+ * @returns {number} Columns, or 0
  */
-function spanAcrossGrid(parent, block) {
-    const style = typeof getComputedStyle === 'function' ? getComputedStyle(parent) : null;
+function gridColumnCount(el) {
+    const style = typeof getComputedStyle === 'function' ? getComputedStyle(el) : null;
     if (!(style?.display || '').includes('grid')) return 0;
     const tracks = style?.gridTemplateColumns || '';
     const columns = tracks && tracks !== 'none' ? tracks.trim().split(/\s+/).length : 0;
-    if (columns <= 1) return 0;
-    block.style.gridColumn = `1 / span ${columns}`;
-    block.style.width = '100%';
-    block.style.order = '1';
-    return columns;
+    return columns > 1 ? columns : 0;
+}
+
+/**
+ * Drop a forecast box into its section's shared row beneath the tiles.
+ *
+ * One box per tile as a grid item does not give a row underneath: a section
+ * whose tiles do not fill the last grid row (combat has two trials in a
+ * four-column grid) would see the boxes flow into the empty cells *beside* the
+ * tiles. So every box in a grid goes into a single Toolasha-owned row instead —
+ * a full-width cell (`1 / span N`) deferred past the tiles (`order: 1`) and laid
+ * out as a wrapping flex row, so the tiles keep their row(s) and the boxes sit
+ * in a compact row underneath whatever the tile count.
+ *
+ * The layout that matters lives on this container, which the panel owns and the
+ * per-block style reset never touches — so it holds where a grid property set on
+ * the box itself was wiped on the next pass, dropping the box back beside its tile.
+ *
+ * @param {Element} grid - The multi-column grid the tiles live in
+ * @param {number} columns - Its column count, for the span
+ * @param {Element} block - The forecast box
+ */
+function placeInBoxRow(grid, columns, block) {
+    let row = null;
+    for (const child of grid.children) {
+        if (child.classList?.contains(BOX_ROW_CLASS)) {
+            row = child;
+            break;
+        }
+    }
+    if (!row) {
+        row = grid.ownerDocument.createElement('div');
+        row.className = BOX_ROW_CLASS;
+        row.style.cssText =
+            `grid-column:1 / span ${columns}; order:1; width:100%;` +
+            'display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; margin-top:8px;';
+        grid.appendChild(row);
+    }
+    row.appendChild(block);
 }
 
 export function placeTrialBlock(root, card, block, name = '') {
@@ -1577,14 +1606,17 @@ export function placeTrialBlock(root, card, block, name = '') {
             card.insertAdjacentElement('afterend', block);
             return 'after-card';
         }
+        // The container we escaped to can itself be the tab's multi-column tile
+        // grid — each trial tile is a single-column grid nested inside it — so a
+        // box landing here belongs in the shared row beneath the tiles, not the
+        // next cell beside one.
+        const outerColumns = gridColumnCount(outer);
+        if (outerColumns) {
+            placeInBoxRow(outer, outerColumns, block);
+            return 'row';
+        }
         block.style.width = '100%';
         block.style.flexBasis = '100%';
-        // The container we escaped to can itself be a multi-column grid — each
-        // trial tile is a single-column grid nested inside the tab's tile grid —
-        // and there width:100% fills only one 126px cell, dropping the block into
-        // the next column beside the tile. Span every column and defer past the
-        // tiles so the boxes take their own rows underneath instead.
-        spanAcrossGrid(outer, block);
         // Placement can run again on the same block when a remount strands it,
         // and a heading per placement is a stutter of headings
         if (name && !block.querySelector('.mwi-trial-block-heading')) {
@@ -1595,9 +1627,10 @@ export function placeTrialBlock(root, card, block, name = '') {
     };
 
     if (display.includes('grid')) {
-        if (spanAcrossGrid(container, block) > 0) {
-            card.insertAdjacentElement('afterend', block);
-            return 'spanned';
+        const columns = gridColumnCount(container);
+        if (columns) {
+            placeInBoxRow(container, columns, block);
+            return 'row';
         }
         return afterContainer();
     }
@@ -1655,6 +1688,12 @@ function trialBlockHeading(name) {
  * @returns {boolean} True while the placement still holds
  */
 function blockNearAnchor(block, anchor, root = null) {
+    // A box that has been gathered into its section's shared row is placed — its
+    // home is that row, not a spot beside the tile, so adjacency to the tile is
+    // the wrong test and would re-place (and re-append) it on every pass.
+    if (block?.parentElement?.classList?.contains(BOX_ROW_CLASS)) {
+        return !root || root.contains(block);
+    }
     if (!anchor?.isConnected) return true; // nothing to re-anchor against
     if (root) {
         const escaped = escapeSquashingRows(root, anchor);
@@ -2614,6 +2653,13 @@ class GuildTrials {
             if (key && drawn.has(key)) continue;
             if (key) this.blockHtml.delete(key);
             block.remove();
+        }
+
+        // A section's shared box row that lost its last box is an empty
+        // full-width cell left in the tile grid; drop it so it stops reserving
+        // a row underneath the tiles
+        for (const row of scope.querySelectorAll(`.${BOX_ROW_CLASS}`)) {
+            if (!row.querySelector(`.${CSS_CLASS}`)) row.remove();
         }
     }
 
