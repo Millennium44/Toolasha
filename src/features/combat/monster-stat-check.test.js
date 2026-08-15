@@ -202,6 +202,44 @@ describe('buildComparison against an engine-built monster', () => {
         expect(result.hasMismatch).toBe(false);
     });
 
+    test('with the effect applied to the sim, the debuffed stat matches', () => {
+        // The buffed-sim path: inject the same pestilent-shot armour shred into
+        // the sim, and the game's debuffed armour should line up — a match, not a
+        // flag, because both sides now carry the effect.
+        seed();
+        const monster = new Monster(HRID, 0, 200, true);
+        monster.combatBuffs = {
+            '/buff_uniques/pestilent_shot_armor': { typeHrid: '/buff_types/armor', ratioBoost: -0.199, flatBoost: 0 },
+        };
+        monster.updateCombatDetails();
+        const gameUnit = gameUnitMatching(monster.combatDetails, {
+            combatBuffMap: { '/buff_uniques/pestilent_shot_armor': {} },
+        });
+
+        const result = buildComparison(gameUnit, monster.combatDetails, { simBuffed: true });
+        const armor = result.groups[0].rows.find((r) => r.key === 'totalArmor');
+        expect(armor.verdict).toBe('match');
+        expect(result.hasMismatch).toBe(false);
+        expect(result.simBuffed).toBe(true);
+    });
+
+    test('in buffed mode a real gap is a mismatch, not a debuff', () => {
+        // Effects are already in the sim, so a remaining gap is unexplained — it
+        // must read as a mismatch even though an effect is present.
+        seed();
+        const monster = new Monster(HRID, 0, 200, true);
+        monster.updateCombatDetails();
+        const gameUnit = gameUnitMatching(monster.combatDetails, {
+            combatBuffMap: { '/buff_uniques/pestilent_shot_armor': {} },
+        });
+        gameUnit.combatDetails.totalArmor = monster.combatDetails.totalArmor * 0.8;
+
+        const result = buildComparison(gameUnit, monster.combatDetails, { simBuffed: true });
+        const armor = result.groups[0].rows.find((r) => r.key === 'totalArmor');
+        expect(armor.verdict).toBe('mismatch');
+        expect(result.hasMismatch).toBe(true);
+    });
+
     test('a gap with no buffs is flagged as a mismatch', () => {
         seed();
         const monster = new Monster(HRID, 0, 200, true);
