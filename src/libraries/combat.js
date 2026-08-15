@@ -30,6 +30,7 @@ import labyrinthTracker from '../features/combat/labyrinth-tracker.js';
 import labyrinthBestLevel from '../features/combat/labyrinth-best-level.js';
 import labyrinthShopPrices from '../features/combat/labyrinth-shop-prices.js';
 import labyrinthClearRate from '../features/combat/labyrinth-clear-rate.js';
+import monsterStatCheckUI from '../features/combat/monster-stat-check-ui.js';
 import labyrinthRoomLogs from '../features/combat/labyrinth-room-logs.js';
 import labyrinthCapture from '../features/combat/labyrinth-capture.js';
 import * as combatSimIntegration from '../features/combat/combat-sim-integration.js';
@@ -100,6 +101,7 @@ toolashaRoot.Combat = {
     labyrinthBestLevel,
     labyrinthShopPrices,
     labyrinthClearRate,
+    monsterStatCheckUI,
     labyrinthRoomLogs,
     labyrinthCapture,
     combatSimIntegration,
@@ -143,6 +145,7 @@ toolashaRoot.Debug = {
     ...labyrinthCapture,
     labAccuracy: () => labyrinthClearRate.labAccuracy(),
     labRooms: () => labyrinthClearRate.labRooms(),
+    monsterStatCheck: () => monsterStatCheckUI.dumpLast(),
     guildXp: () => guildXPTracker.debugState(),
 };
 
