@@ -155,6 +155,14 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.5.1](https://github.com/Millennium44/Toolasha/compare/v3.5.0...v3.5.1) (2026-08-15)
+
+### Bug Fixes
+
+- labyrinth auto-calc button writes the checkbox setting correctly ([681ade5](https://github.com/Millennium44/Toolasha/commit/681ade53a2695dda8f63289b61e23f3c8739934b))
+- labyrinth mobile control bar and tile badge polish ([dcff2e7](https://github.com/Millennium44/Toolasha/commit/dcff2e7286b9f3fcb7741f692dc4c616cc28b893))
+- sim skilling clear rate reads success and gathering gear stats ([80d6132](https://github.com/Millennium44/Toolasha/commit/80d6132afc39c9620235194c923a8be51639b8a2))
+
 ## [3.5.0](https://github.com/Millennium44/Toolasha/compare/v3.4.0...v3.5.0) (2026-08-14)
 
 ### Features
