@@ -153,6 +153,40 @@ describe('debouncedCallback', () => {
         vi.useRealTimers();
     });
 
+    test('maxWait fires the callback under churn that never lets the timer settle', () => {
+        // Without maxWait, a mutation every 40ms against a 50ms delay resets the
+        // trailing timer forever and the callback starves — the In Progress tab's
+        // ticking bar. maxWait bounds that: once the oldest un-fired mutation
+        // crosses 200ms, the next one fires instead of deferring again.
+        vi.useFakeTimers();
+        const callback = vi.fn();
+        domObserver.register('Starve', callback, { debounce: true, debounceDelay: 50, debounceMaxWait: 200 });
+        const handler = domObserver.handlers.find((h) => h.name === 'Starve');
+
+        for (let elapsed = 0; elapsed <= 240; elapsed += 40) {
+            domObserver.debouncedCallback(handler, document.createElement('div'), { elapsed });
+            vi.advanceTimersByTime(40);
+        }
+
+        expect(callback).toHaveBeenCalledTimes(1);
+        vi.useRealTimers();
+    });
+
+    test('without maxWait the same churn starves the callback entirely', () => {
+        vi.useFakeTimers();
+        const callback = vi.fn();
+        domObserver.register('StarveNoMax', callback, { debounce: true, debounceDelay: 50 });
+        const handler = domObserver.handlers.find((h) => h.name === 'StarveNoMax');
+
+        for (let elapsed = 0; elapsed <= 240; elapsed += 40) {
+            domObserver.debouncedCallback(handler, document.createElement('div'), { elapsed });
+            vi.advanceTimersByTime(40);
+        }
+
+        expect(callback).not.toHaveBeenCalled();
+        vi.useRealTimers();
+    });
+
     test('unregistering drops the pending record instead of stranding it', () => {
         vi.useFakeTimers();
         const callback = vi.fn();

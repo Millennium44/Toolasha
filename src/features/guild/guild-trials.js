@@ -1792,13 +1792,17 @@ class GuildTrials {
         // a tile summary nor a level, so there is no narrower class this could
         // wait for without being wrong about one of the two tabs again — and
         // `findTrialsRoot` costs two `querySelector`s to answer "not this tab".
-        // Debounced, so React's render burst is one call rather than hundreds —
-        // which is also why it cannot be the sampler: a bar that ticks every
-        // second re-arms the debounce timer forever and the callback starves.
+        // Debounced, so React's render burst is one call rather than hundreds.
+        // `maxWait` is what keeps the debounce from starving on the In Progress
+        // tab: its bar and countdown re-arm the 100ms timer without pause, which
+        // used to defer first paint all the way to the next 5s sampler tick — the
+        // "slowest tab to overlay". Bounded to 400ms, the tab now draws within
+        // that of opening whatever the churn, while steady state still coalesces.
         this.unregister.push(
             domObserver.onClass('GuildTrials', 'GuildPanel_', () => this._onTab(findTrialsRoot()), {
                 debounce: true,
                 debounceDelay: 100,
+                debounceMaxWait: 400,
             })
         );
 

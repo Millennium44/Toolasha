@@ -14,6 +14,7 @@ class DOMObserver {
         this.isObserving = false;
         this.debounceTimers = new Map(); // Track debounce timers per handler
         this.debouncedLatest = new Map(); // Latest {node, mutation} per handler — O(1) retention
+        this.debounceMaxStart = new Map(); // When the oldest un-fired mutation arrived, for maxWait
         this.DEFAULT_DEBOUNCE_DELAY = 50; // 50ms default delay
     }
 
@@ -75,36 +76,56 @@ class DOMObserver {
     debouncedCallback(handler, node, mutation) {
         const handlerName = handler.name;
         const delay = handler.debounceDelay || this.DEFAULT_DEBOUNCE_DELAY;
+        const maxWait = handler.debounceMaxWait || 0;
 
         // Only the newest node/mutation is ever handed to the callback, so overwrite
         // rather than append: under churn faster than the debounce delay the timer never
         // fires, and an array would retain every intermediate node and MutationRecord.
         this.debouncedLatest.set(handlerName, { node, mutation });
 
-        // Clear existing timer
+        const invoke = () => {
+            if (this.debounceTimers.has(handlerName)) {
+                clearTimeout(this.debounceTimers.get(handlerName));
+                this.debounceTimers.delete(handlerName);
+            }
+            this.debounceMaxStart.delete(handlerName);
+
+            const latest = this.debouncedLatest.get(handlerName);
+            this.debouncedLatest.delete(handlerName);
+
+            // Only the final state matters (e.g. a task list rewritten several times)
+            if (!latest) return;
+            if (performanceMonitor.enabled) {
+                const start = performance.now();
+                handler.callback(latest.node, latest.mutation);
+                performanceMonitor.record(`dom:${handler.name}`, performance.now() - start);
+            } else {
+                handler.callback(latest.node, latest.mutation);
+            }
+        };
+
+        // maxWait bounds the trailing debounce. A burst arriving faster than
+        // `delay` keeps resetting the timer, so a handler watching a container
+        // that never stops mutating — a live panel with a bar ticking every
+        // second — would starve and never run. Once the oldest un-fired mutation
+        // is `maxWait` old, the next one fires the callback instead of deferring
+        // it again, so first paint still happens under continuous churn. Opt-in:
+        // maxWait 0 (the default) is the exact prior trailing-only behaviour.
+        if (maxWait > 0) {
+            const startedAt = this.debounceMaxStart.get(handlerName);
+            if (startedAt === undefined) {
+                this.debounceMaxStart.set(handlerName, Date.now());
+            } else if (Date.now() - startedAt >= maxWait) {
+                invoke();
+                return;
+            }
+        }
+
+        // Clear existing timer and set a new one
         if (this.debounceTimers.has(handlerName)) {
             clearTimeout(this.debounceTimers.get(handlerName));
         }
-
-        // Set new timer
-        const timer = setTimeout(() => {
-            const latest = this.debouncedLatest.get(handlerName);
-            this.debouncedLatest.delete(handlerName);
-            this.debounceTimers.delete(handlerName);
-
-            // Only the final state matters (e.g. a task list rewritten several times)
-            if (latest) {
-                if (performanceMonitor.enabled) {
-                    const start = performance.now();
-                    handler.callback(latest.node, latest.mutation);
-                    performanceMonitor.record(`dom:${handler.name}`, performance.now() - start);
-                } else {
-                    handler.callback(latest.node, latest.mutation);
-                }
-            }
-        }, delay);
-
-        this.debounceTimers.set(handlerName, timer);
+        this.debounceTimers.set(handlerName, setTimeout(invoke, delay));
     }
 
     /**
@@ -120,6 +141,7 @@ class DOMObserver {
         this.debounceTimers.forEach((timer) => clearTimeout(timer));
         this.debounceTimers.clear();
         this.debouncedLatest.clear();
+        this.debounceMaxStart.clear();
 
         this.isObserving = false;
     }
@@ -131,6 +153,7 @@ class DOMObserver {
      * @param {Object} options - Optional configuration
      * @param {boolean} options.debounce - Enable debouncing (default: false)
      * @param {number} options.debounceDelay - Debounce delay in ms (default: 50)
+     * @param {number} options.debounceMaxWait - Max ms the debounce may defer under continuous churn before firing (default: 0 = unbounded)
      * @returns {Function} Unregister function
      */
     register(name, callback, options = {}) {
@@ -139,6 +162,7 @@ class DOMObserver {
             callback,
             debounce: options.debounce || false,
             debounceDelay: options.debounceDelay,
+            debounceMaxWait: options.debounceMaxWait,
         };
         this.handlers.push(handler);
 
@@ -154,6 +178,7 @@ class DOMObserver {
                     this.debounceTimers.delete(name);
                     this.debouncedLatest.delete(name);
                 }
+                this.debounceMaxStart.delete(name);
             }
         };
     }
