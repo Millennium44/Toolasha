@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim: uptime harness — the monster's incoming damage, per ability, real vs sim
+
+Closes the last diagnostic gap: **timing**. The stat check and blind sim confirm the sim's stats and buff production; neither can see how often a monster casts or how long its buffs stay up — which is what a "monster deals more damage than predicted" gap comes down to. `Toolasha.Debug.uptimeHarness()` decomposes the monster's incoming damage per ability from a tick capture (attack-counter rises named by the ability prepared the tick before; health falling with no attack is damage-over-time) and compares it against the sim's own per-ability attack histogram (already in `SimResult.attacks`, no engine change). The comparison is unit-free — cast share, damage share, mean damage per cast — so a `sim-under` on one ability points straight at a cadence or buff-uptime gap for that ability. Arm a tick capture, fight the monster, then run it.
+
 ### Monster stat check: the game's live stats next to the sim's
 
 New opt-in diagnostic (off by default, under Combat Features). With it on, clicking a monster in combat opens a floating panel that reads the game's live combat stats from the `battle_unit_fetched` message and compares them field-by-field against what the combat sim computes for the same monster — armour, the three resistances, evasion and accuracy ratings, max hit, max HP. Room level is backed out of the unit's scaled defence so the sim scales identically. This is the tool that would have caught the resistance-wipe bug on sight.

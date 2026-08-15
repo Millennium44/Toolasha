@@ -14,6 +14,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { buildGameDataPayload, getCommunityBuffs } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation, runBlindBuffProbe } from '../combat-sim/combat-sim-runner.js';
+import { extractMonsterAttacks, summarizeSimAttacks, compareIncoming } from './labyrinth-uptime-harness.js';
 import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
@@ -126,6 +127,39 @@ export const simCacheMethods = {
             console.error('[LabyrinthSimCache] Blind buff probe failed:', error);
             return { produced: [], ran: false };
         }
+    },
+
+    /**
+     * Decompose the monster's incoming damage per ability, real (from a tick
+     * capture) vs sim, to localise a timing/uptime gap. Runs a normal sim (many
+     * fights, for a good histogram) with the current build, reads its per-ability
+     * attack tallies, and compares shares against the captured fight.
+     * @param {string} monsterHrid
+     * @param {number} roomLevel
+     * @param {Array<Object>} ticks - A tick capture's `ticks`
+     * @returns {Promise<{comparison: Object, real: Object, sim: Object}|null>}
+     */
+    async uptimeHarness(monsterHrid, roomLevel, ticks) {
+        const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
+        const dto = this.buildLabyrinthPlayerDTO(loadoutId);
+        if (!dto) return null;
+        const playerHrid = dto.hrid || 'player1';
+        const simResult = await runLabyrinthSimulation({
+            gameData: buildGameDataPayload(),
+            playerDTOs: [dto],
+            zoneHrid: '/actions/combat/fly',
+            monsterHrid,
+            roomLevel,
+            crates: this.getCrateHrids(),
+            hours: this.getSimHours(),
+            precision: this.getSimStopRule(),
+            communityBuffs: getCommunityBuffs(),
+            labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
+            fullAbilities: this.labyrinthFullAbilities(),
+        });
+        const real = extractMonsterAttacks(ticks);
+        const sim = summarizeSimAttacks(simResult?.attacks?.[monsterHrid]?.[playerHrid]);
+        return { comparison: compareIncoming(real, sim), real, sim };
     },
 
     /**
