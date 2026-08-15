@@ -1418,6 +1418,79 @@ export function soleTileOfKind(tiles, kind) {
 }
 
 /**
+ * Fold the cards of a multi-enemy wave into a single tile.
+ *
+ * A guild combat wave can put several enemy cards on screen that share a name —
+ * two "Trial Badger"s, each with its own health bar — and they are one encounter
+ * with one HP pool to clear. Keyed by name (`tileKey` is kind + name), they
+ * otherwise collide: `recordTileSample` drops all but the card sampled last, so
+ * the clear is priced off one bar while the forecast's own wave total — summed
+ * across the wave's monsters from client data — describes both. The two halves
+ * disagree, and the current tier reads at roughly 1/N of its real HP.
+ *
+ * Summing the bar readings position-wise across same-key cards (index 0 is the
+ * health bar the clear is measured from) makes the *measured* remaining and rate
+ * describe the whole wave, so they line up with the forecast's summed base HP and
+ * every figure downstream — kill time, tier pace, party DPS — is a wave figure.
+ *
+ * Same-key cards only ever appear together on the live wave; the Trials tab shows
+ * one setup card per trial, so this is a no-op there.
+ *
+ * @param {Array<Object>} tiles - Cards from `readTrialTiles`
+ * @returns {Array<Object>} One tile per wave, its readings summed across its cards
+ */
+export function mergeWaveTiles(tiles) {
+    if (!Array.isArray(tiles) || tiles.length < 2) return tiles || [];
+
+    const groups = new Map();
+    const order = [];
+    for (const tile of tiles) {
+        const key = tileKey(tile);
+        if (!groups.has(key)) {
+            groups.set(key, [tile]);
+            order.push(key);
+        } else {
+            groups.get(key).push(tile);
+        }
+    }
+
+    return order.map((key) => {
+        const group = groups.get(key);
+        if (group.length === 1) return group[0];
+
+        // Sum the bar readings position-wise: each card carries a health bar
+        // (index 0, what the clear is priced from) and a mana bar, so the wave's
+        // health is the sum of its enemies' health.
+        const width = Math.max(...group.map((tile) => tile.readings?.length || 0));
+        const readings = [];
+        for (let index = 0; index < width; index += 1) {
+            let current = 0;
+            let max = 0;
+            let seen = false;
+            for (const tile of group) {
+                const reading = tile.readings?.[index];
+                if (!reading) continue;
+                seen = true;
+                current += reading.current || 0;
+                max += reading.max || 0;
+            }
+            if (seen) readings.push({ current, max });
+        }
+
+        return {
+            ...group[0],
+            readings,
+            // A wave is cleared only when every enemy in it is down
+            completed: group.every((tile) => tile.completed),
+            // The cards folded in, kept for anything that wants the members rather
+            // than the summed pool (the block still anchors to the first)
+            waveCards: group.map((tile) => tile.element),
+            waveSize: group.length,
+        };
+    });
+}
+
+/**
  * Do something to the page without losing the reader's place.
  *
  * Inserting an element into a scrolling container makes the browser re-lay the
@@ -2076,7 +2149,11 @@ class GuildTrials {
                 return;
             }
 
-            const tiles = readTrialTiles(root);
+            // A multi-enemy wave draws one card per enemy under the same name;
+            // fold them into a single wave tile so the clear is priced off the
+            // whole HP pool rather than one bar (two "Trial Badger"s otherwise
+            // collide on their key and the record keeps only one).
+            const tiles = mergeWaveTiles(readTrialTiles(root));
 
             // One recursive text walk of the panel, shared by both readers below:
             // status and personal stats read the same root, and walking it twice
