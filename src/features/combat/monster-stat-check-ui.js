@@ -353,6 +353,46 @@ class MonsterStatCheckPanel {
         return Array.from(this.history.values());
     }
 
+    /** Build a plain-text rendering of the view on screen, for the clipboard. */
+    _copyText(snapshot) {
+        if (!snapshot) return '';
+        const view =
+            snapshot[this.simMode] || snapshot.buffed || snapshot.baseline || (snapshot.groups ? snapshot : null);
+        const lines = [];
+        const room = snapshot.roomLevel > 0 ? ` — Room ${snapshot.roomLevel}` : '';
+        lines.push(`${snapshot.name || 'Monster'}${room}  (sim: ${this.simMode})`);
+        if (view) {
+            for (const g of view.groups) {
+                lines.push(`[${g.group}]`);
+                for (const r of g.rows) {
+                    const d = r.deltaPct == null ? '' : ` (${r.deltaPct >= 0 ? '+' : ''}${r.deltaPct.toFixed(1)}%)`;
+                    lines.push(`  ${r.label}: game ${fmt(r.game)} / sim ${fmt(r.sim)}${d} — ${r.verdict}`);
+                }
+            }
+        }
+        if (snapshot.buffs?.length) lines.push(`Active effects: ${snapshot.buffs.join(', ')}`);
+        if (snapshot.blind?.rows?.length) {
+            lines.push('Blind sim — buffs it produces (game / sim):');
+            for (const r of snapshot.blind.rows) {
+                lines.push(`  ${r.name}: ${this._blindBoost(r.game)} / ${this._blindBoost(r.sim)} — ${r.verdict}`);
+            }
+        }
+        return lines.join('\n');
+    }
+
+    /** Copy the current view to the clipboard, with a brief ✓ on the button. */
+    _copyToClipboard(btn) {
+        const text = this._copyText(this.displayed);
+        if (!text || !navigator.clipboard) return;
+        navigator.clipboard
+            .writeText(text)
+            .then(() => {
+                btn.textContent = '✓';
+                setTimeout(() => (btn.textContent = '⧉'), 1200);
+            })
+            .catch((error) => console.error('[MonsterStatCheck] Copy failed:', error));
+    }
+
     _ensureBuilt() {
         if (this.container) return;
 
@@ -360,14 +400,20 @@ class MonsterStatCheckPanel {
         container.id = PANEL_ID;
         container.style.cssText = `
             position: fixed;
-            top: 15%;
+            top: 8%;
             left: 50%;
             transform: translateX(-50%);
             z-index: ${config.Z_FLOATING_PANEL};
             width: 340px;
+            min-width: 260px;
+            min-height: 140px;
             display: flex;
             flex-direction: column;
-            max-height: 70vh;
+            /* Height grows to fit the content (header + body), so a full readout
+               shows without a scrollbar; capped just under the viewport so it can
+               never run off screen, and resizable from the corner. */
+            max-height: 94vh;
+            resize: both;
             background: rgba(10, 10, 20, 0.96);
             border: 2px solid ${config.COLOR_ACCENT};
             border-radius: 8px;
@@ -397,6 +443,17 @@ class MonsterStatCheckPanel {
 
         const controls = document.createElement('div');
         controls.style.cssText = 'display: flex; align-items: center; flex-shrink: 0;';
+
+        const copyBtn = document.createElement('button');
+        copyBtn.textContent = '⧉';
+        copyBtn.title = 'Copy the results on screen to the clipboard (as text)';
+        copyBtn.style.cssText = `background: none; border: none; color: #aaa; font-size: 1rem; line-height: 1; cursor: pointer; padding: 0 4px;`;
+        copyBtn.addEventListener('mouseenter', () => (copyBtn.style.color = '#fff'));
+        copyBtn.addEventListener('mouseleave', () => (copyBtn.style.color = '#aaa'));
+        copyBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._copyToClipboard(copyBtn);
+        });
 
         const exportBtn = document.createElement('button');
         exportBtn.textContent = '⭳';
