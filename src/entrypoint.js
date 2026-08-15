@@ -957,6 +957,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'labyrinthMonsterStatCheck',
+            name: 'Monster Stat Check',
+            category: 'Combat',
+            module: Combat.monsterStatCheckUI,
+            async: false,
+        },
+        {
             key: 'labyrinthRoomLogs',
             name: 'Labyrinth Room Logs',
             category: 'Combat',

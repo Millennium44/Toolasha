@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Monster stat check: the game's live stats next to the sim's
+
+New opt-in diagnostic (off by default, under Combat Features). With it on, clicking a monster in combat opens a floating panel that reads the game's live, buffed combat stats from the `battle_unit_fetched` message and compares them field-by-field against what the combat sim computes for the same monster — armour, the three resistances, evasion and accuracy ratings, max hit, max HP. Each row is flagged: a match, a gap the active buffs explain (game higher than the sim's static baseline), or a real modelling mismatch. Room level is backed out of the unit's scaled defence so the sim scales identically. `Toolasha.Debug.monsterStatCheck()` dumps the last comparison as a table. This is the tool that would have caught the resistance-wipe bug on sight.
+
 ### Lab Sim: labyrinth monsters keep their resistance/armour self-buffs
 
 The room-level rescale of a labyrinth monster's armour and resistances reassigned them from base stats, wiping any resistance/armour **buff** the parent had folded in — so a monster's self-buffs (the Cyclops's Toughness and Guardian Aura) never mitigated anything and the sim over-credited your damage per hit (measured ~24% high, hit rate spot-on — a mitigation gap, not accuracy). The rescale now re-applies those buff boosts on top of the scaled base. Labyrinth clear-chance predictions for monsters that buff their own defence will drop toward reality; monsters without such buffs are unchanged.
