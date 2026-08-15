@@ -33,6 +33,7 @@ import labyrinthClearRate from '../features/combat/labyrinth-clear-rate.js';
 import monsterStatCheckUI from '../features/combat/monster-stat-check-ui.js';
 import labyrinthRoomLogs from '../features/combat/labyrinth-room-logs.js';
 import labyrinthCapture from '../features/combat/labyrinth-capture.js';
+import { captureFile } from '../features/combat/labyrinth-tick-capture.js';
 import * as combatSimIntegration from '../features/combat/combat-sim-integration.js';
 import { constructExportObject } from '../features/combat/combat-sim-export.js';
 import { constructMilkonomyExport } from '../features/combat/milkonomy-export.js';
@@ -147,6 +148,37 @@ toolashaRoot.Debug = {
     labRooms: () => labyrinthClearRate.labRooms(),
     monsterStatCheck: () => monsterStatCheckUI.dumpLast(),
     monsterStatCheckLog: () => monsterStatCheckUI.logEntries(),
+    // Decompose the monster's incoming damage per ability, captured fight vs sim,
+    // to localise a timing/uptime gap. Arm a tick capture, fight, then run this.
+    uptimeHarness: async () => {
+        const capture = captureFile();
+        if (!capture?.ticks?.length) {
+            console.warn('[UptimeHarness] No tick capture — arm a capture and fight the monster first.');
+            return null;
+        }
+        const { monsterHrid, roomLevel } = capture.context || {};
+        if (!monsterHrid) {
+            console.warn('[UptimeHarness] The capture has no monster context.');
+            return null;
+        }
+        const result = await labyrinthClearRate.uptimeHarness(monsterHrid, roomLevel ?? 0, capture.ticks);
+        if (result) {
+            console.log(`[UptimeHarness] ${monsterHrid} room ${roomLevel} — incoming damage per ability, real vs sim`);
+            console.table(
+                result.comparison.rows.map((row) => ({
+                    ability: row.ability,
+                    'real cast%': row.real ? Math.round(row.real.castSharePct) : '—',
+                    'sim cast%': row.sim ? Math.round(row.sim.castSharePct) : '—',
+                    'real dmg%': row.real ? Math.round(row.real.dmgSharePct) : '—',
+                    'sim dmg%': row.sim ? Math.round(row.sim.dmgSharePct) : '—',
+                    'real mean': row.real ? Math.round(row.real.meanDmgPerCast) : '—',
+                    'sim mean': row.sim ? Math.round(row.sim.meanDmgPerCast) : '—',
+                    verdict: row.verdict,
+                }))
+            );
+        }
+        return result;
+    },
     guildXp: () => guildXPTracker.debugState(),
 };
 
