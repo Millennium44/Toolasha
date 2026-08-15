@@ -4648,7 +4648,11 @@ class LabSimUI {
     /** @private */
     _applyEquippedSkillingCrates() {
         this._applyEquippedCratesTo(
-            { tea: '#mwi-labsim-skilling-tea', coffee: '#mwi-labsim-skilling-coffee', food: '#mwi-labsim-skilling-food' },
+            {
+                tea: '#mwi-labsim-skilling-tea',
+                coffee: '#mwi-labsim-skilling-coffee',
+                food: '#mwi-labsim-skilling-food',
+            },
             '_skillingCratesUserSet'
         );
     }
@@ -4889,11 +4893,15 @@ class LabSimUI {
                 // Explain the − 1: the trigger is the gap at which skipping starts,
                 // so the hardest room you actually enter is one below it.
                 lines.push(`Room ${room} — the hardest room you still fight`);
-                lines.push(`  trigger ${skip}: rooms ${basis + skip}+ (≥${skip} above you) are skipped, so ${room} is the top`);
+                lines.push(
+                    `  trigger ${skip}: rooms ${basis + skip}+ (≥${skip} above you) are skipped, so ${room} is the top`
+                );
             }
         }
         const bonus = Number(r.skillLevelBonus) || 0;
-        lines.push(`Effective level ${r.effectiveLevel} = base ${r.baseLevel}${bonus ? ` + ${+bonus.toFixed(2)} buffs` : ''}`);
+        lines.push(
+            `Effective level ${r.effectiveLevel} = base ${r.baseLevel}${bonus ? ` + ${+bonus.toFixed(2)} buffs` : ''}`
+        );
         const delta = Number.isFinite(r.levelDelta) ? r.levelDelta : r.effectiveLevel - room;
         lines.push(`Level gap: ${r.effectiveLevel} − ${room} = ${delta >= 0 ? '+' : ''}${delta}`);
         const lb = Number(r.levelBonus) || 0;
@@ -4932,7 +4940,10 @@ class LabSimUI {
         const usesSkipLevels = roomLevel && typeof roomLevel === 'object';
         const clearRate = labyrinthClearRate() || bundledLabyrinthClearRate;
         // The crate tiers behind every row's numbers, for the breakdown's crate line
-        const crateSummary = this._getSkillingCrates().map((h) => this._crateTierLabel(h)).filter(Boolean).join(' · ');
+        const crateSummary = this._getSkillingCrates()
+            .map((h) => this._crateTierLabel(h))
+            .filter(Boolean)
+            .join(' · ');
         // Hover text carries newlines and the odd math symbol — encode for an attr
         const attr = (text) =>
             String(text)
