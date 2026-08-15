@@ -2286,6 +2286,11 @@ class LabSimUI {
                         },
                         communityBuffs,
                         labyrinthCombatBuffs,
+                        // Build the monster with its full tier-gated kit (stun,
+                        // defence shred, self-buffs), same as the tile badges and
+                        // calibration replay — a bare auto-attacker over-predicts
+                        // the clear, which was rosier here than the tile it sits on.
+                        fullAbilities: true,
                         // Never a task fight. A labyrinth monster is not your
                         // combat task, so taskDamage pays nothing here — the
                         // panel used to offer a checkbox for it, which could

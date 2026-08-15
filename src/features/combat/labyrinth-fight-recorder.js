@@ -94,6 +94,8 @@ function persist() {
  * @param {number} attempt.playerHpEnd - Your health on the last tick seen
  * @param {number} [attempt.monsterDamage] - Gross damage you dealt (summed drops)
  * @param {number} [attempt.playerDamageTaken] - Gross damage you took (summed drops)
+ * @param {number} [attempt.playerHits] - Your swings that landed on the monster
+ * @param {number} [attempt.playerMisses] - Your swings that missed
  * @param {string} [attempt.fingerprint] - The gear the fight was fought in
  */
 export function noteAttempt(attempt) {
@@ -107,6 +109,8 @@ export function noteAttempt(attempt) {
 
     const grossDealt = Number(attempt.monsterDamage);
     const grossTaken = Number(attempt.playerDamageTaken);
+    const playerHits = Number(attempt.playerHits);
+    const playerMisses = Number(attempt.playerMisses);
 
     attempts.push({
         monsterHrid: String(attempt.monsterHrid),
@@ -122,6 +126,10 @@ export function noteAttempt(attempt) {
         playerHpEnd: Math.max(0, Number(attempt.playerHpEnd) || 0),
         monsterDamage: Number.isFinite(grossDealt) && grossDealt >= 0 ? grossDealt : null,
         playerDamageTaken: Number.isFinite(grossTaken) && grossTaken >= 0 ? grossTaken : null,
+        // Null on recordings made before hit-rate was tracked, so the replay can
+        // tell "no swing data" from "zero hits landed"
+        playerHits: Number.isFinite(playerHits) && playerHits >= 0 ? playerHits : null,
+        playerMisses: Number.isFinite(playerMisses) && playerMisses >= 0 ? playerMisses : null,
         fingerprint: attempt.fingerprint ? String(attempt.fingerprint) : null,
     });
 
@@ -170,7 +178,7 @@ export function recordingFile(extra = {}) {
     return {
         ...extra,
         format: 'toolasha-labyrinth-recording',
-        version: 1,
+        version: 2,
         exportedAt: Date.now(),
         attempts: recordedAttempts(),
     };

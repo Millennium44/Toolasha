@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim: calibration replay splits the damage gap into accuracy vs mitigation
+
+The passive fight recorder now keeps your per-fight swing counts (hits and misses, from the same `dmgCounter` the wire already sends), so the calibration replay can decompose a "sim over-credits your damage" verdict into **hit rate** (accuracy vs the monster's evasion) and **damage per hit** (what each landed hit does after mitigation). When one is off, the diagnosis now names it — fewer hits than predicted points at an unmodelled evasion buff (Guardian Aura); softer hits point at an unmodelled resistance/armour buff (Toughness). Both rates read off the sim's own attack tally, so no engine change. Older recordings without swing counts simply skip the two new rows.
+
+### Lab Sim & Find Max Level build the monster with its full ability kit
+
+The interactive **Lab Sim** run and **Find Max Level** were fighting a bare auto-attacker — they never passed `fullAbilities`, so tier-gated abilities (stun, defence shred, self-buffs) were dropped, unlike the tile badges and the calibration replay, which already build the full kit. Both now pass it too, so an interactive sim can no longer read rosier than the tile it sits on.
+
 ### Guild trials: forecast box beside the fight, and the damage feed sees the whole wave
 
 - On the In Progress fight view a multi-enemy wave now attaches its forecast box the same way a single boss does — full-width below the enemy grid — instead of a narrow mirrored cell or an absolutely-positioned box that overflowed the panel and added a horizontal scrollbar. (A single boss is a one-column grid that already took the below-the-grid path; a wave is a multi-column grid, which diverged into the tile-row logic.)

@@ -131,6 +131,10 @@ export async function findMaxLabyrinthLevel(params, onProgress) {
             precision: { decideAgainst: threshold, minTrials: DECISION_MIN_TRIALS, maxTrials: DECISION_MAX_TRIALS },
             communityBuffs,
             labyrinthCombatBuffs,
+            // Build the monster with its full tier-gated kit (stun, defence shred,
+            // self-buffs), same as the tile badges and calibration replay — a
+            // bare auto-attacker over-predicts the max clearable level.
+            fullAbilities: true,
         });
 
         const attempts = simResult.labyAttemptCount || 1;
