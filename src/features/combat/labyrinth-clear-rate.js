@@ -2384,16 +2384,6 @@ class LabyrinthClearRate {
             'flex:0 0 auto; padding:0 8px; height:20px; border:0; border-radius:5px; background:rgba(120,134,160,0.85); ' +
             'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
         if (this._tileControlsCollapsed === undefined) this._tileControlsCollapsed = isMobileMode();
-        const applyCollapsed = () => {
-            const collapsed = this._tileControlsCollapsed;
-            body.style.display = collapsed ? 'none' : 'contents';
-            toggle.textContent = collapsed ? '▸ Labyrinth' : '▾ Labyrinth';
-            toggle.title = collapsed ? 'Show labyrinth controls' : 'Hide labyrinth controls';
-        };
-        toggle.addEventListener('click', () => {
-            this._tileControlsCollapsed = !this._tileControlsCollapsed;
-            applyCollapsed();
-        });
 
         // A one-tap floor calc beside the toggle, so a collapsed bar on a phone
         // can still recalculate without being expanded. Only when auto-calc is
@@ -2401,12 +2391,25 @@ class LabyrinthClearRate {
         const autoCalcOn = () => !!config.getSetting('labyrinthAutoCalcTiles');
         const calcButton = document.createElement('button');
         calcButton.className = `${TILE_CONTROLS_CLASS}-quick-calc`;
-        calcButton.textContent = 'Calc';
         calcButton.title = 'Calculate this floor now';
         calcButton.style.cssText =
             'flex:0 0 auto; padding:0 8px; height:20px; border:0; border-radius:5px; background:#3a88ff; ' +
             'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
         calcButton.addEventListener('click', () => this.runTileCalculation());
+
+        const applyCollapsed = () => {
+            const collapsed = this._tileControlsCollapsed;
+            body.style.display = collapsed ? 'none' : 'contents';
+            toggle.textContent = collapsed ? '▸ Labyrinth' : '▾ Labyrinth';
+            toggle.title = collapsed ? 'Show labyrinth controls' : 'Hide labyrinth controls';
+            // Just a "C" while folded so it fits on the toggle's line on a phone;
+            // the full word once the controls are open and there is room for it.
+            calcButton.textContent = collapsed ? 'C' : 'Calc';
+        };
+        toggle.addEventListener('click', () => {
+            this._tileControlsCollapsed = !this._tileControlsCollapsed;
+            applyCollapsed();
+        });
 
         // In the expanded controls: flip auto-calc on, and the quick button
         // steps aside. Reflects the current setting so it reads right on open.
@@ -2430,8 +2433,13 @@ class LabyrinthClearRate {
         body.appendChild(autoButton);
         syncAuto();
 
-        container.appendChild(toggle);
-        container.appendChild(calcButton);
+        // Toggle and quick-calc share one nowrap line — a flex item of their own,
+        // so a narrow phone bar keeps them together instead of stacking them.
+        const header = document.createElement('span');
+        header.style.cssText = 'display:inline-flex; align-items:center; gap:4px; flex:0 0 auto;';
+        header.appendChild(toggle);
+        header.appendChild(calcButton);
+        container.appendChild(header);
         container.appendChild(body);
         applyCollapsed();
 
@@ -3478,22 +3486,26 @@ class LabyrinthClearRate {
         // shrink the fonts a step on a phone, and let the badge size to its text
         // (max-width capped the box but not the nowrap text inside it) so the
         // colour always wraps the whole reading and it stays within the tile.
+        // On mobile the tile is small, so shrink the fonts a couple of steps and
+        // pin text inflation off — enough that "100% 19s" fits whole. Nothing is
+        // clipped: the earlier ellipsis cut the seconds down to a stray digit, so
+        // the badge sizes to its (now small) text instead of hiding part of it.
         const mobile = isMobileMode();
         const badge = document.createElement('div');
         badge.className = TILE_BADGE_CLASS;
         badge.style.cssText =
             'position:absolute; right:1px; bottom:1px; z-index:9; max-width:calc(100% - 2px); padding:1px 3px; ' +
             'border-radius:3px; box-sizing:border-box; display:flex; align-items:baseline; justify-content:flex-end; gap:2px; ' +
-            'white-space:nowrap; overflow:hidden; color:#fff; text-shadow:0 1px 1px rgba(0,0,0,0.55); pointer-events:auto; ' +
+            'white-space:nowrap; color:#fff; text-shadow:0 1px 1px rgba(0,0,0,0.55); pointer-events:auto; ' +
             '-webkit-text-size-adjust:100%; text-size-adjust:100%; ' +
             `background:${this.getTileBadgeColor(chance)};`;
 
         const chanceSpan = document.createElement('span');
-        chanceSpan.style.cssText = `font-size:${mobile ? 8 : 9}px; font-weight:700; line-height:1; flex:0 0 auto;`;
+        chanceSpan.style.cssText = `font-size:${mobile ? 7 : 9}px; font-weight:700; line-height:1; flex:0 0 auto;`;
         chanceSpan.textContent = `${pct}%`;
 
         const etaSpan = document.createElement('span');
-        etaSpan.style.cssText = `font-size:${mobile ? 7 : 8}px; font-weight:600; line-height:1; opacity:0.95; flex:0 1 auto; overflow:hidden; text-overflow:ellipsis;`;
+        etaSpan.style.cssText = `font-size:${mobile ? 6 : 8}px; font-weight:600; line-height:1; opacity:0.95; flex:0 0 auto;`;
         etaSpan.textContent = this.formatEtaSeconds(result.expectedSeconds ?? result.avgFightSeconds, pct);
 
         badge.appendChild(chanceSpan);

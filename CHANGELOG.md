@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth mobile: tidier collapsed bar and un-clipped tile times
+
+The collapsed control bar now keeps the toggle and quick-calc on one line, with the calc button shrunk to just **C** while folded so it fits. And the clear-chance tile badge no longer clips the seconds to a stray digit on a phone — the fonts step down another notch so "100% 19s" shows whole instead of being cut off.
+
 ### Guild trials: the measured-vs-reported comparison, on screen
 
 The Per-player scoreboard now shows the game's authoritative per-member totals (from the wire, so no need to open the Stats modal and it survives a refresh) with each row carrying **meas ±X%** — how far the plugin's own live measurement ran from the game's figure. The wire stats are preferred over the scraped modal where present.
