@@ -709,13 +709,13 @@ describe('placeTrialBlock', () => {
         return block;
     };
 
-    test('the combat fight view sets the box beside the enemies, in the battle row', () => {
-        // The enemy cards live in a grid inside the monsters area, itself a child
-        // of a flex battle row with room to the right; the box belongs in that
-        // spare width, not in a narrow unit-card cell among the enemies.
+    test('the combat fight view hugs the box against the enemies inside the monsters half', () => {
+        // The enemy cards live in a grid inside the monsters area, which the game
+        // sizes wider than the cards; the box goes in the spare space beside them,
+        // inside the half, not in a narrow unit-card cell among the enemies.
         document.body.innerHTML =
             '<div class="GuildPanel_guildPanel__r">' +
-            '<div id="battle" class="BattlePanel_battleArea__x" style="display:flex">' +
+            '<div class="BattlePanel_battleArea__x" style="display:flex">' +
             '<div id="monsters" class="BattlePanel_monstersArea__y">' +
             '<div id="grid" style="display:grid; grid-template-columns:176px 176px 176px 176px">' +
             '<div id="card" class="BattlePanel_combatUnit__z">Trial Badger</div>' +
@@ -726,10 +726,11 @@ describe('placeTrialBlock', () => {
         const block = newBlock();
 
         expect(placeTrialBlock(root, card, block, 'Trial Badger')).toBe('beside-monsters');
-        // A panel-owned wrapper sitting right after the monsters area in the row
-        const side = document.getElementById('battle').querySelector('.mwi-trial-side-box');
+        // A panel-owned wrapper positioned inside the monsters half, anchored off it
+        const side = monsters.querySelector('.mwi-trial-side-box');
         expect(side).not.toBeNull();
-        expect(monsters.nextElementSibling).toBe(side);
+        expect(side.style.position).toBe('absolute');
+        expect(monsters.style.position).toBe('relative');
         expect(side.contains(block)).toBe(true);
         // Not dropped into the enemy grid
         expect(document.getElementById('grid').querySelector('.mwi-trial-info')).toBeNull();
