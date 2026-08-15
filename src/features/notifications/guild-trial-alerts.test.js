@@ -103,7 +103,11 @@ describe('a trial about to start', () => {
             vi.setSystemTime(now);
             // Seen half an hour out, well beyond the ten-minute lead: nothing yet,
             // and no further readings — the panel is closed from here on
-            guildTrialAlerts.noteTrialStatus({ phase: 'scheduled', startsInMs: 30 * 60_000, trials: ['Cheesesmithing'] });
+            guildTrialAlerts.noteTrialStatus({
+                phase: 'scheduled',
+                startsInMs: 30 * 60_000,
+                trials: ['Cheesesmithing'],
+            });
             expect(game.sent).toEqual([]);
 
             // Time crosses into the lead window with no reading to prompt it

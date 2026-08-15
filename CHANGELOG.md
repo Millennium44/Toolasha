@@ -195,17 +195,37 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
-## [3.6.1](https://github.com/Millennium44/Toolasha/compare/v3.6.0...v3.6.1) (2026-08-15)
+## [3.7.0](https://github.com/Millennium44/Toolasha/compare/v3.6.1...v3.7.0) (2026-08-15)
 
+### Features
+
+- guild trials row layout, drop treasury note, schedule the start alert ([7056fd9](https://github.com/Millennium44/Toolasha/commit/7056fd9714dd2ba848bc735566095b8dfd0157c3))
+- set combat forecast beside the fight; sum the whole wave in the damage feed ([0c22646](https://github.com/Millennium44/Toolasha/commit/0c226469bbdd981c2259a758e0187ae4fc1d0ba2))
 
 ### Bug Fixes
 
-* correct the shipped in-game changelog wording ([3a9994e](https://github.com/Millennium44/Toolasha/commit/3a9994e68ddad3d8094f6c115ec4933ebf9fd515))
+- align trial forecast boxes to the tile columns (four for skilling) ([480c31b](https://github.com/Millennium44/Toolasha/commit/480c31b413400c7e9955b7484be93dfcc6210362))
+- anchor the combat forecast box to the panel so it hugs the enemies at width ([5b87a1c](https://github.com/Millennium44/Toolasha/commit/5b87a1c5e6ba69133276ea3b90dd165f5477f12c))
+- fold multi-enemy combat waves into one HP pool for the clear ([9ebcb9a](https://github.com/Millennium44/Toolasha/commit/9ebcb9ab66809b8984b7a6df9f50ab18ee5ef892))
+- gather trial forecast boxes into a compact row, and stop them reverting ([3fa78c7](https://github.com/Millennium44/Toolasha/commit/3fa78c7fd74c89222c01ea7ce769dc36011d641b))
+- hug the combat forecast box against the enemies inside the monsters half ([4c51f9a](https://github.com/Millennium44/Toolasha/commit/4c51f9a0bdf3709c894ababa896fb8a46c44fa8d))
+- place a multi-enemy fight box below the grid like a single boss, no scroll ([fd4f3b0](https://github.com/Millennium44/Toolasha/commit/fd4f3b04eded6fa55925e1bd7ad6d6551fa961df))
+- span trial forecast boxes across the outer tab grid, not the one-cell tile ([669d758](https://github.com/Millennium44/Toolasha/commit/669d758593ee317934cd861bea34eb1558f835fe))
 
+### Performance Improvements
+
+- bound the trials DOM-observer debounce so the overlay paints fast ([2d07b7b](https://github.com/Millennium44/Toolasha/commit/2d07b7bd8c4ae02c1e3977eb73ce2c68dd26cbf8))
+- lighten the trials render pass — scan, text walk, and squash probe ([47511a1](https://github.com/Millennium44/Toolasha/commit/47511a125902d528ffee9f9975d88491201fe199))
+
+## [3.6.1](https://github.com/Millennium44/Toolasha/compare/v3.6.0...v3.6.1) (2026-08-15)
+
+### Bug Fixes
+
+- correct the shipped in-game changelog wording ([3a9994e](https://github.com/Millennium44/Toolasha/commit/3a9994e68ddad3d8094f6c115ec4933ebf9fd515))
 
 ### Documentation
 
-* scrub companion-script name from the changelog; add the no-naming rule ([5f5dd0a](https://github.com/Millennium44/Toolasha/commit/5f5dd0a1a51413739e5b2c5d5c7a41fe7556770d))
+- scrub companion-script name from the changelog; add the no-naming rule ([5f5dd0a](https://github.com/Millennium44/Toolasha/commit/5f5dd0a1a51413739e5b2c5d5c7a41fe7556770d))
 
 ## [3.6.0](https://github.com/Millennium44/Toolasha/compare/v3.5.2...v3.6.0) (2026-08-15)
 
