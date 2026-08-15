@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fix: Lab Sim skilling clear rates now match the Automation tab
+
+The Lab Sim's Skilling tab was reading only speed/efficiency off your gear, dropping the **success** and **gathering-quantity** stats the live Automation clear-rate reader counts — so the sim's clear% ran low on exactly the skills whose tools carry them (gathering: milking/foraging/woodcutting, and cheesesmithing), while skills without them agreed. The sim now extracts those stats the same way, so the two tabs agree. (Reported by Doobs.)
+
 ### Labyrinth mobile: tidier collapsed bar and un-clipped tile times
 
 The collapsed control bar now keeps the toggle and quick-calc on one line, with the calc button shrunk to just **C** while folded so it fits. And the clear-chance tile badge no longer clips the seconds to a stray digit on a phone — the fonts step down another notch so "100% 19s" shows whole instead of being cut off.

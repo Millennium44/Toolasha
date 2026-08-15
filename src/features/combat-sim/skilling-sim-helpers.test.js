@@ -233,6 +233,18 @@ describe('the equipment side, which the community buffs sit beside', () => {
         '/items/chisel': {
             equipmentDetail: { type: '/equipment_types/crafting_tool', noncombatStats: { craftingSpeed: 0.2 } },
         },
+        '/items/axe': {
+            equipmentDetail: {
+                type: '/equipment_types/woodcutting_tool',
+                noncombatStats: { woodcuttingSpeed: 0.2, woodcuttingSuccess: 0.05, gatheringQuantity: 0.15 },
+            },
+        },
+        '/items/hammer': {
+            equipmentDetail: {
+                type: '/equipment_types/cheesesmithing_tool',
+                noncombatStats: { cheesesmithingSpeed: 0.2, cheesesmithingSuccess: 0.04 },
+            },
+        },
     };
 
     test('a kit reaches the room as a speed and an efficiency, and nothing else', () => {
@@ -243,6 +255,30 @@ describe('the equipment side, which the community buffs sit beside', () => {
         );
 
         expect(buffs.map((b) => b.typeHrid)).toEqual(['/buff_types/action_speed']);
+    });
+
+    test('a gathering tool carries its success and gathering-quantity stats too', () => {
+        const buffs = buildEquipmentBuffsForSkill(
+            { '/equipment_types/woodcutting_tool': { hrid: '/items/axe', enhancementLevel: 0 } },
+            '/action_types/woodcutting',
+            ITEMS
+        );
+
+        const byType = Object.fromEntries(buffs.map((b) => [b.typeHrid, b]));
+        expect(byType['/buff_types/woodcutting_success']).toMatchObject({ ratioBoost: 0.05 });
+        expect(byType['/buff_types/gathering']).toMatchObject({ flatBoost: 0.15 });
+    });
+
+    test('cheesesmithing carries its success stat', () => {
+        const buffs = buildEquipmentBuffsForSkill(
+            { '/equipment_types/cheesesmithing_tool': { hrid: '/items/hammer', enhancementLevel: 0 } },
+            '/action_types/cheesesmithing',
+            ITEMS
+        );
+
+        expect(buffs.find((b) => b.typeHrid === '/buff_types/cheesesmithing_success')).toMatchObject({
+            ratioBoost: 0.04,
+        });
     });
 
     test('so another skill’s tool contributes exactly nothing — which is why it is not simmed', () => {

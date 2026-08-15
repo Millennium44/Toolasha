@@ -5,7 +5,12 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import { parseEquipmentSpeedBonuses, parseEquipmentEfficiencyBonuses } from '../../utils/equipment-parser.js';
+import {
+    parseEquipmentSpeedBonuses,
+    parseEquipmentEfficiencyBonuses,
+    parseEquipmentSuccessBonuses,
+    parseEquipmentGatheringBonuses,
+} from '../../utils/equipment-parser.js';
 
 const PRODUCTION_SKILLS = [
     '/action_types/alchemy',
@@ -203,6 +208,22 @@ export function buildEquipmentBuffsForSkill(editorEquipment, actionTypeHrid, ite
     const efficiencyBonus = parseEquipmentEfficiencyBonuses(equipMap, actionTypeHrid, itemDetailMap);
     if (efficiencyBonus > 0) {
         buffs.push({ typeHrid: '/buff_types/efficiency', flatBoost: efficiencyBonus / 100, ratioBoost: 0 });
+    }
+
+    // Success and gathering gear stats were dropped here, so the sim's clear rate
+    // ran below the live clear-rate reader's on exactly the skills whose tools
+    // carry them — gathering (a success stat plus gatheringQuantity) and
+    // cheesesmithing (a success stat) — while skills without them agreed. Emit
+    // them the same way the live `getLoadoutEquipmentBuffs` does so the two match.
+    const successBonus = parseEquipmentSuccessBonuses(equipMap, actionTypeHrid, itemDetailMap);
+    if (successBonus > 0) {
+        const skillId = actionTypeHrid.replace('/action_types/', '');
+        buffs.push({ typeHrid: `/buff_types/${skillId}_success`, flatBoost: 0, ratioBoost: successBonus });
+    }
+
+    const gatheringBonus = parseEquipmentGatheringBonuses(equipMap, itemDetailMap);
+    if (gatheringBonus > 0) {
+        buffs.push({ typeHrid: '/buff_types/gathering', flatBoost: gatheringBonus, ratioBoost: 0 });
     }
 
     return buffs;
