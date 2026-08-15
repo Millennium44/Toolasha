@@ -91,3 +91,68 @@ describe('Monster ability tier gating', () => {
         expect(monster.abilities.filter(Boolean)).toHaveLength(1);
     });
 });
+
+describe('Labyrinth resistance recompute keeps self-buffs', () => {
+    // The Cyclops has no base fire resistance; its whole fire mitigation is
+    // 0.2*defense plus its Toughness / Guardian Aura self-buffs. The room-level
+    // rescale used to reassign the totals from base stats and wipe those buffs,
+    // so the sim under-mitigated and over-credited the player's damage per hit.
+    const RES_HRID = '/monsters/res_dummy';
+    function seedRes(combatStats = {}) {
+        setGameData({
+            abilityDetailMap: {},
+            combatMonsterDetailMap: {
+                [RES_HRID]: {
+                    enrageTime: 0,
+                    experience: 100,
+                    abilities: [],
+                    combatDetails: {
+                        staminaLevel: 100,
+                        intelligenceLevel: 100,
+                        attackLevel: 100,
+                        meleeLevel: 100,
+                        defenseLevel: 100,
+                        rangedLevel: 100,
+                        magicLevel: 100,
+                        attackInterval: 3e9,
+                        combatStats: {
+                            combatStyleHrids: ['/combat_styles/smash'],
+                            attackInterval: 0,
+                            fireResistance: 0,
+                            armor: 0,
+                            ...combatStats,
+                        },
+                    },
+                },
+            },
+        });
+    }
+
+    test('base fire resistance scales from unscaled defense with no buff', () => {
+        seedRes();
+        const monster = new Monster(RES_HRID, 0, 200);
+        monster.updateCombatDetails();
+        // room 200: defenseLevel 200, base = (0.2 * 100 unscaled + 0) * 2 = 40
+        expect(monster.combatDetails.totalFireResistance).toBeCloseTo(40, 3);
+    });
+
+    test('a flat fire-resistance buff lands on top of the rescaled base', () => {
+        seedRes();
+        const monster = new Monster(RES_HRID, 0, 200);
+        monster.combatBuffs = {
+            toughness: { typeHrid: '/buff_types/fire_resistance', flatBoost: 500, ratioBoost: 0 },
+        };
+        monster.updateCombatDetails();
+        // 40 base + 500 buff — before the fix this read 40, wiping the buff
+        expect(monster.combatDetails.totalFireResistance).toBeCloseTo(540, 3);
+    });
+
+    test('a ratio armour buff scales off the rescaled base', () => {
+        seedRes();
+        const monster = new Monster(RES_HRID, 0, 200);
+        monster.combatBuffs = { guard: { typeHrid: '/buff_types/armor', flatBoost: 0, ratioBoost: 0.5 } };
+        monster.updateCombatDetails();
+        // base armour 40, +50% = 60
+        expect(monster.combatDetails.totalArmor).toBeCloseTo(60, 3);
+    });
+});
