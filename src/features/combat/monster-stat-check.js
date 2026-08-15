@@ -158,31 +158,43 @@ export function classify(deltaPct, hasBuffs) {
 /**
  * Build the full game-vs-sim comparison for a fetched unit.
  *
+ * With `simBuffed`, the sim monster was built with the game's active effects
+ * already applied, so the two sides are compared buffed-against-buffed: a
+ * remaining gap is unexplained *by definition*, so it is classified plainly as
+ * match or mismatch, and the buff/debuff verdicts don't arise. Without it, the
+ * sim is the unbuffed baseline and a gap is read against the active effects —
+ * game high is a buff, game low a debuff, only an effect-less gap a mismatch.
+ *
  * @param {Object} gameUnit - The `unit` from a `battle_unit_fetched` payload
  * @param {Object} simDetails - The sim monster's computed `combatDetails`
+ * @param {Object} [options]
+ * @param {boolean} [options.simBuffed=false] - Whether the sim already carries
+ *   the unit's active effects
  * @returns {{
  *   groups: Array<{group: string, rows: Array<{key,label,game,sim,deltaPct,verdict}>}>,
- *   buffs: string[], styleKey: string, hasMismatch: boolean
+ *   buffs: string[], styleKey: string, hasMismatch: boolean, simBuffed: boolean
  * }}
  */
-export function buildComparison(gameUnit, simDetails) {
+export function buildComparison(gameUnit, simDetails, { simBuffed = false } = {}) {
     const gameDetails = gameUnit?.combatDetails || {};
     const styleKey = styleKeyOf(gameDetails.combatStats);
     const buffs = activeBuffNames(gameUnit?.combatBuffMap);
-    const hasBuffs = buffs.length > 0;
+    // When the sim carries the effects, a gap is not effect-explained — classify
+    // it as a flat mismatch rather than a buff/debuff.
+    const classifyHasBuffs = simBuffed ? false : buffs.length > 0;
     let hasMismatch = false;
 
     const groups = statRows(styleKey).map(({ group, rows }) => ({
         group,
         rows: rows.map(([key, label]) => {
             const compared = compareStat(key, gameDetails, simDetails);
-            const verdict = classify(compared.deltaPct, hasBuffs);
+            const verdict = classify(compared.deltaPct, classifyHasBuffs);
             if (verdict === 'mismatch') hasMismatch = true;
             return { ...compared, label, verdict };
         }),
     }));
 
-    return { groups, buffs, styleKey, hasMismatch };
+    return { groups, buffs, styleKey, hasMismatch, simBuffed };
 }
 
 /**

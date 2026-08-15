@@ -72,8 +72,16 @@ function buildSimMonster(gameUnit) {
         const roomLevel = tier === 0 ? deriveRoomLevel(gameDefense, baseDefense) : 0;
 
         const monster = new Monster(hrid, tier, roomLevel, true);
+        // Apply the unit's live effects to the sim before it computes its stats,
+        // so the comparison is buffed-against-buffed. The game's combatBuffMap
+        // records are the engine's own buff shape — `{ typeHrid, ratioBoost,
+        // flatBoost }` — so they fold into the accuracy, evasion, damage, armour
+        // and resistance ratings exactly as the game's did.
+        const buffMap = gameUnit?.combatBuffMap;
+        const buffApplied = !!(buffMap && typeof buffMap === 'object' && Object.keys(buffMap).length);
+        if (buffApplied) monster.combatBuffs = { ...buffMap };
         monster.updateCombatDetails();
-        return { monster, roomLevel };
+        return { monster, roomLevel, buffApplied };
     } catch (error) {
         console.error('[MonsterStatCheck] Failed to build sim monster:', error);
         return null;
@@ -104,7 +112,7 @@ class MonsterStatCheckPanel {
     showFor(gameUnit) {
         const built = buildSimMonster(gameUnit);
         const simDetails = built?.monster?.combatDetails || null;
-        const comparison = buildComparison(gameUnit, simDetails);
+        const comparison = buildComparison(gameUnit, simDetails, { simBuffed: Boolean(built?.buffApplied) });
         this.last = {
             hrid: gameUnit?.hrid,
             name: gameUnit?.name,
@@ -281,7 +289,7 @@ class MonsterStatCheckPanel {
     _render(gameUnit) {
         const body = this.body;
         body.innerHTML = '';
-        const { roomLevel, groups, buffs, hasMismatch, simBuilt } = this.last;
+        const { roomLevel, groups, buffs, hasMismatch, simBuilt, simBuffed } = this.last;
 
         // Title carries the monster and its room level
         const levelLabel = roomLevel > 0 ? ` — Room ${roomLevel}` : '';
@@ -324,17 +332,25 @@ class MonsterStatCheckPanel {
 
         const buffLine = document.createElement('div');
         if (buffs.length) {
-            buffLine.innerHTML = `<span style="color:#e0b64a;">Active effects:</span> ${buffs.join(', ')}`;
+            const applied = simBuffed ? ' (applied to sim)' : '';
+            buffLine.innerHTML = `<span style="color:#e0b64a;">Active effects${applied}:</span> ${buffs.join(', ')}`;
         } else {
-            buffLine.textContent = 'No active effects — the two columns should match.';
+            buffLine.textContent = 'No active effects — clean baseline; every row should match.';
         }
         footer.appendChild(buffLine);
 
         const legend = document.createElement('div');
         legend.style.cssText = 'margin-top: 4px;';
-        legend.innerHTML = hasMismatch
-            ? '<span style="color:#e56b6b;">⚠ off</span> = a gap with no active effect to explain it — the sim may be wrong here.'
-            : '<span style="color:#e0b64a;">↑ buff</span> / <span style="color:#e0b64a;">↓ debuff</span> = an active effect moved the game off the sim’s unbuffed baseline (expected).';
+        if (simBuffed) {
+            // The sim carries the effects too, so every row is a like-for-like check.
+            legend.innerHTML = hasMismatch
+                ? '<span style="color:#e56b6b;">⚠ off</span> = game and sim disagree with the same effects applied — a real modelling gap.'
+                : 'Sim built with the active effects applied — every row matches, so the sim models this monster and its effects correctly.';
+        } else {
+            legend.innerHTML = hasMismatch
+                ? '<span style="color:#e56b6b;">⚠ off</span> = a gap with no active effect to explain it — the sim may be wrong here.'
+                : 'No active effects, so the sim’s baseline is compared directly.';
+        }
         footer.appendChild(legend);
 
         body.appendChild(footer);
