@@ -892,6 +892,13 @@ class GuildTrialDamage {
      * @param {number} at - Now
      */
     _noteBattleMonsters(monsters, tier, at) {
+        // The sheet keeps one monster as its representative (its per-monster stats
+        // are genuinely single-enemy), but the wave can field several — so the
+        // whole wave's health is accumulated alongside, for the ceiling that
+        // otherwise counts one enemy per tier and reads half a two-badger wave.
+        let waveHitpoints = 0;
+        let waveCount = 0;
+        let representative = null;
         for (const monster of Array.isArray(monsters) ? monsters : []) {
             const name = String(monster?.name || '');
             const encounter = encounterOfMonster(monster?.hrid || name);
@@ -901,26 +908,38 @@ class GuildTrialDamage {
                 this.encounter = encounter;
                 this.spectatedBossName = name || this.spectatedBossName;
             }
-            if (!Number.isFinite(tier)) continue;
 
             const details =
                 monster.combatDetails && typeof monster.combatDetails === 'object' ? monster.combatDetails : {};
-            this.bossSheets[tier] = {
-                name,
-                tier,
-                hrid: monster.hrid ?? null,
-                level: Number(details.combatLevel) || null,
-                maxHitpoints: Number(monster.maxHitpoints ?? details.maxHitpoints) || null,
-                maxManapoints: Number(monster.maxManapoints ?? details.maxManapoints) || null,
-                // Nanoseconds on the wire — ten minutes, which is the stack cap
-                enrageTimerMs: Number(monster.enrageTimerDuration) / 1e6 || null,
-                spawnTime: monster.spawnTime ?? null,
-                stats: { ...details },
-                source: 'new_guild_battle',
-                at,
-            };
-            return;
+            const hp = Number(monster.maxHitpoints ?? details.maxHitpoints) || 0;
+            if (hp > 0) {
+                waveHitpoints += hp;
+                waveCount += 1;
+            }
+            if (!representative) representative = { monster, name, details };
         }
+
+        if (!Number.isFinite(tier) || !representative) return;
+
+        const { monster, name, details } = representative;
+        this.bossSheets[tier] = {
+            name,
+            tier,
+            hrid: monster.hrid ?? null,
+            level: Number(details.combatLevel) || null,
+            maxHitpoints: Number(monster.maxHitpoints ?? details.maxHitpoints) || null,
+            maxManapoints: Number(monster.maxManapoints ?? details.maxManapoints) || null,
+            // The whole wave's health and how many enemies made it, so the ceiling
+            // reflects every enemy a kill had to drop, not just the first
+            waveHitpoints: waveHitpoints || null,
+            waveCount: waveCount || null,
+            // Nanoseconds on the wire — ten minutes, which is the stack cap
+            enrageTimerMs: Number(monster.enrageTimerDuration) / 1e6 || null,
+            spawnTime: monster.spawnTime ?? null,
+            stats: { ...details },
+            source: 'new_guild_battle',
+            at,
+        };
     }
 
     /**
@@ -1428,16 +1447,27 @@ class GuildTrialDamage {
      * @param {number} at - Now
      */
     _readPool(mMap, tier, at) {
+        // Summed across every monster in the tick, not the first: a wave can field
+        // several enemies (two Trial Badgers, or Swarm's four monsters) and they
+        // are one HP pool to clear. Taking the first bar priced a two-enemy wave
+        // at half its health, and the Swarm panel at a quarter. Dead monsters
+        // report cHP 0, so they drain the summed current correctly.
+        let current = 0;
+        let max = 0;
+        let seen = false;
         for (const unit of Object.values(mMap || {})) {
-            const current = Number(unit?.cHP);
-            const max = Number(unit?.mHP);
-            if (!Number.isFinite(current) || !Number.isFinite(max) || max <= 0) continue;
-
-            // The encounter travels with the reading. A pool with no name on it
-            // is a pool no card may claim
-            this.pool = { current, max, tier, at, encounter: this.encounter, bossName: this.spectatedBossName };
-            return;
+            const unitCurrent = Number(unit?.cHP);
+            const unitMax = Number(unit?.mHP);
+            if (!Number.isFinite(unitCurrent) || !Number.isFinite(unitMax) || unitMax <= 0) continue;
+            seen = true;
+            current += unitCurrent;
+            max += unitMax;
         }
+        if (!seen) return;
+
+        // The encounter travels with the reading. A pool with no name on it
+        // is a pool no card may claim
+        this.pool = { current, max, tier, at, encounter: this.encounter, bossName: this.spectatedBossName };
     }
 
     /**
@@ -1710,7 +1740,11 @@ export function bossHpCeiling(bossSheets) {
     let hp = 0;
     let fights = 0;
     for (const sheet of Object.values(bossSheets || {})) {
-        const max = Number(sheet?.maxHitpoints);
+        // The wave's total where it was recorded (several enemies under one tier),
+        // the single bar otherwise — a two-badger tier's ceiling is both bars, so
+        // a party total that dropped both no longer reads as over-attributing.
+        const wave = Number(sheet?.waveHitpoints);
+        const max = Number.isFinite(wave) && wave > 0 ? wave : Number(sheet?.maxHitpoints);
         if (Number.isFinite(max) && max > 0) {
             hp += max;
             fights += 1;
