@@ -656,6 +656,32 @@ describe('placeTrialBlock', () => {
         expect(block.previousElementSibling).toBe(card);
     });
 
+    test('a tile nested in the tab grid spans the outer grid, not the one-cell tile', () => {
+        // The live shape: each trial tile is its own single-column grid, sitting
+        // inside the tab's four-column tile grid. Anchored to the inner tile, the
+        // block must span the *outer* grid — otherwise width:100% fills one 126px
+        // cell and the box lands in the next column beside the tile, not beneath.
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__r">' +
+            '<div id="tabgrid" style="display:grid; grid-template-columns:126px 126px 126px 126px">' +
+            '<div id="tile" style="display:grid; grid-template-columns:126px">' +
+            '<div id="card" class="GuildPanel_tileBottom__t">Tailoring</div></div>' +
+            '<div id="tile2" style="display:grid; grid-template-columns:126px">Brewing</div>' +
+            '</div></div>';
+        const root = document.querySelector('[class*="GuildPanel_guildPanel"]');
+        const tile = document.getElementById('tile');
+        const card = document.getElementById('card');
+        const block = newBlock();
+
+        expect(placeTrialBlock(root, card, block, 'Tailoring')).toBe('after-container');
+        // Spanned across the outer four-column grid and deferred past the tiles
+        expect(block.style.gridColumn).toBe('1 / span 4');
+        expect(block.style.order).toBe('1');
+        // A child of the outer grid, sitting right after its tile in the DOM
+        expect(document.getElementById('tabgrid').contains(block)).toBe(true);
+        expect(block.previousElementSibling).toBe(tile);
+    });
+
     test('a grid that declares no columns is left alone and the block goes after it', () => {
         // This is the reported case. `-1` resolves against the explicit grid, so
         // on a container with implicit columns `1 / -1` is a single cell — 126px
