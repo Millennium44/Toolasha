@@ -709,10 +709,10 @@ describe('placeTrialBlock', () => {
         return block;
     };
 
-    test('the combat fight view hugs the box against the enemies inside the monsters half', () => {
-        // The enemy cards live in a grid inside the monsters area, which the game
-        // sizes wider than the cards; the box goes in the spare space beside them,
-        // inside the half, not in a narrow unit-card cell among the enemies.
+    test('a multi-enemy fight grid places its box below the grid, like a single boss', () => {
+        // The In Progress enemy grid is not a tile grid: a two-badger wave must
+        // not gather its box into a narrow mirrored cell, but place it full-width
+        // below the grid — the same path a single boss (a one-column grid) takes.
         document.body.innerHTML =
             '<div class="GuildPanel_guildPanel__r">' +
             '<div class="BattlePanel_battleArea__x" style="display:flex">' +
@@ -722,22 +722,17 @@ describe('placeTrialBlock', () => {
             '</div></div></div></div>';
         const root = document.querySelector('[class*="GuildPanel_guildPanel"]');
         const monsters = document.getElementById('monsters');
+        const grid = document.getElementById('grid');
         const card = document.getElementById('card');
         const block = newBlock();
 
-        expect(placeTrialBlock(root, card, block, 'Trial Badger')).toBe('beside-monsters');
-        // A panel-owned wrapper positioned against the full-width panel, so it can
-        // overflow the narrow gap in the monsters half into the empty space
-        const side = root.querySelector('.mwi-trial-side-box');
-        expect(side).not.toBeNull();
-        expect(side.parentElement).toBe(root);
-        expect(side.style.position).toBe('absolute');
-        expect(root.style.position).toBe('relative');
-        expect(side.contains(block)).toBe(true);
-        // Not dropped into the enemy grid
-        expect(document.getElementById('grid').querySelector('.mwi-trial-info')).toBeNull();
-        // And not left in the monsters half where it would be clipped
-        expect(monsters.querySelector('.mwi-trial-side-box')).toBeNull();
+        expect(placeTrialBlock(root, card, block, 'Trial Badger')).toBe('after-container');
+        // Below the enemy grid, in the monsters area — not a mirrored grid row,
+        // and not absolutely positioned over the panel (which caused a scrollbar)
+        expect(grid.querySelector('.mwi-trial-box-row')).toBeNull();
+        expect(monsters.contains(block)).toBe(true);
+        expect(grid.nextElementSibling).toBe(block);
+        expect(block.style.width).toBe('100%');
     });
 
     test('a grid gathers its boxes into one full-width row beneath the tiles', () => {
