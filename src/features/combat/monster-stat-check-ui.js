@@ -20,7 +20,13 @@ import { attachMinimize } from '../../utils/panel-minimize.js';
 import { buildGameDataPayload } from '../combat-sim/combat-sim-adapter.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import Monster from '../combat-sim/engine/monster.js';
-import { deriveRoomLevel, buildComparison, buildExportPayload, compareBuffProduction } from './monster-stat-check.js';
+import {
+    deriveRoomLevel,
+    buildComparison,
+    buildExportPayload,
+    compareBuffProduction,
+    buffSignature,
+} from './monster-stat-check.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import labyrinthClearRate from './labyrinth-clear-rate.js';
 
@@ -175,7 +181,7 @@ class MonsterStatCheckPanel {
         };
         this._record();
         this.displayed = this.last;
-        this.viewKey = `${this.last.hrid}|${this.last.roomLevel}`;
+        this.viewKey = this._recordKey(this.last);
 
         this._ensureBuilt();
         this.container.style.display = 'flex';
@@ -193,9 +199,14 @@ class MonsterStatCheckPanel {
      * (a re-click refreshes that entry), capped so a long session can't grow
      * without bound.
      */
+    /** Log key: monster + room + effect set, so each distinct buff state is kept. */
+    _recordKey(snap) {
+        return `${snap.hrid}|${snap.roomLevel}|${buffSignature(snap.combatBuffMap)}`;
+    }
+
     _record() {
         if (!this.last?.hrid) return;
-        const key = `${this.last.hrid}|${this.last.roomLevel}`;
+        const key = this._recordKey(this.last);
         // Every clicked monster is kept — the "⚠ only" filter changes what you
         // page through, never what is stored, so switching it can't lose views.
         // Re-insert so the map stays newest-last for eviction and paging.
