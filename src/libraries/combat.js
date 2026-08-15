@@ -146,6 +146,7 @@ toolashaRoot.Debug = {
     labAccuracy: () => labyrinthClearRate.labAccuracy(),
     labRooms: () => labyrinthClearRate.labRooms(),
     monsterStatCheck: () => monsterStatCheckUI.dumpLast(),
+    monsterStatCheckLog: () => monsterStatCheckUI.logEntries(),
     guildXp: () => guildXPTracker.debugState(),
 };
 
