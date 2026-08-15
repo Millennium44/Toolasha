@@ -643,24 +643,39 @@ describe('placeTrialBlock', () => {
         return block;
     };
 
-    test('a grid with a real column template is spanned, all of it', () => {
-        const { root, card } = layout('display:grid; grid-template-columns:126px 126px 126px 126px');
+    test('a grid gathers its boxes into one full-width row beneath the tiles', () => {
+        const { root, container, card } = layout('display:grid; grid-template-columns:126px 126px 126px 126px');
         const block = newBlock();
 
-        expect(placeTrialBlock(root, card, block, 'Trial Chameleon')).toBe('spanned');
-        // `span N`, never `1 / -1`: the latter counts explicit tracks only
-        expect(block.style.gridColumn).toBe('1 / span 4');
-        // Deferred past every tile so grid auto-placement keeps the trial tiles
-        // in their row and stacks the boxes full-width underneath
-        expect(block.style.order).toBe('1');
-        expect(block.previousElementSibling).toBe(card);
+        expect(placeTrialBlock(root, card, block, 'Trial Chameleon')).toBe('row');
+        // A single shared row, spanning every column and deferred past the tiles,
+        // laid out as a wrapping flex row so the boxes sit compactly underneath
+        const row = container.querySelector('.mwi-trial-box-row');
+        expect(row).not.toBeNull();
+        expect(row.style.gridColumn).toBe('1 / span 4');
+        expect(row.style.order).toBe('1');
+        expect(row.style.display).toBe('flex');
+        expect(row.contains(block)).toBe(true);
     });
 
-    test('a tile nested in the tab grid spans the outer grid, not the one-cell tile', () => {
+    test('every box in the grid joins the same row, in order', () => {
+        const { root, container } = layout('display:grid; grid-template-columns:126px 126px 126px 126px');
+        // Two tiles, two boxes: they must share one row, not fill the cells beside the tiles
+        const first = newBlock();
+        const second = newBlock();
+        placeTrialBlock(root, container.children[0], first, 'Trial Chameleon');
+        placeTrialBlock(root, container.children[1], second, 'Alchemy');
+
+        const rows = container.querySelectorAll('.mwi-trial-box-row');
+        expect(rows).toHaveLength(1);
+        expect([...rows[0].children]).toEqual([first, second]);
+    });
+
+    test('a tile nested in the tab grid joins the outer grid row, not the one-cell tile', () => {
         // The live shape: each trial tile is its own single-column grid, sitting
         // inside the tab's four-column tile grid. Anchored to the inner tile, the
-        // block must span the *outer* grid — otherwise width:100% fills one 126px
-        // cell and the box lands in the next column beside the tile, not beneath.
+        // box must land in the shared row on the *outer* grid — otherwise it fills
+        // the next cell beside the tile, not the row beneath.
         document.body.innerHTML =
             '<div class="GuildPanel_guildPanel__r">' +
             '<div id="tabgrid" style="display:grid; grid-template-columns:126px 126px 126px 126px">' +
@@ -669,17 +684,14 @@ describe('placeTrialBlock', () => {
             '<div id="tile2" style="display:grid; grid-template-columns:126px">Brewing</div>' +
             '</div></div>';
         const root = document.querySelector('[class*="GuildPanel_guildPanel"]');
-        const tile = document.getElementById('tile');
         const card = document.getElementById('card');
         const block = newBlock();
 
-        expect(placeTrialBlock(root, card, block, 'Tailoring')).toBe('after-container');
-        // Spanned across the outer four-column grid and deferred past the tiles
-        expect(block.style.gridColumn).toBe('1 / span 4');
-        expect(block.style.order).toBe('1');
-        // A child of the outer grid, sitting right after its tile in the DOM
-        expect(document.getElementById('tabgrid').contains(block)).toBe(true);
-        expect(block.previousElementSibling).toBe(tile);
+        expect(placeTrialBlock(root, card, block, 'Tailoring')).toBe('row');
+        const row = document.getElementById('tabgrid').querySelector('.mwi-trial-box-row');
+        expect(row).not.toBeNull();
+        expect(row.style.gridColumn).toBe('1 / span 4');
+        expect(row.contains(block)).toBe(true);
     });
 
     test('a grid that declares no columns is left alone and the block goes after it', () => {
