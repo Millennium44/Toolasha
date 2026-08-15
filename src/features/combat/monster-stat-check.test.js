@@ -19,6 +19,8 @@ import {
     buildComparison,
     flaggedRows,
     buildExportPayload,
+    buffName,
+    compareBuffProduction,
 } from './monster-stat-check.js';
 
 describe('deriveRoomLevel', () => {
@@ -291,6 +293,62 @@ describe('flaggedRows', () => {
             []
         );
         expect(flaggedRows(null)).toEqual([]);
+    });
+});
+
+describe('buffName', () => {
+    test('strips the path and underscores', () => {
+        expect(buffName('/buff_uniques/pestilent_shot_armor')).toBe('pestilent shot armor');
+        expect(buffName(null)).toBe('');
+    });
+});
+
+describe('compareBuffProduction', () => {
+    const gameMap = {
+        '/buff_uniques/pestilent_shot_armor': { typeHrid: '/buff_types/armor', ratioBoost: -0.199, flatBoost: 0 },
+        '/buff_uniques/toughness': { typeHrid: '/buff_types/armor', ratioBoost: 0.452, flatBoost: 45.2 },
+        '/buff_uniques/curse': { typeHrid: '/buff_types/damage_taken', ratioBoost: 0, flatBoost: 0.044 },
+    };
+
+    test('matches an effect the sim reproduces at the same strength', () => {
+        const produced = [{ uniqueHrid: '/buff_uniques/pestilent_shot_armor', typeHrid: '/buff_types/armor', ratioBoost: -0.2, flatBoost: 0 }];
+        const rows = compareBuffProduction({ '/buff_uniques/pestilent_shot_armor': gameMap['/buff_uniques/pestilent_shot_armor'] }, produced);
+        expect(rows[0].verdict).toBe('match');
+    });
+
+    test('flags an effect the sim never produced as missing', () => {
+        const rows = compareBuffProduction(gameMap, []); // sim produced nothing
+        expect(rows.every((r) => r.verdict === 'missing')).toBe(true);
+    });
+
+    test('flags a magnitude gap when the sim produces it too weak or strong', () => {
+        const produced = [{ uniqueHrid: '/buff_uniques/pestilent_shot_armor', typeHrid: '/buff_types/armor', ratioBoost: -0.3, flatBoost: 0 }];
+        const rows = compareBuffProduction({ '/buff_uniques/pestilent_shot_armor': gameMap['/buff_uniques/pestilent_shot_armor'] }, produced);
+        expect(rows[0].verdict).toBe('magnitude');
+        expect(Math.abs(rows[0].deltaPct)).toBeGreaterThan(40);
+    });
+
+    test('flags a sim-only effect as extra', () => {
+        const produced = [{ uniqueHrid: '/buff_uniques/elusiveness', typeHrid: '/buff_types/evasion', ratioBoost: 0.5, flatBoost: 0 }];
+        const rows = compareBuffProduction({}, produced);
+        expect(rows[0].verdict).toBe('extra');
+    });
+
+    test('uses the flat boost when the effect has no ratio (curse)', () => {
+        const produced = [{ uniqueHrid: '/buff_uniques/curse', typeHrid: '/buff_types/damage_taken', ratioBoost: 0, flatBoost: 0.044 }];
+        const rows = compareBuffProduction({ '/buff_uniques/curse': gameMap['/buff_uniques/curse'] }, produced);
+        expect(rows[0].verdict).toBe('match');
+    });
+
+    test('orders problems (missing/magnitude) before matches', () => {
+        const produced = [
+            { uniqueHrid: '/buff_uniques/toughness', typeHrid: '/buff_types/armor', ratioBoost: 0.452, flatBoost: 45.2 },
+            { uniqueHrid: '/buff_uniques/curse', typeHrid: '/buff_types/damage_taken', ratioBoost: 0, flatBoost: 0.044 },
+            // pestilent_shot_armor is in the game map but NOT produced → missing, should sort first
+        ];
+        const rows = compareBuffProduction(gameMap, produced);
+        expect(rows[0].verdict).toBe('missing');
+        expect(rows[0].name).toBe('pestilent shot armor');
     });
 });
 

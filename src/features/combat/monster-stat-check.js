@@ -227,6 +227,79 @@ export function flaggedRows(comparison) {
     return out;
 }
 
+/** Percent gap within which a produced buff's magnitude is called equal. */
+const BUFF_MATCH_TOLERANCE_PCT = 5;
+
+/** Human-readable name from a buff unique hrid. */
+export function buffName(hrid) {
+    return String(hrid || '')
+        .split('/')
+        .pop()
+        .replace(/_/g, ' ');
+}
+
+/**
+ * Diff the buffs the sim produced in a blind fight against the game's live
+ * effects — the "does the sim even generate these on its own" check. Union by
+ * uniqueHrid, so every effect either side has is a row.
+ *
+ * Verdicts, worst first:
+ * - `missing` — the game has it, the blind sim never produced it (the sim does
+ *   not model the ability, or its rotation never cast it).
+ * - `magnitude` — both produce it, but at a different strength (a derivation /
+ *   level-resolution gap).
+ * - `extra` — the sim produced it but the game snapshot didn't have it up (often
+ *   just timing — the effect was between applications when the panel was read).
+ * - `match` — same effect, same strength.
+ *
+ * @param {Object} gameBuffMap - The unit's live `combatBuffMap`
+ * @param {Array<{uniqueHrid,typeHrid,ratioBoost,flatBoost}>} produced - From the probe
+ * @returns {Array<{uniqueHrid,name,typeHrid,game,sim,verdict,deltaPct}>}
+ */
+export function compareBuffProduction(gameBuffMap, produced) {
+    const toRec = (r) => ({
+        ratioBoost: Number(r?.ratioBoost) || 0,
+        flatBoost: Number(r?.flatBoost) || 0,
+        typeHrid: r?.typeHrid || null,
+    });
+    const game = new Map(Object.entries(gameBuffMap || {}).map(([hrid, r]) => [hrid, toRec(r)]));
+    const sim = new Map((produced || []).filter((r) => r?.uniqueHrid).map((r) => [r.uniqueHrid, toRec(r)]));
+
+    const keys = [...new Set([...game.keys(), ...sim.keys()])];
+    const rows = keys.map((hrid) => {
+        const g = game.get(hrid) || null;
+        const s = sim.get(hrid) || null;
+        let verdict;
+        let deltaPct = null;
+        if (g && !s) {
+            verdict = 'missing';
+        } else if (!g && s) {
+            verdict = 'extra';
+        } else {
+            // Compare on whichever boost the game's effect actually uses.
+            const field = g.ratioBoost !== 0 || g.flatBoost === 0 ? 'ratioBoost' : 'flatBoost';
+            const gv = g[field];
+            const sv = s[field];
+            if (gv !== 0) deltaPct = ((sv - gv) / Math.abs(gv)) * 100;
+            const equal = deltaPct == null ? sv === gv : Math.abs(deltaPct) < BUFF_MATCH_TOLERANCE_PCT;
+            verdict = equal ? 'match' : 'magnitude';
+        }
+        return {
+            uniqueHrid: hrid,
+            name: buffName(hrid),
+            typeHrid: g?.typeHrid || s?.typeHrid || null,
+            game: g,
+            sim: s,
+            verdict,
+            deltaPct,
+        };
+    });
+
+    const rank = { missing: 0, magnitude: 1, extra: 2, match: 3 };
+    rows.sort((a, b) => (rank[a.verdict] ?? 9) - (rank[b.verdict] ?? 9) || a.name.localeCompare(b.name));
+    return rows;
+}
+
 /**
  * Wrap a discrepancy log and the current snapshot in the export envelope.
  * @param {Array<Object>} entries - Recorded discrepancy records, newest last

@@ -3,6 +3,25 @@ import { randomSetup } from './rng.js';
 /** Stand-in for a buff type nothing is currently applying */
 const EMPTY_BOOST = { ratioBoost: 0, flatBoost: 0, boosts: [] };
 
+// Buff-capture instrumentation. Off by default and behind a flag so the normal
+// simulation path pays nothing; the monster-stat-check "blind sim" turns it on
+// around a single fight to learn which buffs the engine applies to the monster
+// on its own. The sink is module-level (not per-instance) so it survives the
+// monster being cleared at the end of the fight, and scoped to non-player units
+// so it collects the monster's self-buffs and the player's on-monster debuffs
+// — exactly the set the game reports in a monster's combatBuffMap.
+let CAPTURE_BUFFS = false;
+let capturedMonsterBuffs = null;
+/** @param {boolean} on - Start (fresh sink) or stop capturing monster buffs. */
+export function setBuffCapture(on) {
+    CAPTURE_BUFFS = Boolean(on);
+    capturedMonsterBuffs = CAPTURE_BUFFS ? new Map() : null;
+}
+/** @returns {Array<{uniqueHrid,typeHrid,ratioBoost,flatBoost}>} Peak per buff. */
+export function getCapturedMonsterBuffs() {
+    return capturedMonsterBuffs ? [...capturedMonsterBuffs.values()] : [];
+}
+
 class CombatUnit {
     isPlayer;
     isStunned = false;
@@ -437,6 +456,20 @@ class CombatUnit {
         this.buffSources.set(instance.uniqueHrid, active);
 
         this.combatBuffs[instance.uniqueHrid] = this.strongestBuff(active);
+
+        // Record the peak (largest-magnitude, signed) boost the monster ever saw
+        // per buff, so a blind fight can report which effects the sim produced.
+        if (CAPTURE_BUFFS && capturedMonsterBuffs && !this.isPlayer) {
+            const rec = capturedMonsterBuffs.get(instance.uniqueHrid) || {
+                uniqueHrid: instance.uniqueHrid,
+                typeHrid: instance.typeHrid,
+                ratioBoost: 0,
+                flatBoost: 0,
+            };
+            if (Math.abs(instance.ratioBoost) > Math.abs(rec.ratioBoost)) rec.ratioBoost = instance.ratioBoost;
+            if (Math.abs(instance.flatBoost) > Math.abs(rec.flatBoost)) rec.flatBoost = instance.flatBoost;
+            capturedMonsterBuffs.set(instance.uniqueHrid, rec);
+        }
 
         this.updateCombatDetails();
     }

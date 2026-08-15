@@ -8,6 +8,7 @@
 
 import { buildPlayerExtraBuffs } from './engine/extra-buffs.js';
 import { setGameData } from './engine/game-data.js';
+import { setBuffCapture, getCapturedMonsterBuffs } from './engine/combat-unit.js';
 import CombatSimulator from './engine/combat-simulator.js';
 import Labyrinth from './engine/labyrinth.js';
 import Player from './engine/player.js';
@@ -31,6 +32,7 @@ onmessage = function (event) {
             precision,
             seed,
             isTaskFight,
+            captureBuffs,
         } = event.data;
 
         // Set game data for the engine singleton
@@ -90,8 +92,18 @@ onmessage = function (event) {
             Boolean(isTaskFight)
         );
 
+        // The blind-buff probe turns on capture around the run and reads back the
+        // buffs the engine applied to the monster on its own (for the
+        // monster-stat-check "does the sim even produce these effects" diagnostic).
+        if (captureBuffs) setBuffCapture(true);
+
         // Run simulation
         const simResult = combatSimulator.simulate(simulationTimeLimit, precision);
+
+        if (captureBuffs) {
+            simResult.producedMonsterBuffs = getCapturedMonsterBuffs();
+            setBuffCapture(false);
+        }
 
         postMessage({
             type: 'result',
