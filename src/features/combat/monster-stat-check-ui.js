@@ -118,6 +118,8 @@ class MonsterStatCheckPanel {
         this.history = new Map();
         /** Which history key is on screen, so the arrows know where they are. */
         this.viewKey = null;
+        /** 'all' keeps every clicked monster; 'discrepancies' keeps only mismatches. */
+        this.storeMode = 'all';
         /** Whether the pointer is over the panel, so arrows only steer it then. */
         this.hovered = false;
         this.keyHandler = null;
@@ -164,6 +166,12 @@ class MonsterStatCheckPanel {
     _record() {
         if (!this.last?.hrid) return;
         const key = `${this.last.hrid}|${this.last.roomLevel}`;
+        // In discrepancy-only mode a clean click is not kept — and if this
+        // monster+room was logged before but reads clean now, drop the stale one.
+        if (this.storeMode === 'discrepancies' && !this.last.hasMismatch) {
+            this.history.delete(key);
+            return;
+        }
         // Re-insert so the map stays newest-last for eviction and paging.
         this.history.delete(key);
         this.history.set(key, this.last);
@@ -172,12 +180,27 @@ class MonsterStatCheckPanel {
         }
     }
 
-    /** Page through recorded views. dir −1 is older (Up), +1 is newer (Down). */
+    /**
+     * Keys in paging order: discrepancies first (newest first), then the clean
+     * views (newest first). So paging surfaces the mismatches before anything
+     * else, and a click still lands wherever its own entry sits.
+     * @returns {string[]}
+     */
+    _orderedKeys() {
+        const entries = [...this.history.entries()];
+        const newestFirst = (list) => list.map(([k]) => k).reverse();
+        return [
+            ...newestFirst(entries.filter(([, s]) => s.hasMismatch)),
+            ...newestFirst(entries.filter(([, s]) => !s.hasMismatch)),
+        ];
+    }
+
+    /** Page through recorded views. dir −1 is previous (Up), +1 is next (Down). */
     _navigate(dir) {
-        const keys = [...this.history.keys()];
+        const keys = this._orderedKeys();
         if (keys.length < 2) return;
         let index = keys.indexOf(this.viewKey);
-        if (index === -1) index = keys.length - 1;
+        if (index === -1) index = 0;
         const next = Math.min(keys.length - 1, Math.max(0, index + dir));
         if (next === index) return;
         this.viewKey = keys[next];
@@ -189,6 +212,17 @@ class MonsterStatCheckPanel {
     _clearHistory() {
         this.history.clear();
         this.viewKey = null;
+        this._render();
+    }
+
+    /** Flip between keeping every click and keeping only discrepancies. */
+    _toggleStoreMode() {
+        this.storeMode = this.storeMode === 'all' ? 'discrepancies' : 'all';
+        if (this.storeMode === 'discrepancies') {
+            for (const [k, s] of [...this.history]) {
+                if (!s.hasMismatch) this.history.delete(k);
+            }
+        }
         this._render();
     }
 
@@ -354,43 +388,53 @@ class MonsterStatCheckPanel {
         return b;
     }
 
-    /** The paging bar: older/newer arrows, position, and Clear. */
+    /** A small text pill button for the nav bar (store toggle, Clear). */
+    _pillButton(text, title, onClick) {
+        const b = document.createElement('button');
+        b.textContent = text;
+        b.title = title;
+        b.style.cssText =
+            'background:none; border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:#aaa; font-size:0.64rem; cursor:pointer; padding:1px 5px; white-space:nowrap;';
+        b.addEventListener('mouseenter', () => (b.style.color = '#fff'));
+        b.addEventListener('mouseleave', () => (b.style.color = '#aaa'));
+        b.addEventListener('click', (e) => {
+            e.stopPropagation();
+            onClick();
+        });
+        return b;
+    }
+
+    /** The paging bar: arrows, position (discrepancies first), store toggle, Clear. */
     _renderNav(body) {
-        const keys = [...this.history.keys()];
+        const keys = this._orderedKeys();
         const total = keys.length;
         if (!total) return;
         const index = keys.indexOf(this.viewKey);
+        const misCount = [...this.history.values()].filter((s) => s.hasMismatch).length;
 
         const nav = document.createElement('div');
         nav.style.cssText =
-            'display:flex; align-items:center; gap:6px; margin-bottom:8px; font-size:0.7rem; color:rgba(255,255,255,0.55);';
+            'display:flex; align-items:center; gap:5px; margin-bottom:8px; font-size:0.7rem; color:rgba(255,255,255,0.55);';
 
-        nav.appendChild(this._navButton('▲', 'Older (↑)', () => this._navigate(-1), index > 0));
-        nav.appendChild(this._navButton('▼', 'Newer (↓)', () => this._navigate(1), index >= 0 && index < total - 1));
+        nav.appendChild(this._navButton('▲', 'Previous (↑)', () => this._navigate(-1), index > 0));
+        nav.appendChild(this._navButton('▼', 'Next (↓)', () => this._navigate(1), index >= 0 && index < total - 1));
 
         const label = document.createElement('span');
-        label.style.cssText = 'flex:1;';
-        if (index === -1) {
-            label.textContent = `${total} recorded`;
-        } else {
-            const live = index === total - 1 ? ' · live' : '';
-            const rel = relTime(this.displayed?.recordedAt);
-            label.textContent = `${index + 1} / ${total}${live}${rel ? ' · ' + rel : ''}`;
-        }
+        label.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+        const pos = index === -1 ? `${total}` : `${index + 1} / ${total}`;
+        const mis = misCount ? ` · <span style="color:#e56b6b;">⚠ ${misCount}</span>` : '';
+        const rel = index >= 0 ? relTime(this.displayed?.recordedAt) : '';
+        label.innerHTML = `${pos}${mis}${rel ? ` · ${rel}` : ''}`;
         nav.appendChild(label);
 
-        const clear = document.createElement('button');
-        clear.textContent = 'Clear';
-        clear.title = 'Clear the session log';
-        clear.style.cssText =
-            'background:none; border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:#aaa; font-size:0.66rem; cursor:pointer; padding:1px 6px;';
-        clear.addEventListener('mouseenter', () => (clear.style.color = '#fff'));
-        clear.addEventListener('mouseleave', () => (clear.style.color = '#aaa'));
-        clear.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this._clearHistory();
-        });
-        nav.appendChild(clear);
+        nav.appendChild(
+            this._pillButton(
+                this.storeMode === 'all' ? 'All' : '⚠ only',
+                'Store every clicked monster, or only discrepancies',
+                () => this._toggleStoreMode()
+            )
+        );
+        nav.appendChild(this._pillButton('Clear', 'Clear the session log', () => this._clearHistory()));
 
         body.appendChild(nav);
     }
@@ -402,9 +446,11 @@ class MonsterStatCheckPanel {
         body.innerHTML = '';
         const { name, roomLevel, groups, buffs, hasMismatch, simBuilt, simBuffed } = snapshot;
 
-        // Title carries the monster and its room level
+        // Title carries the monster, its room level, and a ⚠ when this view is off
         const levelLabel = roomLevel > 0 ? ` — Room ${roomLevel}` : '';
-        this.titleEl.textContent = `${name || 'Monster'}${levelLabel}`;
+        const flag = hasMismatch ? '⚠ ' : '';
+        this.titleEl.textContent = `${flag}${name || 'Monster'}${levelLabel}`;
+        this.titleEl.style.color = hasMismatch ? '#e56b6b' : config.COLOR_ACCENT;
 
         this._renderNav(body);
 
