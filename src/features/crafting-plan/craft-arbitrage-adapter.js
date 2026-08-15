@@ -109,6 +109,13 @@ function secondsPerUnitFor(actionHrid, action, outputCount, cache) {
  * @param {string} [options.mode='ask'] - Pricing mode for material lookups
  * @param {Map} [options.memo] - Shared unit-cost memo, for costing many items at once
  * @param {Map} [options.actionStats] - Shared action-stats cache, same purpose
+ * @param {boolean} [options.skipProcessing=false] - Buy processed intermediates
+ *   (material conversions like hide→leather, log→lumber) rather than making them,
+ *   so `unitCost` reflects a direct craft off bought materials instead of tanning
+ *   and refining the whole tree down to raw drops
+ * @param {number} [options.timeCostPerHour=0] - Gold value of an hour of the
+ *   character's crafting time; when > 0 it is folded into `unitCost` at every
+ *   node so a slow deep-craft is no longer free
  * @returns {Object|null} { itemHrid, unitCost, strategy, actionHrid, actionsNeeded,
  *   secondsPerUnit, skillHrid, requiredLevel, inputs } — null when the item has no
  *   recipe, the game data is not loaded, or a material has no obtainable price.
@@ -123,12 +130,26 @@ export function describeCraft(itemHrid, options = {}) {
     const production = index?.get(itemHrid);
     if (!production) return null;
 
-    const { mode = 'ask', memo = new Map(), actionStats } = options;
+    const { mode = 'ask', memo = new Map(), actionStats, skipProcessing = false, timeCostPerHour = 0 } = options;
     const { actionHrid, action, outputCount } = production;
 
     let plan;
     try {
-        plan = computeBestCraftingPlan(itemHrid, 1, mode, new Set(), memo, 0);
+        // maxDepth / buyRawOnly / forceRootCraft keep their defaults (undefined);
+        // only the time cost and the skip-processing flag are surfaced here.
+        plan = computeBestCraftingPlan(
+            itemHrid,
+            1,
+            mode,
+            new Set(),
+            memo,
+            0,
+            undefined,
+            undefined,
+            undefined,
+            timeCostPerHour,
+            skipProcessing
+        );
     } catch (error) {
         console.error(`[CraftArbitrage] Could not plan ${itemHrid}:`, error);
         return null;

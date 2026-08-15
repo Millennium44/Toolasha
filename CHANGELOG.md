@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Craft arbitrage adapter: expose `skipProcessing` and `timeCostPerHour`
+
+`describeCraft`/`describeCrafts` now forward a `skipProcessing` flag (buy processed intermediates like leather/lumber instead of making them — a direct craft off bought materials) and a `timeCostPerHour` (folds crafting time into the unit cost) to the planner. Lets the Flip Finder companion offer a "direct craft" toggle and a local time-value rate. Both default off, so existing callers are unchanged.
+
 ### Labyrinth auto-calc: stop the bar looping, and move the toggle inline
 
 - Auto-calc no longer re-runs the whole floor (refilling the progress bar) every time the game repaints the grid or our own badge draw trips the observer. An auto pass is now gated on a fingerprint of the rooms + gear + precision; when nothing that changes a result has changed, it silently restores any badges a re-render wiped from cache instead of re-simming.
