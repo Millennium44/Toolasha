@@ -196,7 +196,13 @@ class LabyrinthClearRate {
             forecast: (hrid, level, kind) => this.roomForecast(hrid, level, kind),
             record: (result) => this.recordRoomResult(result),
             accuracy: (options) => this.accuracySnapshot(options),
-            reset: () => this.resetOutcomes(),
+            reset: () => {
+                // The Accuracy tab shows the clear-chance tallies and the recorded
+                // fights together, and Reset has always said it throws away "every
+                // recorded fight" — so it clears both, not just the tallies.
+                this.clearRecordedFights();
+                return this.resetOutcomes();
+            },
             markBaseline: () => this.markOutcomeBaseline(),
             clearBaseline: () => this.clearOutcomeBaseline(),
             recompute: (uncapped) => this.recomputeCombatSims(uncapped),
