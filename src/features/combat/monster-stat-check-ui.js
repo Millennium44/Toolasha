@@ -68,10 +68,18 @@ function relTime(ts) {
  * Build the sim monster for a fetched unit, scaled to match the game's numbers.
  * Room level is recovered from the unit's defense so the sim scales identically;
  * a gap that remains is then a modelling difference, not a room-level mismatch.
+ *
+ * With `applyBuffs`, the unit's live effects are folded into the sim before it
+ * computes stats (buffed-against-buffed); without it, the sim is the unbuffed
+ * baseline. The game's combatBuffMap records are the engine's own buff shape —
+ * `{ typeHrid, ratioBoost, flatBoost }` — so they land on the accuracy, evasion,
+ * damage, armour and resistance ratings exactly as the game's did.
+ *
  * @param {Object} gameUnit - The `unit` from a `battle_unit_fetched` payload
- * @returns {{monster: Monster, roomLevel: number}|null}
+ * @param {boolean} applyBuffs - Whether to inject the unit's live effects
+ * @returns {{monster: Monster, roomLevel: number, buffApplied: boolean}|null}
  */
-function buildSimMonster(gameUnit) {
+function buildSimMonster(gameUnit, applyBuffs) {
     try {
         const hrid = gameUnit?.hrid;
         if (!hrid) return null;
@@ -87,13 +95,8 @@ function buildSimMonster(gameUnit) {
         const roomLevel = tier === 0 ? deriveRoomLevel(gameDefense, baseDefense) : 0;
 
         const monster = new Monster(hrid, tier, roomLevel, true);
-        // Apply the unit's live effects to the sim before it computes its stats,
-        // so the comparison is buffed-against-buffed. The game's combatBuffMap
-        // records are the engine's own buff shape — `{ typeHrid, ratioBoost,
-        // flatBoost }` — so they fold into the accuracy, evasion, damage, armour
-        // and resistance ratings exactly as the game's did.
         const buffMap = gameUnit?.combatBuffMap;
-        const buffApplied = !!(buffMap && typeof buffMap === 'object' && Object.keys(buffMap).length);
+        const buffApplied = !!(applyBuffs && buffMap && typeof buffMap === 'object' && Object.keys(buffMap).length);
         if (buffApplied) monster.combatBuffs = { ...buffMap };
         monster.updateCombatDetails();
         return { monster, roomLevel, buffApplied };
@@ -122,8 +125,10 @@ class MonsterStatCheckPanel {
         this.history = new Map();
         /** Which history key is on screen, so the arrows know where they are. */
         this.viewKey = null;
-        /** 'all' keeps every clicked monster; 'discrepancies' keeps only mismatches. */
-        this.storeMode = 'all';
+        /** Paging filter: 'all' pages every view; 'discrepancies' only mismatches. */
+        this.viewMode = 'all';
+        /** 'buffed' compares with the unit's effects on the sim; 'baseline' without. */
+        this.simMode = 'buffed';
         /** Whether the pointer is over the panel, so arrows only steer it then. */
         this.hovered = false;
         this.keyHandler = null;
@@ -136,16 +141,27 @@ class MonsterStatCheckPanel {
      * @param {Object} gameUnit
      */
     showFor(gameUnit) {
-        const built = buildSimMonster(gameUnit);
-        const simDetails = built?.monster?.combatDetails || null;
-        const comparison = buildComparison(gameUnit, simDetails, { simBuffed: Boolean(built?.buffApplied) });
+        // Build both views up front: the buffed sim (effects folded in — the
+        // trustworthy like-for-like check) and the unbuffed baseline (raw sim
+        // stats, so the effect the game applied is visible). The toggle then
+        // switches between them, and both travel with the history entry.
+        const baseBuilt = buildSimMonster(gameUnit, false);
+        const buffedBuilt = buildSimMonster(gameUnit, true);
+        const baselineCmp = buildComparison(gameUnit, baseBuilt?.monster?.combatDetails || null, { simBuffed: false });
+        const buffedCmp = buildComparison(gameUnit, buffedBuilt?.monster?.combatDetails || null, {
+            simBuffed: Boolean(buffedBuilt?.buffApplied),
+        });
         this.last = {
             recordedAt: Date.now(),
             hrid: gameUnit?.hrid,
             name: gameUnit?.name,
-            roomLevel: built?.roomLevel ?? 0,
-            simBuilt: Boolean(simDetails),
-            ...comparison,
+            roomLevel: buffedBuilt?.roomLevel ?? baseBuilt?.roomLevel ?? 0,
+            simBuilt: Boolean(buffedBuilt?.monster?.combatDetails),
+            buffs: buffedCmp.buffs,
+            // The buffed verdict is canonical for the log, title and ordering.
+            hasMismatch: buffedCmp.hasMismatch,
+            buffed: { groups: buffedCmp.groups, hasMismatch: buffedCmp.hasMismatch, simBuffed: buffedCmp.simBuffed },
+            baseline: { groups: baselineCmp.groups, hasMismatch: baselineCmp.hasMismatch, simBuffed: false },
         };
         this._record();
         this.displayed = this.last;
@@ -170,12 +186,8 @@ class MonsterStatCheckPanel {
     _record() {
         if (!this.last?.hrid) return;
         const key = `${this.last.hrid}|${this.last.roomLevel}`;
-        // In discrepancy-only mode a clean click is not kept — and if this
-        // monster+room was logged before but reads clean now, drop the stale one.
-        if (this.storeMode === 'discrepancies' && !this.last.hasMismatch) {
-            this.history.delete(key);
-            return;
-        }
+        // Every clicked monster is kept — the "⚠ only" filter changes what you
+        // page through, never what is stored, so switching it can't lose views.
         // Re-insert so the map stays newest-last for eviction and paging.
         this.history.delete(key);
         this.history.set(key, this.last);
@@ -183,6 +195,16 @@ class MonsterStatCheckPanel {
             this.history.delete(this.history.keys().next().value);
         }
         this._persist();
+    }
+
+    /**
+     * Keys to page through, honouring the "⚠ only" filter — discrepancies-first
+     * ordering, optionally narrowed to just the mismatches.
+     * @returns {string[]}
+     */
+    _pagingKeys() {
+        const ordered = this._orderedKeys();
+        return this.viewMode === 'discrepancies' ? ordered.filter((k) => this.history.get(k)?.hasMismatch) : ordered;
     }
 
     /**
@@ -203,10 +225,10 @@ class MonsterStatCheckPanel {
         return [...sortedKeys((s) => s.hasMismatch), ...sortedKeys((s) => !s.hasMismatch)];
     }
 
-    /** Save the log and the store-mode choice so a refresh keeps them. */
+    /** Save the log and the view choices so a refresh keeps them. */
     _persist() {
         try {
-            const payload = { mode: this.storeMode, entries: [...this.history.values()] };
+            const payload = { mode: this.viewMode, simMode: this.simMode, entries: [...this.history.values()] };
             Promise.resolve(storage.set(STORE_KEY, payload, STORE_NAME)).catch(() => {});
         } catch {
             /* storage unavailable — the log simply stays in-memory */
@@ -218,7 +240,8 @@ class MonsterStatCheckPanel {
         try {
             const saved = await storage.get(STORE_KEY, STORE_NAME, null);
             if (!saved) return;
-            if (saved.mode === 'all' || saved.mode === 'discrepancies') this.storeMode = saved.mode;
+            if (saved.mode === 'all' || saved.mode === 'discrepancies') this.viewMode = saved.mode;
+            if (saved.simMode === 'buffed' || saved.simMode === 'baseline') this.simMode = saved.simMode;
             for (const entry of saved.entries || []) {
                 if (!entry?.hrid) continue;
                 const key = `${entry.hrid}|${entry.roomLevel}`;
@@ -232,7 +255,7 @@ class MonsterStatCheckPanel {
 
     /** Page through recorded views. dir −1 is previous (Up), +1 is next (Down). */
     _navigate(dir) {
-        const keys = this._orderedKeys();
+        const keys = this._pagingKeys();
         if (keys.length < 2) return;
         let index = keys.indexOf(this.viewKey);
         if (index === -1) index = 0;
@@ -251,14 +274,16 @@ class MonsterStatCheckPanel {
         this._render();
     }
 
-    /** Flip between keeping every click and keeping only discrepancies. */
-    _toggleStoreMode() {
-        this.storeMode = this.storeMode === 'all' ? 'discrepancies' : 'all';
-        if (this.storeMode === 'discrepancies') {
-            for (const [k, s] of [...this.history]) {
-                if (!s.hasMismatch) this.history.delete(k);
-            }
-        }
+    /** Flip the paging filter between all views and only the discrepancies. */
+    _toggleViewMode() {
+        this.viewMode = this.viewMode === 'all' ? 'discrepancies' : 'all';
+        this._persist();
+        this._render();
+    }
+
+    /** Flip the sim column between the buffed and the unbuffed-baseline view. */
+    _toggleSimMode() {
+        this.simMode = this.simMode === 'buffed' ? 'baseline' : 'buffed';
         this._persist();
         this._render();
     }
@@ -272,8 +297,9 @@ class MonsterStatCheckPanel {
 
     /** @returns {Object|null} The most recent comparison, for the console. */
     dump() {
-        if (this.last) {
-            const rows = this.last.groups.flatMap((g) =>
+        const view = this.last?.buffed || (this.last?.groups ? this.last : null);
+        if (this.last && view) {
+            const rows = view.groups.flatMap((g) =>
                 g.rows.map((r) => ({
                     group: g.group,
                     stat: r.label,
@@ -441,34 +467,53 @@ class MonsterStatCheckPanel {
         return b;
     }
 
-    /** The paging bar: arrows, position (discrepancies first), store toggle, Clear. */
+    /**
+     * The paging bar. The controls (view filter, sim toggle, Clear) always show
+     * so they can never strand the user; the arrows and position only appear once
+     * there is something to page through.
+     */
     _renderNav(body) {
-        const keys = this._orderedKeys();
+        const keys = this._pagingKeys();
         const total = keys.length;
-        if (!total) return;
         const index = keys.indexOf(this.viewKey);
         const misCount = [...this.history.values()].filter((s) => s.hasMismatch).length;
 
         const nav = document.createElement('div');
         nav.style.cssText =
-            'display:flex; align-items:center; gap:5px; margin-bottom:8px; font-size:0.7rem; color:rgba(255,255,255,0.55);';
+            'display:flex; flex-wrap:wrap; align-items:center; gap:5px; margin-bottom:8px; font-size:0.7rem; color:rgba(255,255,255,0.55);';
 
-        nav.appendChild(this._navButton('▲', 'Previous (↑)', () => this._navigate(-1), index > 0));
-        nav.appendChild(this._navButton('▼', 'Next (↓)', () => this._navigate(1), index >= 0 && index < total - 1));
+        if (total > 0) {
+            nav.appendChild(this._navButton('▲', 'Previous (↑)', () => this._navigate(-1), index > 0));
+            nav.appendChild(this._navButton('▼', 'Next (↓)', () => this._navigate(1), index >= 0 && index < total - 1));
+        }
 
         const label = document.createElement('span');
         label.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-        const pos = index === -1 ? `${total}` : `${index + 1} / ${total}`;
-        const mis = misCount ? ` · <span style="color:#e56b6b;">⚠ ${misCount}</span>` : '';
-        const rel = index >= 0 ? relTime(this.displayed?.recordedAt) : '';
-        label.innerHTML = `${pos}${mis}${rel ? ` · ${rel}` : ''}`;
+        if (!total) {
+            label.innerHTML =
+                this.viewMode === 'discrepancies'
+                    ? 'no discrepancies logged'
+                    : `<span style="opacity:0.6;">nothing recorded yet</span>`;
+        } else {
+            const pos = index === -1 ? `${total}` : `${index + 1} / ${total}`;
+            const mis = misCount ? ` · <span style="color:#e56b6b;">⚠ ${misCount}</span>` : '';
+            const rel = index >= 0 ? relTime(this.displayed?.recordedAt) : '';
+            label.innerHTML = `${pos}${mis}${rel ? ` · ${rel}` : ''}`;
+        }
         nav.appendChild(label);
 
         nav.appendChild(
             this._pillButton(
-                this.storeMode === 'all' ? 'All' : '⚠ only',
-                'Store every clicked monster, or only discrepancies',
-                () => this._toggleStoreMode()
+                this.simMode === 'buffed' ? 'Sim: buffed' : 'Sim: baseline',
+                'Compare against the sim with the unit’s effects applied (buffed) or the unbuffed baseline',
+                () => this._toggleSimMode()
+            )
+        );
+        nav.appendChild(
+            this._pillButton(
+                this.viewMode === 'all' ? 'Show: all' : 'Show: ⚠ only',
+                'Page through every recorded view, or only the discrepancies (nothing is deleted)',
+                () => this._toggleViewMode()
             )
         );
         nav.appendChild(this._pillButton('Clear', 'Clear the session log', () => this._clearHistory()));
@@ -481,13 +526,20 @@ class MonsterStatCheckPanel {
         if (!snapshot) return;
         const body = this.body;
         body.innerHTML = '';
-        const { name, roomLevel, groups, buffs, hasMismatch, simBuilt, simBuffed } = snapshot;
+        const { name, roomLevel, buffs, simBuilt } = snapshot;
+        // Pick the requested view; fall back through buffed/baseline, and for an
+        // entry persisted before the two-view split, treat the snapshot itself.
+        const view =
+            snapshot[this.simMode] || snapshot.buffed || snapshot.baseline || (snapshot.groups ? snapshot : null);
+        if (!view) return;
+        const { groups, simBuffed } = view;
+        const hasMismatch = view.hasMismatch;
 
         // Title carries the monster, its room level, and a ⚠ when this view is off
         const levelLabel = roomLevel > 0 ? ` — Room ${roomLevel}` : '';
-        const flag = hasMismatch ? '⚠ ' : '';
+        const flag = snapshot.hasMismatch ? '⚠ ' : '';
         this.titleEl.textContent = `${flag}${name || 'Monster'}${levelLabel}`;
-        this.titleEl.style.color = hasMismatch ? '#e56b6b' : config.COLOR_ACCENT;
+        this.titleEl.style.color = snapshot.hasMismatch ? '#e56b6b' : config.COLOR_ACCENT;
 
         this._renderNav(body);
 
