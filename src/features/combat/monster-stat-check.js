@@ -230,6 +230,21 @@ export function flaggedRows(comparison) {
 /** Percent gap within which a produced buff's magnitude is called equal. */
 const BUFF_MATCH_TOLERANCE_PCT = 5;
 
+/**
+ * A stable signature of a unit's active-effect set, for keying labelled cases.
+ * Two clicks with the same effects up (in any order) share a signature; adding
+ * or dropping an effect makes a new one — so a monster is kept in every distinct
+ * buff state it's seen in (unbuffed, part-stacked, fully stacked), each a
+ * deterministic test of the sim's stat arithmetic given that exact set.
+ * @param {Object} combatBuffMap
+ * @returns {string}
+ */
+export function buffSignature(combatBuffMap) {
+    return Object.keys(combatBuffMap || {})
+        .sort()
+        .join(',');
+}
+
 /** Human-readable name from a buff unique hrid. */
 export function buffName(hrid) {
     return String(hrid || '')

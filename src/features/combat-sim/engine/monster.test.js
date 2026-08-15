@@ -158,6 +158,73 @@ describe('Labyrinth resistance recompute keeps self-buffs', () => {
     });
 });
 
+describe('updateCombatDetails is idempotent and reconstructive', () => {
+    // A general invariant on the stat-total recompute: computing twice must give
+    // the same totals, and an incrementally-buffed monster must equal a fresh one
+    // rebuilt with the same buff set. Guards the class of rescale/stale-state bugs
+    // where a recompute diverges from a clean rebuild.
+    const INV_HRID = '/monsters/inv_dummy';
+    function seedInv() {
+        setGameData({
+            abilityDetailMap: {},
+            combatMonsterDetailMap: {
+                [INV_HRID]: {
+                    enrageTime: 0,
+                    experience: 100,
+                    abilities: [],
+                    combatDetails: {
+                        staminaLevel: 100,
+                        intelligenceLevel: 100,
+                        attackLevel: 100,
+                        meleeLevel: 100,
+                        defenseLevel: 100,
+                        rangedLevel: 100,
+                        magicLevel: 100,
+                        attackInterval: 3e9,
+                        combatStats: {
+                            combatStyleHrids: ['/combat_styles/smash'],
+                            attackInterval: 0,
+                            fireResistance: 100,
+                            armor: 50,
+                        },
+                    },
+                },
+            },
+        });
+    }
+    afterEach(() => setGameData(null));
+
+    const BUFF = {
+        uniqueHrid: '/buff_uniques/toughness',
+        typeHrid: '/buff_types/fire_resistance',
+        flatBoost: 300,
+        ratioBoost: 0,
+        duration: 1e12,
+    };
+
+    test('recomputing twice yields identical totals', () => {
+        seedInv();
+        const monster = new Monster(INV_HRID, 0, 200);
+        monster.combatBuffs = { [BUFF.uniqueHrid]: BUFF };
+        monster.updateCombatDetails();
+        const first = monster.combatDetails.totalFireResistance;
+        monster.updateCombatDetails();
+        expect(monster.combatDetails.totalFireResistance).toBeCloseTo(first, 6);
+    });
+
+    test('incrementally buffed equals a fresh rebuild with the same buff set', () => {
+        seedInv();
+        const incremental = new Monster(INV_HRID, 0, 200);
+        incremental.addBuff(BUFF, 0); // addBuff runs updateCombatDetails
+
+        const fresh = new Monster(INV_HRID, 0, 200);
+        fresh.combatBuffs = { [BUFF.uniqueHrid]: BUFF };
+        fresh.updateCombatDetails();
+
+        expect(incremental.combatDetails.totalFireResistance).toBeCloseTo(fresh.combatDetails.totalFireResistance, 6);
+    });
+});
+
 describe('buff capture (blind-sim instrumentation)', () => {
     const HRID2 = '/monsters/cap_dummy';
     function seedCap() {
@@ -194,8 +261,26 @@ describe('buff capture (blind-sim instrumentation)', () => {
         const monster = new Monster(HRID2, 0, 100);
         setBuffCapture(true);
         // Two applications of the same buff at different strengths; keep the peak.
-        monster.addBuff({ uniqueHrid: '/buff_uniques/shred', typeHrid: '/buff_types/armor', ratioBoost: -0.2, flatBoost: 0, duration: 1e12 }, 0);
-        monster.addBuff({ uniqueHrid: '/buff_uniques/shred', typeHrid: '/buff_types/armor', ratioBoost: -0.35, flatBoost: 0, duration: 1e12 }, 1);
+        monster.addBuff(
+            {
+                uniqueHrid: '/buff_uniques/shred',
+                typeHrid: '/buff_types/armor',
+                ratioBoost: -0.2,
+                flatBoost: 0,
+                duration: 1e12,
+            },
+            0
+        );
+        monster.addBuff(
+            {
+                uniqueHrid: '/buff_uniques/shred',
+                typeHrid: '/buff_types/armor',
+                ratioBoost: -0.35,
+                flatBoost: 0,
+                duration: 1e12,
+            },
+            1
+        );
         const produced = getCapturedMonsterBuffs();
         const shred = produced.find((b) => b.uniqueHrid === '/buff_uniques/shred');
         expect(shred).toBeTruthy();
@@ -205,7 +290,16 @@ describe('buff capture (blind-sim instrumentation)', () => {
     test('captures nothing when the flag is off', () => {
         seedCap();
         const monster = new Monster(HRID2, 0, 100);
-        monster.addBuff({ uniqueHrid: '/buff_uniques/x', typeHrid: '/buff_types/armor', ratioBoost: 0.5, flatBoost: 0, duration: 1e12 }, 0);
+        monster.addBuff(
+            {
+                uniqueHrid: '/buff_uniques/x',
+                typeHrid: '/buff_types/armor',
+                ratioBoost: 0.5,
+                flatBoost: 0,
+                duration: 1e12,
+            },
+            0
+        );
         expect(getCapturedMonsterBuffs()).toEqual([]);
     });
 });
