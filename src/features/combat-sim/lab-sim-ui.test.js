@@ -43,6 +43,10 @@ const game = vi.hoisted(() => ({
     guildBuffDetailMap: {},
     /** What `dataManager.characterData.characterInfo` holds */
     characterInfo: null,
+    /** The character's equipped labyrinth crates, or null before data loads */
+    characterLabyrinth: null,
+    /** Fallback crate hrids, mirroring characterData.characterSetting */
+    characterSetting: null,
     /** What the Configure editor reports, or null when it has none */
     editedDTOs: null,
 }));
@@ -82,7 +86,12 @@ vi.mock('../../core/data-manager.js', () => ({
         characterItems: [],
         characterEquipment: new Map(),
         get characterData() {
-            return { characterAbilities: [], characterInfo: game.characterInfo };
+            return {
+                characterAbilities: [],
+                characterInfo: game.characterInfo,
+                characterLabyrinth: game.characterLabyrinth,
+                characterSetting: game.characterSetting,
+            };
         },
     },
 }));
@@ -1295,6 +1304,75 @@ describe('the upgrade table reads like the combat sim’s', () => {
 
         const costCell = container.querySelector('tr[data-gold-row="0"] td:nth-child(2)');
         expect(costCell.getAttribute('style')).toContain('white-space:nowrap');
+    });
+});
+
+describe('the skilling crate dropdowns follow the equipped crates', () => {
+    beforeEach(() => {
+        game.characterLabyrinth = null;
+        game.characterSetting = null;
+    });
+    afterEach(() => {
+        ui.destroy();
+        game.characterLabyrinth = null;
+        game.characterSetting = null;
+    });
+
+    test('default to what the character has equipped, not a hardcoded Expert', async () => {
+        game.characterLabyrinth = {
+            teaCrateItemHrid: '/items/advanced_tea_crate',
+            coffeeCrateItemHrid: '/items/basic_coffee_crate',
+            foodCrateItemHrid: '',
+        };
+        ui.buildPanel();
+        await Promise.resolve();
+
+        expect(ui.panel.querySelector('#mwi-labsim-skilling-tea').value).toBe('/items/advanced_tea_crate');
+        expect(ui.panel.querySelector('#mwi-labsim-skilling-coffee').value).toBe('/items/basic_coffee_crate');
+        // No food crate equipped reads as None, not the old hardcoded Expert
+        expect(ui.panel.querySelector('#mwi-labsim-skilling-food').value).toBe('');
+    });
+
+    test('a manual pick opts out, so a later read does not drag it back', async () => {
+        game.characterLabyrinth = { teaCrateItemHrid: '/items/advanced_tea_crate' };
+        ui.buildPanel();
+        await Promise.resolve();
+
+        const tea = ui.panel.querySelector('#mwi-labsim-skilling-tea');
+        tea.value = '/items/expert_tea_crate';
+        tea.dispatchEvent(new Event('change'));
+        ui._getSkillingCrates(); // re-reads, and would re-sync if not opted out
+
+        expect(tea.value).toBe('/items/expert_tea_crate');
+    });
+
+    test('the row breakdown spells out the room and success working', () => {
+        const clearRate = { getSkipThreshold: () => 67, getEffectiveLevel: () => 108 };
+        const row = {
+            skillName: 'Alchemy',
+            skillHrid: '/skills/alchemy',
+            roomLevel: 174,
+            baseLevel: 106,
+            effectiveLevel: 112,
+            skillLevelBonus: 6,
+            levelDelta: -62,
+            levelBonus: -0.62,
+            successBonus: 0.05,
+            successChance: 0.34,
+            doubleChance: 0.1,
+            workPower: 120,
+            progressPerSuccess: 120,
+            targetProgress: 1740,
+            attempts: 27,
+            clearChance: 0.296,
+        };
+        const text = ui._skillingRowBreakdown(row, true, clearRate);
+
+        expect(text).toContain('Room 174 = skip level 108 + trigger 67 − 1');
+        expect(text).toContain('Eff level 112 = base 106 + 6 buffs');
+        expect(text).toContain('Level gap: 112 − 174 = -62');
+        expect(text).toContain('34.0%'); // success chance
+        expect(text).toContain('Clear 29.6%');
     });
 });
 

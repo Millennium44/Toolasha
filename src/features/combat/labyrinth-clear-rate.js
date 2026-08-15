@@ -4420,6 +4420,13 @@ class LabyrinthClearRate {
         result.targetProgress = targetProgress;
         result.roomLevel = roomLevel;
         result.xpPerRoom = roomLevel * 50 * (1 + (metrics.experienceBonus || 0));
+        // The pieces behind the success rate, so a caller can show its working:
+        // effectiveLevel = baseLevel + skillLevelBonus, and success is
+        // 0.8 × (1 + levelBonus + successBonus).
+        result.skillLevelBonus = metrics.skillLevelBonus;
+        result.levelDelta = levelDelta;
+        result.levelBonus = levelBonus;
+        result.successBonus = metrics.successBonus;
         return result;
     }
 

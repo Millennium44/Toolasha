@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim skilling: crates default to what you have equipped, plus a per-row calc breakdown
+
+The Skilling tab's tea/coffee/food dropdowns were hardcoded to **Expert**, so the sim scored a room against Expert crates the character may not own while the room level itself came from the equipped crate — the two halves disagreed, and the sim's clear read higher than the Automation tab's recommendation for the same skip trigger (e.g. Recommend +63 but the sim needing +67 to hit 30%). The dropdowns now default to the equipped crates (a manual pick still opts out for exploring). And every skilling row now has a hover breakdown showing the working: `Room = skip level + trigger − 1`, `Eff level = base + buffs`, the level gap, the success formula, and the clear — so a mismatch is visible at a glance. (Reported by Doobs.)
+
 ### Craft arbitrage adapter: expose `skipProcessing` and `timeCostPerHour`
 
 `describeCraft`/`describeCrafts` now forward a `skipProcessing` flag (buy processed intermediates like leather/lumber instead of making them — a direct craft off bought materials) and a `timeCostPerHour` (folds crafting time into the unit cost) to the planner. Lets the Flip Finder companion offer a "direct craft" toggle and a local time-value rate. Both default off, so existing callers are unchanged.

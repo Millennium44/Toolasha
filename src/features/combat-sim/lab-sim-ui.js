@@ -1145,6 +1145,17 @@ class LabSimUI {
         this.panel.appendChild(skillingContent);
         this.panel.appendChild(status);
 
+        // The skilling crate dropdowns default to the character's equipped
+        // labyrinth crates rather than a hardcoded Expert — see
+        // _applyEquippedSkillingCrates. A manual pick opts out so "what if I ran
+        // Expert" still works.
+        for (const id of ['#mwi-labsim-skilling-tea', '#mwi-labsim-skilling-coffee', '#mwi-labsim-skilling-food']) {
+            this.panel.querySelector(id)?.addEventListener('change', () => {
+                this._skillingCratesUserSet = true;
+            });
+        }
+        this._applyEquippedSkillingCrates();
+
         // Both bottom corners: a panel docked against the right of the screen
         // can only be widened by dragging its left edge, and the right-hand grip
         // just pushes it off the screen
@@ -4573,8 +4584,59 @@ class LabSimUI {
         return parts.join('');
     }
 
+    /**
+     * The labyrinth crates the character actually has equipped — the same source
+     * the live clear-rate reader scores a room with (getCrateBuffs).
+     * @private
+     */
+    _equippedSkillingCrateHrids() {
+        const labyrinth = dataManager.characterData?.characterLabyrinth;
+        const setting = dataManager.characterData?.characterSetting;
+        return {
+            tea: labyrinth?.teaCrateItemHrid || setting?.labyrinthTeaCrateHrid || '',
+            coffee: labyrinth?.coffeeCrateItemHrid || setting?.labyrinthCoffeeCrateHrid || '',
+            food: labyrinth?.foodCrateItemHrid || setting?.labyrinthFoodCrateHrid || '',
+        };
+    }
+
+    /**
+     * Point the three skilling crate dropdowns at the equipped crates.
+     *
+     * The sim's room level already comes from the live equipped tea crate (via
+     * getTargetRoomLevel → getEffectiveLevel), so the success calc must use the
+     * same crates or the two halves disagree — a room set from equipped tea and
+     * a success scored against a hardcoded Expert crate the player may not own.
+     * That mismatch reads a higher clear than the Automation tab's recommendation
+     * for the same skip threshold. Skipped once the user picks a crate by hand,
+     * so exploring a different crate still works.
+     * @private
+     */
+    _applyEquippedSkillingCrates() {
+        if (this._skillingCratesUserSet) return;
+        // Before character data loads there is nothing to read; leave the
+        // dropdowns as they are rather than forcing them to None.
+        if (!dataManager.characterData) return;
+        const equipped = this._equippedSkillingCrateHrids();
+        const set = (id, hrid) => {
+            const select = this.panel?.querySelector(id);
+            if (!select) return;
+            if (!hrid) {
+                select.value = '';
+            } else if ([...select.options].some((option) => option.value === hrid)) {
+                // Leave an unrecognised crate on its current value rather than blanking it
+                select.value = hrid;
+            }
+        };
+        set('#mwi-labsim-skilling-tea', equipped.tea);
+        set('#mwi-labsim-skilling-coffee', equipped.coffee);
+        set('#mwi-labsim-skilling-food', equipped.food);
+    }
+
     /** @private */
     _getSkillingCrates() {
+        // Re-point at the equipped crates in case the panel was built before
+        // character data arrived; a manual pick has already opted out.
+        this._applyEquippedSkillingCrates();
         const crates = [];
         const tea = this.panel?.querySelector('#mwi-labsim-skilling-tea')?.value;
         const coffee = this.panel?.querySelector('#mwi-labsim-skilling-coffee')?.value;
@@ -4780,11 +4842,61 @@ class LabSimUI {
     }
 
     /** @private */
+    /**
+     * The success/clear working for one skilling row, as hover text. Spells out
+     * how the room level is assigned (skip basis + trigger, from base + tea, the
+     * way the game does it) versus the effective level the success rate uses
+     * (base + every buff) — the two are different, which is what makes a skip
+     * trigger read as one room here and another in the automation panel.
+     * @private
+     */
+    _skillingRowBreakdown(r, usesSkipLevels, clearRate) {
+        const room = r.roomLevel;
+        const lines = [r.skillName];
+        if (usesSkipLevels && r.skillHrid && clearRate) {
+            const skip = clearRate.getSkipThreshold?.(r.skillHrid);
+            const basis = clearRate.getEffectiveLevel?.(r.skillHrid);
+            if (Number.isFinite(skip) && Number.isFinite(basis)) {
+                lines.push(`Room ${room} = skip level ${basis} + trigger ${skip} − 1`);
+                lines.push('  (skip level is base + tea only, as the game assigns rooms)');
+            }
+        }
+        const bonus = Number(r.skillLevelBonus) || 0;
+        lines.push(`Eff level ${r.effectiveLevel} = base ${r.baseLevel}${bonus ? ` + ${+bonus.toFixed(2)} buffs` : ''}`);
+        const delta = Number.isFinite(r.levelDelta) ? r.levelDelta : r.effectiveLevel - room;
+        lines.push(`Level gap: ${r.effectiveLevel} − ${room} = ${delta >= 0 ? '+' : ''}${delta}`);
+        const lb = Number(r.levelBonus) || 0;
+        const sb = Number(r.successBonus) || 0;
+        lines.push(
+            `Success = 0.8 × (1 ${lb >= 0 ? '+' : '−'} ${Math.abs(lb * 100).toFixed(1)}%` +
+                `${sb ? ` + ${(sb * 100).toFixed(1)}% gear` : ''}) = ${((r.successChance || 0) * 100).toFixed(1)}%`
+        );
+        if (Number.isFinite(r.doubleChance) && r.doubleChance > 0) {
+            lines.push(`Double progress: ${(r.doubleChance * 100).toFixed(0)}%`);
+        }
+        if (Number.isFinite(r.workPower)) {
+            lines.push(
+                `Work power ${r.workPower.toFixed(1)} → ${r.progressPerSuccess}/success, room needs ${r.targetProgress}`
+            );
+        }
+        lines.push(`Clear ${((r.clearChance || 0) * 100).toFixed(1)}% over ${r.attempts || 0} attempts`);
+        return lines.join('\n');
+    }
+
     _renderSkillingClearResults(results, roomLevel) {
         const container = this.panel?.querySelector('#mwi-labsim-skilling-results');
         if (!container) return;
 
         const usesSkipLevels = roomLevel && typeof roomLevel === 'object';
+        const clearRate = labyrinthClearRate() || bundledLabyrinthClearRate;
+        // Hover text carries newlines and the odd math symbol — encode for an attr
+        const attr = (text) =>
+            String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\n/g, '&#10;');
         const activeResults = results.filter((r) => !r.skipped);
         const avgClearRate = activeResults.length
             ? activeResults.reduce((s, r) => s + (r.clearChance || 0), 0) / activeResults.length
@@ -4799,6 +4911,7 @@ class LabSimUI {
             ${headerText}
             <span style="color:#888; font-weight:400; font-size:11px; margin-left:8px;">
                 Avg Clear: <span style="color:${avgClearRate >= 0.95 ? '#4caf50' : avgClearRate >= 0.5 ? '#ff9800' : '#f44336'}; font-weight:600;">${(avgClearRate * 100).toFixed(1)}%</span>
+                <span style="margin-left:8px; opacity:0.7;">· hover a row for the calculation</span>
             </span>
         </div>`;
 
@@ -4833,8 +4946,9 @@ class LabSimUI {
             const clearPct = ((r.clearChance || 0) * 100).toFixed(1);
             const rowRoomLevel = r.roomLevel ?? roomLevel;
             const xpPerRoom = r.xpPerRoom > 0 ? formatKMB(r.xpPerRoom) : '—';
+            const breakdown = attr(this._skillingRowBreakdown(r, usesSkipLevels, clearRate));
 
-            html += `<tr style="border-bottom:1px solid #1a1a1a;">
+            html += `<tr style="border-bottom:1px solid #1a1a1a; cursor:help;" title="${breakdown}">
                 <td style="padding:3px 4px; color:#e0e0e0;">${r.skillName}</td>
                 <td style="${tdStyle} color:#ccc;">${rowRoomLevel}</td>
                 <td style="${tdStyle} color:#ccc;">${r.baseLevel}</td>
