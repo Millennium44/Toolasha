@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Guild trials: tiles stay in a row with boxes beneath, cleaner notes, and a scheduled start alert
 
-- The per-trial forecast boxes no longer sit in the grid cell beside each tile: each section now gathers its boxes into one full-width row (deferred past the tiles) laid out as a compact wrapping flex row, so the skilling and combat trial tiles keep their row and the boxes sit underneath. Fixes both the boxes landing beside the tiles and the flicker where they briefly appeared underneath and then jumped back — the layout now lives on a panel-owned row the per-block style reset can't wipe.
+- The per-trial forecast boxes no longer sit in the grid cell beside each tile: each section now gathers its boxes into one full-width row (deferred past the tiles) that mirrors the tile grid's own columns, so the boxes line up in a row directly under the matching tiles — four across for skilling, two for combat. Fixes both the boxes landing beside the tiles and the flicker where they briefly appeared underneath and then jumped back — the layout now lives on a panel-owned row the per-block style reset can't wipe.
 - Dropped the "No Treasury level seen" note — a guild with no Treasury levels bought adds nothing to the token figures, so its absence is nothing to flag.
 - The **trial-starting** alert now anchors on the start instant (seen time + time-till-start) and arms a timer for the lead moment, so it still fires if the panel is closed after the cycle is glimpsed once — previously the panel had to stay open across the whole lead window.
 

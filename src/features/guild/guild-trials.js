@@ -1529,16 +1529,18 @@ function escapeSquashingRows(root, start) {
 const BOX_ROW_CLASS = 'mwi-trial-box-row';
 
 /**
- * Column count of a multi-column grid, or 0 when the element is not one.
+ * The grid geometry of a multi-column grid, or null when the element is not one.
  * @param {Element} el - The candidate grid
- * @returns {number} Columns, or 0
+ * @returns {{columns: number, template: string, columnGap: string}|null}
  */
-function gridColumnCount(el) {
+function gridGeometry(el) {
     const style = typeof getComputedStyle === 'function' ? getComputedStyle(el) : null;
-    if (!(style?.display || '').includes('grid')) return 0;
-    const tracks = style?.gridTemplateColumns || '';
-    const columns = tracks && tracks !== 'none' ? tracks.trim().split(/\s+/).length : 0;
-    return columns > 1 ? columns : 0;
+    if (!(style?.display || '').includes('grid')) return null;
+    const template = style?.gridTemplateColumns || '';
+    const tracks = template && template !== 'none' ? template.trim().split(/\s+/) : [];
+    if (tracks.length <= 1) return null;
+    const gap = style?.columnGap && style.columnGap !== 'normal' ? style.columnGap : '8px';
+    return { columns: tracks.length, template, columnGap: gap };
 }
 
 /**
@@ -1548,19 +1550,23 @@ function gridColumnCount(el) {
  * whose tiles do not fill the last grid row (combat has two trials in a
  * four-column grid) would see the boxes flow into the empty cells *beside* the
  * tiles. So every box in a grid goes into a single Toolasha-owned row instead —
- * a full-width cell (`1 / span N`) deferred past the tiles (`order: 1`) and laid
- * out as a wrapping flex row, so the tiles keep their row(s) and the boxes sit
- * in a compact row underneath whatever the tile count.
+ * a full-width cell (`1 / span N`) deferred past the tiles (`order: 1`).
+ *
+ * The row mirrors the tile grid's own column template and gap, so each box sits
+ * in its own column directly under the matching tile (four across for skilling,
+ * two for combat) rather than wrapping to some width of its own. The boxes cap
+ * their width at the column (`min(260px, 100%)`), so a narrower column just
+ * shrinks the box to fit rather than overflowing.
  *
  * The layout that matters lives on this container, which the panel owns and the
  * per-block style reset never touches — so it holds where a grid property set on
  * the box itself was wiped on the next pass, dropping the box back beside its tile.
  *
  * @param {Element} grid - The multi-column grid the tiles live in
- * @param {number} columns - Its column count, for the span
+ * @param {{columns: number, template: string, columnGap: string}} geometry - Its geometry
  * @param {Element} block - The forecast box
  */
-function placeInBoxRow(grid, columns, block) {
+function placeInBoxRow(grid, geometry, block) {
     let row = null;
     for (const child of grid.children) {
         if (child.classList?.contains(BOX_ROW_CLASS)) {
@@ -1572,8 +1578,9 @@ function placeInBoxRow(grid, columns, block) {
         row = grid.ownerDocument.createElement('div');
         row.className = BOX_ROW_CLASS;
         row.style.cssText =
-            `grid-column:1 / span ${columns}; order:1; width:100%;` +
-            'display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; margin-top:8px;';
+            `grid-column:1 / span ${geometry.columns}; order:1; width:100%;` +
+            `display:grid; grid-template-columns:${geometry.template};` +
+            `column-gap:${geometry.columnGap}; row-gap:8px; align-items:start; margin-top:8px;`;
         grid.appendChild(row);
     }
     row.appendChild(block);
@@ -1610,9 +1617,9 @@ export function placeTrialBlock(root, card, block, name = '') {
         // grid — each trial tile is a single-column grid nested inside it — so a
         // box landing here belongs in the shared row beneath the tiles, not the
         // next cell beside one.
-        const outerColumns = gridColumnCount(outer);
-        if (outerColumns) {
-            placeInBoxRow(outer, outerColumns, block);
+        const outerGrid = gridGeometry(outer);
+        if (outerGrid) {
+            placeInBoxRow(outer, outerGrid, block);
             return 'row';
         }
         block.style.width = '100%';
@@ -1627,9 +1634,9 @@ export function placeTrialBlock(root, card, block, name = '') {
     };
 
     if (display.includes('grid')) {
-        const columns = gridColumnCount(container);
-        if (columns) {
-            placeInBoxRow(container, columns, block);
+        const geometry = gridGeometry(container);
+        if (geometry) {
+            placeInBoxRow(container, geometry, block);
             return 'row';
         }
         return afterContainer();
