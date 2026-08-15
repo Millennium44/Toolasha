@@ -268,6 +268,21 @@ describe('bossHpCeiling', () => {
         expect(bossHpCeiling({})).toEqual({ hp: 0, fights: 0 });
         expect(bossHpCeiling(null)).toEqual({ hp: 0, fights: 0 });
     });
+
+    test('a multi-enemy tier counts its whole wave, not the representative bar', () => {
+        // A two-badger tier records both bars as waveHitpoints; the ceiling must
+        // use that, or a party total that dropped both reads as over-attributing.
+        const sheets = {
+            1: { maxHitpoints: 479895, waveHitpoints: 959790 },
+            2: { maxHitpoints: 552000, waveHitpoints: 1104000 },
+        };
+        expect(bossHpCeiling(sheets)).toEqual({ hp: 2063790, fights: 2 });
+    });
+
+    test('falls back to the single bar when no wave total was recorded', () => {
+        const sheets = { 1: { maxHitpoints: 479895, waveHitpoints: null } };
+        expect(bossHpCeiling(sheets)).toEqual({ hp: 479895, fights: 1 });
+    });
 });
 
 describe('summariseTrialDamage', () => {
@@ -711,6 +726,21 @@ describe('the spectated trial fight', () => {
         const { pool } = guildTrialDamage.breakdown();
         // The last tick of the capture, and 618,000 is the T2 Chameleon pool
         expect(pool).toMatchObject({ current: 453_402, max: 618_000, tier: 2 });
+    });
+
+    test('a tick with several enemies sums them into one pool', () => {
+        // A two-badger wave: the pool is their combined health, not the first bar,
+        // or the clear reads at half the HP it takes to finish the tier
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            battleId: 9,
+            tier: 1,
+            pMap: {},
+            mMap: { 0: { cHP: 300_000, mHP: 590_640 }, 1: { cHP: 445_376, mHP: 590_640 } },
+        });
+
+        const { pool } = guildTrialDamage.breakdown();
+        expect(pool.current).toBe(745_376);
+        expect(pool.max).toBe(1_181_280);
     });
 
     test('the tier is taken from the payload, not reasoned about', () => {
@@ -1198,6 +1228,17 @@ describe('the tier-opening message', () => {
         // Ten minutes, in nanoseconds on the wire
         expect(sheet.enrageTimerMs).toBe(600_000);
         expect(sheet.stats.combatLevel).toBe(100);
+    });
+
+    test('a two-enemy wave records both bars as its wave total, keeping one as the sheet', () => {
+        // The fixture fields two Trial Badgers; the representative sheet keeps one
+        // bar, but the wave total is both, so the ceiling can price the whole kill
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+
+        const sheet = guildTrialDamage.breakdown().bossSheets[1];
+        expect(sheet.maxHitpoints).toBe(429_000);
+        expect(sheet.waveHitpoints).toBe(858_000);
+        expect(sheet.waveCount).toBe(2);
     });
 
     test('and confirms the participant rule again', () => {

@@ -1602,6 +1602,40 @@ function escapeSquashingRows(root, start) {
 /** The shared full-width row that carries a section's forecast boxes beneath its tiles */
 const BOX_ROW_CLASS = 'mwi-trial-box-row';
 
+/** The wrapper that stands a combat forecast box beside the enemy cards in the fight view */
+const SIDE_BOX_CLASS = 'mwi-trial-side-box';
+
+/**
+ * Stand a combat forecast box beside the enemy cards in the In Progress fight.
+ *
+ * The enemies sit in a grid inside the monsters area, and the monsters area is
+ * one child of a flex `battleArea` row with open space to its right. Dropping the
+ * box into the enemy grid puts it in a single narrow unit-card cell; putting it
+ * in the battle row's spare width instead sets it beside the fight at a readable
+ * size. The layout lives on this wrapper — a flex sibling the panel owns — so the
+ * per-block style reset cannot strip it, and it is created once and reused.
+ *
+ * @param {Element} monstersArea - `BattlePanel_monstersArea`
+ * @param {Element} block - The forecast box
+ */
+function placeBesideMonsters(monstersArea, block) {
+    const battleArea = monstersArea.parentElement;
+    let side = null;
+    for (const child of battleArea.children) {
+        if (child.classList?.contains(SIDE_BOX_CLASS)) {
+            side = child;
+            break;
+        }
+    }
+    if (!side) {
+        side = battleArea.ownerDocument.createElement('div');
+        side.className = SIDE_BOX_CLASS;
+        side.style.cssText = 'flex:0 1 auto; align-self:flex-start; min-width:200px; max-width:440px; margin-left:8px;';
+        monstersArea.insertAdjacentElement('afterend', side);
+    }
+    side.appendChild(block);
+}
+
 /**
  * The grid geometry of a multi-column grid, or null when the element is not one.
  * @param {Element} el - The candidate grid
@@ -1667,6 +1701,21 @@ export function placeTrialBlock(root, card, block, name = '') {
     // filter that looks at the card. Placement is the last point at which "this
     // is not the guild panel" can still be said
     if (inFloatingDialog(card)) return 'refused';
+
+    // The In Progress fight view: the enemy cards live in a grid inside the
+    // monsters area, itself one child of a flex battle row with space to its
+    // right. Set the forecast box in that spare width, beside the fight, rather
+    // than in a cramped unit-card cell among the enemies.
+    const monstersArea = card?.closest?.('[class*="BattlePanel_monstersArea"]');
+    if (
+        monstersArea?.parentElement &&
+        root?.contains?.(monstersArea.parentElement) &&
+        typeof getComputedStyle === 'function' &&
+        (getComputedStyle(monstersArea.parentElement)?.display || '').includes('flex')
+    ) {
+        placeBesideMonsters(monstersArea, block);
+        return 'beside-monsters';
+    }
 
     const container = card?.parentElement;
     if (!container || !root?.contains?.(container)) {
@@ -1769,10 +1818,12 @@ function trialBlockHeading(name) {
  * @returns {boolean} True while the placement still holds
  */
 function blockNearAnchor(block, anchor, root = null) {
-    // A box that has been gathered into its section's shared row is placed — its
-    // home is that row, not a spot beside the tile, so adjacency to the tile is
-    // the wrong test and would re-place (and re-append) it on every pass.
-    if (block?.parentElement?.classList?.contains(BOX_ROW_CLASS)) {
+    // A box gathered into a panel-owned container — the shared row beneath a
+    // section's tiles, or the wrapper beside the fight — is placed by that
+    // container, not by adjacency to the card, so testing adjacency here would
+    // re-place (and re-append) it on every pass.
+    const home = block?.parentElement?.classList;
+    if (home?.contains(BOX_ROW_CLASS) || home?.contains(SIDE_BOX_CLASS)) {
         return !root || root.contains(block);
     }
     if (!anchor?.isConnected) return true; // nothing to re-anchor against
@@ -2710,7 +2761,8 @@ class GuildTrials {
             // the per-pass forced reflow. Blocks that live loose in the game's
             // own layout (the payout, the In Progress card readouts) still get
             // the full check, which is what re-places one out of a squashing row.
-            const inBoxRow = existing.parentElement?.classList?.contains(BOX_ROW_CLASS);
+            const parentClasses = existing.parentElement?.classList;
+            const inBoxRow = parentClasses?.contains(BOX_ROW_CLASS) || parentClasses?.contains(SIDE_BOX_CLASS);
             if (!inBoxRow) {
                 const stuckInRow = existing.parentElement && isSquashingRow(existing.parentElement);
                 if (stuckInRow || (anchored && !anchored(existing))) {
@@ -2760,11 +2812,11 @@ class GuildTrials {
             block.remove();
         }
 
-        // A section's shared box row that lost its last box is an empty
-        // full-width cell left in the tile grid; drop it so it stops reserving
-        // a row underneath the tiles
-        for (const row of scope.querySelectorAll(`.${BOX_ROW_CLASS}`)) {
-            if (!row.querySelector(`.${CSS_CLASS}`)) row.remove();
+        // A panel-owned box container that lost its last box is left empty — a
+        // box row reserving a grid row, or a side wrapper taking space beside the
+        // fight; drop either once it holds nothing
+        for (const wrapper of scope.querySelectorAll(`.${BOX_ROW_CLASS}, .${SIDE_BOX_CLASS}`)) {
+            if (!wrapper.querySelector(`.${CSS_CLASS}`)) wrapper.remove();
         }
     }
 

@@ -709,6 +709,32 @@ describe('placeTrialBlock', () => {
         return block;
     };
 
+    test('the combat fight view sets the box beside the enemies, in the battle row', () => {
+        // The enemy cards live in a grid inside the monsters area, itself a child
+        // of a flex battle row with room to the right; the box belongs in that
+        // spare width, not in a narrow unit-card cell among the enemies.
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__r">' +
+            '<div id="battle" class="BattlePanel_battleArea__x" style="display:flex">' +
+            '<div id="monsters" class="BattlePanel_monstersArea__y">' +
+            '<div id="grid" style="display:grid; grid-template-columns:176px 176px 176px 176px">' +
+            '<div id="card" class="BattlePanel_combatUnit__z">Trial Badger</div>' +
+            '</div></div></div></div>';
+        const root = document.querySelector('[class*="GuildPanel_guildPanel"]');
+        const monsters = document.getElementById('monsters');
+        const card = document.getElementById('card');
+        const block = newBlock();
+
+        expect(placeTrialBlock(root, card, block, 'Trial Badger')).toBe('beside-monsters');
+        // A panel-owned wrapper sitting right after the monsters area in the row
+        const side = document.getElementById('battle').querySelector('.mwi-trial-side-box');
+        expect(side).not.toBeNull();
+        expect(monsters.nextElementSibling).toBe(side);
+        expect(side.contains(block)).toBe(true);
+        // Not dropped into the enemy grid
+        expect(document.getElementById('grid').querySelector('.mwi-trial-info')).toBeNull();
+    });
+
     test('a grid gathers its boxes into one full-width row beneath the tiles', () => {
         const { root, container, card } = layout('display:grid; grid-template-columns:126px 126px 126px 126px');
         const block = newBlock();
