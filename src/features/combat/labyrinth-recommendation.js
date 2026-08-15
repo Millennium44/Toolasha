@@ -328,10 +328,72 @@ export const recommendationMethods = {
                 badge.style.color = '#d9534f';
                 note = `${gap} above the recommendation — well below a ${target}`;
             }
-            badge.title = `Recommended skip threshold for a ${target}\nCurrently set to ${currentThreshold}. ${note}.`;
+            badge.title = this._recommendationTooltip(roomHrid, rec, currentThreshold, note, target);
 
             getAnnotationContainer(cell).appendChild(badge);
         }
+    },
+
+    /**
+     * Hover text for a recommendation badge. A skilling row shows its working —
+     * the room the recommended trigger maps to (and why it is trigger − 1 above
+     * you), the effective level, the success formula, the clear, and the crates
+     * behind it — the same breakdown the Lab Sim's Skilling tab now gives. A
+     * combat row keeps the short form: its clear rate is an async simulation, not
+     * a closed-form formula, so there is nothing to spell out here.
+     * @private
+     */
+    _recommendationTooltip(roomHrid, rec, currentThreshold, note, target) {
+        const head = `Recommended skip trigger for a ${target}: ${rec.threshold >= 0 ? '+' : ''}${rec.threshold}`;
+        const tail = `Currently set to ${currentThreshold}. ${note}.`;
+        if (!roomHrid.startsWith('/skills/')) return `${head}\n${tail}`;
+
+        const lines = [head];
+        const effLevel = this.getEffectiveLevel(roomHrid);
+        if (Number.isFinite(effLevel) && Number.isFinite(rec.threshold)) {
+            const room = Math.floor(effLevel + rec.threshold - 1);
+            lines.push(`At ${rec.threshold >= 0 ? '+' : ''}${rec.threshold}: room ${room} — the hardest room you still fight`);
+            lines.push(`  a room is skipped once it's ≥${rec.threshold} above you (≥${effLevel + rec.threshold}), so ${room} is the top`);
+            const result = room > 0 ? this.computeSkillingClear(roomHrid, room) : null;
+            if (result) {
+                const bonus = Number(result.skillLevelBonus) || 0;
+                lines.push(
+                    `Effective level ${result.effectiveLevel} = base ${result.baseLevel}${bonus ? ` + ${+bonus.toFixed(2)} buffs` : ''}`
+                );
+                const lb = Number(result.levelBonus) || 0;
+                const sb = Number(result.successBonus) || 0;
+                lines.push(
+                    `Success = 0.8 × (1 ${lb >= 0 ? '+' : '−'} ${Math.abs(lb * 100).toFixed(1)}%` +
+                        `${sb ? ` + ${(sb * 100).toFixed(1)}% gear` : ''}) = ${((result.successChance || 0) * 100).toFixed(1)}%`
+                );
+                lines.push(`Clear ${((result.clearChance || 0) * 100).toFixed(1)}% at that room`);
+            }
+        }
+        const crates = this._equippedCrateSummary();
+        if (crates) lines.push(`Crates: ${crates}`);
+        lines.push(tail);
+        return lines.join('\n');
+    },
+
+    /**
+     * The equipped labyrinth crate tiers as "Expert tea · Advanced coffee · …",
+     * for the recommendation tooltip's crate line.
+     * @private
+     */
+    _equippedCrateSummary() {
+        const labyrinth = dataManager.characterData?.characterLabyrinth;
+        const setting = dataManager.characterData?.characterSetting;
+        return [
+            labyrinth?.teaCrateItemHrid || setting?.labyrinthTeaCrateHrid || '',
+            labyrinth?.coffeeCrateItemHrid || setting?.labyrinthCoffeeCrateHrid || '',
+            labyrinth?.foodCrateItemHrid || setting?.labyrinthFoodCrateHrid || '',
+        ]
+            .map((hrid) => {
+                const match = /\/items\/(\w+?)_(tea|coffee|food)_crate/.exec(hrid || '');
+                return match ? `${match[1].charAt(0).toUpperCase()}${match[1].slice(1)} ${match[2]}` : '';
+            })
+            .filter(Boolean)
+            .join(' · ');
     },
 
     /**

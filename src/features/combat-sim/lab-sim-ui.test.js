@@ -1366,13 +1366,28 @@ describe('the skilling crate dropdowns follow the equipped crates', () => {
             attempts: 27,
             clearChance: 0.296,
         };
-        const text = ui._skillingRowBreakdown(row, true, clearRate);
+        const text = ui._skillingRowBreakdown(row, true, clearRate, 'Expert tea · Expert coffee');
 
-        expect(text).toContain('Room 174 = skip level 108 + trigger 67 − 1');
-        expect(text).toContain('Eff level 112 = base 106 + 6 buffs');
+        expect(text).toContain('Room 174 — the hardest room you still fight');
+        expect(text).toContain('trigger 67:'); // explains the − 1 in words
+        expect(text).toContain('Effective level 112 = base 106 + 6 buffs');
         expect(text).toContain('Level gap: 112 − 174 = -62');
         expect(text).toContain('34.0%'); // success chance
         expect(text).toContain('Clear 29.6%');
+        expect(text).toContain('Crates: Expert tea · Expert coffee');
+    });
+
+    test('combat crate dropdowns also default to the equipped crates', async () => {
+        game.characterLabyrinth = {
+            teaCrateItemHrid: '/items/advanced_tea_crate',
+            coffeeCrateItemHrid: '/items/advanced_coffee_crate',
+            foodCrateItemHrid: '/items/basic_food_crate',
+        };
+        ui.buildPanel();
+        await Promise.resolve();
+
+        expect(ui.panel.querySelector('#mwi-labsim-coffee').value).toBe('/items/advanced_coffee_crate');
+        expect(ui.panel.querySelector('#mwi-labsim-food').value).toBe('/items/basic_food_crate');
     });
 });
 
