@@ -174,6 +174,19 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.6.0](https://github.com/Millennium44/Toolasha/compare/v3.5.2...v3.6.0) (2026-08-15)
+
+
+### Features
+
+* craft arbitrage adapter forwards skipProcessing and timeCostPerHour ([db197f7](https://github.com/Millennium44/Toolasha/commit/db197f78af8e6ee1cdf3c094cc75955e71633e2c))
+* default combat sim crates to equipped; richer recommendation & breakdown tooltips ([141879b](https://github.com/Millennium44/Toolasha/commit/141879b6ba4d0c17b40675566a0b201d8626fbe2))
+
+
+### Bug Fixes
+
+* Lab Sim skilling crates default to equipped, add per-row calc breakdown ([dfe4f3a](https://github.com/Millennium44/Toolasha/commit/dfe4f3abb31c66a5d97bd6c8b19713550d6be8a2))
+
 ## [3.5.2](https://github.com/Millennium44/Toolasha/compare/v3.5.1...v3.5.2) (2026-08-15)
 
 ### Bug Fixes
