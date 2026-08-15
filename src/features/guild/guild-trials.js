@@ -1525,6 +1525,31 @@ function escapeSquashingRows(root, start) {
     return anchor;
 }
 
+/**
+ * Lay a block out across a multi-column grid it lives in, on its own row.
+ *
+ * `span N` rather than `1 / -1`: the latter counts explicit tracks only and
+ * collapses to a single cell when the game declares none. Grid auto-placement
+ * fills by `order` then source order, so `order: 1` defers every box past the
+ * order-0 tiles — the tiles keep their row(s) and the boxes stack full-width
+ * beneath, rather than a box slotting into the next cell beside its tile.
+ *
+ * @param {Element} parent - The grid the block is (or will be) a child of
+ * @param {Element} block - The block to lay out
+ * @returns {number} Columns spanned, or 0 when the parent is not a multi-column grid
+ */
+function spanAcrossGrid(parent, block) {
+    const style = typeof getComputedStyle === 'function' ? getComputedStyle(parent) : null;
+    if (!(style?.display || '').includes('grid')) return 0;
+    const tracks = style?.gridTemplateColumns || '';
+    const columns = tracks && tracks !== 'none' ? tracks.trim().split(/\s+/).length : 0;
+    if (columns <= 1) return 0;
+    block.style.gridColumn = `1 / span ${columns}`;
+    block.style.width = '100%';
+    block.style.order = '1';
+    return columns;
+}
+
 export function placeTrialBlock(root, card, block, name = '') {
     // Belt and braces over the anchor filter in `readTrialTiles`. The reported
     // failure drew this whole block inside the boss's stat popup, which is
@@ -1554,6 +1579,12 @@ export function placeTrialBlock(root, card, block, name = '') {
         }
         block.style.width = '100%';
         block.style.flexBasis = '100%';
+        // The container we escaped to can itself be a multi-column grid — each
+        // trial tile is a single-column grid nested inside the tab's tile grid —
+        // and there width:100% fills only one 126px cell, dropping the block into
+        // the next column beside the tile. Span every column and defer past the
+        // tiles so the boxes take their own rows underneath instead.
+        spanAcrossGrid(outer, block);
         // Placement can run again on the same block when a remount strands it,
         // and a heading per placement is a stutter of headings
         if (name && !block.querySelector('.mwi-trial-block-heading')) {
@@ -1564,20 +1595,7 @@ export function placeTrialBlock(root, card, block, name = '') {
     };
 
     if (display.includes('grid')) {
-        const tracks = style?.gridTemplateColumns || '';
-        const columns = tracks && tracks !== 'none' ? tracks.trim().split(/\s+/).length : 0;
-        if (columns > 1) {
-            // `span N` rather than `1 / -1`: the latter counts explicit tracks
-            // only, and collapses to one cell when the game declares none
-            block.style.gridColumn = `1 / span ${columns}`;
-            block.style.width = '100%';
-            // Grid auto-placement fills by `order` then source order: leaving the
-            // block at the default order 0 would slot it mid-grid, splitting the
-            // trial tiles across the box and stranding the rest on later rows.
-            // Order 1 defers every box past all the tiles, so the tiles keep their
-            // row(s) and the boxes stack full-width underneath. DOM position stays
-            // put so `blockNearAnchor` can still find its anchor.
-            block.style.order = '1';
+        if (spanAcrossGrid(container, block) > 0) {
             card.insertAdjacentElement('afterend', block);
             return 'spanned';
         }
