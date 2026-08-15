@@ -649,12 +649,13 @@ describe('placeTrialBlock', () => {
 
         expect(placeTrialBlock(root, card, block, 'Trial Chameleon')).toBe('row');
         // A single shared row, spanning every column and deferred past the tiles,
-        // laid out as a wrapping flex row so the boxes sit compactly underneath
+        // and mirroring the tile grid's own columns so the boxes line up under them
         const row = container.querySelector('.mwi-trial-box-row');
         expect(row).not.toBeNull();
         expect(row.style.gridColumn).toBe('1 / span 4');
         expect(row.style.order).toBe('1');
-        expect(row.style.display).toBe('flex');
+        expect(row.style.display).toBe('grid');
+        expect(row.style.gridTemplateColumns).toBe('126px 126px 126px 126px');
         expect(row.contains(block)).toBe(true);
     });
 
