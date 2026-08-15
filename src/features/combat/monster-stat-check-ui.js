@@ -19,7 +19,7 @@ import { attachMinimize } from '../../utils/panel-minimize.js';
 import { buildGameDataPayload } from '../combat-sim/combat-sim-adapter.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import Monster from '../combat-sim/engine/monster.js';
-import { deriveRoomLevel, buildComparison, flaggedRows, buildExportPayload } from './monster-stat-check.js';
+import { deriveRoomLevel, buildComparison, buildExportPayload } from './monster-stat-check.js';
 import { downloadFile } from '../../utils/csv-export.js';
 
 const SETTING_KEY = 'labyrinthMonsterStatCheck';
@@ -47,6 +47,17 @@ function fmtDelta(pct) {
     if (pct == null || !Number.isFinite(pct)) return '';
     const sign = pct >= 0 ? '+' : '−';
     return `${sign}${Math.abs(pct).toFixed(1)}%`;
+}
+
+/** Coarse "how long ago" for the paging label. @param {number} [ts] */
+function relTime(ts) {
+    if (!ts) return '';
+    const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+    if (s < 5) return 'just now';
+    if (s < 60) return `${s}s ago`;
+    const m = Math.round(s / 60);
+    if (m < 60) return `${m}m ago`;
+    return `${Math.round(m / 60)}h ago`;
 }
 
 /**
@@ -101,12 +112,21 @@ class MonsterStatCheckPanel {
         this.dragUpHandler = null;
         /** The most recent comparison, for the console dump. */
         this.last = null;
-        /** Discrepancy log for the session, keyed by `${hrid}|${roomLevel}`. */
+        /** The snapshot currently on screen (live, or a history entry being browsed). */
+        this.displayed = null;
+        /** Recorded comparisons for the session, keyed by `${hrid}|${roomLevel}`. */
         this.history = new Map();
+        /** Which history key is on screen, so the arrows know where they are. */
+        this.viewKey = null;
+        /** Whether the pointer is over the panel, so arrows only steer it then. */
+        this.hovered = false;
+        this.keyHandler = null;
     }
 
     /**
      * Show (building on first use) and refresh for a freshly fetched monster.
+     * A fresh click always jumps back to the live view, even if you were browsing
+     * history a moment ago.
      * @param {Object} gameUnit
      */
     showFor(gameUnit) {
@@ -114,6 +134,7 @@ class MonsterStatCheckPanel {
         const simDetails = built?.monster?.combatDetails || null;
         const comparison = buildComparison(gameUnit, simDetails, { simBuffed: Boolean(built?.buffApplied) });
         this.last = {
+            recordedAt: Date.now(),
             hrid: gameUnit?.hrid,
             name: gameUnit?.name,
             roomLevel: built?.roomLevel ?? 0,
@@ -121,11 +142,13 @@ class MonsterStatCheckPanel {
             ...comparison,
         };
         this._record();
+        this.displayed = this.last;
+        this.viewKey = `${this.last.hrid}|${this.last.roomLevel}`;
 
         this._ensureBuilt();
         this.container.style.display = 'flex';
         bringPanelToFront(this.container);
-        this._render(gameUnit);
+        this._render();
     }
 
     close() {
@@ -133,29 +156,40 @@ class MonsterStatCheckPanel {
     }
 
     /**
-     * Note the current comparison in the session log, if it has anything flagged.
-     * Deduped by monster and room (a re-click updates the record), capped so a
-     * long session can't grow without bound.
+     * Note the current comparison in the session log. Every clicked monster is
+     * kept so the arrows can page back through them; deduped by monster and room
+     * (a re-click refreshes that entry), capped so a long session can't grow
+     * without bound.
      */
     _record() {
-        const flagged = flaggedRows(this.last);
-        if (!flagged.length) return;
+        if (!this.last?.hrid) return;
         const key = `${this.last.hrid}|${this.last.roomLevel}`;
-        // Re-insert last so the map stays newest-last for eviction and export.
+        // Re-insert so the map stays newest-last for eviction and paging.
         this.history.delete(key);
-        this.history.set(key, {
-            recordedAt: Date.now(),
-            monsterHrid: this.last.hrid,
-            name: this.last.name,
-            roomLevel: this.last.roomLevel,
-            simBuilt: this.last.simBuilt,
-            hasMismatch: this.last.hasMismatch,
-            buffs: this.last.buffs,
-            flagged,
-        });
+        this.history.set(key, this.last);
         while (this.history.size > MAX_HISTORY) {
             this.history.delete(this.history.keys().next().value);
         }
+    }
+
+    /** Page through recorded views. dir −1 is older (Up), +1 is newer (Down). */
+    _navigate(dir) {
+        const keys = [...this.history.keys()];
+        if (keys.length < 2) return;
+        let index = keys.indexOf(this.viewKey);
+        if (index === -1) index = keys.length - 1;
+        const next = Math.min(keys.length - 1, Math.max(0, index + dir));
+        if (next === index) return;
+        this.viewKey = keys[next];
+        this.displayed = this.history.get(this.viewKey);
+        this._render();
+    }
+
+    /** Wipe the session log, keeping the current view on screen. */
+    _clearHistory() {
+        this.history.clear();
+        this.viewKey = null;
+        this._render();
     }
 
     /** Download the session's discrepancy log plus the current snapshot as JSON. */
@@ -284,16 +318,95 @@ class MonsterStatCheckPanel {
         });
 
         this._setupDragging(header);
+
+        // Arrows page through history, but only while the pointer is over the
+        // panel — otherwise they'd fight the game's own keyboard handling.
+        container.addEventListener('pointerenter', () => (this.hovered = true));
+        container.addEventListener('pointerleave', () => (this.hovered = false));
+        this.keyHandler = (e) => {
+            if (!this.hovered || this.container?.style.display === 'none' || this.minimize?.collapsed) return;
+            if (e.key === 'ArrowUp') {
+                this._navigate(-1);
+                e.preventDefault();
+            } else if (e.key === 'ArrowDown') {
+                this._navigate(1);
+                e.preventDefault();
+            }
+        };
+        document.addEventListener('keydown', this.keyHandler);
     }
 
-    _render(gameUnit) {
+    /** A small header-style icon button for the nav bar. */
+    _navButton(glyph, title, onClick, enabled) {
+        const b = document.createElement('button');
+        b.textContent = glyph;
+        b.title = title;
+        b.disabled = !enabled;
+        b.style.cssText = `background:none; border:none; color:${enabled ? '#aaa' : 'rgba(255,255,255,0.2)'}; font-size:0.8rem; cursor:${enabled ? 'pointer' : 'default'}; padding:0 2px; line-height:1;`;
+        if (enabled) {
+            b.addEventListener('mouseenter', () => (b.style.color = '#fff'));
+            b.addEventListener('mouseleave', () => (b.style.color = '#aaa'));
+            b.addEventListener('click', (e) => {
+                e.stopPropagation();
+                onClick();
+            });
+        }
+        return b;
+    }
+
+    /** The paging bar: older/newer arrows, position, and Clear. */
+    _renderNav(body) {
+        const keys = [...this.history.keys()];
+        const total = keys.length;
+        if (!total) return;
+        const index = keys.indexOf(this.viewKey);
+
+        const nav = document.createElement('div');
+        nav.style.cssText =
+            'display:flex; align-items:center; gap:6px; margin-bottom:8px; font-size:0.7rem; color:rgba(255,255,255,0.55);';
+
+        nav.appendChild(this._navButton('▲', 'Older (↑)', () => this._navigate(-1), index > 0));
+        nav.appendChild(this._navButton('▼', 'Newer (↓)', () => this._navigate(1), index >= 0 && index < total - 1));
+
+        const label = document.createElement('span');
+        label.style.cssText = 'flex:1;';
+        if (index === -1) {
+            label.textContent = `${total} recorded`;
+        } else {
+            const live = index === total - 1 ? ' · live' : '';
+            const rel = relTime(this.displayed?.recordedAt);
+            label.textContent = `${index + 1} / ${total}${live}${rel ? ' · ' + rel : ''}`;
+        }
+        nav.appendChild(label);
+
+        const clear = document.createElement('button');
+        clear.textContent = 'Clear';
+        clear.title = 'Clear the session log';
+        clear.style.cssText =
+            'background:none; border:1px solid rgba(255,255,255,0.15); border-radius:4px; color:#aaa; font-size:0.66rem; cursor:pointer; padding:1px 6px;';
+        clear.addEventListener('mouseenter', () => (clear.style.color = '#fff'));
+        clear.addEventListener('mouseleave', () => (clear.style.color = '#aaa'));
+        clear.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._clearHistory();
+        });
+        nav.appendChild(clear);
+
+        body.appendChild(nav);
+    }
+
+    _render() {
+        const snapshot = this.displayed;
+        if (!snapshot) return;
         const body = this.body;
         body.innerHTML = '';
-        const { roomLevel, groups, buffs, hasMismatch, simBuilt, simBuffed } = this.last;
+        const { name, roomLevel, groups, buffs, hasMismatch, simBuilt, simBuffed } = snapshot;
 
         // Title carries the monster and its room level
         const levelLabel = roomLevel > 0 ? ` — Room ${roomLevel}` : '';
-        this.titleEl.textContent = `${gameUnit?.name || 'Monster'}${levelLabel}`;
+        this.titleEl.textContent = `${name || 'Monster'}${levelLabel}`;
+
+        this._renderNav(body);
 
         // Column header: Stat | Game | Sim | Δ
         body.appendChild(
@@ -433,6 +546,10 @@ class MonsterStatCheckPanel {
     }
 
     teardown() {
+        if (this.keyHandler) {
+            document.removeEventListener('keydown', this.keyHandler);
+            this.keyHandler = null;
+        }
         if (this.dragMoveHandler) {
             document.removeEventListener('pointermove', this.dragMoveHandler);
             this.dragMoveHandler = null;
