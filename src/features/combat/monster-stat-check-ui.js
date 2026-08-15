@@ -19,15 +19,19 @@ import { attachMinimize } from '../../utils/panel-minimize.js';
 import { buildGameDataPayload } from '../combat-sim/combat-sim-adapter.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import Monster from '../combat-sim/engine/monster.js';
-import { deriveRoomLevel, buildComparison } from './monster-stat-check.js';
+import { deriveRoomLevel, buildComparison, flaggedRows, buildExportPayload } from './monster-stat-check.js';
+import { downloadFile } from '../../utils/csv-export.js';
 
 const SETTING_KEY = 'labyrinthMonsterStatCheck';
 const PANEL_ID = 'toolasha-monster-stat-check';
 const PANEL_KEY = 'monsterStatCheck';
+/** Discrepancy records kept per session, deduped by monster+room, oldest evicted. */
+const MAX_HISTORY = 100;
 
 const VERDICT_STYLE = {
     match: { glyph: '✓', color: '#6fce7f', label: 'match' },
-    buff: { glyph: '≈', color: '#e0b64a', label: 'buff' },
+    buff: { glyph: '↑', color: '#e0b64a', label: 'buff' },
+    debuff: { glyph: '↓', color: '#e0b64a', label: 'debuff' },
     mismatch: { glyph: '⚠', color: '#e56b6b', label: 'off' },
     unknown: { glyph: '–', color: 'rgba(255,255,255,0.35)', label: '' },
 };
@@ -89,6 +93,8 @@ class MonsterStatCheckPanel {
         this.dragUpHandler = null;
         /** The most recent comparison, for the console dump. */
         this.last = null;
+        /** Discrepancy log for the session, keyed by `${hrid}|${roomLevel}`. */
+        this.history = new Map();
     }
 
     /**
@@ -106,6 +112,7 @@ class MonsterStatCheckPanel {
             simBuilt: Boolean(simDetails),
             ...comparison,
         };
+        this._record();
 
         this._ensureBuilt();
         this.container.style.display = 'flex';
@@ -115,6 +122,39 @@ class MonsterStatCheckPanel {
 
     close() {
         if (this.container) this.container.style.display = 'none';
+    }
+
+    /**
+     * Note the current comparison in the session log, if it has anything flagged.
+     * Deduped by monster and room (a re-click updates the record), capped so a
+     * long session can't grow without bound.
+     */
+    _record() {
+        const flagged = flaggedRows(this.last);
+        if (!flagged.length) return;
+        const key = `${this.last.hrid}|${this.last.roomLevel}`;
+        // Re-insert last so the map stays newest-last for eviction and export.
+        this.history.delete(key);
+        this.history.set(key, {
+            recordedAt: Date.now(),
+            monsterHrid: this.last.hrid,
+            name: this.last.name,
+            roomLevel: this.last.roomLevel,
+            simBuilt: this.last.simBuilt,
+            hasMismatch: this.last.hasMismatch,
+            buffs: this.last.buffs,
+            flagged,
+        });
+        while (this.history.size > MAX_HISTORY) {
+            this.history.delete(this.history.keys().next().value);
+        }
+    }
+
+    /** Download the session's discrepancy log plus the current snapshot as JSON. */
+    _export() {
+        const payload = buildExportPayload(Array.from(this.history.values()), this.last, Date.now());
+        const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+        downloadFile(`toolasha-monster-stat-check-${stamp}.json`, JSON.stringify(payload), 'application/json');
     }
 
     /** @returns {Object|null} The most recent comparison, for the console. */
@@ -137,6 +177,11 @@ class MonsterStatCheckPanel {
             console.table(rows);
         }
         return this.last;
+    }
+
+    /** @returns {Array<Object>} The session discrepancy log, newest last. */
+    logEntries() {
+        return Array.from(this.history.values());
     }
 
     _ensureBuilt() {
@@ -184,6 +229,17 @@ class MonsterStatCheckPanel {
         const controls = document.createElement('div');
         controls.style.cssText = 'display: flex; align-items: center; flex-shrink: 0;';
 
+        const exportBtn = document.createElement('button');
+        exportBtn.textContent = '⭳';
+        exportBtn.title = 'Export the session’s discrepancy log (JSON)';
+        exportBtn.style.cssText = `background: none; border: none; color: #aaa; font-size: 1rem; line-height: 1; cursor: pointer; padding: 0 4px;`;
+        exportBtn.addEventListener('mouseenter', () => (exportBtn.style.color = '#fff'));
+        exportBtn.addEventListener('mouseleave', () => (exportBtn.style.color = '#aaa'));
+        exportBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._export();
+        });
+
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '×';
         closeBtn.title = 'Close';
@@ -192,6 +248,7 @@ class MonsterStatCheckPanel {
         closeBtn.addEventListener('mouseleave', () => (closeBtn.style.color = '#aaa'));
         closeBtn.addEventListener('click', () => this.close());
 
+        controls.appendChild(exportBtn);
         controls.appendChild(closeBtn);
         header.appendChild(title);
         header.appendChild(controls);
@@ -267,17 +324,17 @@ class MonsterStatCheckPanel {
 
         const buffLine = document.createElement('div');
         if (buffs.length) {
-            buffLine.innerHTML = `<span style="color:#e0b64a;">Active buffs:</span> ${buffs.join(', ')}`;
+            buffLine.innerHTML = `<span style="color:#e0b64a;">Active effects:</span> ${buffs.join(', ')}`;
         } else {
-            buffLine.textContent = 'No active buffs — the two columns should match.';
+            buffLine.textContent = 'No active effects — the two columns should match.';
         }
         footer.appendChild(buffLine);
 
         const legend = document.createElement('div');
         legend.style.cssText = 'margin-top: 4px;';
         legend.innerHTML = hasMismatch
-            ? '<span style="color:#e56b6b;">⚠ off</span> = the sim disagrees with no buff to explain it.'
-            : '<span style="color:#e0b64a;">≈ buff</span> = game is higher because a buff is up; the sim baseline carries none.';
+            ? '<span style="color:#e56b6b;">⚠ off</span> = a gap with no active effect to explain it — the sim may be wrong here.'
+            : '<span style="color:#e0b64a;">↑ buff</span> / <span style="color:#e0b64a;">↓ debuff</span> = an active effect moved the game off the sim’s unbuffed baseline (expected).';
         footer.appendChild(legend);
 
         body.appendChild(footer);
@@ -426,9 +483,15 @@ function dumpLast() {
     return panel.dump();
 }
 
+/** Console: the session's discrepancy log (also downloadable from the panel). */
+function logEntries() {
+    return panel.logEntries();
+}
+
 export default {
     name: 'Monster Stat Check',
     initialize,
     disable,
     dumpLast,
+    logEntries,
 };

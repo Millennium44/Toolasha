@@ -17,6 +17,8 @@ import {
     compareStat,
     classify,
     buildComparison,
+    flaggedRows,
+    buildExportPayload,
 } from './monster-stat-check.js';
 
 describe('deriveRoomLevel', () => {
@@ -65,16 +67,19 @@ describe('activeBuffNames', () => {
 });
 
 describe('compareStat', () => {
-    test('deltaPct is the sim relative to the game', () => {
-        expect(compareStat('x', { x: 100 }, { x: 90 }).deltaPct).toBeCloseTo(-10, 6);
-        expect(compareStat('x', { x: 100 }, { x: 120 }).deltaPct).toBeCloseTo(20, 6);
+    test('deltaPct is the game relative to the sim baseline', () => {
+        // game below baseline (a debuff shredded it) → negative
+        expect(compareStat('x', { x: 90 }, { x: 100 }).deltaPct).toBeCloseTo(-10, 6);
+        // game above baseline (a buff raised it) → positive
+        expect(compareStat('x', { x: 120 }, { x: 100 }).deltaPct).toBeCloseTo(20, 6);
         expect(compareStat('x', { x: 100 }, { x: 100 }).deltaPct).toBe(0);
     });
 
-    test('null when a side is missing or the game reads zero', () => {
+    test('null when a side is missing, zero when both read zero', () => {
         expect(compareStat('x', {}, { x: 5 }).deltaPct).toBeNull();
         expect(compareStat('x', { x: 5 }, {}).deltaPct).toBeNull();
-        expect(compareStat('x', { x: 0 }, { x: 5 }).deltaPct).toBeNull();
+        expect(compareStat('x', { x: 5 }, { x: 0 }).deltaPct).toBeNull(); // can't divide by a zero baseline
+        expect(compareStat('x', { x: 0 }, { x: 0 }).deltaPct).toBe(0);
     });
 });
 
@@ -84,13 +89,18 @@ describe('classify', () => {
         expect(classify(0.5, true)).toBe('match');
     });
 
-    test('sim below the game with buffs up is buff-explained', () => {
-        expect(classify(-32, true)).toBe('buff');
+    test('game above the baseline with an effect up is a buff', () => {
+        expect(classify(47, true)).toBe('buff');
     });
 
-    test('a gap with no buffs, or the sim reading high, is a mismatch', () => {
+    test('game below the baseline with an effect up is a debuff', () => {
+        // The pestilent-shot case: sim baseline 515, game 413 → −19.8%, effect up
+        expect(classify(-19.8, true)).toBe('debuff');
+    });
+
+    test('any gap with no active effect is a mismatch', () => {
         expect(classify(-32, false)).toBe('mismatch');
-        expect(classify(20, true)).toBe('mismatch'); // sim higher is never a buff
+        expect(classify(47, false)).toBe('mismatch');
     });
 
     test('no data is unknown', () => {
@@ -174,6 +184,24 @@ describe('buildComparison against an engine-built monster', () => {
         expect(result.buffs).toContain('toughness');
     });
 
+    test('a live resistance shred below the sim baseline reads as debuff, not bug', () => {
+        // The pestilent-shot case: the player's debuff lowers the monster's armour
+        // ~20% below the sim's unbuffed baseline. That is the debuff working, not a
+        // sim error — the panel must not flag it red.
+        seed();
+        const monster = new Monster(HRID, 0, 200, true);
+        monster.updateCombatDetails();
+        const gameUnit = gameUnitMatching(monster.combatDetails, {
+            combatBuffMap: { '/buff_uniques/pestilent_shot_armor': {} },
+        });
+        gameUnit.combatDetails.totalArmor = monster.combatDetails.totalArmor * 0.8;
+
+        const result = buildComparison(gameUnit, monster.combatDetails);
+        const armor = result.groups[0].rows.find((r) => r.key === 'totalArmor');
+        expect(armor.verdict).toBe('debuff');
+        expect(result.hasMismatch).toBe(false);
+    });
+
     test('a gap with no buffs is flagged as a mismatch', () => {
         seed();
         const monster = new Monster(HRID, 0, 200, true);
@@ -193,5 +221,56 @@ describe('statRows', () => {
         const groups = statRows('magic');
         const offense = groups.find((g) => g.group === 'Offense');
         expect(offense.rows.map(([key]) => key)).toEqual(['magicAccuracyRating', 'magicMaxDamage']);
+    });
+});
+
+describe('flaggedRows', () => {
+    const comparison = {
+        groups: [
+            {
+                group: 'Mitigation',
+                rows: [
+                    { key: 'a', label: 'A', game: 100, sim: 100, deltaPct: 0, verdict: 'match' },
+                    { key: 'b', label: 'B', game: 80, sim: 100, deltaPct: -20, verdict: 'debuff' },
+                ],
+            },
+            {
+                group: 'Offense',
+                rows: [{ key: 'c', label: 'C', game: 150, sim: 100, deltaPct: 50, verdict: 'mismatch' }],
+            },
+        ],
+    };
+
+    test('keeps buff/debuff/mismatch rows and drops matches', () => {
+        const rows = flaggedRows(comparison);
+        expect(rows.map((r) => r.key)).toEqual(['b', 'c']);
+        expect(rows[0]).toMatchObject({ group: 'Mitigation', stat: 'B', verdict: 'debuff' });
+        expect(rows[1]).toMatchObject({ group: 'Offense', stat: 'C', verdict: 'mismatch' });
+    });
+
+    test('empty for an all-match comparison', () => {
+        expect(flaggedRows({ groups: [{ group: 'x', rows: [{ verdict: 'match' }, { verdict: 'unknown' }] }] })).toEqual(
+            []
+        );
+        expect(flaggedRows(null)).toEqual([]);
+    });
+});
+
+describe('buildExportPayload', () => {
+    test('wraps entries and the current snapshot with a fixed clock', () => {
+        const payload = buildExportPayload([{ monsterHrid: '/monsters/x' }], { name: 'X' }, 1234);
+        expect(payload).toMatchObject({
+            format: 'toolasha-monster-stat-check',
+            version: 1,
+            exportedAt: 1234,
+            current: { name: 'X' },
+            entries: [{ monsterHrid: '/monsters/x' }],
+        });
+    });
+
+    test('tolerates missing inputs', () => {
+        const payload = buildExportPayload(null, null, 0);
+        expect(payload.entries).toEqual([]);
+        expect(payload.current).toBeNull();
     });
 });

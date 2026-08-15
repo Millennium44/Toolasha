@@ -108,7 +108,9 @@ export function statRows(styleKey) {
  * @param {Object} gameDetails - The game unit's `combatDetails`
  * @param {Object} simDetails - The sim monster's `combatDetails`
  * @returns {{key: string, game: number|null, sim: number|null, deltaPct: number|null}}
- *   `deltaPct` is the sim relative to the game — negative means the sim is low.
+ *   `deltaPct` is the game relative to the sim's baseline — positive means the
+ *   game reads *above* the baseline (a buff is up), negative *below* it (a
+ *   debuff is on), so the sign lines up with the direction of the live effect.
  */
 export function compareStat(key, gameDetails, simDetails) {
     const gameRaw = Number(gameDetails?.[key]);
@@ -116,8 +118,9 @@ export function compareStat(key, gameDetails, simDetails) {
     const game = Number.isFinite(gameRaw) ? gameRaw : null;
     const sim = Number.isFinite(simRaw) ? simRaw : null;
     let deltaPct = null;
-    if (game != null && sim != null && game !== 0) {
-        deltaPct = ((sim - game) / game) * 100;
+    if (game != null && sim != null) {
+        if (sim !== 0) deltaPct = ((game - sim) / sim) * 100;
+        else if (game === 0) deltaPct = 0;
     }
     return { key, game, sim, deltaPct };
 }
@@ -125,22 +128,30 @@ export function compareStat(key, gameDetails, simDetails) {
 /**
  * Verdict for a single gap.
  *
+ * The sim's baseline carries no active buffs or debuffs — the engine applies
+ * those per tick during a fight, not to the resting stat block. So when the game
+ * differs from the baseline and *some* combat effect is up, either direction is
+ * accounted for: the game reading high is a buff (Toughness raising resistance),
+ * the game reading low is a debuff (the player's pestilent-shot shred lowering
+ * it). Only a gap with **no** active effect at all is a genuine modelling
+ * mismatch. (A limitation worth stating: a real bug on one stat can hide behind
+ * an unrelated effect on another, since the effect list isn't matched to the
+ * stat — so the clean read is a monster with an empty buff map.)
+ *
  * - `match` — within tolerance, the sim has this stat right.
- * - `buff` — the sim is *below* the game and buffs are up: the game total
- *   carries an active buff the sim's static baseline doesn't, which is expected,
- *   not a modelling error.
- * - `mismatch` — any other real gap, including the sim reading *higher* than the
- *   game (never buff-explained) or a gap with no buffs to account for it.
+ * - `buff` — game above the baseline with an effect up (raised by a buff).
+ * - `debuff` — game below the baseline with an effect up (lowered by a debuff).
+ * - `mismatch` — a gap with no active effect to explain it.
  * - `unknown` — one side had no number to compare.
  *
- * @param {number|null} deltaPct
- * @param {boolean} hasBuffs
- * @returns {'match'|'buff'|'mismatch'|'unknown'}
+ * @param {number|null} deltaPct - Game relative to the sim baseline
+ * @param {boolean} hasBuffs - Whether any combat effect is active on the unit
+ * @returns {'match'|'buff'|'debuff'|'mismatch'|'unknown'}
  */
 export function classify(deltaPct, hasBuffs) {
     if (deltaPct == null) return 'unknown';
     if (Math.abs(deltaPct) < MATCH_TOLERANCE_PCT) return 'match';
-    if (deltaPct < 0 && hasBuffs) return 'buff';
+    if (hasBuffs) return deltaPct > 0 ? 'buff' : 'debuff';
     return 'mismatch';
 }
 
@@ -172,4 +183,51 @@ export function buildComparison(gameUnit, simDetails) {
     }));
 
     return { groups, buffs, styleKey, hasMismatch };
+}
+
+/**
+ * The flagged rows of a comparison — everything the sim's baseline did not match
+ * outright, buff and debuff and mismatch alike. These are what a discrepancy log
+ * keeps: the expected effects with their magnitudes (so a pestilent-shot shred
+ * or an elusiveness buff is on record) and the genuine mismatches that want a
+ * closer look, told apart by `verdict`.
+ *
+ * @param {Object} comparison - A `buildComparison` result
+ * @returns {Array<{group,key,stat,game,sim,deltaPct,verdict}>}
+ */
+export function flaggedRows(comparison) {
+    const out = [];
+    for (const group of comparison?.groups || []) {
+        for (const row of group.rows || []) {
+            if (row.verdict === 'buff' || row.verdict === 'debuff' || row.verdict === 'mismatch') {
+                out.push({
+                    group: group.group,
+                    key: row.key,
+                    stat: row.label,
+                    game: row.game,
+                    sim: row.sim,
+                    deltaPct: row.deltaPct,
+                    verdict: row.verdict,
+                });
+            }
+        }
+    }
+    return out;
+}
+
+/**
+ * Wrap a discrepancy log and the current snapshot in the export envelope.
+ * @param {Array<Object>} entries - Recorded discrepancy records, newest last
+ * @param {Object|null} current - The comparison currently on screen
+ * @param {number} exportedAt - A timestamp (the caller owns the clock)
+ * @returns {Object}
+ */
+export function buildExportPayload(entries, current, exportedAt) {
+    return {
+        format: 'toolasha-monster-stat-check',
+        version: 1,
+        exportedAt,
+        current: current || null,
+        entries: entries || [],
+    };
 }

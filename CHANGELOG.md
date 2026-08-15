@@ -8,7 +8,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Monster stat check: the game's live stats next to the sim's
 
-New opt-in diagnostic (off by default, under Combat Features). With it on, clicking a monster in combat opens a floating panel that reads the game's live, buffed combat stats from the `battle_unit_fetched` message and compares them field-by-field against what the combat sim computes for the same monster — armour, the three resistances, evasion and accuracy ratings, max hit, max HP. Each row is flagged: a match, a gap the active buffs explain (game higher than the sim's static baseline), or a real modelling mismatch. Room level is backed out of the unit's scaled defence so the sim scales identically. `Toolasha.Debug.monsterStatCheck()` dumps the last comparison as a table. This is the tool that would have caught the resistance-wipe bug on sight.
+New opt-in diagnostic (off by default, under Combat Features). With it on, clicking a monster in combat opens a floating panel that reads the game's live combat stats from the `battle_unit_fetched` message and compares them field-by-field against what the combat sim computes for the same monster — armour, the three resistances, evasion and accuracy ratings, max hit, max HP. Room level is backed out of the unit's scaled defence so the sim scales identically. This is the tool that would have caught the resistance-wipe bug on sight.
+
+- **Each row is classified against the sim's unbuffed baseline.** A match; a `↑ buff` (game above baseline — a self-buff like Toughness or elusiveness is up); a `↓ debuff` (game below baseline — a player shred like pestilent shot is on); or a real `⚠ off` mismatch, which is a gap with _no_ active effect to explain it. Both buff and debuff are expected, not bugs — the sim applies effects per tick, not to the resting stat block.
+- **Session discrepancy log + export.** Every flagged comparison (buff, debuff or mismatch) is recorded, deduped by monster and room level, and the panel's ⭳ button downloads the log plus the current snapshot as JSON. `Toolasha.Debug.monsterStatCheck()` dumps the last comparison as a table; `Toolasha.Debug.monsterStatCheckLog()` returns the whole log.
 
 ### Lab Sim: labyrinth monsters keep their resistance/armour self-buffs
 
