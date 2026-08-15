@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trials: multi-enemy combat waves are priced as one HP pool
+
+A combat trial that fields several enemies under one name — two "Trial Badger"s, say — was mishandled: the two cards collided on their name-based key, so the record kept only one badger's health bar and the clear was priced off half the wave. That made "Kill in", "Next tier HP" and the tier pace optimistic (the current tier read at ~1/N of its real HP) while the forecast's own wave total, summed from client data, disagreed. The same-named cards are now folded into one wave tile with their health bars summed before sampling, so the measured remaining, the rate and the party DPS all describe the whole wave and line up with the forecast.
+
 ### Guild trials: overlay appears fast on the Trials and In Progress tabs, and each pass is cheaper
 
 Those two tabs were the slowest to show Toolasha's forecast boxes — up to ~5s. Switching to them fires no socket event, so first paint waited on a trailing-edge debounced DOM observer, and on the In Progress tab that debounce **starved**: the live bar/countdown re-armed the 100ms timer without pause so it never fired, falling back to the 5s sampler. Added an opt-in `maxWait` to the shared DOM observer's debounce (bounds how long it may defer under continuous churn) and set it to 400ms for the trials handler, so the tab now draws within that of opening whatever the churn. `maxWait` defaults to 0 (unbounded) for every other handler, so nothing else changes.

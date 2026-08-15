@@ -185,6 +185,7 @@ const {
     analyseTrial,
     breakdownFor,
     guildTrials,
+    mergeWaveTiles,
     ownParticipation,
     participantCounts,
     placeTrialBlock,
@@ -607,6 +608,71 @@ describe('withScrollKept', () => {
             })
         ).toThrow('nope');
         expect(outer.scrollTop).toBe(80);
+    });
+});
+
+describe('mergeWaveTiles', () => {
+    const tile = (name, kind, readings, extra = {}) => ({
+        element: { id: `${name}-${readings?.[0]?.current ?? 'x'}` },
+        name,
+        kind,
+        readings: readings || [],
+        completed: false,
+        level: null,
+        tier: null,
+        ...extra,
+    });
+
+    test('two same-named enemy cards fold into one wave with summed health', () => {
+        const badgers = [
+            tile('Trial Badger', 'combat', [
+                { current: 430235, max: 479895 },
+                { current: 448475, max: 448500 },
+            ]),
+            tile('Trial Badger', 'combat', [
+                { current: 473164, max: 479895 },
+                { current: 448475, max: 448500 },
+            ]),
+        ];
+
+        const merged = mergeWaveTiles(badgers);
+        expect(merged).toHaveLength(1);
+        // Health (index 0) and mana (index 1) each summed across both cards
+        expect(merged[0].readings).toEqual([
+            { current: 903399, max: 959790 },
+            { current: 896950, max: 897000 },
+        ]);
+        expect(merged[0].waveSize).toBe(2);
+        expect(merged[0].name).toBe('Trial Badger');
+    });
+
+    test('different trials are left alone, in document order', () => {
+        const tiles = [
+            tile('Woodcutting', 'skilling', [{ current: 10, max: 100 }]),
+            tile('Trial Jellyfish', 'combat', [{ current: 5, max: 50 }]),
+        ];
+        expect(mergeWaveTiles(tiles)).toEqual(tiles);
+    });
+
+    test('a wave is completed only once every enemy in it is down', () => {
+        const one = mergeWaveTiles([
+            tile('Trial Badger', 'combat', [{ current: 0, max: 100 }], { completed: true }),
+            tile('Trial Badger', 'combat', [{ current: 40, max: 100 }], { completed: false }),
+        ]);
+        expect(one[0].completed).toBe(false);
+
+        const both = mergeWaveTiles([
+            tile('Trial Badger', 'combat', [{ current: 0, max: 100 }], { completed: true }),
+            tile('Trial Badger', 'combat', [{ current: 0, max: 100 }], { completed: true }),
+        ]);
+        expect(both[0].completed).toBe(true);
+    });
+
+    test('a lone card, an empty list, or nothing passes straight through', () => {
+        const solo = [tile('Trial Badger', 'combat', [{ current: 1, max: 2 }])];
+        expect(mergeWaveTiles(solo)).toBe(solo);
+        expect(mergeWaveTiles([])).toEqual([]);
+        expect(mergeWaveTiles(null)).toEqual([]);
     });
 });
 
