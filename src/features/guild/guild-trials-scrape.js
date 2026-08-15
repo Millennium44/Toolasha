@@ -574,15 +574,17 @@ export function onTrialTab(root) {
  * @returns {{phase: 'scheduled'|'completed'|'live'|null, kind: 'skilling'|'combat'|null, text: string,
  *   startsInMs: number|null}} The status
  */
-export function readTrialStatus(root) {
+export function readTrialStatus(root, allLines = null) {
     const none = { phase: null, kind: null, text: '', startsInMs: null };
     if (!root || typeof root.querySelectorAll !== 'function') return none;
 
     // The status is a *run* of text, and the game splits it across elements —
     // "Skilling Trial - In Progress" arrives as separate nodes on the live tab.
     // Neighbouring runs are therefore considered together as well as alone, so
-    // the words being in two spans does not hide them.
-    const lines = textLines(root).slice(0, STATUS_LINE_LIMIT);
+    // the words being in two spans does not hide them. `allLines` lets the caller
+    // hand in a panel walk it already did — the render reads status and personal
+    // stats off the same root and used to walk it twice.
+    const lines = (allLines || textLines(root)).slice(0, STATUS_LINE_LIMIT);
     const candidates = [];
     for (let index = 0; index < lines.length; index += 1) {
         candidates.push(lines[index]);
@@ -643,11 +645,11 @@ const STATUS_MAX_CHARS = 60;
  * @param {Element} root - The trials root
  * @returns {Object<string, string>} Label → the value as the game wrote it
  */
-export function readPersonalStats(root) {
+export function readPersonalStats(root, allLines = null) {
     const stats = {};
     if (!root || typeof root.querySelectorAll !== 'function') return stats;
 
-    const lines = textLines(root);
+    const lines = allLines || textLines(root);
     const value = /^[+-]?[\d,]*\.?\d+\s*(%|s|ms|x)?$/i;
     const inline = /^(.+?)[:\s]\s*([+-]?[\d,]*\.?\d+\s*(?:%|s|ms|x)?)$/i;
 
@@ -820,27 +822,40 @@ export function readTrialTiles(root) {
     // the run — and so that a level line this script has appended a tier badge
     // to is still found.
     const anchors = [...root.querySelectorAll('*')].filter((el) => {
+        // Cheap positive tests first, ancestor walks last: the two exclusions
+        // below each climb to the panel root, so running them on every element
+        // was O(elements × depth) over the whole guild panel. A tile summary is
+        // a card outright; otherwise a card is anchored by a level, a bar, a
+        // stated tier or a points line in the element's *own* text — and an
+        // element with no direct text of its own can be none of those, so it is
+        // dropped before the regexes run.
+        const isTileSummary = typeof el.className === 'string' && el.className.includes('GuildPanel_tileSummary');
+        if (!isTileSummary) {
+            const own = ownText(el);
+            // A stated tier or a points line anchors a card too. Without them a
+            // Trials card that carries neither a level nor a bar — which is how
+            // the live tab was found to draw them, "840 pts" over "T6" — has
+            // nothing to be found by. Everything found here is still filtered by
+            // `isTrialName` below, so a stray "T3" in prose costs one climb.
+            if (
+                !own ||
+                (parseTrialLevel(own) === null &&
+                    parseBarReadings(own).length === 0 &&
+                    parseTrialTier(own) === null &&
+                    parsePoints(own) === null)
+            ) {
+                return false;
+            }
+        }
+
+        // Now the climbs, for the handful of candidates that got this far.
         // Never this script's own output: the per-card block is appended to the
-        // card it describes, so a careless anchor list reads it straight back
+        // card it describes, so a careless anchor list reads it straight back.
         if (el.closest?.('[class*="mwi-"]')) return false;
         // And never a floating dialog. The boss's stat popup is headed with a
-        // trial name over a level, which is exactly what a card is anchored by
+        // trial name over a level, which is exactly what a card is anchored by.
         if (inFloatingDialog(el)) return false;
-        if (typeof el.className === 'string' && el.className.includes('GuildPanel_tileSummary')) return true;
-
-        // A stated tier or a points line anchors a card too. Without them a
-        // Trials card that carries neither a level nor a bar — which is how the
-        // live tab was found to draw them, "840 pts" over "T6" — has nothing to
-        // be found by, and the tab that holds the tier and the points is read as
-        // holding no trials at all. Everything found here is still filtered by
-        // `isTrialName` below, so a stray "T3" in prose costs one climb.
-        const own = ownText(el);
-        return (
-            parseTrialLevel(own) !== null ||
-            parseBarReadings(own).length > 0 ||
-            parseTrialTier(own) !== null ||
-            parsePoints(own) !== null
-        );
+        return true;
     });
 
     const tiles = [];

@@ -6,9 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Guild trials: overlay appears fast on the Trials and In Progress tabs
+### Guild trials: overlay appears fast on the Trials and In Progress tabs, and each pass is cheaper
 
 Those two tabs were the slowest to show Toolasha's forecast boxes — up to ~5s. Switching to them fires no socket event, so first paint waited on a trailing-edge debounced DOM observer, and on the In Progress tab that debounce **starved**: the live bar/countdown re-armed the 100ms timer without pause so it never fired, falling back to the 5s sampler. Added an opt-in `maxWait` to the shared DOM observer's debounce (bounds how long it may defer under continuous churn) and set it to 400ms for the trials handler, so the tab now draws within that of opening whatever the churn. `maxWait` defaults to 0 (unbounded) for every other handler, so nothing else changes.
+
+The render pass itself is lighter too: the whole-panel element scan for trial cards now runs its two ancestor-climbing exclusions only on the handful of candidates instead of every element; the panel's text is walked once per pass and shared between the status and personal-stat readers rather than twice; and a forecast box in its shared row skips the per-box `getComputedStyle` squash probe (a wrapping row can't squash a card), leaving that check for the blocks that actually live in the game's own layout. That last one, plus the faster cadence, also shortens the moment where the In Progress unit icon is briefly squished before settling.
 
 ### Guild trials: tiles stay in a row with boxes beneath, cleaner notes, and a scheduled start alert
 
