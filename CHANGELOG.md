@@ -18,7 +18,7 @@ The Skilling tab's tea/coffee/food dropdowns were hardcoded to **Expert**, so th
 
 ### Craft arbitrage adapter: expose `skipProcessing` and `timeCostPerHour`
 
-`describeCraft`/`describeCrafts` now forward a `skipProcessing` flag (buy processed intermediates like leather/lumber instead of making them — a direct craft off bought materials) and a `timeCostPerHour` (folds crafting time into the unit cost) to the planner. Lets the Flip Finder companion offer a "direct craft" toggle and a local time-value rate. Both default off, so existing callers are unchanged.
+`describeCraft`/`describeCrafts` now forward a `skipProcessing` flag (buy processed intermediates like leather/lumber instead of making them — a direct craft off bought materials) and a `timeCostPerHour` (folds crafting time into the unit cost) to the planner. Lets a companion script offer a "direct craft" toggle and a local time-value rate. Both default off, so existing callers are unchanged.
 
 ### Labyrinth auto-calc: stop the bar looping, and move the toggle inline
 
@@ -328,7 +328,7 @@ The welcome prompt now offers **"Copy from another character"** — pick one of 
 
 ### Fix: marketplace autofill after the typable-price update
 
-The 8/13/2026 update made the marketplace Price/Quantity fields typable text inputs (`type="text"`), which broke every Toolasha selector that looked for `input[type="number"]` — most visibly the missing-material autofill no longer filled the quantity. Now targets the game's own `MarketplacePanel_quantityInputs` row (falling back to reading all inputs by label), and rewinds React's value tracker on write so a strictly-controlled field can't snap back. Works on both the old (number) and new (text) inputs, so it needs no server gate. Flip Finder's autofill was already class-based and unaffected.
+The 8/13/2026 update made the marketplace Price/Quantity fields typable text inputs (`type="text"`), which broke every Toolasha selector that looked for `input[type="number"]` — most visibly the missing-material autofill no longer filled the quantity. Now targets the game's own `MarketplacePanel_quantityInputs` row (falling back to reading all inputs by label), and rewinds React's value tracker on write so a strictly-controlled field can't snap back. Works on both the old (number) and new (text) inputs, so it needs no server gate. The companion script's autofill was already class-based and unaffected.
 
 The game's market tax went from 2% to 5%. Updated the single `MARKET_TAX` constant and swept out every place that had hardcoded 2% (`0.02`/`0.98`) — networth, order totals, bulk-sell floor, listing value, guild-credit sell→rebuy, profit/hr, enhancement worth-it, EV, tea optimizer — so all profit, net-proceeds and break-even figures use the new rate. Tax labels now derive from the constant instead of a baked-in "2%".
 
