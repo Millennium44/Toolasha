@@ -157,16 +157,25 @@ class Monster extends CombatUnit {
         // Labyrinth: armor/resistances scale linearly from base values. defenseLevel already includes
         // the room scale, so recompute from unscaled defense instead of multiplying the totals again
         // (which would compound the room-level factor on the defense-derived component).
+        //
+        // The parent already folded any armor/resistance buffs into the totals; reassigning them from
+        // base stats alone wiped a monster's self-buffs — Cyclops's Toughness and Guardian Aura raise
+        // resistance, so the sim under-mitigated and over-credited the player's damage per hit. Scale
+        // the base, then re-add the same buff boosts on top of it.
         if (this.roomLevel > 0) {
             const scaleFactor = this.roomLevel / LABYRINTH_BASE_ROOM_LEVEL;
             const unscaledDefense = this.defenseLevel / scaleFactor;
             const combatStats = this.combatDetails.combatStats;
-            this.combatDetails.totalArmor = (0.2 * unscaledDefense + combatStats.armor) * scaleFactor;
-            this.combatDetails.totalWaterResistance =
-                (0.2 * unscaledDefense + combatStats.waterResistance) * scaleFactor;
-            this.combatDetails.totalNatureResistance =
-                (0.2 * unscaledDefense + combatStats.natureResistance) * scaleFactor;
-            this.combatDetails.totalFireResistance = (0.2 * unscaledDefense + combatStats.fireResistance) * scaleFactor;
+            const buffs = this._buffIndex();
+            const scaledTotal = (statKey, buffType) => {
+                const base = (0.2 * unscaledDefense + combatStats[statKey]) * scaleFactor;
+                const boost = buffs.get(buffType) || { flatBoost: 0, ratioBoost: 0 };
+                return base + boost.flatBoost + base * boost.ratioBoost;
+            };
+            this.combatDetails.totalArmor = scaledTotal('armor', '/buff_types/armor');
+            this.combatDetails.totalWaterResistance = scaledTotal('waterResistance', '/buff_types/water_resistance');
+            this.combatDetails.totalNatureResistance = scaledTotal('natureResistance', '/buff_types/nature_resistance');
+            this.combatDetails.totalFireResistance = scaledTotal('fireResistance', '/buff_types/fire_resistance');
         }
     }
 }

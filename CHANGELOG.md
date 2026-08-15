@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim: labyrinth monsters keep their resistance/armour self-buffs
+
+The room-level rescale of a labyrinth monster's armour and resistances reassigned them from base stats, wiping any resistance/armour **buff** the parent had folded in — so a monster's self-buffs (the Cyclops's Toughness and Guardian Aura) never mitigated anything and the sim over-credited your damage per hit (measured ~24% high, hit rate spot-on — a mitigation gap, not accuracy). The rescale now re-applies those buff boosts on top of the scaled base. Labyrinth clear-chance predictions for monsters that buff their own defence will drop toward reality; monsters without such buffs are unchanged.
+
 ### Lab Sim: the Accuracy Reset button now also clears the recorded fights
 
 Reset promised to "throw away every recorded fight" but only cleared the clear-chance tallies — the calibration replay's fight pool survived. It now clears both, so Reset genuinely starts the whole accuracy record over (useful after a change that makes old recordings incomparable).
