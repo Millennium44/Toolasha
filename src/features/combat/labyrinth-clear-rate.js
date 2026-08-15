@@ -2147,6 +2147,56 @@ class LabyrinthClearRate {
     }
 
     /**
+     * A stable signature of everything a tile's clear badge is computed from:
+     * each room's position, target and level, whether it is cleared, the sim
+     * precision, and the gear/enhancement fingerprint. Two floors with the same
+     * signature produce the same badges, so an auto pass whose signature matches
+     * the last settled one has nothing new to compute.
+     * @private
+     * @returns {string|null}
+     */
+    _tileCalcFingerprint() {
+        if (!this.roomData) return null;
+        const flat = this.roomData.flat();
+        const parts = [];
+        for (let i = 0; i < flat.length; i++) {
+            const room = flat[i];
+            if (!room) continue;
+            const target = room.skillHrid || room.monsterHrid || '';
+            const level = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
+            parts.push(`${i}:${target}:${level}:${room.isCleared ? 1 : 0}`);
+        }
+        return `${this.getSimPrecisionPct()}|${this._snapshotContentFingerprint()}|${parts.join(';')}`;
+    }
+
+    /**
+     * Redraw any tile badges a game re-render wiped, from the last pass's cached
+     * results — no sims, no progress bar. Used by an auto pass whose inputs are
+     * unchanged, so a static floor stops re-running the whole calculation (and
+     * re-filling the bar) every time the game repaints the grid.
+     */
+    restoreTileBadgesFromCache() {
+        if (!this._tileResults || !this._tileResults.size || !this.roomData) return;
+        const flatRooms = this.roomData.flat();
+        const cols = Array.isArray(this.roomData[0]) ? this.roomData[0].length : labyrinthGridSize(this.currentFloor);
+        if (!cols) return;
+        const cells = this.findRoomGridCells(flatRooms.length);
+        if (cells.length !== flatRooms.length) return;
+
+        for (let i = 0; i < flatRooms.length; i++) {
+            const room = flatRooms[i];
+            const cell = cells[i];
+            if (!room || !cell || room.isCleared) continue;
+            if (cell.querySelector(`.${TILE_BADGE_CLASS}`)) continue;
+            const tileKey = `${i % cols},${Math.floor(i / cols)}`;
+            const result = this._tileResults.get(tileKey);
+            if (!result) continue;
+            this.appendTileBadge(cell, result);
+            this.calculatedTileKeys?.add(tileKey);
+        }
+    }
+
+    /**
      * Remove clear-chance badges from rooms that have been cleared
      */
     pruneClearedTileBadges() {
@@ -2434,7 +2484,10 @@ class LabyrinthClearRate {
             syncAuto();
             if (next) this.runTileCalculation({ auto: true });
         });
-        body.appendChild(autoButton);
+        // Sit inline with the other controls, before the full-width progress
+        // track — appending it after the bar left it stranded on its own row
+        // below the bar, since the track is a `flex:1 1 100%` line of its own.
+        body.insertBefore(autoButton, track);
         syncAuto();
 
         // Toggle and quick-calc share one nowrap line — a flex item of their own,
@@ -2533,6 +2586,18 @@ class LabyrinthClearRate {
             return;
         }
 
+        // Auto runs fire off the room-cell DOM observer, which our own badge
+        // draws — and the game's periodic re-renders of the grid — keep tripping.
+        // When nothing that changes a result has changed since the last settled
+        // calc, don't re-sim and don't run the bar; just restore any badges a
+        // re-render wiped, from cache. That's what stops the progress bar filling
+        // and refilling on a fully revealed, static floor.
+        const fingerprint = this._tileCalcFingerprint();
+        if (auto && fingerprint && fingerprint === this._autoCalcFingerprint) {
+            this.restoreTileBadgesFromCache();
+            return;
+        }
+
         const rows = this.roomData;
         const flatRooms = rows.flat();
         // The live grid's own width is authoritative; the official
@@ -2547,9 +2612,13 @@ class LabyrinthClearRate {
         if (!this.calculatedTileKeys) {
             this.calculatedTileKeys = new Set();
         }
+        if (!this._tileResults) {
+            this._tileResults = new Map();
+        }
         // Manual runs recalculate everything; auto runs only touch new tiles
         if (!auto) {
             this.calculatedTileKeys.clear();
+            this._tileResults.clear();
             this.autoTileRetryCount = 0;
             document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
         }
@@ -2598,6 +2667,7 @@ class LabyrinthClearRate {
                 if (result) {
                     this.appendTileBadge(target.cell, result);
                     this.calculatedTileKeys.add(target.tileKey);
+                    this._tileResults.set(target.tileKey, result);
                 }
                 completed++;
                 this.setTileProgress(completed / total);
@@ -2618,6 +2688,7 @@ class LabyrinthClearRate {
                 if (!target.cell.isConnected) continue;
 
                 this.appendTileBadge(target.cell, result);
+                this._tileResults.set(target.tileKey, result);
                 if (result.clearChance > 0 || !auto) {
                     this.calculatedTileKeys.add(target.tileKey);
                 } else {
@@ -2631,6 +2702,9 @@ class LabyrinthClearRate {
 
             if (auto && combatRetryNeeded > 0 && (this.autoTileRetryCount || 0) < 3) {
                 this.autoTileRetryCount = (this.autoTileRetryCount || 0) + 1;
+                // Not settled — leave the fingerprint unset so the retry, and any
+                // later auto pass, still run rather than being gated out.
+                this._autoCalcFingerprint = null;
                 if (this.autoTileTimer) clearTimeout(this.autoTileTimer);
                 this.autoTileTimer = setTimeout(() => {
                     this.autoTileTimer = null;
@@ -2638,6 +2712,10 @@ class LabyrinthClearRate {
                 }, 2500);
             } else if (combatRetryNeeded === 0) {
                 this.autoTileRetryCount = 0;
+                // Every calculable tile is badged from a full pass — record the
+                // inputs so further auto triggers restore from cache instead of
+                // re-simming until a room, gear, or precision actually changes.
+                this._autoCalcFingerprint = fingerprint;
             }
         } catch (error) {
             console.error('[LabyrinthClearRate] Tile calculation failed:', error);
