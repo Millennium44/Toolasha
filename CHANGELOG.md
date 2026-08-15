@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim: the Accuracy Reset button now also clears the recorded fights
+
+Reset promised to "throw away every recorded fight" but only cleared the clear-chance tallies — the calibration replay's fight pool survived. It now clears both, so Reset genuinely starts the whole accuracy record over (useful after a change that makes old recordings incomparable).
+
 ### Lab Sim: calibration replay splits the damage gap into accuracy vs mitigation
 
 The passive fight recorder now keeps your per-fight swing counts (hits and misses, from the same `dmgCounter` the wire already sends), so the calibration replay can decompose a "sim over-credits your damage" verdict into **hit rate** (accuracy vs the monster's evasion) and **damage per hit** (what each landed hit does after mitigation). When one is off, the diagnosis now names it — fewer hits than predicted points at an unmodelled evasion buff (Guardian Aura); softer hits point at an unmodelled resistance/armour buff (Toughness). Both rates read off the sim's own attack tally, so no engine change. Older recordings without swing counts simply skip the two new rows.

@@ -144,6 +144,18 @@ export const simCacheMethods = {
      *
      * @returns {Promise<{groups: Array<Object>, fingerprint: string}>}
      */
+    /**
+     * Throw away every recorded fight, so the calibration replay starts fresh.
+     *
+     * Separate from `resetOutcomes` (the clear-chance tallies): the two are shown
+     * together under the Accuracy tab, and the Reset button clears both so the
+     * whole record can be restarted — which is also what its label has always
+     * promised. Clears every fingerprint, not just the current gear's.
+     */
+    clearRecordedFights() {
+        labFightRecorder.clearRecording();
+    },
+
     async replayRecordedFights() {
         const fingerprint = this._snapshotContentFingerprint();
         const attempts = labFightRecorder.recordedAttempts(fingerprint);
