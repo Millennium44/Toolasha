@@ -155,6 +155,7 @@ import {
     readPersonalStats,
     readTrialStatus,
     readTrialTiles,
+    textLines,
 } from './guild-trials-scrape.js';
 import {
     archiveCycle,
@@ -2077,10 +2078,15 @@ class GuildTrials {
 
             const tiles = readTrialTiles(root);
 
+            // One recursive text walk of the panel, shared by both readers below:
+            // status and personal stats read the same root, and walking it twice
+            // was a measurable slice of the per-pass cost on the live tab.
+            const panelLines = textLines(root);
+
             // Where the cycle is decides what the record below even means. Read
             // before anything is folded in, because a stale record must not be
             // sampled into and then archived — the sample would go with it.
-            const status = readTrialStatus(root);
+            const status = readTrialStatus(root, panelLines);
             this._healStaleRecord(status, tiles, now);
             // Any card actually running counts, whichever kind the header names
             const anyLive = tiles.some(
@@ -2095,7 +2101,7 @@ class GuildTrials {
             // The player's own action stats live in the tab's footer rather than
             // on a card, so they are read once and attached to whichever trial
             // is the live one — the only card that can have produced them
-            const personal = readPersonalStats(root);
+            const personal = readPersonalStats(root, panelLines);
             const live = tiles.find((tile) => tile.readings.length > 0) || null;
             // Whose footer this is. A bar identifies the card outright, but the
             // card does not always have one — between tiers, and once the hour
@@ -2619,9 +2625,20 @@ class GuildTrials {
             // No block's correct home is ever such a row, so this holds for every
             // block type regardless of its own anchor test, and re-places it out
             // once the game's flex styles have computed.
-            const stuckInRow = existing.parentElement && isSquashingRow(existing.parentElement);
-            if (stuckInRow || (anchored && !anchored(existing))) {
-                withScrollKept(root, () => place(existing));
+            // A box gathered into its section's shared row is the common case on
+            // the live tab, and it can neither be stuck (the row wraps, so it
+            // never squashes a card) nor mis-anchored (its home is that row,
+            // guaranteed at placement). Skipping it here avoids a
+            // `getComputedStyle` squash probe per box every pass — the bulk of
+            // the per-pass forced reflow. Blocks that live loose in the game's
+            // own layout (the payout, the In Progress card readouts) still get
+            // the full check, which is what re-places one out of a squashing row.
+            const inBoxRow = existing.parentElement?.classList?.contains(BOX_ROW_CLASS);
+            if (!inBoxRow) {
+                const stuckInRow = existing.parentElement && isSquashingRow(existing.parentElement);
+                if (stuckInRow || (anchored && !anchored(existing))) {
+                    withScrollKept(root, () => place(existing));
+                }
             }
             if (!unchanged) {
                 existing.innerHTML = html;

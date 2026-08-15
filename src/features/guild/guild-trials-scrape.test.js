@@ -785,6 +785,21 @@ describe('readTrialStatus', () => {
         expect(status.startsInMs).toBe(2 * 3600_000 + 24 * 60_000);
     });
 
+    test('a caller-supplied line walk is used in place of walking the root again', () => {
+        // The render walks the panel once and hands the same lines to both
+        // readers; supplying them must match reading the root directly.
+        const root = tab(['Skilling Trial - In Progress  Thu 04:00 PM', 'Work Time 3.14s', 'Success Rate 60.8%']);
+        const shared = textLines(root);
+
+        expect(readTrialStatus(root, shared)).toEqual(readTrialStatus(root));
+        expect(readPersonalStats(root, shared)).toEqual(readPersonalStats(root));
+        // And it really used what was handed in, not the DOM: a doctored list is honoured
+        expect(readTrialStatus(root, ['Combat Trial - Scheduled Thu 05:00 PM 1h 2m'])).toMatchObject({
+            phase: 'scheduled',
+            kind: 'combat',
+        });
+    });
+
     test('the live header, exactly as the game writes it', () => {
         // From the running trial: the status carries the trial's *kind* in front
         // of it, which is not what this was built against, and the gate that
