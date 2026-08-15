@@ -123,6 +123,88 @@ describe('predictedFromSim', () => {
         expect(predictedFromSim({ simulatedTime: 0 }, { playerHrid: 'player1', monsterHrid: '/m' })).toBeNull();
         expect(predictedFromSim(null, {})).toBeNull();
     });
+
+    test('hit rate and damage-per-hit come off the sim attack tally', () => {
+        const predicted = predictedFromSim(
+            {
+                simulatedTime: 100e9,
+                labyAttemptCount: 1,
+                encounters: 1,
+                totalDamageDealt: { player1: 1500, '/monsters/cyclops': 0 },
+                // 15 landing swings (5 crit / 10 normal) and 5 misses across abilities
+                attacks: {
+                    player1: {
+                        '/monsters/cyclops': {
+                            '/abilities/auto': { miss: 5, 100: 10 },
+                            '/abilities/smash': { 400: 5 },
+                        },
+                    },
+                },
+            },
+            { playerHrid: 'player1', monsterHrid: '/monsters/cyclops' }
+        );
+        expect(predicted.hitRate).toBeCloseTo(15 / 20, 5);
+        expect(predicted.dmgPerHit).toBeCloseTo(1500 / 15, 5);
+    });
+
+    test('no attack tally leaves hit rate and damage-per-hit null', () => {
+        const predicted = predictedFromSim(
+            { simulatedTime: 100e9, labyAttemptCount: 1, encounters: 0, totalDamageDealt: { p: 100 } },
+            { playerHrid: 'p', monsterHrid: '/m' }
+        );
+        expect(predicted.hitRate).toBeNull();
+        expect(predicted.dmgPerHit).toBeNull();
+    });
+});
+
+describe('the damage gap decomposes into accuracy and mitigation', () => {
+    // Six fights, each 40 hits / 10 misses (80% hit rate), 200 damage per hit
+    const swingLosses = () =>
+        Array.from({ length: 6 }, () =>
+            attempt({ monsterMaxHp: 100000, monsterHpEnd: 92000, seconds: 50, playerHits: 40, playerMisses: 10 })
+        );
+    const predictedLike = (overrides = {}) => ({
+        dps: 160,
+        takenPerSecond: 10,
+        clearRate: 0.2,
+        secondsPerFight: 50,
+        hitRate: 0.8,
+        dmgPerHit: 200,
+        ...overrides,
+    });
+
+    test('observed hit rate and damage-per-hit are derived from the swing counts', () => {
+        const [g] = deriveObserved(swingLosses());
+        expect(g.hitRate).toBeCloseTo(0.8, 5);
+        expect(g.dmgPerHit).toBeCloseTo(200, 5); // 8000 dealt / 40 hits
+        expect(g.hitDataFights).toBe(6);
+    });
+
+    test('fewer hits than the sim expects reads as an accuracy gap', () => {
+        // Sim thinks you hit 95% while you really hit 80% → hit rate falls short
+        const result = compareLab(deriveObserved(swingLosses())[0], predictedLike({ dps: 200, hitRate: 0.95 }));
+        const hit = result.metrics.find((m) => m.key === 'hitRate');
+        expect(hit.verdict).toBe('below');
+        expect(result.diagnosis).toMatch(/land fewer hits/i);
+        expect(result.diagnosis).toMatch(/evasion/i);
+    });
+
+    test('softer hits than the sim expects reads as a mitigation gap', () => {
+        // Sim thinks each hit does 260 while yours do 200 → damage-per-hit short
+        const result = compareLab(deriveObserved(swingLosses())[0], predictedLike({ dps: 200, dmgPerHit: 260 }));
+        const dph = result.metrics.find((m) => m.key === 'dmgPerHit');
+        expect(dph.verdict).toBe('below');
+        expect(result.diagnosis).toMatch(/each hit lands softer/i);
+        expect(result.diagnosis).toMatch(/mitigation|resistance|armour/i);
+    });
+
+    test('recordings without swing counts skip the two rows entirely', () => {
+        const [g] = deriveObserved(losses(6)); // no playerHits/playerMisses
+        expect(g.hitRate).toBeNull();
+        const result = compareLab(g, predictedLike());
+        expect(result.metrics.find((m) => m.key === 'hitRate')).toBeUndefined();
+        expect(result.metrics.find((m) => m.key === 'dmgPerHit')).toBeUndefined();
+    });
 });
 
 describe('deviationPct / relMarginPct', () => {

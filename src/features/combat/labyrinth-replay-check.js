@@ -176,10 +176,19 @@ export function deriveObserved(attempts) {
                 totalSeconds: 0,
                 totalMonsterDamage: 0,
                 totalPlayerTaken: 0,
+                // Hit-rate/damage-per-hit accumulate only over fights that carry
+                // swing counts, so an older recording without them does not drag
+                // the rate toward zero — it just contributes no hit data
+                totalPlayerHits: 0,
+                totalPlayerMisses: 0,
+                totalHitDataDealt: 0,
+                hitDataFights: 0,
                 dpsSamples: [],
                 takenSamples: [],
                 secondsSamples: [],
                 clearSamples: [],
+                hitRateSamples: [],
+                dmgPerHitSamples: [],
             };
             groups.set(key, group);
         }
@@ -195,6 +204,21 @@ export function deriveObserved(attempts) {
         group.takenSamples.push(playerTaken / seconds);
         group.secondsSamples.push(seconds);
         group.clearSamples.push(attempt.cleared ? 1 : 0);
+
+        // Swings recorded this fight — hits + misses. Absent (null) on older
+        // recordings; a swing of zero means the fight had none to attribute
+        const hits = Number(attempt.playerHits);
+        const misses = Number(attempt.playerMisses);
+        if (Number.isFinite(hits) && Number.isFinite(misses) && hits + misses > 0) {
+            group.totalPlayerHits += hits;
+            group.totalPlayerMisses += misses;
+            group.hitDataFights += 1;
+            group.hitRateSamples.push(hits / (hits + misses));
+            if (hits > 0) {
+                group.totalHitDataDealt += monsterDamage;
+                group.dmgPerHitSamples.push(monsterDamage / hits);
+            }
+        }
     }
 
     const out = [...groups.values()].map((group) => ({
@@ -208,6 +232,14 @@ export function deriveObserved(attempts) {
         takenPerSecond: group.totalSeconds > 0 ? group.totalPlayerTaken / group.totalSeconds : 0,
         secondsPerFight: group.fights > 0 ? group.totalSeconds / group.fights : 0,
         clearRate: group.fights > 0 ? group.clears / group.fights : 0,
+        // Null when no fight carried swing counts, so the replay skips these two
+        // rows rather than showing a fabricated 0%
+        hitRate:
+            group.totalPlayerHits + group.totalPlayerMisses > 0
+                ? group.totalPlayerHits / (group.totalPlayerHits + group.totalPlayerMisses)
+                : null,
+        dmgPerHit: group.totalPlayerHits > 0 ? group.totalHitDataDealt / group.totalPlayerHits : null,
+        hitDataFights: group.hitDataFights,
     }));
 
     out.sort((a, b) => b.fights - a.fights);
@@ -236,11 +268,26 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
     const dealt = Number(simResult.totalDamageDealt?.[playerHrid]) || 0;
     const taken = Number(simResult.totalDamageDealt?.[monsterHrid]) || 0;
 
+    // Your swings on the monster, from the sim's per-ability attack tally:
+    // `attacks[you][monster][ability]` is `{miss: n, <damage>: n, …}`, so the
+    // miss key is misses and every other key is a landed hit
+    let simHits = 0;
+    let simMisses = 0;
+    const abilityTally = simResult.attacks?.[playerHrid]?.[monsterHrid];
+    for (const stats of Object.values(abilityTally || {})) {
+        for (const [outcome, count] of Object.entries(stats || {})) {
+            if (outcome === 'miss') simMisses += Number(count) || 0;
+            else simHits += Number(count) || 0;
+        }
+    }
+
     return {
         dps: dealt / simSeconds,
         takenPerSecond: taken / simSeconds,
         secondsPerFight: attempts > 0 ? simSeconds / attempts : 0,
         clearRate: attempts > 0 ? wins / attempts : 0,
+        hitRate: simHits + simMisses > 0 ? simHits / (simHits + simMisses) : null,
+        dmgPerHit: simHits > 0 ? dealt / simHits : null,
         attempts,
         wins,
         simSeconds,
@@ -280,9 +327,10 @@ function compareMetric(key, label, observed, predicted, samples, fights) {
  * @param {Object} dps - Your-damage metric
  * @param {Object} taken - Monster-damage metric
  * @param {Object} clear - Clear-rate metric
+ * @param {Object} [split] - `{hitRate, dmgPerHit}` metrics, when swing data exists
  * @returns {string}
  */
-function diagnose(dps, taken, clear) {
+function diagnose(dps, taken, clear, { hitRate = null, dmgPerHit = null } = {}) {
     // Both damage metrics err in either direction, and each direction is a
     // different finding. `below` on your damage means the sim credited you more
     // than you delivered; `below` on the monster's means it credited the monster
@@ -291,11 +339,28 @@ function diagnose(dps, taken, clear) {
     const yourDamage = dps.verdict === 'below' ? 'over' : dps.verdict === 'above' ? 'under' : null;
     const monsterDamage = taken.verdict === 'above' ? 'under' : taken.verdict === 'below' ? 'over' : null;
 
+    // When the damage gap decomposes, name the half that is off: fewer hits than
+    // predicted is an accuracy gap (the monster's evasion is under-modelled — a
+    // buff like Guardian Aura); softer hits are a mitigation gap (its resistance
+    // or armour is under-modelled — a buff like Toughness).
+    const missingHits = hitRate?.verdict === 'below';
+    const softHits = dmgPerHit?.verdict === 'below';
+    let because = '';
+    if (missingHits && softHits) {
+        because = ' — you land fewer hits and each lands softer than it predicts, so its evasion and mitigation both run light';
+    } else if (missingHits) {
+        because =
+            ' — you land fewer hits than it predicts, so its evasion runs light (an unmodelled evasion buff like Guardian Aura)';
+    } else if (softHits) {
+        because =
+            ' — each hit lands softer than it predicts, so its mitigation runs light (an unmodelled resistance/armour buff like Toughness)';
+    }
+
     if (yourDamage === 'over' && monsterDamage === 'under') {
-        return 'Sim over-credits your damage and under-models the monster’s — both push the clear chance too high.';
+        return `Sim over-credits your damage and under-models the monster’s — both push the clear chance too high${because}.`;
     }
     if (yourDamage === 'over') {
-        return 'Sim over-credits your damage: real fights kill the monster slower, so more of them time out.';
+        return `Sim over-credits your damage: real fights kill the monster slower, so more of them time out${because}.`;
     }
     if (monsterDamage === 'under') {
         return 'Sim under-models the monster’s damage: you take more than predicted, so more attempts end in death.';
@@ -362,6 +427,31 @@ export function compareLab(observed, predicted) {
         observed.fights
     );
 
+    // The decomposition of the damage gap — only when both sides carry swing
+    // counts. Hit-rate is accuracy against the monster's evasion; damage-per-hit
+    // is what each landed hit does after its mitigation. Which one is off names
+    // whether the sim under-models the monster's evasion or its resistance.
+    const hasHitData =
+        observed.hitDataFights > 0 && observed.hitRate !== null && Number.isFinite(predicted?.hitRate);
+    const hitRate = hasHitData
+        ? compareMetric('hitRate', 'Your hit rate', observed.hitRate, predicted.hitRate, observed.hitRateSamples, observed.hitDataFights)
+        : null;
+    const dmgPerHit =
+        hasHitData && observed.dmgPerHit !== null && Number.isFinite(predicted?.dmgPerHit)
+            ? compareMetric(
+                  'dmgPerHit',
+                  'Damage / hit',
+                  observed.dmgPerHit,
+                  predicted.dmgPerHit,
+                  observed.dmgPerHitSamples,
+                  observed.hitDataFights
+              )
+            : null;
+
+    const metrics = [dps, taken, clear, seconds];
+    if (hitRate) metrics.push(hitRate);
+    if (dmgPerHit) metrics.push(dmgPerHit);
+
     return {
         monsterHrid: observed.monsterHrid,
         monsterName: observed.monsterName || null,
@@ -370,8 +460,8 @@ export function compareLab(observed, predicted) {
         levelHigh: observed.levelHigh ?? observed.roomLevel,
         fights: observed.fights,
         clears: observed.clears,
-        metrics: [dps, taken, clear, seconds],
-        diagnosis: diagnose(dps, taken, clear),
+        metrics,
+        diagnosis: diagnose(dps, taken, clear, { hitRate, dmgPerHit }),
     };
 }
 

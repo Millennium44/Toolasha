@@ -27,6 +27,7 @@ import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { classifyFight, fightTally, failureShape, isFreshLabyrinthFight } from './labyrinth-fight-log.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
+import { newAttributionState, noteActions, attributeTick, foldEvents } from '../../utils/damage-attribution.js';
 import labTickCapture from './labyrinth-tick-capture.js';
 import { accuracyReport } from './labyrinth-outcome-log.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
@@ -35,6 +36,21 @@ import { readScoped, writeScoped } from '../../utils/character-key.js';
 
 /** Re-exported from labyrinth-formulas.js, where it now lives */
 export { ROOM_TRAVEL_SECONDS };
+
+/**
+ * Sum a fight's attribution tally into your swing counts.
+ * @param {Object} tally - From `foldEvents`, player index → `{hits, misses, ...}`
+ * @returns {{playerHits: number, playerMisses: number}}
+ */
+function tallyHitsMisses(tally) {
+    let playerHits = 0;
+    let playerMisses = 0;
+    for (const entry of Object.values(tally || {})) {
+        playerHits += Number(entry?.hits) || 0;
+        playerMisses += Number(entry?.misses) || 0;
+    }
+    return { playerHits, playerMisses };
+}
 
 /**
  * Where the room log lives.
@@ -649,10 +665,28 @@ class LabyrinthRoomLogs {
                 // gross, so a net-vs-gross comparison read as the sim over-hitting.
                 grossTaken: 0,
                 grossDealt: 0,
+                // Per-hit tally, so the replay can split the damage gap into
+                // "landed fewer hits than the sim" (accuracy vs the monster's
+                // evasion) versus "each hit softer than the sim" (its mitigation).
+                // Read from the same dmgCounter/critCounter the wire already
+                // carries, via the shared attribution decoder.
+                attrState: newAttributionState(),
+                attrTally: {},
                 prevPlayerHp: player.cHP,
                 prevMonsterHp: monster.cHP,
                 startedAt: Date.now(),
             };
+        }
+
+        // A swing is the monster's dmgCounter rising; a miss is a swing that left
+        // its health untouched. filterNonDamaging:false so every swing counts,
+        // not only those during a damaging ability
+        try {
+            noteActions(this.fight.attrState, data.pMap);
+            const events = attributeTick({ pMap: data.pMap, mMap: data.mMap }, this.fight.attrState);
+            foldEvents(this.fight.attrTally, events, { filterNonDamaging: false });
+        } catch (error) {
+            console.error('[LabyrinthRoomLogs] Attributing a fight tick failed:', error);
         }
 
         // Accumulate the drops, not the endpoints: a health bar that fell 300 and
@@ -825,6 +859,9 @@ class LabyrinthRoomLogs {
             // totals, unlike the endpoints, which are net of your regen
             monsterDamage: fight.grossDealt,
             playerDamageTaken: fight.grossTaken,
+            // Your swings on the monster, hits and misses, summed across the
+            // fight — the replay reads hit-rate and damage-per-hit from these
+            ...tallyHitsMisses(fight.attrTally),
             fingerprint: this.simSource?.fingerprint?.() || null,
         });
 
@@ -1505,8 +1542,9 @@ class LabyrinthRoomLogs {
     /** How a replay metric value reads, by which metric it is */
     formatReplayValue(key, value) {
         if (!Number.isFinite(value)) return '—';
-        if (key === 'clearRate') return `${Math.round(value * 100)}%`;
+        if (key === 'clearRate' || key === 'hitRate') return `${Math.round(value * 100)}%`;
         if (key === 'secondsPerFight') return `${value.toFixed(1)}s`;
+        if (key === 'dmgPerHit') return formatKMB(value);
         return `${formatKMB(value)}/s`;
     }
 
