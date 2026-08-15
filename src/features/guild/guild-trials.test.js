@@ -726,14 +726,18 @@ describe('placeTrialBlock', () => {
         const block = newBlock();
 
         expect(placeTrialBlock(root, card, block, 'Trial Badger')).toBe('beside-monsters');
-        // A panel-owned wrapper positioned inside the monsters half, anchored off it
-        const side = monsters.querySelector('.mwi-trial-side-box');
+        // A panel-owned wrapper positioned against the full-width panel, so it can
+        // overflow the narrow gap in the monsters half into the empty space
+        const side = root.querySelector('.mwi-trial-side-box');
         expect(side).not.toBeNull();
+        expect(side.parentElement).toBe(root);
         expect(side.style.position).toBe('absolute');
-        expect(monsters.style.position).toBe('relative');
+        expect(root.style.position).toBe('relative');
         expect(side.contains(block)).toBe(true);
         // Not dropped into the enemy grid
         expect(document.getElementById('grid').querySelector('.mwi-trial-info')).toBeNull();
+        // And not left in the monsters half where it would be clipped
+        expect(monsters.querySelector('.mwi-trial-side-box')).toBeNull();
     });
 
     test('a grid gathers its boxes into one full-width row beneath the tiles', () => {

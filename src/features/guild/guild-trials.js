@@ -1610,49 +1610,47 @@ const SIDE_BOX_CLASS = 'mwi-trial-side-box';
  *
  * The enemies sit in a grid inside the monsters area, and the game gives that
  * area a fixed half of the battle row (`flex: 1 1 0%`, matched to the players
- * half) — so it is wider than the cards, with empty space to their right. A box
- * placed *after* the half clears that space and floats off by the gap; a box
- * dropped into the enemy grid lands in a single narrow unit-card cell. So the
- * box goes inside the half, absolutely positioned against the enemy grid's own
- * right edge — hugging the cards without resizing the half or pushing them.
+ * half). The cards nearly fill that half, so the gap to its right is only ~160px
+ * — too narrow for the box, and the half (and the battle row) clip anything
+ * wider. So the box is anchored to the full-width panel instead, positioned at
+ * the enemy grid's own top-right corner: it hugs the cards and is free to use the
+ * empty space out to the panel edge, at its natural width and aligned to the row.
  *
  * The wrapper is the panel's own element, so the per-block style reset cannot
- * strip its position; `position: relative` on the area is the anchor and is
+ * strip its position; `position: relative` on the panel is the anchor and is
  * visually harmless, re-asserted each pass in case a re-render clears it.
  *
+ * @param {Element} host - The trials root, a full-width non-clipping ancestor
  * @param {Element} monstersArea - `BattlePanel_monstersArea`
  * @param {Element} block - The forecast box
  */
-function placeBesideMonsters(monstersArea, block) {
-    // Anchor the absolutely-positioned box to the area unless the game already
-    // gives it a positioning context of its own
-    const areaPosition = typeof getComputedStyle === 'function' ? getComputedStyle(monstersArea)?.position : '';
-    if (!['relative', 'absolute', 'fixed', 'sticky'].includes(areaPosition)) {
-        monstersArea.style.position = 'relative';
+function placeBesideMonsters(host, monstersArea, block) {
+    const hostPosition = typeof getComputedStyle === 'function' ? getComputedStyle(host)?.position : '';
+    if (!['relative', 'absolute', 'fixed', 'sticky'].includes(hostPosition)) {
+        host.style.position = 'relative';
     }
 
     let side = null;
-    for (const child of monstersArea.children) {
+    for (const child of host.children) {
         if (child.classList?.contains(SIDE_BOX_CLASS)) {
             side = child;
             break;
         }
     }
     if (!side) {
-        side = monstersArea.ownerDocument.createElement('div');
+        side = host.ownerDocument.createElement('div');
         side.className = SIDE_BOX_CLASS;
-        side.style.cssText = 'position:absolute; top:0; left:8px;';
-        monstersArea.appendChild(side);
+        side.style.cssText = 'position:absolute; top:0; left:0; max-width:320px;';
+        host.appendChild(side);
     }
 
-    // Hug the enemy grid's right edge and take whatever width is left in the half
-    const grid = [...monstersArea.children].find((child) => child !== side);
+    // Pin the box to the enemy grid's top-right corner, in the panel's coordinates
+    const grid = [...monstersArea.children].find((child) => !child.classList?.contains(SIDE_BOX_CLASS));
     if (grid && typeof grid.getBoundingClientRect === 'function') {
-        const area = monstersArea.getBoundingClientRect();
+        const panel = host.getBoundingClientRect();
         const cards = grid.getBoundingClientRect();
-        const left = Math.max(0, Math.round(cards.right - area.left) + 8);
-        side.style.left = `${left}px`;
-        side.style.maxWidth = `${Math.max(160, Math.round(area.width - left))}px`;
+        side.style.left = `${Math.round(cards.right - panel.left) + 8}px`;
+        side.style.top = `${Math.round(cards.top - panel.top)}px`;
     }
 
     side.appendChild(block);
@@ -1730,7 +1728,7 @@ export function placeTrialBlock(root, card, block, name = '') {
     // among the enemies.
     const monstersArea = card?.closest?.('[class*="BattlePanel_monstersArea"]');
     if (monstersArea && root?.contains?.(monstersArea)) {
-        placeBesideMonsters(monstersArea, block);
+        placeBesideMonsters(root, monstersArea, block);
         return 'beside-monsters';
     }
 
