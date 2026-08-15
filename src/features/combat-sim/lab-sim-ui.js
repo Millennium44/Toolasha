@@ -1145,16 +1145,22 @@ class LabSimUI {
         this.panel.appendChild(skillingContent);
         this.panel.appendChild(status);
 
-        // The skilling crate dropdowns default to the character's equipped
-        // labyrinth crates rather than a hardcoded Expert — see
-        // _applyEquippedSkillingCrates. A manual pick opts out so "what if I ran
-        // Expert" still works.
+        // Both crate dropdown trios (combat + skilling) default to the character's
+        // equipped labyrinth crates rather than a hardcoded Expert — see
+        // _applyEquippedCratesTo. A manual pick opts that trio out, so "what if I
+        // ran Expert" still works.
         for (const id of ['#mwi-labsim-skilling-tea', '#mwi-labsim-skilling-coffee', '#mwi-labsim-skilling-food']) {
             this.panel.querySelector(id)?.addEventListener('change', () => {
                 this._skillingCratesUserSet = true;
             });
         }
+        for (const id of ['#mwi-labsim-tea', '#mwi-labsim-coffee', '#mwi-labsim-food']) {
+            this.panel.querySelector(id)?.addEventListener('change', () => {
+                this._combatCratesUserSet = true;
+            });
+        }
         this._applyEquippedSkillingCrates();
+        this._applyEquippedCombatCrates();
 
         // Both bottom corners: a panel docked against the right of the screen
         // can only be widened by dragging its left edge, and the right-hand grip
@@ -2049,6 +2055,9 @@ class LabSimUI {
      * @returns {string[]}
      */
     getSelectedCrates() {
+        // Default the combat crates to what the character has equipped, in case
+        // the panel was built before data loaded; a manual pick has opted out.
+        this._applyEquippedCombatCrates();
         const crates = [];
         const teaHrid = this.panel?.querySelector('#mwi-labsim-tea')?.value;
         const coffeeHrid = this.panel?.querySelector('#mwi-labsim-coffee')?.value;
@@ -4586,10 +4595,11 @@ class LabSimUI {
 
     /**
      * The labyrinth crates the character actually has equipped — the same source
-     * the live clear-rate reader scores a room with (getCrateBuffs).
+     * the live clear-rate reader scores a room with (getCrateBuffs). Shared by
+     * the skilling and combat crate dropdowns, which point at one equipped set.
      * @private
      */
-    _equippedSkillingCrateHrids() {
+    _equippedCrateHrids() {
         const labyrinth = dataManager.characterData?.characterLabyrinth;
         const setting = dataManager.characterData?.characterSetting;
         return {
@@ -4600,23 +4610,26 @@ class LabSimUI {
     }
 
     /**
-     * Point the three skilling crate dropdowns at the equipped crates.
+     * Point one crate dropdown trio at the equipped crates.
      *
-     * The sim's room level already comes from the live equipped tea crate (via
-     * getTargetRoomLevel → getEffectiveLevel), so the success calc must use the
-     * same crates or the two halves disagree — a room set from equipped tea and
-     * a success scored against a hardcoded Expert crate the player may not own.
-     * That mismatch reads a higher clear than the Automation tab's recommendation
-     * for the same skip threshold. Skipped once the user picks a crate by hand,
-     * so exploring a different crate still works.
+     * The sim's room level already comes from the live equipped crate (via
+     * getTargetRoomLevel → getEffectiveLevel for skilling, the effective combat
+     * level for combat), so the success calc must use the same crates or the two
+     * halves disagree — a room set from the equipped crate and a fight scored
+     * against a hardcoded Expert crate the player may not own. That mismatch reads
+     * a higher clear than the live tile / recommendation for the same threshold
+     * (e.g. the Expert coffee crate's +15 combat levels). Skipped once the user
+     * picks a crate by hand, so exploring a different crate still works.
+     * @param {{tea:string,coffee:string,food:string}} ids - Select element ids
+     * @param {string} userSetKey - The "user has overridden" flag to honour
      * @private
      */
-    _applyEquippedSkillingCrates() {
-        if (this._skillingCratesUserSet) return;
+    _applyEquippedCratesTo(ids, userSetKey) {
+        if (this[userSetKey]) return;
         // Before character data loads there is nothing to read; leave the
         // dropdowns as they are rather than forcing them to None.
         if (!dataManager.characterData) return;
-        const equipped = this._equippedSkillingCrateHrids();
+        const equipped = this._equippedCrateHrids();
         const set = (id, hrid) => {
             const select = this.panel?.querySelector(id);
             if (!select) return;
@@ -4627,9 +4640,25 @@ class LabSimUI {
                 select.value = hrid;
             }
         };
-        set('#mwi-labsim-skilling-tea', equipped.tea);
-        set('#mwi-labsim-skilling-coffee', equipped.coffee);
-        set('#mwi-labsim-skilling-food', equipped.food);
+        set(ids.tea, equipped.tea);
+        set(ids.coffee, equipped.coffee);
+        set(ids.food, equipped.food);
+    }
+
+    /** @private */
+    _applyEquippedSkillingCrates() {
+        this._applyEquippedCratesTo(
+            { tea: '#mwi-labsim-skilling-tea', coffee: '#mwi-labsim-skilling-coffee', food: '#mwi-labsim-skilling-food' },
+            '_skillingCratesUserSet'
+        );
+    }
+
+    /** @private */
+    _applyEquippedCombatCrates() {
+        this._applyEquippedCratesTo(
+            { tea: '#mwi-labsim-tea', coffee: '#mwi-labsim-coffee', food: '#mwi-labsim-food' },
+            '_combatCratesUserSet'
+        );
     }
 
     /** @private */
@@ -4850,19 +4879,21 @@ class LabSimUI {
      * trigger read as one room here and another in the automation panel.
      * @private
      */
-    _skillingRowBreakdown(r, usesSkipLevels, clearRate) {
+    _skillingRowBreakdown(r, usesSkipLevels, clearRate, crateSummary) {
         const room = r.roomLevel;
         const lines = [r.skillName];
         if (usesSkipLevels && r.skillHrid && clearRate) {
             const skip = clearRate.getSkipThreshold?.(r.skillHrid);
             const basis = clearRate.getEffectiveLevel?.(r.skillHrid);
-            if (Number.isFinite(skip) && Number.isFinite(basis)) {
-                lines.push(`Room ${room} = skip level ${basis} + trigger ${skip} − 1`);
-                lines.push('  (skip level is base + tea only, as the game assigns rooms)');
+            if (Number.isFinite(skip) && Number.isFinite(basis) && skip > 0) {
+                // Explain the − 1: the trigger is the gap at which skipping starts,
+                // so the hardest room you actually enter is one below it.
+                lines.push(`Room ${room} — the hardest room you still fight`);
+                lines.push(`  trigger ${skip}: rooms ${basis + skip}+ (≥${skip} above you) are skipped, so ${room} is the top`);
             }
         }
         const bonus = Number(r.skillLevelBonus) || 0;
-        lines.push(`Eff level ${r.effectiveLevel} = base ${r.baseLevel}${bonus ? ` + ${+bonus.toFixed(2)} buffs` : ''}`);
+        lines.push(`Effective level ${r.effectiveLevel} = base ${r.baseLevel}${bonus ? ` + ${+bonus.toFixed(2)} buffs` : ''}`);
         const delta = Number.isFinite(r.levelDelta) ? r.levelDelta : r.effectiveLevel - room;
         lines.push(`Level gap: ${r.effectiveLevel} − ${room} = ${delta >= 0 ? '+' : ''}${delta}`);
         const lb = Number(r.levelBonus) || 0;
@@ -4880,7 +4911,18 @@ class LabSimUI {
             );
         }
         lines.push(`Clear ${((r.clearChance || 0) * 100).toFixed(1)}% over ${r.attempts || 0} attempts`);
+        if (crateSummary) lines.push(`Crates: ${crateSummary}`);
         return lines.join('\n');
+    }
+
+    /**
+     * "Expert tea" from an /items/expert_tea_crate hrid, for the breakdown's
+     * crate line so it is clear which crate tier drove the numbers.
+     * @private
+     */
+    _crateTierLabel(hrid) {
+        const match = /\/items\/(\w+?)_(tea|coffee|food)_crate/.exec(hrid || '');
+        return match ? `${match[1].charAt(0).toUpperCase()}${match[1].slice(1)} ${match[2]}` : '';
     }
 
     _renderSkillingClearResults(results, roomLevel) {
@@ -4889,6 +4931,8 @@ class LabSimUI {
 
         const usesSkipLevels = roomLevel && typeof roomLevel === 'object';
         const clearRate = labyrinthClearRate() || bundledLabyrinthClearRate;
+        // The crate tiers behind every row's numbers, for the breakdown's crate line
+        const crateSummary = this._getSkillingCrates().map((h) => this._crateTierLabel(h)).filter(Boolean).join(' · ');
         // Hover text carries newlines and the odd math symbol — encode for an attr
         const attr = (text) =>
             String(text)
@@ -4946,7 +4990,7 @@ class LabSimUI {
             const clearPct = ((r.clearChance || 0) * 100).toFixed(1);
             const rowRoomLevel = r.roomLevel ?? roomLevel;
             const xpPerRoom = r.xpPerRoom > 0 ? formatKMB(r.xpPerRoom) : '—';
-            const breakdown = attr(this._skillingRowBreakdown(r, usesSkipLevels, clearRate));
+            const breakdown = attr(this._skillingRowBreakdown(r, usesSkipLevels, clearRate, crateSummary));
 
             html += `<tr style="border-bottom:1px solid #1a1a1a; cursor:help;" title="${breakdown}">
                 <td style="padding:3px 4px; color:#e0e0e0;">${r.skillName}</td>

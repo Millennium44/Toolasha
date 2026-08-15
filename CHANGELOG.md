@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim combat crates default to equipped too; recommendation & breakdown tooltips spell out the working
+
+- The **combat** sim's tea/coffee/food dropdowns had the same hardcoded-Expert bug as the skilling tab — so a fight was scored with an Expert coffee crate's **+15 combat levels** the character may not own. They now default to the equipped crates (manual pick still opts out), same as skilling.
+- The Automation-tab **recommendation badge** now has a full hover breakdown for skilling rooms — the room the recommended trigger maps to (and *why* it's `trigger − 1` above you), the effective level, the success formula, the clear, and the crate tiers — matching the Lab Sim's row breakdown.
+- Both breakdowns now **name the crate tiers** driving the numbers and explain the `− 1` in words (a room is skipped once it's ≥ trigger above you, so the hardest you still fight is one below).
+
 ### Lab Sim skilling: crates default to what you have equipped, plus a per-row calc breakdown
 
 The Skilling tab's tea/coffee/food dropdowns were hardcoded to **Expert**, so the sim scored a room against Expert crates the character may not own while the room level itself came from the equipped crate — the two halves disagreed, and the sim's clear read higher than the Automation tab's recommendation for the same skip trigger (e.g. Recommend +63 but the sim needing +67 to hit 30%). The dropdowns now default to the equipped crates (a manual pick still opts out for exploring). And every skilling row now has a hover breakdown showing the working: `Room = skip level + trigger − 1`, `Eff level = base + buffs`, the level gap, the success formula, and the clear — so a mismatch is visible at a glance. (Reported by Doobs.)
