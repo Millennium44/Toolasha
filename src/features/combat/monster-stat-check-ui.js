@@ -20,8 +20,16 @@ import { attachMinimize } from '../../utils/panel-minimize.js';
 import { buildGameDataPayload } from '../combat-sim/combat-sim-adapter.js';
 import { setGameData } from '../combat-sim/engine/game-data.js';
 import Monster from '../combat-sim/engine/monster.js';
-import { deriveRoomLevel, buildComparison, buildExportPayload } from './monster-stat-check.js';
+import { deriveRoomLevel, buildComparison, buildExportPayload, compareBuffProduction } from './monster-stat-check.js';
 import { downloadFile } from '../../utils/csv-export.js';
+import labyrinthClearRate from './labyrinth-clear-rate.js';
+
+const BLIND_VERDICT = {
+    match: { glyph: '✓', color: '#6fce7f' },
+    missing: { glyph: '⚠', color: '#e56b6b' },
+    magnitude: { glyph: '≠', color: '#e0b64a' },
+    extra: { glyph: '+', color: '#7aa2d0' },
+};
 
 const SETTING_KEY = 'labyrinthMonsterStatCheck';
 const PANEL_ID = 'toolasha-monster-stat-check';
@@ -157,6 +165,8 @@ class MonsterStatCheckPanel {
             name: gameUnit?.name,
             roomLevel: buffedBuilt?.roomLevel ?? baseBuilt?.roomLevel ?? 0,
             simBuilt: Boolean(buffedBuilt?.monster?.combatDetails),
+            // Kept so the blind-sim button can diff produced buffs against the live set.
+            combatBuffMap: gameUnit?.combatBuffMap || {},
             buffs: buffedCmp.buffs,
             // The buffed verdict is canonical for the log, title and ordering.
             hasMismatch: buffedCmp.hasMismatch,
@@ -286,6 +296,26 @@ class MonsterStatCheckPanel {
         this.simMode = this.simMode === 'buffed' ? 'baseline' : 'buffed';
         this._persist();
         this._render();
+    }
+
+    /**
+     * Run a blind sim fight for the shown monster and diff the buffs it produces
+     * on its own against the game's live effects. Synchronous — a handful of
+     * fights is well under the frame budget.
+     */
+    async _runBlindSim() {
+        const snap = this.displayed;
+        if (!snap?.hrid) return;
+        try {
+            const { produced, ran } = await labyrinthClearRate.blindBuffProbe(snap.hrid, snap.roomLevel);
+            snap.blind = { rows: compareBuffProduction(snap.combatBuffMap || {}, produced), ran, at: Date.now() };
+        } catch (error) {
+            console.error('[MonsterStatCheck] Blind sim failed:', error);
+            snap.blind = { rows: [], ran: false, at: Date.now() };
+        }
+        // Only re-render if this snapshot is still the one on screen.
+        if (this.displayed === snap) this._render();
+        this._persist();
     }
 
     /** Download the session's discrepancy log plus the current snapshot as JSON. */
@@ -601,7 +631,91 @@ class MonsterStatCheckPanel {
         }
         footer.appendChild(legend);
 
+        this._renderBlind(footer, snapshot);
+
         body.appendChild(footer);
+    }
+
+    /** Boost as a short string: a ratio as a percent, else the flat value. */
+    _blindBoost(rec) {
+        if (!rec) return '—';
+        if (rec.ratioBoost) return `${(rec.ratioBoost * 100).toFixed(0)}%`;
+        if (rec.flatBoost) return `${Math.round(rec.flatBoost * 1000) / 1000}`;
+        return '0';
+    }
+
+    /** The blind-sim section: a Run button, and the produced-vs-live buff diff. */
+    _renderBlind(footer, snapshot) {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08);';
+
+        const blind = snapshot.blind;
+        if (blind) {
+            const head = document.createElement('div');
+            head.style.cssText =
+                'font-size:0.68rem; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.4); margin-bottom:2px;';
+            head.textContent = 'Blind sim — buffs it produces';
+            wrap.appendChild(head);
+
+            if (!blind.ran) {
+                const err = document.createElement('div');
+                err.style.cssText = 'font-size:0.72rem; color:#e56b6b; font-style:italic;';
+                err.textContent = 'Blind fight could not run (no loadout or sim data).';
+                wrap.appendChild(err);
+            } else if (!blind.rows.length) {
+                const none = document.createElement('div');
+                none.style.cssText = 'font-size:0.72rem; color:rgba(255,255,255,0.5);';
+                none.textContent = 'No buffs on either side.';
+                wrap.appendChild(none);
+            } else {
+                for (const r of blind.rows) {
+                    const style = BLIND_VERDICT[r.verdict] || BLIND_VERDICT.match;
+                    const line = document.createElement('div');
+                    line.style.cssText =
+                        'display:grid; grid-template-columns: 1.4fr 0.8fr 0.8fr auto; gap:4px; align-items:baseline; font-size:0.74rem; padding:1px 0;';
+                    const name = document.createElement('span');
+                    name.textContent = r.name;
+                    name.style.cssText = 'overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+                    const g = document.createElement('span');
+                    g.textContent = this._blindBoost(r.game);
+                    g.style.cssText = 'text-align:right; font-variant-numeric:tabular-nums;';
+                    const s = document.createElement('span');
+                    s.textContent = this._blindBoost(r.sim);
+                    s.style.cssText =
+                        'text-align:right; font-variant-numeric:tabular-nums; color:rgba(255,255,255,0.75);';
+                    const v = document.createElement('span');
+                    v.textContent = style.glyph;
+                    v.style.cssText = `text-align:right; color:${style.color};`;
+                    v.title = r.verdict;
+                    line.append(name, g, s, v);
+                    wrap.appendChild(line);
+                }
+                const key = document.createElement('div');
+                key.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
+                key.innerHTML =
+                    '<span style="color:#e56b6b;">⚠ missing</span> = the sim never produced a live effect · ' +
+                    '<span style="color:#e0b64a;">≠</span> different strength · <span style="color:#7aa2d0;">+</span> sim-only (timing). Game vs sim columns.';
+                wrap.appendChild(key);
+            }
+        }
+
+        const btn = document.createElement('button');
+        btn.textContent = blind ? 'Re-run blind sim' : 'Run blind sim';
+        btn.title = 'Simulate a fight fed only the monster + level (no live buffs) and list the buffs the sim produces';
+        btn.style.cssText =
+            'margin-top:6px; background:none; border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#cbd5e8; font-size:0.7rem; cursor:pointer; padding:3px 8px;';
+        btn.addEventListener('mouseenter', () => (btn.style.background = 'rgba(255,255,255,0.06)'));
+        btn.addEventListener('mouseleave', () => (btn.style.background = 'none'));
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            btn.textContent = 'Running…';
+            btn.disabled = true;
+            // Yield a frame so the label paints before the synchronous fight.
+            setTimeout(() => this._runBlindSim(), 0);
+        });
+        wrap.appendChild(btn);
+
+        footer.appendChild(wrap);
     }
 
     /**

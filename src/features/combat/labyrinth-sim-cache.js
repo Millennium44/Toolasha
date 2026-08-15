@@ -13,7 +13,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { buildGameDataPayload, getCommunityBuffs } from '../combat-sim/combat-sim-adapter.js';
-import { runLabyrinthSimulation } from '../combat-sim/combat-sim-runner.js';
+import { runLabyrinthSimulation, runBlindBuffProbe } from '../combat-sim/combat-sim-runner.js';
 import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
@@ -95,6 +95,37 @@ export const simCacheMethods = {
      */
     labyrinthFullAbilities() {
         return true;
+    },
+
+    /**
+     * Run one blind sim fight for a monster and return the buffs the sim applied
+     * to it on its own — fed the current build, crates and community buffs, but
+     * never the monster's live buffs. For the monster-stat-check "does the sim
+     * even produce these effects" diagnostic.
+     * @param {string} monsterHrid
+     * @param {number} roomLevel
+     * @returns {{produced: Array, ran: boolean, error?: string}}
+     */
+    async blindBuffProbe(monsterHrid, roomLevel) {
+        const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
+        const dto = this.buildLabyrinthPlayerDTO(loadoutId);
+        if (!dto) return { produced: [], ran: false };
+        try {
+            const produced = await runBlindBuffProbe({
+                gameData: buildGameDataPayload(),
+                playerDTOs: [dto],
+                zoneHrid: '/actions/combat/fly',
+                monsterHrid,
+                roomLevel,
+                crates: this.getCrateHrids(),
+                communityBuffs: getCommunityBuffs(),
+                labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
+            });
+            return { produced, ran: true };
+        } catch (error) {
+            console.error('[LabyrinthSimCache] Blind buff probe failed:', error);
+            return { produced: [], ran: false };
+        }
     },
 
     /**

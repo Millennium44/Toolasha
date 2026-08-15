@@ -10,6 +10,7 @@
 
 import { describe, test, expect, afterEach } from 'vitest';
 import { setGameData } from './game-data.js';
+import { setBuffCapture, getCapturedMonsterBuffs } from './combat-unit.js';
 import Monster from './monster.js';
 
 const HRID = '/monsters/test_dummy';
@@ -154,5 +155,57 @@ describe('Labyrinth resistance recompute keeps self-buffs', () => {
         monster.updateCombatDetails();
         // base armour 40, +50% = 60
         expect(monster.combatDetails.totalArmor).toBeCloseTo(60, 3);
+    });
+});
+
+describe('buff capture (blind-sim instrumentation)', () => {
+    const HRID2 = '/monsters/cap_dummy';
+    function seedCap() {
+        setGameData({
+            abilityDetailMap: {},
+            combatMonsterDetailMap: {
+                [HRID2]: {
+                    enrageTime: 0,
+                    experience: 100,
+                    abilities: [],
+                    combatDetails: {
+                        staminaLevel: 100,
+                        intelligenceLevel: 100,
+                        attackLevel: 100,
+                        meleeLevel: 100,
+                        defenseLevel: 100,
+                        rangedLevel: 100,
+                        magicLevel: 100,
+                        attackInterval: 3e9,
+                        combatStats: { combatStyleHrids: ['/combat_styles/smash'], attackInterval: 0 },
+                    },
+                },
+            },
+        });
+    }
+
+    afterEach(() => {
+        setBuffCapture(false);
+        setGameData(null);
+    });
+
+    test('records the peak magnitude of a buff applied to the monster', () => {
+        seedCap();
+        const monster = new Monster(HRID2, 0, 100);
+        setBuffCapture(true);
+        // Two applications of the same buff at different strengths; keep the peak.
+        monster.addBuff({ uniqueHrid: '/buff_uniques/shred', typeHrid: '/buff_types/armor', ratioBoost: -0.2, flatBoost: 0, duration: 1e12 }, 0);
+        monster.addBuff({ uniqueHrid: '/buff_uniques/shred', typeHrid: '/buff_types/armor', ratioBoost: -0.35, flatBoost: 0, duration: 1e12 }, 1);
+        const produced = getCapturedMonsterBuffs();
+        const shred = produced.find((b) => b.uniqueHrid === '/buff_uniques/shred');
+        expect(shred).toBeTruthy();
+        expect(shred.ratioBoost).toBeCloseTo(-0.35, 6);
+    });
+
+    test('captures nothing when the flag is off', () => {
+        seedCap();
+        const monster = new Monster(HRID2, 0, 100);
+        monster.addBuff({ uniqueHrid: '/buff_uniques/x', typeHrid: '/buff_types/armor', ratioBoost: 0.5, flatBoost: 0, duration: 1e12 }, 0);
+        expect(getCapturedMonsterBuffs()).toEqual([]);
     });
 });

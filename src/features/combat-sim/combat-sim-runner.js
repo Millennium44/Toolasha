@@ -554,6 +554,50 @@ export async function runLabyrinthSimulation(params, onProgress) {
     return result;
 }
 
+/** A few fights, not one: one may not exercise every ability in the rotation. */
+const BLIND_PROBE_FIGHTS = 5;
+
+/**
+ * Run a short blind labyrinth fight and return the buffs the sim applied to the
+ * monster on its own — fed the build + level, never the monster's live buffs.
+ * Uses the same worker path as a normal sim (no engine on the main thread), with
+ * capture turned on for the run.
+ *
+ * @param {Object} params - Same shape as `runLabyrinthSimulation` params
+ * @returns {Promise<Array<{uniqueHrid,typeHrid,ratioBoost,flatBoost}>>}
+ */
+export async function runBlindBuffProbe(params) {
+    const { gameData, playerDTOs, zoneHrid, monsterHrid, roomLevel, crates, communityBuffs, labyrinthCombatBuffs } =
+        params;
+    const extraBuffs = [...buildExtraBuffs(communityBuffs), ...(labyrinthCombatBuffs || [])];
+    const taskId = ++taskIdCounter;
+    const message = {
+        type: 'start_simulation',
+        taskId,
+        gameData,
+        playerDTOs,
+        zoneHrid,
+        difficultyTier: 0,
+        // Time is not the stopping rule here — a fixed handful of fights is
+        simulationTimeLimit: 3600 * 1e9,
+        extraBuffs,
+        isTaskFight: false,
+        captureBuffs: true,
+        labyrinth: {
+            monsterHrid,
+            roomLevel,
+            crates: crates || [],
+            liveState: null,
+            // The full kit — self-buffs and debuff abilities are the whole point
+            fullAbilities: true,
+        },
+        precision: { maxTrials: BLIND_PROBE_FIGHTS, minTrials: 1 },
+        seed: deriveSeed(1, 0),
+    };
+    const result = await runWorkerChunk(message);
+    return Array.isArray(result?.producedMonsterBuffs) ? result.producedMonsterBuffs : [];
+}
+
 /**
  * Terminate all active simulation workers and reject pending promises.
  */
