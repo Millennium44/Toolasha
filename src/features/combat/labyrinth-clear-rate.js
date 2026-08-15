@@ -2426,7 +2426,11 @@ class LabyrinthClearRate {
         };
         autoButton.addEventListener('click', () => {
             const next = !autoCalcOn();
-            config.setSettingValue('labyrinthAutoCalcTiles', next);
+            // A checkbox setting is stored as `isTrue`, which is what `getSetting`
+            // reads — so it must be written with `setSetting`, not `setSettingValue`
+            // (that writes `.value`, which the read ignores, so the toggle did
+            // nothing). The number inputs above genuinely use `setSettingValue`.
+            config.setSetting('labyrinthAutoCalcTiles', next);
             syncAuto();
             if (next) this.runTileCalculation({ auto: true });
         });

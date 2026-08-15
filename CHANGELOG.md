@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Fix: the labyrinth "Enable auto-calc" button actually toggles the setting
+
+The new auto-calc button wrote the setting with `setSettingValue` (which sets `.value`), but `labyrinthAutoCalcTiles` is a checkbox read back as `.isTrue` — so the write never reached the read and the button did nothing. It now uses `setSetting`.
+
 ### Fix: Lab Sim skilling clear rates now match the Automation tab
 
 The Lab Sim's Skilling tab was reading only speed/efficiency off your gear, dropping the **success** and **gathering-quantity** stats the live Automation clear-rate reader counts — so the sim's clear% ran low on exactly the skills whose tools carry them (gathering: milking/foraging/woodcutting, and cheesesmithing), while skills without them agreed. The sim now extracts those stats the same way, so the two tabs agree. (Reported by Doobs.)
