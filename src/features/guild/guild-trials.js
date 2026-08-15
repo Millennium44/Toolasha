@@ -1571,6 +1571,13 @@ export function placeTrialBlock(root, card, block, name = '') {
             // only, and collapses to one cell when the game declares none
             block.style.gridColumn = `1 / span ${columns}`;
             block.style.width = '100%';
+            // Grid auto-placement fills by `order` then source order: leaving the
+            // block at the default order 0 would slot it mid-grid, splitting the
+            // trial tiles across the box and stranding the rest on later rows.
+            // Order 1 defers every box past all the tiles, so the tiles keep their
+            // row(s) and the boxes stack full-width underneath. DOM position stays
+            // put so `blockNearAnchor` can still find its anchor.
+            block.style.order = '1';
             card.insertAdjacentElement('afterend', block);
             return 'spanned';
         }
@@ -2823,23 +2830,17 @@ class GuildTrials {
             );
         }
 
-        // Treasury only prices tokens, and the In Progress tab does not price them,
-        // so its "no Treasury level seen" nag belongs on the Trials tab only.
-        // Builder's Hall moves the Guild Points themselves, so that one stays.
-        const treasuryMissing = !Number.isFinite(treasuryBonus) && !inProgress;
-        if (!Number.isFinite(buildersHallBonus) || treasuryMissing) {
-            const missing = [];
-            if (!Number.isFinite(buildersHallBonus)) missing.push('Builder’s Hall');
-            if (treasuryMissing) missing.push('Treasury');
+        // Builder's Hall moves the Guild Points themselves, so a level not yet seen
+        // is worth flagging. Treasury only prices tokens, and a guild with no
+        // Treasury levels adds nothing — the figures are already right at 0 — so its
+        // absence is left unflagged rather than nagged about.
+        if (!Number.isFinite(buildersHallBonus)) {
             rows.push(
                 `<div style="color:${WARN}; margin-top:4px;">` +
-                    `No ${missing.join(' or ')} level seen, so the token figures leave ` +
-                    `${missing.length === 1 ? 'that bonus' : 'those bonuses'} out — each level adds ` +
-                    `${formatPercent(bonuses.treasury.rules?.bonusPerLevel)}. ` +
-                    'Open the guild Buildings tab once and it will be picked up, or set it in Toolasha settings.' +
-                    (Number.isFinite(buildersHallBonus)
-                        ? ''
-                        : ' The Guild Points row is still exact: it is what the cards themselves state.') +
+                    'No Builder’s Hall level seen, so the Guild Points figures leave that bonus out — ' +
+                    `each level adds ${formatPercent(bonuses.buildersHall.rules?.bonusPerLevel)}. ` +
+                    'Open the guild Buildings tab once and it will be picked up, or set it in Toolasha settings. ' +
+                    'The Guild Points row is still exact: it is what the cards themselves state.' +
                     '</div>'
             );
         }

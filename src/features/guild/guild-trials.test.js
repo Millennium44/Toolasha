@@ -650,6 +650,9 @@ describe('placeTrialBlock', () => {
         expect(placeTrialBlock(root, card, block, 'Trial Chameleon')).toBe('spanned');
         // `span N`, never `1 / -1`: the latter counts explicit tracks only
         expect(block.style.gridColumn).toBe('1 / span 4');
+        // Deferred past every tile so grid auto-placement keeps the trial tiles
+        // in their row and stacks the boxes full-width underneath
+        expect(block.style.order).toBe('1');
         expect(block.previousElementSibling).toBe(card);
     });
 
@@ -1082,8 +1085,9 @@ describe('the panel, end to end', () => {
 
         expect(text()).toContain('level seen');
         expect(text()).toContain('Builder’s Hall');
-        expect(text()).toContain('Treasury');
         expect(text()).toContain('each level adds 2%');
+        // Treasury only prices tokens and adds nothing at 0 levels — no longer nagged
+        expect(text()).not.toContain('No Treasury level seen');
     });
 
     test('a resolvable bonus drops the caption', () => {
@@ -4301,7 +4305,7 @@ describe('the payout block, audited', () => {
 
         expect(text()).toContain('Builder’s Hall read as level 10');
         expect(text()).toContain('+20%');
-        // The Treasury has no such shortcut, and the block says so
-        expect(text()).toContain('No Treasury level seen');
+        // Treasury is no longer nagged about — a guild with no levels is right at 0
+        expect(text()).not.toContain('No Treasury level seen');
     });
 });

@@ -16,12 +16,14 @@
  * that imported the guild feature would be a cycle, and the guild feature
  * already imports this one.
  *
- * That has a consequence worth stating plainly: **the countdown only advances
- * while the guild panel is open**, because that is the only time anything reads
- * it. A player who never opens the panel gets no starting alert. The panel is
- * usually open in the run-up to a trial the player has signed up for, which is
- * exactly the case this is for, and an alert that fires late is better than a
- * fabricated schedule that fires wrongly.
+ * The panel only reports its countdown while it is open, but the starting alert
+ * does not need it open at the moment of firing: the first scheduled reading
+ * fixes the start as an absolute instant (**seen time + time-till-start**) and a
+ * timer is armed for the lead moment against that instant, so closing the panel
+ * afterwards does not silence the warning. A player who never opens the panel
+ * during a cycle still gets nothing — there is no schedule to anchor to until it
+ * has been seen once — but one glimpse is enough, where before the panel had to
+ * be open across the whole lead window.
  *
  * ## Re-arming
  *
@@ -33,6 +35,7 @@
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import notificationService from './notification-service.js';
+import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { timeReadable } from '../../utils/formatters.js';
 
 /** Master switch for the "a trial is about to start" alert */
@@ -114,6 +117,11 @@ class GuildTrialAlerts {
         this.trials = [];
         /** The payout at the last live reading, for the results alert */
         this.lastPayout = null;
+        /** Start instant currently armed (rounded to the minute), so a re-read does not re-arm */
+        this.scheduledFor = null;
+        /** The pending start-timer id, so it can be cleared and not double-armed */
+        this.startTimerId = null;
+        this.timers = createTimerRegistry();
     }
 
     /**
@@ -133,6 +141,7 @@ class GuildTrialAlerts {
         if (this.onChat) webSocketHook.off('chat_message_received', this.onChat);
         this.onChat = null;
         this.initialized = false;
+        this._clearStartTimer();
     }
 
     /**
@@ -146,8 +155,10 @@ class GuildTrialAlerts {
 
         // The game has said it outright, so this is the start whatever the panel
         // last reported — and the phase is moved on so the panel agreeing a
-        // moment later does not announce it twice
+        // moment later does not announce it twice. A pending "starts soon" timer
+        // is now moot, so it is dropped rather than left to fire after the fact
         this.phase = 'live';
+        this._clearStartTimer();
         return this._announceStarted('chat');
     }
 
@@ -157,6 +168,7 @@ class GuildTrialAlerts {
         this.announcedStartFor = null;
         this.trials = [];
         this.lastPayout = null;
+        this._clearStartTimer();
     }
 
     /**
@@ -187,8 +199,14 @@ class GuildTrialAlerts {
             if (phase) this.phase = phase;
 
             if (phase === 'scheduled') return this._maybeAnnounceStart(startsInMs, at);
-            if (phase === 'live' && previous === 'scheduled') return this._announceStarted();
-            if (phase === 'completed' && previous && previous !== 'completed') return this._announceResults();
+            if (phase === 'live' && previous === 'scheduled') {
+                this._clearStartTimer();
+                return this._announceStarted();
+            }
+            if (phase === 'completed' && previous && previous !== 'completed') {
+                this._clearStartTimer();
+                return this._announceResults();
+            }
             return null;
         } catch (error) {
             console.error('[GuildTrialAlerts] Reading the trial status failed:', error);
@@ -197,22 +215,85 @@ class GuildTrialAlerts {
     }
 
     /**
-     * "It starts soon", once the countdown is inside the lead time.
+     * A scheduled reading came in.
+     *
+     * The countdown is turned into an absolute start instant — seen time plus
+     * time-till-start — which is what the lead-moment timer is armed against, so
+     * the warning still fires if the panel is shut before the lead time arrives.
+     * The immediate check stays too, for the case where the very first reading is
+     * already inside the lead window.
+     *
      * @param {number|null} startsInMs - From the panel's own countdown
-     * @param {number} at - Clock
-     * @returns {Object|null} The service's result
+     * @param {number} at - Clock at the reading
+     * @returns {Object|null} The service's result, when it announced now
      */
     _maybeAnnounceStart(startsInMs, at) {
         if (!config.getSetting(START_SETTING, false)) return null;
         if (!Number.isFinite(startsInMs) || startsInMs <= 0) return null;
 
-        const lead = leadMinutes() * 60_000;
-        if (startsInMs > lead) return null;
+        const startAt = at + startsInMs;
+        this._armStartTimer(startAt);
+        return this._announceStartSoon(startAt, at);
+    }
 
-        // One announcement per scheduled cycle. The countdown is re-read every
-        // few seconds while the panel is open and would otherwise re-fire on
-        // every one of them until the service's cooldown caught it
-        const key = `${START_KEY}:${Math.round((at + startsInMs) / 60_000)}`;
+    /**
+     * Arm a one-shot timer for the lead moment of a known start instant.
+     *
+     * Keyed on the start rounded to the minute: the countdown is re-read every
+     * few seconds while the panel is open, and re-arming on each reading would be
+     * churn for the same instant. A start already inside the lead window (or past
+     * it) needs no timer — `_announceStartSoon` speaks for it synchronously.
+     *
+     * @param {number} startAt - Absolute start instant, ms
+     */
+    _armStartTimer(startAt) {
+        const key = Math.round(startAt / 60_000);
+        if (this.scheduledFor === key && this.startTimerId) return;
+
+        const fireAt = startAt - leadMinutes() * 60_000;
+        const delay = fireAt - Date.now();
+        if (delay <= 0) return;
+
+        this._clearStartTimer();
+        this.scheduledFor = key;
+        this.startTimerId = setTimeout(() => {
+            this.startTimerId = null;
+            this.scheduledFor = null;
+            // The chat line or a live reading may have moved the cycle on while
+            // the timer waited; a "starts soon" after it has started is noise
+            if (this.phase && this.phase !== 'scheduled') return;
+            this._announceStartSoon(startAt, Date.now());
+        }, delay);
+        this.timers.registerTimeout(this.startTimerId);
+    }
+
+    /** Drop any pending start timer. */
+    _clearStartTimer() {
+        if (this.startTimerId) {
+            clearTimeout(this.startTimerId);
+            this.startTimerId = null;
+        }
+        this.scheduledFor = null;
+    }
+
+    /**
+     * "It starts soon", when the moment is inside the lead time.
+     * @param {number} startAt - Absolute start instant, ms
+     * @param {number} now - Clock to measure the remaining time against
+     * @returns {Object|null} The service's result
+     */
+    _announceStartSoon(startAt, now) {
+        if (!config.getSetting(START_SETTING, false)) return null;
+
+        const remainingMs = startAt - now;
+        if (!(remainingMs > 0)) return null;
+        if (remainingMs > leadMinutes() * 60_000) return null;
+
+        // One announcement per scheduled cycle, whichever path reaches it. Keyed
+        // on the start instant so the synchronous check and the timer agree, and
+        // rounded to the minute so a re-derivation a few hundred ms later is the
+        // same key rather than a second alert
+        const key = `${START_KEY}:${Math.round(startAt / 60_000)}`;
         if (this.announcedStartFor === key) return null;
         this.announcedStartFor = key;
 
@@ -220,7 +301,7 @@ class GuildTrialAlerts {
         // it a millisecond count turned a ten-minute warning into "6 days 22
         // hours" — the one number in the message the player would act on
         const named = this.trials.length ? ` (${this.trials.join(', ')})` : '';
-        const remaining = timeReadable(Math.round(startsInMs / 1000));
+        const remaining = timeReadable(Math.round(remainingMs / 1000));
         return notificationService.notify(key, `Guild trial starts in ${remaining}${named}.`, {
             title: 'Guild trial starting',
         });
