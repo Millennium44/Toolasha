@@ -162,15 +162,13 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.5.2](https://github.com/Millennium44/Toolasha/compare/v3.5.1...v3.5.2) (2026-08-15)
 
-
 ### Bug Fixes
 
-* stop labyrinth auto-calc looping the bar on a static floor; move toggle inline ([4246ea6](https://github.com/Millennium44/Toolasha/commit/4246ea65e96f655d8437e549303f3201333fadc8))
-
+- stop labyrinth auto-calc looping the bar on a static floor; move toggle inline ([4246ea6](https://github.com/Millennium44/Toolasha/commit/4246ea65e96f655d8437e549303f3201333fadc8))
 
 ### Documentation
 
-* standing rule to work directly on main ([e414d26](https://github.com/Millennium44/Toolasha/commit/e414d26d8c431ef9f03939da84e7d19f99c3a540))
+- standing rule to work directly on main ([e414d26](https://github.com/Millennium44/Toolasha/commit/e414d26d8c431ef9f03939da84e7d19f99c3a540))
 
 ## [3.5.1](https://github.com/Millennium44/Toolasha/compare/v3.5.0...v3.5.1) (2026-08-15)
 
