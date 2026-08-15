@@ -97,6 +97,43 @@ describe('a trial about to start', () => {
         expect(game.sent[0].message).not.toMatch(/day/i);
     });
 
+    test('a start seen once fires at the lead moment even after the panel shuts', () => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(now);
+            // Seen half an hour out, well beyond the ten-minute lead: nothing yet,
+            // and no further readings — the panel is closed from here on
+            guildTrialAlerts.noteTrialStatus({ phase: 'scheduled', startsInMs: 30 * 60_000, trials: ['Cheesesmithing'] });
+            expect(game.sent).toEqual([]);
+
+            // Time crosses into the lead window with no reading to prompt it
+            vi.advanceTimersByTime(20 * 60_000);
+
+            expect(game.sent).toHaveLength(1);
+            expect(game.sent[0].message).toContain('Guild trial starts in');
+            expect(game.sent[0].message).toContain('Cheesesmithing');
+            expect(game.sent[0].message).toContain('10m');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('the scheduled timer stays quiet once the trial has already started', () => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(now);
+            guildTrialAlerts.noteTrialStatus({ phase: 'scheduled', startsInMs: 30 * 60_000 });
+            // The game announces the start over chat before the lead timer fires
+            guildTrialAlerts.noteChatLine('The guild trials have begun!');
+            game.sent = [];
+
+            vi.advanceTimersByTime(30 * 60_000);
+            expect(game.sent).toEqual([]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     test('the moment it actually starts is its own announcement', () => {
         guildTrialAlerts.noteTrialStatus({ phase: 'scheduled', startsInMs: 3 * 3600_000, at: now });
         guildTrialAlerts.noteTrialStatus({ phase: 'live', trials: ['Alchemy'], at: now + 1000 });

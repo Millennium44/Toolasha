@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trials: tiles stay in a row with boxes beneath, cleaner notes, and a scheduled start alert
+
+- The per-trial forecast boxes no longer split the tile row: they're deferred (CSS `order`) past every tile so grid auto-placement keeps the skilling and combat trial tiles on their own row(s) and stacks the boxes full-width underneath.
+- Dropped the "No Treasury level seen" note — a guild with no Treasury levels bought adds nothing to the token figures, so its absence is nothing to flag.
+- The **trial-starting** alert now anchors on the start instant (seen time + time-till-start) and arms a timer for the lead moment, so it still fires if the panel is closed after the cycle is glimpsed once — previously the panel had to stay open across the whole lead window.
+
 ### Lab Sim combat crates default to equipped too; recommendation & breakdown tooltips spell out the working
 
 - The **combat** sim's tea/coffee/food dropdowns had the same hardcoded-Expert bug as the skilling tab — so a fight was scored with an Expert coffee crate's **+15 combat levels** the character may not own. They now default to the equipped crates (manual pick still opts out), same as skilling.
