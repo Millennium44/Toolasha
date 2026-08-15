@@ -251,6 +251,61 @@ export function parseEquipmentEfficiencyBonuses(characterEquipment, actionTypeHr
 }
 
 /**
+ * Valid skilling success fields from game data.
+ */
+const VALID_SUCCESS_FIELDS = [
+    'milkingSuccess',
+    'foragingSuccess',
+    'woodcuttingSuccess',
+    'cheesesmithingSuccess',
+    'craftingSuccess',
+    'tailoringSuccess',
+    'brewingSuccess',
+    'cookingSuccess',
+    'alchemySuccess',
+    'enhancingSuccess',
+];
+
+/**
+ * Parse equipment success-rate bonus for a skill, as a raw ratio.
+ *
+ * The labyrinth clears a skilling room on the *success* of each action, so a
+ * tool's success stat is one of the biggest levers on the clear rate — the live
+ * clear-rate reader counts it, and the sim has to as well or the two disagree on
+ * exactly the skills whose gear carries it (gathering tools, cheesesmithing).
+ *
+ * @param {Map} characterEquipment - Equipment map
+ * @param {string} actionTypeHrid - e.g. "/action_types/woodcutting"
+ * @param {Object} itemDetailMap - Item details
+ * @returns {number} Success ratio bonus (e.g. 0.05 for +5%)
+ */
+export function parseEquipmentSuccessBonuses(characterEquipment, actionTypeHrid, itemDetailMap) {
+    const skillSpecificField = getFieldForActionType(actionTypeHrid, 'Success', VALID_SUCCESS_FIELDS);
+
+    return parseEquipmentStat(characterEquipment, itemDetailMap, {
+        skillSpecificField,
+        genericField: null,
+        returnAsPercentage: false,
+    });
+}
+
+/**
+ * Parse equipment gathering-quantity bonus (gathering tools carry it), as a raw
+ * ratio. It feeds the double-chance term of the gathering clear rate.
+ *
+ * @param {Map} characterEquipment - Equipment map
+ * @param {Object} itemDetailMap - Item details
+ * @returns {number} Gathering-quantity bonus (e.g. 0.15 for +15%)
+ */
+export function parseEquipmentGatheringBonuses(characterEquipment, itemDetailMap) {
+    return parseEquipmentStat(characterEquipment, itemDetailMap, {
+        skillSpecificField: null,
+        genericField: 'gatheringQuantity',
+        returnAsPercentage: false,
+    });
+}
+
+/**
  * Parse Essence Find bonus from equipment
  * @param {Map} characterEquipment - Equipment map from dataManager.getEquipment()
  * @param {Object} itemDetailMap - Item details from init_client_data
