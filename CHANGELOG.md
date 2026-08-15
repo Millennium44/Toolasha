@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Guild trials: forecast box beside the fight, and the damage feed sees the whole wave
 
-- On the In Progress fight view the combat forecast box now sits beside the enemy cards, in the battle row's spare width, instead of a cramped cell inside the enemy grid.
+- On the In Progress fight view the combat forecast box now hugs the enemy cards inside the monsters half (the game sizes that half wider than the cards), instead of a cramped cell inside the enemy grid or floating off past the empty space.
 - The battle-feed path is no longer single-enemy: the spectated pool (`_readPool`) and the per-tier boss sheet now sum every enemy in a wave, so the stream-fed clear/kill-time and the damage ceiling reflect all of them. This fixes the Trial Swarm remaining bar (four monsters, previously read as one) and stops the false "measured damage runs over the bosses' combined health" note on multi-enemy waves.
 
 ### Guild trials: multi-enemy combat waves are priced as one HP pool

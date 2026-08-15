@@ -1608,31 +1608,53 @@ const SIDE_BOX_CLASS = 'mwi-trial-side-box';
 /**
  * Stand a combat forecast box beside the enemy cards in the In Progress fight.
  *
- * The enemies sit in a grid inside the monsters area, and the monsters area is
- * one child of a flex `battleArea` row with open space to its right. Dropping the
- * box into the enemy grid puts it in a single narrow unit-card cell; putting it
- * in the battle row's spare width instead sets it beside the fight at a readable
- * size. The layout lives on this wrapper — a flex sibling the panel owns — so the
- * per-block style reset cannot strip it, and it is created once and reused.
+ * The enemies sit in a grid inside the monsters area, and the game gives that
+ * area a fixed half of the battle row (`flex: 1 1 0%`, matched to the players
+ * half) — so it is wider than the cards, with empty space to their right. A box
+ * placed *after* the half clears that space and floats off by the gap; a box
+ * dropped into the enemy grid lands in a single narrow unit-card cell. So the
+ * box goes inside the half, absolutely positioned against the enemy grid's own
+ * right edge — hugging the cards without resizing the half or pushing them.
+ *
+ * The wrapper is the panel's own element, so the per-block style reset cannot
+ * strip its position; `position: relative` on the area is the anchor and is
+ * visually harmless, re-asserted each pass in case a re-render clears it.
  *
  * @param {Element} monstersArea - `BattlePanel_monstersArea`
  * @param {Element} block - The forecast box
  */
 function placeBesideMonsters(monstersArea, block) {
-    const battleArea = monstersArea.parentElement;
+    // Anchor the absolutely-positioned box to the area unless the game already
+    // gives it a positioning context of its own
+    const areaPosition = typeof getComputedStyle === 'function' ? getComputedStyle(monstersArea)?.position : '';
+    if (!['relative', 'absolute', 'fixed', 'sticky'].includes(areaPosition)) {
+        monstersArea.style.position = 'relative';
+    }
+
     let side = null;
-    for (const child of battleArea.children) {
+    for (const child of monstersArea.children) {
         if (child.classList?.contains(SIDE_BOX_CLASS)) {
             side = child;
             break;
         }
     }
     if (!side) {
-        side = battleArea.ownerDocument.createElement('div');
+        side = monstersArea.ownerDocument.createElement('div');
         side.className = SIDE_BOX_CLASS;
-        side.style.cssText = 'flex:0 1 auto; align-self:flex-start; min-width:200px; max-width:440px; margin-left:8px;';
-        monstersArea.insertAdjacentElement('afterend', side);
+        side.style.cssText = 'position:absolute; top:0; left:8px;';
+        monstersArea.appendChild(side);
     }
+
+    // Hug the enemy grid's right edge and take whatever width is left in the half
+    const grid = [...monstersArea.children].find((child) => child !== side);
+    if (grid && typeof grid.getBoundingClientRect === 'function') {
+        const area = monstersArea.getBoundingClientRect();
+        const cards = grid.getBoundingClientRect();
+        const left = Math.max(0, Math.round(cards.right - area.left) + 8);
+        side.style.left = `${left}px`;
+        side.style.maxWidth = `${Math.max(160, Math.round(area.width - left))}px`;
+    }
+
     side.appendChild(block);
 }
 
@@ -1703,16 +1725,11 @@ export function placeTrialBlock(root, card, block, name = '') {
     if (inFloatingDialog(card)) return 'refused';
 
     // The In Progress fight view: the enemy cards live in a grid inside the
-    // monsters area, itself one child of a flex battle row with space to its
-    // right. Set the forecast box in that spare width, beside the fight, rather
-    // than in a cramped unit-card cell among the enemies.
+    // monsters area, which the game sizes wider than the cards. Set the forecast
+    // box in the spare space beside them, rather than in a cramped unit-card cell
+    // among the enemies.
     const monstersArea = card?.closest?.('[class*="BattlePanel_monstersArea"]');
-    if (
-        monstersArea?.parentElement &&
-        root?.contains?.(monstersArea.parentElement) &&
-        typeof getComputedStyle === 'function' &&
-        (getComputedStyle(monstersArea.parentElement)?.display || '').includes('flex')
-    ) {
+    if (monstersArea && root?.contains?.(monstersArea)) {
         placeBesideMonsters(monstersArea, block);
         return 'beside-monsters';
     }
