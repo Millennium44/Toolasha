@@ -227,29 +227,27 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.8.0](https://github.com/Millennium44/Toolasha/compare/v3.7.0...v3.8.0) (2026-08-16)
 
-
 ### Features
 
-* lab-sim replay splits the damage gap into hit-rate vs damage-per-hit ([de3f5a2](https://github.com/Millennium44/Toolasha/commit/de3f5a2908967f4706a1758b72547f67fc1b06cd))
-* monster stat check — game live stats vs sim, on click ([f7f4d82](https://github.com/Millennium44/Toolasha/commit/f7f4d82bed180d174bc2cda6609764a2ccf0ad1a))
-* monster stat check "Run blind sim" — does the sim produce the effects at all ([7f51baf](https://github.com/Millennium44/Toolasha/commit/7f51bafcb219f66ac84318289a1be136c02d2e3a))
-* monster stat check applies the unit's live effects to the sim ([c0addbe](https://github.com/Millennium44/Toolasha/commit/c0addbe38d37b20c4d5c99bc9bc421eb309ee4c2))
-* monster stat check baseline toggle; fix vanishing nav controls ([bae24cc](https://github.com/Millennium44/Toolasha/commit/bae24ccc2adee3eb4ae0d06f710a600ff3b106ba))
-* monster stat check classifies debuffs, and logs/exports discrepancies ([9f69e43](https://github.com/Millennium44/Toolasha/commit/9f69e43fdd1a8f3cd117f37749003aae940ee170))
-* monster stat check history paging + clear ([d25abca](https://github.com/Millennium44/Toolasha/commit/d25abcab4c07c1fa43e79d8343bf2c5e9647135b))
-* monster stat check log — store toggle and discrepancy-first paging ([d35c7a6](https://github.com/Millennium44/Toolasha/commit/d35c7a6a61837ad7a9c806138503b7678363622c))
-* monster stat check log is a labelled corpus; stat-recompute invariant test ([889d188](https://github.com/Millennium44/Toolasha/commit/889d188cf90d0509a475679207899219134d2502))
-* monster stat check log persists across refreshes ([92575bb](https://github.com/Millennium44/Toolasha/commit/92575bb4b57c1fb9fabf6036eb1e3f0dc85d9326))
-* monster stat check panel grows to fit, resizes, and copies to clipboard ([1894382](https://github.com/Millennium44/Toolasha/commit/18943824741c416da6f4e9aff5666c6fd9ba363c))
-* run the uptime harness from the Monster Stat Check panel ([ecd327a](https://github.com/Millennium44/Toolasha/commit/ecd327a40c6a93fb8688a3c308e213283cf6d4f9))
-* uptime harness — monster incoming damage decomposed per ability, real vs sim ([0d6e1bd](https://github.com/Millennium44/Toolasha/commit/0d6e1bd96f7472bab5e388a607aa8630f3b1d3e1))
-* uptime harness button auto-arms a tick capture when none exists ([f6f806d](https://github.com/Millennium44/Toolasha/commit/f6f806dc3532ba8d0dcf08bad6b4392b15e0dd30))
-
+- lab-sim replay splits the damage gap into hit-rate vs damage-per-hit ([de3f5a2](https://github.com/Millennium44/Toolasha/commit/de3f5a2908967f4706a1758b72547f67fc1b06cd))
+- monster stat check — game live stats vs sim, on click ([f7f4d82](https://github.com/Millennium44/Toolasha/commit/f7f4d82bed180d174bc2cda6609764a2ccf0ad1a))
+- monster stat check "Run blind sim" — does the sim produce the effects at all ([7f51baf](https://github.com/Millennium44/Toolasha/commit/7f51bafcb219f66ac84318289a1be136c02d2e3a))
+- monster stat check applies the unit's live effects to the sim ([c0addbe](https://github.com/Millennium44/Toolasha/commit/c0addbe38d37b20c4d5c99bc9bc421eb309ee4c2))
+- monster stat check baseline toggle; fix vanishing nav controls ([bae24cc](https://github.com/Millennium44/Toolasha/commit/bae24ccc2adee3eb4ae0d06f710a600ff3b106ba))
+- monster stat check classifies debuffs, and logs/exports discrepancies ([9f69e43](https://github.com/Millennium44/Toolasha/commit/9f69e43fdd1a8f3cd117f37749003aae940ee170))
+- monster stat check history paging + clear ([d25abca](https://github.com/Millennium44/Toolasha/commit/d25abcab4c07c1fa43e79d8343bf2c5e9647135b))
+- monster stat check log — store toggle and discrepancy-first paging ([d35c7a6](https://github.com/Millennium44/Toolasha/commit/d35c7a6a61837ad7a9c806138503b7678363622c))
+- monster stat check log is a labelled corpus; stat-recompute invariant test ([889d188](https://github.com/Millennium44/Toolasha/commit/889d188cf90d0509a475679207899219134d2502))
+- monster stat check log persists across refreshes ([92575bb](https://github.com/Millennium44/Toolasha/commit/92575bb4b57c1fb9fabf6036eb1e3f0dc85d9326))
+- monster stat check panel grows to fit, resizes, and copies to clipboard ([1894382](https://github.com/Millennium44/Toolasha/commit/18943824741c416da6f4e9aff5666c6fd9ba363c))
+- run the uptime harness from the Monster Stat Check panel ([ecd327a](https://github.com/Millennium44/Toolasha/commit/ecd327a40c6a93fb8688a3c308e213283cf6d4f9))
+- uptime harness — monster incoming damage decomposed per ability, real vs sim ([0d6e1bd](https://github.com/Millennium44/Toolasha/commit/0d6e1bd96f7472bab5e388a607aa8630f3b1d3e1))
+- uptime harness button auto-arms a tick capture when none exists ([f6f806d](https://github.com/Millennium44/Toolasha/commit/f6f806dc3532ba8d0dcf08bad6b4392b15e0dd30))
 
 ### Bug Fixes
 
-* Accuracy Reset clears the recorded fight pool, not just the tallies ([0031851](https://github.com/Millennium44/Toolasha/commit/003185193645ea5a3a63032b428ce37e01a0e7ca))
-* labyrinth monster rescale wiped resistance/armour buffs ([38f9aa1](https://github.com/Millennium44/Toolasha/commit/38f9aa1d26c9b0a6a056558d9adddd6845b0bad9))
+- Accuracy Reset clears the recorded fight pool, not just the tallies ([0031851](https://github.com/Millennium44/Toolasha/commit/003185193645ea5a3a63032b428ce37e01a0e7ca))
+- labyrinth monster rescale wiped resistance/armour buffs ([38f9aa1](https://github.com/Millennium44/Toolasha/commit/38f9aa1d26c9b0a6a056558d9adddd6845b0bad9))
 
 ## [3.7.0](https://github.com/Millennium44/Toolasha/compare/v3.6.1...v3.7.0) (2026-08-15)
 
