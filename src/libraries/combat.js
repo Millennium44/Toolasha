@@ -242,6 +242,54 @@ toolashaRoot.Debug = {
         console.log(JSON.stringify(out, null, 2));
         return out;
     },
+    // Raw tick trace of the armed capture — per tick: the monster's prepared
+    // abilityHrid, its attack counter, the player's HP, and the HP drop. Lets you
+    // see where a hit actually lands relative to the ability label, to check the
+    // uptime harness's real-side attribution (which names a hit by the previous
+    // tick's abilityHrid — wrong if a hit lands as the label flips to the next
+    // cast). Rows where the attack counter rises are flagged.
+    uptimeTrace: (opts = {}) => {
+        const capture = captureFile();
+        const ticks = capture?.ticks;
+        if (!ticks?.length) {
+            console.warn('[UptimeTrace] No tick capture — arm a capture and fight the monster first.');
+            return null;
+        }
+        const mi = opts.monsterIndex ?? '0';
+        const pi = opts.playerIndex ?? '0';
+        const short = (h) => (h ? h.slice(h.lastIndexOf('/') + 1) : '');
+        let prevAtk;
+        let prevPHP;
+        let firstAt;
+        const rows = ticks.map((tick, i) => {
+            const at = tick?.at;
+            if (firstAt === undefined && Number.isFinite(at)) firstAt = at;
+            const monster = tick?.payload?.mMap?.[mi];
+            const player = tick?.payload?.pMap?.[pi];
+            const atk = monster ? Number(monster.atkCounter) : null;
+            const php = player && Number.isFinite(Number(player.cHP)) ? Number(player.cHP) : null;
+            const drop = prevPHP != null && php != null ? prevPHP - php : 0;
+            const atkRose = prevAtk != null && atk != null && atk > prevAtk;
+            const row = {
+                i,
+                ms: Number.isFinite(at) && firstAt !== undefined ? at - firstAt : null,
+                preparing: monster ? short(monster.abilityHrid) : '(gone)',
+                atk,
+                atkRose: atkRose ? `+${atk - prevAtk}` : '',
+                playerHP: php,
+                drop: drop > 0 ? drop : '',
+            };
+            if (monster && atk != null) prevAtk = atk;
+            else prevAtk = undefined;
+            if (php != null) prevPHP = php;
+            return row;
+        });
+        console.log(
+            `[UptimeTrace] ${capture.context?.monsterHrid || '?'} — ${rows.length} ticks (attack rises flagged):`
+        );
+        console.table(rows);
+        return rows;
+    },
     guildXp: () => guildXPTracker.debugState(),
 };
 

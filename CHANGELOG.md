@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim: `Toolasha.Debug.uptimeTrace()` — raw tick trace of the armed capture
+
+Companion to the uptime harness for auditing its **real-side attribution**. Prints each captured tick — the monster's prepared `abilityHrid`, its attack counter, the player's HP, and the HP drop — with attack-counter rises flagged, so you can see where a hit actually lands relative to the ability label. The harness names a real hit by the previous tick's `abilityHrid`, which mis-credits an ability whose damage lands as the label flips to the next cast (e.g. a 2s-cast nuke); this trace makes that offset visible.
+
 ### Lab Sim: `Toolasha.Debug.monsterAbilityData()` — dump a monster's raw ability kit
 
 Read-only console diagnostic for tracing a cadence gap (the sim casting an ability more or less often than the real fight). Given a monster hrid (or the last tick-capture's monster), it prints the ability array **in cast order** — which is the sim's cast priority — with each ability's cooldown, its `defaultCombatTriggers` (the gates that decide when it fires), the buff uniqueHrids it applies, its per-effect damage shape (element, ratios, DoT — so a magnitude gap can be told from a cadence gap), and any keys on the monster's ability entry the sim ignores. Pairs with the uptime harness: the harness localises which ability is over/under-cast, this shows the data that drives it.
