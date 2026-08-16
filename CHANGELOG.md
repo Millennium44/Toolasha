@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim: `Toolasha.Debug.monsterAbilityData()` — dump a monster's raw ability kit
+
+Read-only console diagnostic for tracing a cadence gap (the sim casting an ability more or less often than the real fight). Given a monster hrid (or the last tick-capture's monster), it prints the ability array **in cast order** — which is the sim's cast priority — with each ability's cooldown, its `defaultCombatTriggers` (the gates that decide when it fires), the buff uniqueHrids it applies, and any keys on the monster's ability entry the sim ignores. Pairs with the uptime harness: the harness localises which ability is over/under-cast, this shows the data that drives it.
+
 ### Lab Sim: player build check — the sim's build of your character next to your live stats
 
 Closes the player-init gap. Every other check verifies how the sim builds the _monster_; none looked at how it builds _you_ — the gear, ability levels and persistent buffs (teas/community/guild/house) that decide your damage and mitigation. A **"Check my build"** button in the Monster Stat Check panel runs a one-fight sim probe and reads back the sim player's resolved `combatDetails` at the one faithful moment (first combat start, after `generatePermanentBuffs()` + `reset(0)`, before any transient combat buff), then diffs it field-by-field against your live in-game stats from clicking yourself in combat. Both sides carry the persistent buffs, so a `⚠ off` row is a real build difference — a gear, ability-level or buff-init gap — not a "which side has the buff?" question. Reads at fight start, so a transient combat buff (fury) or a monster debuff on you shows as an expected gap. Needs the same flag-gated capture hook pattern as the blind sim, off for every normal sim (`combat-simulator.js` snapshots the player build only when the probe asks).
