@@ -317,6 +317,20 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.9.1](https://github.com/Millennium44/Toolasha/compare/v3.9.0...v3.9.1) (2026-08-16)
+
+### Bug Fixes
+
+- fold live offense buffs into the player-build sim column ([2fd0212](https://github.com/Millennium44/Toolasha/commit/2fd0212c2210a490469a463f9084c09189cc5316))
+- lab sim: open monster abilities at deterministic half-cooldown — the cyclops over-estimation fix, which shipped in 3.9.0 but was omitted from its notes ([f4f728a](https://github.com/Millennium44/Toolasha/commit/f4f728a))
+- lab skip-threshold table: sim the skip-derived level, not the live run ([388e6e7](https://github.com/Millennium44/Toolasha/commit/388e6e7))
+- lab replay: honest observed damage and in-fight predicted rates ([7991e40](https://github.com/Millennium44/Toolasha/commit/7991e40))
+- tick capture: auto-stop when the fight leaves its monster ([9788d04](https://github.com/Millennium44/Toolasha/commit/9788d04))
+- uptime harness: don't credit incoming damage to buff casts, and reset the ability label on auto-attack ticks ([3bd1425](https://github.com/Millennium44/Toolasha/commit/3bd1425))
+- lab recorder: record your crit count per fight ([bb04c02](https://github.com/Millennium44/Toolasha/commit/bb04c02))
+- monster stat check: export the player build, add a copy-all-results button ([d243802](https://github.com/Millennium44/Toolasha/commit/d243802))
+- settings: add a "What's new" button to reopen the update notes ([126eaf6](https://github.com/Millennium44/Toolasha/commit/126eaf6))
+
 ## [3.9.0](https://github.com/Millennium44/Toolasha/compare/v3.8.0...v3.9.0) (2026-08-16)
 
 ### Features
