@@ -70,7 +70,8 @@ const PATH_SHROUD_WEIGHT = 1e6;
  * @param {Array<Object|null>} tiles - Flat grid, null = wall; entries carry
  *   { cleared, isEntrance, needsShroud, isTreasure, isExit, isUnknown }
  * @param {number} cols - Grid width
- * @returns {Object|null} { route: Set<number>, chests: Set<number>, shrouds,
+ * @returns {Object|null} { route: Set<number>, chests: Set<number>,
+ *   chestBranch: Set<number> (rooms entered only to reach a chest), shrouds,
  *   torches, target } or null when there is no start/exit/route
  */
 export function computeLabyrinthPath(tiles, cols) {
@@ -258,6 +259,11 @@ export function computeLabyrinthPath(tiles, cols) {
         }
     }
 
+    // Everything routed so far is on the way to the exit; the treasure branches
+    // grafted on next are detours you take for loot, not to get out. Snapshot the
+    // exit route here so the two can be told apart when the plan is drawn.
+    const exitRoute = new Set(routeSet);
+
     // Graft on every treasure room reachable without an extra shroud,
     // cheapest branch (fewest torches) first
     const chests = new Set();
@@ -294,7 +300,15 @@ export function computeLabyrinthPath(tiles, cols) {
         if (t.needsShroud) shrouds++;
     }
 
-    return { route: routeSet, chests, shrouds, torches, target: targetIdx };
+    // Rooms the plan enters only to reach a chest — on the route but not on the
+    // way out, and not a treasure tile themselves. The drawing colours these
+    // apart from the exit-critical rooms so an optional loot detour reads as one.
+    const chestBranch = new Set();
+    for (const idx of routeSet) {
+        if (!exitRoute.has(idx) && !tiles[idx]?.isTreasure) chestBranch.add(idx);
+    }
+
+    return { route: routeSet, chests, chestBranch, shrouds, torches, target: targetIdx };
 }
 
 /**

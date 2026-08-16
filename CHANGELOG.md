@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth path: rooms cleared only for a chest are coloured apart
+
+A room the plan enters purely to reach a treasure chest — an optional loot detour, not on the way out — now draws in amber instead of the green used for the exit-critical rooms, so you can see at a glance which fights you can skip if you don't want the chest.
+
 ### Labyrinth path: cleared tiles the route walks now show the walked outline
 
 A tile shrouded ahead of the frontier is free to walk over but was left blank when the route ran through it, so the highlighted line looked like it skipped a step. Those tiles now get the same dashed "walked" outline as the approach from where you stand.

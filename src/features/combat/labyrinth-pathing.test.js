@@ -75,6 +75,19 @@ describe('computeLabyrinthPath', () => {
         expect(path.torches).toBe(3);
     });
 
+    test('marks the rooms cleared only to reach a chest as a chest branch', () => {
+        // S→F runs along the top row (rooms 1, 2). The chest at index 7 hangs off
+        // room 4 below the exit line: room 4 is entered only to reach it, so it is
+        // a chest-branch room; the exit-critical rooms are not.
+        const { tiles, cols } = grid(['S.F', '..#', '.T#']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.chests.has(7)).toBe(true);
+        expect(path.chestBranch.has(4)).toBe(true); // the room reached only for the chest
+        expect(path.chestBranch.has(1)).toBe(false); // on the way to the exit
+        expect(path.chestBranch.has(2)).toBe(false); // the exit approach
+        expect(path.chestBranch.has(7)).toBe(false); // the treasure tile itself is not a branch room
+    });
+
     test('never spends a shroud to reach a chest', () => {
         const { tiles, cols } = grid(['S.F', '#X#', '#T#']);
         const path = computeLabyrinthPath(tiles, cols);
