@@ -1830,17 +1830,7 @@ class CombatSimulator {
     processAbilityPromoteEffect(source, _ability, _abilityEffect) {
         const promotionHrids = ['/monsters/enchanted_rook', '/monsters/enchanted_knight', '/monsters/enchanted_bishop'];
         const randomPromotionIndex = Math.floor(random() * promotionHrids.length);
-        // The promoted monster stands in the same room, so it inherits the room
-        // level and the full-ability instantiation the source was built with —
-        // without them a promotion inside the labyrinth would rebuild at room
-        // level 0, dropping the lab stat scaling and the deterministic ability
-        // cadence. A no-op for zone content (roomLevel 0, includeAllAbilities off).
-        return new Monster(
-            promotionHrids[randomPromotionIndex],
-            source.difficultyTier,
-            source.roomLevel || 0,
-            source.includeAllAbilities === true
-        );
+        return new Monster(promotionHrids[randomPromotionIndex], source.difficultyTier);
     }
 
     processAbilitySpendHpEffect(source, ability, abilityEffect) {

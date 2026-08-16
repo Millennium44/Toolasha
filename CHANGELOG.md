@@ -6,9 +6,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Lab sim: a monster that promotes mid-fight keeps its room level
+### Labyrinth path: cleared tiles the route walks now show the walked outline
 
-A promoting monster (the enchanted rook/knight/bishop line) was rebuilt on promotion at room level 0, dropping the labyrinth stat scaling and the deterministic ability cadence for its new form. It now inherits the source's room level and full-ability kit, so the half-cooldown fix and lab scaling survive a promotion. No effect outside the labyrinth. Audited the rest of the sim consumers: every lab-sim path (including the Upgrade Advisor's labyrinth analysis) already threads a positive room level, so the fix reaches them.
+A tile shrouded ahead of the frontier is free to walk over but was left blank when the route ran through it, so the highlighted line looked like it skipped a step. Those tiles now get the same dashed "walked" outline as the approach from where you stand.
 
 ### Labyrinth path: an isolated cleared tile is no longer a free start
 
