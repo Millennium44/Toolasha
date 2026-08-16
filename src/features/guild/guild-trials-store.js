@@ -215,6 +215,17 @@ export function recordTileSample(record, tile, at) {
     if (readings.length) samples.push({ t: at, readings: readings.map((reading) => ({ ...reading })) });
     samples.sort((a, b) => a.t - b.t);
 
+    // A timestamped series of the card's stated *total points*, kept even when no
+    // progress bar is present. A trial this character did not join never sends a
+    // bar reading, so `samples` above stays empty and no rate can be fitted — but
+    // the Trials tab still states the running total, and watching that total tick
+    // up across refreshes is a loose fill rate for a trial you are not in. Only
+    // the Trials card carries points; the In Progress card does not, so a reading
+    // without one must not erase the series.
+    const pointSamples = (existing.pointSamples || []).filter((sample) => sample?.t !== at);
+    if (Number.isFinite(tile?.points)) pointSamples.push({ t: at, points: tile.points });
+    pointSamples.sort((a, b) => a.t - b.t);
+
     // The tier the reading belongs to may have come from the *other* tab: the In
     // Progress card carries a total and no tier, the Trials card carries a tier
     // and no total, and a tier observation needs both. Taking the tier already
@@ -304,6 +315,7 @@ export function recordTileSample(record, tile, at) {
         signups: tile?.signups || existing.signups || null,
         pointsByTier,
         samples: samples.slice(-MAX_SAMPLES),
+        pointSamples: pointSamples.slice(-MAX_SAMPLES),
         tiers,
     };
 
@@ -365,6 +377,12 @@ export function mergeTrialRecords(base, incoming) {
         }
         const samples = [...byTime.values()].sort((a, b) => a.t - b.t).slice(-MAX_SAMPLES);
 
+        const byPointTime = new Map();
+        for (const sample of [...(existing.pointSamples || []), ...(tile.pointSamples || [])]) {
+            if (Number.isFinite(sample?.t)) byPointTime.set(sample.t, sample);
+        }
+        const pointSamples = [...byPointTime.values()].sort((a, b) => a.t - b.t).slice(-MAX_SAMPLES);
+
         const tiers = [...(existing.tiers || [])];
         for (const entry of tile.tiers || []) {
             if (!tiers.some((seen) => seen.tier === entry.tier && seen.total === entry.total)) tiers.push(entry);
@@ -399,6 +417,7 @@ export function mergeTrialRecords(base, incoming) {
             signups: fresher.signups || staler.signups || null,
             pointsByTier: { ...(staler.pointsByTier || {}), ...(fresher.pointsByTier || {}) },
             samples,
+            pointSamples,
             tiers,
         };
     }

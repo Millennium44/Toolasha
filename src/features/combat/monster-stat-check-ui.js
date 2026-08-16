@@ -48,6 +48,7 @@ const UPTIME_VERDICT = {
     'sim-over': { glyph: '≠', color: '#e0b64a' },
     'sim-missing': { glyph: '⚠', color: '#e56b6b' },
     'sim-extra': { glyph: '+', color: '#7aa2d0' },
+    buff: { glyph: '·', color: 'rgba(255,255,255,0.4)' },
 };
 
 const SETTING_KEY = 'labyrinthMonsterStatCheck';
@@ -1046,7 +1047,10 @@ class MonsterStatCheckPanel {
                     const v = document.createElement('span');
                     v.textContent = style.glyph;
                     v.style.cssText = `text-align:right; color:${style.color};`;
-                    v.title = r.verdict;
+                    v.title =
+                        r.verdict === 'buff'
+                            ? 'non-damaging buff — not in the damage tally; verify via blind probe'
+                            : r.verdict;
                     line.append(name, g, s, v);
                     wrap.appendChild(line);
                 }
@@ -1127,15 +1131,19 @@ class MonsterStatCheckPanel {
                     const v = document.createElement('span');
                     v.textContent = style.glyph;
                     v.style.cssText = `text-align:right; color:${style.color};`;
-                    v.title = r.verdict;
+                    v.title =
+                        r.verdict === 'buff'
+                            ? 'non-damaging buff — not in the damage tally; verify via blind probe'
+                            : r.verdict;
                     line.append(name, g, s, v);
                     wrap.appendChild(line);
                 }
                 const key = document.createElement('div');
                 key.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
                 key.innerHTML =
-                    '<span style="color:#e56b6b;">⚠ missing</span> = the sim never produced a live effect · ' +
-                    '<span style="color:#e0b64a;">≠</span> different strength · <span style="color:#7aa2d0;">+</span> sim-only (timing). Game vs sim columns.';
+                    '<span style="color:#e56b6b;">⚠ missing</span> = the sim never produced a damaging effect · ' +
+                    '<span style="color:#e0b64a;">≠</span> different strength · <span style="color:#7aa2d0;">+</span> sim-only (timing) · ' +
+                    '<span style="color:rgba(255,255,255,0.5);">·</span> non-damaging buff (blind probe verifies). Game vs sim columns.';
                 wrap.appendChild(key);
             }
         }

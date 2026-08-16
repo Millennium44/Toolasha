@@ -137,6 +137,22 @@ describe('recording samples', () => {
         expect(record.tiles['combat::trial chameleon'].samples.map((sample) => sample.t)).toEqual([now, now + 5000]);
     });
 
+    test('stated total points are kept as a timestamped series, even with no bar', () => {
+        // A trial not joined sends a Trials-tab card with points but no reading —
+        // the bar samples stay empty, but the point series grows so a loose rate
+        // can be fitted for a trial you are not in.
+        const carded = (points, extra = {}) => ({ name: 'Cooking', kind: 'skilling', tier: 2, points, ...extra });
+        let record = recordTileSample(emptyRecord(thisWeek), carded(360), now);
+        record = recordTileSample(record, carded(420), now + 5000);
+        const entry = record.tiles['skilling::cooking'];
+
+        expect(entry.samples).toEqual([]); // no bar readings arrived
+        expect(entry.pointSamples).toEqual([
+            { t: now, points: 360 },
+            { t: now + 5000, points: 420 },
+        ]);
+    });
+
     test('a repeat at the same instant replaces rather than duplicates', () => {
         // The panel observer fires several times for one React render, and a
         // zero-span pair reads as an infinite rate

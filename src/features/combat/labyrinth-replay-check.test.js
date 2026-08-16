@@ -270,4 +270,16 @@ describe('compareLab verdicts and diagnosis', () => {
         const dps = result.metrics.find((m) => m.key === 'dps');
         expect(dps.verdict).toBe('insufficient');
     });
+
+    test('the taken metric tolerates the tick-summed undercount before crying "below"', () => {
+        // Observed taken is 10/s; the sim predicts 10.4/s — a ~3.8% shortfall that
+        // is within the damage-taken figure's known low bias, so it must read as
+        // consistent rather than "sim over-models the monster". (Your own damage,
+        // which carries no such bias, would flag the same gap.)
+        const result = compareLab(observed(), predictedLike({ takenPerSecond: 10.4 }));
+        const taken = result.metrics.find((m) => m.key === 'taken');
+        expect(taken.verdict).toBe('consistent');
+        // The shown deviation is still the honest raw figure, not bias-adjusted.
+        expect(taken.deviationPct).toBeCloseTo(-3.846, 2);
+    });
 });

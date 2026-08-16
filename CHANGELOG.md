@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trials: a loose next-tier estimate for trials you didn't join
+
+Trials you aren't in never stream a live fill bar, so they used to read "only trials you join". The Trials tab still states each card's running total points, which is now sampled over time to give a rough fill rate (pts/s), and — once the card has shown a couple of tier badges — a loose "next tier in ~Xm" and "~N more tiers before it ends". A whole-guild average off stated totals, not your own contribution, so keep the Trials tab open a few seconds for it to settle.
+
+### Lab diagnostics: stop two noise sources from crying wolf on Giant Mantis
+
+Fable verified the Giant Mantis sim is correct — the level-206 "inconsistency" was sampling noise plus two diagnostics that mislabelled it. Non-damaging self-buffs (precision, a fierce/guardian aura) now read as a buff (·) rather than "sim-missing", since the damage tally correctly omits them (the blind probe verifies they apply). And the damage-taken metric now tolerates its own documented ~3% tick-merge undercount before calling a session "below", so a noisy result no longer prints a phantom "sim over-models the monster".
+
 ### Player build check: the sim column now carries your live offense buffs
 
 The player-build stat check reads the sim at fight start, before precision/fury are cast, so your buffed accuracy and max hit used to show as fat gaps against it. Your live offense buffs (precision, fury, a monster's damage shred on you) are now folded into the sim column by the engine's own formula, so those rows compare like-for-like, and the active effects are listed under the readout.

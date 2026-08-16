@@ -185,6 +185,7 @@ const {
     analyseTrial,
     breakdownFor,
     guildTrials,
+    looseTrialForecast,
     mergeWaveTiles,
     ownParticipation,
     participantCounts,
@@ -345,6 +346,55 @@ describe('analyseTrial', () => {
         expect(analysis.rate).toBeNull();
         expect(analysis.tiersClearedSoFar).toBe(0);
         expect(analysis.samples).toBe(0);
+    });
+});
+
+describe('looseTrialForecast — a rate for a trial you did not join', () => {
+    test('two rising point readings give a points-per-second', () => {
+        const forecast = looseTrialForecast({
+            pointSamples: [
+                { t: 0, points: 0 },
+                { t: 10_000, points: 100 },
+            ],
+        });
+        expect(forecast.pointsPerSecond).toBeCloseTo(10, 5);
+        expect(forecast.samples).toBe(2);
+        // Without two tier badges to size a tier from, the ETA stays null
+        expect(forecast.pointsPerTier).toBeNull();
+        expect(forecast.etaMsToNextTier).toBeNull();
+    });
+
+    test('per-tier point steps place the next tier and the tiers left', () => {
+        const forecast = looseTrialForecast(
+            {
+                // Two badges seen: a tier is worth ~1000 points
+                pointsByTier: { 1: 1000, 2: 2000 },
+                pointSamples: [
+                    { t: 0, points: 2000 },
+                    { t: 10_000, points: 2500 },
+                ],
+            },
+            { timeLeftMs: 60_000 }
+        );
+        expect(forecast.pointsPerSecond).toBeCloseTo(50, 5); // 500 over 10s
+        expect(forecast.pointsPerTier).toBe(1000);
+        // 500 into the current tier, 500 to go at 0.05 pts/ms → 10s
+        expect(forecast.etaMsToNextTier).toBeCloseTo(10_000, 5);
+        // 10s to the next, then one tier per 20s across the remaining 50s → 3
+        expect(forecast.tiersBeforeEnd).toBe(3);
+    });
+
+    test('one reading, or a total that did not move, is not a rate', () => {
+        expect(looseTrialForecast({ pointSamples: [{ t: 0, points: 100 }] })).toBeNull();
+        expect(
+            looseTrialForecast({
+                pointSamples: [
+                    { t: 0, points: 100 },
+                    { t: 10_000, points: 100 },
+                ],
+            })
+        ).toBeNull();
+        expect(looseTrialForecast({})).toBeNull();
     });
 });
 

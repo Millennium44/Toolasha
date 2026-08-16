@@ -241,6 +241,98 @@ const DEFAULT_WORK_BASES = {
     'trial badger': 330_000,
 };
 
+/** Below this many rising point readings there is no loose rate to give. */
+const MIN_POINT_SAMPLES = 2;
+
+/** The median positive step between the totals stated at consecutive tier badges. */
+function medianTierStep(pointsByTier) {
+    if (!pointsByTier || typeof pointsByTier !== 'object') return null;
+    const tiers = Object.keys(pointsByTier)
+        .map((tier) => ({ tier: Number(tier), total: Number(pointsByTier[tier]) }))
+        .filter((entry) => Number.isFinite(entry.tier) && Number.isFinite(entry.total))
+        .sort((a, b) => a.tier - b.tier);
+    const steps = [];
+    for (let i = 1; i < tiers.length; i += 1) {
+        const step = tiers[i].total - tiers[i - 1].total;
+        if (step > 0) steps.push(step);
+    }
+    if (!steps.length) return null;
+    steps.sort((a, b) => a - b);
+    const mid = Math.floor(steps.length / 2);
+    return steps.length % 2 ? steps[mid] : (steps[mid - 1] + steps[mid]) / 2;
+}
+
+/** The total points the card stated at its highest banked-tier badge, or null. */
+function highestStatedTierTotal(pointsByTier) {
+    if (!pointsByTier || typeof pointsByTier !== 'object') return null;
+    let bestTier = -Infinity;
+    let bestTotal = null;
+    for (const [tier, total] of Object.entries(pointsByTier)) {
+        const t = Number(tier);
+        const v = Number(total);
+        if (Number.isFinite(t) && Number.isFinite(v) && t > bestTier) {
+            bestTier = t;
+            bestTotal = v;
+        }
+    }
+    return bestTotal;
+}
+
+/**
+ * A loose next-tier forecast for a trial this character has NOT joined.
+ *
+ * The live progress bar only streams for trials you join, so no fill rate can be
+ * fitted for the others — but the Trials tab still states each card's running
+ * total points, which `recordTileSample` keeps as a timestamped series. Two
+ * rising readings give a points-per-second, and the per-tier point steps the card
+ * has already shown (`pointsByTier`) give roughly what one tier is worth; together
+ * they place the next tier's clear loosely in time. Rough by construction — a
+ * whole-guild average read off stated totals, not your own measured contribution
+ * — and null until it has two rising readings to work from. The tier ETA is
+ * further null until the card has shown two tier badges to size a tier from.
+ *
+ * Pure: reads the record, returns numbers, touches nothing.
+ *
+ * @param {Object} record - A tile record from the store
+ * @param {Object} [options]
+ * @param {number|null} [options.timeLeftMs] - Active time left in the trial
+ * @returns {{pointsPerSecond: number, pointsPerTier: number|null,
+ *   etaMsToNextTier: number|null, tiersBeforeEnd: number|null, samples: number}|null}
+ */
+export function looseTrialForecast(record, { timeLeftMs = null } = {}) {
+    const pointSamples = Array.isArray(record?.pointSamples) ? record.pointSamples : [];
+    const series = pointSamples
+        .filter((sample) => Number.isFinite(sample?.t) && Number.isFinite(sample?.points))
+        .map((sample) => ({ t: sample.t, value: sample.points }));
+    if (series.length < MIN_POINT_SAMPLES) return null;
+
+    const rate = ratePerMs(series, 1);
+    if (!Number.isFinite(rate) || rate <= 0) return null;
+
+    const pointsPerTier = medianTierStep(record?.pointsByTier);
+    let etaMsToNextTier = null;
+    let tiersBeforeEnd = null;
+    if (Number.isFinite(pointsPerTier) && pointsPerTier > 0) {
+        const latestTotal = series[series.length - 1].value;
+        const bankedTotal = highestStatedTierTotal(record?.pointsByTier);
+        const intoTier = Number.isFinite(bankedTotal) ? Math.max(0, latestTotal - bankedTotal) : 0;
+        etaMsToNextTier = etaMs(Math.max(0, pointsPerTier - intoTier), rate);
+        if (Number.isFinite(timeLeftMs) && timeLeftMs > 0 && Number.isFinite(etaMsToNextTier)) {
+            const msPerTier = pointsPerTier / rate;
+            const afterFirst = timeLeftMs - etaMsToNextTier;
+            tiersBeforeEnd = afterFirst < 0 ? 0 : 1 + Math.floor(afterFirst / msPerTier);
+        }
+    }
+
+    return {
+        pointsPerSecond: rate * 1000,
+        pointsPerTier: Number.isFinite(pointsPerTier) ? pointsPerTier : null,
+        etaMsToNextTier,
+        tiersBeforeEnd,
+        samples: series.length,
+    };
+}
+
 /**
  * Everything derivable about one trial, from its stored samples.
  *
@@ -965,7 +1057,7 @@ export function renderTrialBlock(
     analysis,
     participants,
     breakdown = guildTrialDamage.breakdown(),
-    { participating = null, phase = null, startsInMs = null, forecast = null } = {}
+    { participating = null, phase = null, startsInMs = null, forecast = null, looseForecast = null } = {}
 ) {
     const unit = analysis.kind === 'combat' ? 'dmg' : 'work';
     const rows = [];
@@ -1007,18 +1099,56 @@ export function renderTrialBlock(
     const notMine = participating === false && !Number.isFinite(analysis.rate);
 
     if (notMine) {
-        rows.push(
-            line(
-                'Rate',
-                'only trials you join',
-                DIM,
-                'Every figure here is read off the guild panel, and the In Progress tab only ever shows the ' +
-                    'trials this character signed up for. Nothing arrives for the others — not from the ' +
-                    'socket, not from the screen — so this is a limit rather than a measurement in progress.\n' +
-                    'What the Trials tab states about this card — its tier, its points, its sign-ups — is ' +
-                    'still read and still shown below.'
-            )
-        );
+        const loose = looseForecast;
+        if (loose && Number.isFinite(loose.pointsPerSecond)) {
+            // A loose estimate off the stated total points — the only rate we can
+            // get for a trial this character did not join.
+            rows.push(
+                line(
+                    'Est. fill',
+                    `~${num(loose.pointsPerSecond)}\u00a0pts/s`,
+                    ACCENT,
+                    'A rough rate for a trial you did not join, read off the running total the Trials tab ' +
+                        'states — the whole guild’s pace, not your own contribution. The live per-second ' +
+                        'bar only ever streams for the trials you joined; this watches the stated total tick up ' +
+                        'instead, so keep this tab open for it to settle.'
+                )
+            );
+            if (Number.isFinite(loose.etaMsToNextTier)) {
+                rows.push(
+                    line(
+                        'Next tier in',
+                        `~${formatEta(loose.etaMsToNextTier)}`,
+                        GOOD,
+                        'At that points rate, roughly how long until the next tier’s worth of points is in ' +
+                            '— sized from the per-tier point steps this card has already shown. A loose figure.'
+                    )
+                );
+            }
+            if (Number.isFinite(loose.tiersBeforeEnd)) {
+                rows.push(
+                    line(
+                        'Before it ends',
+                        `~${loose.tiersBeforeEnd} more tier${loose.tiersBeforeEnd === 1 ? '' : 's'}`,
+                        DIM,
+                        'How many more tiers that rate would clear in the time the trial has left — a projection ' +
+                            'off a whole-guild average, not a promise.'
+                    )
+                );
+            }
+        } else {
+            rows.push(
+                line(
+                    'Rate',
+                    'only trials you join',
+                    DIM,
+                    'The live per-second bar only ever streams for the trials this character joined, so no ' +
+                        'measured rate arrives for the others. A loose estimate off the Trials tab’s stated ' +
+                        'total points appears here once two readings a few seconds apart have been seen — keep ' +
+                        'this tab open.\nIts tier, points and sign-ups are read and shown below regardless.'
+                )
+            );
+        }
     } else if (!Number.isFinite(analysis.rate)) {
         rows.push(line('Rate', analysis.samples < 2 ? 'measuring…' : 'no movement yet', DIM));
     } else {
@@ -2408,6 +2538,7 @@ class GuildTrials {
                         phase: tilePhase,
                         startsInMs: status?.startsInMs ?? null,
                         forecast: this._forecast(tile, analysis, participants),
+                        looseForecast: looseTrialForecast(record, { timeLeftMs }),
                     }),
                     // Wide enough that a label and a figure fit on one line, and
                     // capped so it cannot stretch a whole panel — the reported

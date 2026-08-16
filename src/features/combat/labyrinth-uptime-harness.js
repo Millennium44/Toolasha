@@ -274,8 +274,15 @@ export function compareIncoming(real, sim, tolerancePct = 15) {
         // question (per-cast damage), not a rotation one.
         const castShareGap = (s?.castSharePct ?? 0) - (r?.castSharePct ?? 0);
         let verdict = 'ok';
-        if (!s) verdict = 'sim-missing';
-        else if (!r) verdict = 'sim-extra';
+        if (!s) {
+            // A self-buff (precision, a fierce/guardian aura) casts but deals no
+            // damage, so it never enters the sim's attack tally — that is the
+            // tally correctly omitting a non-damaging ability, not the sim
+            // failing to produce a damage source. Flag those apart from a
+            // genuinely absent damaging ability, which the blind-buff probe is
+            // the right tool to verify; otherwise every buff cast reads as a bug.
+            verdict = r && r.damage === 0 && r.hits === 0 ? 'buff' : 'sim-missing';
+        } else if (!r) verdict = 'sim-extra';
         else if (Math.abs(dmgShareGap) >= tolerancePct) verdict = dmgShareGap < 0 ? 'sim-under' : 'sim-over';
         return { ability: String(ability).split('/').pop(), real: r, sim: s, dmgShareGap, castShareGap, verdict };
     });
