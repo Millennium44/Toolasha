@@ -317,17 +317,26 @@ export function compareBuffProduction(gameBuffMap, produced) {
 
 /**
  * Wrap a discrepancy log and the current snapshot in the export envelope.
+ *
+ * playerBuild is panel-level (one per session, not per monster), so it rides at
+ * the top rather than inside an entry. It is the other half of the sim-vs-real
+ * picture: a monster can match perfectly while the sim builds *you* wrong, and
+ * an export that carries only the monster side sends whoever reads it hunting on
+ * the wrong side of the fight.
+ *
  * @param {Array<Object>} entries - Recorded discrepancy records, newest last
  * @param {Object|null} current - The comparison currently on screen
  * @param {number} exportedAt - A timestamp (the caller owns the clock)
+ * @param {Object|null} [playerBuild] - The player-build (you vs sim) result, if run
  * @returns {Object}
  */
-export function buildExportPayload(entries, current, exportedAt) {
+export function buildExportPayload(entries, current, exportedAt, playerBuild = null) {
     return {
         format: 'toolasha-monster-stat-check',
         version: 1,
         exportedAt,
         current: current || null,
         entries: entries || [],
+        playerBuild: playerBuild || null,
     };
 }
