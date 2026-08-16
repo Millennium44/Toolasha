@@ -427,6 +427,22 @@ class MonsterStatCheckPanel {
                 ) {
                     console.log('[MonsterStatCheck] Max HP gap — you vs sim, by input term:');
                     console.table({ you, sim });
+                    // The buff carrying the missing HP ratio — its typeHrid is what
+                    // the engine has to map. List the ones with a nonzero boost.
+                    const buffs = Object.entries(this.lastPlayerUnit?.combatBuffMap || {})
+                        .map(([uniqueHrid, b]) => ({
+                            uniqueHrid,
+                            typeHrid: b?.typeHrid,
+                            ratioBoost: b?.ratioBoost,
+                            flatBoost: b?.flatBoost,
+                        }))
+                        .filter((b) => b.ratioBoost || b.flatBoost);
+                    if (buffs.length) {
+                        console.log(
+                            '[MonsterStatCheck] Your active buffs (find the max-HP one — its typeHrid is the fix):'
+                        );
+                        console.table(buffs);
+                    }
                 }
             }
         } catch (error) {
