@@ -3218,7 +3218,16 @@ class LabyrinthClearRate {
             for (const idx of path.route) {
                 const tile = tiles[idx];
                 const cell = cells[idx];
-                if (!tile || tile.cleared || tile.isEntrance || !cell) continue;
+                if (!tile || tile.isEntrance || !cell) continue;
+                // A cleared tile the route runs through is free ground walked
+                // over to reach the rooms beyond it — a tile shrouded ahead of
+                // the frontier, most often. Mark it walked with the same dashed
+                // outline as the approach from where you stand, rather than
+                // leaving it blank so the line looks like it skips a step.
+                if (tile.cleared) {
+                    this.appendPathOverlay(cell, '#57d08a', '', { approach: true });
+                    continue;
+                }
                 let color;
                 let label = '';
                 if (tile.isExit) {
