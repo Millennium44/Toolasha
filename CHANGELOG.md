@@ -6,17 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Settings: a single "Pinning" section for both pin toggles
-
-The pinned-actions toggle lived under Skill Page & Tiles and the alchemy-picker pin toggle under Alchemy, so the two "pinning" switches were in different places. Grouped both under a new **Pinning** category — kept as two independent toggles (each feature is distinct, and you may want one without the other) rather than collapsed into one, so turning off the alchemy pins doesn't also drop the pinned-actions page.
-
 ### Alchemy pins: smaller, less intrusive pin badges on touchscreens
 
 On a touchscreen every item tile shows its pin (there's no hover to reveal it), and at 32px the pushpin buried the item art and count under it across the whole picker. Shrunk the touch pin to an 18px corner badge and dropped unpinned pins to half opacity so the grid reads again; a pinned tile's pin stays gold and full-strength.
 
 ### Labyrinth path: revealing more of the floor now ranks above torches
 
-The route planner treated "uncover more unknown rooms" as a sub-torch tiebreak that could never justify a single extra step, so it would skip a one-step detour that reveals a new room — even though an unknown room may hide a chest the planner can't yet see. Reveals now rank second, above torches (a shroud still trumps everything): the min-shroud base route is compared against routes that detour through one revealing room, and whichever uncovers the most *unique* unknown rooms — then the fewest torches — wins. One detour at a time, so it opens the floor up without carpet-revealing, and it never spends an extra shroud to reveal. This is done above the shortest-path cost, since a single Dijkstra cost can't rank reveals over torches without negative edges.
+The route planner treated "uncover more unknown rooms" as a sub-torch tiebreak that could never justify a single extra step, so it would skip a one-step detour that reveals a new room — even though an unknown room may hide a chest the planner can't yet see. Reveals now rank second, above torches (a shroud still trumps everything): the min-shroud base route is compared against routes that detour through one revealing room, and whichever uncovers the most _unique_ unknown rooms — then the fewest torches — wins. One detour at a time, so it opens the floor up without carpet-revealing, and it never spends an extra shroud to reveal. This is done above the shortest-path cost, since a single Dijkstra cost can't rank reveals over torches without negative edges.
 
 ### Lab Sim: fold guild-shrine max HP / MP buffs into the sim player
 
@@ -279,11 +275,17 @@ The simulator valued every drop at its gross market price, so profit ignored the
 - run the uptime harness from the Monster Stat Check panel ([ecd327a](https://github.com/Millennium44/Toolasha/commit/ecd327a40c6a93fb8688a3c308e213283cf6d4f9))
 - uptime harness — monster incoming damage decomposed per ability, real vs sim ([0d6e1bd](https://github.com/Millennium44/Toolasha/commit/0d6e1bd96f7472bab5e388a607aa8630f3b1d3e1))
 - uptime harness button auto-arms a tick capture when none exists ([f6f806d](https://github.com/Millennium44/Toolasha/commit/f6f806dc3532ba8d0dcf08bad6b4392b15e0dd30))
+- player build check — the sim's build of your character vs your live stats ([2e3bd0f](https://github.com/Millennium44/Toolasha/commit/2e3bd0fa459b450471d00a25e515e9f4e7f14d80))
+- uptime harness attributes real incoming damage from the damage counter ([e228c82](https://github.com/Millennium44/Toolasha/commit/e228c8228d70b778f01a69feebc0e1eba547210b))
+- labyrinth route values revealing more of the floor above torches ([23674da](https://github.com/Millennium44/Toolasha/commit/23674dae7f914dd543d17818469d0fffc23c1fcd))
 
 ### Bug Fixes
 
 - Accuracy Reset clears the recorded fight pool, not just the tallies ([0031851](https://github.com/Millennium44/Toolasha/commit/003185193645ea5a3a63032b428ce37e01a0e7ca))
 - labyrinth monster rescale wiped resistance/armour buffs ([38f9aa1](https://github.com/Millennium44/Toolasha/commit/38f9aa1d26c9b0a6a056558d9adddd6845b0bad9))
+- fold guild-shrine max HP/MP buffs into the sim player ([f2ed4be](https://github.com/Millennium44/Toolasha/commit/f2ed4beb9f19c4469f27e86f3a1c2776e3d724c5))
+- labyrinth route re-syncs cleared tiles from the live grid (mobile stale-tile fix) ([9bbfd4d](https://github.com/Millennium44/Toolasha/commit/9bbfd4dfaa35c9d68d2fc2c60f57046a580111cf))
+- alchemy item pins sized down on touchscreens ([13df3e3](https://github.com/Millennium44/Toolasha/commit/13df3e30277ab8c9de61afc635ab4958a896df0e))
 
 ## [3.7.0](https://github.com/Millennium44/Toolasha/compare/v3.6.1...v3.7.0) (2026-08-15)
 

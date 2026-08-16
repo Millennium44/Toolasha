@@ -257,26 +257,12 @@ export const settingsGroups = {
                 default: true,
                 help: 'Shows how many of the output item you currently own, on action tiles and in the action detail panel',
             },
-        },
-    },
-
-    pinning: {
-        title: 'Pinning',
-        icon: '📌',
-        settings: {
             actions_pinnedPage: {
                 id: 'actions_pinnedPage',
-                label: 'Actions: pinned-actions page and pin icons on tiles',
+                label: 'Pinned actions: Enable pinned actions page and pin icons',
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a Pinned button to the left nav bar showing all pinned actions, and shows pin icons on action tiles.',
-            },
-            alchemyItemPins: {
-                id: 'alchemyItemPins',
-                label: 'Alchemy: pin items to the front of the picker',
-                type: 'checkbox',
-                default: true,
-                help: 'Adds a 📌 to each item in the Alchemize Item list that moves it to the front. Kept per action, since what is worth coinifying is rarely what is worth decomposing. Pins reorder but do not exempt: a pinned item that does not match the filter box stays hidden',
             },
         },
     },
@@ -410,6 +396,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
                 help: 'Adds a button to see items ranked by profit or XP for each alchemy type.',
+            },
+            alchemyItemPins: {
+                id: 'alchemyItemPins',
+                label: 'Alchemy panel: Pin items in the item picker',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a 📌 to each item in the Alchemize Item list that moves it to the front. Kept per action, since what is worth coinifying is rarely what is worth decomposing. Pins reorder but do not exempt: a pinned item that does not match the filter box stays hidden',
             },
             alchemy_transmuteHistory: {
                 id: 'alchemy_transmuteHistory',
