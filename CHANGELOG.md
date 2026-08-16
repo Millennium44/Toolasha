@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tick capture: stop when the fight leaves its monster
+
+A tick capture armed for a monster now ends itself the moment a fresh fight against a *different* monster begins — so clearing the room (or dying out of the labyrinth into your main-game action) no longer pollutes the file with a fight the harness isn't comparing against. Retries against the same monster keep recording; a general capture with no target monster still records until stopped.
+
 ### Lab skip-threshold table: always plan from your skill level, not the live run
 
 The skip-threshold table's clear-% badges simmed the *live run's* room level for a monster whenever you were in a labyrinth, so the numbers swung to whatever the current floor happened to roll instead of answering "what does my threshold clear". Both the skilling and combat rows now always sim `effective level + threshold − 1` (the skip-derived level), ignoring the live run — the grid overlay still shows the actual rooms. Removed the now-unused live-preferring helpers.
