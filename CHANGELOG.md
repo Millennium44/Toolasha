@@ -315,23 +315,20 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.9.0](https://github.com/Millennium44/Toolasha/compare/v3.8.0...v3.9.0) (2026-08-16)
 
-
 ### Features
 
-* colour labyrinth rooms cleared only for a chest apart from the exit path ([442ff1b](https://github.com/Millennium44/Toolasha/commit/442ff1b4a6feb370ae527ff682ae9855f8c5e919))
-
+- colour labyrinth rooms cleared only for a chest apart from the exit path ([442ff1b](https://github.com/Millennium44/Toolasha/commit/442ff1b4a6feb370ae527ff682ae9855f8c5e919))
 
 ### Bug Fixes
 
-* carry lab clears across a live refresh; player check tolerates combat buffs ([e161add](https://github.com/Millennium44/Toolasha/commit/e161adda3d58f253eefab95b33def447d74dca06))
-* carry room level through a mid-fight monster promotion ([1c39600](https://github.com/Millennium44/Toolasha/commit/1c39600d60ae46d224850f028b99ba17b7d2c7e8))
-* draw walked cleared tiles on the labyrinth route; revert promotion no-op ([a0eca6d](https://github.com/Millennium44/Toolasha/commit/a0eca6d8d62b6df8aab6279ecd065574d59c0c33))
-* labyrinth path treats only entrance-connected clears as free starts ([538ce3b](https://github.com/Millennium44/Toolasha/commit/538ce3b49c29b7ef98c89dcc60568d51f6e284b5))
-
+- carry lab clears across a live refresh; player check tolerates combat buffs ([e161add](https://github.com/Millennium44/Toolasha/commit/e161adda3d58f253eefab95b33def447d74dca06))
+- carry room level through a mid-fight monster promotion ([1c39600](https://github.com/Millennium44/Toolasha/commit/1c39600d60ae46d224850f028b99ba17b7d2c7e8))
+- draw walked cleared tiles on the labyrinth route; revert promotion no-op ([a0eca6d](https://github.com/Millennium44/Toolasha/commit/a0eca6d8d62b6df8aab6279ecd065574d59c0c33))
+- labyrinth path treats only entrance-connected clears as free starts ([538ce3b](https://github.com/Millennium44/Toolasha/commit/538ce3b49c29b7ef98c89dcc60568d51f6e284b5))
 
 ### Miscellaneous Chores
 
-* restore original pin settings; document 3.8.0's later changes ([81049f6](https://github.com/Millennium44/Toolasha/commit/81049f6c3e12338479f297da9188173507100b6a))
+- restore original pin settings; document 3.8.0's later changes ([81049f6](https://github.com/Millennium44/Toolasha/commit/81049f6c3e12338479f297da9188173507100b6a))
 
 ## [3.8.0](https://github.com/Millennium44/Toolasha/compare/v3.7.0...v3.8.0) (2026-08-16)
 
