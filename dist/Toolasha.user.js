@@ -21,13 +21,13 @@
 // @require      https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js
 // @require      https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js
 // @require      https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0/dist/chartjs-plugin-datalabels.min.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@a41c514dbcf6552d2a04d68a86df2c9693ba1b93/dist/libraries/toolasha-core.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@a41c514dbcf6552d2a04d68a86df2c9693ba1b93/dist/libraries/toolasha-utils.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@a41c514dbcf6552d2a04d68a86df2c9693ba1b93/dist/libraries/toolasha-sim.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@a41c514dbcf6552d2a04d68a86df2c9693ba1b93/dist/libraries/toolasha-market.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@a41c514dbcf6552d2a04d68a86df2c9693ba1b93/dist/libraries/toolasha-actions.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@a41c514dbcf6552d2a04d68a86df2c9693ba1b93/dist/libraries/toolasha-combat.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@a41c514dbcf6552d2a04d68a86df2c9693ba1b93/dist/libraries/toolasha-ui.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@fcea27c2ba899291bc27b348a933657ba6f19638/dist/libraries/toolasha-core.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@fcea27c2ba899291bc27b348a933657ba6f19638/dist/libraries/toolasha-utils.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@fcea27c2ba899291bc27b348a933657ba6f19638/dist/libraries/toolasha-sim.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@fcea27c2ba899291bc27b348a933657ba6f19638/dist/libraries/toolasha-market.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@fcea27c2ba899291bc27b348a933657ba6f19638/dist/libraries/toolasha-actions.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@fcea27c2ba899291bc27b348a933657ba6f19638/dist/libraries/toolasha-combat.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@fcea27c2ba899291bc27b348a933657ba6f19638/dist/libraries/toolasha-ui.js
 // ==/UserScript==
 // Note: Combat Sim auto-import requires Tampermonkey for cross-domain storage. Not available on Steam (use manual clipboard copy/paste instead).
 
