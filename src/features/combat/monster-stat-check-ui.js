@@ -29,7 +29,7 @@ import {
 } from './monster-stat-check.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import labyrinthClearRate from './labyrinth-clear-rate.js';
-import { captureFile } from './labyrinth-tick-capture.js';
+import { captureFile, startCapture } from './labyrinth-tick-capture.js';
 
 const BLIND_VERDICT = {
     match: { glyph: '✓', color: '#6fce7f' },
@@ -347,14 +347,20 @@ class MonsterStatCheckPanel {
         if (!snap?.hrid) return;
         try {
             const capture = captureFile();
-            if (!capture?.ticks?.length) {
-                snap.uptime = { error: 'No tick capture — arm one (Capture) and fight this monster first.' };
-            } else if (capture.context?.monsterHrid && capture.context.monsterHrid !== snap.hrid) {
-                const name = String(capture.context.monsterHrid).split('/').pop();
-                snap.uptime = { error: `The tick capture is for ${name}, not this monster.` };
-            } else {
+            const capturedMonster = capture?.context?.monsterHrid;
+            // A capture is usable if it holds ticks and is for this monster (or is
+            // unlabelled). Otherwise arm a fresh one that records the next fight.
+            const usable = capture?.ticks?.length && (!capturedMonster || capturedMonster === snap.hrid);
+            if (usable) {
                 const result = await labyrinthClearRate.uptimeHarness(snap.hrid, snap.roomLevel, capture.ticks);
                 snap.uptime = result ? { rows: result.comparison.rows, at: Date.now() } : { error: 'Sim run failed.' };
+            } else {
+                // Nothing captured for this monster — start capturing the next fight.
+                startCapture({ monsterHrid: snap.hrid, roomLevel: snap.roomLevel });
+                snap.uptime = {
+                    armed: true,
+                    message: 'Capturing — fight this monster, then click “Run uptime harness” again.',
+                };
             }
         } catch (error) {
             console.error('[MonsterStatCheck] Uptime harness failed:', error);
@@ -762,7 +768,12 @@ class MonsterStatCheckPanel {
             head.textContent = 'Uptime harness — incoming damage / ability';
             wrap.appendChild(head);
 
-            if (up.error) {
+            if (up.armed) {
+                const armed = document.createElement('div');
+                armed.style.cssText = 'font-size:0.72rem; color:#6fce7f; font-style:italic;';
+                armed.textContent = up.message;
+                wrap.appendChild(armed);
+            } else if (up.error) {
                 const err = document.createElement('div');
                 err.style.cssText = 'font-size:0.72rem; color:#e0b64a; font-style:italic;';
                 err.textContent = up.error;
@@ -814,8 +825,9 @@ class MonsterStatCheckPanel {
         }
 
         const btn = document.createElement('button');
-        btn.textContent = up && !up.error ? 'Re-run uptime harness' : 'Run uptime harness';
-        btn.title = 'Decompose the monster’s incoming damage per ability (armed tick capture) vs the sim';
+        btn.textContent = up?.rows?.length ? 'Re-run uptime harness' : 'Run uptime harness';
+        btn.title =
+            'Decompose the monster’s incoming damage per ability vs the sim. With no capture yet, arms one for the next fight.';
         btn.style.cssText =
             'margin-top:6px; background:none; border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#cbd5e8; font-size:0.7rem; cursor:pointer; padding:3px 8px;';
         btn.addEventListener('mouseenter', () => (btn.style.background = 'rgba(255,255,255,0.06)'));
