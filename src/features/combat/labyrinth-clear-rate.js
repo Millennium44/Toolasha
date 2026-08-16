@@ -1467,21 +1467,6 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Compute target room level for a combat room: the live room's level while
-     * a run is active, otherwise the skip-derived level.
-     */
-    getCombatRoomLevel(monsterHrid) {
-        if (this.roomData) {
-            const room = this.findRoomByMonsterHrid(monsterHrid);
-            if (room && !room.isCleared) {
-                return Number(room.recommendedLevel || 0);
-            }
-        }
-
-        return this.getCombatSkipRoomLevel(monsterHrid);
-    }
-
-    /**
      * Get the labyrinth loadout ID for a monster from characterSetting
      */
     getLabyrinthLoadoutId(monsterHrid) {
@@ -3689,16 +3674,13 @@ class LabyrinthClearRate {
             if (!isSkill && !isMonster) continue;
 
             if (isSkill) {
-                let roomLevel = null;
-                if (this.roomData) {
-                    const room = this.findRoomByHrid(roomHrid);
-                    if (room && !room.isCleared) {
-                        roomLevel = Number(room.recommendedLevel || 0);
-                    }
-                }
-                if (!roomLevel) {
-                    roomLevel = this.getTargetRoomLevel(roomHrid);
-                }
+                // The skip-threshold table is a skill-level plan — "what my
+                // threshold clears" — not a readout of the run you happen to be
+                // in. Always sim the level the threshold implies (effective level
+                // + threshold − 1), never the live room's, or the badges swing to
+                // whatever the current labyrinth rolled and stop answering the
+                // question the table asks.
+                const roomLevel = this.getTargetRoomLevel(roomHrid);
                 if (!roomLevel || roomLevel <= 0) continue;
 
                 const isEnhancing = roomHrid === '/skills/enhancing';
@@ -3709,7 +3691,8 @@ class LabyrinthClearRate {
                 if (!result) continue;
                 this.appendBadge(cell, result, roomLevel);
             } else {
-                const roomLevel = this.getCombatRoomLevel(roomHrid);
+                // Skill-level plan, not the live run — see the skilling branch.
+                const roomLevel = this.getCombatSkipRoomLevel(roomHrid);
                 if (!roomLevel || roomLevel <= 0) continue;
 
                 const cached = this.getCachedCombatResult(roomHrid, roomLevel);
@@ -3768,21 +3751,6 @@ class LabyrinthClearRate {
 
     updateBadge(badge, result, roomLevel) {
         this.decorateBadge(badge, result, roomLevel);
-    }
-
-    /**
-     * Find a room in cached roomData matching the extracted HRID
-     */
-    findRoomByHrid(skillHrid) {
-        if (!this.roomData) return null;
-        for (const row of this.roomData) {
-            for (const cell of row) {
-                if (cell && cell.skillHrid === skillHrid) {
-                    return cell;
-                }
-            }
-        }
-        return null;
     }
 
     /**
