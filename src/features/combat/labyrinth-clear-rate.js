@@ -3242,6 +3242,11 @@ class LabyrinthClearRate {
                     // Nothing known about it — routed as clearable; reveal to verify
                     color = '#8fb4d8';
                     label = '?';
+                } else if (path.chestBranch?.has(idx)) {
+                    // A room cleared only to reach a chest — an optional loot
+                    // detour, not on the way out. Amber sets it apart from the
+                    // green exit-critical rooms.
+                    color = '#ff9800';
                 } else {
                     color = '#57d08a';
                 }
