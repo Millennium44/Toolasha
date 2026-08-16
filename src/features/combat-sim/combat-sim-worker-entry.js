@@ -9,7 +9,7 @@
 import { buildPlayerExtraBuffs } from './engine/extra-buffs.js';
 import { setGameData } from './engine/game-data.js';
 import { setBuffCapture, getCapturedMonsterBuffs } from './engine/combat-unit.js';
-import CombatSimulator from './engine/combat-simulator.js';
+import CombatSimulator, { setPlayerDetailsCapture, getCapturedPlayerDetails } from './engine/combat-simulator.js';
 import Labyrinth from './engine/labyrinth.js';
 import Player from './engine/player.js';
 import { seedSimRng } from './engine/rng.js';
@@ -33,6 +33,7 @@ onmessage = function (event) {
             seed,
             isTaskFight,
             captureBuffs,
+            capturePlayerDetails,
         } = event.data;
 
         // Set game data for the engine singleton
@@ -96,6 +97,7 @@ onmessage = function (event) {
         // buffs the engine applied to the monster on its own (for the
         // monster-stat-check "does the sim even produce these effects" diagnostic).
         if (captureBuffs) setBuffCapture(true);
+        if (capturePlayerDetails) setPlayerDetailsCapture(true);
 
         // Run simulation
         const simResult = combatSimulator.simulate(simulationTimeLimit, precision);
@@ -103,6 +105,10 @@ onmessage = function (event) {
         if (captureBuffs) {
             simResult.producedMonsterBuffs = getCapturedMonsterBuffs();
             setBuffCapture(false);
+        }
+        if (capturePlayerDetails) {
+            simResult.playerCombatDetails = getCapturedPlayerDetails();
+            setPlayerDetailsCapture(false);
         }
 
         postMessage({

@@ -28,6 +28,24 @@ import AwaitCooldownEvent from './events/await-cooldown-event.js';
 import Monster from './monster.js';
 import Ability from './ability.js';
 
+// Player-build capture. Off by default and behind a flag so the normal sim path
+// pays nothing; the monster-stat-check "player build" diagnostic turns it on to
+// read the sim player's resolved stats at the one faithful moment — the first
+// combat start, after generatePermanentBuffs() + reset(0) have folded in the
+// persistent buffs (teas/community/guild/house) and before any transient combat
+// buff accumulates.
+let CAPTURE_PLAYER_DETAILS = false;
+let capturedPlayerDetails = null;
+/** @param {boolean} on - Start (fresh) or stop capturing the sim player build. */
+export function setPlayerDetailsCapture(on) {
+    CAPTURE_PLAYER_DETAILS = Boolean(on);
+    capturedPlayerDetails = null;
+}
+/** @returns {Object|null} The sim player's resolved combatDetails at fight start. */
+export function getCapturedPlayerDetails() {
+    return capturedPlayerDetails;
+}
+
 const ONE_SECOND = 1e9;
 const HOT_TICK_INTERVAL = 5 * ONE_SECOND;
 const DOT_TICK_INTERVAL = 3 * ONE_SECOND;
@@ -371,6 +389,12 @@ class CombatSimulator {
             } else {
                 this.players[i].reset(this.simulationTime);
             }
+        }
+
+        // The one faithful moment to read the sim player's build: persistent buffs
+        // folded, no transient combat buff yet. Snapshot once.
+        if (CAPTURE_PLAYER_DETAILS && !capturedPlayerDetails && this.players[0]) {
+            capturedPlayerDetails = structuredClone(this.players[0].combatDetails);
         }
 
         const regenTickEvent = new RegenTickEvent(this.simulationTime + REGEN_TICK_INTERVAL);
