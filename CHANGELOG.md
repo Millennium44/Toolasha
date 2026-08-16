@@ -319,10 +319,9 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.9.1](https://github.com/Millennium44/Toolasha/compare/v3.9.0...v3.9.1) (2026-08-16)
 
-
 ### Bug Fixes
 
-* fold live offense buffs into the player-build sim column ([2fd0212](https://github.com/Millennium44/Toolasha/commit/2fd0212c2210a490469a463f9084c09189cc5316))
+- fold live offense buffs into the player-build sim column ([2fd0212](https://github.com/Millennium44/Toolasha/commit/2fd0212c2210a490469a463f9084c09189cc5316))
 
 ## [3.9.0](https://github.com/Millennium44/Toolasha/compare/v3.8.0...v3.9.0) (2026-08-16)
 
