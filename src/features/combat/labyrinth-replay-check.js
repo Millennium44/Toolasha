@@ -347,7 +347,8 @@ function diagnose(dps, taken, clear, { hitRate = null, dmgPerHit = null } = {}) 
     const softHits = dmgPerHit?.verdict === 'below';
     let because = '';
     if (missingHits && softHits) {
-        because = ' — you land fewer hits and each lands softer than it predicts, so its evasion and mitigation both run light';
+        because =
+            ' — you land fewer hits and each lands softer than it predicts, so its evasion and mitigation both run light';
     } else if (missingHits) {
         because =
             ' — you land fewer hits than it predicts, so its evasion runs light (an unmodelled evasion buff like Guardian Aura)';
@@ -431,10 +432,16 @@ export function compareLab(observed, predicted) {
     // counts. Hit-rate is accuracy against the monster's evasion; damage-per-hit
     // is what each landed hit does after its mitigation. Which one is off names
     // whether the sim under-models the monster's evasion or its resistance.
-    const hasHitData =
-        observed.hitDataFights > 0 && observed.hitRate !== null && Number.isFinite(predicted?.hitRate);
+    const hasHitData = observed.hitDataFights > 0 && observed.hitRate !== null && Number.isFinite(predicted?.hitRate);
     const hitRate = hasHitData
-        ? compareMetric('hitRate', 'Your hit rate', observed.hitRate, predicted.hitRate, observed.hitRateSamples, observed.hitDataFights)
+        ? compareMetric(
+              'hitRate',
+              'Your hit rate',
+              observed.hitRate,
+              predicted.hitRate,
+              observed.hitRateSamples,
+              observed.hitDataFights
+          )
         : null;
     const dmgPerHit =
         hasHitData && observed.dmgPerHit !== null && Number.isFinite(predicted?.dmgPerHit)
