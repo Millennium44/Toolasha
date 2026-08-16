@@ -327,10 +327,9 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.10.0](https://github.com/Millennium44/Toolasha/compare/v3.9.1...v3.10.0) (2026-08-16)
 
-
 ### Features
 
-* loose next-tier estimate for un-joined trials; quiet two noisy lab diagnostics ([f7f4fdf](https://github.com/Millennium44/Toolasha/commit/f7f4fdf2086ded5cabc1119718f845b72b275b38))
+- loose next-tier estimate for un-joined trials; quiet two noisy lab diagnostics ([f7f4fdf](https://github.com/Millennium44/Toolasha/commit/f7f4fdf2086ded5cabc1119718f845b72b275b38))
 
 ## [3.9.1](https://github.com/Millennium44/Toolasha/compare/v3.9.0...v3.9.1) (2026-08-16)
 
