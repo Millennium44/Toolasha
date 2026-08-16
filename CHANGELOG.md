@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Settings: a "What's new" button to reopen the update notes
+
+The after-update popup (changelog + the update's new settings) is one-shot and a stray click dismisses it, with no way back. Added a **What's new** button to the settings panel that reopens it. The contents are remembered when an update is detected — even for someone who has the popup turned off — and persisted so they survive a refresh; with nothing cached it still opens on the bundled changelog, so the button is never dead.
+
 ### Uptime harness: don't credit incoming damage to buff casts
 
 A monster's self-buffs and debuffs (Toughness, a guardian aura, a smoke burst) take a turn but land no hit, yet the harness queued every cast for the next damage resolution — so a real swing's damage paid off the buff's slot and Toughness/guardian aura showed a phantom incoming-damage share. The caller now passes the monster's zero-damage abilities (from game data) so the harness counts their casts but never credits them damage.
