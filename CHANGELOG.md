@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab skip-threshold table: always plan from your skill level, not the live run
+
+The skip-threshold table's clear-% badges simmed the *live run's* room level for a monster whenever you were in a labyrinth, so the numbers swung to whatever the current floor happened to roll instead of answering "what does my threshold clear". Both the skilling and combat rows now always sim `effective level + threshold − 1` (the skip-derived level), ignoring the live run — the grid overlay still shows the actual rooms. Removed the now-unused live-preferring helpers.
+
 ### Lab sim: monsters open abilities at half-cooldown, fixing over-estimated clear rates
 
 The sim gave a labyrinth monster a *random* first-cast delay (`[cd/2, cd)`, averaging 0.75×cooldown), but tick captures show the real game opens each ability at exactly **half its cooldown**, deterministically — Cyclops's specials at ~10s on a 20s cooldown, Toughness at ~15s on 30s, its guardian aura at 60s on 120s. That extra ~quarter-cooldown of delay robbed the monster of resistance-buff uptime (Toughness ≈ 48% sim vs ≈ 68% real), so the sim under-mitigated it, over-credited your damage per hit, and **over-estimated the clear rate** — the Cyclops bug. Labyrinth monsters now open at cd/2; zone sims keep the random de-sync a pack needs. Thanks to a Fable deep-dive for localizing it.
