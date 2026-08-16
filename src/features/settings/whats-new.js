@@ -163,11 +163,84 @@ class WhatsNew {
         this.panel = null;
         this._pending = null;
         this._keyHandler = null;
+        // The last update's popup contents, so the settings-panel button can
+        // reopen it after it was dismissed (kept in memory for this session,
+        // persisted below so it survives a refresh).
+        this._shownData = null;
     }
 
     /** @private */
     _stateKey() {
         return `${STATE_KEY_PREFIX}_${dataManager.getCurrentCharacterId() || 'default'}`;
+    }
+
+    /**
+     * Where the last shown popup's contents are cached for reopening. Global, not
+     * per-character: the changelog and a build's new settings are the same for
+     * every character, and "reopen the update notes" wants the latest either way.
+     * @private
+     */
+    _snapshotKey() {
+        return `${STATE_KEY_PREFIX}_lastShown`;
+    }
+
+    /**
+     * Remember an update's popup contents so {@link reopen} can show them again —
+     * in memory now, and persisted (the Set flattened to an array) for later
+     * sessions. Called whether or not the popup is actually shown, so the reopen
+     * button works even for someone who has the after-update popup turned off.
+     * @private
+     */
+    _rememberShown(data) {
+        this._shownData = data;
+        const serial = {
+            headline: data.headline,
+            forkChanged: Boolean(data.forkChanged),
+            newIds: Array.isArray(data.newIds) ? data.newIds : [],
+            turnedOff: [...(data.turnedOff || [])],
+            isNewcomer: Boolean(data.isNewcomer),
+        };
+        storage
+            .setJSON(this._snapshotKey(), serial, 'settings')
+            .catch((error) => console.error('[WhatsNew] Saving the update snapshot failed:', error));
+    }
+
+    /** Load the persisted last-shown popup contents, or null. @private */
+    async _loadShownSnapshot() {
+        const stored = await storage.getJSON(this._snapshotKey(), 'settings', null);
+        if (!stored) return null;
+        return {
+            headline: stored.headline || "Toolasha — what's new",
+            forkChanged: Boolean(stored.forkChanged),
+            newIds: Array.isArray(stored.newIds) ? stored.newIds : [],
+            turnedOff: new Set(stored.turnedOff || []),
+            isNewcomer: Boolean(stored.isNewcomer),
+        };
+    }
+
+    /**
+     * Reopen the update popup on demand — the after-update popup is one-shot and a
+     * stray click dismisses it, so this is the way back to the changelog and the
+     * update's new settings. Prefers the last shown contents (this session, or the
+     * persisted snapshot); with none — nothing has updated since install, or the
+     * popup is turned off and none was ever cached — it still opens on the bundled
+     * changelog so the button is never dead.
+     */
+    async reopen() {
+        try {
+            const data = this._shownData || (await this._loadShownSnapshot());
+            this._buildPanel(
+                data || {
+                    headline: "Toolasha — what's new",
+                    forkChanged: false,
+                    newIds: [],
+                    turnedOff: new Set(),
+                    isNewcomer: false,
+                }
+            );
+        } catch (error) {
+            console.error('[WhatsNew] Reopening the update popup failed:', error);
+        }
     }
 
     /** @private */
@@ -620,7 +693,13 @@ class WhatsNew {
     /** Show the popup, where there is something to show and it is wanted. */
     maybeShow() {
         if (!this._pending) return;
-        if (!config.getSetting('whatsNew_showPopup', true)) return;
+        // Remembered before the opt-out check, so the reopen button can show the
+        // notes even for someone who has the after-update popup turned off.
+        this._rememberShown(this._pending);
+        if (!config.getSetting('whatsNew_showPopup', true)) {
+            this._pending = null;
+            return;
+        }
         try {
             this._buildPanel(this._pending);
         } catch (error) {

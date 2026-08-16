@@ -1475,6 +1475,14 @@ class SettingsUI {
             'Re-open the welcome setup for this character — pick a preset or copy settings from another character';
         setupBtn.addEventListener('click', () => whatsNew.promptSetup());
 
+        // Reopen the after-update popup — the changelog and the update's new
+        // settings — which is one-shot and easily dismissed by a stray click.
+        const whatsNewBtn = document.createElement('button');
+        whatsNewBtn.textContent = "What's new";
+        whatsNewBtn.className = 'toolasha-utility-button';
+        whatsNewBtn.title = 'Reopen the latest update notes — the changelog and any new settings';
+        whatsNewBtn.addEventListener('click', () => whatsNew.reopen());
+
         // Fetch Latest Prices button
         const fetchPricesBtn = document.createElement('button');
         fetchPricesBtn.textContent = '🔄 Fetch Latest Prices';
@@ -1538,6 +1546,7 @@ class SettingsUI {
         buttonsDiv.appendChild(syncBtn);
         buttonsDiv.appendChild(syncIronCowBtn);
         buttonsDiv.appendChild(setupBtn);
+        buttonsDiv.appendChild(whatsNewBtn);
         buttonsDiv.appendChild(fetchPricesBtn);
         buttonsDiv.appendChild(allOffBtn);
         buttonsDiv.appendChild(restoreBtn);

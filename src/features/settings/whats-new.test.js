@@ -271,6 +271,26 @@ describe('the popup shows the overview only to newcomers', () => {
     });
 });
 
+describe('reopening the update popup', () => {
+    const base = { headline: 'x', forkChanged: false, newIds: [], turnedOff: new Set(), isNewcomer: false };
+
+    test('reopen rebuilds the last shown popup from the cached contents', async () => {
+        whatsNew._shownData = { ...base, isNewcomer: true };
+        await whatsNew.reopen();
+        expect(whatsNew.panel).toBeTruthy();
+        expect(whatsNew.panel.textContent).toContain('Toolasha — at a glance'); // the newcomer overview
+        whatsNew.close();
+        whatsNew._shownData = null;
+    });
+
+    test('reopen with nothing cached still opens, so the button is never dead', async () => {
+        whatsNew._shownData = null; // and the mocked storage returns no snapshot
+        await whatsNew.reopen();
+        expect(whatsNew.panel).toBeTruthy();
+        whatsNew.close();
+    });
+});
+
 describe('the fresh-install picker', () => {
     test('Defaults comes first and is primary, No change follows, then the other presets', async () => {
         mocks.answer = DEFAULT_PRESET_ID;
