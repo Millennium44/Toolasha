@@ -38,18 +38,24 @@ import { readScoped, writeScoped } from '../../utils/character-key.js';
 export { ROOM_TRAVEL_SECONDS };
 
 /**
- * Sum a fight's attribution tally into your swing counts.
- * @param {Object} tally - From `foldEvents`, player index → `{hits, misses, ...}`
- * @returns {{playerHits: number, playerMisses: number}}
+ * Sum a fight's attribution tally into your swing counts. Crits ride along —
+ * damage-per-hit compares real against sim, and a real crit rate below what your
+ * crit buffs imply is the sim over-crediting crits (a soft-hit gap that isn't the
+ * monster's mitigation); a matching crit rate points the soft-hit gap back at the
+ * monster instead. Recorded so a later export can tell the two apart.
+ * @param {Object} tally - From `foldEvents`, player index → `{hits, misses, crits, ...}`
+ * @returns {{playerHits: number, playerMisses: number, playerCrits: number}}
  */
 function tallyHitsMisses(tally) {
     let playerHits = 0;
     let playerMisses = 0;
+    let playerCrits = 0;
     for (const entry of Object.values(tally || {})) {
         playerHits += Number(entry?.hits) || 0;
         playerMisses += Number(entry?.misses) || 0;
+        playerCrits += Number(entry?.crits) || 0;
     }
-    return { playerHits, playerMisses };
+    return { playerHits, playerMisses, playerCrits };
 }
 
 /**
