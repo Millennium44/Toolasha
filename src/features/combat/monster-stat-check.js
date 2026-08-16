@@ -82,6 +82,45 @@ export function activeBuffNames(combatBuffMap) {
     return Object.keys(combatBuffMap || {}).map((hrid) => String(hrid).split('/').pop().replace(/_/g, ' '));
 }
 
+/** A buff type → the compared `combatDetails` keys it raises. */
+const BUFF_TYPE_TO_KEYS = {
+    '/buff_types/accuracy': (style) => [`${style}AccuracyRating`],
+    '/buff_types/damage': (style) => [`${style}MaxDamage`],
+    '/buff_types/evasion': () => EVASION_ROWS.map(([key]) => key),
+    '/buff_types/armor': () => ['totalArmor'],
+    '/buff_types/max_hitpoints': () => ['maxHitpoints'],
+    '/buff_types/water_resistance': () => ['totalWaterResistance'],
+    '/buff_types/nature_resistance': () => ['totalNatureResistance'],
+    '/buff_types/fire_resistance': () => ['totalFireResistance'],
+};
+
+/**
+ * The compared stat keys that an active buff on this unit raises.
+ *
+ * The player-build check compares the sim's build at *fight start* — before any
+ * transient combat buff has been cast — against your live stats, which are read
+ * mid-fight with those buffs up. Precision (a `/buff_types/accuracy` self-buff,
+ * +68.4% at level 72) is the common one: it lifts your live accuracy while the
+ * fight-start sim build has none, and the row reads as a fat mismatch when it is
+ * really the sim applying precision in the fight, just not in this snapshot. The
+ * keys this returns are handed leniency so such a row reads as a buff, not a bug;
+ * every other stat stays sharp. Harmless for a folded persistent buff — both
+ * sides carry it, so the row matches and the leniency never fires.
+ *
+ * @param {Object} combatBuffMap - The unit's `combatBuffMap`
+ * @param {string} styleKey - The unit's combat style short key
+ * @returns {Set<string>} Compared `combatDetails` keys a live buff raises
+ */
+export function buffedStatKeys(combatBuffMap, styleKey) {
+    const keys = new Set();
+    for (const buff of Object.values(combatBuffMap || {})) {
+        const toKeys = BUFF_TYPE_TO_KEYS[buff?.typeHrid];
+        if (!toKeys) continue;
+        for (const key of toKeys(styleKey)) keys.add(key);
+    }
+    return keys;
+}
+
 /**
  * The grouped list of rows to compare, given the monster's own combat style.
  * Offense is style-specific — a smasher has a `smashMaxDamage`, not a magic one.
@@ -170,17 +209,23 @@ export function classify(deltaPct, hasBuffs) {
  * @param {Object} [options]
  * @param {boolean} [options.simBuffed=false] - Whether the sim already carries
  *   the unit's active effects
+ * @param {Set<string>} [options.leniencyKeys] - Compared keys to classify with
+ *   buff-awareness even when `simBuffed` — for the player check, where the sim's
+ *   fight-start build lacks the transient combat buffs your live stats carry, so
+ *   the boosted rows must not read as mismatches (see `buffedStatKeys`).
  * @returns {{
  *   groups: Array<{group: string, rows: Array<{key,label,game,sim,deltaPct,verdict}>}>,
  *   buffs: string[], styleKey: string, hasMismatch: boolean, simBuffed: boolean
  * }}
  */
-export function buildComparison(gameUnit, simDetails, { simBuffed = false } = {}) {
+export function buildComparison(gameUnit, simDetails, { simBuffed = false, leniencyKeys = null } = {}) {
     const gameDetails = gameUnit?.combatDetails || {};
     const styleKey = styleKeyOf(gameDetails.combatStats);
     const buffs = activeBuffNames(gameUnit?.combatBuffMap);
     // When the sim carries the effects, a gap is not effect-explained — classify
-    // it as a flat mismatch rather than a buff/debuff.
+    // it as a flat mismatch rather than a buff/debuff. Exception: a stat a live
+    // buff raises that the sim build lacks (the player check's fight-start snap)
+    // keeps buff-awareness, so precision reads as a buff, not a bug.
     const classifyHasBuffs = simBuffed ? false : buffs.length > 0;
     let hasMismatch = false;
 
@@ -188,7 +233,8 @@ export function buildComparison(gameUnit, simDetails, { simBuffed = false } = {}
         group,
         rows: rows.map(([key, label]) => {
             const compared = compareStat(key, gameDetails, simDetails);
-            const verdict = classify(compared.deltaPct, classifyHasBuffs);
+            const rowHasBuffs = leniencyKeys?.has(key) ? true : classifyHasBuffs;
+            const verdict = classify(compared.deltaPct, rowHasBuffs);
             if (verdict === 'mismatch') hasMismatch = true;
             return { ...compared, label, verdict };
         }),

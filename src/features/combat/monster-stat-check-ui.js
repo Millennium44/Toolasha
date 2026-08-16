@@ -26,6 +26,8 @@ import {
     buildExportPayload,
     compareBuffProduction,
     buffSignature,
+    buffedStatKeys,
+    styleKeyOf,
 } from './monster-stat-check.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import labyrinthClearRate from './labyrinth-clear-rate.js';
@@ -402,7 +404,13 @@ class MonsterStatCheckPanel {
             } else {
                 // Sharp check: both sides carry the persistent buffs, so a gap is a
                 // real build difference (simBuffed skips the buff/debuff leniency).
-                const cmp = buildComparison(this.lastPlayerUnit, simDetails, { simBuffed: true });
+                // The exception is the stats a live transient combat buff raises —
+                // precision above all — which the sim's fight-start build has not
+                // cast yet; those rows keep buff-awareness so they read as a buff,
+                // not a phantom mismatch, while every other stat stays sharp.
+                const styleKey = styleKeyOf(this.lastPlayerUnit?.combatDetails?.combatStats);
+                const leniencyKeys = buffedStatKeys(this.lastPlayerUnit?.combatBuffMap, styleKey);
+                const cmp = buildComparison(this.lastPlayerUnit, simDetails, { simBuffed: true, leniencyKeys });
                 this.playerCheck = {
                     groups: cmp.groups,
                     hasMismatch: cmp.hasMismatch,
