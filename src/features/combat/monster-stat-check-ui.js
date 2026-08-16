@@ -452,9 +452,26 @@ class MonsterStatCheckPanel {
         this._render();
     }
 
+    /**
+     * The player-build result plus the raw live buffs behind it, for export.
+     * The buff map is what pins a build gap — an accuracy or max-HP delta is
+     * almost always a live buff the sim did not seed, so ship it alongside the
+     * comparison rather than making the reader guess.
+     * @returns {Object|null}
+     */
+    _playerBuildForExport() {
+        if (!this.playerCheck) return null;
+        return { ...this.playerCheck, playerBuffMap: this.lastPlayerUnit?.combatBuffMap || null };
+    }
+
     /** Download the session's discrepancy log plus the current snapshot as JSON. */
     _export() {
-        const payload = buildExportPayload(Array.from(this.history.values()), this.last, Date.now());
+        const payload = buildExportPayload(
+            Array.from(this.history.values()),
+            this.last,
+            Date.now(),
+            this._playerBuildForExport()
+        );
         const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
         downloadFile(`toolasha-monster-stat-check-${stamp}.json`, JSON.stringify(payload), 'application/json');
     }
@@ -524,12 +541,48 @@ class MonsterStatCheckPanel {
         return lines.join('\n');
     }
 
-    /** Copy the current view to the clipboard, with a brief ✓ on the button. */
+    /** The player-build (you vs sim) section as text, or '' if never run. */
+    _playerBuildText() {
+        const pc = this.playerCheck;
+        if (!pc) return '';
+        if (pc.error) return `Player build — you vs sim: ${pc.error}`;
+        const lines = ['Player build — you vs sim:'];
+        for (const g of pc.groups || []) {
+            lines.push(`[${g.group}]`);
+            for (const r of g.rows) {
+                const d = r.deltaPct == null ? '' : ` (${r.deltaPct >= 0 ? '+' : ''}${r.deltaPct.toFixed(1)}%)`;
+                lines.push(`  ${r.label}: you ${fmt(r.game)} / sim ${fmt(r.sim)}${d} — ${r.verdict}`);
+            }
+        }
+        if (pc.buffs?.length) lines.push(`Your active buffs: ${pc.buffs.join(', ')}`);
+        return lines.join('\n');
+    }
+
+    /**
+     * Copy the whole session to the clipboard as text, with a brief ✓ on the
+     * button — the player build, then every monster checked (not just the one on
+     * screen), so one paste carries the full sim-vs-real picture to a bug report.
+     */
     _copyToClipboard(btn) {
-        const text = this._copyText(this.displayed);
-        if (!text || !navigator.clipboard) return;
+        const parts = [];
+        const playerText = this._playerBuildText();
+        if (playerText) parts.push(playerText);
+
+        const entries = Array.from(this.history.values());
+        // Include the on-screen monster even if it was never logged as a record.
+        const seen = new Set(entries.map((e) => `${e.hrid}:${e.roomLevel}`));
+        if (this.displayed && !seen.has(`${this.displayed.hrid}:${this.displayed.roomLevel}`)) {
+            entries.push(this.displayed);
+        }
+        for (const entry of entries) {
+            const text = this._copyText(entry);
+            if (text) parts.push(text);
+        }
+
+        const joined = parts.join(`\n\n${'─'.repeat(32)}\n\n`);
+        if (!joined || !navigator.clipboard) return;
         navigator.clipboard
-            .writeText(text)
+            .writeText(joined)
             .then(() => {
                 btn.textContent = '✓';
                 setTimeout(() => (btn.textContent = '⧉'), 1200);
@@ -590,7 +643,7 @@ class MonsterStatCheckPanel {
 
         const copyBtn = document.createElement('button');
         copyBtn.textContent = '⧉';
-        copyBtn.title = 'Copy the results on screen to the clipboard (as text)';
+        copyBtn.title = 'Copy all results (player build + every monster) to the clipboard (as text)';
         copyBtn.style.cssText = `background: none; border: none; color: #aaa; font-size: 1rem; line-height: 1; cursor: pointer; padding: 0 4px;`;
         copyBtn.addEventListener('mouseenter', () => (copyBtn.style.color = '#fff'));
         copyBtn.addEventListener('mouseleave', () => (copyBtn.style.color = '#aaa'));
@@ -618,6 +671,7 @@ class MonsterStatCheckPanel {
         closeBtn.addEventListener('mouseleave', () => (closeBtn.style.color = '#aaa'));
         closeBtn.addEventListener('click', () => this.close());
 
+        controls.appendChild(copyBtn);
         controls.appendChild(exportBtn);
         controls.appendChild(closeBtn);
         header.appendChild(title);

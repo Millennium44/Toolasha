@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Monster Stat Check: export the player build, and a copy-all button
+
+The discrepancy-log export now carries the player-build (you vs sim) result and the live buffs behind it, not just the monster side — a monster can match perfectly while the sim builds *you* wrong, and that half was missing from the export. Also surfaced the copy button (it was built but never mounted) and made it copy the whole session as text — player build plus every monster checked — so a bug report is one paste instead of several screenshots.
+
 ### Alchemy pins: smaller, less intrusive pin badges on touchscreens
 
 On a touchscreen every item tile shows its pin (there's no hover to reveal it), and at 32px the pushpin buried the item art and count under it across the whole picker. Shrunk the touch pin to an 18px corner badge and dropped unpinned pins to half opacity so the grid reads again; a pinned tile's pin stays gold and full-strength.

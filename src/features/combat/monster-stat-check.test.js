@@ -420,9 +420,16 @@ describe('buildExportPayload', () => {
         });
     });
 
+    test('carries the player build when one is supplied', () => {
+        const playerBuild = { hasMismatch: true, groups: [], playerBuffMap: {} };
+        const payload = buildExportPayload([], null, 1, playerBuild);
+        expect(payload.playerBuild).toBe(playerBuild);
+    });
+
     test('tolerates missing inputs', () => {
         const payload = buildExportPayload(null, null, 0);
         expect(payload.entries).toEqual([]);
         expect(payload.current).toBeNull();
+        expect(payload.playerBuild).toBeNull();
     });
 });
