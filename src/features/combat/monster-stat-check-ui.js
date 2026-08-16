@@ -155,6 +155,16 @@ class MonsterStatCheckPanel {
         /** Whether the pointer is over the panel, so arrows only steer it then. */
         this.hovered = false;
         this.keyHandler = null;
+        /** Your last live combat stats (from clicking yourself), for the build check. */
+        this.lastPlayerUnit = null;
+        /** The player-build comparison result (panel-level, not per monster). */
+        this.playerCheck = null;
+    }
+
+    /** Remember the character's live stats from a self-click, for the build check. */
+    noteChar(unit) {
+        this.lastPlayerUnit = unit;
+        if (this.container && this.container.style.display !== 'none') this._render();
     }
 
     /**
@@ -367,6 +377,44 @@ class MonsterStatCheckPanel {
             snap.uptime = { error: 'Uptime harness failed (see console).' };
         }
         if (this.displayed === snap) this._render();
+    }
+
+    /**
+     * Compare the sim's build of your character against your live in-game stats,
+     * to catch a player-init bug (gear, ability levels, applied buffs) directly.
+     */
+    async _runPlayerCheck() {
+        if (!this.lastPlayerUnit) {
+            this.playerCheck = { error: 'Click yourself in combat first, so I have your live stats.' };
+            this._render();
+            return;
+        }
+        const snap = this.displayed;
+        if (!snap?.hrid) {
+            this.playerCheck = { error: 'Open a monster’s panel first — the sim needs a fight to build the player.' };
+            this._render();
+            return;
+        }
+        try {
+            const simDetails = await labyrinthClearRate.simPlayerDetails(snap.hrid, snap.roomLevel);
+            if (!simDetails) {
+                this.playerCheck = { error: 'Sim player build failed.' };
+            } else {
+                // Sharp check: both sides carry the persistent buffs, so a gap is a
+                // real build difference (simBuffed skips the buff/debuff leniency).
+                const cmp = buildComparison(this.lastPlayerUnit, simDetails, { simBuffed: true });
+                this.playerCheck = {
+                    groups: cmp.groups,
+                    hasMismatch: cmp.hasMismatch,
+                    buffs: cmp.buffs,
+                    at: Date.now(),
+                };
+            }
+        } catch (error) {
+            console.error('[MonsterStatCheck] Player check failed:', error);
+            this.playerCheck = { error: 'Player check failed (see console).' };
+        }
+        this._render();
     }
 
     /** Download the session's discrepancy log plus the current snapshot as JSON. */
@@ -751,8 +799,84 @@ class MonsterStatCheckPanel {
 
         this._renderBlind(footer, snapshot);
         this._renderUptime(footer, snapshot);
+        this._renderPlayerCheck(footer);
 
         body.appendChild(footer);
+    }
+
+    /** The player-build section: a Check button, and your-vs-sim stat diff. */
+    _renderPlayerCheck(footer) {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08);';
+
+        const pc = this.playerCheck;
+        if (pc) {
+            const head = document.createElement('div');
+            head.style.cssText =
+                'font-size:0.68rem; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.4); margin-bottom:2px;';
+            head.textContent = 'Player build — you vs sim';
+            wrap.appendChild(head);
+
+            if (pc.error) {
+                const err = document.createElement('div');
+                err.style.cssText = 'font-size:0.72rem; color:#e0b64a; font-style:italic;';
+                err.textContent = pc.error;
+                wrap.appendChild(err);
+            } else if (pc.groups) {
+                wrap.appendChild(
+                    this._rowEl(
+                        { label: 'Stat', game: 'You', sim: 'Sim', delta: '', verdict: null },
+                        { headerRow: true }
+                    )
+                );
+                for (const group of pc.groups) {
+                    const heading = document.createElement('div');
+                    heading.style.cssText =
+                        'font-size:0.66rem; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.35); margin:6px 0 1px;';
+                    heading.textContent = group.group;
+                    wrap.appendChild(heading);
+                    for (const row of group.rows) {
+                        wrap.appendChild(
+                            this._rowEl({
+                                label: row.label,
+                                game: fmt(row.game),
+                                sim: fmt(row.sim),
+                                delta: fmtDelta(row.deltaPct),
+                                verdict: row.verdict,
+                            })
+                        );
+                    }
+                }
+                const note = document.createElement('div');
+                note.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
+                note.innerHTML = pc.hasMismatch
+                    ? '<span style="color:#e56b6b;">⚠ off</span> = the sim builds you differently here — a gear, ability-level or buff-init gap.'
+                    : 'Every row matches — the sim builds your character correctly.';
+                wrap.appendChild(note);
+                const caveat = document.createElement('div');
+                caveat.style.cssText = 'margin-top:2px; font-size:0.64rem; color:rgba(255,255,255,0.35);';
+                caveat.textContent =
+                    'Read at fight start: transient combat buffs (fury) or a monster debuff on you show as gaps.';
+                wrap.appendChild(caveat);
+            }
+        }
+
+        const btn = document.createElement('button');
+        btn.textContent = pc?.groups ? 'Re-check my build' : 'Check my build';
+        btn.title = 'Compare the sim’s build of your character against your live in-game stats (click yourself first)';
+        btn.style.cssText =
+            'margin-top:6px; background:none; border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#cbd5e8; font-size:0.7rem; cursor:pointer; padding:3px 8px;';
+        btn.addEventListener('mouseenter', () => (btn.style.background = 'rgba(255,255,255,0.06)'));
+        btn.addEventListener('mouseleave', () => (btn.style.background = 'none'));
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            btn.textContent = 'Running…';
+            btn.disabled = true;
+            setTimeout(() => this._runPlayerCheck(), 0);
+        });
+        wrap.appendChild(btn);
+
+        footer.appendChild(wrap);
     }
 
     /** The uptime-harness section: a Run button, and the incoming-damage diff. */
@@ -1038,8 +1162,14 @@ let fetchHandler = null;
 function handleFetched(data) {
     try {
         const unit = data?.unit;
-        // Only monsters — a player's own detail panel fires this too.
-        if (!unit || unit.isPlayer || !unit.hrid) return;
+        if (!unit) return;
+        // Clicking yourself fires this too — keep the live stats for the "Check my
+        // build" button, but don't open the panel on it.
+        if (unit.isPlayer) {
+            panel.noteChar(unit);
+            return;
+        }
+        if (!unit.hrid) return;
         panel.showFor(unit);
     } catch (error) {
         console.error('[MonsterStatCheck] Failed to handle fetched unit:', error);

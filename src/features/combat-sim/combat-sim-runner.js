@@ -599,6 +599,45 @@ export async function runBlindBuffProbe(params) {
 }
 
 /**
+ * Run a minimal fight and return the sim player's resolved build at fight start
+ * (persistent buffs folded, no transient combat buff) — for the monster-stat-
+ * check "player build" diagnostic. Same worker path as a normal sim.
+ *
+ * @param {Object} params - Same shape as `runLabyrinthSimulation` params
+ * @returns {Promise<Object|null>} The player's `combatDetails`, or null
+ */
+export async function runPlayerStatProbe(params) {
+    const { gameData, playerDTOs, zoneHrid, monsterHrid, roomLevel, crates, communityBuffs, labyrinthCombatBuffs } =
+        params;
+    const extraBuffs = [...buildExtraBuffs(communityBuffs), ...(labyrinthCombatBuffs || [])];
+    const taskId = ++taskIdCounter;
+    const message = {
+        type: 'start_simulation',
+        taskId,
+        gameData,
+        playerDTOs,
+        zoneHrid,
+        difficultyTier: 0,
+        simulationTimeLimit: 3600 * 1e9,
+        extraBuffs,
+        isTaskFight: false,
+        capturePlayerDetails: true,
+        labyrinth: {
+            monsterHrid,
+            roomLevel,
+            crates: crates || [],
+            liveState: null,
+            fullAbilities: true,
+        },
+        // One fight is enough — the build is snapshot at its start.
+        precision: { maxTrials: 1, minTrials: 1 },
+        seed: deriveSeed(1, 0),
+    };
+    const result = await runWorkerChunk(message);
+    return result?.playerCombatDetails || null;
+}
+
+/**
  * Terminate all active simulation workers and reject pending promises.
  */
 export function cancelSimulation() {

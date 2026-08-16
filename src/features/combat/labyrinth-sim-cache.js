@@ -13,7 +13,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { buildGameDataPayload, getCommunityBuffs } from '../combat-sim/combat-sim-adapter.js';
-import { runLabyrinthSimulation, runBlindBuffProbe } from '../combat-sim/combat-sim-runner.js';
+import { runLabyrinthSimulation, runBlindBuffProbe, runPlayerStatProbe } from '../combat-sim/combat-sim-runner.js';
 import { extractMonsterAttacks, summarizeSimAttacks, compareIncoming } from './labyrinth-uptime-harness.js';
 import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import loadoutSnapshot from './loadout-snapshot.js';
@@ -160,6 +160,35 @@ export const simCacheMethods = {
         const real = extractMonsterAttacks(ticks);
         const sim = summarizeSimAttacks(simResult?.attacks?.[monsterHrid]?.[playerHrid]);
         return { comparison: compareIncoming(real, sim), real, sim };
+    },
+
+    /**
+     * Build the sim's player for the current loadout and return its resolved
+     * combatDetails at fight start — for the "player build" stat check. Room
+     * level does not affect the player, but a monster is needed to run the fight.
+     * @param {string} monsterHrid
+     * @param {number} roomLevel
+     * @returns {Promise<Object|null>} The sim player's combatDetails
+     */
+    async simPlayerDetails(monsterHrid, roomLevel) {
+        const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
+        const dto = this.buildLabyrinthPlayerDTO(loadoutId);
+        if (!dto) return null;
+        try {
+            return await runPlayerStatProbe({
+                gameData: buildGameDataPayload(),
+                playerDTOs: [dto],
+                zoneHrid: '/actions/combat/fly',
+                monsterHrid,
+                roomLevel,
+                crates: this.getCrateHrids(),
+                communityBuffs: getCommunityBuffs(),
+                labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
+            });
+        } catch (error) {
+            console.error('[LabyrinthSimCache] Player stat probe failed:', error);
+            return null;
+        }
     },
 
     /**
