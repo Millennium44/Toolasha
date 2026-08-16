@@ -96,6 +96,7 @@ function persist() {
  * @param {number} [attempt.playerDamageTaken] - Gross damage you took (summed drops)
  * @param {number} [attempt.playerHits] - Your swings that landed on the monster
  * @param {number} [attempt.playerMisses] - Your swings that missed
+ * @param {number} [attempt.playerCrits] - Your landed swings that critted
  * @param {string} [attempt.fingerprint] - The gear the fight was fought in
  */
 export function noteAttempt(attempt) {
@@ -111,6 +112,7 @@ export function noteAttempt(attempt) {
     const grossTaken = Number(attempt.playerDamageTaken);
     const playerHits = Number(attempt.playerHits);
     const playerMisses = Number(attempt.playerMisses);
+    const playerCrits = Number(attempt.playerCrits);
 
     attempts.push({
         monsterHrid: String(attempt.monsterHrid),
@@ -130,6 +132,9 @@ export function noteAttempt(attempt) {
         // tell "no swing data" from "zero hits landed"
         playerHits: Number.isFinite(playerHits) && playerHits >= 0 ? playerHits : null,
         playerMisses: Number.isFinite(playerMisses) && playerMisses >= 0 ? playerMisses : null,
+        // Null on recordings from before crits were tracked, so a rate reads as
+        // "unknown" rather than "zero crits"
+        playerCrits: Number.isFinite(playerCrits) && playerCrits >= 0 ? playerCrits : null,
         fingerprint: attempt.fingerprint ? String(attempt.fingerprint) : null,
     });
 

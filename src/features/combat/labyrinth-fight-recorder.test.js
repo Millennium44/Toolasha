@@ -84,6 +84,14 @@ describe('labyrinth fight recorder', () => {
         expect(b.playerMisses).toBeNull();
     });
 
+    test('crit counts are kept, and null on recordings without them', () => {
+        recorder.noteAttempt(attempt({ playerHits: 40, playerCrits: 12 }));
+        recorder.noteAttempt(attempt()); // no crit count
+        const [a, b] = recorder.recordedAttempts();
+        expect(a.playerCrits).toBe(12);
+        expect(b.playerCrits).toBeNull();
+    });
+
     test('the buffer is bounded to the newest 500', () => {
         for (let i = 0; i < 550; i++) recorder.noteAttempt(attempt());
         expect(recorder.recordingStatus().attempts).toBe(500);

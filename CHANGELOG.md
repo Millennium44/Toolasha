@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab recorder: keep your crit count per fight
+
+The attribution decoder already worked out how many of your swings critted, but the recorder threw it away. Now each recorded attempt keeps `playerCrits`, so a replay export carries your real crit rate. That's the tie-breaker for a damage-per-hit shortfall: a real crit rate below what your crit buffs imply means the sim over-credits crits, while a matching one points the soft-hit gap at the monster's mitigation instead. Null on older recordings, so a rate reads as "unknown" rather than "zero".
+
 ### Uptime harness: stop mislabelling auto-attacks as the last special
 
 The real-vs-sim attribution held the last special the monster cast and, because the payload only names a special on its cast tick (marking ordinary swings with `isAutoAtk`), never let go of it — so every auto-attack after a special inherited that special's label. The "real" column then reported special cast-shares the cooldowns physically can't produce (e.g. cyclops autoAttack at ~47% when the 20s cooldowns floor it near ~60%), which sent a bug hunt chasing a sim cadence problem that wasn't there. Auto-attack ticks now reset the label.
