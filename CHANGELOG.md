@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth path: an isolated cleared tile is no longer a free start
+
+A tile shrouded deep in the floor clears without you having walked to it, so it sits cut off from the entrance's cleared region. The planner treated every cleared tile as a free starting point, so the exit route "teleported" onto such a tile and skipped the rooms you'd actually fight through to reach it. Sources are now only the cleared ground flood-connected to the entrance; an isolated clear stays free to walk through once reached, but the rooms leading to it are costed.
+
 ### Labyrinth path: a just-shrouded tile no longer routes back through itself
 
 Shrouding a tile is a server round-trip; resimming before the update lands read the tile still uncleared and planned back through it. Cleared status is now carried forward from the previous grid (same floor only — descending resets it), so a tile the tracker already knows is cleared stays free traversal.

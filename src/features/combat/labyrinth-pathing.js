@@ -78,12 +78,6 @@ export function computeLabyrinthPath(tiles, cols) {
     const targetIdx = target >= 0 ? target : tiles.findIndex((t) => t?.isExit);
     if (targetIdx < 0) return null;
 
-    const sources = [];
-    for (let i = 0; i < tiles.length; i++) {
-        if (tiles[i]?.cleared || tiles[i]?.isEntrance) sources.push(i);
-    }
-    if (!sources.length) return null;
-
     const neighbors = (idx) => {
         const x = idx % cols;
         const out = [];
@@ -93,6 +87,48 @@ export function computeLabyrinthPath(tiles, cols) {
         if (idx + cols < tiles.length) out.push(idx + cols);
         return out;
     };
+
+    // Sources are the cleared ground you can actually stand on right now: the
+    // region flood-connected to the entrance over cleared tiles. A cleared tile
+    // cut off from the entrance by uncleared rooms — a tile shrouded deep in the
+    // floor, most often — is NOT a free starting point. You can only reach it by
+    // paying for the rooms between it and where you already are; treating every
+    // cleared tile as a free source let the exit route "teleport" onto an
+    // isolated shroud and skip the rooms needed to get there. Such a tile is
+    // still free to *traverse* once reached (enterCost stays 0 for any cleared
+    // tile); it just cannot seed the search.
+    //
+    // The flood roots at the entrance (index 0 always carries the flag in a real
+    // grid); a grid with no entrance at all roots at its cleared tiles instead,
+    // so the region is still whatever ground connects to a legitimate origin.
+    const isFreeGround = (idx) => tiles[idx] && (tiles[idx].cleared || tiles[idx].isEntrance);
+    const roots = [];
+    for (let i = 0; i < tiles.length; i++) {
+        if (tiles[i]?.isEntrance) roots.push(i);
+    }
+    if (!roots.length) {
+        for (let i = 0; i < tiles.length; i++) {
+            if (tiles[i]?.cleared) roots.push(i);
+        }
+    }
+    const sources = [];
+    const seenSource = new Array(tiles.length).fill(false);
+    for (const root of roots) {
+        if (seenSource[root]) continue;
+        seenSource[root] = true;
+        const queue = [root];
+        while (queue.length) {
+            const cur = queue.shift();
+            sources.push(cur);
+            for (const nb of neighbors(cur)) {
+                if (!seenSource[nb] && isFreeGround(nb)) {
+                    seenSource[nb] = true;
+                    queue.push(nb);
+                }
+            }
+        }
+    }
+    if (!sources.length) return null;
 
     // Reveal tie-break: among routes tying on shrouds and torches, prefer the
     // one that uncovers the most unknown rooms rather than Dijkstra's arbitrary
