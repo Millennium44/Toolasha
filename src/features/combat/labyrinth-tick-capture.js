@@ -35,6 +35,14 @@ let ticks = [];
 let context = null;
 let handlers = null;
 let autoStopTimer = null;
+/** The monster this capture is for; a fresh fight against a different one ends it */
+let targetMonster = null;
+
+/** The first monster's hrid in a `new_battle` payload, or null. */
+function firstMonsterHrid(payload) {
+    const monsters = Array.isArray(payload?.monsters) ? payload.monsters : Object.values(payload?.monsters || {});
+    return monsters[0]?.hrid || null;
+}
 
 /** @returns {boolean} Whether a capture is running */
 export function isCapturing() {
@@ -64,7 +72,21 @@ function labelFromBattle(payload) {
  */
 function push(type, payload) {
     if (!capturing) return;
-    if (type === 'new_battle') labelFromBattle(payload);
+    if (type === 'new_battle') {
+        // End the capture when the fight moves off the monster it is for. Clearing
+        // the room (or dying out of the labyrinth) sends you to the next fight — a
+        // different monster, or your main-game action — and recording that pollutes
+        // the file with a fight the harness is not comparing against. The fights
+        // captured so far are kept; retries against the same monster keep recording.
+        if (targetMonster) {
+            const hrid = firstMonsterHrid(payload);
+            if (hrid && hrid !== targetMonster) {
+                stopCapture();
+                return;
+            }
+        }
+        labelFromBattle(payload);
+    }
     ticks.push({ at: Date.now() - startedAt, type, payload });
     // Keep the newest: a long capture that overflows should hold the recent
     // fight, not the one it opened on
@@ -75,13 +97,19 @@ function push(type, payload) {
  * Start recording the raw combat feed.
  *
  * @param {Object} [ctx] - What is being fought, for the file — `{ monsterHrid, roomLevel }`
+ * @param {Object} [opts]
+ * @param {boolean} [opts.stopOnLeave=true] - End the capture when a fight against
+ *   a different monster begins (so clearing the room doesn't record what comes
+ *   after). Only applies when `ctx.monsterHrid` is set; a general capture with no
+ *   target monster records until stopped.
  */
-export function startCapture(ctx = null) {
+export function startCapture(ctx = null, { stopOnLeave = true } = {}) {
     stopCapture();
     capturing = true;
     startedAt = Date.now();
     ticks = [];
     context = ctx || null;
+    targetMonster = stopOnLeave ? ctx?.monsterHrid || null : null;
 
     // Both sides' health/mana/counters, and the message that names the units and
     // their abilities. `battle_updated` is trimmed to what a fight reads; the
@@ -115,6 +143,7 @@ export function clearCapture() {
     ticks = [];
     startedAt = 0;
     context = null;
+    targetMonster = null;
 }
 
 /**

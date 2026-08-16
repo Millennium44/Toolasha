@@ -89,3 +89,37 @@ describe('labyrinth tick capture', () => {
         expect(capture.captureStatus().ticks).toBe(0);
     });
 });
+
+describe('the capture ends when the fight leaves its monster', () => {
+    test('a fresh fight against a different monster stops it, keeping what was captured', () => {
+        capture.startCapture({ monsterHrid: '/monsters/cyclops', roomLevel: 206 });
+        emit('new_battle', { monsters: [{ hrid: '/monsters/cyclops', name: 'Cyclops' }], players: [] });
+        emit('battle_updated', battle);
+        const kept = capture.captureFile().ticks.length;
+        expect(capture.isCapturing()).toBe(true);
+
+        // Room cleared → the game moves on to the next fight (a different monster
+        // or your main-game action). The capture ends without recording it.
+        emit('new_battle', { monsters: [{ hrid: '/monsters/gobo_stabber' }], players: [] });
+        expect(capture.isCapturing()).toBe(false);
+        emit('battle_updated', battle); // ignored — stopped
+        expect(capture.captureFile().ticks.length).toBe(kept);
+    });
+
+    test('a retry against the same monster keeps recording', () => {
+        capture.startCapture({ monsterHrid: '/monsters/cyclops', roomLevel: 206 });
+        emit('new_battle', { monsters: [{ hrid: '/monsters/cyclops' }], players: [] });
+        emit('battle_updated', battle);
+        emit('new_battle', { monsters: [{ hrid: '/monsters/cyclops' }], players: [] }); // died, retry
+        emit('battle_updated', battle);
+        expect(capture.isCapturing()).toBe(true);
+        expect(capture.captureFile().ticks.length).toBe(4);
+    });
+
+    test('stopOnLeave:false records across monsters (a general capture)', () => {
+        capture.startCapture({ monsterHrid: '/monsters/cyclops' }, { stopOnLeave: false });
+        emit('new_battle', { monsters: [{ hrid: '/monsters/cyclops' }], players: [] });
+        emit('new_battle', { monsters: [{ hrid: '/monsters/other' }], players: [] });
+        expect(capture.isCapturing()).toBe(true);
+    });
+});
