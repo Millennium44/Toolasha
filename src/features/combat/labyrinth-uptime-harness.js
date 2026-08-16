@@ -11,10 +11,13 @@
  * decomposes the player's outgoing damage — but per ability, and from two
  * sources put side by side:
  *
- *   - **Real**, from a tick capture: each time the monster's attack counter
- *     rises, an attack landed; the ability it was preparing the tick before
- *     names it, and the player's health drop is the damage. Health falling with
- *     no attack-counter rise is a damage-over-time tick.
+ *   - **Real**, from a tick capture: an incoming attack is the *player's*
+ *     `dmgCounter` rising (immune to regen, and exact even when the health
+ *     snapshot lags the swing); the monster's attack counter names which swing it
+ *     pays off, labelled by the ability the monster was preparing before it, and
+ *     the player's health drop that tick is the damage. A counter rise with no
+ *     swing waiting is a damage-over-time tick. (See `damage-attribution.js` — the
+ *     same counter-based attribution, pointed at the monster→player direction.)
  *   - **Sim**, from `SimResult.attacks[monster][player]`, which already records a
  *     per-ability damage histogram — no sim instrumentation needed.
  *
@@ -48,13 +51,37 @@ export function extractMonsterAttacks(ticks, opts = {}) {
     const rec = (ability) =>
         (byAbility[ability] = byAbility[ability] || { casts: 0, hits: 0, misses: 0, damage: 0, samples: [] });
 
-    let prevAtk;
-    let prevAbility;
+    // Prefer the player's damage counter. A resolved incoming attack is
+    // `dmgCounter` **rising** — which, unlike a health drop, is immune to regen,
+    // survives the health snapshot lagging the swing (the counter is exact even
+    // when the HP number that tick is stale), and states a miss (`dmgCounter` up,
+    // health flat) as plainly as a hit. The monster's own `atkCounter` names the
+    // swing but its damage lands a tick or two later for a cast ability, so the
+    // swings queue up and each is paid off by the next resolution (FIFO). This is
+    // the same signal the damage panel and calibration replay attribute from,
+    // pointed at the monster→player direction. When the capture lacks the counter
+    // we fall back to health drops, labelling by the ability prepared before.
+    const hasDmgCounter = (ticks || []).some((t) => Number.isFinite(Number(t?.payload?.pMap?.[pi]?.dmgCounter)));
+
+    let prevMatk;
+    let prevMAbility;
     let prevPHP;
+    let prevPdmg;
     let firstAt;
     let lastAt;
     let fights = 0;
     let sawAttack = false;
+    // Swings awaiting their resolution, oldest first — each holds the ability the
+    // monster was preparing when it swung.
+    const pending = [];
+
+    const resetFight = () => {
+        prevMatk = undefined;
+        prevMAbility = undefined;
+        prevPHP = undefined;
+        prevPdmg = undefined;
+        pending.length = 0;
+    };
 
     for (const tick of ticks || []) {
         const at = tick?.at;
@@ -64,35 +91,73 @@ export function extractMonsterAttacks(ticks, opts = {}) {
         const monster = tick?.payload?.mMap?.[mi];
         const player = tick?.payload?.pMap?.[pi];
         if (!monster) {
-            // Monster gone between fights — drop the running counters so the next
-            // spawn's first counter reading is not read as a burst of attacks.
-            prevAtk = undefined;
-            prevAbility = undefined;
+            // Monster gone between fights, or a brief render gap: the health
+            // readings around it snap to stale/max values, so drop ALL running
+            // baselines — health included — and re-seed cleanly on the next
+            // spawn rather than reading a giant drop off a corrupted baseline.
+            resetFight();
             continue;
         }
 
-        const atk = Number(monster.atkCounter);
+        const matk = Number(monster.atkCounter);
         const php = player && Number.isFinite(Number(player.cHP)) ? Number(player.cHP) : null;
-        const drop = prevPHP != null && php != null ? prevPHP - php : 0;
+        const pdmg = player && Number.isFinite(Number(player.dmgCounter)) ? Number(player.dmgCounter) : null;
 
-        if (prevAtk !== undefined && Number.isFinite(atk)) {
-            if (atk < prevAtk) {
-                // Counter reset — a new fight (respawn).
-                fights += 1;
-            } else if (atk > prevAtk) {
-                const ability = prevAbility || monster.abilityHrid || 'autoAttack';
-                const r = rec(ability);
-                r.casts += atk - prevAtk;
+        // Respawn — the monster's counter reset. New fight; drop the baselines so
+        // the reset is not read as a burst of attacks.
+        if (prevMatk !== undefined && Number.isFinite(matk) && matk < prevMatk) {
+            fights += 1;
+            resetFight();
+        }
+
+        if (hasDmgCounter) {
+            // The monster's swings drive cast share, labelled by the ability it
+            // was preparing before the swing (the hit was cast by what came
+            // before it, not the next thing already being wound up).
+            if (prevMatk !== undefined && Number.isFinite(matk) && matk > prevMatk) {
+                const label = prevMAbility || monster.abilityHrid || 'autoAttack';
+                for (let n = 0; n < matk - prevMatk; n++) {
+                    rec(label).casts += 1;
+                    pending.push(label);
+                }
+                sawAttack = true;
+            }
+            // The attacks that actually connected this tick, from the exact
+            // counter. Each pays off the oldest pending swing; a resolution with
+            // no swing waiting is a damage-over-time tick.
+            if (prevPdmg !== undefined && pdmg !== null && pdmg > prevPdmg) {
+                const count = pdmg - prevPdmg;
+                const drop = prevPHP != null && php != null ? Math.max(0, prevPHP - php) : 0;
+                const per = count > 0 ? drop / count : 0; // even split across a merged tick
+                for (let n = 0; n < count; n++) {
+                    const label = pending.length ? pending.shift() : 'damageOverTime';
+                    const r = rec(label);
+                    if (per > 0) {
+                        r.hits += 1;
+                        r.damage += per;
+                        r.samples.push(per);
+                    } else {
+                        r.misses += 1;
+                    }
+                }
+                sawAttack = true;
+            }
+        } else {
+            // Health-drop fallback, for a capture with no damage counter.
+            const drop = prevPHP != null && php != null ? prevPHP - php : 0;
+            if (prevMatk !== undefined && Number.isFinite(matk) && matk > prevMatk) {
+                const label = prevMAbility || monster.abilityHrid || 'autoAttack';
+                const r = rec(label);
+                r.casts += matk - prevMatk;
                 if (drop > 0) {
                     r.hits += 1;
                     r.damage += drop;
                     r.samples.push(drop);
                 } else {
-                    r.misses += atk - prevAtk;
+                    r.misses += matk - prevMatk;
                 }
                 sawAttack = true;
-            } else if (drop > 0) {
-                // Health fell with no attack this tick → damage over time.
+            } else if (prevMatk !== undefined && drop > 0) {
                 const r = rec('damageOverTime');
                 r.hits += 1;
                 r.damage += drop;
@@ -100,9 +165,10 @@ export function extractMonsterAttacks(ticks, opts = {}) {
             }
         }
 
-        prevAtk = Number.isFinite(atk) ? atk : prevAtk;
-        if (monster.abilityHrid) prevAbility = monster.abilityHrid;
+        if (Number.isFinite(matk)) prevMatk = matk;
+        if (monster.abilityHrid) prevMAbility = monster.abilityHrid;
         if (php != null) prevPHP = php;
+        if (pdmg != null) prevPdmg = pdmg;
     }
 
     return { durationMs: (lastAt ?? 0) - (firstAt ?? 0), fights: fights + (sawAttack ? 1 : 0), byAbility };
@@ -175,11 +241,15 @@ export function compareIncoming(real, sim, tolerancePct = 15) {
         const s = side(sim?.byAbility?.[ability], simT);
         // The headline gap: how the ability's share of incoming damage differs.
         const dmgShareGap = (s?.dmgSharePct ?? 0) - (r?.dmgSharePct ?? 0);
+        // Cadence, read straight off the attack counter — the reliable half. A
+        // damage-share gap on an ability whose cast share matches is a magnitude
+        // question (per-cast damage), not a rotation one.
+        const castShareGap = (s?.castSharePct ?? 0) - (r?.castSharePct ?? 0);
         let verdict = 'ok';
         if (!s) verdict = 'sim-missing';
         else if (!r) verdict = 'sim-extra';
         else if (Math.abs(dmgShareGap) >= tolerancePct) verdict = dmgShareGap < 0 ? 'sim-under' : 'sim-over';
-        return { ability: String(ability).split('/').pop(), real: r, sim: s, dmgShareGap, verdict };
+        return { ability: String(ability).split('/').pop(), real: r, sim: s, dmgShareGap, castShareGap, verdict };
     });
 
     rows.sort((a, b) => (b.real?.dmgSharePct ?? 0) - (a.real?.dmgSharePct ?? 0));

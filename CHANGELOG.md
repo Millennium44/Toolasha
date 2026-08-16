@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim: uptime harness now attributes real incoming damage from the damage counter
+
+The harness's real side used to read the monster's attack counter against the player's **health drop**, which the tick feed corrupts: a cast ability's damage lands a tick or two after the swing (so the swing tick read as a miss and the damage piled onto whatever was casting when it finally showed), regeneration and a monster-"gone" render gap (health snapping to max) invented drops, and a 2s-cast ability's hit got mis-credited to the filler. On Salamander the real smoke_burst share swung 4%→26% across fights while the sim held steady — a diagnostic artifact, not a sim gap. It now detects an incoming attack from the **player's `dmgCounter` rising** (immune to regen, exact when the health snapshot lags), pairs each resolution to the monster's swing through a FIFO so a delayed hit lands on the ability that cast it, treats a counter rise with no pending swing as damage-over-time, and resets all baselines across a monster-gone gap so a stale health reading can't inflate the next hit — the same counter-based attribution the damage panel uses, pointed at the monster→player direction. Falls back to health drops when a capture lacks the counter. `compareIncoming` now also reports `castShareGap`, so a matching cast% with a damage gap reads as a per-cast magnitude issue rather than cadence.
+
 ### Lab Sim: `Toolasha.Debug.uptimeTrace()` — raw tick trace of the armed capture
 
 Companion to the uptime harness for auditing its **real-side attribution**. Prints each captured tick — the monster's prepared `abilityHrid`, its attack counter, the player's HP, and the HP drop — with attack-counter rises flagged, so you can see where a hit actually lands relative to the ability label. The harness names a real hit by the previous tick's `abilityHrid`, which mis-credits an ability whose damage lands as the label flips to the next cast (e.g. a 2s-cast nuke); this trace makes that offset visible.

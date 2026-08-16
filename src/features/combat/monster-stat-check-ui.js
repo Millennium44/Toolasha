@@ -943,7 +943,7 @@ class MonsterStatCheckPanel {
                 const key = document.createElement('div');
                 key.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
                 key.innerHTML =
-                    '<span style="color:#e56b6b;">⚠ sim-under</span> = sim gives this ability a smaller share of incoming damage than reality — a cadence or buff-uptime gap. Hover a row for cast% and mean/cast.';
+                    '<span style="color:#e56b6b;">⚠ sim-under</span> = sim gives this ability a smaller share of incoming damage than reality. Hover for cast% and mean/cast: a matching cast% with a damage gap is a per-cast magnitude (buff-uptime) issue, a cast% gap is cadence.';
                 wrap.appendChild(key);
             }
         }
