@@ -47,19 +47,24 @@ const BEACON_SEARCH_WIDE_LIMIT = 6;
 const PATH_SHROUD_WEIGHT = 1e6;
 
 /**
- * Compute the cheapest route from the cleared region (or the entrance) to the
- * floor exit over a flat labyrinth grid. Priorities, lexicographic: fewest
- * shrouds (a shroud instantly clears a room, spent on uncleared tiles below
- * the clearable threshold), then most treasure rooms, then fewest torches
- * (uncleared tiles revealed). Treasure rooms are grafted onto the route
- * greedily whenever they can be reached without an extra shroud — a chest is
- * always worth extra torches, never an extra shroud.
+ * Compute the route from the cleared region (or the entrance) to the floor exit
+ * over a flat labyrinth grid. Priorities, lexicographic: fewest shrouds (a
+ * shroud instantly clears a room, spent on uncleared tiles below the clearable
+ * threshold), then the most unknown rooms uncovered, then fewest torches
+ * (uncleared tiles walked). Revealing more of the floor ranks above torches
+ * because an unknown room may hide a chest the planner cannot yet see — so the
+ * plan will step aside to uncover more rooms, but never spends an extra shroud
+ * to do it. Treasure rooms are then grafted on greedily whenever they can be
+ * reached without an extra shroud — a chest is always worth extra torches,
+ * never an extra shroud.
  *
- * Finally, among routes that tie on all of the above, the one that uncovers the
- * most unknown rooms wins, via a bounded sub-torch bonus (below) — so it only
- * ever separates otherwise-equal routes and never trades a torch or a shroud
- * for a reveal. This replaces Dijkstra's arbitrary wall-hugging pick between
- * equal-length paths with one that opens up more of the floor.
+ * The reveal objective sits above the shortest-path cost, not inside it: a
+ * single Dijkstra cost cannot rank reveals above torches without negative edges
+ * (a room can uncover several unknowns at once). So the base min-shroud route is
+ * compared against routes that detour through one revealing room, and the one
+ * uncovering the most *unique* unknown rooms (then fewest torches) wins — one
+ * detour at a time, so it opens up the floor without carpet-revealing. A
+ * sub-torch reveal bonus still breaks ties inside each Dijkstra sub-path.
  *
  * Pure function so the routing logic is testable without DOM or sims.
  * @param {Array<Object|null>} tiles - Flat grid, null = wall; entries carry
@@ -161,6 +166,61 @@ export function computeLabyrinthPath(tiles, cols) {
     const base = dijkstra(sources, routeSet);
     if (!Number.isFinite(base.dist[targetIdx])) return null;
     for (const idx of tracePath(base.prev, targetIdx, sourceSet)) routeSet.add(idx);
+
+    // Reveal-value candidate selection. A shortest-path cost cannot itself rank
+    // "reveal more rooms" above torches without going negative (a room can
+    // uncover several unknowns, which would make an edge cheaper than free), so
+    // the reveal objective lives one level up: keep the min-shroud base route,
+    // then compare it against routes that detour through one revealing room and
+    // take whichever uncovers the most *unique* unknown rooms, then the fewest
+    // torches. One detour at a time bounds it — the plan will step aside to
+    // reveal more of the floor (which may hide a chest the planner cannot yet
+    // see), but never carpet-reveals. Reveals rank above torches, never a shroud.
+    const routeTiles = (set) => [...set].filter((i) => tiles[i] && !tiles[i].cleared && !tiles[i].isEntrance);
+    const shroudsOf = (set) => routeTiles(set).filter((i) => tiles[i].needsShroud).length;
+    const torchesOf = (set) => routeTiles(set).length;
+    // Distinct unknown rooms a route uncovers: each route room, and its unknown
+    // neighbours, counted once via a set (no double-count of a shared corner).
+    const uniqueReveals = (set) => {
+        const seen = new Set();
+        for (const idx of routeTiles(set)) {
+            if (tiles[idx].isUnknown) seen.add(idx);
+            for (const nb of neighbors(idx)) if (tiles[nb]?.isUnknown) seen.add(nb);
+        }
+        return seen.size;
+    };
+    // Cheapest route from the cleared region to the exit that passes through one
+    // room, or null if that room or the exit beyond it is unreachable.
+    const routeThrough = (waypoint) => {
+        const toWp = dijkstra(sources, new Set());
+        if (!Number.isFinite(toWp.dist[waypoint])) return null;
+        const set = new Set(tracePath(toWp.prev, waypoint, sourceSet));
+        const stop = new Set([...sourceSet, ...set]);
+        const toExit = dijkstra([...sources, ...set], set);
+        if (!Number.isFinite(toExit.dist[targetIdx])) return null;
+        for (const idx of tracePath(toExit.prev, targetIdx, stop)) set.add(idx);
+        return set;
+    };
+
+    const minShrouds = shroudsOf(routeSet);
+    let bestReveals = uniqueReveals(routeSet);
+    let bestTorches = torchesOf(routeSet);
+    for (let r = 0; r < tiles.length; r++) {
+        const t = tiles[r];
+        if (!t || t.cleared || t.isEntrance || sourceSet.has(r)) continue;
+        // Only rooms that would actually uncover something are worth a detour.
+        if (!t.isUnknown && !neighbors(r).some((nb) => tiles[nb]?.isUnknown)) continue;
+        const cand = routeThrough(r);
+        if (!cand || shroudsOf(cand) !== minShrouds) continue; // never an extra shroud
+        const reveals = uniqueReveals(cand);
+        const torches = torchesOf(cand);
+        if (reveals > bestReveals || (reveals === bestReveals && torches < bestTorches)) {
+            bestReveals = reveals;
+            bestTorches = torches;
+            routeSet.clear();
+            for (const idx of cand) routeSet.add(idx);
+        }
+    }
 
     // Graft on every treasure room reachable without an extra shroud,
     // cheapest branch (fewest torches) first
