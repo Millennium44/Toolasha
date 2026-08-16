@@ -53,6 +53,9 @@ function median(values) {
 /** The sim's own run-to-run wobble, folded into every margin so a within-noise call stays honest */
 const SIM_NOISE_FLOOR_PCT = 2;
 
+/** Idle seconds the sim inserts between fights (the engine's RESTART_INTERVAL), excluded from per-fight rates */
+const SIM_RESTART_SECONDS = 3;
+
 /** 95% of a normal sits inside this many standard errors of the mean */
 const Z95 = 1.96;
 
@@ -128,8 +131,18 @@ export function deviationPct(observed, predicted) {
  */
 function exchange(attempt) {
     if (Number.isFinite(attempt.monsterDamage) && Number.isFinite(attempt.playerDamageTaken)) {
+        // Your damage output: the larger of the tick-summed drops and the
+        // monster's endpoint HP loss. The summed feed is 3 Hz, so hits that
+        // merged into one frame go uncounted — a few % low. The monster does not
+        // regen through a lab fight, so its total HP lost is exact damage you
+        // dealt, a firmer floor. (A monster that healed would push its summed
+        // drops above the endpoint loss, and the max keeps that instead.) Damage
+        // you TOOK stays the summed figure: you regen, so an endpoint understates.
+        const endpointDealt = attempt.cleared
+            ? Number(attempt.monsterMaxHp) || 0
+            : Math.max(0, (Number(attempt.monsterMaxHp) || 0) - (Number(attempt.monsterHpEnd) || 0));
         return {
-            monsterDamage: Math.max(0, attempt.monsterDamage),
+            monsterDamage: Math.max(0, attempt.monsterDamage, endpointDealt),
             playerTaken: Math.max(0, attempt.playerDamageTaken),
         };
     }
@@ -268,6 +281,15 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
     const dealt = Number(simResult.totalDamageDealt?.[playerHrid]) || 0;
     const taken = Number(simResult.totalDamageDealt?.[monsterHrid]) || 0;
 
+    // The sim spends SIM_RESTART_SECONDS idle between fights (the engine's
+    // RESTART_INTERVAL), so simSeconds is longer than time actually spent
+    // fighting. The observed side measures pure fight duration (the recorder's
+    // per-fight seconds), so the rates must divide by the same: in-fight seconds,
+    // not wall-clock. Otherwise the sim reads slower-per-fight and lower-dps than
+    // it truly fights, biasing the comparison the sim's way.
+    const fightSeconds = Math.max(0, simSeconds - attempts * SIM_RESTART_SECONDS);
+    const rateSeconds = fightSeconds > 0 ? fightSeconds : simSeconds;
+
     // Your swings on the monster, from the sim's per-ability attack tally:
     // `attacks[you][monster][ability]` is `{miss: n, <damage>: n, …}`, so the
     // miss key is misses and every other key is a landed hit
@@ -282,9 +304,9 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
     }
 
     return {
-        dps: dealt / simSeconds,
-        takenPerSecond: taken / simSeconds,
-        secondsPerFight: attempts > 0 ? simSeconds / attempts : 0,
+        dps: dealt / rateSeconds,
+        takenPerSecond: taken / rateSeconds,
+        secondsPerFight: attempts > 0 ? fightSeconds / attempts : 0,
         clearRate: attempts > 0 ? wins / attempts : 0,
         hitRate: simHits + simMisses > 0 ? simHits / (simHits + simMisses) : null,
         dmgPerHit: simHits > 0 ? dealt / simHits : null,

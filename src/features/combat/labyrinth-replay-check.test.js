@@ -103,7 +103,7 @@ describe('deriveObserved', () => {
 });
 
 describe('predictedFromSim', () => {
-    test('reads dealt off the player key and taken off the monster key', () => {
+    test('reads dealt off the player key and taken off the monster key, over in-fight seconds', () => {
         const predicted = predictedFromSim(
             {
                 simulatedTime: 100e9,
@@ -113,10 +113,12 @@ describe('predictedFromSim', () => {
             },
             { playerHrid: 'player1', monsterHrid: '/monsters/cyclops' }
         );
-        expect(predicted.dps).toBeCloseTo(14, 5);
-        expect(predicted.takenPerSecond).toBeCloseTo(9, 5);
+        // 100s wall-clock − 2 fights × 3s restart = 94s actually fighting; the
+        // rates divide by that, matching the observed side's pure fight duration.
+        expect(predicted.dps).toBeCloseTo(1400 / 94, 5);
+        expect(predicted.takenPerSecond).toBeCloseTo(900 / 94, 5);
         expect(predicted.clearRate).toBe(0.5);
-        expect(predicted.secondsPerFight).toBe(50);
+        expect(predicted.secondsPerFight).toBe(47);
     });
 
     test('a sim with no time to divide by is not a prediction', () => {
