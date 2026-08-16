@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth path: revealing more of the floor now ranks above torches
+
+The route planner treated "uncover more unknown rooms" as a sub-torch tiebreak that could never justify a single extra step, so it would skip a one-step detour that reveals a new room — even though an unknown room may hide a chest the planner can't yet see. Reveals now rank second, above torches (a shroud still trumps everything): the min-shroud base route is compared against routes that detour through one revealing room, and whichever uncovers the most *unique* unknown rooms — then the fewest torches — wins. One detour at a time, so it opens the floor up without carpet-revealing, and it never spends an extra shroud to reveal. This is done above the shortest-path cost, since a single Dijkstra cost can't rank reveals over torches without negative edges.
+
 ### Lab Sim: fold guild-shrine max HP / MP buffs into the sim player
 
 The combat engine mapped ~35 buff types onto stats but never mapped `/buff_types/max_hitpoints` or `/buff_types/max_manapoints`, so the guild shrine's +2% max-HP / +2% max-MP bonuses (and any other source of those types) were silently dropped — the HP/MP formula ran on the equipment ratio alone. The player build check surfaced it: max HP 2295 live vs 2250 sim, the whole gap in the ratio term. `updateCombatDetails` now folds both buff types (ratio and flat) into the max HP/MP formulas, applied inline so a repeated recompute can't re-accumulate them. Small on its own; it also means guild-shrine HP/MP no longer skews clear-chance predictions.

@@ -103,14 +103,36 @@ describe('computeLabyrinthPath', () => {
         expect(path.route.has(5)).toBe(false); // right column, revealing nothing
     });
 
-    test('never lengthens the route just to reveal more', () => {
-        // The direct 2-torch path reveals nothing; a 4-torch detour would pass
-        // an unknown. Reveals are only a tie-break, never worth an extra torch,
-        // so the short route must win.
+    test('does not detour when the reveal is already on the way', () => {
+        // The unknown sits directly below the middle of the direct path, so the
+        // 2-torch route already uncovers it. A detour onto the unknown itself
+        // reveals nothing new, so the shorter route wins on torches.
         const { tiles, cols } = grid(['S.F', '.?.']);
         const path = computeLabyrinthPath(tiles, cols);
         expect(path.torches).toBe(2);
         expect(path.route.has(4)).toBe(false); // the unknown, only on the long way
+    });
+
+    test('detours to uncover a new unknown room even at an extra torch', () => {
+        // The direct S→F path reveals nothing (the unknown at 3 sits below the
+        // cleared start, off the direct line). A one-step-longer route down
+        // through room 3 uncovers it. Reveals now rank above torches, so the
+        // planner takes the detour despite spending no extra shroud.
+        const { tiles, cols } = grid(['S.F', '?..']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.shrouds).toBe(0);
+        expect(path.route.has(3)).toBe(true); // stepped down to reveal the unknown
+        expect(path.torches).toBe(3); // one more than the 2-torch direct route
+    });
+
+    test('will not spend an extra shroud to reveal more', () => {
+        // Revealing the unknown at 3 would require shrouding the wall-gap; the
+        // reveal objective sits below shrouds, so the plan declines it.
+        const { tiles, cols } = grid(['S.F', '#X#', '#?#']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.shrouds).toBe(0);
+        expect(path.route.has(7)).toBe(false); // the unknown behind the shroud
+        expect(path.torches).toBe(2);
     });
 
     test('returns null when no start or exit exists', () => {
