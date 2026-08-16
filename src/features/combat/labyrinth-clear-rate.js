@@ -2141,6 +2141,31 @@ class LabyrinthClearRate {
     }
 
     /**
+     * Re-sync the room grid from the game's live client state.
+     *
+     * `this.roomData` is only refreshed when a `labyrinth_updated` message
+     * arrives with `roomData`; a dropped message — common on a throttled or
+     * backgrounded mobile tab — leaves a since-cleared tile still reading
+     * uncleared, so the planned route re-enters a room already finished. The
+     * React state always holds the current grid (see `getLabyrinthFromReactState`),
+     * so read cleared status from there before pathing. No-op when the live grid
+     * is unavailable, so it can only make the cached data fresher, never blank it.
+     */
+    refreshRoomDataFromLive() {
+        try {
+            const labyrinth = this.getLabyrinthFromReactState();
+            const live = this.parseRoomData(labyrinth?.roomData);
+            if (!live) return;
+            this.roomData = live;
+            if (this._pathData == null && labyrinth?.pathData != null) this._pathData = labyrinth.pathData;
+            const floor = Math.floor(Number(labyrinth?.currentFloor));
+            if (Number.isFinite(floor) && floor >= 0) this.currentFloor = floor;
+        } catch (error) {
+            console.error('[LabyrinthClearRate] Live room-data refresh failed:', error);
+        }
+    }
+
+    /**
      * Debounced auto tile calculation (no-op unless the setting is enabled)
      */
     scheduleAutoTileCalc() {
@@ -3035,6 +3060,10 @@ class LabyrinthClearRate {
 
     async runPathCalculation() {
         if (this.pathCalcRunning) return;
+        // Trust the live client grid over the last websocket snapshot, which may
+        // have missed a tile's clear (dropped `labyrinth_updated`, common on
+        // mobile) and would otherwise route back through a room already cleared.
+        this.refreshRoomDataFromLive();
         if (!this.roomData) {
             this.setTileStatus('No labyrinth data');
             return;
@@ -3120,6 +3149,7 @@ class LabyrinthClearRate {
             // floor that no longer exists. Re-reading here is also what makes a
             // second press on an unchanged board give the same answer as the
             // first, and one on a board you have since shrouded give a new one.
+            this.refreshRoomDataFromLive();
             const fresh = Array.isArray(this.roomData) ? this.roomData.flat() : [];
             if (fresh.length !== flat.length) {
                 this.setTileStatus('The floor changed while the sims ran — press Path again');

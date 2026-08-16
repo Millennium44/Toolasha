@@ -2276,3 +2276,42 @@ describe('fullClearTime shows the real expected clear time, uncapped', () => {
         expect(labyrinthClearRate.fullClearTime(0)).toBe('—');
     });
 });
+
+describe('refreshRoomDataFromLive', () => {
+    afterEach(() => {
+        labyrinthClearRate.roomData = null;
+    });
+
+    test('replaces a stale cached grid with the live client grid', () => {
+        // The cached websocket snapshot still says the first tile is uncleared…
+        labyrinthClearRate.roomData = [[{ isCleared: false }, { isCleared: false }]];
+        const spy = vi.spyOn(labyrinthClearRate, 'getLabyrinthFromReactState').mockReturnValue({
+            roomData: [[{ isCleared: true }, { isCleared: false }]],
+            currentFloor: 2,
+        });
+        labyrinthClearRate.refreshRoomDataFromLive();
+        // …but the live grid knows it is cleared, and wins.
+        expect(labyrinthClearRate.roomData[0][0].isCleared).toBe(true);
+        expect(labyrinthClearRate.currentFloor).toBe(2);
+        spy.mockRestore();
+    });
+
+    test('is a no-op when the live grid is unavailable — never blanks the cache', () => {
+        const cached = [[{ isCleared: false }]];
+        labyrinthClearRate.roomData = cached;
+        const spy = vi.spyOn(labyrinthClearRate, 'getLabyrinthFromReactState').mockReturnValue(null);
+        labyrinthClearRate.refreshRoomDataFromLive();
+        expect(labyrinthClearRate.roomData).toBe(cached);
+        spy.mockRestore();
+    });
+
+    test('parses a JSON-string roomData from the live grid', () => {
+        labyrinthClearRate.roomData = null;
+        const spy = vi.spyOn(labyrinthClearRate, 'getLabyrinthFromReactState').mockReturnValue({
+            roomData: JSON.stringify([[{ isCleared: true }]]),
+        });
+        labyrinthClearRate.refreshRoomDataFromLive();
+        expect(labyrinthClearRate.roomData[0][0].isCleared).toBe(true);
+        spy.mockRestore();
+    });
+});
