@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Player build check: the sim column now carries your live offense buffs
+
+The player-build stat check reads the sim at fight start, before precision/fury are cast, so your buffed accuracy and max hit used to show as fat gaps against it. Your live offense buffs (precision, fury, a monster's damage shred on you) are now folded into the sim column by the engine's own formula, so those rows compare like-for-like, and the active effects are listed under the readout.
+
 ### Labyrinth path: rooms cleared only for a chest are coloured apart
 
 A room the plan enters purely to reach a treasure chest — an optional loot detour, not on the way out — now draws in amber instead of the green used for the exit-critical rooms, so you can see at a glance which fights you can skip if you don't want the chest.

@@ -85,7 +85,9 @@ export function activeBuffNames(combatBuffMap) {
 /** A buff type → the compared `combatDetails` keys it raises. */
 const BUFF_TYPE_TO_KEYS = {
     '/buff_types/accuracy': (style) => [`${style}AccuracyRating`],
+    '/buff_types/fury_accuracy': (style) => [`${style}AccuracyRating`],
     '/buff_types/damage': (style) => [`${style}MaxDamage`],
+    '/buff_types/fury_damage': (style) => [`${style}MaxDamage`],
     '/buff_types/evasion': () => EVASION_ROWS.map(([key]) => key),
     '/buff_types/armor': () => ['totalArmor'],
     '/buff_types/max_hitpoints': () => ['maxHitpoints'],
@@ -93,6 +95,82 @@ const BUFF_TYPE_TO_KEYS = {
     '/buff_types/nature_resistance': () => ['totalNatureResistance'],
     '/buff_types/fire_resistance': () => ['totalFireResistance'],
 };
+
+/** The offense buff types folded into the sim column, and where each lands. */
+const OFFENSE_BUFF_TYPES = {
+    '/buff_types/accuracy': 'accuracy',
+    '/buff_types/fury_accuracy': 'furyAccuracy',
+    '/buff_types/damage': 'damage',
+    '/buff_types/fury_damage': 'furyDamage',
+};
+
+/**
+ * Sum the ratio boosts a live buff map applies to the derived offense ratings.
+ * @param {Object} combatBuffMap - The unit's `combatBuffMap`
+ * @returns {{accuracy: number, furyAccuracy: number, damage: number, furyDamage: number}}
+ */
+export function offenseRatioBoosts(combatBuffMap) {
+    const sum = { accuracy: 0, furyAccuracy: 0, damage: 0, furyDamage: 0 };
+    for (const buff of Object.values(combatBuffMap || {})) {
+        const bucket = OFFENSE_BUFF_TYPES[buff?.typeHrid];
+        if (bucket) sum[bucket] += Number(buff?.ratioBoost) || 0;
+    }
+    return sum;
+}
+
+/**
+ * A copy of the sim's fight-start build with the live transient *offense* buffs
+ * folded into the derived accuracy and max-hit ratings, by the engine's own
+ * formula: `base × (1 + ratio) × (1 + furyRatio)` (see combat-unit.js
+ * updateCombatDetails). The sim snapshot is read before precision/fury are cast,
+ * so without this your buffed accuracy and damage read as fat gaps against it —
+ * the player check's whole "you vs sim" offense mismatch.
+ *
+ * Offense only, and deliberately so: accuracy and damage *ratio* buffs are
+ * combat-transient (precision, fury, a monster's damage-shred debuff on you) with
+ * no persistent source, so folding them into the snapshot cannot double-count.
+ * Max-HP, armour and resistance buffs do have persistent sources (the guild
+ * shrine's max HP, say) already baked into the snapshot, so they are left alone
+ * and stay covered by the softer `buffedStatKeys` leniency instead.
+ *
+ * @param {Object} simDetails - The sim player's fight-start `combatDetails`
+ * @param {Object} combatBuffMap - Your live `combatBuffMap`
+ * @param {string} styleKey - Your combat style short key
+ * @returns {Object} A folded copy, or `simDetails` unchanged when nothing applies
+ */
+export function foldOffenseBuffs(simDetails, combatBuffMap, styleKey) {
+    if (!simDetails) return simDetails;
+    const b = offenseRatioBoosts(combatBuffMap);
+    const accMul = (1 + b.accuracy) * (1 + b.furyAccuracy);
+    const dmgMul = (1 + b.damage) * (1 + b.furyDamage);
+    if (accMul === 1 && dmgMul === 1) return simDetails;
+    const out = { ...simDetails };
+    const accKey = `${styleKey}AccuracyRating`;
+    const dmgKey = `${styleKey}MaxDamage`;
+    if (Number.isFinite(Number(out[accKey]))) out[accKey] = Number(out[accKey]) * accMul;
+    if (Number.isFinite(Number(out[dmgKey]))) out[dmgKey] = Number(out[dmgKey]) * dmgMul;
+    return out;
+}
+
+/** Buff types whose gaps the player check explains, for the effects readout. */
+const EFFECT_BUFF_TYPES = new Set([...Object.keys(BUFF_TYPE_TO_KEYS)]);
+
+/**
+ * The names of the combat effects on a unit that move a compared stat — the ones
+ * that explain a player-build gap (precision, fury, a monster's shred on you),
+ * with the level-boost community/house buffs that fold into base stats left out.
+ * @param {Object} combatBuffMap - The unit's `combatBuffMap`
+ * @returns {string[]}
+ */
+export function combatEffectNames(combatBuffMap) {
+    const names = [];
+    for (const [uniqueHrid, buff] of Object.entries(combatBuffMap || {})) {
+        if (EFFECT_BUFF_TYPES.has(buff?.typeHrid)) {
+            names.push(String(uniqueHrid).split('/').pop().replace(/_/g, ' '));
+        }
+    }
+    return names;
+}
 
 /**
  * The compared stat keys that an active buff on this unit raises.
