@@ -139,6 +139,28 @@ describe('computeLabyrinthPath', () => {
         expect(computeLabyrinthPath(grid(['..F']).tiles, 3)).toBeNull();
         expect(computeLabyrinthPath(grid(['S..']).tiles, 3)).toBeNull();
     });
+
+    test('a cleared tile cut off from the entrance is not a free start', () => {
+        // The S at index 2 is cleared (a tile shrouded ahead) but the entrance
+        // only touches uncleared rooms — you cannot stand on it yet. The plan must
+        // cost the room between the entrance and it (index 1), not teleport onto
+        // the shroud and route straight to the exit.
+        const { tiles, cols } = grid(['E.S.F']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.route.has(1)).toBe(true); // the room reaching the isolated clear is on the plan
+        expect(path.shrouds).toBe(0);
+        expect(path.torches).toBe(3); // rooms 1 and 3 and the exit — not 2, which would skip room 1
+    });
+
+    test('a cleared tile connected to the entrance still seeds the route for free', () => {
+        // Here the cleared region is contiguous with the entrance (E–S adjacent),
+        // so the plan starts at the frontier: only the two rooms out to the exit
+        // cost, exactly as before.
+        const { tiles, cols } = grid(['ES..F']);
+        const path = computeLabyrinthPath(tiles, cols);
+        expect(path.route.has(1)).toBe(false); // the cleared S is free, not a costed room
+        expect(path.torches).toBe(3); // rooms 2, 3 and the exit
+    });
 });
 
 /**
