@@ -5,6 +5,9 @@
  * Exports to: window.Toolasha.Combat
  */
 
+// Core
+import dataManager from '../core/data-manager.js';
+
 // Combat features
 import zoneIndices from '../features/combat/zone-indices.js';
 import loadoutEnhancementDisplay from '../features/combat/loadout-enhancement-display.js';
@@ -178,6 +181,53 @@ toolashaRoot.Debug = {
             );
         }
         return result;
+    },
+    // Dump a monster's raw ability kit from live game data — the cast order, each
+    // ability's cooldown, and its defaultCombatTriggers (the gates that decide
+    // when it fires) — so a cadence gap (sim over/under-casting an ability vs the
+    // real fight) can be traced to the data. Pass a monster hrid, or omit it to
+    // use the last tick-capture's monster.
+    monsterAbilityData: (monsterHrid) => {
+        const hrid = monsterHrid || captureFile()?.context?.monsterHrid;
+        if (!hrid) {
+            console.warn('[MonsterAbilityData] Pass a monster hrid, or arm a capture first.');
+            return null;
+        }
+        const gameData = dataManager.getInitClientData();
+        const monster = gameData?.combatMonsterDetailMap?.[hrid];
+        const abilityMap = gameData?.abilityDetailMap || {};
+        if (!monster) {
+            console.warn('[MonsterAbilityData] No monster found for hrid:', hrid);
+            return null;
+        }
+        // The array order IS the sim's cast priority (first eligible ability wins).
+        const abilities = (monster.abilities || []).map((entry, index) => {
+            const detail = abilityMap[entry.abilityHrid] || {};
+            return {
+                order: index,
+                abilityHrid: entry.abilityHrid,
+                level: entry.level,
+                minDifficultyTier: entry.minDifficultyTier,
+                cooldownSec: detail.cooldownDuration ? detail.cooldownDuration / 1e9 : null,
+                castSec: detail.castDuration ? detail.castDuration / 1e9 : null,
+                // The gates the sim reads (ability.js falls back to these for
+                // monsters — no per-monster override is applied).
+                defaultCombatTriggers: detail.defaultCombatTriggers || [],
+                // Anything the game hangs on the monster's own ability entry that
+                // the sim ignores (only abilityHrid/level/minDifficultyTier are read).
+                entryExtraKeys: Object.keys(entry).filter(
+                    (k) => !['abilityHrid', 'level', 'minDifficultyTier'].includes(k)
+                ),
+                buffUniqueHrids: (detail.abilityEffects || [])
+                    .flatMap((e) => e.buffs || [])
+                    .map((b) => b?.uniqueHrid)
+                    .filter(Boolean),
+            };
+        });
+        const out = { monsterHrid: hrid, abilities };
+        console.log('[MonsterAbilityData]', hrid, '— cast order, cooldowns, and trigger gates:');
+        console.log(JSON.stringify(out, null, 2));
+        return out;
     },
     guildXp: () => guildXPTracker.debugState(),
 };
