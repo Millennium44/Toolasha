@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Alchemy pins: smaller, less intrusive pin badges on touchscreens
+
+On a touchscreen every item tile shows its pin (there's no hover to reveal it), and at 32px the pushpin buried the item art and count under it across the whole picker. Shrunk the touch pin to an 18px corner badge and dropped unpinned pins to half opacity so the grid reads again; a pinned tile's pin stays gold and full-strength.
+
 ### Labyrinth path: revealing more of the floor now ranks above torches
 
 The route planner treated "uncover more unknown rooms" as a sub-torch tiebreak that could never justify a single extra step, so it would skip a one-step detour that reveals a new room — even though an unknown room may hide a chest the planner can't yet see. Reveals now rank second, above torches (a shroud still trumps everything): the min-shroud base route is compared against routes that detour through one revealing room, and whichever uncovers the most *unique* unknown rooms — then the fewest torches — wins. One detour at a time, so it opens the floor up without carpet-revealing, and it never spends an extra shroud to reveal. This is done above the shortest-path cost, since a single Dijkstra cost can't rank reveals over torches without negative edges.
