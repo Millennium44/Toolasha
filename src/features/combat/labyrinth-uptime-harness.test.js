@@ -60,6 +60,24 @@ describe('extractMonsterAttacks', () => {
         expect(byAbility.autoAttack).toMatchObject({ casts: 2, hits: 2, damage: 100 });
     });
 
+    test('a non-damaging buff cast never absorbs a later hit', () => {
+        // The monster casts a self-buff (toughness, no damage), then auto-attacks
+        // for 100. Without the guard, the buff's queued slot swallows the auto's
+        // damage — crediting incoming damage to an ability that deals none.
+        const mk = (at, matk, mFields, cHP, pdmg) => ({
+            at,
+            payload: { mMap: { 0: { atkCounter: matk, ...mFields } }, pMap: { 0: { cHP, dmgCounter: pdmg } } },
+        });
+        const ticks = [
+            mk(0, 0, { abilityHrid: '/abilities/toughness' }, 1000, 0), // preparing toughness
+            mk(100, 1, { isAutoAtk: true }, 1000, 0), // toughness registered (no damage), now auto-ing
+            mk(200, 2, { isAutoAtk: true }, 900, 1), // auto lands for 100
+        ];
+        const { byAbility } = extractMonsterAttacks(ticks, { nonDamaging: new Set(['/abilities/toughness']) });
+        expect(byAbility['/abilities/toughness']).toMatchObject({ casts: 1, damage: 0 });
+        expect(byAbility.autoAttack).toMatchObject({ hits: 1, damage: 100 });
+    });
+
     test('an attack with no health drop is a miss', () => {
         const ticks = [
             tick(0, 0, '/abilities/fireball', 1000),

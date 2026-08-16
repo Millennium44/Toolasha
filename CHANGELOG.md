@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Uptime harness: don't credit incoming damage to buff casts
+
+A monster's self-buffs and debuffs (Toughness, a guardian aura, a smoke burst) take a turn but land no hit, yet the harness queued every cast for the next damage resolution — so a real swing's damage paid off the buff's slot and Toughness/guardian aura showed a phantom incoming-damage share. The caller now passes the monster's zero-damage abilities (from game data) so the harness counts their casts but never credits them damage.
+
 ### Lab recorder: keep your crit count per fight
 
 The attribution decoder already worked out how many of your swings critted, but the recorder threw it away. Now each recorded attempt keeps `playerCrits`, so a replay export carries your real crit rate. That's the tie-breaker for a damage-per-hit shortfall: a real crit rate below what your crit buffs imply means the sim over-credits crits, while a matching one points the soft-hit gap at the monster's mitigation instead. Null on older recordings, so a rate reads as "unknown" rather than "zero".

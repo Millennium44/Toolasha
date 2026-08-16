@@ -23,6 +23,29 @@ import { roomXpPerHour } from './labyrinth-formulas.js';
 import { DISCARD_LEGACY } from './labyrinth-outcomes.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 
+/**
+ * The monster's ability hrids that deal no damage — its self-buffs and debuffs.
+ * The uptime harness counts their casts but must not credit them incoming
+ * damage: they take a turn but land no hit, and queueing one lets the next real
+ * swing pay off its slot (Toughness and a guardian aura showing a damage share).
+ * @param {Object} gameData - `{combatMonsterDetailMap, abilityDetailMap}`
+ * @param {string} monsterHrid
+ * @returns {Set<string>}
+ */
+function nonDamagingAbilities(gameData, monsterHrid) {
+    const set = new Set();
+    const monster = gameData?.combatMonsterDetailMap?.[monsterHrid];
+    const abilityMap = gameData?.abilityDetailMap || {};
+    for (const entry of monster?.abilities || []) {
+        const hrid = entry?.abilityHrid;
+        const def = hrid && abilityMap[hrid];
+        if (!def) continue;
+        const dealsDamage = (def.abilityEffects || []).some((e) => e.effectType === '/ability_effect_types/damage');
+        if (!dealsDamage) set.add(hrid);
+    }
+    return set;
+}
+
 /** Clear chances are pinned to this many percentage points either side by default */
 export const DEFAULT_SIM_PRECISION_PCT = 1;
 /** No room stops before this many trials, however lopsided the early ones look */
@@ -144,8 +167,9 @@ export const simCacheMethods = {
         const dto = this.buildLabyrinthPlayerDTO(loadoutId);
         if (!dto) return null;
         const playerHrid = dto.hrid || 'player1';
+        const gameData = buildGameDataPayload();
         const simResult = await runLabyrinthSimulation({
-            gameData: buildGameDataPayload(),
+            gameData,
             playerDTOs: [dto],
             zoneHrid: '/actions/combat/fly',
             monsterHrid,
@@ -157,7 +181,7 @@ export const simCacheMethods = {
             labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
             fullAbilities: this.labyrinthFullAbilities(),
         });
-        const real = extractMonsterAttacks(ticks);
+        const real = extractMonsterAttacks(ticks, { nonDamaging: nonDamagingAbilities(gameData, monsterHrid) });
         const sim = summarizeSimAttacks(simResult?.attacks?.[monsterHrid]?.[playerHrid]);
         return { comparison: compareIncoming(real, sim), real, sim };
     },

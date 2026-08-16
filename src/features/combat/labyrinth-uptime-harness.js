@@ -40,13 +40,21 @@
  * tick-capture tick list.
  *
  * @param {Array<Object>} ticks - `battle_updated` payloads, as recorded
- * @param {Object} [opts] - `{monsterIndex='0', playerIndex='0'}`
+ * @param {Object} [opts] - `{monsterIndex='0', playerIndex='0', nonDamaging}`,
+ *   where `nonDamaging` is a Set of ability hrids that deal no damage (buffs,
+ *   debuffs) — counted as casts but never credited incoming damage
  * @returns {{durationMs: number, fights: number, byAbility: Object}}
  *   `byAbility[ability] = {casts, hits, misses, damage, samples: number[]}`
  */
 export function extractMonsterAttacks(ticks, opts = {}) {
     const mi = opts.monsterIndex ?? '0';
     const pi = opts.playerIndex ?? '0';
+    // Ability hrids that deal no damage — a monster's self-buffs and debuffs
+    // (Toughness, a guardian aura, a smoke burst). They still take a turn, so
+    // they count as casts, but they land no hit: queueing one would let the next
+    // real swing's damage pay off the buff's slot, crediting incoming damage to
+    // an ability that cannot deal any. Empty set = label everything as it comes.
+    const nonDamaging = opts.nonDamaging instanceof Set ? opts.nonDamaging : new Set();
     const byAbility = {};
     const rec = (ability) =>
         (byAbility[ability] = byAbility[ability] || { casts: 0, hits: 0, misses: 0, damage: 0, samples: [] });
@@ -116,9 +124,12 @@ export function extractMonsterAttacks(ticks, opts = {}) {
             // before it, not the next thing already being wound up).
             if (prevMatk !== undefined && Number.isFinite(matk) && matk > prevMatk) {
                 const label = prevMLabel || monster.abilityHrid || 'autoAttack';
+                const dealsDamage = !nonDamaging.has(label);
                 for (let n = 0; n < matk - prevMatk; n++) {
                     rec(label).casts += 1;
-                    pending.push(label);
+                    // A buff/debuff takes a turn but lands no hit, so it never
+                    // joins the queue the next resolution pays off.
+                    if (dealsDamage) pending.push(label);
                 }
                 sawAttack = true;
             }
@@ -149,7 +160,16 @@ export function extractMonsterAttacks(ticks, opts = {}) {
                 const label = prevMLabel || monster.abilityHrid || 'autoAttack';
                 const r = rec(label);
                 r.casts += matk - prevMatk;
-                if (drop > 0) {
+                if (nonDamaging.has(label)) {
+                    // A buff/debuff cast lands no hit; a health drop this tick is
+                    // something else resolving (a damage-over-time), not this cast.
+                    if (drop > 0) {
+                        const dot = rec('damageOverTime');
+                        dot.hits += 1;
+                        dot.damage += drop;
+                        dot.samples.push(drop);
+                    }
+                } else if (drop > 0) {
                     r.hits += 1;
                     r.damage += drop;
                     r.samples.push(drop);
