@@ -40,6 +40,26 @@ describe('extractMonsterAttacks', () => {
         expect(fights).toBeGreaterThanOrEqual(2);
     });
 
+    test('an auto-attack after a special is autoAttack, not the lingering special', () => {
+        // Real ticks carry isAutoAtk on ordinary swings and name a special in
+        // abilityHrid only on its cast tick (never persisted). The label must
+        // fall back to autoAttack, or every auto after a special inherits it —
+        // reporting a special cast-share the cooldowns could never produce.
+        const auto = (at, atk, hp) => ({
+            at,
+            payload: { mMap: { 0: { atkCounter: atk, isAutoAtk: true } }, pMap: { 0: { cHP: hp } } },
+        });
+        const ticks = [
+            tick(0, 0, '/abilities/sweep', 1000), // preparing sweep
+            auto(100, 1, 900), // sweep landed (100); now auto-attacking
+            auto(200, 2, 850), // auto landed (50)
+            auto(300, 3, 800), // auto landed (50)
+        ];
+        const { byAbility } = extractMonsterAttacks(ticks);
+        expect(byAbility['/abilities/sweep']).toMatchObject({ casts: 1, hits: 1, damage: 100 });
+        expect(byAbility.autoAttack).toMatchObject({ casts: 2, hits: 2, damage: 100 });
+    });
+
     test('an attack with no health drop is a miss', () => {
         const ticks = [
             tick(0, 0, '/abilities/fireball', 1000),

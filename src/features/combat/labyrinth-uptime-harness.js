@@ -64,7 +64,7 @@ export function extractMonsterAttacks(ticks, opts = {}) {
     const hasDmgCounter = (ticks || []).some((t) => Number.isFinite(Number(t?.payload?.pMap?.[pi]?.dmgCounter)));
 
     let prevMatk;
-    let prevMAbility;
+    let prevMLabel;
     let prevPHP;
     let prevPdmg;
     let firstAt;
@@ -77,7 +77,7 @@ export function extractMonsterAttacks(ticks, opts = {}) {
 
     const resetFight = () => {
         prevMatk = undefined;
-        prevMAbility = undefined;
+        prevMLabel = undefined;
         prevPHP = undefined;
         prevPdmg = undefined;
         pending.length = 0;
@@ -115,7 +115,7 @@ export function extractMonsterAttacks(ticks, opts = {}) {
             // was preparing before the swing (the hit was cast by what came
             // before it, not the next thing already being wound up).
             if (prevMatk !== undefined && Number.isFinite(matk) && matk > prevMatk) {
-                const label = prevMAbility || monster.abilityHrid || 'autoAttack';
+                const label = prevMLabel || monster.abilityHrid || 'autoAttack';
                 for (let n = 0; n < matk - prevMatk; n++) {
                     rec(label).casts += 1;
                     pending.push(label);
@@ -146,7 +146,7 @@ export function extractMonsterAttacks(ticks, opts = {}) {
             // Health-drop fallback, for a capture with no damage counter.
             const drop = prevPHP != null && php != null ? prevPHP - php : 0;
             if (prevMatk !== undefined && Number.isFinite(matk) && matk > prevMatk) {
-                const label = prevMAbility || monster.abilityHrid || 'autoAttack';
+                const label = prevMLabel || monster.abilityHrid || 'autoAttack';
                 const r = rec(label);
                 r.casts += matk - prevMatk;
                 if (drop > 0) {
@@ -166,7 +166,15 @@ export function extractMonsterAttacks(ticks, opts = {}) {
         }
 
         if (Number.isFinite(matk)) prevMatk = matk;
-        if (monster.abilityHrid) prevMAbility = monster.abilityHrid;
+        // What the monster is doing this tick, so the NEXT swing is labelled by
+        // it. The payload names a special in abilityHrid only on its cast tick and
+        // never persists it, marking ordinary swings with isAutoAtk instead — so
+        // an auto-attack tick must reset the label to autoAttack. Without this the
+        // last special sticks and every following auto inherits it, inflating
+        // special cast-share past what the cooldowns physically allow (an auto
+        // share the fight length cannot produce) and starving autoAttack.
+        if (monster.abilityHrid) prevMLabel = monster.abilityHrid;
+        else if (monster.isAutoAtk) prevMLabel = 'autoAttack';
         if (php != null) prevPHP = php;
         if (pdmg != null) prevPdmg = pdmg;
     }
