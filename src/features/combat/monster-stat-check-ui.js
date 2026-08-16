@@ -29,12 +29,21 @@ import {
 } from './monster-stat-check.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import labyrinthClearRate from './labyrinth-clear-rate.js';
+import { captureFile } from './labyrinth-tick-capture.js';
 
 const BLIND_VERDICT = {
     match: { glyph: '✓', color: '#6fce7f' },
     missing: { glyph: '⚠', color: '#e56b6b' },
     magnitude: { glyph: '≠', color: '#e0b64a' },
     extra: { glyph: '+', color: '#7aa2d0' },
+};
+
+const UPTIME_VERDICT = {
+    ok: { glyph: '✓', color: '#6fce7f' },
+    'sim-under': { glyph: '⚠', color: '#e56b6b' },
+    'sim-over': { glyph: '≠', color: '#e0b64a' },
+    'sim-missing': { glyph: '⚠', color: '#e56b6b' },
+    'sim-extra': { glyph: '+', color: '#7aa2d0' },
 };
 
 const SETTING_KEY = 'labyrinthMonsterStatCheck';
@@ -329,6 +338,31 @@ class MonsterStatCheckPanel {
         this._persist();
     }
 
+    /**
+     * Decompose the monster's incoming damage per ability from the armed tick
+     * capture and compare it against the sim, to localise a timing/uptime gap.
+     */
+    async _runUptimeHarness() {
+        const snap = this.displayed;
+        if (!snap?.hrid) return;
+        try {
+            const capture = captureFile();
+            if (!capture?.ticks?.length) {
+                snap.uptime = { error: 'No tick capture — arm one (Capture) and fight this monster first.' };
+            } else if (capture.context?.monsterHrid && capture.context.monsterHrid !== snap.hrid) {
+                const name = String(capture.context.monsterHrid).split('/').pop();
+                snap.uptime = { error: `The tick capture is for ${name}, not this monster.` };
+            } else {
+                const result = await labyrinthClearRate.uptimeHarness(snap.hrid, snap.roomLevel, capture.ticks);
+                snap.uptime = result ? { rows: result.comparison.rows, at: Date.now() } : { error: 'Sim run failed.' };
+            }
+        } catch (error) {
+            console.error('[MonsterStatCheck] Uptime harness failed:', error);
+            snap.uptime = { error: 'Uptime harness failed (see console).' };
+        }
+        if (this.displayed === snap) this._render();
+    }
+
     /** Download the session's discrepancy log plus the current snapshot as JSON. */
     _export() {
         const payload = buildExportPayload(Array.from(this.history.values()), this.last, Date.now());
@@ -386,6 +420,16 @@ class MonsterStatCheckPanel {
             lines.push('Blind sim — buffs it produces (game / sim):');
             for (const r of snapshot.blind.rows) {
                 lines.push(`  ${r.name}: ${this._blindBoost(r.game)} / ${this._blindBoost(r.sim)} — ${r.verdict}`);
+            }
+        }
+        if (snapshot.uptime?.rows?.length) {
+            lines.push('Uptime harness — incoming damage / ability (real vs sim):');
+            for (const r of snapshot.uptime.rows) {
+                const rd = r.real ? `${Math.round(r.real.dmgSharePct)}%` : '—';
+                const sd = r.sim ? `${Math.round(r.sim.dmgSharePct)}%` : '—';
+                const rc = r.real ? `${Math.round(r.real.castSharePct)}%` : '—';
+                const sc = r.sim ? `${Math.round(r.sim.castSharePct)}%` : '—';
+                lines.push(`  ${r.ability}: dmg ${rd}/${sd}, cast ${rc}/${sc} — ${r.verdict}`);
             }
         }
         return lines.join('\n');
@@ -700,8 +744,91 @@ class MonsterStatCheckPanel {
         footer.appendChild(legend);
 
         this._renderBlind(footer, snapshot);
+        this._renderUptime(footer, snapshot);
 
         body.appendChild(footer);
+    }
+
+    /** The uptime-harness section: a Run button, and the incoming-damage diff. */
+    _renderUptime(footer, snapshot) {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08);';
+
+        const up = snapshot.uptime;
+        if (up) {
+            const head = document.createElement('div');
+            head.style.cssText =
+                'font-size:0.68rem; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.4); margin-bottom:2px;';
+            head.textContent = 'Uptime harness — incoming damage / ability';
+            wrap.appendChild(head);
+
+            if (up.error) {
+                const err = document.createElement('div');
+                err.style.cssText = 'font-size:0.72rem; color:#e0b64a; font-style:italic;';
+                err.textContent = up.error;
+                wrap.appendChild(err);
+            } else if (!up.rows?.length) {
+                const none = document.createElement('div');
+                none.style.cssText = 'font-size:0.72rem; color:rgba(255,255,255,0.5);';
+                none.textContent = 'No attacks found in the capture.';
+                wrap.appendChild(none);
+            } else {
+                const header = document.createElement('div');
+                header.style.cssText =
+                    'display:grid; grid-template-columns:1.3fr 0.9fr 0.9fr auto; gap:4px; font-size:0.64rem; color:rgba(255,255,255,0.4); padding:1px 0;';
+                header.innerHTML =
+                    '<span>ability</span><span style="text-align:right;">real dmg%</span><span style="text-align:right;">sim dmg%</span><span></span>';
+                wrap.appendChild(header);
+
+                for (const r of up.rows) {
+                    const style = UPTIME_VERDICT[r.verdict] || UPTIME_VERDICT.ok;
+                    const line = document.createElement('div');
+                    line.style.cssText =
+                        'display:grid; grid-template-columns:1.3fr 0.9fr 0.9fr auto; gap:4px; align-items:baseline; font-size:0.74rem; padding:1px 0;';
+                    const pct = (side) => (side ? `${Math.round(side.dmgSharePct)}%` : '—');
+                    const name = document.createElement('span');
+                    name.textContent = r.ability;
+                    name.style.cssText = 'overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+                    // Cast share on hover, so the row stays compact.
+                    name.title = `casts: real ${r.real ? Math.round(r.real.castSharePct) : '—'}% / sim ${r.sim ? Math.round(r.sim.castSharePct) : '—'}%  ·  mean/cast: real ${r.real ? Math.round(r.real.meanDmgPerCast) : '—'} / sim ${r.sim ? Math.round(r.sim.meanDmgPerCast) : '—'}`;
+                    const g = document.createElement('span');
+                    g.textContent = pct(r.real);
+                    g.style.cssText = 'text-align:right; font-variant-numeric:tabular-nums;';
+                    const s = document.createElement('span');
+                    s.textContent = pct(r.sim);
+                    s.style.cssText =
+                        'text-align:right; font-variant-numeric:tabular-nums; color:rgba(255,255,255,0.75);';
+                    const v = document.createElement('span');
+                    v.textContent = style.glyph;
+                    v.style.cssText = `text-align:right; color:${style.color};`;
+                    v.title = r.verdict;
+                    line.append(name, g, s, v);
+                    wrap.appendChild(line);
+                }
+                const key = document.createElement('div');
+                key.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
+                key.innerHTML =
+                    '<span style="color:#e56b6b;">⚠ sim-under</span> = sim gives this ability a smaller share of incoming damage than reality — a cadence or buff-uptime gap. Hover a row for cast% and mean/cast.';
+                wrap.appendChild(key);
+            }
+        }
+
+        const btn = document.createElement('button');
+        btn.textContent = up && !up.error ? 'Re-run uptime harness' : 'Run uptime harness';
+        btn.title = 'Decompose the monster’s incoming damage per ability (armed tick capture) vs the sim';
+        btn.style.cssText =
+            'margin-top:6px; background:none; border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#cbd5e8; font-size:0.7rem; cursor:pointer; padding:3px 8px;';
+        btn.addEventListener('mouseenter', () => (btn.style.background = 'rgba(255,255,255,0.06)'));
+        btn.addEventListener('mouseleave', () => (btn.style.background = 'none'));
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            btn.textContent = 'Running…';
+            btn.disabled = true;
+            setTimeout(() => this._runUptimeHarness(), 0);
+        });
+        wrap.appendChild(btn);
+
+        footer.appendChild(wrap);
     }
 
     /** Boost as a short string: a ratio as a percent, else the flat value. */
