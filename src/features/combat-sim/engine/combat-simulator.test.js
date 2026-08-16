@@ -18,6 +18,7 @@ import { describe, test, expect, afterEach } from 'vitest';
 
 import CombatSimulator from './combat-simulator.js';
 import { setGameData } from './game-data.js';
+import Monster from './monster.js';
 import Player from './player.js';
 import { clearSimRng, seedSimRng } from './rng.js';
 import Zone from './zone.js';
@@ -216,5 +217,48 @@ describe('golden run: one seeded hour, pinned exactly', () => {
         expect(second.experienceGained).toEqual(first.experienceGained);
         expect(second.totalDamageDealt).toEqual(first.totalDamageDealt);
         expect(second.simulatedTime).toBe(first.simulatedTime);
+    });
+});
+
+describe('monster promotion inherits the labyrinth context', () => {
+    const PROMOTIONS = ['/monsters/enchanted_rook', '/monsters/enchanted_knight', '/monsters/enchanted_bishop'];
+
+    function installPromotionData() {
+        const levels = {
+            staminaLevel: 50,
+            intelligenceLevel: 5,
+            attackLevel: 60,
+            meleeLevel: 60,
+            defenseLevel: 45,
+            rangedLevel: 1,
+            magicLevel: 1,
+        };
+        const map = {};
+        for (const hrid of PROMOTIONS) map[hrid] = monster(levels, 100);
+        setGameData({ combatMonsterDetailMap: map, combatStyleDetailMap: {} });
+    }
+
+    afterEach(() => setGameData(null));
+
+    test('a promotion in the labyrinth rebuilds at the source room level, not 0', () => {
+        installPromotionData();
+        seedSimRng(1);
+        const simulator = new CombatSimulator([], { hrid: '/actions/combat/x', difficultyTier: 0 });
+        // A lab source: room level 250, full ability kit.
+        const source = { difficultyTier: 0, roomLevel: 250, includeAllAbilities: true };
+        const promoted = simulator.processAbilityPromoteEffect(source, null, null);
+        expect(promoted).toBeInstanceOf(Monster);
+        expect(promoted.roomLevel).toBe(250);
+        expect(promoted.includeAllAbilities).toBe(true);
+    });
+
+    test('a zone promotion stays at room level 0', () => {
+        installPromotionData();
+        seedSimRng(1);
+        const simulator = new CombatSimulator([], { hrid: '/actions/combat/x', difficultyTier: 0 });
+        const source = { difficultyTier: 2, roomLevel: 0, includeAllAbilities: false };
+        const promoted = simulator.processAbilityPromoteEffect(source, null, null);
+        expect(promoted.roomLevel).toBe(0);
+        expect(promoted.difficultyTier).toBe(2);
     });
 });
