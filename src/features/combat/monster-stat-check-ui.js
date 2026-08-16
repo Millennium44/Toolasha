@@ -409,6 +409,25 @@ class MonsterStatCheckPanel {
                     buffs: cmp.buffs,
                     at: Date.now(),
                 };
+                // When Max HP disagrees, the term-by-term breakdown says which
+                // input differs — stamina level, the flat HP from gear, or a % HP
+                // buff — which is the actual lead, not the total. Logged, not shown.
+                const hpTerms = (cd) => ({
+                    staminaLevel: cd?.staminaLevel,
+                    flatMaxHp: cd?.combatStats?.maxHitpoints,
+                    maxHpRatio: cd?.combatStats?.maxHitpointsRatio,
+                    maxHitpoints: cd?.maxHitpoints,
+                });
+                const you = hpTerms(this.lastPlayerUnit?.combatDetails);
+                const sim = hpTerms(simDetails);
+                if (
+                    you.maxHitpoints &&
+                    sim.maxHitpoints &&
+                    Math.abs(you.maxHitpoints - sim.maxHitpoints) / you.maxHitpoints > 0.01
+                ) {
+                    console.log('[MonsterStatCheck] Max HP gap — you vs sim, by input term:');
+                    console.table({ you, sim });
+                }
             }
         } catch (error) {
             console.error('[MonsterStatCheck] Player check failed:', error);
