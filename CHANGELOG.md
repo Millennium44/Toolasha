@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Settings: a single "Pinning" section for both pin toggles
+
+The pinned-actions toggle lived under Skill Page & Tiles and the alchemy-picker pin toggle under Alchemy, so the two "pinning" switches were in different places. Grouped both under a new **Pinning** category — kept as two independent toggles (each feature is distinct, and you may want one without the other) rather than collapsed into one, so turning off the alchemy pins doesn't also drop the pinned-actions page.
+
 ### Alchemy pins: smaller, less intrusive pin badges on touchscreens
 
 On a touchscreen every item tile shows its pin (there's no hover to reveal it), and at 32px the pushpin buried the item art and count under it across the whole picker. Shrunk the touch pin to an 18px corner badge and dropped unpinned pins to half opacity so the grid reads again; a pinned tile's pin stays gold and full-strength.
