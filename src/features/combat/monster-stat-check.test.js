@@ -18,6 +18,9 @@ import {
     classify,
     buildComparison,
     buffedStatKeys,
+    offenseRatioBoosts,
+    foldOffenseBuffs,
+    combatEffectNames,
     flaggedRows,
     buildExportPayload,
     buffName,
@@ -290,6 +293,63 @@ describe('buildComparison against an engine-built monster', () => {
         const result = buildComparison(gameUnit, monster.combatDetails, { simBuffed: true, leniencyKeys });
         const armor = result.groups[0].rows.find((r) => r.key === 'totalArmor');
         expect(armor.verdict).toBe('mismatch');
+    });
+});
+
+describe('foldOffenseBuffs — the sim column carries your live offense buffs', () => {
+    test('precision folds accuracy by its ratio, matching your live rating', () => {
+        const sim = { smashAccuracyRating: 507, smashMaxDamage: 380 };
+        const buffs = { '/buff_uniques/precision': { typeHrid: '/buff_types/accuracy', ratioBoost: 0.684 } };
+        const out = foldOffenseBuffs(sim, buffs, 'smash');
+        expect(out.smashAccuracyRating).toBeCloseTo(507 * 1.684, 5); // ≈ 853, your live value
+        expect(out.smashMaxDamage).toBe(380); // untouched
+    });
+
+    test('a monster damage shred folds max hit down', () => {
+        const sim = { smashAccuracyRating: 507, smashMaxDamage: 380 };
+        const buffs = { '/buff_uniques/crippling': { typeHrid: '/buff_types/damage', ratioBoost: -0.234 } };
+        const out = foldOffenseBuffs(sim, buffs, 'smash');
+        expect(out.smashMaxDamage).toBeCloseTo(380 * 0.766, 5); // ≈ 291
+    });
+
+    test('accuracy and fury-accuracy multiply, matching the engine formula', () => {
+        const sim = { magicAccuracyRating: 100, magicMaxDamage: 50 };
+        const buffs = {
+            '/buff_uniques/precision': { typeHrid: '/buff_types/accuracy', ratioBoost: 0.5 },
+            '/buff_uniques/fury': { typeHrid: '/buff_types/fury_accuracy', ratioBoost: 0.2 },
+        };
+        const out = foldOffenseBuffs(sim, buffs, 'magic');
+        expect(out.magicAccuracyRating).toBeCloseTo(100 * 1.5 * 1.2, 5);
+    });
+
+    test('no offense buffs returns the sim details unchanged (same object)', () => {
+        const sim = { smashAccuracyRating: 507, smashMaxDamage: 380 };
+        expect(foldOffenseBuffs(sim, { '/b': { typeHrid: '/buff_types/armor', ratioBoost: 0.1 } }, 'smash')).toBe(sim);
+        expect(foldOffenseBuffs(sim, {}, 'smash')).toBe(sim);
+    });
+});
+
+describe('offenseRatioBoosts', () => {
+    test('sums each offense boost into its own bucket', () => {
+        const b = offenseRatioBoosts({
+            a: { typeHrid: '/buff_types/accuracy', ratioBoost: 0.3 },
+            b: { typeHrid: '/buff_types/accuracy', ratioBoost: 0.1 },
+            c: { typeHrid: '/buff_types/damage', ratioBoost: -0.2 },
+            d: { typeHrid: '/buff_types/max_hitpoints', ratioBoost: 0.02 },
+        });
+        expect(b.accuracy).toBeCloseTo(0.4, 5);
+        expect(b.damage).toBeCloseTo(-0.2, 5);
+        expect(b.furyAccuracy).toBe(0);
+    });
+});
+
+describe('combatEffectNames', () => {
+    test('lists stat-moving combat effects, skips folded level buffs', () => {
+        const names = combatEffectNames({
+            '/buff_uniques/precision': { typeHrid: '/buff_types/accuracy', ratioBoost: 0.684 },
+            '/buff_uniques/community_attack': { typeHrid: '/buff_types/attack_level', flatBoost: 5 },
+        });
+        expect(names).toEqual(['precision']);
     });
 });
 

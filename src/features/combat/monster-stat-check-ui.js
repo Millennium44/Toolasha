@@ -27,6 +27,8 @@ import {
     compareBuffProduction,
     buffSignature,
     buffedStatKeys,
+    foldOffenseBuffs,
+    combatEffectNames,
     styleKeyOf,
 } from './monster-stat-check.js';
 import { downloadFile } from '../../utils/csv-export.js';
@@ -402,19 +404,24 @@ class MonsterStatCheckPanel {
             if (!simDetails) {
                 this.playerCheck = { error: 'Sim player build failed.' };
             } else {
-                // Sharp check: both sides carry the persistent buffs, so a gap is a
-                // real build difference (simBuffed skips the buff/debuff leniency).
-                // The exception is the stats a live transient combat buff raises —
-                // precision above all — which the sim's fight-start build has not
-                // cast yet; those rows keep buff-awareness so they read as a buff,
-                // not a phantom mismatch, while every other stat stays sharp.
+                // The sim build is read at fight start, before your transient
+                // combat buffs are cast, so fold your live offense buffs (precision,
+                // fury, a monster's damage shred on you) into the sim column by the
+                // engine's own formula — now the accuracy and max-hit rows compare
+                // like against like instead of showing the buff as a fat gap. The
+                // rarer mitigation/evasion transient effects, which can't be folded
+                // without double-counting persistent sources, keep the softer
+                // leniency so they read as a buff rather than a bug.
                 const styleKey = styleKeyOf(this.lastPlayerUnit?.combatDetails?.combatStats);
-                const leniencyKeys = buffedStatKeys(this.lastPlayerUnit?.combatBuffMap, styleKey);
-                const cmp = buildComparison(this.lastPlayerUnit, simDetails, { simBuffed: true, leniencyKeys });
+                const buffMap = this.lastPlayerUnit?.combatBuffMap;
+                const leniencyKeys = buffedStatKeys(buffMap, styleKey);
+                const simFolded = foldOffenseBuffs(simDetails, buffMap, styleKey);
+                const cmp = buildComparison(this.lastPlayerUnit, simFolded, { simBuffed: true, leniencyKeys });
                 this.playerCheck = {
                     groups: cmp.groups,
                     hasMismatch: cmp.hasMismatch,
                     buffs: cmp.buffs,
+                    effects: combatEffectNames(buffMap),
                     at: Date.now(),
                 };
                 // When Max HP disagrees, the term-by-term breakdown says which
@@ -944,6 +951,12 @@ class MonsterStatCheckPanel {
                         );
                     }
                 }
+                if (pc.effects?.length) {
+                    const fx = document.createElement('div');
+                    fx.style.cssText = 'margin-top:4px; font-size:0.66rem; color:rgba(255,255,255,0.55);';
+                    fx.innerHTML = `<span style="color:#e0b64a;">Effects on you (folded into sim offense):</span> ${pc.effects.join(', ')}`;
+                    wrap.appendChild(fx);
+                }
                 const note = document.createElement('div');
                 note.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
                 note.innerHTML = pc.hasMismatch
@@ -953,7 +966,7 @@ class MonsterStatCheckPanel {
                 const caveat = document.createElement('div');
                 caveat.style.cssText = 'margin-top:2px; font-size:0.64rem; color:rgba(255,255,255,0.35);';
                 caveat.textContent =
-                    'Read at fight start: transient combat buffs (fury) or a monster debuff on you show as gaps.';
+                    'Your live offense buffs (precision, fury, a monster shred on you) are folded into the sim column; a mitigation/evasion buff can still show as a gap.';
                 wrap.appendChild(caveat);
             }
         }
