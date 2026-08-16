@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab Sim: fold guild-shrine max HP / MP buffs into the sim player
+
+The combat engine mapped ~35 buff types onto stats but never mapped `/buff_types/max_hitpoints` or `/buff_types/max_manapoints`, so the guild shrine's +2% max-HP / +2% max-MP bonuses (and any other source of those types) were silently dropped — the HP/MP formula ran on the equipment ratio alone. The player build check surfaced it: max HP 2295 live vs 2250 sim, the whole gap in the ratio term. `updateCombatDetails` now folds both buff types (ratio and flat) into the max HP/MP formulas, applied inline so a repeated recompute can't re-accumulate them. Small on its own; it also means guild-shrine HP/MP no longer skews clear-chance predictions.
+
 ### Labyrinth path: re-sync cleared tiles from the live grid before routing
 
 The route calc read cleared-tile state from the last `labyrinth_updated` websocket snapshot and only ever synced from the game's live client grid once (the seed bailed if a grid already existed), so after seeding it trusted that snapshot forever. A dropped `labyrinth_updated` — common on a throttled/backgrounded mobile tab — left a since-cleared tile still reading uncleared, and the planned route re-entered a room already finished. `runPathCalculation` now refreshes `isCleared` from the live React grid (authoritative even when a WS message was missed) before pathing, and again before the post-sim second pass. Fixes the "lab calc doesn't know I cleared tile 2" report; desktop was unaffected because its socket rarely drops the message.

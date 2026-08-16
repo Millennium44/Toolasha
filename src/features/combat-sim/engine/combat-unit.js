@@ -240,13 +240,25 @@ class CombatUnit {
             });
         });
 
+        // Max HP/MP buffs (e.g. the guild shrine's +2%) arrive as
+        // /buff_types/max_hitpoints and max_manapoints. Unlike the ~35 stats
+        // above, nothing folded them in, so the formula ran on the equipment
+        // ratio alone — the guild shrine's max-HP/MP bonus was silently dropped.
+        // Applied in the formula (not written back to combatStats) so a repeated
+        // updateCombatDetails call can't re-accumulate them.
+        const maxHpBoost = boostOf('/buff_types/max_hitpoints');
+        const maxMpBoost = boostOf('/buff_types/max_manapoints');
         this.combatDetails.maxHitpoints = Math.floor(
-            (10 * (10 + this.combatDetails.staminaLevel) + this.combatDetails.combatStats.maxHitpoints) *
-                (1 + this.combatDetails.combatStats.maxHitpointsRatio)
+            (10 * (10 + this.combatDetails.staminaLevel) +
+                this.combatDetails.combatStats.maxHitpoints +
+                maxHpBoost.flatBoost) *
+                (1 + this.combatDetails.combatStats.maxHitpointsRatio + maxHpBoost.ratioBoost)
         );
         this.combatDetails.maxManapoints = Math.floor(
-            (10 * (10 + this.combatDetails.intelligenceLevel) + this.combatDetails.combatStats.maxManapoints) *
-                (1 + this.combatDetails.combatStats.maxManapointsRatio)
+            (10 * (10 + this.combatDetails.intelligenceLevel) +
+                this.combatDetails.combatStats.maxManapoints +
+                maxMpBoost.flatBoost) *
+                (1 + this.combatDetails.combatStats.maxManapointsRatio + maxMpBoost.ratioBoost)
         );
 
         const accuracyRatioBoostFromFury = boostOf('/buff_types/fury_accuracy').ratioBoost;
