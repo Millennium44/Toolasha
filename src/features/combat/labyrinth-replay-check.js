@@ -56,6 +56,17 @@ const SIM_NOISE_FLOOR_PCT = 2;
 /** Idle seconds the sim inserts between fights (the engine's RESTART_INTERVAL), excluded from per-fight rates */
 const SIM_RESTART_SECONDS = 3;
 
+/**
+ * How much the damage-taken figure is known to run low. Damage you take is the 3
+ * Hz tick-summed drops (see `exchange`) — two hits inside one frame collapse to a
+ * single drop, so the total undercounts by a few percent. Damage you deal takes
+ * the exact endpoint floor instead and carries no such bias, so this is credited
+ * back to the taken metric alone, before its verdict, so a session that lands a
+ * couple of points low on top of the bias is not called "below" (which reads as
+ * "the sim over-models the monster") on what is really a measurement artifact.
+ */
+const TAKEN_UNDERCOUNT_PCT = 3;
+
 /** 95% of a normal sits inside this many standard errors of the mean */
 const Z95 = 1.96;
 
@@ -325,19 +336,25 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
  * @param {number} predicted
  * @param {number[]} samples - The per-fight values the observed rate came from
  * @param {number} fights - How many fights back the observed rate
+ * @param {number} [downwardBiasPct=0] - Percent the observed side is known to run
+ *   low (a measurement bias); credited back before the verdict, not to the shown
+ *   deviation, so a rate short only by the bias is not called "below".
  * @returns {Object}
  */
-function compareMetric(key, label, observed, predicted, samples, fights) {
+function compareMetric(key, label, observed, predicted, samples, fights, downwardBiasPct = 0) {
     const marginPct = widenedMarginPct(samples);
     const dev = deviationPct(observed, predicted);
+    // The verdict judges the bias-corrected deviation; the row still shows the
+    // raw one, since the observed figure it displays is the real measured rate.
+    const judgedDev = dev === null ? null : dev + downwardBiasPct;
 
     let verdict;
-    if (fights < MIN_LAB_FIGHTS || marginPct === null || dev === null) {
+    if (fights < MIN_LAB_FIGHTS || marginPct === null || judgedDev === null) {
         verdict = 'insufficient';
-    } else if (Math.abs(dev) <= marginPct) {
+    } else if (Math.abs(judgedDev) <= marginPct) {
         verdict = 'consistent';
     } else {
-        verdict = dev > 0 ? 'above' : 'below';
+        verdict = judgedDev > 0 ? 'above' : 'below';
     }
 
     return { key, label, observed, predicted, deviationPct: dev, marginPct, verdict };
@@ -431,7 +448,8 @@ export function compareLab(observed, predicted) {
         observed.takenPerSecond,
         predicted.takenPerSecond,
         observed.takenSamples,
-        observed.fights
+        observed.fights,
+        TAKEN_UNDERCOUNT_PCT
     );
     const clear = compareMetric(
         'clearRate',

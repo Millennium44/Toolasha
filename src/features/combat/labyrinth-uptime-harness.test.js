@@ -204,4 +204,14 @@ describe('compareIncoming', () => {
         const { rows } = compareIncoming(real, summarizeSimAttacks({}));
         expect(rows[0].verdict).toBe('sim-missing');
     });
+
+    test('a non-damaging self-buff the sim omits is a buff, not sim-missing', () => {
+        // Precision / a fierce aura casts but deals no damage, so the sim's
+        // attack tally correctly omits it — that is not a missing damage source.
+        const real = {
+            byAbility: { '/abilities/precision': { casts: 7, hits: 0, misses: 0, damage: 0, samples: [] } },
+        };
+        const { rows } = compareIncoming(real, summarizeSimAttacks({}));
+        expect(rows[0].verdict).toBe('buff');
+    });
 });
