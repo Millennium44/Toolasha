@@ -222,6 +222,19 @@ toolashaRoot.Debug = {
                     .flatMap((e) => e.buffs || [])
                     .map((b) => b?.uniqueHrid)
                     .filter(Boolean),
+                // The damage shape per effect — so a magnitude gap (sim over/under-
+                // damaging an ability vs the real fight) can be told apart from a
+                // cadence gap. baseDamageRatio ~0 with only buffs = a utility cast.
+                damageEffects: (detail.abilityEffects || []).map((e) => ({
+                    effectType: e.effectType,
+                    damageType: e.damageType,
+                    baseDamageRatio: e.baseDamageRatio,
+                    baseDamageFlat: e.baseDamageFlat,
+                    damageOverTimeRatio: e.damageOverTimeRatio,
+                    damageOverTimeDuration: e.damageOverTimeDuration ? e.damageOverTimeDuration / 1e9 : 0,
+                    hpDrainRatio: e.hpDrainRatio,
+                    bonusAccuracyRatio: e.bonusAccuracyRatio,
+                })),
             };
         });
         const out = { monsterHrid: hrid, abilities };

@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Lab Sim: `Toolasha.Debug.monsterAbilityData()` — dump a monster's raw ability kit
 
-Read-only console diagnostic for tracing a cadence gap (the sim casting an ability more or less often than the real fight). Given a monster hrid (or the last tick-capture's monster), it prints the ability array **in cast order** — which is the sim's cast priority — with each ability's cooldown, its `defaultCombatTriggers` (the gates that decide when it fires), the buff uniqueHrids it applies, and any keys on the monster's ability entry the sim ignores. Pairs with the uptime harness: the harness localises which ability is over/under-cast, this shows the data that drives it.
+Read-only console diagnostic for tracing a cadence gap (the sim casting an ability more or less often than the real fight). Given a monster hrid (or the last tick-capture's monster), it prints the ability array **in cast order** — which is the sim's cast priority — with each ability's cooldown, its `defaultCombatTriggers` (the gates that decide when it fires), the buff uniqueHrids it applies, its per-effect damage shape (element, ratios, DoT — so a magnitude gap can be told from a cadence gap), and any keys on the monster's ability entry the sim ignores. Pairs with the uptime harness: the harness localises which ability is over/under-cast, this shows the data that drives it.
 
 ### Lab Sim: player build check — the sim's build of your character next to your live stats
 
