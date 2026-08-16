@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab replay: two honesty fixes to the sim-vs-real comparison
+
+Both made the sim look weaker than it fights. (1) Your observed damage output now takes the larger of the tick-summed drops and the monster's endpoint HP loss — the 3 Hz feed misses hits that merged into one frame, and a monster that doesn't regen (most) has an exact HP-lost figure. (2) The sim's predicted per-fight rates (dps, damage taken, fight length) now divide by *in-fight* seconds, excluding the 3s restart interval the engine inserts between fights — matching the observed side's pure fight duration.
+
 ### Tick capture: stop when the fight leaves its monster
 
 A tick capture armed for a monster now ends itself the moment a fresh fight against a *different* monster begins — so clearing the room (or dying out of the labyrinth into your main-game action) no longer pollutes the file with a fight the harness isn't comparing against. Retries against the same monster keep recording; a general capture with no target monster still records until stopped.
