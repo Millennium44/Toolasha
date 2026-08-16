@@ -2314,4 +2314,35 @@ describe('refreshRoomDataFromLive', () => {
         expect(labyrinthClearRate.roomData[0][0].isCleared).toBe(true);
         spy.mockRestore();
     });
+
+    test('carries a same-floor clear forward when the live read lags a shroud', () => {
+        // You shrouded tile [0][1] and hit resim before the update landed, so the
+        // live React grid still reads it uncleared.
+        labyrinthClearRate.currentFloor = 3;
+        labyrinthClearRate.roomData = [[{ isCleared: true }, { isCleared: true }]];
+        const spy = vi.spyOn(labyrinthClearRate, 'getLabyrinthFromReactState').mockReturnValue({
+            roomData: [[{ isCleared: true }, { isCleared: false }]],
+            currentFloor: 3,
+        });
+        labyrinthClearRate.refreshRoomDataFromLive();
+        // The tracker already knew it was cleared, so it stays cleared — not routed
+        // back through.
+        expect(labyrinthClearRate.roomData[0][1].isCleared).toBe(true);
+        spy.mockRestore();
+    });
+
+    test('does not carry clears across a floor change — a fresh floor is fresh', () => {
+        // Descended: the old floor's clears must not bleed into the new grid, whose
+        // same positions are brand-new rooms.
+        labyrinthClearRate.currentFloor = 3;
+        labyrinthClearRate.roomData = [[{ isCleared: true }, { isCleared: true }]];
+        const spy = vi.spyOn(labyrinthClearRate, 'getLabyrinthFromReactState').mockReturnValue({
+            roomData: [[{ isCleared: false }, { isCleared: false }]],
+            currentFloor: 4,
+        });
+        labyrinthClearRate.refreshRoomDataFromLive();
+        expect(labyrinthClearRate.roomData[0][0].isCleared).toBe(false);
+        expect(labyrinthClearRate.currentFloor).toBe(4);
+        spy.mockRestore();
+    });
 });

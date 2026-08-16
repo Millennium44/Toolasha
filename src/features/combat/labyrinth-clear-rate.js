@@ -2135,18 +2135,47 @@ class LabyrinthClearRate {
      * React state always holds the current grid (see `getLabyrinthFromReactState`),
      * so read cleared status from there before pathing. No-op when the live grid
      * is unavailable, so it can only make the cached data fresher, never blank it.
+     *
+     * The reverse race exists too: shrouding a tile is a server round-trip, so a
+     * resim fired before the `labyrinth_updated` lands reads the tile still
+     * uncleared and routes back through it. Clears are monotonic within a floor,
+     * so `carryClearsForward` keeps any cleared flag the old grid held (guarded to
+     * the same floor — descending resets the grid).
      */
     refreshRoomDataFromLive() {
         try {
             const labyrinth = this.getLabyrinthFromReactState();
             const live = this.parseRoomData(labyrinth?.roomData);
             if (!live) return;
+            const floor = Math.floor(Number(labyrinth?.currentFloor));
+            const sameFloor = Number.isFinite(floor) && floor === this.currentFloor;
+            if (sameFloor && Array.isArray(this.roomData)) this.carryClearsForward(this.roomData, live);
             this.roomData = live;
             if (this._pathData == null && labyrinth?.pathData != null) this._pathData = labyrinth.pathData;
-            const floor = Math.floor(Number(labyrinth?.currentFloor));
             if (Number.isFinite(floor) && floor >= 0) this.currentFloor = floor;
         } catch (error) {
             console.error('[LabyrinthClearRate] Live room-data refresh failed:', error);
+        }
+    }
+
+    /**
+     * Union the cleared flags of a previous grid into a fresh one, in place on
+     * `next`. A tile the old grid knew was cleared stays cleared even if the
+     * fresh read hasn't caught up (the shroud round-trip race). Same-floor only;
+     * the caller guards that. Never un-clears — it can only add clears.
+     * @param {Array<Array<Object|null>>} prev - The grid before the refresh
+     * @param {Array<Array<Object|null>>} next - The fresh grid, mutated in place
+     */
+    carryClearsForward(prev, next) {
+        for (let y = 0; y < next.length; y++) {
+            const prevRow = prev[y];
+            const nextRow = next[y];
+            if (!Array.isArray(prevRow) || !Array.isArray(nextRow)) continue;
+            for (let x = 0; x < nextRow.length; x++) {
+                if (prevRow[x]?.isCleared === true && nextRow[x] && nextRow[x].isCleared !== true) {
+                    nextRow[x].isCleared = true;
+                }
+            }
         }
     }
 

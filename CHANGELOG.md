@@ -6,21 +6,29 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth path: a just-shrouded tile no longer routes back through itself
+
+Shrouding a tile is a server round-trip; resimming before the update lands read the tile still uncleared and planned back through it. Cleared status is now carried forward from the previous grid (same floor only — descending resets it), so a tile the tracker already knows is cleared stays free traversal.
+
+### Player build check: precision (and other combat buffs) no longer read as a mismatch
+
+The sim's player build is snapshot at fight start, before your precision self-buff is up, so the "you vs sim" check flagged a phantom ~68% accuracy gap. The stats a live combat buff raises now keep buff-awareness — that row reads as a buff, not a bug — while every other stat stays a sharp build-diff check. The sim already applies precision during the fight; clear rates were never affected.
+
 ### Lab replay: two honesty fixes to the sim-vs-real comparison
 
-Both made the sim look weaker than it fights. (1) Your observed damage output now takes the larger of the tick-summed drops and the monster's endpoint HP loss — the 3 Hz feed misses hits that merged into one frame, and a monster that doesn't regen (most) has an exact HP-lost figure. (2) The sim's predicted per-fight rates (dps, damage taken, fight length) now divide by *in-fight* seconds, excluding the 3s restart interval the engine inserts between fights — matching the observed side's pure fight duration.
+Both made the sim look weaker than it fights. (1) Your observed damage output now takes the larger of the tick-summed drops and the monster's endpoint HP loss — the 3 Hz feed misses hits that merged into one frame, and a monster that doesn't regen (most) has an exact HP-lost figure. (2) The sim's predicted per-fight rates (dps, damage taken, fight length) now divide by _in-fight_ seconds, excluding the 3s restart interval the engine inserts between fights — matching the observed side's pure fight duration.
 
 ### Tick capture: stop when the fight leaves its monster
 
-A tick capture armed for a monster now ends itself the moment a fresh fight against a *different* monster begins — so clearing the room (or dying out of the labyrinth into your main-game action) no longer pollutes the file with a fight the harness isn't comparing against. Retries against the same monster keep recording; a general capture with no target monster still records until stopped.
+A tick capture armed for a monster now ends itself the moment a fresh fight against a _different_ monster begins — so clearing the room (or dying out of the labyrinth into your main-game action) no longer pollutes the file with a fight the harness isn't comparing against. Retries against the same monster keep recording; a general capture with no target monster still records until stopped.
 
 ### Lab skip-threshold table: always plan from your skill level, not the live run
 
-The skip-threshold table's clear-% badges simmed the *live run's* room level for a monster whenever you were in a labyrinth, so the numbers swung to whatever the current floor happened to roll instead of answering "what does my threshold clear". Both the skilling and combat rows now always sim `effective level + threshold − 1` (the skip-derived level), ignoring the live run — the grid overlay still shows the actual rooms. Removed the now-unused live-preferring helpers.
+The skip-threshold table's clear-% badges simmed the _live run's_ room level for a monster whenever you were in a labyrinth, so the numbers swung to whatever the current floor happened to roll instead of answering "what does my threshold clear". Both the skilling and combat rows now always sim `effective level + threshold − 1` (the skip-derived level), ignoring the live run — the grid overlay still shows the actual rooms. Removed the now-unused live-preferring helpers.
 
 ### Lab sim: monsters open abilities at half-cooldown, fixing over-estimated clear rates
 
-The sim gave a labyrinth monster a *random* first-cast delay (`[cd/2, cd)`, averaging 0.75×cooldown), but tick captures show the real game opens each ability at exactly **half its cooldown**, deterministically — Cyclops's specials at ~10s on a 20s cooldown, Toughness at ~15s on 30s, its guardian aura at 60s on 120s. That extra ~quarter-cooldown of delay robbed the monster of resistance-buff uptime (Toughness ≈ 48% sim vs ≈ 68% real), so the sim under-mitigated it, over-credited your damage per hit, and **over-estimated the clear rate** — the Cyclops bug. Labyrinth monsters now open at cd/2; zone sims keep the random de-sync a pack needs. Thanks to a Fable deep-dive for localizing it.
+The sim gave a labyrinth monster a _random_ first-cast delay (`[cd/2, cd)`, averaging 0.75×cooldown), but tick captures show the real game opens each ability at exactly **half its cooldown**, deterministically — Cyclops's specials at ~10s on a 20s cooldown, Toughness at ~15s on 30s, its guardian aura at 60s on 120s. That extra ~quarter-cooldown of delay robbed the monster of resistance-buff uptime (Toughness ≈ 48% sim vs ≈ 68% real), so the sim under-mitigated it, over-credited your damage per hit, and **over-estimated the clear rate** — the Cyclops bug. Labyrinth monsters now open at cd/2; zone sims keep the random de-sync a pack needs. Thanks to a Fable deep-dive for localizing it.
 
 ### Settings: a "What's new" button to reopen the update notes
 
@@ -40,7 +48,7 @@ The real-vs-sim attribution held the last special the monster cast and, because 
 
 ### Monster Stat Check: export the player build, and a copy-all button
 
-The discrepancy-log export now carries the player-build (you vs sim) result and the live buffs behind it, not just the monster side — a monster can match perfectly while the sim builds *you* wrong, and that half was missing from the export. Also surfaced the copy button (it was built but never mounted) and made it copy the whole session as text — player build plus every monster checked — so a bug report is one paste instead of several screenshots.
+The discrepancy-log export now carries the player-build (you vs sim) result and the live buffs behind it, not just the monster side — a monster can match perfectly while the sim builds _you_ wrong, and that half was missing from the export. Also surfaced the copy button (it was built but never mounted) and made it copy the whole session as text — player build plus every monster checked — so a bug report is one paste instead of several screenshots.
 
 ### Alchemy pins: smaller, less intrusive pin badges on touchscreens
 

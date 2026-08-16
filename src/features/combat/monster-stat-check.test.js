@@ -17,6 +17,7 @@ import {
     compareStat,
     classify,
     buildComparison,
+    buffedStatKeys,
     flaggedRows,
     buildExportPayload,
     buffName,
@@ -254,6 +255,57 @@ describe('buildComparison against an engine-built monster', () => {
         const armor = result.groups[0].rows.find((r) => r.key === 'totalArmor');
         expect(armor.verdict).toBe('mismatch');
         expect(result.hasMismatch).toBe(true);
+    });
+
+    test('a leniency key stays buff-aware even in buffed mode — precision is not a bug', () => {
+        // The player check: the sim's fight-start build has no precision, so live
+        // accuracy sits ~68% above it. Named as a leniency key, that row reads as a
+        // buff, not a mismatch, while every other stat keeps the sharp check.
+        seed();
+        const monster = new Monster(HRID, 0, 200, true);
+        monster.updateCombatDetails();
+        const gameUnit = gameUnitMatching(monster.combatDetails, {
+            combatBuffMap: { '/buff_uniques/precision': { typeHrid: '/buff_types/accuracy', ratioBoost: 0.684 } },
+        });
+        gameUnit.combatDetails.magicAccuracyRating = monster.combatDetails.magicAccuracyRating * 1.684;
+
+        const leniencyKeys = buffedStatKeys(gameUnit.combatBuffMap, 'magic');
+        const result = buildComparison(gameUnit, monster.combatDetails, { simBuffed: true, leniencyKeys });
+        const acc = result.groups.flatMap((g) => g.rows).find((r) => r.key === 'magicAccuracyRating');
+        expect(acc.verdict).toBe('buff');
+        expect(result.hasMismatch).toBe(false);
+    });
+
+    test('leniency is scoped — an un-boosted stat still flags in buffed mode', () => {
+        // Precision lifts accuracy only; an armour gap the same run is still a bug.
+        seed();
+        const monster = new Monster(HRID, 0, 200, true);
+        monster.updateCombatDetails();
+        const gameUnit = gameUnitMatching(monster.combatDetails, {
+            combatBuffMap: { '/buff_uniques/precision': { typeHrid: '/buff_types/accuracy', ratioBoost: 0.684 } },
+        });
+        gameUnit.combatDetails.totalArmor = monster.combatDetails.totalArmor * 0.8;
+
+        const leniencyKeys = buffedStatKeys(gameUnit.combatBuffMap, 'magic');
+        const result = buildComparison(gameUnit, monster.combatDetails, { simBuffed: true, leniencyKeys });
+        const armor = result.groups[0].rows.find((r) => r.key === 'totalArmor');
+        expect(armor.verdict).toBe('mismatch');
+    });
+});
+
+describe('buffedStatKeys', () => {
+    test('maps a precision (accuracy) buff to the style accuracy row', () => {
+        const keys = buffedStatKeys(
+            { '/buff_uniques/precision': { typeHrid: '/buff_types/accuracy', ratioBoost: 0.684 } },
+            'magic'
+        );
+        expect(keys.has('magicAccuracyRating')).toBe(true);
+        expect(keys.has('magicMaxDamage')).toBe(false);
+    });
+
+    test('an empty or unmapped buff map yields no keys', () => {
+        expect(buffedStatKeys({}, 'smash').size).toBe(0);
+        expect(buffedStatKeys({ '/buff_uniques/x': { typeHrid: '/buff_types/mystery' } }, 'smash').size).toBe(0);
     });
 });
 
