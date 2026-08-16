@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab sim: monsters open abilities at half-cooldown, fixing over-estimated clear rates
+
+The sim gave a labyrinth monster a *random* first-cast delay (`[cd/2, cd)`, averaging 0.75×cooldown), but tick captures show the real game opens each ability at exactly **half its cooldown**, deterministically — Cyclops's specials at ~10s on a 20s cooldown, Toughness at ~15s on 30s, its guardian aura at 60s on 120s. That extra ~quarter-cooldown of delay robbed the monster of resistance-buff uptime (Toughness ≈ 48% sim vs ≈ 68% real), so the sim under-mitigated it, over-credited your damage per hit, and **over-estimated the clear rate** — the Cyclops bug. Labyrinth monsters now open at cd/2; zone sims keep the random de-sync a pack needs. Thanks to a Fable deep-dive for localizing it.
+
 ### Settings: a "What's new" button to reopen the update notes
 
 The after-update popup (changelog + the update's new settings) is one-shot and a stray click dismisses it, with no way back. Added a **What's new** button to the settings panel that reopens it. The contents are remembered when an update is detected — even for someone who has the popup turned off — and persisted so they survive a refresh; with nothing cached it still opens on the bundled changelog, so the button is never dead.

@@ -303,3 +303,30 @@ describe('buff capture (blind-sim instrumentation)', () => {
         expect(getCapturedMonsterBuffs()).toEqual([]);
     });
 });
+
+describe('resetCooldowns — labyrinth abilities open at deterministic half-cooldown', () => {
+    test('a labyrinth monster (roomLevel > 0) opens each ability at exactly cd/2, no randomness', () => {
+        seed();
+        const now = 1e9;
+        const lab = new Monster(HRID, 0, 200);
+        lab.resetCooldowns(now);
+        const ability = lab.abilities.find((a) => a);
+        // Ready at now + 0.5·cd — the real lab casts Toughness at ~15s on a 30s
+        // cooldown and a guardian aura at 60s on 120s, deterministically. No
+        // random term, so under-run resistance-buff uptime can't over-credit the
+        // player's damage.
+        expect(ability.lastUsed).toBe(now - Math.floor(ability.cooldownDuration * 0.5));
+    });
+
+    test('a zone monster (roomLevel 0) keeps the randomized [cd/2, cd) first cast', () => {
+        seed();
+        const now = 1e9;
+        const zone = new Monster(HRID, 0, 0);
+        zone.resetCooldowns(now);
+        const ability = zone.abilities.find((a) => a);
+        const half = Math.floor(ability.cooldownDuration * 0.5);
+        // lastUsed = now - half + floor(rand·half) ∈ [now - half, now)
+        expect(ability.lastUsed).toBeGreaterThanOrEqual(now - half);
+        expect(ability.lastUsed).toBeLessThan(now);
+    });
+});

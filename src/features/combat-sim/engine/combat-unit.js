@@ -689,10 +689,25 @@ class CombatUnit {
                     if (haste > 0) {
                         cooldownDuration = (cooldownDuration * 100) / (100 + haste);
                     }
-                    ability.lastUsed =
-                        currentTime -
-                        Math.floor(cooldownDuration * 0.5) +
-                        Math.floor(randomSetup() * cooldownDuration * 0.5);
+                    if (this.roomLevel > 0) {
+                        // Labyrinth: the real game opens each ability at exactly
+                        // half its cooldown — measured deterministically from tick
+                        // captures (its specials at ~cd/2 ≈ 10-11s on a 20s
+                        // cooldown, Toughness at ~15s on 30s, a guardian aura at
+                        // 60s on 120s). A zone monster's random [0.5cd, cd) first
+                        // availability delays the cast by another ~quarter cooldown
+                        // on average, which robs the monster of resistance-buff
+                        // uptime (Toughness, guardian aura), under-mitigates it,
+                        // and over-credits the player's damage — an over-estimated
+                        // clear rate. One monster per lab fight, so nothing needs
+                        // the random de-synchronisation a zone pack does.
+                        ability.lastUsed = currentTime - Math.floor(cooldownDuration * 0.5);
+                    } else {
+                        ability.lastUsed =
+                            currentTime -
+                            Math.floor(cooldownDuration * 0.5) +
+                            Math.floor(randomSetup() * cooldownDuration * 0.5);
+                    }
                 }
             });
     }
