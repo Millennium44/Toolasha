@@ -50,6 +50,76 @@ describe('extractMonsterAttacks', () => {
     });
 });
 
+/** A dmgCounter-carrying tick: monster (atk/ability) vs player (HP + damage-taken counter). */
+function dtick(at, matk, ability, playerHP, pdmg) {
+    return {
+        at,
+        payload: {
+            mMap: { 0: { atkCounter: matk, abilityHrid: ability } },
+            pMap: { 0: { cHP: playerHP, dmgCounter: pdmg } },
+        },
+    };
+}
+
+describe('extractMonsterAttacks — damage-counter path', () => {
+    test('credits a cast-ability hit that lands a tick after the swing', () => {
+        // firestorm swings at tick 1 (atk rises, damage not yet applied), and its
+        // hit resolves at tick 2 (dmgCounter rises, HP falls). The health-only
+        // path would call tick 1 a miss and tick 2 a DoT; the counter pairs them.
+        const ticks = [
+            dtick(0, 0, '/abilities/firestorm', 1000, 0),
+            dtick(100, 1, '/abilities/smoke_burst', 1000, 0), // firestorm swing registered, no damage yet
+            dtick(200, 1, '/abilities/smoke_burst', 900, 1), // firestorm resolves for 100
+        ];
+        const { byAbility } = extractMonsterAttacks(ticks);
+        expect(byAbility['/abilities/firestorm']).toMatchObject({ casts: 1, hits: 1, damage: 100 });
+        expect(byAbility.damageOverTime).toBeUndefined();
+    });
+
+    test('a damage-counter rise with no pending swing is damage-over-time', () => {
+        const ticks = [
+            dtick(0, 5, '/abilities/fireball', 1000, 10),
+            dtick(100, 5, '/abilities/fireball', 940, 11), // no swing, counter rose → DoT 60
+        ];
+        const { byAbility } = extractMonsterAttacks(ticks);
+        expect(byAbility.damageOverTime).toMatchObject({ hits: 1, damage: 60 });
+    });
+
+    test('a damage-counter rise with health flat is a miss', () => {
+        const ticks = [
+            dtick(0, 0, '/abilities/fireball', 1000, 0),
+            dtick(100, 1, '/abilities/fireball', 1000, 0), // swing
+            dtick(200, 1, '/abilities/fireball', 1000, 1), // resolves, no HP change → miss
+        ];
+        const { byAbility } = extractMonsterAttacks(ticks);
+        expect(byAbility['/abilities/fireball']).toMatchObject({ casts: 1, hits: 0, misses: 1 });
+    });
+
+    test('a monster-gone gap does not inflate the next hit off a stale baseline', () => {
+        // The HP reading snaps to max (1000) while the monster is gone; the next
+        // real hit must be measured from the re-seeded baseline, not that spike.
+        const ticks = [
+            dtick(0, 3, '/abilities/fireball', 600, 5),
+            { at: 100, payload: { mMap: {}, pMap: { 0: { cHP: 1000, dmgCounter: 5 } } } }, // gone, HP snaps up
+            dtick(200, 3, '/abilities/fireball', 1000, 5), // re-seed baseline at 1000
+            dtick(300, 4, '/abilities/fireball', 1000, 5), // swing
+            dtick(400, 4, '/abilities/fireball', 940, 6), // resolves for 60, not 60+400
+        ];
+        const { byAbility } = extractMonsterAttacks(ticks);
+        expect(byAbility['/abilities/fireball'].damage).toBe(60);
+    });
+
+    test('two attacks resolving on one merged tick split the drop', () => {
+        const ticks = [
+            dtick(0, 0, '/abilities/fireball', 1000, 0),
+            dtick(100, 2, '/abilities/fireball', 1000, 0), // two swings registered
+            dtick(200, 2, '/abilities/fireball', 800, 2), // both resolve, 200 over 2 = 100 each
+        ];
+        const { byAbility } = extractMonsterAttacks(ticks);
+        expect(byAbility['/abilities/fireball']).toMatchObject({ casts: 2, hits: 2, damage: 200 });
+    });
+});
+
 describe('summarizeSimAttacks', () => {
     test('folds a damage histogram into hits, misses and total damage', () => {
         const { byAbility } = summarizeSimAttacks({
