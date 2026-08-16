@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Uptime harness: stop mislabelling auto-attacks as the last special
+
+The real-vs-sim attribution held the last special the monster cast and, because the payload only names a special on its cast tick (marking ordinary swings with `isAutoAtk`), never let go of it — so every auto-attack after a special inherited that special's label. The "real" column then reported special cast-shares the cooldowns physically can't produce (e.g. cyclops autoAttack at ~47% when the 20s cooldowns floor it near ~60%), which sent a bug hunt chasing a sim cadence problem that wasn't there. Auto-attack ticks now reset the label.
+
 ### Monster Stat Check: export the player build, and a copy-all button
 
 The discrepancy-log export now carries the player-build (you vs sim) result and the live buffs behind it, not just the monster side — a monster can match perfectly while the sim builds *you* wrong, and that half was missing from the export. Also surfaced the copy button (it was built but never mounted) and made it copy the whole session as text — player build plus every monster checked — so a bug report is one paste instead of several screenshots.
