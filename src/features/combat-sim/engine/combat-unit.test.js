@@ -131,3 +131,75 @@ describe('CombatUnit.removeExpiredBuffs fallback', () => {
         expect(unit.combatBuffs['/buff_uniques/speed_aura']).toBeUndefined();
     });
 });
+
+describe('CombatUnit.updateCombatDetails max HP/MP buffs', () => {
+    // The guild shrine's max-HP/MP bonus arrives as these buff types; the engine
+    // used to ignore them, computing HP/MP on the equipment ratio alone.
+    const maxHpBuff = (ratioBoost, flatBoost = 0) => ({
+        uniqueHrid: '/buff_uniques/max_hitpoints_guild_buff',
+        typeHrid: '/buff_types/max_hitpoints',
+        ratioBoost,
+        ratioBoostLevelBonus: 0,
+        flatBoost,
+        flatBoostLevelBonus: 0,
+        duration: 60 * NS,
+    });
+    const maxMpBuff = (ratioBoost) => ({
+        uniqueHrid: '/buff_uniques/max_manapoints_guild_buff',
+        typeHrid: '/buff_types/max_manapoints',
+        ratioBoost,
+        ratioBoostLevelBonus: 0,
+        flatBoost: 0,
+        flatBoostLevelBonus: 0,
+        duration: 60 * NS,
+    });
+
+    test('folds a +2% guild max-hitpoints buff into max HP', () => {
+        const unit = new CombatUnit();
+        unit.staminaLevel = 165;
+        unit.combatDetails.combatStats.maxHitpoints = 500;
+        unit.addBuff(maxHpBuff(0.02), 0);
+        unit.updateCombatDetails();
+        // (10*(10+165) + 500) * (1 + 0.02) = 2250 * 1.02 = 2295
+        expect(unit.combatDetails.maxHitpoints).toBe(2295);
+    });
+
+    test('without the buff, max HP runs on the base alone (the old value)', () => {
+        const unit = new CombatUnit();
+        unit.staminaLevel = 165;
+        unit.combatDetails.combatStats.maxHitpoints = 500;
+        unit.updateCombatDetails();
+        expect(unit.combatDetails.maxHitpoints).toBe(2250);
+    });
+
+    test('a +2% guild max-manapoints buff folds into max MP', () => {
+        const unit = new CombatUnit();
+        unit.intelligenceLevel = 100;
+        unit.combatDetails.combatStats.maxManapoints = 0;
+        unit.addBuff(maxMpBuff(0.02), 0);
+        unit.updateCombatDetails();
+        // (10*(10+100) + 0) * 1.02 = 1100 * 1.02 = 1122
+        expect(unit.combatDetails.maxManapoints).toBe(1122);
+    });
+
+    test('a flat max-hitpoints buff adds inside the ratio, matching the game', () => {
+        const unit = new CombatUnit();
+        unit.staminaLevel = 165;
+        unit.combatDetails.combatStats.maxHitpoints = 500;
+        unit.addBuff(maxHpBuff(0.02, 100), 0);
+        unit.updateCombatDetails();
+        // (10*(10+165) + 500 + 100) * 1.02 = 2350 * 1.02 = 2397
+        expect(unit.combatDetails.maxHitpoints).toBe(2397);
+    });
+
+    test('repeated updateCombatDetails does not re-accumulate the buff', () => {
+        const unit = new CombatUnit();
+        unit.staminaLevel = 165;
+        unit.combatDetails.combatStats.maxHitpoints = 500;
+        unit.addBuff(maxHpBuff(0.02), 0);
+        unit.updateCombatDetails();
+        unit.updateCombatDetails();
+        unit.updateCombatDetails();
+        expect(unit.combatDetails.maxHitpoints).toBe(2295);
+    });
+});
