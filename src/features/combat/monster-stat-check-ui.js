@@ -399,9 +399,15 @@ class MonsterStatCheckPanel {
         try {
             const capture = captureFile();
             const capturedMonster = capture?.context?.monsterHrid;
-            // A capture is usable if it holds ticks and is for this monster (or is
-            // unlabelled). Otherwise arm a fresh one that records the next fight.
-            const usable = capture?.ticks?.length && (!capturedMonster || capturedMonster === snap.hrid);
+            const capturedLevel = Number(capture?.context?.roomLevel) || 0;
+            // A capture is usable if it holds ticks and matches this monster AND
+            // this room level (unlabelled fields pass) — comparing ticks from one
+            // room level against a sim of another reads as a finding when it is a
+            // context mismatch. Otherwise arm a fresh capture for the next fight.
+            const usable =
+                capture?.ticks?.length &&
+                (!capturedMonster || capturedMonster === snap.hrid) &&
+                (!capturedLevel || !snap.roomLevel || capturedLevel === snap.roomLevel);
             if (usable) {
                 const result = await labyrinthClearRate.uptimeHarness(snap.hrid, snap.roomLevel, capture.ticks);
                 snap.uptime = result ? { rows: result.comparison.rows, at: Date.now() } : { error: 'Sim run failed.' };

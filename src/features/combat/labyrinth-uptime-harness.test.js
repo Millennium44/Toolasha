@@ -215,3 +215,88 @@ describe('compareIncoming', () => {
         expect(rows[0].verdict).toBe('buff');
     });
 });
+
+describe('attempt segmentation on new_battle', () => {
+    /** A capture-shaped start message with full unit snapshots */
+    const start = (at, { mHp, pHp, matk = 1, pdmg = 0 }) => ({
+        at,
+        type: 'new_battle',
+        payload: {
+            battleId: 1, // the server reuses ids — segmentation must not rely on them
+            players: [{ attackAttemptCounter: 1, damageSplatCounter: pdmg, currentHitpoints: pHp }],
+            monsters: [{ attackAttemptCounter: matk, currentHitpoints: mHp, isPreparingAutoAttack: true }],
+        },
+    });
+    /** A compact battle tick */
+    const tick = (at, { mHp, mAtk, pHp, pDmg, auto = true }) => ({
+        at,
+        type: 'battle_updated',
+        payload: {
+            mMap: { 0: { cHP: mHp, atkCounter: mAtk, isAutoAtk: auto } },
+            pMap: { 0: { cHP: pHp, dmgCounter: pDmg } },
+        },
+    });
+
+    // Mirrors the real Frost Sniper capture's structure: a fight already in
+    // progress when recording began, then three seen-from-the-start retries —
+    // two losses and a win — with the server reusing battle id 1 throughout.
+    const CAPTURE = [
+        // Leading partial: no new_battle seen, ends in a death
+        tick(0, { mHp: 900, mAtk: 5, pHp: 200, pDmg: 10 }),
+        tick(500, { mHp: 900, mAtk: 6, pHp: 100, pDmg: 11 }),
+        tick(1000, { mHp: 900, mAtk: 7, pHp: 0, pDmg: 12 }),
+        // Attempt 1 (complete): the FIRST compact tick already carries a swing
+        // and its 50-damage hit relative to the start snapshot — the case the
+        // unseeded baseline silently swallowed
+        start(10_000, { mHp: 1000, pHp: 500 }),
+        tick(10_500, { mHp: 1000, mAtk: 2, pHp: 450, pDmg: 1 }),
+        tick(11_000, { mHp: 1000, mAtk: 3, pHp: 0, pDmg: 2 }),
+        // Attempt 2 (complete): a win
+        start(20_000, { mHp: 1000, pHp: 500 }),
+        tick(20_500, { mHp: 600, mAtk: 2, pHp: 460, pDmg: 1 }),
+        tick(21_000, { mHp: 0, mAtk: 2, pHp: 460, pDmg: 1 }),
+    ];
+
+    test('the capture reads as its attempts, not one long fight', () => {
+        const out = extractMonsterAttacks(CAPTURE);
+
+        expect(out.fights).toBe(2);
+        expect(out.partialFights).toBe(1);
+        expect(out.captureStartedMidFight).toBe(true);
+        expect(out.attempts.map((a) => a.complete)).toEqual([false, true, true]);
+        expect(out.attempts.map((a) => a.outcome)).toEqual(['loss', 'loss', 'win']);
+    });
+
+    test('the first tick after a start is measured, not spent as a baseline', () => {
+        const out = extractMonsterAttacks(CAPTURE);
+
+        // Attempt 1's opening swing: counter 1→2 with a 500→450 drop. The old
+        // extractor seeded on this tick and the 50 damage vanished.
+        const auto = out.attempts[1].byAbility.autoAttack;
+        expect(auto.casts).toBeGreaterThanOrEqual(1);
+        expect(auto.damage).toBeCloseTo(50 + 450, 5); // opening hit + killing blow
+    });
+
+    test('the leading partial stays out of the aggregate', () => {
+        const out = extractMonsterAttacks(CAPTURE);
+
+        // The partial dealt 100+100 into pHp drops; the aggregate carries only
+        // the complete attempts' totals
+        const total = Object.values(out.byAbility).reduce((sum, r) => sum + r.damage, 0);
+        const partialTotal = Object.values(out.attempts[0].byAbility).reduce((sum, r) => sum + r.damage, 0);
+        expect(partialTotal).toBeGreaterThan(0);
+        expect(total).toBeCloseTo(50 + 450 + 40, 5); // both complete attempts, nothing from the partial
+    });
+
+    test('a capture with no start messages keeps the legacy reading', () => {
+        const legacy = [
+            tick(0, { mHp: 900, mAtk: 1, pHp: 500, pDmg: 0 }),
+            tick(500, { mHp: 900, mAtk: 2, pHp: 450, pDmg: 1 }),
+            tick(1000, { mHp: 900, mAtk: 3, pHp: 400, pDmg: 2 }),
+        ];
+        const out = extractMonsterAttacks(legacy);
+        expect(out.fights).toBe(1);
+        expect(out.partialFights).toBe(0);
+        expect(out.captureStartedMidFight).toBe(false);
+    });
+});
