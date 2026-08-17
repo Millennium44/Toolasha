@@ -123,6 +123,31 @@ describe('adjacent duplicate ticks are dropped, and counted', () => {
         expect(capture.captureFile().duplicatesDiscarded).toBe(0);
     });
 
+    test('saving marks the capture saved; starting or clearing unmarks it', () => {
+        vi.stubGlobal('Blob', class {});
+        vi.stubGlobal('URL', { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} });
+        vi.stubGlobal('document', { createElement: () => ({ click: () => {} }) });
+
+        capture.startCapture();
+        emit('battle_updated', battle);
+        expect(capture.captureStatus().savedAt).toBeNull();
+
+        capture.stopCapture();
+        expect(capture.downloadCapture()).toBe(true);
+        // The ticks stay held (the uptime harness reuses them); only the
+        // "still needs saving" flag flips
+        expect(capture.captureStatus().ticks).toBe(1);
+        expect(capture.captureStatus().savedAt).not.toBeNull();
+
+        capture.startCapture();
+        expect(capture.captureStatus().savedAt).toBeNull();
+        capture.stopCapture();
+        capture.clearCapture();
+        expect(capture.captureStatus().savedAt).toBeNull();
+
+        vi.unstubAllGlobals();
+    });
+
     test('a fresh capture forgets the previous one’s duplicate count and last tick', () => {
         capture.startCapture();
         emit('battle_updated', battle);

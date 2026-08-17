@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Player-build check: the offense fold no longer double-applies persistent buffs
+
+The diagnostic folded your whole live buff map into the sim column, re-applying persistent ratios (the guild damage buff, the labyrinth combat-damage upgrade) the sim's build already carries — a ranged max hit read 1,029 against the game's 895. The fold now runs as a ratio against your buff map at fight start (kept from `new_battle`), so each effect counts exactly once and only what appeared, grew or expired mid-fight moves the column. The stat-check history also restores under its full recorded key again — an older restore collapsed every distinct buff-state snapshot of one monster/room down to the oldest and then saved the loss.
+
+### Lab capture button: live tick count, and no more silently lost captures
+
+The capture button now shows the running tick count while recording, and a capture that stops by itself (the fight moved on, or the time limit) flips the button to "Save capture (N)" with a separate Discard — starting a new capture can no longer silently erase an unsaved one. Repeated-tick discards are reported in the button's tooltip.
+
 ### Lab sim: full monster abilities everywhere, honest attempt counting, and no double ticks
 
 Four structural fixes from an external calibration review, each verified against the code before changing it. The upgrade advisor (baseline, every candidate, community buffs, all-fights, combination check) and the live attempt-bar replay were still simulating monsters stripped of their tier-gated kit — stun, shred, self-buffs — while the tile badges and calibration replay simmed the full kit; full abilities are now the default for every labyrinth sim (persisted advisor results from before the change are discarded rather than compared against). Attempt counting now tracks resolved fights explicitly, so a capped run that ended on the killing blow no longer reports the impossible "100.4% clear". The websocket hook was delivering every message on its skip-dedup list twice (a getter/mark ordering bug) — raw tick captures were half duplicates; fixed at the hook, with capture-side dedup and a duplicates count in the export as a backstop. The live "clear from here" replay now wears the same ~ as the extrapolated estimate, since it restores health and the clock but not cooldowns or buffs. Also: the replay check no longer subtracts a restart idle the lab engine never inserts (it read sim dps a few percent high), and tick captures carry version/host metadata.

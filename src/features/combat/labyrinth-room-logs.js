@@ -312,6 +312,17 @@ class LabyrinthRoomLogs {
         this.battleHandler = (data) => this.onBattleUpdated(data);
         webSocketHook.on('battle_updated', this.battleHandler);
 
+        // The capture button's live tick count, and — once combat has moved on
+        // and no battle tick will repaint it — the flip to "Save capture (N)"
+        // when a capture stops by itself. A second's cadence is plenty for a
+        // counter, and the tick is a no-op while the panel is closed and
+        // nothing is armed or held.
+        this.captureRefreshTimer = setInterval(() => {
+            const status = labTickCapture.captureStatus();
+            if (!status.capturing && !status.ticks) return;
+            if (this.panel?.isConnected && this.panel.style.display !== 'none') this.paintCapture();
+        }, 1000);
+
         // Experience is credited by its own messages, on their own schedule.
         // Watching for it to land and attributing it to whichever room is open
         // works whichever message brings it and whether it turns up during the
@@ -342,6 +353,10 @@ class LabyrinthRoomLogs {
         if (this.battleHandler) {
             webSocketHook.off('battle_updated', this.battleHandler);
             this.battleHandler = null;
+        }
+        if (this.captureRefreshTimer) {
+            clearInterval(this.captureRefreshTimer);
+            this.captureRefreshTimer = null;
         }
         for (const [type, handler] of this.xpHandlers) webSocketHook.off(type, handler);
         this.xpHandlers = [];
@@ -1187,8 +1202,20 @@ class LabyrinthRoomLogs {
         this.captureButton = document.createElement('button');
         this.captureButton.addEventListener('click', () => this.onCaptureClicked());
 
+        // Shown only while an unsaved auto-stopped capture is held, so the held
+        // fight can be thrown away deliberately instead of silently by the next
+        // Capture press
+        this.captureDiscardButton = document.createElement('button');
+        this.captureDiscardButton.textContent = 'Discard';
+        this.captureDiscardButton.title = 'Throw away the held capture without saving it';
+        this.captureDiscardButton.addEventListener('click', () => {
+            labTickCapture.clearCapture();
+            this.paintCapture();
+        });
+
         actions.appendChild(this.replayButton);
         actions.appendChild(this.captureButton);
+        actions.appendChild(this.captureDiscardButton);
         actions.appendChild(this.uncappedButton);
         actions.appendChild(this.recomputeButton);
         actions.appendChild(this.exportButton);
@@ -1264,17 +1291,30 @@ class LabyrinthRoomLogs {
         this.replayButton.style.cursor = canReplay ? 'pointer' : 'default';
     }
 
-    /** Show whether a raw tick capture is running and how many ticks it has */
+    /**
+     * Paint the capture button for its three states: idle, recording (live tick
+     * count), and stopped-holding-an-unsaved-capture (a capture that ended by
+     * itself — the monster changed, or the time limit — still needs a way out
+     * to a file; before this state existed those ticks were only ever one
+     * Capture press away from silent erasure).
+     */
     paintCapture() {
         if (!this.captureButton) return;
         const status = labTickCapture.captureStatus();
+        const holdingUnsaved = !status.capturing && status.ticks > 0 && !status.savedAt;
+        const dupes = status.duplicatesDiscarded > 0 ? ` ${status.duplicatesDiscarded} repeated ticks discarded.` : '';
 
         if (status.capturing) {
-            this.captureButton.textContent = status.ticks ? `Stop & save (${status.ticks})` : 'Capturing…';
+            this.captureButton.textContent = `Stop & save (${status.ticks})`;
             this.captureButton.title =
                 'Stop the raw capture and download it. It records the moment-to-moment combat feed — every ' +
                 'health, mana and counter tick — so the stun cadence and per-hit damage behind a rate mismatch ' +
-                'can be read. Hand the file over.';
+                `can be read. Hand the file over.${dupes}`;
+        } else if (holdingUnsaved) {
+            this.captureButton.textContent = `Save capture (${status.ticks})`;
+            this.captureButton.title =
+                'The capture stopped by itself (the fight moved to a different monster, or the time limit) and ' +
+                `is still holding these ticks. Save writes the file; Discard throws them away.${dupes}`;
         } else {
             this.captureButton.textContent = 'Capture';
             this.captureButton.title =
@@ -1287,7 +1327,15 @@ class LabyrinthRoomLogs {
             'white-space:nowrap; flex-shrink:0; ' +
             (status.capturing
                 ? 'background:rgba(255,110,110,0.85); color:#fff;'
-                : 'background:rgba(255,255,255,0.12); color:#9ec4ff;');
+                : holdingUnsaved
+                  ? 'background:rgba(255,190,80,0.85); color:#222;'
+                  : 'background:rgba(255,255,255,0.12); color:#9ec4ff;');
+        if (this.captureDiscardButton) {
+            this.captureDiscardButton.style.cssText =
+                'height:18px; border:0; border-radius:4px; font-size:10px; cursor:pointer; padding:0 6px; ' +
+                'white-space:nowrap; flex-shrink:0; background:rgba(255,255,255,0.12); color:#ffb3b3; ' +
+                (holdingUnsaved ? '' : 'display:none;');
+        }
     }
 
     /** Show whether an uncapped Recompute is armed */
@@ -1369,8 +1417,15 @@ class LabyrinthRoomLogs {
      * there is nothing to do between stopping and handing it over.
      */
     onCaptureClicked() {
-        if (labTickCapture.isCapturing()) {
+        const status = labTickCapture.captureStatus();
+        if (status.capturing) {
             labTickCapture.stopCapture();
+            labTickCapture.downloadCapture();
+        } else if (status.ticks > 0 && !status.savedAt) {
+            // A capture that stopped by itself is still held; this press is the
+            // save it never got. Starting fresh from here would erase it —
+            // that path is only reachable once these ticks are saved or
+            // discarded, so a Capture press can never silently destroy a fight.
             labTickCapture.downloadCapture();
         } else {
             // Best-effort label from whatever knows the current room; the capture

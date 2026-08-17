@@ -47,6 +47,13 @@ let targetMonster = null;
 let duplicatesDiscarded = 0;
 /** The last battle_updated payload kept, serialized, for the adjacency check */
 let lastBattleKey = null;
+/**
+ * When the held ticks were last written out, or null while unsaved. The room-log
+ * button reads this to tell "stopped, holding an unsaved capture" (offer Save)
+ * from "stopped and already saved" (offer a fresh Capture) — without it a saved
+ * capture would sit offering the same download forever.
+ */
+let savedAt = null;
 
 /** The first monster's hrid in a `new_battle` payload, or null. */
 function firstMonsterHrid(payload) {
@@ -137,6 +144,7 @@ export function startCapture(ctx = null, { stopOnLeave = true } = {}) {
     ticks = [];
     duplicatesDiscarded = 0;
     lastBattleKey = null;
+    savedAt = null;
     context = ctx || null;
     targetMonster = stopOnLeave ? ctx?.monsterHrid || null : null;
 
@@ -175,11 +183,13 @@ export function clearCapture() {
     targetMonster = null;
     duplicatesDiscarded = 0;
     lastBattleKey = null;
+    savedAt = null;
 }
 
 /**
  * How much has been captured, for the button to read.
- * @returns {{capturing: boolean, ticks: number, seconds: number, duplicatesDiscarded: number}}
+ * @returns {{capturing: boolean, ticks: number, seconds: number, duplicatesDiscarded: number,
+ *   savedAt: number|null}}
  */
 export function captureStatus() {
     return {
@@ -187,6 +197,7 @@ export function captureStatus() {
         ticks: ticks.length,
         seconds: startedAt ? (Date.now() - startedAt) / 1000 : 0,
         duplicatesDiscarded,
+        savedAt,
     };
 }
 
@@ -237,6 +248,9 @@ export function downloadCapture() {
         link.download = `toolasha-labyrinth-ticks-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
         link.click();
         URL.revokeObjectURL(link.href);
+        // The ticks stay held (the uptime harness reuses a stopped capture),
+        // but the button no longer needs to offer this download again
+        savedAt = Date.now();
         return true;
     } catch (error) {
         console.error('[LabyrinthTickCapture] Writing the capture failed:', error);

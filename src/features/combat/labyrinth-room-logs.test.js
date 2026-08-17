@@ -5,6 +5,28 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => false, getSettingValue: (_k, d) => d, Z_FLOATING_PANEL: 1100 },
 }));
+const tick = vi.hoisted(() => ({
+    status: { capturing: false, ticks: 0, seconds: 0, duplicatesDiscarded: 0, savedAt: null },
+    calls: [],
+}));
+vi.mock('./labyrinth-tick-capture.js', () => ({
+    default: {
+        captureStatus: () => ({ ...tick.status }),
+        isCapturing: () => tick.status.capturing,
+        startCapture: (...args) => tick.calls.push(['start', ...args]),
+        stopCapture: () => tick.calls.push(['stop']),
+        downloadCapture: () => {
+            tick.calls.push(['download']);
+            tick.status.savedAt = 123;
+            return true;
+        },
+        clearCapture: () => {
+            tick.calls.push(['clear']);
+            tick.status = { capturing: false, ticks: 0, seconds: 0, duplicatesDiscarded: 0, savedAt: null };
+        },
+        captureFile: () => ({ ticks: [] }),
+    },
+}));
 vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => null, setJSON: async () => {} } }));
 vi.mock('../../core/data-manager.js', () => ({ default: { getSkills: () => null } }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
@@ -402,5 +424,76 @@ describe('marking a point to measure from', () => {
 
     test('and Reset is still there, because it answers a different question', () => {
         expect(labyrinthRoomLogs.clearButton.textContent).toBe('Reset');
+    });
+});
+
+describe('the capture button knows its three states', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        labyrinthRoomLogs.panel = null;
+        tick.status = { capturing: false, ticks: 0, seconds: 0, duplicatesDiscarded: 0, savedAt: null };
+        tick.calls = [];
+        labyrinthRoomLogs.ensurePanel();
+    });
+
+    test('idle: plain Capture, no discard on offer', () => {
+        expect(labyrinthRoomLogs.captureButton.textContent).toBe('Capture');
+        expect(labyrinthRoomLogs.captureDiscardButton.style.display).toBe('none');
+    });
+
+    test('recording: the tick count is live, not painted once and left', () => {
+        tick.status = { ...tick.status, capturing: true, ticks: 12 };
+        labyrinthRoomLogs.paintCapture();
+        expect(labyrinthRoomLogs.captureButton.textContent).toBe('Stop & save (12)');
+
+        // More ticks arrive; the next paint (the 1s refresh) must show them
+        tick.status.ticks = 40;
+        labyrinthRoomLogs.paintCapture();
+        expect(labyrinthRoomLogs.captureButton.textContent).toBe('Stop & save (40)');
+    });
+
+    test('stopped holding an unsaved capture: Save is offered, and Discard appears', () => {
+        // The auto-stop case — the monster changed or the time limit hit
+        tick.status = { ...tick.status, capturing: false, ticks: 300 };
+        labyrinthRoomLogs.paintCapture();
+        expect(labyrinthRoomLogs.captureButton.textContent).toBe('Save capture (300)');
+        expect(labyrinthRoomLogs.captureDiscardButton.style.display).not.toBe('none');
+    });
+
+    test('clicking Save downloads the held capture and cannot start a new one over it', () => {
+        tick.status = { ...tick.status, capturing: false, ticks: 300 };
+        labyrinthRoomLogs.paintCapture();
+
+        labyrinthRoomLogs.onCaptureClicked();
+
+        expect(tick.calls).toContainEqual(['download']);
+        expect(tick.calls.some(([what]) => what === 'start')).toBe(false);
+        // Saved: the button falls back to a plain Capture
+        expect(labyrinthRoomLogs.captureButton.textContent).toBe('Capture');
+    });
+
+    test('Discard throws the held capture away deliberately', () => {
+        tick.status = { ...tick.status, capturing: false, ticks: 300 };
+        labyrinthRoomLogs.paintCapture();
+
+        labyrinthRoomLogs.captureDiscardButton.click();
+
+        expect(tick.calls).toContainEqual(['clear']);
+        expect(labyrinthRoomLogs.captureButton.textContent).toBe('Capture');
+    });
+
+    test('an already-saved capture offers a fresh start, not a second download', () => {
+        tick.status = { ...tick.status, capturing: false, ticks: 300, savedAt: 99 };
+        labyrinthRoomLogs.paintCapture();
+        expect(labyrinthRoomLogs.captureButton.textContent).toBe('Capture');
+
+        labyrinthRoomLogs.onCaptureClicked();
+        expect(tick.calls.some(([what]) => what === 'start')).toBe(true);
+    });
+
+    test('discarded repeats are reported where there is room — the title', () => {
+        tick.status = { ...tick.status, capturing: true, ticks: 50, duplicatesDiscarded: 7 };
+        labyrinthRoomLogs.paintCapture();
+        expect(labyrinthRoomLogs.captureButton.title).toContain('7 repeated ticks discarded');
     });
 });

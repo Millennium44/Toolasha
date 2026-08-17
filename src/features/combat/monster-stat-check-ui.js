@@ -13,6 +13,7 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import storage from '../../core/storage.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -164,12 +165,43 @@ class MonsterStatCheckPanel {
         this.lastPlayerUnit = null;
         /** The player-build comparison result (panel-level, not per monster). */
         this.playerCheck = null;
+        /**
+         * Your `combatBuffMap` as the current fight opened, from `new_battle`.
+         * The offense fold subtracts this so persistent ratios (guild damage,
+         * the labyrinth combat-damage upgrade) — already in the sim's build —
+         * are not applied to the sim column a second time. Null until a fight
+         * starts while the feature is on; the fold then falls back to the whole
+         * live map, its pre-delta behavior.
+         */
+        this.fightStartBuffMap = null;
     }
 
     /** Remember the character's live stats from a self-click, for the build check. */
     noteChar(unit) {
         this.lastPlayerUnit = unit;
         if (this.container && this.container.style.display !== 'none') this._render();
+    }
+
+    /**
+     * Remember your buff map as a fight opens, for the offense fold's delta.
+     * @param {Object} payload - A `new_battle` payload
+     */
+    noteBattleStart(payload) {
+        const players = Array.isArray(payload?.players) ? payload.players : Object.values(payload?.players || {});
+        if (!players.length) return;
+        const characterId = dataManager.getCurrentCharacterId?.();
+        const characterName = dataManager.getCurrentCharacterName?.();
+        const mine =
+            players.find((player) => characterId && player?.character?.id === characterId) ||
+            players.find(
+                (player) =>
+                    characterName && (player?.character?.name === characterName || player?.name === characterName)
+            ) ||
+            (players.length === 1 ? players[0] : null);
+        // A payload without a buff map (older shape, trimmed replay) resets to
+        // null rather than keeping the previous fight's map, which would
+        // subtract someone else's yesterday from today's fold
+        this.fightStartBuffMap = mine?.combatBuffMap ? { ...mine.combatBuffMap } : null;
     }
 
     /**
@@ -289,7 +321,11 @@ class MonsterStatCheckPanel {
             if (saved.simMode === 'buffed' || saved.simMode === 'baseline') this.simMode = saved.simMode;
             for (const entry of saved.entries || []) {
                 if (!entry?.hrid) continue;
-                const key = `${entry.hrid}|${entry.roomLevel}`;
+                // The same key the entry was recorded under — monster, room AND
+                // buff signature. An earlier restore rebuilt only the first two,
+                // which collapsed every distinct effect-state snapshot of one
+                // monster/level down to the oldest and then persisted the loss.
+                const key = this._recordKey(entry);
                 if (!this.history.has(key)) this.history.set(key, entry);
             }
             if (this.container && this.displayed) this._render();
@@ -406,17 +442,20 @@ class MonsterStatCheckPanel {
                 this.playerCheck = { error: 'Sim player build failed.' };
             } else {
                 // The sim build is read at fight start, before your transient
-                // combat buffs are cast, so fold your live offense buffs (precision,
-                // fury, a monster's damage shred on you) into the sim column by the
-                // engine's own formula — now the accuracy and max-hit rows compare
-                // like against like instead of showing the buff as a fat gap. The
-                // rarer mitigation/evasion transient effects, which can't be folded
-                // without double-counting persistent sources, keep the softer
-                // leniency so they read as a buff rather than a bug.
+                // combat buffs are cast, so fold the offense buffs that changed
+                // since the fight opened (precision, fury, a monster's damage
+                // shred on you) into the sim column by the engine's own formula —
+                // now the accuracy and max-hit rows compare like against like
+                // instead of showing the buff as a fat gap. The fold deltas
+                // against the fight-start buff map, so persistent ratios (guild
+                // damage, the labyrinth combat-damage upgrade) already inside the
+                // sim's build are not applied a second time. The rarer
+                // mitigation/evasion transient effects keep the softer leniency
+                // so they read as a buff rather than a bug.
                 const styleKey = styleKeyOf(this.lastPlayerUnit?.combatDetails?.combatStats);
                 const buffMap = this.lastPlayerUnit?.combatBuffMap;
                 const leniencyKeys = buffedStatKeys(buffMap, styleKey);
-                const simFolded = foldOffenseBuffs(simDetails, buffMap, styleKey);
+                const simFolded = foldOffenseBuffs(simDetails, buffMap, styleKey, this.fightStartBuffMap);
                 const cmp = buildComparison(this.lastPlayerUnit, simFolded, { simBuffed: true, leniencyKeys });
                 this.playerCheck = {
                     groups: cmp.groups,
@@ -477,7 +516,13 @@ class MonsterStatCheckPanel {
      */
     _playerBuildForExport() {
         if (!this.playerCheck) return null;
-        return { ...this.playerCheck, playerBuffMap: this.lastPlayerUnit?.combatBuffMap || null };
+        return {
+            ...this.playerCheck,
+            playerBuffMap: this.lastPlayerUnit?.combatBuffMap || null,
+            // What the offense fold subtracted, so a reader can re-derive the
+            // delta — null means the fold ran against the whole live map
+            fightStartBuffMap: this.fightStartBuffMap || null,
+        };
     }
 
     /** Download the session's discrepancy log plus the current snapshot as JSON. */
@@ -1277,6 +1322,9 @@ const panel = new MonsterStatCheckPanel();
 /** The `battle_unit_fetched` handler, kept as a reference so it can be removed. */
 let fetchHandler = null;
 
+/** The `new_battle` handler — the fight-start buff snapshot the offense fold deltas against. */
+let battleHandler = null;
+
 function handleFetched(data) {
     try {
         const unit = data?.unit;
@@ -1299,6 +1347,16 @@ function initialize() {
         fetchHandler = handleFetched;
         webSocketHook.on('battle_unit_fetched', fetchHandler);
     }
+    if (!battleHandler) {
+        battleHandler = (data) => {
+            try {
+                panel.noteBattleStart(data);
+            } catch (error) {
+                console.error('[MonsterStatCheck] Failed to note a battle start:', error);
+            }
+        };
+        webSocketHook.on('new_battle', battleHandler);
+    }
 
     // Restore the log saved from an earlier session so the panel opens with it.
     panel._loadPersisted();
@@ -1314,6 +1372,10 @@ function disable() {
     if (fetchHandler) {
         webSocketHook.off('battle_unit_fetched', fetchHandler);
         fetchHandler = null;
+    }
+    if (battleHandler) {
+        webSocketHook.off('new_battle', battleHandler);
+        battleHandler = null;
     }
     panel.teardown();
 }
@@ -1335,3 +1397,6 @@ export default {
     dumpLast,
     logEntries,
 };
+
+/** The panel singleton, exported for tests. */
+export { panel };

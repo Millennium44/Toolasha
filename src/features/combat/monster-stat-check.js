@@ -105,7 +105,7 @@ const OFFENSE_BUFF_TYPES = {
 };
 
 /**
- * Sum the ratio boosts a live buff map applies to the derived offense ratings.
+ * Sum the ratio boosts a buff map applies to the derived offense ratings.
  * @param {Object} combatBuffMap - The unit's `combatBuffMap`
  * @returns {{accuracy: number, furyAccuracy: number, damage: number, furyDamage: number}}
  */
@@ -119,30 +119,44 @@ export function offenseRatioBoosts(combatBuffMap) {
 }
 
 /**
- * A copy of the sim's fight-start build with the live transient *offense* buffs
- * folded into the derived accuracy and max-hit ratings, by the engine's own
- * formula: `base × (1 + ratio) × (1 + furyRatio)` (see combat-unit.js
- * updateCombatDetails). The sim snapshot is read before precision/fury are cast,
- * so without this your buffed accuracy and damage read as fat gaps against it —
- * the player check's whole "you vs sim" offense mismatch.
+ * A copy of the sim's fight-start build with the offense buffs that changed
+ * *during* the fight folded into the derived accuracy and max-hit ratings, by
+ * the engine's own formula: `base × (1 + ratio) × (1 + furyRatio)` (see
+ * combat-unit.js updateCombatDetails). The sim snapshot is read at fight start,
+ * before precision/fury are cast, so without the fold your buffed accuracy and
+ * damage read as fat gaps against it.
  *
- * Offense only, and deliberately so: accuracy and damage *ratio* buffs are
- * combat-transient (precision, fury, a monster's damage-shred debuff on you) with
- * no persistent source, so folding them into the snapshot cannot double-count.
- * Max-HP, armour and resistance buffs do have persistent sources (the guild
- * shrine's max HP, say) already baked into the snapshot, so they are left alone
- * and stay covered by the softer `buffedStatKeys` leniency instead.
+ * The fold is a *ratio* against the fight-start buff map when one is supplied:
+ * per bucket, `(1 + Σnow) / (1 + Σstart)`. The start-map effects are the ones
+ * already inside the sim's rating (persistent sources — the guild damage buff,
+ * the labyrinth combat-damage upgrade — are on you when the fight opens and in
+ * the sim's build), so dividing them out applies each effect exactly once. An
+ * earlier version folded the whole live map on the assumption that offense
+ * ratios had no persistent source — false, and re-applying them inflated the
+ * sim column by their whole product (an observed 895 → 1029). A ratio, not a
+ * subtracted delta, because that is how the engine composes: removing a spent
+ * buff must divide its factor out, not subtract its ratio.
+ *
+ * Without a start map the whole live map folds, as before — the best available,
+ * and it can still overstate the sim column by any persistent ratios.
  *
  * @param {Object} simDetails - The sim player's fight-start `combatDetails`
  * @param {Object} combatBuffMap - Your live `combatBuffMap`
  * @param {string} styleKey - Your combat style short key
+ * @param {Object|null} [startBuffMap] - Your `combatBuffMap` at fight start, from `new_battle`
  * @returns {Object} A folded copy, or `simDetails` unchanged when nothing applies
  */
-export function foldOffenseBuffs(simDetails, combatBuffMap, styleKey) {
+export function foldOffenseBuffs(simDetails, combatBuffMap, styleKey, startBuffMap = null) {
     if (!simDetails) return simDetails;
-    const b = offenseRatioBoosts(combatBuffMap);
-    const accMul = (1 + b.accuracy) * (1 + b.furyAccuracy);
-    const dmgMul = (1 + b.damage) * (1 + b.furyDamage);
+    const now = offenseRatioBoosts(combatBuffMap);
+    const start = startBuffMap
+        ? offenseRatioBoosts(startBuffMap)
+        : { accuracy: 0, furyAccuracy: 0, damage: 0, furyDamage: 0 };
+    // A start factor at or below zero is a degenerate map (a −100% ratio);
+    // dividing by it would explode, so such a bucket falls back to no baseline
+    const factor = (nowSum, startSum) => (1 + nowSum) / (1 + startSum > 0 ? 1 + startSum : 1);
+    const accMul = factor(now.accuracy, start.accuracy) * factor(now.furyAccuracy, start.furyAccuracy);
+    const dmgMul = factor(now.damage, start.damage) * factor(now.furyDamage, start.furyDamage);
     if (accMul === 1 && dmgMul === 1) return simDetails;
     const out = { ...simDetails };
     const accKey = `${styleKey}AccuracyRating`;
