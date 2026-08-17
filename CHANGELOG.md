@@ -339,11 +339,10 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.12.0](https://github.com/Millennium44/Toolasha/compare/v3.11.0...v3.12.0) (2026-08-17)
 
-
 ### Features
 
-* explain a failed library load at startup instead of a cryptic crash ([b0ec9ae](https://github.com/Millennium44/Toolasha/commit/b0ec9ae992a7a1c40dd285061bc5d1df5108b2f1))
-* notify on your own level-ups and reaching a Time-to-Level target ([a279513](https://github.com/Millennium44/Toolasha/commit/a279513fea4e2c62e37662db03b6b53152cd9227))
+- explain a failed library load at startup instead of a cryptic crash ([b0ec9ae](https://github.com/Millennium44/Toolasha/commit/b0ec9ae992a7a1c40dd285061bc5d1df5108b2f1))
+- notify on your own level-ups and reaching a Time-to-Level target ([a279513](https://github.com/Millennium44/Toolasha/commit/a279513fea4e2c62e37662db03b6b53152cd9227))
 
 ## [3.11.0](https://github.com/Millennium44/Toolasha/compare/v3.10.0...v3.11.0) (2026-08-17)
 
