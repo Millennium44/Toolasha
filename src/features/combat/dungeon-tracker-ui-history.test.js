@@ -2,7 +2,7 @@
  *
  * The run history's group headers, where a team is a list of names.
  *
- * A team-grouped header reads "Aster,Player11,cove", and each of those is a
+ * A team-grouped header reads "Aster,Briar,cove", and each of those is a
  * player somebody might want to look up mid-argument about whose fault the
  * slow run was. So each name is its own clickable span that fills
  * "/profile <name>" into chat — without ever changing what the header says,
@@ -59,31 +59,31 @@ afterEach(() => {
 describe('team group headers', () => {
     test('each name in the header is its own clickable span, and the label reads unchanged', () => {
         const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
-        const runList = render(history, history.groupByTeam([run('Aster,Player11,cove')]));
+        const runList = render(history, history.groupByTeam([run('Aster,Briar,cove')]));
 
         const names = [...runList.querySelectorAll('.mwi-dt-player-name')];
-        expect(names.map((el) => el.textContent)).toEqual(['Aster', 'Player11', 'cove']);
+        expect(names.map((el) => el.textContent)).toEqual(['Aster', 'Briar', 'cove']);
         expect(names.every((el) => el.style.cursor === 'pointer')).toBe(true);
 
         const header = runList.querySelector('.mwi-dt-group-header');
-        expect(header.textContent).toContain('Aster,Player11,cove');
+        expect(header.textContent).toContain('Aster,Briar,cove');
     });
 
     test('clicking a name fills "/profile <name>" into chat', () => {
         const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
-        const runList = render(history, history.groupByTeam([run('Aster,Player11')]));
+        const runList = render(history, history.groupByTeam([run('Aster,Briar')]));
         const input = document.querySelector('input');
 
-        const mazo = [...runList.querySelectorAll('.mwi-dt-player-name')].find((el) => el.textContent === 'Player11');
+        const mazo = [...runList.querySelectorAll('.mwi-dt-player-name')].find((el) => el.textContent === 'Briar');
         mazo.dispatchEvent(new Event('click', { bubbles: true }));
 
-        expect(input.value).toBe('/profile Player11');
+        expect(input.value).toBe('/profile Briar');
     });
 
     test('a name click does not also toggle the group open', () => {
         const state = freshState('team');
         const history = new DungeonTrackerUIHistory(state, (ms) => `${ms}ms`);
-        const runList = render(history, history.groupByTeam([run('Aster,Player11')]));
+        const runList = render(history, history.groupByTeam([run('Aster,Briar')]));
 
         const runsDiv = runList.querySelector('.mwi-dt-group-runs');
         expect(runsDiv.style.display).toBe('none');
@@ -97,7 +97,7 @@ describe('team group headers', () => {
     test('with no chat input on screen the click simply does nothing', () => {
         document.body.innerHTML = '';
         const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
-        const runList = render(history, history.groupByTeam([run('Aster,Player11')]));
+        const runList = render(history, history.groupByTeam([run('Aster,Briar')]));
 
         expect(() => {
             runList.querySelector('.mwi-dt-player-name').dispatchEvent(new Event('click', { bubbles: true }));
@@ -136,9 +136,9 @@ describe('the CSV export', () => {
                 dungeonName: 'Chimerical Den',
                 tier: 1,
                 duration: 300_000,
-                team: ['Aster', 'Player11'],
-                teamKey: 'Aster,Player11',
-                keyCountsMap: { Player11: 3, Aster: 2 },
+                team: ['Aster', 'Briar'],
+                teamKey: 'Aster,Briar',
+                keyCountsMap: { Briar: 3, Aster: 2 },
             },
             // A legacy websocket-recorded run: totalTime instead of duration,
             // no team array, no tier, no key counts
@@ -151,9 +151,9 @@ describe('the CSV export', () => {
                 dungeon: 'Chimerical Den',
                 tier: 1,
                 durationSeconds: 300,
-                team: 'Aster, Player11',
+                team: 'Aster, Briar',
                 teamSize: 2,
-                keyCounts: 'Aster: 2; Player11: 3',
+                keyCounts: 'Aster: 2; Briar: 3',
             },
             {
                 timestamp: '2026-08-03T09:30:00.000Z',
@@ -168,7 +168,7 @@ describe('the CSV export', () => {
     });
 
     test('every column names a field the rows carry', () => {
-        const [row] = buildRunHistoryRows([run('Aster,Player11')]);
+        const [row] = buildRunHistoryRows([run('Aster,Briar')]);
         for (const column of DUNGEON_RUN_CSV_COLUMNS) {
             expect(row).toHaveProperty(column.key);
         }
@@ -176,7 +176,7 @@ describe('the CSV export', () => {
 
     test('the export bar carries a button wired to the runs it was built over', () => {
         const history = new DungeonTrackerUIHistory(freshState('team'), (ms) => `${ms}ms`);
-        const bar = history.csvExportBar([run('Aster,Player11')]);
+        const bar = history.csvExportBar([run('Aster,Briar')]);
 
         expect(bar.dataset.csvExport).toBe('dungeon-runs');
         expect(bar.querySelector('button').textContent).toBe('Export CSV');

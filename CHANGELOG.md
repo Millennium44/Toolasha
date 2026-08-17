@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Recorded test fixtures regenerated with synthetic data
+
+Recorded fixtures and test literals now use synthetic names, ids and placeholder links throughout, and a hygiene test keeps committed data synthetic going forward. No behavior change.
+
 ### Player-build check: the offense fold no longer double-applies persistent buffs
 
 The diagnostic folded your whole live buff map into the sim column, re-applying persistent ratios (the guild damage buff, the labyrinth combat-damage upgrade) the sim's build already carries — a ranged max hit read 1,029 against the game's 895. The fold now runs as a ratio against your buff map at fight start (kept from `new_battle`), so each effect counts exactly once and only what appeared, grew or expired mid-fight moves the column. The stat-check history also restores under its full recorded key again — an older restore collapsed every distinct buff-state snapshot of one monster/room down to the oldest and then saved the loss.

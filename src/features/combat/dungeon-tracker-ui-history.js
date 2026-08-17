@@ -278,7 +278,7 @@ class DungeonTrackerUIHistory {
     /**
      * A group header label, with team-member names individually clickable.
      *
-     * Only the team grouping's headers are player lists ("Aster,Player11,cove");
+     * Only the team grouping's headers are player lists ("Aster,Briar,cove");
      * dungeon headers and the Solo bucket come back escaped but unwrapped. The
      * wrap keeps the label's exact text, with each valid player name in its own
      * span that fills "/profile <name>" into chat when clicked.

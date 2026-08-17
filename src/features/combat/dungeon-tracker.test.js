@@ -728,7 +728,7 @@ describe('a canceled battle start', () => {
         // party-forming later — reads as its completion.
         tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: DEN, difficultyTier: 0, isDone: false }] });
         await tracker.onNewBattle({ wave: 0, battleId: 9, combatStartTime: '2026-08-04T10:26:30.000Z' });
-        tracker.onChatMessage(keyCountsData('2026-08-04T10:26:30.000Z', '[Aster - 95] [Player11 - 42]'));
+        tracker.onChatMessage(keyCountsData('2026-08-04T10:26:30.000Z', '[Aster - 95] [Briar - 42]'));
         await flush();
         expect(tracker.isTracking).toBe(true);
 
