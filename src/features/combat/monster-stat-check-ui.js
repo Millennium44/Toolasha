@@ -25,13 +25,16 @@ import {
     deriveRoomLevel,
     buildComparison,
     buildExportPayload,
+    captureContextMismatches,
     compareBuffProduction,
     buffSignature,
     buffedStatKeys,
     foldOffenseBuffs,
     combatEffectNames,
     styleKeyOf,
+    unionProducedBuffs,
 } from './monster-stat-check.js';
+import { describeFights, MIN_REAL_CASTS } from './labyrinth-uptime-harness.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import labyrinthClearRate from './labyrinth-clear-rate.js';
 import { captureFile, startCapture } from './labyrinth-tick-capture.js';
@@ -40,8 +43,30 @@ const BLIND_VERDICT = {
     match: { glyph: '✓', color: '#6fce7f' },
     missing: { glyph: '⚠', color: '#e56b6b' },
     magnitude: { glyph: '≠', color: '#e0b64a' },
-    extra: { glyph: '+', color: '#7aa2d0' },
+    stacks: { glyph: '×', color: 'rgba(255,255,255,0.6)' },
+    notInSnapshot: { glyph: '·', color: 'rgba(255,255,255,0.4)' },
+    // Legacy rows persisted before 'extra' was renamed to 'notInSnapshot'
+    extra: { glyph: '·', color: 'rgba(255,255,255,0.4)' },
 };
+
+/** Hover text per blind verdict — what the glyph is claiming, in one line. */
+const BLIND_TITLE = {
+    match: 'match',
+    missing: 'the game shows this effect; the sim never produced it across the probe fights',
+    magnitude: 'both produce it, at different strength — a derivation gap',
+    stacks: 'integer multiple of the single-stack strength — a stack-count difference, not a magnitude gap',
+    notInSnapshot: 'not active in snapshot — the game column is one clicked instant, so this is timing, not modelling',
+    extra: 'not active in snapshot',
+};
+
+/**
+ * Probe runs unioned per blind-sim press. One run's fights can miss a
+ * low-uptime effect, and "never produced" must keep meaning never. The runner
+ * currently pins the probe's seed, so today's repeats coincide (each run
+ * already spans five internal fights, unioned by the engine's capture sink);
+ * the union here is what makes a seed-varied probe a drop-in improvement.
+ */
+const BLIND_PROBE_RUNS = 3;
 
 const UPTIME_VERDICT = {
     ok: { glyph: '✓', color: '#6fce7f' },
@@ -50,6 +75,13 @@ const UPTIME_VERDICT = {
     'sim-missing': { glyph: '⚠', color: '#e56b6b' },
     'sim-extra': { glyph: '+', color: '#7aa2d0' },
     buff: { glyph: '·', color: 'rgba(255,255,255,0.4)' },
+    inconclusive: { glyph: '?', color: 'rgba(255,255,255,0.35)' },
+};
+
+/** Hover text for the uptime verdicts that need more than their own name. */
+const UPTIME_TITLE = {
+    buff: 'non-damaging buff — not in the damage tally; verify via blind probe',
+    inconclusive: `fewer than ${MIN_REAL_CASTS} real casts — too few to grade`,
 };
 
 const SETTING_KEY = 'labyrinthMonsterStatCheck';
@@ -370,16 +402,29 @@ class MonsterStatCheckPanel {
     }
 
     /**
-     * Run a blind sim fight for the shown monster and diff the buffs it produces
-     * on its own against the game's live effects. Synchronous — a handful of
-     * fights is well under the frame budget.
+     * Run blind sim fights for the shown monster and diff the buffs the sim
+     * produces on its own against the game's live effects. Several probe runs,
+     * produced-effects unioned (see BLIND_PROBE_RUNS) — the probe sims are
+     * short, so the repeats stay well under a button press's patience.
      */
     async _runBlindSim() {
         const snap = this.displayed;
         if (!snap?.hrid) return;
         try {
-            const { produced, ran } = await labyrinthClearRate.blindBuffProbe(snap.hrid, snap.roomLevel);
-            snap.blind = { rows: compareBuffProduction(snap.combatBuffMap || {}, produced), ran, at: Date.now() };
+            const runs = [];
+            let ran = false;
+            for (let n = 0; n < BLIND_PROBE_RUNS; n++) {
+                const probe = await labyrinthClearRate.blindBuffProbe(snap.hrid, snap.roomLevel);
+                if (probe?.ran) {
+                    ran = true;
+                    runs.push(probe.produced || []);
+                }
+            }
+            snap.blind = {
+                rows: compareBuffProduction(snap.combatBuffMap || {}, unionProducedBuffs(runs)),
+                ran,
+                at: Date.now(),
+            };
         } catch (error) {
             console.error('[MonsterStatCheck] Blind sim failed:', error);
             snap.blind = { rows: [], ran: false, at: Date.now() };
@@ -398,25 +443,37 @@ class MonsterStatCheckPanel {
         if (!snap?.hrid) return;
         try {
             const capture = captureFile();
-            const capturedMonster = capture?.context?.monsterHrid;
-            const capturedLevel = Number(capture?.context?.roomLevel) || 0;
-            // A capture is usable if it holds ticks and matches this monster AND
-            // this room level (unlabelled fields pass) — comparing ticks from one
-            // room level against a sim of another reads as a finding when it is a
-            // context mismatch. Otherwise arm a fresh capture for the next fight.
-            const usable =
-                capture?.ticks?.length &&
-                (!capturedMonster || capturedMonster === snap.hrid) &&
-                (!capturedLevel || !snap.roomLevel || capturedLevel === snap.roomLevel);
+            // The build the sim would run with right now — the same fingerprint
+            // the fight recorder pools by. Ticks fought in other gear compared
+            // against a sim of this gear read as findings that are really a
+            // loadout change.
+            const fingerprint = labyrinthClearRate._snapshotContentFingerprint?.() || null;
+            // A capture is usable if it holds ticks and matches this monster,
+            // this room level AND this build (unlabelled fields pass) —
+            // comparing ticks from one context against a sim of another reads
+            // as a finding when it is a context mismatch.
+            const mismatches = captureContextMismatches(capture?.context, {
+                monsterHrid: snap.hrid,
+                roomLevel: snap.roomLevel,
+                fingerprint,
+            });
+            const usable = capture?.ticks?.length && mismatches.length === 0;
             if (usable) {
                 const result = await labyrinthClearRate.uptimeHarness(snap.hrid, snap.roomLevel, capture.ticks);
-                snap.uptime = result ? { rows: result.comparison.rows, at: Date.now() } : { error: 'Sim run failed.' };
+                snap.uptime = result
+                    ? { rows: result.comparison.rows, fightsLabel: describeFights(result.real), at: Date.now() }
+                    : { error: 'Sim run failed.' };
             } else {
-                // Nothing captured for this monster — start capturing the next fight.
-                startCapture({ monsterHrid: snap.hrid, roomLevel: snap.roomLevel });
+                // Arm a capture bound to this monster, room and build. When a
+                // held capture was refused, name what differed rather than
+                // silently starting over.
+                startCapture({ monsterHrid: snap.hrid, roomLevel: snap.roomLevel, fingerprint });
+                const refusal = capture?.ticks?.length
+                    ? `Held capture is from a different ${mismatches.join(' / ')} — starting a fresh one. `
+                    : '';
                 snap.uptime = {
                     armed: true,
-                    message: 'Capturing — fight this monster, then click “Run uptime harness” again.',
+                    message: `${refusal}Capturing — fight this monster, then click “Run uptime harness” again.`,
                 };
             }
         } catch (error) {
@@ -596,13 +653,16 @@ class MonsterStatCheckPanel {
             }
         }
         if (snapshot.uptime?.rows?.length) {
-            lines.push('Uptime harness — incoming damage / ability (real vs sim):');
+            const fights = snapshot.uptime.fightsLabel ? ` (${snapshot.uptime.fightsLabel})` : '';
+            lines.push(`Uptime harness — incoming damage / ability (real vs sim)${fights}:`);
+            const pct = (v) => (v == null || !Number.isFinite(v) ? '—' : `${Math.round(v)}%`);
             for (const r of snapshot.uptime.rows) {
-                const rd = r.real ? `${Math.round(r.real.dmgSharePct)}%` : '—';
-                const sd = r.sim ? `${Math.round(r.sim.dmgSharePct)}%` : '—';
-                const rc = r.real ? `${Math.round(r.real.castSharePct)}%` : '—';
-                const sc = r.sim ? `${Math.round(r.sim.castSharePct)}%` : '—';
-                lines.push(`  ${r.ability}: dmg ${rd}/${sd}, cast ${rc}/${sc} — ${r.verdict}`);
+                const rd = pct(r.real?.dmgSharePct);
+                const sd = pct(r.sim?.dmgSharePct);
+                const rc = pct(r.real?.castSharePct);
+                const sc = pct(r.sim?.castSharePct);
+                const n = r.samples != null ? `, n=${r.samples}` : '';
+                lines.push(`  ${r.ability}: dmg ${rd}/${sd}, cast ${rc}/${sc}${n} — ${r.verdict}`);
             }
         }
         return lines.join('\n');
@@ -1054,6 +1114,15 @@ class MonsterStatCheckPanel {
             head.textContent = 'Uptime harness — incoming damage / ability';
             wrap.appendChild(head);
 
+            // How much real evidence the rows rest on: complete fights counted,
+            // partials excluded, and whether the capture opened mid-fight.
+            if (up.fightsLabel) {
+                const fights = document.createElement('div');
+                fights.style.cssText = 'font-size:0.66rem; color:rgba(255,255,255,0.45); margin-bottom:2px;';
+                fights.textContent = up.fightsLabel;
+                wrap.appendChild(fights);
+            }
+
             if (up.armed) {
                 const armed = document.createElement('div');
                 armed.style.cssText = 'font-size:0.72rem; color:#6fce7f; font-style:italic;';
@@ -1082,33 +1151,39 @@ class MonsterStatCheckPanel {
                     const line = document.createElement('div');
                     line.style.cssText =
                         'display:grid; grid-template-columns:1.3fr 0.9fr 0.9fr auto; gap:4px; align-items:baseline; font-size:0.74rem; padding:1px 0;';
-                    const pct = (side) => (side ? `${Math.round(side.dmgSharePct)}%` : '—');
+                    const num = (v) => (v == null || !Number.isFinite(v) ? '—' : `${Math.round(v)}`);
+                    const pct = (v) => (v == null || !Number.isFinite(v) ? '—' : `${Math.round(v)}%`);
                     const name = document.createElement('span');
                     name.textContent = r.ability;
                     name.style.cssText = 'overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-                    // Cast share on hover, so the row stays compact.
-                    name.title = `casts: real ${r.real ? Math.round(r.real.castSharePct) : '—'}% / sim ${r.sim ? Math.round(r.sim.castSharePct) : '—'}%  ·  mean/cast: real ${r.real ? Math.round(r.real.meanDmgPerCast) : '—'} / sim ${r.sim ? Math.round(r.sim.meanDmgPerCast) : '—'}`;
+                    // Cast share, means and sample size on hover, so the row
+                    // stays compact. Cast share is '—' for the DoT row, whose
+                    // ticks are not casts.
+                    name.title =
+                        `casts: real ${pct(r.real?.castSharePct)} / sim ${pct(r.sim?.castSharePct)}` +
+                        `  ·  mean/cast: real ${num(r.real?.meanDmgPerCast)} / sim ${num(r.sim?.meanDmgPerCast)}` +
+                        `  ·  mean/hit: real ${num(r.real?.meanDmgPerHit)} / sim ${num(r.sim?.meanDmgPerHit)}` +
+                        `  ·  ${r.samples ?? 0} real casts`;
                     const g = document.createElement('span');
-                    g.textContent = pct(r.real);
+                    g.textContent = pct(r.real?.dmgSharePct);
                     g.style.cssText = 'text-align:right; font-variant-numeric:tabular-nums;';
                     const s = document.createElement('span');
-                    s.textContent = pct(r.sim);
+                    s.textContent = pct(r.sim?.dmgSharePct);
                     s.style.cssText =
                         'text-align:right; font-variant-numeric:tabular-nums; color:rgba(255,255,255,0.75);';
                     const v = document.createElement('span');
                     v.textContent = style.glyph;
                     v.style.cssText = `text-align:right; color:${style.color};`;
-                    v.title =
-                        r.verdict === 'buff'
-                            ? 'non-damaging buff — not in the damage tally; verify via blind probe'
-                            : r.verdict;
+                    v.title = UPTIME_TITLE[r.verdict] || r.verdict;
                     line.append(name, g, s, v);
                     wrap.appendChild(line);
                 }
                 const key = document.createElement('div');
                 key.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
                 key.innerHTML =
-                    '<span style="color:#e56b6b;">⚠ sim-under</span> = sim gives this ability a smaller share of incoming damage than reality. Hover for cast% and mean/cast: a matching cast% with a damage gap is a per-cast magnitude (buff-uptime) issue, a cast% gap is cadence.';
+                    '<span style="color:#e56b6b;">⚠ sim-under</span> = sim gives this ability a smaller share of incoming damage than reality (or lands it for a smaller mean). ' +
+                    '<span style="color:rgba(255,255,255,0.5);">?</span> = too few real casts to grade. ' +
+                    'Hover for cast%, means and sample size: a matching cast% with a damage gap is a per-cast magnitude (buff-uptime) issue, a cast% gap is cadence.';
                 wrap.appendChild(key);
             }
         }
@@ -1180,21 +1255,22 @@ class MonsterStatCheckPanel {
                     s.style.cssText =
                         'text-align:right; font-variant-numeric:tabular-nums; color:rgba(255,255,255,0.75);';
                     const v = document.createElement('span');
-                    v.textContent = style.glyph;
+                    v.textContent = r.verdict === 'stacks' && r.stackMultiple ? `×${r.stackMultiple}` : style.glyph;
                     v.style.cssText = `text-align:right; color:${style.color};`;
                     v.title =
-                        r.verdict === 'buff'
-                            ? 'non-damaging buff — not in the damage tally; verify via blind probe'
-                            : r.verdict;
+                        r.verdict === 'stacks' && r.stackMultiple
+                            ? `${r.stackMultiple}× the single-stack strength — ${BLIND_TITLE.stacks}`
+                            : BLIND_TITLE[r.verdict] || r.verdict;
                     line.append(name, g, s, v);
                     wrap.appendChild(line);
                 }
                 const key = document.createElement('div');
                 key.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
                 key.innerHTML =
-                    '<span style="color:#e56b6b;">⚠ missing</span> = the sim never produced a damaging effect · ' +
-                    '<span style="color:#e0b64a;">≠</span> different strength · <span style="color:#7aa2d0;">+</span> sim-only (timing) · ' +
-                    '<span style="color:rgba(255,255,255,0.5);">·</span> non-damaging buff (blind probe verifies). Game vs sim columns.';
+                    '<span style="color:#e56b6b;">⚠ missing</span> = the sim never produced an effect the game shows · ' +
+                    '<span style="color:#e0b64a;">≠</span> different strength · ' +
+                    '<span style="color:rgba(255,255,255,0.6);">×n</span> stack-count difference · ' +
+                    '<span style="color:rgba(255,255,255,0.5);">·</span> not active in snapshot (timing, not modelling). Game vs sim columns.';
                 wrap.appendChild(key);
             }
         }

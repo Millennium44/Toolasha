@@ -1437,7 +1437,11 @@ class LabyrinthRoomLogs {
                 this.activeSession?.roomLevel ||
                 Math.floor(Number(room?.recommendedLevel) || 0) ||
                 0;
-            labTickCapture.startCapture(monsterHrid || roomLevel ? { monsterHrid, roomLevel } : null);
+            labTickCapture.startCapture({
+                monsterHrid,
+                roomLevel,
+                fingerprint: this.simSource?.fingerprint?.() || null,
+            });
         }
         this.paintCapture();
     }

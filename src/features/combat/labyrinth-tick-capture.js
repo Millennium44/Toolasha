@@ -130,7 +130,11 @@ function push(type, payload) {
 /**
  * Start recording the raw combat feed.
  *
- * @param {Object} [ctx] - What is being fought, for the file — `{ monsterHrid, roomLevel }`
+ * @param {Object} [ctx] - What is being fought, for the file —
+ *   `{ monsterHrid, roomLevel, fingerprint }`. `fingerprint` is the gear/build
+ *   fingerprint the fight is fought in (the fight recorder's), kept in the
+ *   file's context so the uptime harness can refuse to compare ticks from one
+ *   build against a sim of another.
  * @param {Object} [opts]
  * @param {boolean} [opts.stopOnLeave=true] - End the capture when a fight against
  *   a different monster begins (so clearing the room doesn't record what comes

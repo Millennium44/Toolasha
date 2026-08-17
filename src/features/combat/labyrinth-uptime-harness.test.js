@@ -1,5 +1,12 @@
 import { describe, test, expect } from 'vitest';
-import { extractMonsterAttacks, summarizeSimAttacks, compareIncoming } from './labyrinth-uptime-harness.js';
+import {
+    extractMonsterAttacks,
+    summarizeSimAttacks,
+    compareIncoming,
+    describeFights,
+    MIN_REAL_CASTS,
+    MEAN_PER_CAST_TOLERANCE_PCT,
+} from './labyrinth-uptime-harness.js';
 
 /** A tick payload for the monster (index 0) attacking the player (index 0). */
 function tick(at, atk, ability, playerHP) {
@@ -213,6 +220,121 @@ describe('compareIncoming', () => {
         };
         const { rows } = compareIncoming(real, summarizeSimAttacks({}));
         expect(rows[0].verdict).toBe('buff');
+    });
+
+    test('rows carry the real cast count as samples, and per-hit means', () => {
+        const real = {
+            byAbility: { '/abilities/fireball': { casts: 10, hits: 8, misses: 2, damage: 800, samples: [] } },
+        };
+        const sim = summarizeSimAttacks({ '/abilities/fireball': { 100: 8, miss: 2 } });
+        const { rows } = compareIncoming(real, sim);
+        expect(rows[0].samples).toBe(10);
+        expect(rows[0].real.meanDmgPerCast).toBeCloseTo(80, 5);
+        expect(rows[0].real.meanDmgPerHit).toBeCloseTo(100, 5);
+        expect(rows[0].sim.meanDmgPerHit).toBeCloseTo(100, 5);
+    });
+
+    test('a row with too few real casts is inconclusive, whatever its share gap says', () => {
+        // Two abilities so the shares can gape; the thin one must not read as a
+        // finding off two casts.
+        const real = {
+            byAbility: {
+                '/abilities/fireball': { casts: 20, hits: 20, misses: 0, damage: 2000, samples: [] },
+                '/abilities/nova': { casts: MIN_REAL_CASTS - 1, hits: 4, misses: 0, damage: 40, samples: [] },
+            },
+        };
+        const sim = summarizeSimAttacks({
+            '/abilities/fireball': { 100: 20 },
+            '/abilities/nova': { 100: 20 }, // sim gives nova a huge share — still not gradable
+        });
+        const { rows } = compareIncoming(real, sim);
+        const nova = rows.find((r) => r.ability === 'nova');
+        expect(nova.verdict).toBe('inconclusive');
+    });
+
+    test('shares can pass while the per-cast mean gives the verdict away', () => {
+        // One ability on each side: both shares are 100% by construction, so
+        // only the mean can catch the sim landing every cast for half as much.
+        const real = {
+            byAbility: { '/abilities/fireball': { casts: 10, hits: 10, misses: 0, damage: 1000, samples: [] } },
+        };
+        const under = compareIncoming(real, summarizeSimAttacks({ '/abilities/fireball': { 50: 10 } }));
+        expect(under.rows[0].verdict).toBe('sim-under');
+        expect(under.rows[0].meanPerCastGapPct).toBeCloseTo(-50, 5);
+
+        const over = compareIncoming(real, summarizeSimAttacks({ '/abilities/fireball': { 200: 10 } }));
+        expect(over.rows[0].verdict).toBe('sim-over');
+
+        // Within the tolerance the row stays ok
+        const near = compareIncoming(real, summarizeSimAttacks({ '/abilities/fireball': { 110: 10 } }));
+        expect(Math.abs(near.rows[0].meanPerCastGapPct)).toBeLessThan(MEAN_PER_CAST_TOLERANCE_PCT);
+        expect(near.rows[0].verdict).toBe('ok');
+    });
+});
+
+describe('compareIncoming — damage-over-time rows', () => {
+    // Both sides record DoT at tick level under 'damageOverTime' (the sim files
+    // each 3-second DamageOverTimeEvent tick there), so the row compares
+    // directly — but its ticks are not casts, and must not enter cast shares.
+    const real = {
+        byAbility: {
+            '/abilities/fireball': { casts: 10, hits: 10, misses: 0, damage: 1000, samples: [] },
+            damageOverTime: { casts: 0, hits: 6, misses: 0, damage: 300, samples: [] },
+        },
+    };
+
+    test('per-tick means compare and ticks stand in as the sample count', () => {
+        const sim = summarizeSimAttacks({
+            '/abilities/fireball': { 100: 10 },
+            damageOverTime: { 50: 6 },
+        });
+        const { rows } = compareIncoming(real, sim);
+        const dot = rows.find((r) => r.ability === 'damageOverTime');
+        expect(dot.samples).toBe(6);
+        expect(dot.real.meanDmgPerCast).toBeCloseTo(50, 5);
+        expect(dot.sim.meanDmgPerCast).toBeCloseTo(50, 5);
+        expect(dot.verdict).toBe('ok');
+    });
+
+    test('DoT ticks stay out of the cast-share denominators on both sides', () => {
+        const sim = summarizeSimAttacks({
+            '/abilities/fireball': { 100: 10 },
+            damageOverTime: { 50: 6 }, // 6 sim ticks that must not dilute fireball's cast share
+        });
+        const { rows } = compareIncoming(real, sim);
+        const fireball = rows.find((r) => r.ability === 'fireball');
+        expect(fireball.real.castSharePct).toBeCloseTo(100, 5);
+        expect(fireball.sim.castSharePct).toBeCloseTo(100, 5);
+        const dot = rows.find((r) => r.ability === 'damageOverTime');
+        expect(dot.real.castSharePct).toBeNull();
+        expect(dot.sim.castSharePct).toBeNull();
+        expect(dot.castShareGap).toBeNull();
+    });
+
+    test('a DoT row with too few real ticks is inconclusive', () => {
+        const thin = {
+            byAbility: {
+                '/abilities/fireball': { casts: 10, hits: 10, misses: 0, damage: 1000, samples: [] },
+                damageOverTime: { casts: 0, hits: 2, misses: 0, damage: 100, samples: [] },
+            },
+        };
+        const sim = summarizeSimAttacks({
+            '/abilities/fireball': { 100: 10 },
+            damageOverTime: { 10: 2 },
+        });
+        const { rows } = compareIncoming(thin, sim);
+        expect(rows.find((r) => r.ability === 'damageOverTime').verdict).toBe('inconclusive');
+    });
+});
+
+describe('describeFights', () => {
+    test('counts fights, names excluded partials, and flags a mid-fight start', () => {
+        expect(describeFights({ fights: 3, partialFights: 0, captureStartedMidFight: false })).toBe('3 fights');
+        expect(describeFights({ fights: 1, partialFights: 0, captureStartedMidFight: false })).toBe('1 fight');
+        expect(describeFights({ fights: 2, partialFights: 1, captureStartedMidFight: true })).toBe(
+            '2 fights (+1 partial excluded) — capture started mid-fight'
+        );
+        expect(describeFights(null)).toBe('');
     });
 });
 

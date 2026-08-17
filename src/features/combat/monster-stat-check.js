@@ -392,22 +392,83 @@ export function buffName(hrid) {
 }
 
 /**
+ * The integer stack multiple between two boosts of the same effect, or null.
+ *
+ * Neither side states a stack count: the game's `combatBuffMap` records carry
+ * only `{typeHrid, ratioBoost, flatBoost}` (no stack field appears in any
+ * payload this codebase handles), and the sim's capture keeps one strongest
+ * instance per uniqueHrid — so a stacked effect is visible only as its total
+ * sitting at an integer multiple of the single-stack value. Heuristic by
+ * necessity: same sign, ratio an integer ≥ 2 in either direction, within the
+ * match tolerance of exact.
+ *
+ * @param {number} gv - The game's boost
+ * @param {number} sv - The sim's boost
+ * @returns {number|null} The multiple (2, 3, …), or null when not one
+ */
+function stackMultipleOf(gv, sv) {
+    if (!gv || !sv) return null;
+    if (gv > 0 !== sv > 0) return null;
+    const ratio = Math.abs(gv) >= Math.abs(sv) ? gv / sv : sv / gv;
+    const n = Math.round(ratio);
+    if (n < 2) return null;
+    return Math.abs(ratio - n) <= n * (BUFF_MATCH_TOLERANCE_PCT / 100) ? n : null;
+}
+
+/**
+ * Union the produced-effect records of several blind probe runs, keeping the
+ * peak (largest-magnitude, signed) boost per uniqueHrid — the same rule the
+ * engine's capture sink applies within one run. A low-uptime effect that
+ * happened not to appear in one run's fights must not read as never produced.
+ *
+ * @param {Array<Array<{uniqueHrid,typeHrid,ratioBoost,flatBoost}>>} runs
+ * @returns {Array<{uniqueHrid,typeHrid,ratioBoost,flatBoost}>}
+ */
+export function unionProducedBuffs(runs) {
+    const merged = new Map();
+    for (const produced of runs || []) {
+        for (const rec of produced || []) {
+            if (!rec?.uniqueHrid) continue;
+            const kept = merged.get(rec.uniqueHrid) || {
+                uniqueHrid: rec.uniqueHrid,
+                typeHrid: rec.typeHrid || null,
+                ratioBoost: 0,
+                flatBoost: 0,
+            };
+            const ratio = Number(rec.ratioBoost) || 0;
+            const flat = Number(rec.flatBoost) || 0;
+            if (Math.abs(ratio) > Math.abs(kept.ratioBoost)) kept.ratioBoost = ratio;
+            if (Math.abs(flat) > Math.abs(kept.flatBoost)) kept.flatBoost = flat;
+            merged.set(rec.uniqueHrid, kept);
+        }
+    }
+    return [...merged.values()];
+}
+
+/**
  * Diff the buffs the sim produced in a blind fight against the game's live
  * effects — the "does the sim even generate these on its own" check. Union by
  * uniqueHrid, so every effect either side has is a row.
  *
  * Verdicts, worst first:
- * - `missing` — the game has it, the blind sim never produced it (the sim does
- *   not model the ability, or its rotation never cast it).
+ * - `missing` — the game has it, the blind sim never produced it across its
+ *   probe fights (the sim does not model the ability, or its rotation never
+ *   cast it). The one claim the probe's evidence is strong for.
  * - `magnitude` — both produce it, but at a different strength (a derivation /
  *   level-resolution gap).
- * - `extra` — the sim produced it but the game snapshot didn't have it up (often
- *   just timing — the effect was between applications when the panel was read).
+ * - `stacks` — both produce it and the strengths sit at an integer multiple
+ *   (2×, 3×, either direction) of each other: the per-stack value agrees, only
+ *   the stack count at the compared instants differs — a timing/uptime
+ *   question, not a derivation one. `stackMultiple` carries the multiple.
+ * - `notInSnapshot` — the sim produced it but it wasn't up in the game's
+ *   snapshot. The game column is ONE clicked instant, so an effect between
+ *   applications simply isn't there — timing, not a modelling defect; graded
+ *   neutral and never counted as an issue.
  * - `match` — same effect, same strength.
  *
  * @param {Object} gameBuffMap - The unit's live `combatBuffMap`
  * @param {Array<{uniqueHrid,typeHrid,ratioBoost,flatBoost}>} produced - From the probe
- * @returns {Array<{uniqueHrid,name,typeHrid,game,sim,verdict,deltaPct}>}
+ * @returns {Array<{uniqueHrid,name,typeHrid,game,sim,verdict,deltaPct,stackMultiple}>}
  */
 export function compareBuffProduction(gameBuffMap, produced) {
     const toRec = (r) => ({
@@ -424,10 +485,11 @@ export function compareBuffProduction(gameBuffMap, produced) {
         const s = sim.get(hrid) || null;
         let verdict;
         let deltaPct = null;
+        let stackMultiple = null;
         if (g && !s) {
             verdict = 'missing';
         } else if (!g && s) {
-            verdict = 'extra';
+            verdict = 'notInSnapshot';
         } else {
             // Compare on whichever boost the game's effect actually uses.
             const field = g.ratioBoost !== 0 || g.flatBoost === 0 ? 'ratioBoost' : 'flatBoost';
@@ -435,7 +497,12 @@ export function compareBuffProduction(gameBuffMap, produced) {
             const sv = s[field];
             if (gv !== 0) deltaPct = ((sv - gv) / Math.abs(gv)) * 100;
             const equal = deltaPct == null ? sv === gv : Math.abs(deltaPct) < BUFF_MATCH_TOLERANCE_PCT;
-            verdict = equal ? 'match' : 'magnitude';
+            if (equal) {
+                verdict = 'match';
+            } else {
+                stackMultiple = stackMultipleOf(gv, sv);
+                verdict = stackMultiple ? 'stacks' : 'magnitude';
+            }
         }
         return {
             uniqueHrid: hrid,
@@ -445,12 +512,43 @@ export function compareBuffProduction(gameBuffMap, produced) {
             sim: s,
             verdict,
             deltaPct,
+            stackMultiple,
         };
     });
 
-    const rank = { missing: 0, magnitude: 1, extra: 2, match: 3 };
+    const rank = { missing: 0, magnitude: 1, stacks: 2, notInSnapshot: 3, match: 4 };
     rows.sort((a, b) => (rank[a.verdict] ?? 9) - (rank[b.verdict] ?? 9) || a.name.localeCompare(b.name));
     return rows;
+}
+
+/**
+ * Which context fields a held tick capture disagrees with, for the uptime
+ * harness's usable gate. A field unlabelled on either side passes — absence of
+ * a label is not evidence of a mismatch (old captures carry no fingerprint,
+ * and a capture armed outside a room may carry no monster). What this refuses
+ * to do is compare ticks from one monster/room/build against a sim of another
+ * and call the gap a finding.
+ *
+ * @param {Object|null} captureContext - The capture file's `context`
+ * @param {{monsterHrid: string, roomLevel: number, fingerprint: string|null}} current
+ * @returns {string[]} Human-readable names of the differing fields
+ *   ('monster', 'room level', 'build'); empty when the capture is usable
+ */
+export function captureContextMismatches(captureContext, current) {
+    const mismatches = [];
+    const capturedMonster = captureContext?.monsterHrid || null;
+    const capturedLevel = Number(captureContext?.roomLevel) || 0;
+    const capturedBuild = captureContext?.fingerprint || null;
+    if (capturedMonster && current?.monsterHrid && capturedMonster !== current.monsterHrid) {
+        mismatches.push('monster');
+    }
+    if (capturedLevel && Number(current?.roomLevel) && capturedLevel !== Number(current.roomLevel)) {
+        mismatches.push('room level');
+    }
+    if (capturedBuild && current?.fingerprint && capturedBuild !== current.fingerprint) {
+        mismatches.push('build');
+    }
+    return mismatches;
 }
 
 /**

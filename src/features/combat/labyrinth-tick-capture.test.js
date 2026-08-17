@@ -73,6 +73,17 @@ describe('labyrinth tick capture', () => {
         expect(file.context.monsterHrid).toBe('/monsters/dryad');
     });
 
+    test('a caller-supplied build fingerprint is exported, and survives the monster backfill', () => {
+        // The uptime harness binds captures to the build they were fought in;
+        // the file must carry the fingerprint even when the monster label is
+        // filled in later from the fight's own feed.
+        capture.startCapture({ fingerprint: 'fp-abc' });
+        emit('new_battle', { monsters: [{ hrid: '/monsters/dryad', name: 'Dryad' }] });
+        const file = capture.captureFile();
+        expect(file.context.fingerprint).toBe('fp-abc');
+        expect(file.context.monsterHrid).toBe('/monsters/dryad');
+    });
+
     test('a stopped capture hears nothing more', () => {
         capture.startCapture();
         emit('battle_updated', battle);

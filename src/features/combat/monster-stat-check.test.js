@@ -26,6 +26,8 @@ import {
     buffName,
     compareBuffProduction,
     buffSignature,
+    unionProducedBuffs,
+    captureContextMismatches,
 } from './monster-stat-check.js';
 
 describe('deriveRoomLevel', () => {
@@ -541,12 +543,56 @@ describe('compareBuffProduction', () => {
         expect(Math.abs(rows[0].deltaPct)).toBeGreaterThan(40);
     });
 
-    test('flags a sim-only effect as extra', () => {
+    test('a sim-only effect is notInSnapshot — timing, not a defect', () => {
+        // The game column is one clicked instant; an effect the sim produces
+        // that was between applications at that instant is not evidence of a
+        // modelling gap and must not grade as one.
         const produced = [
             { uniqueHrid: '/buff_uniques/elusiveness', typeHrid: '/buff_types/evasion', ratioBoost: 0.5, flatBoost: 0 },
         ];
         const rows = compareBuffProduction({}, produced);
-        expect(rows[0].verdict).toBe('extra');
+        expect(rows[0].verdict).toBe('notInSnapshot');
+    });
+
+    test('an integer multiple of the single-stack strength is stacks, not magnitude', () => {
+        const game = { '/buff_uniques/enrage': { typeHrid: '/buff_types/damage', ratioBoost: 0.3, flatBoost: 0 } };
+        const produced = [
+            { uniqueHrid: '/buff_uniques/enrage', typeHrid: '/buff_types/damage', ratioBoost: 0.1, flatBoost: 0 },
+        ];
+        const rows = compareBuffProduction(game, produced);
+        expect(rows[0].verdict).toBe('stacks');
+        expect(rows[0].stackMultiple).toBe(3);
+    });
+
+    test('the stack multiple reads either direction, and on the flat boost too', () => {
+        // Sim's peak at 2× the game's snapshot: the game was mid-stack when clicked
+        const game = {
+            '/buff_uniques/curse': { typeHrid: '/buff_types/damage_taken', ratioBoost: 0, flatBoost: 0.05 },
+        };
+        const produced = [
+            { uniqueHrid: '/buff_uniques/curse', typeHrid: '/buff_types/damage_taken', ratioBoost: 0, flatBoost: 0.1 },
+        ];
+        const rows = compareBuffProduction(game, produced);
+        expect(rows[0].verdict).toBe('stacks');
+        expect(rows[0].stackMultiple).toBe(2);
+    });
+
+    test('a non-integer strength gap stays magnitude', () => {
+        const game = { '/buff_uniques/aura': { typeHrid: '/buff_types/armor', ratioBoost: 0.25, flatBoost: 0 } };
+        const produced = [
+            { uniqueHrid: '/buff_uniques/aura', typeHrid: '/buff_types/armor', ratioBoost: 0.1, flatBoost: 0 },
+        ];
+        const rows = compareBuffProduction(game, produced);
+        expect(rows[0].verdict).toBe('magnitude');
+        expect(rows[0].stackMultiple).toBeNull();
+    });
+
+    test('opposite signs never read as stacks', () => {
+        const game = { '/buff_uniques/shred': { typeHrid: '/buff_types/armor', ratioBoost: -0.2, flatBoost: 0 } };
+        const produced = [
+            { uniqueHrid: '/buff_uniques/shred', typeHrid: '/buff_types/armor', ratioBoost: 0.1, flatBoost: 0 },
+        ];
+        expect(compareBuffProduction(game, produced)[0].verdict).toBe('magnitude');
     });
 
     test('uses the flat boost when the effect has no ratio (curse)', () => {
@@ -581,6 +627,71 @@ describe('compareBuffProduction', () => {
         const rows = compareBuffProduction(gameMap, produced);
         expect(rows[0].verdict).toBe('missing');
         expect(rows[0].name).toBe('pestilent shot armor');
+    });
+});
+
+describe('unionProducedBuffs', () => {
+    test('unions effects across runs so one quiet run cannot erase an effect', () => {
+        const runA = [{ uniqueHrid: '/buff_uniques/toughness', typeHrid: '/buff_types/armor', ratioBoost: 0.4 }];
+        const runB = [{ uniqueHrid: '/buff_uniques/haste', typeHrid: '/buff_types/attack_speed', ratioBoost: 0.1 }];
+        const union = unionProducedBuffs([runA, runB]);
+        expect(union.map((r) => r.uniqueHrid).sort()).toEqual(['/buff_uniques/haste', '/buff_uniques/toughness']);
+    });
+
+    test('keeps the peak signed magnitude per effect, per boost field', () => {
+        const union = unionProducedBuffs([
+            [{ uniqueHrid: '/buff_uniques/shred', typeHrid: '/buff_types/armor', ratioBoost: -0.2, flatBoost: 0 }],
+            [{ uniqueHrid: '/buff_uniques/shred', typeHrid: '/buff_types/armor', ratioBoost: -0.35, flatBoost: 0 }],
+        ]);
+        expect(union).toHaveLength(1);
+        expect(union[0].ratioBoost).toBeCloseTo(-0.35, 6);
+    });
+
+    test('tolerates empty and malformed runs', () => {
+        expect(unionProducedBuffs(null)).toEqual([]);
+        expect(unionProducedBuffs([[], null, [{ typeHrid: '/x' }]])).toEqual([]);
+    });
+});
+
+describe('captureContextMismatches', () => {
+    const CURRENT = { monsterHrid: '/monsters/cyclops', roomLevel: 206, fingerprint: 'fp-now' };
+
+    test('a fully matching context is usable', () => {
+        expect(
+            captureContextMismatches(
+                { monsterHrid: '/monsters/cyclops', roomLevel: 206, fingerprint: 'fp-now' },
+                CURRENT
+            )
+        ).toEqual([]);
+    });
+
+    test('names every field that differs', () => {
+        expect(
+            captureContextMismatches({ monsterHrid: '/monsters/dryad', roomLevel: 300, fingerprint: 'fp-old' }, CURRENT)
+        ).toEqual(['monster', 'room level', 'build']);
+    });
+
+    test('a build change alone is named as build', () => {
+        expect(
+            captureContextMismatches(
+                { monsterHrid: '/monsters/cyclops', roomLevel: 206, fingerprint: 'fp-old' },
+                CURRENT
+            )
+        ).toEqual(['build']);
+    });
+
+    test('a fingerprint missing on either side passes — absence is not a mismatch', () => {
+        expect(captureContextMismatches({ monsterHrid: '/monsters/cyclops', roomLevel: 206 }, CURRENT)).toEqual([]);
+        expect(
+            captureContextMismatches(
+                { monsterHrid: '/monsters/cyclops', roomLevel: 206, fingerprint: 'fp-old' },
+                { ...CURRENT, fingerprint: null }
+            )
+        ).toEqual([]);
+    });
+
+    test('an unlabelled capture (no context at all) passes', () => {
+        expect(captureContextMismatches(null, CURRENT)).toEqual([]);
     });
 });
 

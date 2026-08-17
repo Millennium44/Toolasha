@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab diagnostics: context-bound captures, honest blind-probe verdicts, harness statistics
+
+The uptime harness now refuses a held capture whose monster, room level or build fingerprint differs from the sim it would compare against, saying which field differs. Blind-probe effects the sim produced but the clicked snapshot happened not to show read as "not active in snapshot" instead of a finding, probes union three runs, and integer-multiple magnitude gaps read as stack differences. Harness rows gain per-hit means and sample counts, rows under five real casts read inconclusive, a mean-damage gap now fails a row that shares alone would pass, DoT rows compare per-tick on both sides (sim tick counts no longer inflate cast shares), and the header states fights and excluded partials.
+
 ### Trial Party DPS panel sits beside the final boss in live fights
 
 In the guild In Progress combat view the Party DPS/forecast block now joins the boss grid as a compact sidecar after the last boss card, staying in the first row instead of spanning full-width underneath — redraw-stable across boss remounts. The Trials setup tab and skilling view are unchanged.

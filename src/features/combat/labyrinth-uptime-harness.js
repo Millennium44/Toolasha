@@ -349,21 +349,72 @@ export function summarizeSimAttacks(attacksForPair) {
     return { byAbility };
 }
 
+/**
+ * Real casts a row needs before its gaps count as findings. Shares and means
+ * are ratios of small counts below this — a 2-cast ability is one merged tick
+ * away from any verdict — so such rows grade as `inconclusive` instead.
+ */
+export const MIN_REAL_CASTS = 5;
+
+/**
+ * Real-vs-sim mean damage-per-cast gap beyond which a row cannot be `ok`, even
+ * when both shares pass — shares can agree while every cast lands for the
+ * wrong amount (both sides concentrated in one ability does exactly that).
+ */
+export const MEAN_PER_CAST_TOLERANCE_PCT = 25;
+
+/**
+ * The pseudo-ability both sides file damage-over-time under. Units align by
+ * construction: the real side counts a damage-counter rise with no swing
+ * pending as one DoT tick, and the sim records each 3-second
+ * DamageOverTimeEvent tick as one `'damageOverTime'` attack (see
+ * combat-simulator.js processDamageOverTimeTickEvent) — tick-level, 3 s
+ * cadence, same label on both sides, so damage share and per-tick mean compare
+ * directly. What does NOT compare is casts: the monster's attack counter never
+ * sees a DoT, so the real row carries no casts while `summarizeSimAttacks`
+ * counts every sim tick as one. The DoT row therefore takes its tick count as
+ * its cast count on both sides and is excluded from the cast-share
+ * denominators entirely (its cast share is null, not a number).
+ */
+const DOT_ABILITY = 'damageOverTime';
+
 /** Totals across a `byAbility` map, for the share denominators. */
 function totalsOf(byAbility) {
     let casts = 0;
     let damage = 0;
-    for (const r of Object.values(byAbility || {})) {
-        casts += r.casts || 0;
+    for (const [ability, r] of Object.entries(byAbility || {})) {
+        // DoT ticks are not casts (see DOT_ABILITY) — counting the sim's tick
+        // entries as casts would deflate every real ability's sim cast share
+        if (ability !== DOT_ABILITY) casts += r.casts || 0;
         damage += r.damage || 0;
     }
     return { casts, damage };
 }
 
 /**
+ * One line for the uptime section header: how many complete fights back the
+ * aggregate, whether partials were excluded, and whether the capture opened on
+ * a fight already in progress.
+ * @param {Object} real - From {@link extractMonsterAttacks}
+ * @returns {string}
+ */
+export function describeFights(real) {
+    if (!real) return '';
+    const fights = real.fights || 0;
+    const partials = real.partialFights || 0;
+    let label = `${fights} fight${fights === 1 ? '' : 's'}`;
+    if (partials) label += ` (+${partials} partial${partials === 1 ? '' : 's'} excluded)`;
+    if (real.captureStartedMidFight) label += ' — capture started mid-fight';
+    return label;
+}
+
+/**
  * Per-ability real-vs-sim comparison of the monster's attacks — cast share,
- * damage share, and mean damage per cast, all unit-free so no time alignment is
- * needed. Rows are ordered by real damage share (what hurts most, first).
+ * damage share, and mean damage per cast and per hit, all unit-free so no time
+ * alignment is needed. Rows are ordered by real damage share (what hurts most,
+ * first). Each row carries `samples` (the real casts behind it — ticks for the
+ * DoT row); a row under {@link MIN_REAL_CASTS} grades `inconclusive` rather
+ * than passing a share gap off as a finding.
  *
  * @param {Object} real - From {@link extractMonsterAttacks}
  * @param {Object} sim - From {@link summarizeSimAttacks}
@@ -375,27 +426,41 @@ export function compareIncoming(real, sim, tolerancePct = 15) {
     const simT = totalsOf(sim?.byAbility);
     const abilities = [...new Set([...Object.keys(real?.byAbility || {}), ...Object.keys(sim?.byAbility || {})])];
 
-    const side = (r, tot) =>
-        r
-            ? {
-                  casts: r.casts,
-                  hits: r.hits,
-                  damage: Math.round(r.damage),
-                  castSharePct: tot.casts ? (100 * r.casts) / tot.casts : 0,
-                  dmgSharePct: tot.damage ? (100 * r.damage) / tot.damage : 0,
-                  meanDmgPerCast: r.casts ? r.damage / r.casts : r.hits ? r.damage / r.hits : 0,
-              }
-            : null;
+    const side = (r, tot, isDot) => {
+        if (!r) return null;
+        // A DoT row's "casts" are its ticks — the only per-event count either
+        // side has for it (see DOT_ABILITY)
+        const casts = isDot ? r.hits + r.misses : r.casts;
+        return {
+            casts,
+            hits: r.hits,
+            damage: Math.round(r.damage),
+            castSharePct: isDot ? null : tot.casts ? (100 * r.casts) / tot.casts : 0,
+            dmgSharePct: tot.damage ? (100 * r.damage) / tot.damage : 0,
+            meanDmgPerCast: casts ? r.damage / casts : r.hits ? r.damage / r.hits : 0,
+            meanDmgPerHit: r.hits ? r.damage / r.hits : 0,
+        };
+    };
 
     const rows = abilities.map((ability) => {
-        const r = side(real?.byAbility?.[ability], realT);
-        const s = side(sim?.byAbility?.[ability], simT);
+        const isDot = ability === DOT_ABILITY;
+        const rawReal = real?.byAbility?.[ability];
+        const r = side(rawReal, realT, isDot);
+        const s = side(sim?.byAbility?.[ability], simT, isDot);
+        // How many real casts (DoT: ticks) stand behind this row's numbers.
+        const samples = rawReal ? (isDot ? rawReal.hits + rawReal.misses : rawReal.casts) : 0;
         // The headline gap: how the ability's share of incoming damage differs.
         const dmgShareGap = (s?.dmgSharePct ?? 0) - (r?.dmgSharePct ?? 0);
         // Cadence, read straight off the attack counter — the reliable half. A
         // damage-share gap on an ability whose cast share matches is a magnitude
-        // question (per-cast damage), not a rotation one.
-        const castShareGap = (s?.castSharePct ?? 0) - (r?.castSharePct ?? 0);
+        // question (per-cast damage), not a rotation one. Null for the DoT row,
+        // which has no cast share on either side.
+        const castShareGap =
+            r?.castSharePct != null || s?.castSharePct != null ? (s?.castSharePct ?? 0) - (r?.castSharePct ?? 0) : null;
+        // Magnitude gap relative to the real mean; needs both means, and a real
+        // mean of zero (an all-miss row) has no scale to compare against.
+        const meanPerCastGapPct =
+            r && s && r.meanDmgPerCast > 0 ? (100 * (s.meanDmgPerCast - r.meanDmgPerCast)) / r.meanDmgPerCast : null;
         let verdict = 'ok';
         if (!s) {
             // A self-buff (precision, a fierce/guardian aura) casts but deals no
@@ -405,9 +470,28 @@ export function compareIncoming(real, sim, tolerancePct = 15) {
             // genuinely absent damaging ability, which the blind-buff probe is
             // the right tool to verify; otherwise every buff cast reads as a bug.
             verdict = r && r.damage === 0 && r.hits === 0 ? 'buff' : 'sim-missing';
-        } else if (!r) verdict = 'sim-extra';
-        else if (Math.abs(dmgShareGap) >= tolerancePct) verdict = dmgShareGap < 0 ? 'sim-under' : 'sim-over';
-        return { ability: String(ability).split('/').pop(), real: r, sim: s, dmgShareGap, castShareGap, verdict };
+        } else if (!r) {
+            verdict = 'sim-extra';
+        } else if (samples < MIN_REAL_CASTS) {
+            // The share/mean verdicts below are ratio claims and need samples;
+            // the existence claims above (buff, sim-missing, sim-extra) do not —
+            // one real cast of an ability the sim NEVER produces is still real.
+            verdict = 'inconclusive';
+        } else if (Math.abs(dmgShareGap) >= tolerancePct) {
+            verdict = dmgShareGap < 0 ? 'sim-under' : 'sim-over';
+        } else if (meanPerCastGapPct != null && Math.abs(meanPerCastGapPct) >= MEAN_PER_CAST_TOLERANCE_PCT) {
+            verdict = meanPerCastGapPct < 0 ? 'sim-under' : 'sim-over';
+        }
+        return {
+            ability: String(ability).split('/').pop(),
+            real: r,
+            sim: s,
+            dmgShareGap,
+            castShareGap,
+            meanPerCastGapPct,
+            samples,
+            verdict,
+        };
     });
 
     rows.sort((a, b) => (b.real?.dmgSharePct ?? 0) - (a.real?.dmgSharePct ?? 0));
