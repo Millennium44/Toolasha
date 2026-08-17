@@ -328,23 +328,36 @@ describe('applyPathBootsSimLevel', () => {
         ...extra,
     });
 
-    test('pins a base path boot to +7, even when the current piece is higher', () => {
-        const c = swap('/items/pathfinder_boots', 10);
+    test('pins a base path boot to +7 when the worn piece is below +10', () => {
+        const c = swap('/items/pathfinder_boots', 10, { currentLevel: 8 });
         applyPathBootsSimLevel(c);
         expect(c.upgradeLevel).toBe(7);
         expect(c.description).toBe('Centaur Boots +10 → X (+7)');
     });
 
+    test('recommends +10 when the worn boots are already +10 or higher', () => {
+        const c = swap('/items/pathfinder_boots', 7, { currentLevel: 10 });
+        applyPathBootsSimLevel(c);
+        expect(c.upgradeLevel).toBe(10);
+        expect(c.description).toBe('Centaur Boots +10 → X (+10)');
+    });
+
     test('raises a path boot below +7 up to +7 as well', () => {
-        const c = swap('/items/pathbreaker_boots', 3);
+        const c = swap('/items/pathbreaker_boots', 3, { currentLevel: 3 });
         applyPathBootsSimLevel(c);
         expect(c.upgradeLevel).toBe(7);
     });
 
-    test('a refined path boot lands at +7, overriding the refined +10 floor', () => {
-        const c = swap('/items/pathseeker_boots_refined', 10);
+    test('a refined path boot lands at +7 when the worn piece is below +10', () => {
+        const c = swap('/items/pathseeker_boots_refined', 10, { currentLevel: 7 });
         applyPathBootsSimLevel(c);
         expect(c.upgradeLevel).toBe(7);
+    });
+
+    test('a refined path boot keeps +10 when the worn boots are +10 or higher', () => {
+        const c = swap('/items/pathseeker_boots_refined', 10, { currentLevel: 12 });
+        applyPathBootsSimLevel(c);
+        expect(c.upgradeLevel).toBe(10);
     });
 
     test('a refined path boot with a swapLabel redraws its description to +7', () => {
@@ -412,8 +425,19 @@ describe('addRefinedPathBootCandidates', () => {
         expect(refined.type).toBe('tier');
     });
 
-    test('the added refined sibling normalizes to +7 through the level passes', () => {
+    test('the added refined sibling follows the worn level through the passes', () => {
+        // baseCandidate wears +10, so the sibling it inherits from is recommended
+        // at +10 (a +10 wearer would enhance the path boots to +10 too).
         const candidates = [baseCandidate()];
+        addRefinedPathBootCandidates(candidates, gameData);
+        candidates.forEach(applyPathBootsSimLevel);
+        const refined = candidates.find((c) => c.upgradeHrid === '/items/pathfinder_boots_refined');
+        expect(refined.upgradeLevel).toBe(10);
+        expect(refined.description).toContain('Pathfinder Boots (R) +10');
+    });
+
+    test('the sibling normalizes to +7 when the worn boots are below +10', () => {
+        const candidates = [{ ...baseCandidate(), currentLevel: 8 }];
         addRefinedPathBootCandidates(candidates, gameData);
         candidates.forEach(applyPathBootsSimLevel);
         const refined = candidates.find((c) => c.upgradeHrid === '/items/pathfinder_boots_refined');
