@@ -1686,7 +1686,9 @@ class LabyrinthClearRate {
                 estimate.timerKnown
                     ? `${Math.round(estimate.remainingSeconds)}s left on the room timer`
                     : 'Joined this fight in progress, so the room timer is unknown and left out',
-                fresh ? '' : 'Extrapolated from the health lost so far; abilities and procs are not modelled',
+                fresh
+                    ? 'Approximate: the replay restores health, mana and the clock, but cooldowns, buffs and DoTs start fresh — so it reads a fight with spent cooldowns slightly high'
+                    : 'Extrapolated from the health lost so far; abilities and procs are not modelled',
             ].filter(Boolean)
         );
     }

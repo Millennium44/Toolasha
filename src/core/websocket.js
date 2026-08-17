@@ -185,16 +185,25 @@ class WebSocketHook {
         }
 
         socket.addEventListener('message', (event) => {
-            if (this.isMessageEventProcessed(event)) {
+            if (!event || this.isMessageEventProcessed(event)) {
                 return;
             }
 
-            if (!event || typeof event.data !== 'string') {
-                return;
-            }
-
+            // Mark BEFORE the first `event.data` read. That read goes through
+            // the hooked MessageEvent.data getter, and on an unmarked event the
+            // getter dispatches processMessage itself — after which this
+            // listener dispatched again. The content-hash dedup silently
+            // absorbed the echo for most types, but everything on the
+            // skip-dedup list (battle_updated among them) reached every handler
+            // twice, and raw tick captures came out half duplicates.
             this.markMessageEventProcessed(event);
-            this.processMessage(event.data);
+
+            const data = event.data;
+            if (typeof data !== 'string') {
+                return;
+            }
+
+            this.processMessage(data);
         });
     }
 

@@ -102,7 +102,7 @@ describe('what the attempt bar shows', () => {
 
     test('a replay of this fight is quoted as a figure', () => {
         const out = liveClearDisplay({ estimate: measured(0.2), replay: { clearChance: 0.63 } });
-        expect(out).toMatchObject({ text: 'Clear 63%', source: 'replay' });
+        expect(out).toMatchObject({ text: 'Clear ~63%', source: 'replay' });
     });
 
     test('an earned extrapolation is quoted as a figure', () => {

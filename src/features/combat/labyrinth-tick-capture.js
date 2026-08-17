@@ -37,6 +37,16 @@ let handlers = null;
 let autoStopTimer = null;
 /** The monster this capture is for; a fresh fight against a different one ends it */
 let targetMonster = null;
+/**
+ * Adjacent battle_updated ticks whose payload was byte-identical to the one
+ * before them, dropped rather than kept. The websocket hook no longer echoes
+ * every message twice, so what lands here now is the game server genuinely
+ * repeating a tick — worth counting either way, because a capture that silently
+ * contains doubles reads as twice the cadence it really had.
+ */
+let duplicatesDiscarded = 0;
+/** The last battle_updated payload kept, serialized, for the adjacency check */
+let lastBattleKey = null;
 
 /** The first monster's hrid in a `new_battle` payload, or null. */
 function firstMonsterHrid(payload) {
@@ -87,6 +97,23 @@ function push(type, payload) {
         }
         labelFromBattle(payload);
     }
+    if (type === 'battle_updated') {
+        // Drop an exact repeat of the tick before it. Only battle_updated:
+        // two identical new_battle messages are two real fights, never noise.
+        // battle_updated carries no timestamp or sequence number, so payload
+        // identity is the only key there is.
+        let key = null;
+        try {
+            key = JSON.stringify(payload);
+        } catch {
+            // Unserializable payload: keep it rather than guess
+        }
+        if (key !== null && key === lastBattleKey) {
+            duplicatesDiscarded++;
+            return;
+        }
+        if (key !== null) lastBattleKey = key;
+    }
     ticks.push({ at: Date.now() - startedAt, type, payload });
     // Keep the newest: a long capture that overflows should hold the recent
     // fight, not the one it opened on
@@ -108,6 +135,8 @@ export function startCapture(ctx = null, { stopOnLeave = true } = {}) {
     capturing = true;
     startedAt = Date.now();
     ticks = [];
+    duplicatesDiscarded = 0;
+    lastBattleKey = null;
     context = ctx || null;
     targetMonster = stopOnLeave ? ctx?.monsterHrid || null : null;
 
@@ -144,31 +173,53 @@ export function clearCapture() {
     startedAt = 0;
     context = null;
     targetMonster = null;
+    duplicatesDiscarded = 0;
+    lastBattleKey = null;
 }
 
 /**
  * How much has been captured, for the button to read.
- * @returns {{capturing: boolean, ticks: number, seconds: number}}
+ * @returns {{capturing: boolean, ticks: number, seconds: number, duplicatesDiscarded: number}}
  */
 export function captureStatus() {
     return {
         capturing,
         ticks: ticks.length,
         seconds: startedAt ? (Date.now() - startedAt) / 1000 : 0,
+        duplicatesDiscarded,
     };
+}
+
+/** The script version, when the userscript sandbox is there to ask. */
+function scriptVersion() {
+    try {
+        return typeof GM_info !== 'undefined' ? GM_info?.script?.version || null : null;
+    } catch {
+        return null;
+    }
 }
 
 /**
  * The capture in a shape safe to write out and read back.
+ *
+ * Carries what a reader needs to reproduce the run: which script produced it,
+ * against which server (live and test do not share balance), and how many
+ * repeated ticks were dropped — a capture whose duplicates were silently kept
+ * would read as twice the cadence it really had.
  * @returns {Object}
  */
 export function captureFile() {
+    const host = typeof location !== 'undefined' ? location.hostname || null : null;
     return {
         format: 'toolasha-labyrinth-tick-capture',
-        version: 1,
+        version: 2,
+        toolashaVersion: scriptVersion(),
+        host,
+        isTestServer: host ? host.includes('test.') : null,
         recordedAt: startedAt || null,
         exportedAt: Date.now(),
         context: context || null,
+        duplicatesDiscarded,
         ticks: ticks.map((tick) => ({ ...tick })),
     };
 }

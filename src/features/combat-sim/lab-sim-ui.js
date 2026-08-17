@@ -108,8 +108,13 @@ const PANEL_ID = 'mwi-lab-sim-panel';
  */
 const GEOMETRY_KEY = 'labSimPanel';
 
-/** Storage key for the last Upgrade-tab results, remembered across refreshes (opt-in) */
-const LAB_UPGRADE_RESULTS_KEY = 'labSimUpgradeResults';
+/**
+ * Storage key for the last Upgrade-tab results, remembered across refreshes
+ * (opt-in). The `-fullkit` suffix orphans results persisted before lab sims
+ * defaulted to the monster's full ability kit — a baseline computed against a
+ * tier-0 subset monster must not be re-shown beside full-kit runs.
+ */
+const LAB_UPGRADE_RESULTS_KEY = 'labSimUpgradeResults-fullkit';
 
 /** Floor sizes the resize grips will not take the panel below. */
 const MIN_PANEL_WIDTH = 400;

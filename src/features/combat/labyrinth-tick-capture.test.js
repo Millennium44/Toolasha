@@ -90,6 +90,52 @@ describe('labyrinth tick capture', () => {
     });
 });
 
+describe('adjacent duplicate ticks are dropped, and counted', () => {
+    test('an exact repeat of the previous battle tick is discarded, not kept', () => {
+        capture.startCapture();
+        emit('battle_updated', battle);
+        emit('battle_updated', battle); // the game repeating itself
+        emit('battle_updated', { ...battle, pMap: { 0: { cHP: 90 } } });
+
+        const file = capture.captureFile();
+        expect(file.ticks.filter((t) => t.type === 'battle_updated')).toHaveLength(2);
+        expect(file.duplicatesDiscarded).toBe(1);
+        expect(capture.captureStatus().duplicatesDiscarded).toBe(1);
+    });
+
+    test('the same reading returning later is kept — only adjacency is noise', () => {
+        capture.startCapture();
+        emit('battle_updated', battle);
+        emit('battle_updated', { ...battle, pMap: { 0: { cHP: 90 } } });
+        emit('battle_updated', battle); // healed back to the same numbers: real
+
+        expect(capture.captureFile().ticks).toHaveLength(3);
+        expect(capture.captureFile().duplicatesDiscarded).toBe(0);
+    });
+
+    test('identical new_battle messages are never deduplicated — two of them are two fights', () => {
+        capture.startCapture();
+        const fight = { monsters: [{ hrid: '/monsters/cyclops' }], players: [] };
+        emit('new_battle', fight);
+        emit('new_battle', fight);
+
+        expect(capture.captureFile().ticks.filter((t) => t.type === 'new_battle')).toHaveLength(2);
+        expect(capture.captureFile().duplicatesDiscarded).toBe(0);
+    });
+
+    test('a fresh capture forgets the previous one’s duplicate count and last tick', () => {
+        capture.startCapture();
+        emit('battle_updated', battle);
+        emit('battle_updated', battle);
+        capture.startCapture();
+        // Same payload as before the restart, but the first of this capture
+        emit('battle_updated', battle);
+
+        expect(capture.captureFile().ticks).toHaveLength(1);
+        expect(capture.captureFile().duplicatesDiscarded).toBe(0);
+    });
+});
+
 describe('the capture ends when the fight leaves its monster', () => {
     test('a fresh fight against a different monster stops it, keeping what was captured', () => {
         capture.startCapture({ monsterHrid: '/monsters/cyclops', roomLevel: 206 });
@@ -111,7 +157,7 @@ describe('the capture ends when the fight leaves its monster', () => {
         emit('new_battle', { monsters: [{ hrid: '/monsters/cyclops' }], players: [] });
         emit('battle_updated', battle);
         emit('new_battle', { monsters: [{ hrid: '/monsters/cyclops' }], players: [] }); // died, retry
-        emit('battle_updated', battle);
+        emit('battle_updated', { ...battle, pMap: { 0: { cHP: 90 } } });
         expect(capture.isCapturing()).toBe(true);
         expect(capture.captureFile().ticks.length).toBe(4);
     });

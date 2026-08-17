@@ -263,10 +263,20 @@ class CombatSimulator {
         // Labyrinth result tracking
         if (this.labyrinth) {
             this.simResult.isLabyrinth = true;
-            // The attempt in progress when the run stopped never resolved, and
-            // counting it would score it a loss: attemptCount rises when a
-            // monster spawns, while a win is only recorded when one dies.
-            this.simResult.labyAttemptCount = Math.max(0, this.labyrinth.attemptCount - 1);
+            // Only attempts that actually finished — win, death or timeout —
+            // are counted; the fight still in progress when the run stopped is
+            // reported separately rather than scored or subtracted. (The old
+            // blanket `attemptCount - 1` subtracted a *resolved* win whenever
+            // the time cap landed on the killing blow itself, and a 100%-win
+            // run then read 251/250 = "100.4% clear".)
+            this.simResult.labyAttemptCount = this.labyrinth.resolvedCount;
+            this.simResult.labyUnfinishedAttempts = this.labyrinth.attemptCount - this.labyrinth.resolvedCount;
+            if (this.simResult.encounters > this.labyrinth.resolvedCount) {
+                // Impossible by construction; if it ever prints, the counters have drifted
+                console.warn(
+                    `[CombatSimulator] Labyrinth wins (${this.simResult.encounters}) exceed resolved attempts (${this.labyrinth.resolvedCount})`
+                );
+            }
             this.simResult.labyStoppedOnPrecision = this.converged;
             this.simResult.labyrinthMonsterHrid = this.labyrinth.monsterHrid;
             this.simResult.roomLevel = this.labyrinth.roomLevel;
@@ -732,6 +742,7 @@ class CombatSimulator {
         // Labyrinth timeout check
         if (this.labyrinth && this.enemies && this.labyrinth.checkTimeout(this.simulationTime)) {
             // Timeout = loss. Clear everything and immediately restart.
+            this.labyrinth.resolvedCount++;
             this.enemies = null;
             this.eventQueue.clear();
             const combatStartEvent = new CombatStartEvent(this.simulationTime);
@@ -761,6 +772,7 @@ class CombatSimulator {
 
             if (this.labyrinth) {
                 // Labyrinth win: immediate restart (no respawn delay)
+                this.labyrinth.resolvedCount++;
                 this.enemies = null;
                 this.simResult.addEncounterEnd();
                 this.eventQueue.clear();
@@ -817,6 +829,7 @@ class CombatSimulator {
         if (!this.players.some((player) => player.combatDetails.currentHitpoints > 0)) {
             if (this.labyrinth) {
                 // Labyrinth death = loss. Immediate restart.
+                this.labyrinth.resolvedCount++;
                 this.enemies = null;
                 this.eventQueue.clear();
                 const combatStartEvent = new CombatStartEvent(this.simulationTime);

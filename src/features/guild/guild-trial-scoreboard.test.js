@@ -153,6 +153,37 @@ describe('scoreboardRows', () => {
         expect(tib.measuredDeltaPct).toBeCloseTo(20, 6);
     });
 
+    test('the rendered row shows the measured number itself, not just its error', () => {
+        // The delta alone says how far the stream ran from the game's figure but
+        // hides what the stream actually read — the before-number the comparison
+        // is about. Both belong on the row.
+        const html = guildTrialScoreboard._rowHTML({
+            rank: 1,
+            name: 'Tib',
+            value: 500_000,
+            share: 55.6,
+            perSecond: null,
+            measured: true,
+            measuredValue: 600_000,
+            measuredDeltaPct: 20,
+        });
+        expect(html).toContain('meas 600.0K · +20%');
+
+        // With no game figure to compare against, the absolute stands alone
+        const bare = guildTrialScoreboard._rowHTML({
+            rank: 2,
+            name: 'Moo',
+            value: 0,
+            share: 0,
+            perSecond: null,
+            measured: true,
+            measuredValue: 226_100,
+            measuredDeltaPct: null,
+        });
+        // The comparison span ends at the absolute — no dangling delta
+        expect(bare).toContain('meas 226.1K</span>');
+    });
+
     test('the wire stats are preferred over the scraped modal', () => {
         const report = breakdown({
             encounter: 'badger',
