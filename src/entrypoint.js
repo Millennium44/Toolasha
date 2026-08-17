@@ -11,13 +11,129 @@
  * - UI (tasks, skills, settings, misc)
  */
 
-// Access libraries from global namespace
-const Core = window.Toolasha.Core;
-const Utils = window.Toolasha.Utils;
-const Market = window.Toolasha.Market;
-const Actions = window.Toolasha.Actions;
-const Combat = window.Toolasha.Combat;
-const UI = window.Toolasha.UI;
+// ---------------------------------------------------------------------------
+// Library-load guard.
+//
+// The @require bundles populate window.Toolasha.{Core,Utils,…}. They load as raw
+// repository content from a CDN, so a GitHub or CDN outage can leave one or more
+// unset — and every read below would then throw a cryptic "window.Toolasha is
+// undefined" with no hint why. Catch that here, tell the user what actually
+// happened using nothing from the libraries (they are the thing missing), and —
+// since the usual cause is GitHub itself — confirm it against GitHub's status
+// page, which lives on separate infrastructure and stays up during a GitHub
+// outage. (2026-08-17: a GitHub incident that 50%-errored raw content downloads
+// broke the @require loads for everyone, presenting only as this cryptic throw.)
+// ---------------------------------------------------------------------------
+
+const REQUIRED_LIBRARIES = ['Core', 'Utils', 'Market', 'Actions', 'Combat', 'UI'];
+
+/** Which required library globals did not load. */
+function missingLibraries(ns) {
+    return REQUIRED_LIBRARIES.filter((lib) => !ns || !ns[lib]);
+}
+
+/** GM's cross-origin request, whichever grant this manager exposes, or null. */
+function gmRequest() {
+    if (typeof GM_xmlhttpRequest !== 'undefined') return GM_xmlhttpRequest;
+    if (typeof GM !== 'undefined' && GM && typeof GM.xmlHttpRequest === 'function') return GM.xmlHttpRequest;
+    return null;
+}
+
+/** A self-contained banner — the libraries' own toast may be the thing missing. */
+function showLoadErrorBanner(html) {
+    try {
+        let el = document.getElementById('toolasha-load-error');
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'toolasha-load-error';
+            el.style.cssText =
+                'position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:2147483647; ' +
+                'max-width:min(92vw,520px); padding:12px 16px; border-radius:8px; background:#2a1418; ' +
+                'border:1px solid #7a2e34; color:#f3d6d6; font:13px/1.5 system-ui,sans-serif; ' +
+                'box-shadow:0 6px 24px rgba(0,0,0,0.5);';
+            (document.body || document.documentElement).appendChild(el);
+        }
+        el.innerHTML = html;
+        return el;
+    } catch {
+        return null;
+    }
+}
+
+/** The line the banner settles on, given GitHub's status indicator. */
+function githubOutageLine(indicator, description) {
+    if (indicator && indicator !== 'none') {
+        return (
+            '<b>GitHub is having an outage right now</b>' +
+            (description ? ` (${description})` : '') +
+            ' — that is why Toolasha could not load its code, not a bug in the script. It will fix ' +
+            'itself; refresh once GitHub is back.'
+        );
+    }
+    return (
+        'Toolasha could not load its code libraries, but GitHub reports no outage — this may be your ' +
+        'network or the CDN. Refresh in a minute or two.'
+    );
+}
+
+/**
+ * Explain a failed library load, confirming the usual cause (GitHub) against its
+ * status page. Best-effort and self-contained; never throws.
+ * @param {string[]} missing - The library globals that did not load
+ */
+function reportLibraryLoadFailure(missing) {
+    const heading = '<div style="font-weight:600; margin-bottom:4px;">Toolasha didn’t load</div>';
+    const link = '<a href="https://www.githubstatus.com" target="_blank" style="color:#ffb3b3;">githubstatus.com</a>';
+    showLoadErrorBanner(
+        heading +
+            `<div>Its code libraries (${missing.join(', ')}) failed to download — almost always a ` +
+            `temporary GitHub or CDN outage, since they load as raw repository content. Checking ${link}…</div>`
+    );
+    const request = gmRequest();
+    if (!request) return;
+    try {
+        request({
+            method: 'GET',
+            url: 'https://www.githubstatus.com/api/v2/status.json',
+            timeout: 8000,
+            onload: (response) => {
+                try {
+                    const data = JSON.parse(response?.responseText || '{}');
+                    const line = githubOutageLine(data?.status?.indicator, data?.status?.description);
+                    showLoadErrorBanner(`${heading}<div>${line} ${link}</div>`);
+                } catch {
+                    /* the "checking…" message stands */
+                }
+            },
+            onerror: () => {},
+            ontimeout: () => {},
+        });
+    } catch {
+        /* the base message stands */
+    }
+}
+
+// Access libraries from the global namespace — resolved from window, or from
+// unsafeWindow on a manager that isolates the page context.
+const toolashaNamespace =
+    (typeof window !== 'undefined' && window.Toolasha) ||
+    (typeof unsafeWindow !== 'undefined' && unsafeWindow.Toolasha) ||
+    null;
+
+const missingLibs = missingLibraries(toolashaNamespace);
+if (missingLibs.length) {
+    reportLibraryLoadFailure(missingLibs);
+    throw new Error(
+        `Toolasha libraries failed to load (${missingLibs.join(', ')}) — likely a GitHub/CDN outage. Refresh shortly.`
+    );
+}
+
+const Core = toolashaNamespace.Core;
+const Utils = toolashaNamespace.Utils;
+const Market = toolashaNamespace.Market;
+const Actions = toolashaNamespace.Actions;
+const Combat = toolashaNamespace.Combat;
+const UI = toolashaNamespace.UI;
 
 // Destructure core modules
 const { storage, config, webSocketHook, domObserver, dataManager, featureRegistry, performanceMonitor } = Core;
