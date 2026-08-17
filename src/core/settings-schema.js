@@ -3032,6 +3032,20 @@ export const settingsGroups = {
                 default: false,
                 help: 'Keys on the server’s own death count for your character going up between battles — your deaths only, not the party’s. One message per cooldown rather than one per death, so a zone that is killing you repeatedly says so once and the total in the message tells you how bad it got. Deaths that happened before you switched this on are not announced.',
             },
+            notifications_skillLevelUp: {
+                id: 'notifications_skillLevelUp',
+                label: 'Notify when you level up a skill',
+                type: 'checkbox',
+                default: false,
+                help: 'Fires when one of your own skills gains a level — the same milestone the game announces in chat as “… has reached level …”, but read from the skill data the server sends (skills_updated) rather than parsed out of chat, so it is your character only and needs no name match. One message per level gained; levels the character already had when you switched this on are not announced.',
+            },
+            notifications_ttlTargetReached: {
+                id: 'notifications_ttlTargetReached',
+                label: 'Notify when a skill reaches its Time to Level target',
+                type: 'checkbox',
+                default: false,
+                help: 'Reads the target level you set in the Time to Level tile (the Combat Level panel selection) and says so once the skill reaches it. Only a target you actually chose counts — the tile’s default “next level” is left to the level-up notification. Re-arms when you pick a new target; a target already passed when you switched this on is not announced.',
+            },
             notifications_enhancementTarget: {
                 id: 'notifications_enhancementTarget',
                 label: 'Notify when an item reaches its enhancement target',

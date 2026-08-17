@@ -1537,6 +1537,24 @@ function registerFeatures() {
             customCheck: () => config.getSetting('notifications_combatDeath'),
         },
         {
+            key: 'skillLevelUpAlerts',
+            name: 'Skill Level-Up Alerts',
+            category: 'Notifications',
+            module: UI.skillLevelUpAlerts,
+            async: true,
+            // Schema setting is the only gate; no feature-map entry.
+            customCheck: () => config.getSetting('notifications_skillLevelUp'),
+        },
+        {
+            key: 'ttlTargetAlerts',
+            name: 'Time-to-Level Target Alerts',
+            category: 'Notifications',
+            module: UI.ttlTargetAlerts,
+            async: true,
+            // Schema setting is the only gate; no feature-map entry.
+            customCheck: () => config.getSetting('notifications_ttlTargetReached'),
+        },
+        {
             key: 'marketUndercutAlerts',
             name: 'Market Undercut Alerts',
             category: 'Notifications',

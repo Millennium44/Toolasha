@@ -101,6 +101,8 @@ import communityBuffAlerts from '../features/notifications/community-buff-alerts
 import labyrinthRunAlerts from '../features/notifications/labyrinth-run-alerts.js';
 import labyrinthEntryAlerts from '../features/notifications/labyrinth-entry-alerts.js';
 import combatDeathAlerts from '../features/notifications/combat-death-alerts.js';
+import skillLevelUpAlerts from '../features/notifications/skill-level-up-alerts.js';
+import ttlTargetAlerts from '../features/notifications/ttl-target-alerts.js';
 import enhancementTargetAlerts from '../features/notifications/enhancement-target-alerts.js';
 import taskSlotAlerts from '../features/notifications/task-slot-alerts.js';
 import marketUndercutAlerts from '../features/notifications/market-undercut-alerts.js';
@@ -202,6 +204,8 @@ toolashaRoot.UI = {
     labyrinthRunAlerts,
     labyrinthEntryAlerts,
     combatDeathAlerts,
+    skillLevelUpAlerts,
+    ttlTargetAlerts,
     enhancementTargetAlerts,
     taskSlotAlerts,
     marketUndercutAlerts,
