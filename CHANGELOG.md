@@ -337,6 +337,14 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.12.0](https://github.com/Millennium44/Toolasha/compare/v3.11.0...v3.12.0) (2026-08-17)
+
+
+### Features
+
+* explain a failed library load at startup instead of a cryptic crash ([b0ec9ae](https://github.com/Millennium44/Toolasha/commit/b0ec9ae992a7a1c40dd285061bc5d1df5108b2f1))
+* notify on your own level-ups and reaching a Time-to-Level target ([a279513](https://github.com/Millennium44/Toolasha/commit/a279513fea4e2c62e37662db03b6b53152cd9227))
+
 ## [3.11.0](https://github.com/Millennium44/Toolasha/compare/v3.10.0...v3.11.0) (2026-08-17)
 
 ### Features
