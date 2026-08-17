@@ -331,10 +331,9 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.11.0](https://github.com/Millennium44/Toolasha/compare/v3.10.0...v3.11.0) (2026-08-17)
 
-
 ### Features
 
-* upgrade advisor recommends path boots at +10 for a +10 wearer ([4b3708b](https://github.com/Millennium44/Toolasha/commit/4b3708b7c04bd74048409744e755d7bc15031fbe))
+- upgrade advisor recommends path boots at +10 for a +10 wearer ([4b3708b](https://github.com/Millennium44/Toolasha/commit/4b3708b7c04bd74048409744e755d7bc15031fbe))
 
 ## [3.10.0](https://github.com/Millennium44/Toolasha/compare/v3.9.1...v3.10.0) (2026-08-16)
 
