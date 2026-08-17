@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Startup: a clear message when the code libraries can't load (usually GitHub)
+
+The production script loads its library bundles via `@require` as raw repository content, so a GitHub or CDN outage can leave them unset — which previously surfaced only as a cryptic `window.Toolasha is undefined` crash. It now detects that at startup, shows a banner explaining the libraries failed to download, and actively checks GitHub's status page (separate infrastructure, up during GitHub outages) to confirm and say so outright when GitHub is the cause.
+
 ### Upgrade advisor: recommend path boots at +10 when you already run +10 boots
 
 A swap to path boots (Pathbreaker/Pathfinder/Pathseeker, base or refined) was always simmed and priced at +7, their acquisition level. But someone already wearing +10 boots would enhance the path boots to +10 too, and pinning to +7 undersold them against the +10 they wear. When the worn boots are +10 or higher the swap is now simmed and priced at +10; below +10 it stays at +7.

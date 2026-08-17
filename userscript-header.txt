@@ -15,6 +15,7 @@
 // @grant        GM_xmlhttpRequest
 // @connect      api.github.com
 // @connect      gist.githubusercontent.com
+// @connect      www.githubstatus.com
 // @grant        GM_notification
 // @grant        GM_getValue
 // @grant        GM_setValue
