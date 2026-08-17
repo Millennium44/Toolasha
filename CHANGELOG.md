@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial Party DPS panel sits beside the final boss in live fights
+
+In the guild In Progress combat view the Party DPS/forecast block now joins the boss grid as a compact sidecar after the last boss card, staying in the first row instead of spanning full-width underneath — redraw-stable across boss remounts. The Trials setup tab and skilling view are unchanged.
+
 ### Uptime harness: retries read as separate attempts, measured from their real start
 
 A tick capture spanning retries used to read as one long fight — the `new_battle` boundary wiped the very baselines the fight-splitter keyed on, and the server reuses battle ids so they cannot segment. Each `new_battle` now opens its own attempt and seeds the counters, health and prepared-ability from its full start snapshot, so the opening hit is measured instead of silently spent as a baseline. A capture that began mid-fight keeps that segment as a flagged partial, excluded from the aggregate; validated against a real three-retry capture (2 losses + 1 win, each attempt's duration and outcome correct). The harness also now refuses a capture from a different room level than the sim it would compare against.

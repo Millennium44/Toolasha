@@ -1790,6 +1790,30 @@ function placeInBoxRow(grid, geometry, block) {
     row.appendChild(block);
 }
 
+/**
+ * The live fight's boss grid, when a card belongs to one.
+ *
+ * Scoped by the monsters area rather than by "is a grid": the Trials setup tab
+ * is grids all the way down, and a block landing in one of those belongs in the
+ * shared box row beneath the tiles, not beside a tile. Only the In Progress
+ * combat view puts its unit grid inside a `BattlePanel_monstersArea`, so that
+ * ancestor is what separates the two.
+ *
+ * The card is not always inside the grid: a composite encounter (Trial Swarm)
+ * has no card of its own and stands a synthetic tile on the monsters area
+ * itself, so the grid is looked up beneath it as a last resort.
+ *
+ * @param {Element} card - The card, or synthetic tile element, a block belongs to
+ * @returns {Element|null} The combat unit grid, or null outside a live fight
+ */
+function fightMonsterGrid(card) {
+    const monstersArea = card?.closest?.('[class*="BattlePanel_monstersArea"]');
+    if (!monstersArea) return null;
+    const GRID = '[class*="BattlePanel_combatUnitGrid"]';
+    if (card.matches?.(GRID)) return card;
+    return card.closest?.(GRID) || monstersArea.querySelector?.(GRID) || null;
+}
+
 export function placeTrialBlock(root, card, block, name = '') {
     // Belt and braces over the anchor filter in `readTrialTiles`. The reported
     // failure drew this whole block inside the boss's stat popup, which is
@@ -1797,6 +1821,19 @@ export function placeTrialBlock(root, card, block, name = '') {
     // filter that looks at the card. Placement is the last point at which "this
     // is not the guild panel" can still be said
     if (inFloatingDialog(card)) return 'refused';
+
+    // The live fight: the block is a sidecar in the boss grid rather than a
+    // full-width strip below it, so the fight and the forecast are read
+    // together. Appended, never inserted after the anchor card — a wave of
+    // several bosses folds into one tile anchored on the *first* of them, and
+    // the block belongs after the last. `grid-row:1` keeps it on the bosses'
+    // row instead of wrapping to a line of its own.
+    const fightGrid = fightMonsterGrid(card);
+    if (fightGrid && root?.contains?.(fightGrid)) {
+        block.style.gridRow = '1';
+        fightGrid.appendChild(block);
+        return 'fight-sidecar';
+    }
 
     const container = card?.parentElement;
     if (!container || !root?.contains?.(container)) {
@@ -1838,11 +1875,10 @@ export function placeTrialBlock(root, card, block, name = '') {
     };
 
     if (display.includes('grid')) {
-        // The In Progress fight's enemy grid is not a tile grid: gathering the box
-        // into a mirrored row would drop it in a narrow unit-card column. Fall
-        // through to the full-width-below placement a single boss card already
-        // uses (its one-column grid never reaches the row logic), so a wave of
-        // several enemies attaches its box exactly as one boss does.
+        // A fight whose unit grid could not be named (the sidecar above takes
+        // every grid that could). Its enemy grid is still not a tile grid:
+        // gathering the box into a mirrored row would drop it in a narrow
+        // unit-card column, so it falls through to full-width below the grid.
         const inFight = !!card?.closest?.('[class*="BattlePanel_monstersArea"]');
         const geometry = inFight ? null : gridGeometry(container);
         if (geometry) {
@@ -1904,13 +1940,20 @@ function trialBlockHeading(name) {
  * @param {Element} [root] - The trials root, for the escape test; omitted keeps the plain adjacency check
  * @returns {boolean} True while the placement still holds
  */
-function blockNearAnchor(block, anchor, root = null) {
+export function blockNearAnchor(block, anchor, root = null) {
     // A box gathered into its section's shared row is placed — its home is that
     // row, not a spot beside the tile, so adjacency to the tile is the wrong test
     // and would re-place (and re-append) it on every pass.
     if (block?.parentElement?.classList?.contains(BOX_ROW_CLASS)) {
         return !root || root.contains(block);
     }
+    // The live fight's sidecar is anchored on the first boss of the wave but
+    // lives after the last, so adjacency to the anchor is the wrong test — it
+    // reads a correctly placed sidecar as displaced and yanks it out on every
+    // pass. Last child of the grid is the placement, and a boss that mounts
+    // after it fails this and re-triggers placement, putting it back at the end.
+    const fightGrid = fightMonsterGrid(anchor);
+    if (fightGrid && block?.parentElement === fightGrid) return fightGrid.lastElementChild === block;
     if (!anchor?.isConnected) return true; // nothing to re-anchor against
     if (root) {
         const escaped = escapeSquashingRows(root, anchor);
@@ -2526,6 +2569,12 @@ class GuildTrials {
 
                 const key = `tile:${tileKey(tile)}`;
                 drawn.add(key);
+                // In the live fight the block is a grid item beside the bosses,
+                // so it takes a boss card's width rather than a panel's. The
+                // sizing has to be part of the base style: `_placeBlock`
+                // reapplies the stored `cssText` on every later render, which
+                // wipes anything set on the element at placement time.
+                const inProgressCombat = !!fightMonsterGrid(tile.element);
                 this._placeBlock(root, key, {
                     // The card the block belongs beside, for the re-anchoring
                     // check below — the game tears cards down and remounts
@@ -2544,8 +2593,11 @@ class GuildTrials {
                     // capped so it cannot stretch a whole panel — the reported
                     // screenshot was this block one card wide and a mile tall
                     style:
-                        'position:static; display:block; box-sizing:border-box; clear:both;' +
-                        'min-width:min(260px, 100%); max-width:520px;' +
+                        'position:static; display:block; box-sizing:border-box;' +
+                        (inProgressCombat
+                            ? 'grid-row:1; clear:none; width:220px; min-width:180px;' +
+                              'max-width:220px; align-self:start;'
+                            : 'clear:both; min-width:min(260px, 100%); max-width:520px;') +
                         'margin:6px 0 8px; padding:6px 10px; background:rgba(0,0,0,0.25);' +
                         'border-radius:6px; font-size:11px; line-height:1.6;',
                     place: (block) => placeTrialBlock(root, tile.element, block, tile.name),

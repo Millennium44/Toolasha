@@ -183,6 +183,7 @@ vi.mock('./guild-xp-tracker.js', () => ({
 
 const {
     analyseTrial,
+    blockNearAnchor,
     breakdownFor,
     guildTrials,
     looseTrialForecast,
@@ -758,6 +759,77 @@ describe('placeTrialBlock', () => {
         block.innerHTML = '<div>Banked 3 tiers</div>';
         return block;
     };
+
+    /**
+     * The In Progress combat view, as the game draws it.
+     * @param {number} bosses - How many boss cards the wave has
+     * @returns {{root: Element, monsters: Element, grid: Element, cards: Element[]}} The pieces
+     */
+    function fightLayout(bosses) {
+        const bossCards = Array.from(
+            { length: bosses },
+            (_, index) => `<div id="boss${index + 1}" class="BattlePanel_combatUnit__z">Trial Badger</div>`
+        ).join('');
+        document.body.innerHTML =
+            '<div class="GuildPanel_guildPanel__r"><div class="GuildPanel_inProgressTab__i">' +
+            '<div class="BattlePanel_battlePanel__p">' +
+            '<div class="BattlePanel_battleArea__x" style="display:flex">' +
+            '<div id="monsters" class="BattlePanel_monstersArea__y">' +
+            '<div id="grid" class="BattlePanel_combatUnitGrid__g" ' +
+            'style="display:grid; grid-template-columns:176px 176px 176px 176px">' +
+            '<div id="payout" class="mwi-trial-info" data-mwi-block="payout">Trial payout</div>' +
+            `${bossCards}</div></div></div></div></div></div>`;
+        return {
+            root: document.querySelector('[class*="GuildPanel_guildPanel"]'),
+            monsters: document.getElementById('monsters'),
+            grid: document.getElementById('grid'),
+            cards: Array.from({ length: bosses }, (_, index) => document.getElementById(`boss${index + 1}`)),
+        };
+    }
+
+    test('a live fight puts the block beside the last boss, in the boss grid', () => {
+        // A wave of four bosses folds into one tile anchored on the *first* of
+        // them, so the block must be appended past all four rather than inserted
+        // after the anchor — and stay on the bosses' row rather than wrapping.
+        const { root, grid, cards } = fightLayout(4);
+        const block = newBlock();
+
+        expect(placeTrialBlock(root, cards[0], block, 'Trial Badger')).toBe('fight-sidecar');
+        expect(grid.lastElementChild).toBe(block);
+        expect(block.previousElementSibling).toBe(cards[3]);
+        expect(block.style.gridRow).toBe('1');
+        // Not gathered into a mirrored row, and the payout block is left where it was
+        expect(grid.querySelector('.mwi-trial-box-row')).toBeNull();
+        expect(grid.firstElementChild).toBe(document.getElementById('payout'));
+    });
+
+    test('a composite wave anchored on the monsters area finds the grid beneath it', () => {
+        // Trial Swarm has no card of its own, so the tile stands on the monsters
+        // area itself — the grid is below the anchor rather than above it.
+        const { root, monsters, grid, cards } = fightLayout(4);
+        const block = newBlock();
+
+        expect(placeTrialBlock(root, monsters, block, 'Trial Swarm')).toBe('fight-sidecar');
+        expect(grid.lastElementChild).toBe(block);
+        expect(block.previousElementSibling).toBe(cards[3]);
+    });
+
+    test('a placed sidecar reads as anchored, and a boss mounting after it does not', () => {
+        // Anchored on the first boss but living after the last: an adjacency test
+        // would call every correctly placed sidecar displaced and yank it out on
+        // every five-second pass.
+        const { root, grid, cards } = fightLayout(4);
+        const block = newBlock();
+        placeTrialBlock(root, cards[0], block, 'Trial Badger');
+
+        expect(blockNearAnchor(block, cards[0], root)).toBe(true);
+
+        // A wave boundary remounts the bosses after the block; it has to move back
+        const late = document.createElement('div');
+        late.className = 'BattlePanel_combatUnit__z';
+        grid.appendChild(late);
+        expect(blockNearAnchor(block, cards[0], root)).toBe(false);
+    });
 
     test('a multi-enemy fight grid places its box below the grid, like a single boss', () => {
         // The In Progress enemy grid is not a tile grid: a two-badger wave must
