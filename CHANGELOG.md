@@ -347,16 +347,14 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.12.1](https://github.com/Millennium44/Toolasha/compare/v3.12.0...v3.12.1) (2026-08-17)
 
-
 ### Bug Fixes
 
-* fire the skill milestone alert only on the game's guild broadcast ([8e83a66](https://github.com/Millennium44/Toolasha/commit/8e83a660cf2aa5c99fa2ff497d43af4cdcbd5e0c))
-* lab sim structural fixes from calibration review, and measured totals on trial rows ([988d9fa](https://github.com/Millennium44/Toolasha/commit/988d9fab44503d342293a8fdfe929e374eb4ae59))
-
+- fire the skill milestone alert only on the game's guild broadcast ([8e83a66](https://github.com/Millennium44/Toolasha/commit/8e83a660cf2aa5c99fa2ff497d43af4cdcbd5e0c))
+- lab sim structural fixes from calibration review, and measured totals on trial rows ([988d9fa](https://github.com/Millennium44/Toolasha/commit/988d9fab44503d342293a8fdfe929e374eb4ae59))
 
 ### Styles
 
-* wrap the skill-milestone test import to satisfy prettier ([7d967c8](https://github.com/Millennium44/Toolasha/commit/7d967c8111d4e058b690d3be6b43e2584fceb04f))
+- wrap the skill-milestone test import to satisfy prettier ([7d967c8](https://github.com/Millennium44/Toolasha/commit/7d967c8111d4e058b690d3be6b43e2584fceb04f))
 
 ## [3.12.0](https://github.com/Millennium44/Toolasha/compare/v3.11.0...v3.12.0) (2026-08-17)
 
