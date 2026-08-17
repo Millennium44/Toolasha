@@ -345,6 +345,17 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.12.1](https://github.com/Millennium44/Toolasha/compare/v3.12.0...v3.12.1) (2026-08-17)
+
+### Bug Fixes
+
+- fire the skill milestone alert only on the game's guild broadcast ([8e83a66](https://github.com/Millennium44/Toolasha/commit/8e83a660cf2aa5c99fa2ff497d43af4cdcbd5e0c))
+- lab sim structural fixes from calibration review, and measured totals on trial rows ([988d9fa](https://github.com/Millennium44/Toolasha/commit/988d9fab44503d342293a8fdfe929e374eb4ae59))
+
+### Styles
+
+- wrap the skill-milestone test import to satisfy prettier ([7d967c8](https://github.com/Millennium44/Toolasha/commit/7d967c8111d4e058b690d3be6b43e2584fceb04f))
+
 ## [3.12.0](https://github.com/Millennium44/Toolasha/compare/v3.11.0...v3.12.0) (2026-08-17)
 
 ### Features
