@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Upgrade advisor: recommend path boots at +10 when you already run +10 boots
+
+A swap to path boots (Pathbreaker/Pathfinder/Pathseeker, base or refined) was always simmed and priced at +7, their acquisition level. But someone already wearing +10 boots would enhance the path boots to +10 too, and pinning to +7 undersold them against the +10 they wear. When the worn boots are +10 or higher the swap is now simmed and priced at +10; below +10 it stays at +7.
+
 ### Guild trials: a loose next-tier estimate for trials you didn't join
 
 Trials you aren't in never stream a live fill bar, so they used to read "only trials you join". The Trials tab still states each card's running total points, which is now sampled over time to give a rough fill rate (pts/s), and — once the card has shown a couple of tier badges — a loose "next tier in ~Xm" and "~N more tiers before it ends". A whole-guild average off stated totals, not your own contribution, so keep the Trials tab open a few seconds for it to settle.

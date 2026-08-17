@@ -2519,6 +2519,12 @@ const PATH_BOOTS_BASE_HRIDS = new Set([
     '/items/pathseeker_boots',
 ]);
 const PATH_BOOTS_SIM_LEVEL = 7;
+/**
+ * …unless you already run +10 boots. Then you would enhance the path boots to +10
+ * too, and simming them at +7 undersells them against the +10 you wear. At or
+ * above this worn level the swap is simmed and priced at +10 instead.
+ */
+const PATH_BOOTS_HIGH_LEVEL = 10;
 
 /** Whether an item hrid is a path boot (base or refined). */
 function isPathBoot(hrid) {
@@ -2528,27 +2534,32 @@ function isPathBoot(hrid) {
 /**
  * Pin a proposed swap to path boots at +7 — their only obtainable level — rather
  * than inheriting the worn piece's enhancement level (which the tier candidates
- * do). Set to exactly +7 whether the current piece is above or below it. Runs
- * after the refined +10 clamp, so refined path boots override that floor down to
- * +7. Mirrors clampRefinedCandidateToMinLevel's description redraw.
+ * do). +7 whether the current piece is below it or between +7 and +10; but once
+ * the worn boots are already +10 or higher the pin is +10 instead, because a
+ * player at that level would enhance the path boots to +10 too and +7 would
+ * undersell them. Runs after the refined +10 clamp, so it overrides that floor
+ * down to +7 for a lower-level player and keeps it at +10 for a +10 one. Mirrors
+ * clampRefinedCandidateToMinLevel's description redraw.
  * @param {Object} candidate - Candidate from generateCandidates() (mutated in place)
  */
 export function applyPathBootsSimLevel(candidate) {
+    const targetLevel =
+        (Number(candidate.currentLevel) || 0) >= PATH_BOOTS_HIGH_LEVEL ? PATH_BOOTS_HIGH_LEVEL : PATH_BOOTS_SIM_LEVEL;
     let changed = false;
 
     if (
         candidate.upgradeHrid !== candidate.currentHrid &&
         isPathBoot(candidate.upgradeHrid) &&
-        candidate.upgradeLevel !== PATH_BOOTS_SIM_LEVEL
+        candidate.upgradeLevel !== targetLevel
     ) {
-        candidate.upgradeLevel = PATH_BOOTS_SIM_LEVEL;
+        candidate.upgradeLevel = targetLevel;
         changed = true;
     }
 
     if (candidate.addedSlots) {
         for (const added of Object.values(candidate.addedSlots)) {
-            if (isPathBoot(added?.hrid) && (added.enhancementLevel || 0) !== PATH_BOOTS_SIM_LEVEL) {
-                added.enhancementLevel = PATH_BOOTS_SIM_LEVEL;
+            if (isPathBoot(added?.hrid) && (added.enhancementLevel || 0) !== targetLevel) {
+                added.enhancementLevel = targetLevel;
                 changed = true;
             }
         }
