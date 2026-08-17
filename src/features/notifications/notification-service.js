@@ -73,6 +73,8 @@ export const NOTIFICATION_SETTING_KEYS = [
     'notifications_labyrinthRunFinished',
     'notifications_labyrinthEntryAvailable',
     'notifications_combatDeath',
+    'notifications_skillLevelUp',
+    'notifications_ttlTargetReached',
     'notifications_enhancementTarget',
     'notifications_trialStarting',
     'notifications_trialResults',
