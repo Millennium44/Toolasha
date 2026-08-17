@@ -1,58 +1,77 @@
 /**
  * Skill Level-Up Alerts
  *
- * Says so when one of your own skills gains a level — the same milestone the
- * game broadcasts to chat as "<Name> has reached level <N> <Skill>!", but read
- * from the character's own skill data rather than out of the chat log.
+ * Says so when the game broadcasts one of your own skill milestones — the
+ * "<Name> has reached level <N> <Skill>!" line it posts to guild chat at the
+ * levels worth announcing (100, 105, …), not every single level.
  *
- * ## Where the levels come from
+ * ## Why the chat broadcast, not `skills_updated`
  *
- * `skills_updated` carries the full `characterSkills` array whenever a level
- * changes, and each entry is `{ skillHrid, level, experience }`. That array is
- * inherently the logged-in character's — there is no name to match, no other
- * player's level to filter out, and no locale-dependent sentence to parse. A
- * chat line is a rendered string in whatever language the client is set to and
- * mixed in with everyone else's levels; the socket message is the fact behind
- * it, so that is what this reads.
+ * The point of this alert is the milestone, and the game already decides what a
+ * milestone is: it sends a `chat_message_received` with the system key
+ * `systemChatMessage.characterLeveledUp` exactly for the levels it broadcasts,
+ * and stays silent for the ones in between. Keying off that message means the
+ * alert fires on precisely those milestones with no threshold table to keep in
+ * sync — where an earlier version read `skills_updated` and fired on every
+ * level, which is not what the game announces and not what was wanted.
  *
- * ## Diffing
+ * The system message is structured, not prose: `systemMetadata` carries
+ * `{ name, skillHrid, level }`, so nothing here parses a localized sentence.
  *
- * dataManager overwrites its own `characterSkills` before it re-emits the
- * event, so there is nothing to diff against there. This module keeps its own
- * `skillHrid → level` snapshot, seeded from `getSkills()` in `initialize()` so
- * the levels the character already has do not all fire on login, and updated on
- * every message. A level that is higher than the stored one is announced, once.
+ * ## Only your own
  *
- * ## Re-arming
+ * The same broadcast arrives for every guildmate who hits a milestone. Only the
+ * one whose `name` matches the logged-in character is announced — that is the
+ * whole request, "tell me when *I* am the subject" — and the metadata's own
+ * name field is matched rather than a sentence scraped for a leading token.
+ *
+ * ## Depends on the guild broadcast
+ *
+ * This is the guild-chat milestone, so it needs that broadcast to arrive: a
+ * character in a guild, with guild chat coming over the socket. A solo
+ * character the game never announces is a character this cannot announce.
+ *
+ * ## Repeats
  *
  * The announced level is baked into the notification service's event key, so
- * each level gained is a distinct key and the service's cooldown cannot swallow
- * a real second level-up. The snapshot is updated whether or not a message was
- * delivered, so a level going the other way — a character switch reseeding to a
- * lower level — re-baselines instead of re-announcing.
+ * each milestone is distinct. A light timestamp guard drops any history the
+ * client replays on load — only broadcasts at or after the feature came up are
+ * announced, with a minute of slack for clock skew so a genuine live milestone
+ * is never dropped.
  */
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import webSocketHook from '../../core/websocket.js';
 import notificationService from './notification-service.js';
 import { skillName } from '../../utils/skill-progress.js';
 
 /** Master switch; nothing below it is consulted while this is off */
 export const MASTER_SETTING = 'notifications_skillLevelUp';
 
+/** The system-message key the game sends for a broadcast milestone level */
+export const LEVEL_UP_MESSAGE_KEY = 'systemChatMessage.characterLeveledUp';
+
 /** Prefix for the notification service's event keys */
 const EVENT_KEY_PREFIX = 'skill-levelup';
 
+/**
+ * How far before startup a broadcast may be timestamped and still count as live.
+ * Live milestones carry a current time; replayed history is minutes or hours
+ * old. The slack only has to swallow client/server clock skew.
+ */
+const REPLAY_GRACE_MS = 60 * 1000;
+
 class SkillLevelUpAlerts {
     constructor() {
-        /** skillHrid → the level last seen, so a rise can be spotted */
-        this.levels = new Map();
-        this.skillsUpdatedHandler = null;
+        /** When watching began, so replayed chat history can be told from live */
+        this.startedAt = 0;
+        this.unregisterHandlers = [];
         this.characterSwitchingHandler = null;
     }
 
     /**
-     * Start watching for level-ups.
+     * Start watching for broadcast milestone levels.
      * @returns {Promise<void>}
      */
     async initialize() {
@@ -60,18 +79,8 @@ class SkillLevelUpAlerts {
             return;
         }
 
-        // Seed from the levels the character already has, so a fresh login does
-        // not announce every skill the player has ever trained
-        this.seedFromCurrentSkills();
-
-        this.skillsUpdatedHandler = (data) => {
-            try {
-                this.check(data?.characterSkills);
-            } catch (error) {
-                console.error('[SkillLevelUpAlerts] Reading a skills update failed:', error);
-            }
-        };
-        dataManager.on('skills_updated', this.skillsUpdatedHandler);
+        this.startedAt = Date.now();
+        this.registerWebSocketListeners();
 
         this.characterSwitchingHandler = () => {
             this.disable();
@@ -79,59 +88,70 @@ class SkillLevelUpAlerts {
         dataManager.on('character_switching', this.characterSwitchingHandler);
     }
 
-    /** Take the current levels as the baseline, announcing nothing. */
-    seedFromCurrentSkills() {
-        const skills = dataManager.getSkills();
-        if (!Array.isArray(skills)) return;
-        for (const skill of skills) {
-            if (skill?.skillHrid) {
-                this.levels.set(skill.skillHrid, Number(skill.level) || 0);
+    /** Listen for the chat message that carries a milestone broadcast. */
+    registerWebSocketListeners() {
+        const handler = (data) => {
+            try {
+                this.check(data);
+            } catch (error) {
+                console.error('[SkillLevelUpAlerts] Reading a chat message failed:', error);
             }
-        }
+        };
+
+        webSocketHook.on('chat_message_received', handler);
+        this.unregisterHandlers.push(() => webSocketHook.off('chat_message_received', handler));
     }
 
     /**
-     * Announce any skill whose level has risen since it was last seen.
-     * @param {Array<Object>} skills - `characterSkills` from `skills_updated`
+     * Announce a milestone broadcast for the logged-in character.
+     * @param {Object} data - `chat_message_received` payload
      */
-    check(skills) {
+    check(data) {
         if (!config.getSetting(MASTER_SETTING)) return;
-        if (!Array.isArray(skills)) return;
 
-        for (const skill of skills) {
-            const hrid = skill?.skillHrid;
-            if (!hrid) continue;
+        const message = data?.message;
+        if (!message || !message.isSystemMessage) return;
+        if (message.m !== LEVEL_UP_MESSAGE_KEY) return;
 
-            const level = Number(skill.level);
-            if (!Number.isFinite(level)) continue;
+        // History the client replays on load is old; a live milestone is not
+        const when = Date.parse(message.t ?? '');
+        if (Number.isFinite(when) && when < this.startedAt - REPLAY_GRACE_MS) return;
 
-            const previous = this.levels.get(hrid);
-            // Record whichever way it moved, so a reseed to a lower level is a
-            // new baseline and not a resurrection of an old level-up
-            this.levels.set(hrid, level);
-
-            if (previous === undefined || level <= previous) continue;
-
-            const name = skillName(hrid);
-            notificationService.notify(`${EVENT_KEY_PREFIX}:${hrid}:${level}`, `You reached level ${level} ${name}!`, {
-                title: 'Level up',
-            });
+        let meta;
+        try {
+            meta = JSON.parse(message.systemMetadata ?? '{}');
+        } catch (error) {
+            console.error('[SkillLevelUpAlerts] Malformed level-up metadata:', error);
+            return;
         }
+
+        // Only the broadcast whose subject is the logged-in character
+        const characterName = dataManager.getCurrentCharacterName();
+        if (!characterName || meta.name !== characterName) return;
+
+        const level = Number(meta.level);
+        if (!meta.skillHrid || !Number.isFinite(level)) return;
+
+        const name = skillName(meta.skillHrid);
+        notificationService.notify(
+            `${EVENT_KEY_PREFIX}:${meta.skillHrid}:${level}`,
+            `You reached level ${level} ${name}!`,
+            { title: 'Level up' }
+        );
     }
 
     /**
      * Cleanup
      */
     disable() {
-        if (this.skillsUpdatedHandler) {
-            dataManager.off('skills_updated', this.skillsUpdatedHandler);
-            this.skillsUpdatedHandler = null;
-        }
         if (this.characterSwitchingHandler) {
             dataManager.off('character_switching', this.characterSwitchingHandler);
             this.characterSwitchingHandler = null;
         }
-        this.levels.clear();
+
+        this.unregisterHandlers.forEach((unregister) => unregister());
+        this.unregisterHandlers = [];
+        this.startedAt = 0;
     }
 }
 

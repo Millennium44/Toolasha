@@ -6,9 +6,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Notifications: level-ups of your own, and reaching a Time-to-Level target
+### Notifications: your own skill milestones, and reaching a Time-to-Level target
 
-Two new opt-in notifications. One fires when a skill of yours gains a level (read from the skill data the server sends, so it is your character only and needs no chat-name match). The other fires when a skill reaches the target level you set in the Time to Level tile — the goal you chose, not the tile's implicit "next level" — once, re-arming when you pick a new target.
+Two new opt-in notifications. One fires on the skill milestones the game broadcasts to guild chat ("… has reached level …" at 100, 105, and so on — not every level), keyed off that broadcast itself and matched to your character, so it needs a guild and guild chat coming through. The other fires when a skill reaches the target level you set in the Time to Level tile — the goal you chose, not the tile's implicit "next level" — once, re-arming when you pick a new target.
 
 ### Startup: a clear message when the code libraries can't load (usually GitHub)
 

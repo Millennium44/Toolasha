@@ -1538,7 +1538,7 @@ function registerFeatures() {
         },
         {
             key: 'skillLevelUpAlerts',
-            name: 'Skill Level-Up Alerts',
+            name: 'Skill Milestone Alerts',
             category: 'Notifications',
             module: UI.skillLevelUpAlerts,
             async: true,
