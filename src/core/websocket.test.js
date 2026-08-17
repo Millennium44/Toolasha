@@ -435,6 +435,42 @@ describe('native WebSocket listener semantics (prototype wrapping removed)', () 
         expect(spy).not.toHaveBeenCalled();
         spy.mockRestore();
     });
+
+    test('one message dispatches once even with the page data-getter live', () => {
+        // In the page, MessageEvent.prototype.data is hooked: reading .data on
+        // an UNMARKED event makes the getter itself run processMessage and then
+        // mark the event. The socket listener's old `typeof event.data` probe
+        // did exactly that read before marking — so the getter dispatched, then
+        // the listener dispatched again, and every skip-dedup type (this test's
+        // battle_updated among them) reached each handler twice. This fake
+        // getter reproduces the page's semantics; the handler must fire once.
+        const socket = makeFakeWebSocket();
+        webSocketHook.attachSocketListeners(socket);
+
+        const raw = JSON.stringify({ type: 'battle_updated', pMap: { p: { cHP: 1 } } });
+        const event = new Event('message');
+        Object.defineProperty(event, 'data', {
+            get() {
+                if (!webSocketHook.isMessageEventProcessed(this)) {
+                    webSocketHook.markMessageEventProcessed(this);
+                    webSocketHook.processMessage(raw);
+                }
+                return raw;
+            },
+        });
+
+        const calls = [];
+        const handler = (payload) => calls.push(payload);
+        webSocketHook.on('battle_updated', handler);
+        try {
+            socket.dispatchEvent(event);
+        } finally {
+            webSocketHook.off('battle_updated', handler);
+            webSocketHook.attachedSockets.delete(socket);
+        }
+
+        expect(calls).toHaveLength(1);
+    });
 });
 
 describe('handler dispatch snapshots (upstream 03204a5)', () => {

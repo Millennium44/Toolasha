@@ -9,15 +9,24 @@ const LABYRINTH_TIMEOUT = 120 * 1e9; // 120 seconds in nanoseconds
  * Timeout (120s) or player death = loss; enemy killed = win.
  */
 class Labyrinth {
-    constructor(monsterHrid, roomLevel, crateHrids = [], liveState = null, fullAbilities = false) {
+    constructor(monsterHrid, roomLevel, crateHrids = [], liveState = null, fullAbilities = true) {
         this.monsterHrid = monsterHrid;
         this.hrid = monsterHrid;
         this.roomLevel = roomLevel;
         // Whether the monster is built with its full ability kit rather than only
-        // the abilities available at difficultyTier 0 (see Monster)
-        this.fullAbilities = fullAbilities === true;
+        // the abilities available at difficultyTier 0 (see Monster). Defaults ON:
+        // the tier-0 subset over-predicts clears, so only an explicit false —
+        // a deliberate diagnostic — builds the stripped monster.
+        this.fullAbilities = fullAbilities !== false;
         this.buffs = [];
         this.attemptCount = 0;
+        // Attempts that actually finished — win, death or timeout. attemptCount
+        // rises when a monster spawns, so at any instant the two differ by the
+        // one fight still in progress (or by nothing, when the run stopped on
+        // the resolving blow itself). Clear rates divide by this, never by
+        // attemptCount: subtracting a blanket 1 from attemptCount scored 100.4%
+        // when a capped run's last event was the kill.
+        this.resolvedCount = 0;
         this.encounterStartTime = 0;
         /**
          * A fight already under way, replayed from where it stands: health

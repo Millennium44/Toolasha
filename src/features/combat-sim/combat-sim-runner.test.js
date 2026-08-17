@@ -153,3 +153,45 @@ describe('whether the run counts as a task fight', () => {
         expect(messages[0].isTaskFight).toBe(false);
     });
 });
+
+describe('whether the labyrinth monster gets its full ability kit', () => {
+    // A tier-0 subset monster drops its stun/shred/self-buff kit and the sim
+    // over-predicts clears — the calibration replay verified the full kit reads
+    // closer to reality. Callers that say nothing must get the full kit: for
+    // months the upgrade advisor and live replay silently simmed the stripped
+    // monster while the tile badges simmed the real one.
+    test('a caller who says nothing gets the full kit', async () => {
+        const messages = captureWorkerMessages();
+
+        await runLabyrinthSimulation({ zoneHrid: '/actions/combat/fly', monsterHrid: '/monsters/x', hours: 1 });
+
+        expect(messages).toHaveLength(1);
+        expect(messages[0].labyrinth.fullAbilities).toBe(true);
+    });
+
+    test('an explicit true is still true', async () => {
+        const messages = captureWorkerMessages();
+
+        await runLabyrinthSimulation({
+            zoneHrid: '/actions/combat/fly',
+            monsterHrid: '/monsters/x',
+            hours: 1,
+            fullAbilities: true,
+        });
+
+        expect(messages[0].labyrinth.fullAbilities).toBe(true);
+    });
+
+    test('only an explicit false — a deliberate tier-0 diagnostic — opts out', async () => {
+        const messages = captureWorkerMessages();
+
+        await runLabyrinthSimulation({
+            zoneHrid: '/actions/combat/fly',
+            monsterHrid: '/monsters/x',
+            hours: 1,
+            fullAbilities: false,
+        });
+
+        expect(messages[0].labyrinth.fullAbilities).toBe(false);
+    });
+});

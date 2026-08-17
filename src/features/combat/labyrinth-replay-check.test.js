@@ -113,12 +113,13 @@ describe('predictedFromSim', () => {
             },
             { playerHrid: 'player1', monsterHrid: '/monsters/cyclops' }
         );
-        // 100s wall-clock − 2 fights × 3s restart = 94s actually fighting; the
-        // rates divide by that, matching the observed side's pure fight duration.
-        expect(predicted.dps).toBeCloseTo(1400 / 94, 5);
-        expect(predicted.takenPerSecond).toBeCloseTo(900 / 94, 5);
+        // Labyrinth restarts are instant, so all 100 s of wall-clock is fight
+        // time — no per-attempt restart idle to subtract. (Subtracting one, as
+        // an earlier version did, read the sim's rates a few percent high.)
+        expect(predicted.dps).toBeCloseTo(1400 / 100, 5);
+        expect(predicted.takenPerSecond).toBeCloseTo(900 / 100, 5);
         expect(predicted.clearRate).toBe(0.5);
-        expect(predicted.secondsPerFight).toBe(47);
+        expect(predicted.secondsPerFight).toBe(50);
     });
 
     test('a sim with no time to divide by is not a prediction', () => {

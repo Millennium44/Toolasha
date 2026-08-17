@@ -18,6 +18,7 @@ import { describe, test, expect, afterEach } from 'vitest';
 
 import CombatSimulator from './combat-simulator.js';
 import { setGameData } from './game-data.js';
+import Labyrinth from './labyrinth.js';
 import Player from './player.js';
 import { clearSimRng, seedSimRng } from './rng.js';
 import Zone from './zone.js';
@@ -216,5 +217,144 @@ describe('golden run: one seeded hour, pinned exactly', () => {
         expect(second.experienceGained).toEqual(first.experienceGained);
         expect(second.totalDamageDealt).toEqual(first.totalDamageDealt);
         expect(second.simulatedTime).toBe(first.simulatedTime);
+    });
+});
+
+/**
+ * Labyrinth attempt accounting.
+ *
+ * A clear rate is wins over attempts, so the denominator must count exactly
+ * the attempts that finished — win, death or timeout — never the fight still
+ * in progress when the run stopped, and never one fewer. The old blanket
+ * `attemptCount - 1` subtracted a *resolved* win whenever the time cap landed
+ * on the killing blow itself, and a 100%-win run then read 251/250 — the
+ * "100.4% clear" a room log actually displayed.
+ */
+describe('labyrinth attempt accounting', () => {
+    const LAB_MONSTER = '/monsters/golden_lab_rat';
+
+    /**
+     * One seeded, time-capped labyrinth run against a monster with the given
+     * levels. Returns both the result and the labyrinth, so tests can check
+     * the result's counts against the engine's own spawn counter.
+     * @param {number} seed - RNG seed
+     * @param {Object} levels - Monster level block (see monster())
+     * @param {number} capSeconds - Simulation time cap
+     * @returns {{result: Object, labyrinth: Labyrinth}}
+     */
+    function labyrinthRun(seed, levels, capSeconds) {
+        // The golden zone (for SimResult's constructor) plus the lab monster
+        setGameData({
+            actionDetailMap: {
+                [ZONE_HRID]: {
+                    buffs: null,
+                    combatZoneInfo: {
+                        isDungeon: false,
+                        dungeonInfo: null,
+                        fightInfo: {
+                            bossSpawns: null,
+                            randomSpawnInfo: { maxSpawnCount: 1, maxTotalStrength: 1, spawns: [] },
+                        },
+                    },
+                },
+            },
+            combatMonsterDetailMap: { [LAB_MONSTER]: monster(levels, 50) },
+            combatStyleDetailMap: {
+                '/combat_styles/smash': { skillExpMap: { '/skills/attack': 1, '/skills/melee': 1 } },
+            },
+        });
+        seedSimRng(seed);
+
+        const zone = new Zone(ZONE_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+
+        // Room level 100 = scale factor 1, so the level block is used as-is
+        const labyrinth = new Labyrinth(LAB_MONSTER, 100);
+        const simulator = new CombatSimulator([player], zone, undefined, labyrinth);
+        return { result: simulator.simulate(capSeconds * ONE_SECOND), labyrinth };
+    }
+
+    /** The invariants every labyrinth run must satisfy, whatever the seed */
+    function expectSoundCounts(result, labyrinth) {
+        // Wins can never exceed finished attempts — this is the 100.4% bug
+        expect(result.encounters).toBeLessThanOrEqual(result.labyAttemptCount);
+        // Every spawn is either finished or the one fight still in progress
+        expect(result.labyAttemptCount + result.labyUnfinishedAttempts).toBe(labyrinth.attemptCount);
+        expect([0, 1]).toContain(result.labyUnfinishedAttempts);
+        if (result.labyAttemptCount > 0) {
+            expect(result.encounters / result.labyAttemptCount).toBeLessThanOrEqual(1);
+        }
+    }
+
+    // Feeble monster: every fight is a quick kill, so the event that crosses
+    // the time cap is very often the killing blow itself — the exact case the
+    // old subtraction scored as 101%
+    const FEEBLE = {
+        staminaLevel: 3,
+        intelligenceLevel: 1,
+        attackLevel: 1,
+        meleeLevel: 1,
+        defenseLevel: 1,
+        rangedLevel: 1,
+        magicLevel: 1,
+    };
+
+    test('an all-win run keeps every win in the denominator, cap-on-kill included', () => {
+        let sawCapLandOnAKill = false;
+        for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+            const { result, labyrinth } = labyrinthRun(seed, FEEBLE, 60);
+            expectSoundCounts(result, labyrinth);
+            expect(result.encounters).toBeGreaterThan(0);
+            if (result.labyUnfinishedAttempts === 0) {
+                // The run stopped on a resolution — under the old accounting
+                // this read wins/(wins-1), i.e. more than 100%
+                sawCapLandOnAKill = true;
+                expect(result.encounters).toBe(result.labyAttemptCount);
+            }
+        }
+        expect(sawCapLandOnAKill).toBe(true);
+    });
+
+    test('an all-loss run counts the deaths and claims no wins', () => {
+        // A monster that flattens the fixture player every fight
+        const { result, labyrinth } = labyrinthRun(
+            11,
+            {
+                staminaLevel: 300,
+                intelligenceLevel: 50,
+                attackLevel: 500,
+                meleeLevel: 500,
+                defenseLevel: 300,
+                rangedLevel: 1,
+                magicLevel: 1,
+            },
+            300
+        );
+        expectSoundCounts(result, labyrinth);
+        expect(result.encounters).toBe(0);
+        expect(result.labyAttemptCount).toBeGreaterThan(0);
+    });
+
+    test('fights that hit the 120s room timeout resolve as losses, not phantoms', () => {
+        // Both sides too tanky to finish: every fight times out
+        const { result, labyrinth } = labyrinthRun(
+            7,
+            {
+                staminaLevel: 5000,
+                intelligenceLevel: 50,
+                attackLevel: 5,
+                meleeLevel: 5,
+                defenseLevel: 200,
+                rangedLevel: 1,
+                magicLevel: 1,
+            },
+            500
+        );
+        expectSoundCounts(result, labyrinth);
+        expect(result.encounters).toBe(0);
+        // 500s of 120s timeouts: four resolve, a fifth may be in flight
+        expect(result.labyAttemptCount).toBeGreaterThanOrEqual(3);
     });
 });

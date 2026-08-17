@@ -150,7 +150,12 @@ export function bandFor(clearChance, previous = null) {
 export function liveClearDisplay({ estimate, replay = null, previousBand = null, previousSmoothed = null }) {
     const nothing = { band: null, smoothed: null };
     if (replay && Number.isFinite(replay.clearChance)) {
-        return { text: `Clear ${(replay.clearChance * 100).toFixed(0)}%`, source: 'replay', ...nothing };
+        // "~" because the replay restores health, mana and the room clock but
+        // not cooldowns, buffs, DoTs or stun — those start fresh, which
+        // flatters a fight whose cooldowns are actually spent. The same tilde
+        // the extrapolated estimate wears; a bare number would claim an
+        // exactness the reconstruction does not have.
+        return { text: `Clear ~${(replay.clearChance * 100).toFixed(0)}%`, source: 'replay', ...nothing };
     }
     if (!estimate || estimate.clearChance === null) return { text: '', source: 'none', ...nothing };
     if (estimate.confident) {

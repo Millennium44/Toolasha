@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab sim: full monster abilities everywhere, honest attempt counting, and no double ticks
+
+Four structural fixes from an external calibration review, each verified against the code before changing it. The upgrade advisor (baseline, every candidate, community buffs, all-fights, combination check) and the live attempt-bar replay were still simulating monsters stripped of their tier-gated kit — stun, shred, self-buffs — while the tile badges and calibration replay simmed the full kit; full abilities are now the default for every labyrinth sim (persisted advisor results from before the change are discarded rather than compared against). Attempt counting now tracks resolved fights explicitly, so a capped run that ended on the killing blow no longer reports the impossible "100.4% clear". The websocket hook was delivering every message on its skip-dedup list twice (a getter/mark ordering bug) — raw tick captures were half duplicates; fixed at the hook, with capture-side dedup and a duplicates count in the export as a backstop. The live "clear from here" replay now wears the same ~ as the extrapolated estimate, since it restores health and the clock but not cooldowns or buffs. Also: the replay check no longer subtracts a restart idle the lab engine never inserts (it read sim dps a few percent high), and tick captures carry version/host metadata.
+
+### Trial damage panel: the measured number next to the game's figure
+
+Game-stats rows showed only how far the live measurement ran from the game's total ("meas +1%"); they now show the measured number itself too ("meas 226.1K · +1%"), so both sides of the comparison are on screen.
+
 ### Notifications: your own skill milestones, and reaching a Time-to-Level target
 
 Two new opt-in notifications. One fires on the skill milestones the game broadcasts to guild chat ("… has reached level …" at 100, 105, and so on — not every level), keyed off that broadcast itself and matched to your character, so it needs a guild and guild chat coming through. The other fires when a skill reaches the target level you set in the Time to Level tile — the goal you chose, not the tile's implicit "next level" — once, re-arming when you pick a new target.

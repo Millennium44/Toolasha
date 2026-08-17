@@ -841,15 +841,18 @@ class GuildTrialScoreboard {
         // beside it is not, and a table that does not say so is claiming both
         const label = estimated ? 'estimated' : row.measured === false ? `${rate}/s · partial` : `${rate}/s`;
 
-        // On a game-reported row, how far the plugin's own live measurement ran
-        // from it — the comparison, on screen. Omitted when nothing was measured
-        // for this player (the fight view was never open on them).
+        // On a game-reported row, the plugin's own live measurement next to how
+        // far it ran from the game's figure — both halves of the comparison, on
+        // screen, so the before-number is readable and not just its error.
+        // Omitted when nothing was measured for this player (the fight view was
+        // never open on them).
         let comparison = '';
         if (row.measuredValue !== null && row.measuredValue !== undefined) {
+            const measured = formatKMB(Math.round(row.measuredValue));
             comparison =
                 row.measuredDeltaPct === null
-                    ? ` · meas ${formatKMB(Math.round(row.measuredValue))}`
-                    : ` · meas ${row.measuredDeltaPct >= 0 ? '+' : '−'}${Math.abs(row.measuredDeltaPct).toFixed(0)}%`;
+                    ? ` · meas ${measured}`
+                    : ` · meas ${measured} · ${row.measuredDeltaPct >= 0 ? '+' : '−'}${Math.abs(row.measuredDeltaPct).toFixed(0)}%`;
         }
 
         return (
@@ -861,7 +864,7 @@ class GuildTrialScoreboard {
             `<span style="margin-left:auto; color:${color}; font-weight:600;">${figure}</span>` +
             `</div>` +
             `<div style="display:flex; gap:6px; color:${DIM}; font-size:10px;">` +
-            `<span title="How far the plugin's own live measurement ran from the game's reported figure">${label}${comparison}</span>` +
+            `<span title="meas: what the plugin's own live stream measured for this player, and how far that ran from the game's reported figure">${label}${comparison}</span>` +
             `<span style="margin-left:auto;">${row.share === null ? '—' : `${row.share.toFixed(1)}%`}</span>` +
             `</div></div>`
         );

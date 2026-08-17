@@ -53,9 +53,6 @@ function median(values) {
 /** The sim's own run-to-run wobble, folded into every margin so a within-noise call stays honest */
 const SIM_NOISE_FLOOR_PCT = 2;
 
-/** Idle seconds the sim inserts between fights (the engine's RESTART_INTERVAL), excluded from per-fight rates */
-const SIM_RESTART_SECONDS = 3;
-
 /**
  * How much the damage-taken figure is known to run low. Damage you take is the 3
  * Hz tick-summed drops (see `exchange`) — two hits inside one frame collapse to a
@@ -292,14 +289,13 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
     const dealt = Number(simResult.totalDamageDealt?.[playerHrid]) || 0;
     const taken = Number(simResult.totalDamageDealt?.[monsterHrid]) || 0;
 
-    // The sim spends SIM_RESTART_SECONDS idle between fights (the engine's
-    // RESTART_INTERVAL), so simSeconds is longer than time actually spent
-    // fighting. The observed side measures pure fight duration (the recorder's
-    // per-fight seconds), so the rates must divide by the same: in-fight seconds,
-    // not wall-clock. Otherwise the sim reads slower-per-fight and lower-dps than
-    // it truly fights, biasing the comparison the sim's way.
-    const fightSeconds = Math.max(0, simSeconds - attempts * SIM_RESTART_SECONDS);
-    const rateSeconds = fightSeconds > 0 ? fightSeconds : simSeconds;
+    // Labyrinth restarts are instant: every resolution (win, death, timeout)
+    // queues the next CombatStartEvent at the same simulationTime, so the sim's
+    // wall-clock IS in-fight time. An earlier version subtracted 3 s per attempt
+    // here for "the engine's RESTART_INTERVAL" — but that interval only applies
+    // to the dungeon-wipe path, so the subtraction shrank the divisor and read
+    // the sim's dps and damage-taken a few percent higher than it fights.
+    const rateSeconds = simSeconds;
 
     // Your swings on the monster, from the sim's per-ability attack tally:
     // `attacks[you][monster][ability]` is `{miss: n, <damage>: n, …}`, so the
@@ -317,7 +313,7 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
     return {
         dps: dealt / rateSeconds,
         takenPerSecond: taken / rateSeconds,
-        secondsPerFight: attempts > 0 ? fightSeconds / attempts : 0,
+        secondsPerFight: attempts > 0 ? simSeconds / attempts : 0,
         clearRate: attempts > 0 ? wins / attempts : 0,
         hitRate: simHits + simMisses > 0 ? simHits / (simHits + simMisses) : null,
         dmgPerHit: simHits > 0 ? dealt / simHits : null,

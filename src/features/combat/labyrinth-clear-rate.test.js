@@ -1821,7 +1821,7 @@ describe('the live clear chance on the attempt bar', () => {
         };
         runTicks([[0.38, 0.68]]);
 
-        expect(liveText()).toContain('Clear 63%');
+        expect(liveText()).toContain('Clear ~63%');
     });
 });
 
