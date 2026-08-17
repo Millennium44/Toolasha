@@ -150,6 +150,30 @@ describe('predictedFromSim', () => {
         expect(predicted.dmgPerHit).toBeCloseTo(1500 / 15, 5);
     });
 
+    test("the sim run's own counters ride through for the export", () => {
+        const predicted = predictedFromSim(
+            {
+                simulatedTime: 100e9,
+                labyAttemptCount: 4,
+                encounters: 1,
+                labyUnfinishedAttempts: 1,
+                labyStoppedOnPrecision: true,
+                totalDamageDealt: { player1: 1400, '/monsters/cyclops': 900 },
+            },
+            { playerHrid: 'player1', monsterHrid: '/monsters/cyclops' }
+        );
+        expect(predicted.unfinishedAttempts).toBe(1);
+        expect(predicted.stoppedOnPrecision).toBe(true);
+
+        const result = compareLab(deriveObserved(losses(6))[0], predicted);
+        expect(result.sim).toMatchObject({
+            attempts: 4,
+            wins: 1,
+            unfinishedAttempts: 1,
+            stoppedOnPrecision: true,
+        });
+    });
+
     test('no attack tally leaves hit rate and damage-per-hit null', () => {
         const predicted = predictedFromSim(
             { simulatedTime: 100e9, labyAttemptCount: 1, encounters: 0, totalDamageDealt: { p: 100 } },
@@ -263,6 +287,12 @@ describe('compareLab verdicts and diagnosis', () => {
         expect(taken.verdict).toBe('below');
         expect(result.diagnosis).toMatch(/over-models the monster/i);
         expect(result.diagnosis).not.toMatch(/within noise/i);
+    });
+
+    test('a hand-built prediction without run counters leaves the sim block null, not undefined', () => {
+        const result = compareLab(observed(), predictedLike());
+        expect(result.sim.unfinishedAttempts).toBeNull();
+        expect(result.sim.stoppedOnPrecision).toBeNull();
     });
 
     test('too few fights is called insufficient, not consistent', () => {

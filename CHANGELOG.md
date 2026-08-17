@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Accuracy record: predictions stored at entry, model cohorts, calibration report, sanitized exports
+
+Each recorded lab fight now stores the clear prediction in effect when it happened plus a sim-model marker, so fights judged under the previous sim model are excluded from the headline numbers (with a count) instead of silently pooled — and a live prediction no longer retroactively judges history. The Accuracy tab gains a calibration card: reliability by probability band, Brier score and expected±sigma. Exports carry version/host/full-kit provenance and unrounded figures, and a new Sanitized export hashes names and strips ids for public bug reports.
+
 ### Lab diagnostics: context-bound captures, honest blind-probe verdicts, harness statistics
 
 The uptime harness now refuses a held capture whose monster, room level or build fingerprint differs from the sim it would compare against, saying which field differs. Blind-probe effects the sim produced but the clicked snapshot happened not to show read as "not active in snapshot" instead of a finding, probes union three runs, and integer-multiple magnitude gaps read as stack differences. Harness rows gain per-hit means and sample counts, rows under five real casts read inconclusive, a mean-damage gap now fails a row that shares alone would pass, DoT rows compare per-tick on both sides (sim tick counts no longer inflate cast shares), and the header states fights and excluded partials.

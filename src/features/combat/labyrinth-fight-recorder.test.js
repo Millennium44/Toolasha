@@ -110,6 +110,36 @@ describe('labyrinth fight recorder', () => {
         expect(recorder.recordedAttempts()[0].seconds).toBe(40);
     });
 
+    test('the prediction in effect at record time is stored, and null when there was none', () => {
+        recorder.noteAttempt(attempt({ predicted: 0.42 }));
+        recorder.noteAttempt(attempt()); // room never simmed
+        recorder.noteAttempt(attempt({ predicted: 1.7 })); // not a probability
+        const [a, b, c] = recorder.recordedAttempts();
+        expect(a.predicted).toBe(0.42);
+        expect(b.predicted).toBeNull();
+        expect(c.predicted).toBeNull();
+    });
+
+    test('every new attempt carries the sim-model marker', () => {
+        // Attempts without it are the legacy cohort from before the full-kit
+        // switch, which the accuracy views count but never pool
+        recorder.noteAttempt(attempt());
+        const [a] = recorder.recordedAttempts();
+        expect(a.model.fullKit).toBe(true);
+        // No userscript sandbox in tests, so the guarded version reads null
+        expect(a.model.version).toBeNull();
+    });
+
+    test('the recording file says which script, server and sim model produced it', () => {
+        recorder.noteAttempt(attempt());
+        const file = recorder.recordingFile();
+        expect(file.version).toBe(3);
+        expect(file.fullKit).toBe(true);
+        expect(file).toHaveProperty('toolashaVersion');
+        expect(file).toHaveProperty('host');
+        expect(file).toHaveProperty('isTestServer');
+    });
+
     test('a replay comparison embeds beside the attempts without clobbering the format', () => {
         recorder.noteAttempt(attempt());
         const file = recorder.recordingFile({ replay: { groups: [{ monsterHrid: '/m' }] }, format: 'sneaky' });

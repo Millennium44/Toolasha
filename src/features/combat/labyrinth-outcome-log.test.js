@@ -322,6 +322,75 @@ describe('foldFloorOutcomes prediction capture', () => {
     });
 });
 
+describe('the full-kit cohort', () => {
+    test('folds accumulate the cohort only while a prediction was in effect', () => {
+        const state = foldAll([grid([combat({ entryCount: 2 })])], { predictedFor: () => 0.25 });
+        expect(state.totals[MIMIC]).toMatchObject({ fullKitJudged: 2, fullKitJudgedClears: 0 });
+        expect(state.totals[MIMIC].fullKitExpected).toBeCloseTo(0.5, 10);
+        expect(state.totals[MIMIC].fullKitVariance).toBeCloseTo(2 * 0.25 * 0.75, 10);
+    });
+
+    test('attempts folded with no sim yet stay out of the cohort', () => {
+        const state = foldAll([grid([combat({ entryCount: 2 })])]);
+        expect(state.totals[MIMIC].fullKitJudged).toBeUndefined();
+    });
+
+    test('expected clears are summed at the rate in effect when each fight landed', () => {
+        // The stamp is last-write-wins, but the cohort's expectation is not: two
+        // fights at 20% and two at 60% owe 1.6 clears, not four at the newest rate
+        const first = foldFloorOutcomes({}, {}, readFloorRooms(grid([combat({ entryCount: 2 })])), {
+            scope: 'run|1',
+            predictedFor: () => 0.2,
+        });
+        const next = foldFloorOutcomes(first.totals, first.seen, readFloorRooms(grid([combat({ entryCount: 4 })])), {
+            scope: 'run|1',
+            predictedFor: () => 0.6,
+        });
+        expect(next.totals[MIMIC].fullKitExpected).toBeCloseTo(2 * 0.2 + 2 * 0.6, 10);
+        expect(next.totals[MIMIC].predicted).toBe(0.6);
+    });
+
+    test('a legacy bucket without the counters is excluded from the headline and counted in the note', () => {
+        // A record written before the full-kit switch: attempts and a stamped
+        // prediction, but no cohort counters. It stays in the pooled figures
+        // and out of the headline — excluded, not deleted.
+        const rows = accuracyRows(
+            {
+                [MIMIC]: { monsterHrid: '/monsters/mimic', roomLevel: 252, attempts: 21, clears: 0, predicted: 0.244 },
+            },
+            { interval: wilsonInterval }
+        );
+        const summary = accuracySummary(rows, wilsonInterval);
+        expect(summary.cohort.judged).toBe(0);
+        expect(summary.cohort.expected).toBeNull();
+        expect(summary.cohort.legacyExcluded).toBe(21);
+        // The all-eras pool still carries it, for reference
+        expect(summary.judged).toBe(21);
+    });
+
+    test('a current-model record headlines with its fold-time expectation', () => {
+        const state = foldAll([grid([combat({ entryCount: 4, isCleared: true })])], { predictedFor: () => 0.25 });
+        const rows = accuracyRows(state.totals, { interval: wilsonInterval });
+        const summary = accuracySummary(rows, wilsonInterval);
+        expect(summary.cohort.judged).toBe(4);
+        expect(summary.cohort.judgedClears).toBe(1);
+        expect(summary.cohort.expected).toBeCloseTo(1, 10);
+        expect(summary.cohort.legacyExcluded).toBe(0);
+        expect(summary.cohort.sd).toBeCloseTo(Math.sqrt(4 * 0.25 * 0.75), 10);
+    });
+
+    test('the cohort counters subtract under a baseline like every other counter', () => {
+        const before = foldAll([grid([combat({ entryCount: 2 })])], { predictedFor: () => 0.5 });
+        const after = foldFloorOutcomes(before.totals, before.seen, readFloorRooms(grid([combat({ entryCount: 5 })])), {
+            scope: 'run|1',
+            predictedFor: () => 0.5,
+        });
+        const since = totalsSince(after.totals, before.totals);
+        expect(since[MIMIC].fullKitJudged).toBe(3);
+        expect(since[MIMIC].fullKitExpected).toBeCloseTo(1.5, 10);
+    });
+});
+
 describe('accuracyRows', () => {
     const totals = {
         [outcomeKey('/monsters/mimic', 252)]: {
@@ -594,6 +663,36 @@ describe('accuracyReport', () => {
         const empty = accuracyReport({ rows: [], summary: {}, bySubject: [] });
         expect(empty).toContain('labyrinth sim accuracy');
         expect(empty).not.toContain('PER-ACTION RATES');
+    });
+
+    test('carries the unrounded probabilities beside the rounded ones', () => {
+        // 0.62 renders as "62.0%" in the pct columns; the raw columns keep the
+        // figure the arithmetic actually used
+        expect(report()).toContain('0.62');
+        expect(report()).toContain('0.2');
+    });
+
+    test('says which script, server and sim model produced it when told', () => {
+        const withMeta = accuracyReport(snapshot, {
+            meta: { toolashaVersion: '4.1.0', host: 'www.milkywayidle.com', isTestServer: false, fullKit: true },
+        });
+        expect(withMeta).toContain('4.1.0');
+        expect(withMeta).toContain('www.milkywayidle.com');
+        expect(withMeta).toContain('full-kit sim model');
+        expect(withMeta).not.toContain('(test server)');
+    });
+
+    test('headlines the current cohort and counts the excluded legacy fights', () => {
+        const withCohort = accuracyReport({
+            ...snapshot,
+            summary: {
+                ...snapshot.summary,
+                cohort: { judged: 8, judgedClears: 2, expected: 3.1, sd: 1.2, sigma: -0.9, legacyExcluded: 12 },
+            },
+        });
+        expect(withCohort).toContain('Judged (current sim model): 8 fights');
+        expect(withCohort).toContain('12 older fights from a previous sim model excluded');
+        expect(withCohort).toContain('All eras pooled (for reference only)');
     });
 });
 

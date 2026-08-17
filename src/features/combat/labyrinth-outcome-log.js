@@ -203,6 +203,22 @@ export function foldFloorOutcomes(totals, seen, rooms, options = {}) {
         const bucket = nextTotals[key] || { subjectHrid, kind, roomLevel, attempts: 0, clears: 0 };
         const predicted = predictedFor ? rateOrNaN(predictedFor(subjectHrid, roomLevel, kind)) : NaN;
         const clears = bucket.clears + newClear;
+        // The full-kit cohort: attempts folded with a prediction in effect at
+        // fold time, under the current (full-ability) sim model. Expected clears
+        // and their variance accumulate per fold at that moment's rate, so the
+        // headline judges each fight against the claim actually on screen —
+        // never against one recomputed later by a newer engine. Buckets written
+        // before these counters existed carry none and read as the legacy
+        // cohort, which the headline excludes rather than deletes.
+        const counted = Math.max(newEntries, newClear);
+        const cohort = Number.isFinite(predicted)
+            ? {
+                  fullKitJudged: (Number(bucket.fullKitJudged) || 0) + counted,
+                  fullKitJudgedClears: (Number(bucket.fullKitJudgedClears) || 0) + newClear,
+                  fullKitExpected: (Number(bucket.fullKitExpected) || 0) + predicted * counted,
+                  fullKitVariance: (Number(bucket.fullKitVariance) || 0) + predicted * (1 - predicted) * counted,
+              }
+            : {};
         nextTotals[key] = {
             ...bucket,
             subjectHrid,
@@ -214,6 +230,7 @@ export function foldFloorOutcomes(totals, seen, rooms, options = {}) {
             attempts: Math.max(bucket.attempts + newEntries, clears),
             clears,
             ...(Number.isFinite(predicted) ? { predicted } : {}),
+            ...cohort,
         };
         changed = true;
     }
@@ -499,6 +516,15 @@ export function accuracyRows(totals, { predictedFor, interval, orderOf } = {}) {
             timing: roomTiming(bucket, measured),
             fightLength: fightLength(bucket),
             rates: actionRates(bucket, measured, interval),
+            // The full-kit cohort's share of this bucket, with expected clears
+            // summed at the prediction in effect when each fight was folded. A
+            // bucket predating the counters reads all zeros — the legacy cohort.
+            cohort: {
+                judged: Math.max(0, Number(bucket.fullKitJudged) || 0),
+                clears: Math.max(0, Number(bucket.fullKitJudgedClears) || 0),
+                expected: Math.max(0, Number(bucket.fullKitExpected) || 0),
+                variance: Math.max(0, Number(bucket.fullKitVariance) || 0),
+            },
         });
     }
     // The game's order, and within a room type by level, so a subject's rooms
@@ -694,11 +720,20 @@ function actionRates(bucket, measured, interval) {
  * with nought expected clears for fights it never made a claim about, and make
  * it look pessimistic in exactly the cases where it said nothing at all.
  *
+ * The `cohort` block is the same comparison restricted to the full-kit cohort —
+ * fights folded with a prediction in effect at fold time, under the current sim
+ * model — which is what the headline shows by default. Fights judged only by a
+ * later or legacy prediction are counted in `cohort.legacyExcluded` instead of
+ * being pooled: those predictions came from a different model and pooling them
+ * would test a claim nothing ever made.
+ *
  * @param {Array<Object>} rows - Output of accuracyRows
  * @param {Function} [interval] - wilsonInterval, for the chance-level figures
  * @returns {{buckets: number, attempts: number, clears: number, judged: number,
  *   expected: number|null, sd: number|null, sigma: number|null,
- *   contested: number, contestedByChance: number|null}}
+ *   contested: number, contestedByChance: number|null,
+ *   cohort: {judged: number, judgedClears: number, expected: number|null,
+ *   sd: number|null, sigma: number|null, legacyExcluded: number}}}
  */
 export function accuracySummary(rows, interval) {
     const list = Array.isArray(rows) ? rows : [];
@@ -706,6 +741,7 @@ export function accuracySummary(rows, interval) {
 
     const expected = judged.length ? judged.reduce((sum, row) => sum + row.predicted * row.attempts, 0) : null;
     const judgedClears = judged.reduce((sum, row) => sum + row.clears, 0);
+    const judgedAttempts = judged.reduce((sum, row) => sum + row.attempts, 0);
 
     // How far the total is allowed to wander if every prediction is right. Most
     // rooms are near-certain and contribute almost nothing, so nearly all of it
@@ -715,17 +751,31 @@ export function accuracySummary(rows, interval) {
     const variance = judged.reduce((sum, row) => sum + row.attempts * row.predicted * (1 - row.predicted), 0);
     const sd = judged.length && variance > 0 ? Math.sqrt(variance) : null;
 
+    const cohortJudged = list.reduce((sum, row) => sum + (row.cohort?.judged || 0), 0);
+    const cohortClears = list.reduce((sum, row) => sum + (row.cohort?.clears || 0), 0);
+    const cohortExpected = list.reduce((sum, row) => sum + (row.cohort?.expected || 0), 0);
+    const cohortVariance = list.reduce((sum, row) => sum + (row.cohort?.variance || 0), 0);
+    const cohortSd = cohortVariance > 0 ? Math.sqrt(cohortVariance) : null;
+
     return {
         buckets: list.length,
         attempts: list.reduce((sum, row) => sum + row.attempts, 0),
         clears: list.reduce((sum, row) => sum + row.clears, 0),
-        judged: judged.reduce((sum, row) => sum + row.attempts, 0),
+        judged: judgedAttempts,
         judgedClears,
         expected,
         sd,
         sigma: sd && expected !== null ? (judgedClears - expected) / sd : null,
         contested: list.filter((row) => row.verdict === 'sim too high' || row.verdict === 'sim too low').length,
         contestedByChance: interval ? judged.reduce((sum, row) => sum + flagChance(row, interval), 0) : null,
+        cohort: {
+            judged: cohortJudged,
+            judgedClears: cohortClears,
+            expected: cohortJudged > 0 ? cohortExpected : null,
+            sd: cohortSd,
+            sigma: cohortSd ? (cohortClears - cohortExpected) / cohortSd : null,
+            legacyExcluded: Math.max(0, judgedAttempts - cohortJudged),
+        },
     };
 }
 
@@ -789,6 +839,10 @@ const COUNTERS = [
     'doubleRatioSum',
     'doubleRatioSquares',
     'doubleRatioRooms',
+    'fullKitJudged',
+    'fullKitJudgedClears',
+    'fullKitExpected',
+    'fullKitVariance',
 ];
 
 /**
@@ -950,23 +1004,48 @@ export function accuracyBySubject(rows, interval, orderOf) {
  * counts, not just the rates.
  *
  * @param {Object} snapshot - `{rows, summary, bySubject}`
- * @param {Object} [options] - `{ name }` for what to call each subject
+ * @param {Object} [options] - `{ name }` for what to call each subject, `{ meta }`
+ *   for provenance — `{toolashaVersion, host, isTestServer, fullKit}`
  * @returns {string}
  */
-export function accuracyReport({ rows = [], summary = {}, bySubject = [] } = {}, { name } = {}) {
+export function accuracyReport({ rows = [], summary = {}, bySubject = [] } = {}, { name, meta } = {}) {
     const label = name || ((hrid) => hrid.split('/').pop());
     const pct = (value, places = 1) => (Number.isFinite(value) ? `${(value * 100).toFixed(places)}%` : '—');
+    // The raw probability, for checking the arithmetic — the pct columns round
+    const raw = (value) => (Number.isFinite(value) ? String(value) : '—');
     const out = [];
 
     out.push('Toolasha — labyrinth sim accuracy');
+    if (meta) {
+        out.push(
+            `Toolasha ${meta.toolashaVersion || 'unknown version'} · ${meta.host || 'unknown host'}` +
+                (meta.isTestServer ? ' (test server)' : '') +
+                (meta.fullKit ? ' · full-kit sim model' : '')
+        );
+    }
     out.push(`${summary.attempts ?? 0} fights over ${summary.buckets ?? 0} room/level buckets`);
+    // The headline is the current-model cohort, judged at the prediction in
+    // effect when each fight was folded; older fights are counted, not pooled
+    const cohort = summary.cohort;
+    if (cohort && cohort.expected !== null) {
+        const off = cohort.judgedClears - cohort.expected;
+        out.push(
+            `Judged (current sim model): ${cohort.judged} fights, expected ${cohort.expected.toFixed(1)} clears, ` +
+                `got ${cohort.judgedClears} (${off >= 0 ? '+' : ''}${off.toFixed(1)}` +
+                (cohort.sd ? `, ${cohort.sigma.toFixed(1)} sd on a spread of ${cohort.sd.toFixed(1)})` : ')')
+        );
+    }
+    if (cohort && cohort.legacyExcluded > 0) {
+        out.push(`${cohort.legacyExcluded} older fights from a previous sim model excluded`);
+    }
     if (summary.expected === null || summary.expected === undefined) {
         out.push('No simulated rates to compare against yet.');
     } else {
         const off = (summary.judgedClears ?? 0) - summary.expected;
         out.push(
-            `Judged: ${summary.judged} fights, expected ${summary.expected.toFixed(1)} clears, ` +
-                `got ${summary.judgedClears} (${off >= 0 ? '+' : ''}${off.toFixed(1)}` +
+            `All eras pooled (for reference only): ${summary.judged} fights, expected ` +
+                `${summary.expected.toFixed(1)} clears, got ${summary.judgedClears} ` +
+                `(${off >= 0 ? '+' : ''}${off.toFixed(1)}` +
                 (summary.sd ? `, ${summary.sigma.toFixed(1)} sd on a spread of ${summary.sd.toFixed(1)})` : ')')
         );
     }
@@ -1003,7 +1082,7 @@ export function accuracyReport({ rows = [], summary = {}, bySubject = [] } = {},
     out.push('Seconds are per clear and include the attempts you lose, on both sides — that is');
     out.push('what the calculator predicts, so it is what the measurement has to be.');
     out.push(
-        'subject\tlevel\tattempts\tclears\tsim\tactual\t95% band\tverdict\tlikelihood\t' +
+        'subject\tlevel\tattempts\tclears\tsim\tactual\tsim raw\tactual raw\t95% band\tverdict\tlikelihood\t' +
             'sim secs/clear\treal secs/clear\tsecs in a winning visit'
     );
     for (const row of rows) {
@@ -1015,6 +1094,9 @@ export function accuracyReport({ rows = [], summary = {}, bySubject = [] } = {},
                 row.clears,
                 pct(row.predicted),
                 pct(row.observed),
+                // Unrounded, so the arithmetic can be checked from the file
+                raw(row.predicted),
+                raw(row.observed),
                 `${pct(row.low)}-${pct(row.high)}`,
                 row.verdict,
                 row.likelihood === null ? '—' : row.likelihood.toFixed(4),

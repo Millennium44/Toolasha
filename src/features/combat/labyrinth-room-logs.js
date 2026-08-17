@@ -30,6 +30,8 @@ import labFightRecorder from './labyrinth-fight-recorder.js';
 import { newAttributionState, noteActions, attributeTick, foldEvents } from '../../utils/damage-attribution.js';
 import labTickCapture from './labyrinth-tick-capture.js';
 import { accuracyReport } from './labyrinth-outcome-log.js';
+import { splitModelCohorts, calibrationReport } from './labyrinth-calibration.js';
+import { exportMeta, buildAccuracyExport, sanitizeExport, downloadJson } from './labyrinth-accuracy-export.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { ROOM_TRAVEL_SECONDS } from './labyrinth-formulas.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
@@ -884,6 +886,11 @@ class LabyrinthRoomLogs {
             // fight — the replay reads hit-rate and damage-per-hit from these
             ...tallyHitsMisses(fight.attrTally),
             fingerprint: this.simSource?.fingerprint?.() || null,
+            // The clear chance in effect while the fight ran — captured at room
+            // entry (or during the fight, if the tile's sim landed late). Null
+            // when the room was never simmed; the recorder must not backfill it
+            // later from a newer engine's cache.
+            predicted: session.predicted ?? null,
         });
 
         this.persist();
@@ -1159,6 +1166,18 @@ class LabyrinthRoomLogs {
             'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
         this.exportButton.addEventListener('click', () => this.exportAccuracy());
 
+        // The export for public bug reports: the full record as JSON — raw
+        // unrounded probabilities, attempts, reliability — with character names
+        // hashed and character ids stripped, so it can be posted anywhere
+        this.sanitizedButton = document.createElement('button');
+        this.sanitizedButton.textContent = 'Sanitized';
+        this.sanitizedButton.title =
+            'Download the whole accuracy record as JSON with character names hashed and character ids ' +
+            'stripped — use this one when attaching the record to a public bug report.';
+        this.sanitizedButton.style.cssText =
+            'height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); color:#fff; font-size:10px; cursor:pointer; padding:0 6px; white-space:nowrap; flex-shrink:0;';
+        this.sanitizedButton.addEventListener('click', () => this.exportSanitized());
+
         this.recomputeButton = document.createElement('button');
         this.recomputeButton.textContent = 'Recompute';
         this.recomputeButton.title =
@@ -1219,6 +1238,7 @@ class LabyrinthRoomLogs {
         actions.appendChild(this.uncappedButton);
         actions.appendChild(this.recomputeButton);
         actions.appendChild(this.exportButton);
+        actions.appendChild(this.sanitizedButton);
         actions.appendChild(this.clearButton);
         actions.appendChild(closeBtn);
         header.appendChild(tabs);
@@ -1269,6 +1289,7 @@ class LabyrinthRoomLogs {
         // Only the accuracy tab has a record worth exporting; the room log is
         // one run and is on screen already
         if (this.exportButton) this.exportButton.style.display = accuracy ? '' : 'none';
+        if (this.sanitizedButton) this.sanitizedButton.style.display = accuracy ? '' : 'none';
         this.clearButton.textContent = accuracy ? (this.resetArmed ? 'Sure?' : 'Reset') : 'Clear';
         this.clearButton.title = accuracy
             ? 'Throw away every recorded fight and start the accuracy record over'
@@ -1707,8 +1728,12 @@ class LabyrinthRoomLogs {
             'Download the recorded attempts together with this replay comparison — observed vs sim per rate, ' +
             'and the verdict — so the whole accuracy check can be handed over or kept';
         // Embed the comparison beside the raw attempts, so one file is the whole
-        // check rather than only the half a bare recording carries
-        save.addEventListener('click', () => labFightRecorder.downloadRecording({ replay: result }));
+        // check rather than only the half a bare recording carries. Identity
+        // rides along so a hand-over says whose record it is; the sanitized
+        // export is the one that strips it.
+        save.addEventListener('click', () =>
+            labFightRecorder.downloadRecording({ replay: result, ...this.exportIdentity() })
+        );
         box.appendChild(save);
 
         return box;
@@ -2003,6 +2028,12 @@ class LabyrinthRoomLogs {
         this.lastAccuracy = snapshot;
         list.appendChild(this.renderAccuracySummary(summary, snapshot));
 
+        // The per-attempt calibration check, from the recorder's pool — each
+        // fight there carries the prediction that was on screen when it was
+        // recorded, which the per-room record cannot reconstruct
+        const pool = labFightRecorder.recordedAttempts();
+        if (pool.length) list.appendChild(this.renderReliability(pool));
+
         // Each room type's pooled reading followed by its own levels, in the
         // game's order and by level within it. Every pooled row first and every
         // level after them read as two unrelated lists, and the levels were
@@ -2103,7 +2134,7 @@ class LabyrinthRoomLogs {
             return;
         }
 
-        const report = accuracyReport(snapshot, { name: (hrid) => this.prettyMonsterName(hrid) });
+        const report = accuracyReport(snapshot, { name: (hrid) => this.prettyMonsterName(hrid), meta: exportMeta() });
         try {
             await navigator.clipboard.writeText(report);
             this.flashExport('Copied ✓');
@@ -2116,15 +2147,78 @@ class LabyrinthRoomLogs {
     }
 
     /**
+     * Who the record belongs to, for an export. Sanitized mode hashes the name
+     * and strips the id; the plain JSON export keeps both, since a private
+     * hand-over across characters needs to say whose record it is.
+     * @returns {{characterId: string|null, characterName: string|null}}
+     */
+    exportIdentity() {
+        try {
+            return {
+                characterId: dataManager.getCurrentCharacterId?.() || null,
+                characterName:
+                    typeof dataManager.getCurrentCharacterName === 'function'
+                        ? dataManager.getCurrentCharacterName() || null
+                        : null,
+            };
+        } catch {
+            return { characterId: null, characterName: null };
+        }
+    }
+
+    /**
+     * The whole accuracy record as sanitized JSON — the export for public bug
+     * reports. Character names are hashed to a stable stand-in and character
+     * ids stripped; everything else, including the unrounded probabilities the
+     * text report rounds away, goes out as-is.
+     */
+    async exportSanitized() {
+        let snapshot = null;
+        try {
+            snapshot = this.lastAccuracy || (await this.simSource?.accuracy?.()) || null;
+        } catch (error) {
+            console.error('[LabyrinthRoomLogs] Reading the fight record for export failed:', error);
+        }
+        const attempts = labFightRecorder.recordedAttempts();
+        if (!snapshot?.rows?.length && !attempts.length) {
+            this.flashButton(this.sanitizedButton, 'Nothing yet', 'Sanitized');
+            return;
+        }
+
+        const file = buildAccuracyExport({
+            snapshot,
+            attempts,
+            replay: this.replayResult || null,
+            character: this.exportIdentity(),
+        });
+        const saved = downloadJson({ ...sanitizeExport(file), sanitized: true }, 'toolasha-labyrinth-accuracy');
+        this.flashButton(this.sanitizedButton, saved ? 'Saved ✓' : 'Failed', 'Sanitized');
+    }
+
+    /**
      * @param {string} text - What the button should say for a moment
      */
     flashExport(text) {
-        if (!this.exportButton) return;
-        this.exportButton.textContent = text;
-        clearTimeout(this._exportFlash);
-        this._exportFlash = setTimeout(() => {
-            if (this.exportButton) this.exportButton.textContent = 'Export';
-        }, 1600);
+        this.flashButton(this.exportButton, text, 'Export');
+    }
+
+    /**
+     * Show a moment's feedback on a header button, then restore its label.
+     * @param {HTMLElement} button - Which button
+     * @param {string} text - What it should say for a moment
+     * @param {string} restore - What it says the rest of the time
+     */
+    flashButton(button, text, restore) {
+        if (!button) return;
+        button.textContent = text;
+        this._buttonFlashes = this._buttonFlashes || new Map();
+        clearTimeout(this._buttonFlashes.get(button));
+        this._buttonFlashes.set(
+            button,
+            setTimeout(() => {
+                if (button.isConnected) button.textContent = restore;
+            }, 1600)
+        );
     }
 
     renderAccuracySummary(summary, snapshot = {}) {
@@ -2138,33 +2232,58 @@ class LabyrinthRoomLogs {
         head.textContent = `${summary.attempts} fights over ${summary.buckets} monster/level rooms`;
         card.appendChild(head);
 
+        // The headline judges only the current-model cohort — fights folded with
+        // a prediction in effect at the time, under the full-kit sim. Older
+        // fights were judged by a different model, so they are counted in a note
+        // rather than pooled. Snapshots without a cohort (hand-built, or from an
+        // older build) fall back to the pooled figures.
+        const cohort = summary.cohort || null;
+        const expected = cohort ? cohort.expected : (summary.expected ?? null);
+        const judged = cohort ? cohort.judged : summary.judged;
+        const judgedClears = cohort ? cohort.judgedClears : summary.judgedClears;
+        const sd = cohort ? cohort.sd : summary.sd;
+        const sigma = cohort ? cohort.sigma : summary.sigma;
+
         const body = document.createElement('div');
         body.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.92);';
-        if (summary.expected === null) {
-            body.textContent = 'None of them have a simulated rate to compare against yet.';
+        if (expected === null) {
+            body.textContent =
+                cohort && cohort.legacyExcluded > 0
+                    ? 'No fights under the current sim model have a rate to be judged against yet.'
+                    : 'None of them have a simulated rate to compare against yet.';
         } else {
-            const off = summary.judgedClears - summary.expected;
+            const off = judgedClears - expected;
             const direction = off >= 0 ? 'above' : 'below';
             // With the spread beside it, because a shortfall of ten is a shrug
             // over one sample and a finding over another, and the figure alone
             // cannot say which
-            const spread = summary.sd ? ` — ${Math.abs(summary.sigma).toFixed(1)} sd` : '';
+            const spread = sd ? ` — ${Math.abs(sigma).toFixed(1)} sd` : '';
             body.textContent =
-                `Over the ${summary.judged} it had a rate for, the sim expected ${summary.expected.toFixed(1)} clears ` +
-                `and you got ${summary.judgedClears} — ${Math.abs(off).toFixed(1)} ${direction}${spread}.`;
+                `Over the ${judged} it had a rate for, the sim expected ${expected.toFixed(1)} clears ` +
+                `and you got ${judgedClears} — ${Math.abs(off).toFixed(1)} ${direction}${spread}.`;
         }
         card.appendChild(body);
 
-        if (summary.sd) {
+        if (sd) {
             const scale = document.createElement('div');
             scale.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.55);';
             scale.textContent =
-                Math.abs(summary.sigma) < 2
+                Math.abs(sigma) < 2
                     ? 'Within what chance allows for — a record this size wanders by about ' +
-                      `${summary.sd.toFixed(1)} clears on its own.`
+                      `${sd.toFixed(1)} clears on its own.`
                     : 'Further out than chance comfortably explains — a record this size wanders by about ' +
-                      `${summary.sd.toFixed(1)} clears on its own.`;
+                      `${sd.toFixed(1)} clears on its own.`;
             card.appendChild(scale);
+        }
+
+        if (cohort && cohort.legacyExcluded > 0) {
+            const note = document.createElement('div');
+            note.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.55);';
+            note.textContent = `${cohort.legacyExcluded} older fights from a previous sim model excluded`;
+            note.title =
+                'These were judged by predictions the sim no longer makes — it has since switched to full ' +
+                'monster abilities — so they are kept in the per-room rows but left out of the headline.';
+            card.appendChild(note);
         }
 
         card.appendChild(this.renderBaselineLine(snapshot));
@@ -2181,6 +2300,76 @@ class LabyrinthRoomLogs {
                 `${summary.contested} room${summary.contested === 1 ? '' : 's'} the record contradicts` +
                 (chance === null ? '' : ` — about ${chance.toFixed(1)} would be flagged by chance alone`);
             card.appendChild(flag);
+        }
+        return card;
+    }
+
+    /**
+     * The reliability report: recorded attempts grouped by the clear chance
+     * that was stored with each, so a band's expected clears can be read
+     * against what it delivered. Computed over the current sim-model cohort
+     * only — attempts without the model marker predate the full-kit switch and
+     * are counted in a note, never pooled.
+     *
+     * @param {Array<Object>} attempts - The recorder's pool, all fingerprints
+     * @returns {HTMLElement}
+     */
+    renderReliability(attempts) {
+        const { current, legacy } = splitModelCohorts(attempts);
+        const report = calibrationReport(current);
+
+        const card = document.createElement('div');
+        card.style.cssText =
+            'border:1px solid rgba(146,182,255,0.35); border-radius:5px; background:rgba(30,44,64,0.95); ' +
+            'padding:6px 7px; font-size:11px; line-height:1.4;';
+        card.title =
+            'Each recorded fight keeps the clear chance the sim was claiming when it happened. Grouped by that ' +
+            'chance, a well-calibrated sim clears about what each band promises. The Brier score is the mean ' +
+            'squared gap between prediction and outcome — lower is better, and a coin-toss guess scores 0.25.';
+
+        const head = document.createElement('div');
+        head.style.cssText = 'font-weight:700; color:#9ec4ff;';
+        head.textContent = 'Reliability — stored predictions vs outcomes';
+        card.appendChild(head);
+
+        const body = document.createElement('div');
+        body.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.92);';
+        if (report.count === 0) {
+            body.textContent =
+                'No recorded fight carries a stored prediction yet — they accumulate as simmed rooms are fought.';
+            card.appendChild(body);
+        } else {
+            const spread = report.sd ? ` — ${Math.abs(report.sigma).toFixed(1)} sd` : '';
+            body.textContent =
+                `${report.count} fights with a stored prediction: expected ${report.expected.toFixed(1)} clears, ` +
+                `got ${report.observed}${spread}. Brier ${report.brier.toFixed(3)}.`;
+            card.appendChild(body);
+
+            for (const band of report.bands) {
+                if (!band.count) continue;
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex; justify-content:space-between; gap:8px; font-size:10px;';
+                const label = document.createElement('span');
+                label.style.cssText = 'color:#9ab0d8;';
+                label.textContent = band.label;
+                const figures = document.createElement('span');
+                figures.style.cssText = 'color:rgba(221,232,255,0.85); text-align:right;';
+                figures.textContent =
+                    `${band.count} fight${band.count === 1 ? '' : 's'} · ` +
+                    `expected ${band.expected.toFixed(1)} · got ${band.observed}`;
+                row.append(label, figures);
+                card.appendChild(row);
+            }
+        }
+
+        const notes = [];
+        if (report.unpredicted > 0) notes.push(`${report.unpredicted} without a stored prediction`);
+        if (legacy.length > 0) notes.push(`${legacy.length} older fights from a previous sim model excluded`);
+        if (notes.length) {
+            const note = document.createElement('div');
+            note.style.cssText = 'font-size:10px; color:rgba(221,232,255,0.55);';
+            note.textContent = notes.join(' · ');
+            card.appendChild(note);
         }
         return card;
     }

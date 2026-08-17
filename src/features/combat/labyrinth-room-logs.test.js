@@ -1,6 +1,6 @@
 /** @vitest-environment happy-dom */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => false, getSettingValue: (_k, d) => d, Z_FLOATING_PANEL: 1100 },
@@ -32,6 +32,7 @@ vi.mock('../../core/data-manager.js', () => ({ default: { getSkills: () => null 
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 
 const { groupByFloor, floorSummary, labyrinthRoomLogs, ROOM_TRAVEL_SECONDS } = await import('./labyrinth-room-logs.js');
+const { default: labFightRecorder } = await import('./labyrinth-fight-recorder.js');
 
 const room = (over = {}) => ({
     runKey: 'run|15',
@@ -294,6 +295,109 @@ describe('the sim accuracy list opens a room type at a time', () => {
 
         expect(text()).toContain('Milking Lv.173');
         expect(text()).not.toContain('Brewing Lv.200');
+    });
+});
+
+describe('the accuracy view keeps sim-model cohorts apart', () => {
+    const snapshot = (cohort) => ({
+        rows: [
+            {
+                subjectHrid: '/monsters/mimic',
+                kind: 'combat',
+                monster: 'mimic',
+                level: 252,
+                attempts: 21,
+                clears: 0,
+                predicted: 0.244,
+                observed: 0,
+                low: 0,
+                high: 0.15,
+                likelihood: 0.003,
+                verdict: 'sim too high',
+                measured: null,
+                timing: null,
+                fightLength: null,
+                rates: null,
+            },
+        ],
+        summary: {
+            buckets: 1,
+            attempts: 21,
+            clears: 0,
+            judged: 21,
+            judgedClears: 0,
+            expected: 5.1,
+            sd: 2,
+            sigma: -2.5,
+            contested: 1,
+            contestedByChance: 0.3,
+            cohort,
+        },
+        bySubject: [],
+        baselineAt: null,
+        since: false,
+    });
+
+    const setup = async (snap) => {
+        document.body.innerHTML = '';
+        labyrinthRoomLogs.panel = null;
+        labyrinthRoomLogs.view = 'accuracy';
+        labyrinthRoomLogs.replayResult = null;
+        labyrinthRoomLogs.expandedSubjects = new Set();
+        labyrinthRoomLogs.simSource = { accuracy: async () => snap };
+        await labyrinthRoomLogs.renderAccuracy();
+    };
+
+    const text = () => document.querySelector('.mwi-lab-logs-list').textContent;
+
+    afterEach(() => {
+        labFightRecorder.clearRecording();
+    });
+
+    test('legacy fights are excluded from the headline and counted in a one-line note', async () => {
+        await setup(
+            snapshot({ judged: 0, judgedClears: 0, expected: null, sd: null, sigma: null, legacyExcluded: 21 })
+        );
+        expect(text()).toContain('21 older fights from a previous sim model excluded');
+        expect(text()).toContain('No fights under the current sim model');
+        // The pooled expectation must not headline as if the old model still claimed it
+        expect(text()).not.toContain('expected 5.1 clears');
+    });
+
+    test('a current-model cohort headlines with its own expectation', async () => {
+        await setup(snapshot({ judged: 10, judgedClears: 4, expected: 4.4, sd: 1.5, sigma: -0.3, legacyExcluded: 11 }));
+        expect(text()).toContain('Over the 10 it had a rate for, the sim expected 4.4 clears');
+        expect(text()).toContain('11 older fights from a previous sim model excluded');
+    });
+
+    test('recorded fights with stored predictions draw the reliability bands', async () => {
+        const fight = (predicted, cleared) => ({
+            monsterHrid: '/monsters/cyclops',
+            roomLevel: 200,
+            seconds: 40,
+            outcome: cleared ? 'clear' : 'death',
+            cleared,
+            monsterMaxHp: 1000,
+            monsterHpEnd: cleared ? 0 : 300,
+            playerMaxHp: 500,
+            playerHpStart: 500,
+            playerHpEnd: cleared ? 200 : 0,
+            predicted,
+        });
+        labFightRecorder.noteAttempt(fight(0.8, true));
+        labFightRecorder.noteAttempt(fight(0.8, false));
+        await setup(snapshot(undefined));
+
+        expect(text()).toContain('Reliability — stored predictions vs outcomes');
+        expect(text()).toContain('70–90%');
+        expect(text()).toContain('expected 1.6');
+        expect(text()).toContain('Brier');
+    });
+
+    test('the sanitized export is offered on the accuracy view, labelled for public bug reports', async () => {
+        await setup(snapshot(undefined));
+        expect(labyrinthRoomLogs.sanitizedButton.style.display).not.toBe('none');
+        expect(labyrinthRoomLogs.sanitizedButton.title).toContain('public bug report');
     });
 });
 

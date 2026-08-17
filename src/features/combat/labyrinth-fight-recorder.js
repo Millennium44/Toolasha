@@ -44,6 +44,28 @@ let attempts = [];
 let loaded = false;
 let loading = null;
 
+/** The script version, when the userscript sandbox is there to ask. */
+function scriptVersion() {
+    try {
+        return typeof GM_info !== 'undefined' ? GM_info?.script?.version || null : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The sim-model marker stamped on every attempt recorded from here on.
+ *
+ * The sim switched every labyrinth path to full monster abilities, so a
+ * prediction made before that switch came from a different model. Attempts
+ * without this marker are that legacy cohort, and the accuracy views must not
+ * pool their predictions with new ones.
+ * @returns {{fullKit: boolean, version: string|null}}
+ */
+function modelMarker() {
+    return { fullKit: true, version: scriptVersion() };
+}
+
 /**
  * Read the accumulated fights back from storage, once.
  *
@@ -98,6 +120,8 @@ function persist() {
  * @param {number} [attempt.playerMisses] - Your swings that missed
  * @param {number} [attempt.playerCrits] - Your landed swings that critted
  * @param {string} [attempt.fingerprint] - The gear the fight was fought in
+ * @param {number} [attempt.predicted] - The cached clear chance in effect when the
+ *   fight was recorded (0..1), or absent when no sim had run for the room
  */
 export function noteAttempt(attempt) {
     if (!attempt || !attempt.monsterHrid) return;
@@ -113,6 +137,7 @@ export function noteAttempt(attempt) {
     const playerHits = Number(attempt.playerHits);
     const playerMisses = Number(attempt.playerMisses);
     const playerCrits = Number(attempt.playerCrits);
+    const predicted = Number(attempt.predicted);
 
     attempts.push({
         monsterHrid: String(attempt.monsterHrid),
@@ -136,6 +161,13 @@ export function noteAttempt(attempt) {
         // "unknown" rather than "zero crits"
         playerCrits: Number.isFinite(playerCrits) && playerCrits >= 0 ? playerCrits : null,
         fingerprint: attempt.fingerprint ? String(attempt.fingerprint) : null,
+        // The clear chance the sim was claiming when the fight was recorded —
+        // the prediction at entry, not one recomputed later by a newer engine.
+        // Null when no sim had run for the room; old records lack the field.
+        predicted: Number.isFinite(predicted) && predicted >= 0 && predicted <= 1 ? predicted : null,
+        // Attempts without this marker predate the full-kit sim model and are
+        // the legacy cohort — kept, but never pooled with current predictions
+        model: modelMarker(),
     });
 
     if (attempts.length > MAX_ATTEMPTS) attempts = attempts.slice(attempts.length - MAX_ATTEMPTS);
@@ -180,11 +212,19 @@ export function clearRecording() {
  * @returns {Object}
  */
 export function recordingFile(extra = {}) {
+    // Which script produced the file and against which server — live and test
+    // do not share balance, so a reader has to know which one it is looking at
+    const host = typeof location !== 'undefined' ? location.hostname || null : null;
     return {
         ...extra,
         format: 'toolasha-labyrinth-recording',
-        version: 2,
+        version: 3,
         exportedAt: Date.now(),
+        toolashaVersion: scriptVersion(),
+        host,
+        isTestServer: host ? host.includes('test.') : null,
+        // The sim model this build records under; attempts carry their own marker
+        fullKit: true,
         attempts: recordedAttempts(),
     };
 }

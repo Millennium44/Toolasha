@@ -320,6 +320,11 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
         attempts,
         wins,
         simSeconds,
+        // How the sim run itself went, for the exported comparison: attempts it
+        // left unresolved at the cutoff, and whether it stopped because the rate
+        // hit its precision target rather than the clock
+        unfinishedAttempts: Math.max(0, Number(simResult.labyUnfinishedAttempts) || 0),
+        stoppedOnPrecision: !!simResult.labyStoppedOnPrecision,
     };
 }
 
@@ -504,6 +509,16 @@ export function compareLab(observed, predicted) {
         fights: observed.fights,
         clears: observed.clears,
         metrics,
+        // The sim run behind the prediction, kept so an exported comparison
+        // says how the figures were produced — a run that stopped wide of its
+        // precision target is a weaker witness than one that converged
+        sim: {
+            attempts: predicted.attempts ?? null,
+            wins: predicted.wins ?? null,
+            simSeconds: predicted.simSeconds ?? null,
+            unfinishedAttempts: predicted.unfinishedAttempts ?? null,
+            stoppedOnPrecision: predicted.stoppedOnPrecision ?? null,
+        },
         diagnosis: diagnose(dps, taken, clear, { hitRate, dmgPerHit }),
     };
 }
