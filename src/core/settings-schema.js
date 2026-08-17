@@ -3034,10 +3034,10 @@ export const settingsGroups = {
             },
             notifications_skillLevelUp: {
                 id: 'notifications_skillLevelUp',
-                label: 'Notify when you level up a skill',
+                label: 'Notify when you hit a skill milestone',
                 type: 'checkbox',
                 default: false,
-                help: 'Fires when one of your own skills gains a level — the same milestone the game announces in chat as “… has reached level …”, but read from the skill data the server sends (skills_updated) rather than parsed out of chat, so it is your character only and needs no name match. One message per level gained; levels the character already had when you switched this on are not announced.',
+                help: 'Fires on the skill milestones the game broadcasts to guild chat as “… has reached level …” (100, 105, and so on) — not every single level. It keys off that broadcast itself (the structured system message, not the scraped sentence) and announces only the one whose subject is your character, so it needs a guild and guild chat coming through. One message per milestone.',
             },
             notifications_ttlTargetReached: {
                 id: 'notifications_ttlTargetReached',
