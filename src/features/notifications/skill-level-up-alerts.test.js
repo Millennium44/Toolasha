@@ -54,7 +54,11 @@ vi.mock('./notification-service.js', () => ({
     },
 }));
 
-const { default: skillLevelUpAlerts, MASTER_SETTING, LEVEL_UP_MESSAGE_KEY } = await import('./skill-level-up-alerts.js');
+const {
+    default: skillLevelUpAlerts,
+    MASTER_SETTING,
+    LEVEL_UP_MESSAGE_KEY,
+} = await import('./skill-level-up-alerts.js');
 
 /** A `characterLeveledUp` broadcast, timestamped `now` by default */
 function levelUp({ name = 'Benny', skillHrid = '/skills/foraging', level = 100, t } = {}) {
