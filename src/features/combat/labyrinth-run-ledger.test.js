@@ -1,5 +1,12 @@
 import { describe, test, expect } from 'vitest';
-import { gridSize, roomsFullClear, roomsRush, torchesForPlan, rushFloorTable, foldSighting } from './labyrinth-run-ledger.js';
+import {
+    gridSize,
+    roomsFullClear,
+    roomsRush,
+    torchesForPlan,
+    rushFloorTable,
+    foldSighting,
+} from './labyrinth-run-ledger.js';
 
 describe('the grid arithmetic, straight from the game guide', () => {
     test('floor 1 is 4×4, one wider per floor, capped at 8×8 from floor 5', () => {
