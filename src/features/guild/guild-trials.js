@@ -3283,10 +3283,15 @@ class GuildTrials {
                 if (firstTile?.isConnected) {
                     // A combat fight's card lives inside the boss unit grid; a
                     // payout dropped in there becomes a grid item fighting the
-                    // DPS sidecar for a cell. Its home is above the whole
-                    // monsters area, full width.
+                    // DPS sidecar for a cell — and dropped beside the monsters
+                    // area it becomes a column between the two fields, pushing
+                    // the fight into overflow. Its home is above the whole
+                    // battle row, full width.
                     const monstersArea = firstTile.closest?.('[class*="BattlePanel_monstersArea"]');
-                    if (monstersArea) return block.nextElementSibling === monstersArea;
+                    if (monstersArea) {
+                        const battleRow = escapeSquashingRows(root, monstersArea);
+                        return block.nextElementSibling === battleRow;
+                    }
                     return block.nextElementSibling === escapeSquashingRows(root, firstTile);
                 }
                 return root.firstElementChild === block;
@@ -3310,11 +3315,13 @@ class GuildTrials {
                 if (statusRow) {
                     statusRow.insertAdjacentElement('afterend', block);
                 } else if (monstersArea?.parentElement && root.contains(monstersArea)) {
-                    // Above the whole fight, never inside its unit grid — a
-                    // grid-item payout lands in a boss-card-sized cell and
-                    // overlaps the DPS sidecar
+                    // Above the whole battle row — the row holding the roster
+                    // field and the fight field — never inside it: a payout
+                    // inserted beside the monsters area becomes a middle
+                    // column, and the fight overflows off the panel's edge
                     block.style.width = '100%';
-                    monstersArea.insertAdjacentElement('beforebegin', block);
+                    const battleRow = escapeSquashingRows(root, monstersArea);
+                    battleRow.insertAdjacentElement('beforebegin', block);
                 } else if (firstTile?.isConnected) {
                     block.style.width = '100%';
                     escapeSquashingRows(root, firstTile).insertAdjacentElement('beforebegin', block);

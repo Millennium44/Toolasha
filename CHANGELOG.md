@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The payout strip sits above the whole trial view
+
+Placed before the monsters area, the payout became a middle column between the roster field and the fight field, pushing the fight into horizontal overflow. It now escapes the whole battle row and sits above both fields, full width, with the Party DPS sidecar back beside the boss cards.
+
 ### Trial fixes from a live trial: your own kit, the payout's spot
 
 The Trial Abilities panel marked the local player "captured" off their own zone fight's `new_battle` — the _current_ kit, not the one the trial was entered with — while everyone else honestly said "needs Battle Info". The trial session now takes only Battle Info captures, the same source for every participant, and a restored session demotes any `new_battle` entry back to "needs Battle Info". The Trial payout also stops landing inside the combat fight's boss grid (where it overlapped the DPS sidecar) — in a fight it sits above the whole monsters area, full width and flat.
