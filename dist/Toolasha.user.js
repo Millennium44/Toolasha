@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha (Millennium44)
 // @namespace    http://tampermonkey.net/
-// @version      3.12.1
+// @version      3.13.0
 // @description  Toolasha (Millennium44 fork) — enhanced tools for Milky Way Idle: combat & labyrinth simulators with upgrade advisors, per-character data, cross-device sync, goal planner, guild tools, overlay, mobile support. Built on work by bot7420, Celasha, Frotty, Q7, jigglymoose, dakonglong, and the combat-sim team — full credits in the listing info.
 // @author       Millennium44 (fork of Celasha and Claude's Toolasha). Thank you to bot7420, DrDucky, Frotty, Truth_Light, AlphB, qu, and sentientmilk for providing the basis for a lot of this; to Shykai, amVoidGuy, vlad, and kuganDev for their immense work on the combat sim; and to Paradoxian for extensive bug finding, testing, and detailed writeups. Thanks to Miku, Orvel, Jigglymoose, Incinarator, Knerd, Maarg, MekaPyon, and others for their time and help; to SilkyPanda for contributing several features; to Steez for testing and catching my mistakes; to Tib for the Character Cards; to Sapnas for deep testing and singlehandedly improving performance; to vidonnus for infrastructure, bug fixes, engineering, and issue raising; and to Zaeter for the name. This fork also draws on code and ideas from other Milky Way Idle tools: MWITools by bot7420, MWI Combat Suite by Frotty, JIGS by jigglymoose, the Labyrinth Win Rate Calculator by dakonglong, and the mooket market pools by Q7 (mooket II) and IOMisaka (mooket I).
 // @license      CC-BY-NC-SA-4.0
@@ -22,13 +22,13 @@
 // @require      https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js
 // @require      https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js
 // @require      https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0/dist/chartjs-plugin-datalabels.min.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@7174076682dbe44a42f9550f9d48681e6e09f200/dist/libraries/toolasha-core.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@7174076682dbe44a42f9550f9d48681e6e09f200/dist/libraries/toolasha-utils.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@7174076682dbe44a42f9550f9d48681e6e09f200/dist/libraries/toolasha-sim.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@7174076682dbe44a42f9550f9d48681e6e09f200/dist/libraries/toolasha-market.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@7174076682dbe44a42f9550f9d48681e6e09f200/dist/libraries/toolasha-actions.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@7174076682dbe44a42f9550f9d48681e6e09f200/dist/libraries/toolasha-combat.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@7174076682dbe44a42f9550f9d48681e6e09f200/dist/libraries/toolasha-ui.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9dd0bf2a4dff906eba1f1f7beed3801aa5dbb0b7/dist/libraries/toolasha-core.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9dd0bf2a4dff906eba1f1f7beed3801aa5dbb0b7/dist/libraries/toolasha-utils.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9dd0bf2a4dff906eba1f1f7beed3801aa5dbb0b7/dist/libraries/toolasha-sim.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9dd0bf2a4dff906eba1f1f7beed3801aa5dbb0b7/dist/libraries/toolasha-market.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9dd0bf2a4dff906eba1f1f7beed3801aa5dbb0b7/dist/libraries/toolasha-actions.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9dd0bf2a4dff906eba1f1f7beed3801aa5dbb0b7/dist/libraries/toolasha-combat.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9dd0bf2a4dff906eba1f1f7beed3801aa5dbb0b7/dist/libraries/toolasha-ui.js
 // ==/UserScript==
 // Note: Combat Sim auto-import requires Tampermonkey for cross-domain storage. Not available on Steam (use manual clipboard copy/paste instead).
 
@@ -354,6 +354,12 @@
      * @returns {Array<{key: string, name: string, reason: string}>} One entry per missing anchor
      */
     function checkAnchorCanaries() {
+        // A disconnected game is not a broken one. When the socket drops (another
+        // tab logs the account in, a server restart), the game replaces itself
+        // with a full-screen connection message and tears the header and nav down
+        // — three ungated anchors gone at once, none of them evidence of a game
+        // update. No anchor means anything until the game is back.
+        if (document.querySelector(GAME.CONNECTION_MESSAGE)) return [];
         const ANCHORS = [
             { key: 'canaryHeaderTotalLevel', name: 'Header (total level)', selector: GAME.TOTAL_LEVEL },
             { key: 'canaryGamePanel', name: 'Game panel wrapper', selector: GAME.GAME_PANEL },
@@ -449,6 +455,25 @@
             if (when && !document.querySelector(when)) continue;
             if (!document.querySelector(selector)) {
                 failures.push({ key, name, reason: 'selector missing — game update?' });
+            }
+        }
+
+        // The React fiber root. Fifteen features climb it for game methods
+        // (profile popups, marketplace navigation, chat commands, task tools),
+        // every one via the legacy `_reactRootContainer` key — which a React 18
+        // createRoot migration renames to `__reactContainer$<random>` in one
+        // stroke, failing all of them to null with no error. Not a selector, so
+        // it cannot ride the ANCHORS table; gated on the game page having
+        // rendered (the panel wrapper), the same way the table gates on `when`.
+        const rootEl = document.getElementById('root');
+        if (rootEl && document.querySelector(GAME.GAME_PANEL)) {
+            const fiber = rootEl._reactRootContainer?.current || rootEl._reactRootContainer?._internalRoot?.current;
+            if (!fiber) {
+                failures.push({
+                    key: 'canaryFiberRoot',
+                    name: 'React fiber root (game internals)',
+                    reason: 'fiber key missing — game React update?',
+                });
             }
         }
         return failures;
@@ -998,7 +1023,10 @@
                 category: 'Profile',
                 module: Combat.combatScore,
                 async: false,
-                healthCheck: () => injectedInto('div.SharableProfile_overviewTab__W4dCV', '#mwi-combat-score-panel'),
+                // Prefix-matched: anchoring this on the same hashed selector the
+                // feature itself uses meant a game rehash blinded check and feature
+                // together — the one failure the health pass exists to catch
+                healthCheck: () => injectedInto('div[class*="SharableProfile_overviewTab"]', '#mwi-combat-score-panel'),
             },
             {
                 key: 'characterCardButton',
@@ -1086,6 +1114,13 @@
                 name: 'Labyrinth Tracker',
                 category: 'Combat',
                 module: Combat.labyrinthTracker,
+                async: false,
+            },
+            {
+                key: 'labyrinthRunLedger',
+                name: 'Labyrinth Run Ledger',
+                category: 'Combat',
+                module: Combat.labyrinthRunLedger,
                 async: false,
             },
             {
@@ -1870,7 +1905,7 @@
         // Expose minimal user-facing API
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
-        targetWindow.Toolasha.version = '3.12.1';
+        targetWindow.Toolasha.version = '3.13.0';
         // Which fork this build came from. Version numbers are shared with
         // upstream, so the what's-new popup keys on the (fork, version) pair —
         // the same number on a different fork is still an update.
@@ -1914,6 +1949,10 @@
             // The selector canary, callable directly for a spot-check without
             // waiting for the delayed health pass to run it on its own.
             canary: checkAnchorCanaries,
+            // Diff the whole selector registry against the game's stylesheets —
+            // the after-a-game-update sweep, without visiting a single screen.
+            // Extra selectors (a feature's private ones) can be handed in.
+            selectorAudit: (extra) => UI.selectorAudit.runSelectorAudit(extra),
             // The same, for the shape of the game data rather than the page
             schema: () => UI.schemaCanary.runSchemaCanary(),
             // The health report on demand, rather than only when a startup toast
