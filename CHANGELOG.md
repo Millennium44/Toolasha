@@ -14,6 +14,10 @@ Logging the account in from another tab (or any socket loss) replaces the game w
 
 `npm test` was intermittently failing the enhancement-config and equipment-savings-row chain tests — a timeout, not state pollution: each takes ~1 s alone (first mathjs chain of its block) and 14 s when the whole suite contends for the CPU. Vitest was also running every file twice by picking up the `.claude/worktrees` copies. Both tests now carry an explicit 30 s timeout, and the config excludes `.claude/**`.
 
+### The zone decomposition is on the panel and in the export
+
+The Sim Accuracy panel now draws an "Incoming damage by ability" card after every check — one block per monster the recording fought, rows graded with the lab card's verdict glyphs, cast shares and means on hover, the wave-level DoT row labelled as such, and sim-only monsters listed as a footnote rather than findings. Refusals (party, mixed builds, foreign monsters, counterless recording) appear in the card in plain words. The decomposition also rides the export beside the comparison; it carries hrids and counters only, so the sanitized path needs nothing new.
+
 ### The uptime harness reaches zones
 
 `Toolasha.Debug.zoneUptimeHarness()` decomposes a recorded zone session's incoming damage per monster and per ability — real (from the recorder's counters) beside sim — reusing the lab harness's comparison unchanged and the very SimResult the Sim Accuracy check already ran, so it costs no second simulation. Multi-monster waves keep cast counts exact per monster; simultaneous swings share one payoff queue; damage-over-time is one wave-level row because the feed cannot say whose bleed it was. Counterless legacy recordings, parties, mixed builds, and foreign-zone recordings are refused by name instead of graded. `Toolasha.Debug.simAccuracyCheck()` runs the panel's check from the console, so the whole record-check-decompose loop can be driven without the overlay.

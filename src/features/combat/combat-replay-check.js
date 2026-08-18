@@ -194,6 +194,15 @@ import {
     toggleRecording,
     UNIT_LABELS,
 } from './combat-record-control.js';
+import {
+    waveHridsOf,
+    nonDamagingByHrid,
+    extractWaveIncoming,
+    mergeWaveIncoming,
+    compareZoneIncoming,
+    zoneUptimeMismatches,
+} from './zone-uptime-harness.js';
+import { describeFights, MIN_REAL_CASTS } from './labyrinth-uptime-harness.js';
 import { newAttributionState, noteActions, attributeTick, foldEvents } from '../../utils/damage-attribution.js';
 import { newTakenState, attributeIncoming, foldTaken } from '../../utils/damage-taken.js';
 import { registerRow } from '../../utils/overlay-rows.js';
@@ -1628,6 +1637,9 @@ class ReplayCheck {
         // decompositions (the zone uptime harness) can read its per-ability
         // attack histograms without paying for a second simulation.
         this.lastSimResult = null;
+        // The per-monster incoming-damage decomposition of that sim against
+        // the recording, computed once per check — see decomposeIncoming
+        this.uptime = null;
     }
 
     /**
@@ -1851,12 +1863,17 @@ class ReplayCheck {
             observations: this.observations,
             aggregate: observed,
             comparison: this.comparison,
+            // The per-monster incoming decomposition, when the last check made
+            // one. Carries hrids, counters and damage figures only — nothing
+            // the sanitized path would need to strip.
+            uptime: this.uptime,
             history: pruneHistory(this.history),
             recording: session,
             includes: [
                 'per-fight summaries for every observation kept (seconds, damage, hits, misses, kills, xp)',
                 'the loadout snapshot each observation was recorded under',
                 'the last comparison and the history of past checks',
+                'the per-monster incoming-damage decomposition, when the last check produced one',
                 session?.ticksComplete
                     ? 'the raw payloads of every segment of the recording still in memory'
                     : 'the raw payloads of the most recent segments; older segments carry their summary only',
@@ -1956,6 +1973,15 @@ class ReplayCheck {
 
             this.lastSimResult = simResult;
             this.comparison = compareRun(observed, predictFromSim(simResult));
+            // The incoming-damage decomposition of the same sim against the
+            // same recording — pure arithmetic on what is already in hand, so
+            // a failure in it must never cost the check itself.
+            try {
+                this.uptime = this.decomposeIncoming();
+            } catch (error) {
+                console.error('[ReplayCheck] The incoming-damage decomposition failed:', error);
+                this.uptime = null;
+            }
             await this.rememberCheck(this.comparison);
             return this.comparison;
         } catch (error) {
@@ -1965,6 +1991,42 @@ class ReplayCheck {
         } finally {
             this.running = false;
         }
+    }
+
+    /**
+     * Decompose the recording's incoming damage per monster and per ability
+     * against the retained sim — the zone uptime harness, fed from what the
+     * check already holds. Costs no simulation: extraction is arithmetic over
+     * the recorder's ticks, and the sim side reads the SimResult's own attack
+     * histograms.
+     *
+     * @returns {Object|null} `{real, sections, dotRow, simOnlyHrids}`, or
+     *   `{empty}` / `{unusable}` / `{real, mismatches}` naming why there is no
+     *   table; null with no sim on hand
+     */
+    decomposeIncoming() {
+        if (!this.lastSimResult) return null;
+        const session = combatRecorder.sessionFile();
+        const segments = (session?.segments || []).filter((entry) => entry.ticksIncluded && entry.ticks?.length);
+        if (!segments.length) return { empty: true };
+
+        const gameData = buildGameDataPayload();
+        const hrids = new Set();
+        for (const entry of segments) {
+            for (const hrid of waveHridsOf(entry.ticks)) hrids.add(hrid);
+        }
+        const nonDamaging = nonDamagingByHrid(gameData, hrids);
+        const real = mergeWaveIncoming(segments.map((entry) => extractWaveIncoming(entry.ticks, { nonDamaging })));
+        if (!real.usable) return { unusable: real.reason };
+
+        const mismatches = zoneUptimeMismatches(real, {
+            zoneHrid: this.observed()?.zoneHrid || null,
+            gameData,
+            segmentLoadouts: segments.map((entry) => entry.loadout ?? null),
+        });
+        if (mismatches.length) return { real, mismatches };
+
+        return { real, ...compareZoneIncoming(real, this.lastSimResult) };
     }
 
     /**
@@ -1980,6 +2042,7 @@ class ReplayCheck {
         this.history = [];
         this.comparison = null;
         this.lastSimResult = null;
+        this.uptime = null;
         this.error = null;
         await writeScoped(STORAGE_KEY, [], 'settings');
         await writeScoped(HISTORY_KEY, [], 'settings');
@@ -2002,6 +2065,7 @@ class ReplayCheck {
         this.history = [];
         this.comparison = null;
         this.lastSimResult = null;
+        this.uptime = null;
         this.loaded = false;
         resetRecordTargetCache();
     }
@@ -2391,6 +2455,143 @@ function drawDecomposition(body, comparison) {
  * @param {HTMLElement} body - Where it goes
  * @param {Object} comparison - From `compareRun`
  */
+/** Verdict glyphs for the uptime rows — the lab card's, unchanged. */
+const UPTIME_VERDICT = {
+    ok: { glyph: '✓', color: '#6fce7f' },
+    'sim-under': { glyph: '⚠', color: '#e56b6b' },
+    'sim-over': { glyph: '≠', color: '#e0b64a' },
+    'sim-missing': { glyph: '⚠', color: '#e56b6b' },
+    'sim-extra': { glyph: '+', color: '#7aa2d0' },
+    buff: { glyph: '·', color: 'rgba(255,255,255,0.4)' },
+    inconclusive: { glyph: '?', color: 'rgba(255,255,255,0.35)' },
+};
+
+/** Hover text for the uptime verdicts that need more than their own name. */
+const UPTIME_TITLE = {
+    buff: 'non-damaging buff — casts but cannot appear in the damage tally',
+    inconclusive: `fewer than ${MIN_REAL_CASTS} real casts — too few to grade`,
+};
+
+/** A monster's display name, from live game data. */
+function monsterName(monsterHrid) {
+    return dataManager.getInitClientData()?.combatMonsterDetailMap?.[monsterHrid]?.name || monsterHrid;
+}
+
+/** Why an uptime mismatch code refused, in the panel's words. */
+const UPTIME_MISMATCH_TEXT = {
+    party: 'the recording is from a party, and only solo runs decompose against a solo sim',
+    zone: 'the recording is not stamped with a zone',
+    wave: 'the recording contains monsters foreign to the simmed zone',
+    build: 'the recording spans more than one loadout',
+};
+
+/**
+ * The per-monster incoming-damage card — the zone edition of the lab's uptime
+ * section. One block per monster seen in the recording, rows graded by the
+ * same share/mean verdicts; hover for cast share, means and sample size.
+ *
+ * @param {Object} body - Panel body
+ * @param {Object|null} uptime - From `decomposeIncoming`
+ */
+function drawUptime(body, uptime) {
+    if (!uptime) return;
+
+    const card = panelCard(body, 'Incoming damage by ability', ACCENT);
+    if (uptime.empty) {
+        card.appendChild(
+            panelNote('No tick recording on hand — the decomposition needs the recorder running during the fights.')
+        );
+        return;
+    }
+    if (uptime.unusable) {
+        card.appendChild(panelNote(`The recording cannot be decomposed: ${uptime.unusable}.`));
+        return;
+    }
+    if (uptime.mismatches) {
+        const reasons = uptime.mismatches.map((code) => UPTIME_MISMATCH_TEXT[code] || code).join('; ');
+        card.appendChild(panelNote(`Recording and sim do not describe the same fight: ${reasons}.`));
+        return;
+    }
+
+    const meta = document.createElement('div');
+    meta.textContent = describeFights(uptime.real);
+    meta.style.cssText = 'font-size:0.68rem; color:rgba(255,255,255,0.45);';
+    card.appendChild(meta);
+
+    const num = (value) => (value == null || !Number.isFinite(value) ? '—' : `${Math.round(value)}`);
+    const pct = (value) => (value == null || !Number.isFinite(value) ? '—' : `${Math.round(value)}%`);
+
+    const drawRow = (wrap, row) => {
+        const style = UPTIME_VERDICT[row.verdict] || UPTIME_VERDICT.ok;
+        const line = document.createElement('div');
+        line.style.cssText =
+            'display:grid; grid-template-columns:1.3fr 0.9fr 0.9fr auto; gap:4px; align-items:baseline; font-size:0.74rem; padding:1px 0;';
+        const name = document.createElement('span');
+        name.textContent = row.ability;
+        name.style.cssText = 'overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+        // Cast share, means and sample size on hover, so the row stays
+        // compact. Cast share is '—' for the DoT row, whose ticks are not casts.
+        name.title =
+            `casts: real ${pct(row.real?.castSharePct)} / sim ${pct(row.sim?.castSharePct)}` +
+            `  ·  mean/cast: real ${num(row.real?.meanDmgPerCast ?? row.real?.meanPerTick)} / sim ${num(row.sim?.meanDmgPerCast ?? row.sim?.meanPerTick)}` +
+            `  ·  ${row.samples ?? row.real?.ticks ?? 0} real ${row.ability === 'damageOverTime' ? 'ticks' : 'casts'}`;
+        const real = document.createElement('span');
+        real.textContent = pct(row.real?.dmgSharePct);
+        real.style.cssText = 'text-align:right; font-variant-numeric:tabular-nums;';
+        const sim = document.createElement('span');
+        sim.textContent = pct(row.sim?.dmgSharePct);
+        sim.style.cssText = 'text-align:right; font-variant-numeric:tabular-nums; color:rgba(255,255,255,0.75);';
+        const verdict = document.createElement('span');
+        verdict.textContent = style.glyph;
+        verdict.style.cssText = `text-align:right; color:${style.color};`;
+        verdict.title = UPTIME_TITLE[row.verdict] || row.verdict;
+        line.append(name, real, sim, verdict);
+        wrap.appendChild(line);
+    };
+
+    for (const section of uptime.sections) {
+        const heading = document.createElement('div');
+        heading.textContent = `${monsterName(section.monsterHrid)} — ${section.fights} fight${section.fights === 1 ? '' : 's'}`;
+        heading.style.cssText = 'margin-top:4px; font-size:0.72rem; font-weight:bold; color:rgba(255,255,255,0.7);';
+        card.appendChild(heading);
+
+        const header = document.createElement('div');
+        header.style.cssText =
+            'display:grid; grid-template-columns:1.3fr 0.9fr 0.9fr auto; gap:4px; font-size:0.64rem; color:rgba(255,255,255,0.4); padding:1px 0;';
+        header.innerHTML =
+            '<span>ability</span><span style="text-align:right;">real dmg%</span><span style="text-align:right;">sim dmg%</span><span></span>';
+        card.appendChild(header);
+
+        for (const row of section.rows) drawRow(card, row);
+    }
+
+    if (uptime.dotRow) {
+        const heading = document.createElement('div');
+        heading.textContent = 'Damage over time — whole wave';
+        heading.title = 'A DoT tick names no monster in the feed, so the row covers the wave rather than pretending.';
+        heading.style.cssText = 'margin-top:4px; font-size:0.72rem; font-weight:bold; color:rgba(255,255,255,0.7);';
+        card.appendChild(heading);
+        drawRow(card, uptime.dotRow);
+    }
+
+    if (uptime.simOnlyHrids?.length) {
+        card.appendChild(
+            panelNote(
+                `Only the sim's own encounter draws met: ${uptime.simOnlyHrids.map(monsterName).join(', ')} — ` +
+                    'not findings, just monsters this recording never fought.'
+            )
+        );
+    }
+
+    const key = document.createElement('div');
+    key.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
+    key.innerHTML =
+        '<span style="color:#e56b6b;">⚠ sim-under</span> = sim gives this ability a smaller share of incoming damage than reality (or lands it for a smaller mean). ' +
+        '<span style="color:rgba(255,255,255,0.5);">?</span> = too few real casts to grade. ' +
+        'Hover for cast%, means and sample size: a matching cast% with a damage gap is a per-cast magnitude (buff-uptime) question, a cast% gap is cadence.';
+    card.appendChild(key);
+}
+
 function drawGains(body, comparison) {
     if (comparison.experienceBySkill?.length) {
         const card = panelCard(body, 'Experience by skill', ACCENT);
@@ -2789,6 +2990,7 @@ export const replayCheckPanel = createPanel({
             drawDecomposition(body, replayCheck.comparison);
             drawHints(body, replayCheck.comparison, observed);
             drawGains(body, replayCheck.comparison);
+            drawUptime(body, replayCheck.uptime);
             for (const warning of replayCheck.comparison.warnings) {
                 body.appendChild(panelNote(`The engine skipped a mechanic in this zone: ${warning}`));
             }

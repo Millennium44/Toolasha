@@ -983,6 +983,10 @@ describe('what the check simulates', () => {
 
         return replayCheck.check().then(() => {
             expect(replayCheck.lastSimResult).toBe(simResult);
+            // With no tick recording in the recorder, the decomposition says
+            // so rather than guessing — and the export carries the answer
+            expect(replayCheck.uptime).toEqual({ empty: true });
+            expect(replayCheck.exportFile().uptime).toEqual({ empty: true });
         });
     });
 
