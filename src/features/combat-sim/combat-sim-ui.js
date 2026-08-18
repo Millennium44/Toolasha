@@ -3409,6 +3409,7 @@ class CombatSimUI {
             this._lastSimResult = simResult;
             this._lastSimHours = hours;
             this._lastGameData = gameData;
+            this._persistConsumableRates(simResult);
 
             // Generate label before displaying (display may re-render)
             const historyLabel = this._editor?.generateSimLabel() || 'Current Gear';
@@ -3650,6 +3651,43 @@ class CombatSimUI {
      * @param {Object} gameData - Game data maps for drop calculation
      * @private
      */
+    /**
+     * Keep the last sim's per-hour consumable use where a reload cannot lose it.
+     *
+     * The one figure the Consumables panel cannot compute for itself: food has
+     * no arithmetic rate (it fires on health and mana triggers), so the sim is
+     * the only thing that can say how fast a zone eats it while nothing is
+     * being fought. First player only — the sim's own character — as
+     * per-hour counts keyed by item, stamped with the zone they were simmed in.
+     *
+     * @param {Object} simResult - The finished SimResult
+     */
+    _persistConsumableRates(simResult) {
+        try {
+            const playerHrid = Object.keys(simResult?.consumablesUsed || {})[0];
+            const used = playerHrid ? simResult.consumablesUsed[playerHrid] : null;
+            if (!used) return;
+            const simHours = (Number(simResult.simulatedTime) || 0) / (3600 * 1e9) || 1;
+            const perHour = {};
+            for (const [itemHrid, count] of Object.entries(used)) {
+                if (Number(count) > 0) perHour[itemHrid] = Number(count) / simHours;
+            }
+            if (!Object.keys(perHour).length) return;
+            writeScoped(
+                'simConsumableRates',
+                {
+                    zoneHrid: simResult.zoneName || null,
+                    difficultyTier: simResult.difficultyTier ?? 0,
+                    savedAt: Date.now(),
+                    perHour,
+                },
+                'combatExport'
+            ).catch(() => {});
+        } catch (error) {
+            console.error('[CombatSimUI] Persisting consumable rates failed:', error);
+        }
+    }
+
     _displayResults(simResult, hours, gameData) {
         // If an active detail index is set, show that history entry's details instead
         let partyWarnings = this._lastPartyWarnings || [];

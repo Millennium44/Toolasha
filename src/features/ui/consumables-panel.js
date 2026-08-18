@@ -63,6 +63,8 @@ import { openShoppingList } from './consumables-shopping-list.js';
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js';
 import { queueLengthEstimator } from '../../utils/bundle-bridge.js';
+import { getDrinkConcentration } from '../../utils/tea-parser.js';
+import { readScoped } from '../../utils/character-key.js';
 
 const PANEL_ID = 'toolasha-consumables-panel';
 const GEOMETRY_KEY = 'consumablesPanel';
@@ -122,6 +124,8 @@ class ConsumablesPanel {
     async loadSettings() {
         await loadTarget(() => this._render());
         this._labRuns = Number(await storage.get('consumablesLabRuns', 'settings', 5)) || 5;
+        // The last sim's measured consumable use, for rating food while idle
+        this._simRates = await readScoped('simConsumableRates', 'combatExport', null).catch(() => null);
     }
 
     /** The duration everything is measured against */
@@ -471,12 +475,19 @@ class ConsumablesPanel {
         const players = this._players();
 
         if (!players.length) {
-            const empty = document.createElement('div');
-            empty.style.color = COLORS.textDim;
-            // Reached before any combat has been fought — consumption is measured
-            // from what a run actually used, so there is nothing to measure yet
-            empty.textContent = 'No consumable data yet. Fight something with food or drinks equipped.';
-            this.bodyEl.appendChild(empty);
+            // Nothing measured because nothing is being fought — but what the
+            // next fight will drink is already decided by the default loadout,
+            // and what it will eat by the last sim. Plan from those instead of
+            // shrugging, when the setting allows and either source exists.
+            const idle = config.getSetting('consumables_idleLoadoutPlan') ? this._idleSection() : null;
+            if (idle) {
+                this.bodyEl.appendChild(idle);
+            } else {
+                const empty = document.createElement('div');
+                empty.style.color = COLORS.textDim;
+                empty.textContent = 'No consumable data yet. Fight something with food or drinks equipped.';
+                this.bodyEl.appendChild(empty);
+            }
         }
 
         for (const player of players) this.bodyEl.appendChild(this._playerSection(player));
@@ -486,6 +497,103 @@ class ConsumablesPanel {
             if (lab) this.bodyEl.appendChild(lab);
         } catch (error) {
             console.error('[ConsumablesPanel] Building the labyrinth section failed:', error);
+        }
+    }
+
+    /**
+     * The idle plan: the default combat loadout's consumables, rated without a
+     * fight. Drinks are arithmetic — buff duration against drink concentration
+     * needs no observing — and food takes the last sim's measured per-hour use
+     * for whatever zone was simmed (said in the heading), since food has no
+     * rate outside a fight or a sim. Food with no sim on record still lists,
+     * held and priced, with its rate honestly blank.
+     *
+     * @returns {HTMLElement|null} Null when no default loadout names anything
+     */
+    _idleSection() {
+        const bridge = window.Toolasha?.Combat?.loadoutSnapshot;
+        const snapshots = bridge?.getAllSnapshots?.() || [];
+        const combat = snapshots.filter(
+            (snap) => snap.actionTypeHrid === '/action_types/combat' || snap.actionTypeHrid === ''
+        );
+        combat.sort(
+            (a, b) =>
+                (b.actionTypeHrid === '/action_types/combat') - (a.actionTypeHrid === '/action_types/combat') ||
+                Number(b.isDefault) - Number(a.isDefault) ||
+                (a.ordinal || 0) - (b.ordinal || 0)
+        );
+        const loadout = combat[0];
+        if (!loadout) return null;
+
+        const sim = this._simRates || null;
+        const itemMap = dataManager.getInitClientData?.()?.itemDetailMap;
+        const inventory = dataManager.getInventory?.();
+        const concentration = this._idleConcentration();
+        const simPerDay = (hrid) => (sim?.perHour?.[hrid] > 0 ? sim.perHour[hrid] * 24 : null);
+
+        const entries = [];
+        for (const slot of loadout.drinks || []) {
+            if (!slot?.itemHrid) continue;
+            const duration = itemMap?.[slot.itemHrid]?.consumableDetail?.buffs?.[0]?.duration;
+            const perDay = drinkRatePerDay(duration, concentration) ?? simPerDay(slot.itemHrid);
+            entries.push({ itemHrid: slot.itemHrid, perDay });
+        }
+        for (const slot of loadout.food || []) {
+            if (!slot?.itemHrid) continue;
+            entries.push({ itemHrid: slot.itemHrid, perDay: simPerDay(slot.itemHrid) });
+        }
+        if (!entries.length) return null;
+
+        const section = document.createElement('div');
+        section.style.marginBottom = '12px';
+        const heading = document.createElement('div');
+        Object.assign(heading.style, {
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: '8px',
+            borderBottom: `1px solid ${COLORS.border}`,
+            paddingBottom: '3px',
+            marginBottom: '5px',
+        });
+        const name = document.createElement('span');
+        name.textContent = 'Idle plan — default loadout';
+        name.style.fontWeight = 'bold';
+        name.style.color = COLORS.accent;
+        const source = document.createElement('span');
+        source.style.marginLeft = 'auto';
+        source.style.color = COLORS.textDim;
+        source.textContent = sim
+            ? `food rated from last sim (${dataManager.getInitClientData()?.actionDetailMap?.[sim.zoneHrid]?.name || sim.zoneHrid || 'unknown zone'})`
+            : 'food unrated — run a sim to rate it';
+        heading.append(name, source);
+        section.appendChild(heading);
+        section.appendChild(this._columnHeadings());
+
+        for (const { itemHrid, perDay } of entries) {
+            const entry = forecast(
+                {
+                    itemHrid,
+                    itemName: dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop(),
+                    inventoryAmount: heldInInventory(inventory, itemHrid),
+                    consumptionRate: perDay > 0 ? perDay / 86400 : 0,
+                    consumedPerDay: perDay > 0 ? Math.ceil(perDay) : 0,
+                },
+                getItemPrices(itemHrid)
+            );
+            section.appendChild(this._entryRow(entry, false));
+        }
+        return section;
+    }
+
+    /** Drink concentration off worn gear, for the idle plan's arithmetic rates */
+    _idleConcentration() {
+        try {
+            return (
+                getDrinkConcentration(dataManager.getEquipment?.(), dataManager.getInitClientData?.()?.itemDetailMap) ||
+                0
+            );
+        } catch {
+            return 0;
         }
     }
 

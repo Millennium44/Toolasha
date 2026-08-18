@@ -1251,6 +1251,13 @@ export const settingsGroups = {
                 min: 0,
                 help: 'The spread rule in absolute coins: what the whole stack would earn by waiting in the sell queue instead of insta-selling — (ask − bid) × count, after the 5% tax. Under this amount the Bulk Sell Assistant insta-sells: the premium is not worth a listing slot and the wait. 0 turns this rule off. Default: 0.',
             },
+            consumables_idleLoadoutPlan: {
+                id: 'consumables_idleLoadoutPlan',
+                label: 'Consumables: plan from the default loadout while idle',
+                type: 'checkbox',
+                default: true,
+                help: "With no combat being measured, the panel plans from the default combat loadout instead of showing nothing: drinks rated arithmetically (buff duration against drink concentration), food rated from the last combat sim's measured use for the zone it simmed — or listed unrated until a sim has run.",
+            },
             consumables_labTorchMax: {
                 id: 'consumables_labTorchMax',
                 label: 'Consumables: Labyrinth torch capacity per run',

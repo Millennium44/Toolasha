@@ -725,7 +725,8 @@ class BulkSellAssistant {
             const d = this.decision;
             const verb = d?.vendor ? 'Vendor-sell' : d?.insta ? 'Insta-sell' : 'List';
             const confirmHint = d?.vendor ? 'click Sell For in the item menu' : 'confirm in modal';
-            status.textContent = `${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${formatKMB(d?.price || 0)} (${d?.reason}) — ${confirmHint}`;
+            const shown = d?.insta && d.avgPrice ? d.avgPrice : d?.price || 0;
+            status.textContent = `${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${d?.insta ? '~' : ''}${formatKMB(shown)} (${d?.reason}) — ${confirmHint}`;
             mainBtn.textContent = '⏭ Skip';
             mainBtn.title = 'Close the modal and skip this item';
         } else if (this.state === 'awaiting_next') {
@@ -1016,17 +1017,27 @@ class BulkSellAssistant {
         // sell of the whole stack fills every bid at or above the price the
         // form names, so the price is walked down the book until the depth
         // covers the count — otherwise the modal claims a price the trade
-        // cannot get and sells only part of the stack.
+        // cannot get and sells only part of the stack. The fill itself is
+        // best-first: each unit sells at the best remaining bid, and only the
+        // remainder the better levels could not absorb takes the walked price
+        // — so what the run actually earns is the cumulative sum, and that
+        // (as a per-unit average) is what the chip reports.
         let instaPrice = bids[0]?.price ?? 0;
+        let instaAvg = instaPrice;
         let depthShort = false;
         if (insta) {
             let covered = 0;
+            let proceeds = 0;
             for (const row of bids) {
-                covered += Math.max(0, (row.orderQuantity ?? row.quantity ?? 0) - (row.filledQuantity ?? 0));
+                const available = Math.max(0, (row.orderQuantity ?? row.quantity ?? 0) - (row.filledQuantity ?? 0));
+                const taken = Math.min(available, this.current.count - covered);
+                covered += taken;
+                proceeds += taken * row.price;
                 instaPrice = row.price;
                 if (covered >= this.current.count) break;
             }
             depthShort = covered < this.current.count;
+            instaAvg = covered > 0 ? proceeds / covered : instaPrice;
         }
         const price = insta ? instaPrice : askPrice || bidPrice || 0;
 
@@ -1044,9 +1055,10 @@ class BulkSellAssistant {
             : 'queue ok';
         const depthNote =
             insta && instaPrice < (bids[0]?.price ?? 0)
-                ? `; priced to ${formatKMB(instaPrice)} so the depth covers the stack${depthShort ? ' (book still short)' : ''}`
+                ? `; fills best-first to ${formatKMB(instaPrice)} so the depth covers the stack` +
+                  `${depthShort ? ' (book still short)' : ''}`
                 : '';
-        this.decision = { insta, price, reason: reason + depthNote };
+        this.decision = { insta, price, avgPrice: insta ? instaAvg : null, reason: reason + depthNote };
 
         const open = insta
             ? marketplaceShortcuts.clickInstantActionButton('Sell')

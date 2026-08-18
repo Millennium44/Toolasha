@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The Consumables panel plans while idle, and insta sells report the real average
+
+With nothing being fought, the panel now plans from the default combat loadout instead of shrugging (setting, on by default): drinks rated arithmetically from buff duration and drink concentration, food rated from the last combat sim's measured use — which now survives reloads as a small per-zone summary saved when a sim finishes — with the simmed zone named in the heading, and food listed unrated until a sim has run. Bulk sell's depth-walked insta price is also now reported as what the fill actually earns — each unit sells at the best remaining bid, so the chip shows the volume-weighted average and names the walked floor separately.
+
 ### The Consumables panel buys the way Bulk Sell sells
 
 The Buy links' order-or-instant call now runs the bulk-sell rulebook in reverse — a configurable spread floor, a minimum saving in coins, and a minimum order value all say "pay the ask", urgency still overrules everything, and the tooltip prices each hour of patience (saving ÷ expected fill time). A link now opens the very form its ⚡/⏳ recommendation points at with the quantity filled in (setting, on by default; nothing is bought until the game's own confirm). A new Labyrinth block plans full consumption per run — the whole torch/shroud/beacon capacity (capacities are settings: base 100/4/5 plus your upgrades) and one crate per selected slot — against a cycling 1/3/5/10/25-run target.
