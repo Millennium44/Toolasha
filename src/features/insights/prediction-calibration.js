@@ -39,6 +39,7 @@ import { calculateProductionProfit } from '../actions/production-profit.js';
 import { LootLogStats } from '../actions/loot-log-stats.js';
 import { GATHERING_TYPES, PRODUCTION_TYPES } from '../../utils/profit-constants.js';
 import { runInBackground } from '../../utils/background-work.js';
+import { scriptVersion } from '../../utils/script-version.js';
 
 /** Shares the loot log's store; the key is this feature's own */
 const STORE_NAME = 'lootLogHistory';
@@ -200,6 +201,9 @@ class PredictionCalibration {
             predicted: forecast.predicted,
             actual: actual.perHour,
             actualBid: actual.perHourBid,
+            // The cohort marker: which script's calculators made the forecast.
+            // Without it an engine fix mid-ledger reads as prediction drift.
+            v: scriptVersion(),
         });
         this.recorded.add(id);
 
@@ -285,7 +289,10 @@ class PredictionCalibration {
         if (!this.records) await this._load();
         if (this.recorded.has(record.id)) return false;
 
-        this.records.push(record);
+        // Every pair carries its cohort marker, whoever measured it — a
+        // caller that stamped its own version keeps it
+        const stamped = record.v === undefined ? { ...record, v: scriptVersion() } : record;
+        this.records.push(stamped);
         this.recorded.add(record.id);
         if (this.records.length > MAX_RECORDS) {
             const dropped = this.records.splice(0, this.records.length - MAX_RECORDS);

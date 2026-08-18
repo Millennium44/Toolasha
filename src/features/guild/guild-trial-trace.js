@@ -23,6 +23,7 @@
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import { compressionAvailable, gzipText } from '../sync/sync-compress.js';
+import { scriptVersion } from '../../utils/script-version.js';
 
 /** The settings toggle the capture is gated on */
 export const TRACE_SETTING = 'guildTrialDiagnosticTrace';
@@ -52,15 +53,6 @@ export const TRACE_MESSAGES = [
 
 /** The message whose absence at the head of a trace means the fight was joined late */
 const BOUNDARY_MESSAGE = 'new_guild_battle';
-
-/** The script version, when the userscript sandbox is there to ask. */
-function scriptVersion() {
-    try {
-        return typeof GM_info !== 'undefined' ? GM_info?.script?.version || null : null;
-    } catch {
-        return null;
-    }
-}
 
 /** Monotonic tail for traceId, so two starts in one millisecond still differ */
 let traceSeq = 0;

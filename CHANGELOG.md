@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Zone predictions carry an engine cohort marker
+
+Every stored calibration pair and every Sim Accuracy history row is now stamped with the script version that made its prediction — the lab's cohort lesson applied to zones, where a sim fix mid-ledger used to read as prediction drift. The calibration panel counts pairs from older versions among its combat caveats, and the Past Checks table tags rows from a different version and says why they are not a trend. (One shared `scriptVersion()` helper now replaces the four private copies.)
+
 ### Bulk sell: insta-sell when the spread is a sliver, and banded prices everywhere
 
 A fourth insta-sell rule (`Insta-sell when the spread is under X%`, default off): with the game's finer price increments a listing often earns only a sliver over selling instantly, and inside the threshold that sliver is not worth a listing slot and the queue wait. And every cached price the script serves — all ~65 call sites — is now clamped into the game's tradable range at the one place they all read from (`marketAPI.getPrice`), so a stale snapshot price parked outside the band can no longer print a profit or valuation no order could actually reach. A missing side stays missing: the band never invents a price.

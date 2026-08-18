@@ -51,6 +51,7 @@ import { supportCoverage } from './guild-trial-support.js';
 import guildMemberSkills from './guild-member-skills.js';
 import { TRIAL_ACTIVE_MS, trialWeekStart } from './guild-trials-math.js';
 import { loadTrialRecord } from './guild-trials-store.js';
+import { scriptVersion } from '../../utils/script-version.js';
 
 /** Object store sessions live in — shared with the rest of the guild history */
 const STORE_NAME = 'guildHistory';
@@ -437,18 +438,6 @@ class GuildTrialRecorder {
 }
 
 const guildTrialRecorder = new GuildTrialRecorder();
-
-/**
- * The script version, when the userscript sandbox is there to ask.
- * @returns {string|null} The `@version` of the running build
- */
-function scriptVersion() {
-    try {
-        return typeof GM_info !== 'undefined' ? GM_info?.script?.version || null : null;
-    } catch {
-        return null;
-    }
-}
 
 /**
  * Everything the trials feature knows right now, as one object.

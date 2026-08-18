@@ -134,6 +134,14 @@ function drawCombatCaveats(card, combatRecords) {
     if (mismatched) parts.push(`${mismatched} of ${combatRecords.length} in different gear`);
     if (unknown) parts.push(`${unknown} gear unknown`);
 
+    // Pairs stamped by a different script version were forecast by a different
+    // sim — pooled in, an engine fix reads as prediction drift. The newest
+    // stamped pair's version stands for "current": the running version would
+    // damn every legacy pair recorded before versions were stamped.
+    const currentV = [...combatRecords].sort((a, b) => (b.t || 0) - (a.t || 0)).find((record) => record.v)?.v ?? null;
+    const older = currentV === null ? 0 : combatRecords.filter((record) => (record.v ?? null) !== currentV).length;
+    if (older) parts.push(`${older} from older script versions`);
+
     card.appendChild(
         panelLine(
             'Forecast: all-zones sim',
@@ -141,7 +149,8 @@ function drawCombatCaveats(card, combatRecords) {
             mismatched ? ROW_COLORS.bad : ROW_COLORS.dim,
             'Combat forecasts come from the saved all-zones simulation, not a live calculator. ' +
                 'A pair measured against an aged snapshot or different gear says less about the sim ' +
-                'than about what changed since it ran.'
+                'than about what changed since it ran — and a pair from an older script version was ' +
+                'forecast by a different sim, so an engine fix in between reads as drift.'
         )
     );
 }

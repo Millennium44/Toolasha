@@ -186,6 +186,26 @@ describe('pairing a forecast with a finished run', () => {
         expect(game.stored['lootLogHistory:calibration_char-1']).toHaveLength(1);
     });
 
+    test('every pair carries its script-version cohort marker', async () => {
+        await calibration.addRecord({ id: 'combat|v|1', actionType: 'combat', predicted: 1, actual: 1, t: 0 });
+        // Outside the userscript sandbox the version is null — but the field is
+        // there, so a reader can split cohorts without guessing from timestamps
+        const [stamped] = await calibration.getRecords();
+        expect('v' in stamped).toBe(true);
+        expect(stamped.v).toBeNull();
+
+        // A caller that stamped its own version keeps it
+        await calibration.addRecord({
+            id: 'combat|v|2',
+            actionType: 'combat',
+            predicted: 1,
+            actual: 1,
+            t: 0,
+            v: '9.9.9',
+        });
+        expect((await calibration.getRecords()).at(-1).v).toBe('9.9.9');
+    });
+
     test('does not accept the same outside pair twice, nor one without a name', async () => {
         const record = { id: 'combat|A|t', actionType: 'combat', predicted: 1, actual: 1, t: 0 };
         expect(await calibration.addRecord(record)).toBe(true);

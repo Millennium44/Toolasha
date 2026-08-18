@@ -1864,6 +1864,9 @@ describe('whether the accuracy is drifting', () => {
 
         expect(remembered).toMatchObject({ at: 5_000, zoneHrid: '/actions/combat/fly', fights: 6 });
         expect(remembered.deviationPct).toBeCloseTo(comparison.metrics[0].deviationPct, 10);
+        // The cohort marker: which engine's prediction was deviated from.
+        // Null outside the sandbox, but always present.
+        expect('v' in remembered).toBe(true);
     });
 
     test('a check with nothing to say is not remembered as a zero', () => {

@@ -29,6 +29,7 @@
  */
 
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { scriptVersion } from '../../utils/script-version.js';
 
 /** The labyrinth store, shared with the sim cache — this is labyrinth history */
 const STORE = 'labyrinth';
@@ -43,15 +44,6 @@ const MIN_FIGHT_SECONDS = 3;
 let attempts = [];
 let loaded = false;
 let loading = null;
-
-/** The script version, when the userscript sandbox is there to ask. */
-function scriptVersion() {
-    try {
-        return typeof GM_info !== 'undefined' ? GM_info?.script?.version || null : null;
-    } catch {
-        return null;
-    }
-}
 
 /**
  * The sim-model marker stamped on every attempt recorded from here on.

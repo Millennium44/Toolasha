@@ -23,6 +23,7 @@
 
 import webSocketHook from '../../core/websocket.js';
 import { FINGERPRINT_SPEC } from './labyrinth-recommendation.js';
+import { scriptVersion } from '../../utils/script-version.js';
 
 /** Ticks kept before the oldest fall off — far more than one fight, bounded so a tab can't grow forever */
 const MAX_TICKS = 8000;
@@ -240,15 +241,6 @@ export function captureStatus() {
         ticksDropped,
         stoppedReason,
     };
-}
-
-/** The script version, when the userscript sandbox is there to ask. */
-function scriptVersion() {
-    try {
-        return typeof GM_info !== 'undefined' ? GM_info?.script?.version || null : null;
-    } catch {
-        return null;
-    }
 }
 
 /**

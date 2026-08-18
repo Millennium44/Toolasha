@@ -201,6 +201,7 @@ import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatRelativeTime, formatKMB } from '../../utils/formatters.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { scriptVersion } from '../../utils/script-version.js';
 
 /** Below this many fights the spread of the sample says nothing about the mean */
 export const MIN_SAMPLE_FIGHTS = 3;
@@ -1374,6 +1375,10 @@ export function historyEntry(comparison, at = Date.now()) {
         deviationPct: dps.deviationPct,
         marginPct: dps.marginPct,
         verdict: dps.verdict,
+        // The engine that made the prediction being deviated from. Rows from
+        // different engines are not a drift, and without this the history
+        // cannot say which rows those are.
+        v: scriptVersion(),
     };
 }
 
@@ -2246,19 +2251,35 @@ function drawHistory(body, history) {
     if (entries.length < 2) return;
 
     const card = panelCard(body, 'Past checks', ACCENT);
+    // Rows from a different script version were predicted by a different
+    // engine, and an engine fix between rows reads exactly like drift. The
+    // newest row's version is "current" for this table — steadier than the
+    // running version, which legacy rows (recorded before versions were
+    // stamped) could never match.
+    const currentV = [...entries].reverse().find((entry) => entry.v)?.v ?? null;
+    const versions = new Set(entries.map((entry) => entry.v ?? 'unknown'));
     // Newest first, because the question is "is this getting worse" and the
     // answer is read by comparing the top row to the ones under it
     for (const entry of [...entries].reverse()) {
         const magnitude = `${entry.deviationPct >= 0 ? '+' : ''}${entry.deviationPct.toFixed(1)}%`;
         const band = Number.isFinite(entry.marginPct) ? ` ± ${entry.marginPct.toFixed(1)}%` : '';
+        const cohort = (entry.v ?? null) === currentV ? '' : ` · ${entry.v ? `v${entry.v}` : 'older script'}`;
         card.appendChild(
             panelLine(
                 formatRelativeTime(Date.now() - entry.at) + ' ago',
-                `${magnitude}${band} on ${entry.fights} fights — ${zoneName(entry.zoneHrid)}`,
+                `${magnitude}${band} on ${entry.fights} fights — ${zoneName(entry.zoneHrid)}${cohort}`,
                 verdictColor(entry.verdict),
                 'Damage per second against the prediction, as it stood when the check was run. Rows in the same ' +
                     'zone drifting one way over weeks is the one finding a single check cannot make; rows from ' +
                     'different zones are not a trend.'
+            )
+        );
+    }
+    if (versions.size > 1) {
+        card.appendChild(
+            panelNote(
+                'These checks were not all run by the same script version — a sim change between rows ' +
+                    'reads exactly like drift, so compare rows within one version first.'
             )
         );
     }
