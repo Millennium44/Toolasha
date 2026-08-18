@@ -6,7 +6,9 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const bus = new Map();
+// Hoisted: the recommendation-module graph the fingerprint-spec import pulls in
+// registers websocket listeners while the imports are still being evaluated
+const bus = vi.hoisted(() => new Map());
 vi.mock('../../core/websocket.js', () => ({
     default: {
         on: (type, fn) => {
@@ -14,6 +16,9 @@ vi.mock('../../core/websocket.js', () => ({
             bus.get(type).add(fn);
         },
         off: (type, fn) => bus.get(type)?.delete(fn),
+        // The fingerprint-spec import pulls the recommendation module's graph,
+        // whose connection-state listens for socket lifecycle at import time
+        onSocketEvent: () => {},
     },
 }));
 
@@ -98,6 +103,136 @@ describe('labyrinth tick capture', () => {
         emit('battle_updated', battle);
         capture.startCapture();
         expect(capture.captureStatus().ticks).toBe(0);
+    });
+});
+
+describe('the file says which capture it is, and how the capture ended', () => {
+    // Runs before any suite that downloads: lastCaptureRef is deliberately
+    // sticky across clear/start, so "null before any save" is only observable
+    // while nothing in this file has saved yet.
+    test('lastCaptureRef is null before any capture has been saved', () => {
+        expect(capture.lastCaptureRef()).toBeNull();
+    });
+
+    test('captureId is stable across captureFile calls, and new on the next start', () => {
+        capture.startCapture();
+        const first = capture.captureFile().captureId;
+        expect(first).toEqual(expect.any(String));
+        expect(first.length).toBeGreaterThan(0);
+        expect(capture.captureFile().captureId).toBe(first);
+        expect(capture.captureStatus().captureId).toBe(first);
+
+        capture.startCapture();
+        expect(capture.captureFile().captureId).not.toBe(first);
+    });
+
+    test('a manual stop is recorded as manual, and a redundant stop does not relabel it', () => {
+        vi.useFakeTimers();
+        capture.startCapture();
+        expect(capture.captureFile().stoppedReason).toBeNull();
+        capture.stopCapture();
+        expect(capture.captureFile().stoppedReason).toBe('manual');
+
+        capture.startCapture();
+        vi.advanceTimersByTime(15 * 60 * 1000);
+        expect(capture.isCapturing()).toBe(false);
+        expect(capture.captureFile().stoppedReason).toBe('auto_max_duration');
+        // The button's stop on an already-finished capture must not rewrite why
+        capture.stopCapture();
+        expect(capture.captureFile().stoppedReason).toBe('auto_max_duration');
+        vi.useRealTimers();
+    });
+
+    test('leaving the monster is its own stop reason', () => {
+        capture.startCapture({ monsterHrid: '/monsters/cyclops' });
+        emit('new_battle', { monsters: [{ hrid: '/monsters/gobo_stabber' }], players: [] });
+        expect(capture.captureFile().stoppedReason).toBe('left_monster');
+    });
+
+    test('ring-buffer overflow is counted, not silent', () => {
+        capture.startCapture();
+        // 8000 retained plus 5 pushed off the front; every payload distinct so
+        // the duplicate filter keeps out of the way
+        for (let i = 0; i < 8005; i++) {
+            emit('battle_updated', { ...battle, pMap: { 0: { cHP: i } } });
+        }
+        const file = capture.captureFile();
+        expect(file.ticks).toHaveLength(8000);
+        expect(file.ticksDropped).toBe(5);
+        expect(capture.captureStatus().ticksDropped).toBe(5);
+        // The oldest fell off: the first retained tick is the sixth pushed
+        expect(file.ticks[0].payload.pMap[0].cHP).toBe(5);
+    });
+
+    test('a clean capture reports zero drops', () => {
+        capture.startCapture();
+        emit('battle_updated', battle);
+        expect(capture.captureFile().ticksDropped).toBe(0);
+    });
+
+    test('gap stats come from the retained tick times', () => {
+        vi.useFakeTimers();
+        capture.startCapture();
+        emit('battle_updated', { ...battle, pMap: { 0: { cHP: 100 } } });
+        vi.advanceTimersByTime(300);
+        emit('battle_updated', { ...battle, pMap: { 0: { cHP: 90 } } });
+        vi.advanceTimersByTime(6000); // the tab stalled
+        emit('battle_updated', { ...battle, pMap: { 0: { cHP: 80 } } });
+        vi.advanceTimersByTime(400);
+        emit('battle_updated', { ...battle, pMap: { 0: { cHP: 70 } } });
+
+        const file = capture.captureFile();
+        expect(file.maxGapMs).toBe(6000);
+        expect(file.gapsOver5s).toBe(1);
+        vi.useRealTimers();
+    });
+
+    test('a capture too short to have gaps reports none', () => {
+        capture.startCapture();
+        emit('battle_updated', battle);
+        const file = capture.captureFile();
+        expect(file.maxGapMs).toBeNull();
+        expect(file.gapsOver5s).toBe(0);
+    });
+
+    test('the file names the fingerprint spec beside its context', () => {
+        capture.startCapture({ fingerprint: 'fp-abc' });
+        const file = capture.captureFile();
+        expect(file.fingerprintSpec).toEqual(expect.any(String));
+        expect(file.fingerprintSpec).toContain('djb2');
+    });
+
+    test('the file carries savedAt, and lastCaptureRef survives the clear after a save', () => {
+        vi.stubGlobal('Blob', class {});
+        vi.stubGlobal('URL', { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} });
+        vi.stubGlobal('document', { createElement: () => ({ click: () => {} }) });
+
+        capture.startCapture({ monsterHrid: '/monsters/cyclops', roomLevel: 206 });
+        emit('battle_updated', battle);
+        const id = capture.captureFile().captureId;
+        expect(capture.captureFile().savedAt).toBeNull();
+
+        capture.stopCapture();
+        expect(capture.downloadCapture()).toBe(true);
+        expect(capture.captureFile().savedAt).not.toBeNull();
+
+        const ref = capture.lastCaptureRef();
+        expect(ref).toEqual({
+            captureId: id,
+            savedAt: expect.any(Number),
+            monsterHrid: '/monsters/cyclops',
+            roomLevel: 206,
+        });
+
+        // The ref names the file on disk, so throwing away the held ticks —
+        // and even starting a new capture — must not lose it
+        capture.clearCapture();
+        expect(capture.lastCaptureRef()).toEqual(ref);
+        capture.startCapture();
+        expect(capture.lastCaptureRef()).toEqual(ref);
+        capture.stopCapture();
+
+        vi.unstubAllGlobals();
     });
 });
 

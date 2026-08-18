@@ -20,6 +20,13 @@ export const RECOMMEND_CONTROLS_CLASS = 'mwi-labyrinth-recommend-controls';
 /** Fallback for the recommend panel's Target Win %, matching settings-schema */
 const DEFAULT_RECOMMEND_TARGET_PCT = 70;
 
+/**
+ * What the build fingerprint hashes, for exports to carry — stored records key
+ * on the value, so the algorithm must never change; this documents it instead.
+ */
+export const FINGERPRINT_SPEC =
+    'djb2 over loadout snapshots (savedAt excluded) + worn itemHrid+enhancementLevel; excludes levels, abilities, buffs';
+
 /** Prototype methods mixed into LabyrinthClearRate */
 export const recommendationMethods = {
     /**
@@ -148,6 +155,9 @@ export const recommendationMethods = {
      * savedAt is excluded — snapshots are rebuilt with a fresh timestamp every
      * time the game re-broadcasts loadouts (e.g. when the lab equips the next
      * room's loadout), which is not a content change.
+     *
+     * Inputs and algorithm are pinned by {@link FINGERPRINT_SPEC}: stored
+     * records key on the value, so neither may change.
      * @private
      */
     _snapshotContentFingerprint() {

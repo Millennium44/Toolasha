@@ -5,8 +5,22 @@
  * file's provenance fields.
  */
 
-import { describe, test, expect } from 'vitest';
-import { exportMeta, hashPlayerName, sanitizeExport, buildAccuracyExport } from './labyrinth-accuracy-export.js';
+import { describe, test, expect, afterEach, vi } from 'vitest';
+
+/** What the mocked tick capture reports as its last saved file; set per test */
+const tick = vi.hoisted(() => ({ ref: null }));
+vi.mock('./labyrinth-tick-capture.js', () => ({
+    default: { lastCaptureRef: () => tick.ref },
+}));
+
+import {
+    exportMeta,
+    hashPlayerName,
+    sanitizeExport,
+    buildAccuracyExport,
+    setSimConfigSource,
+} from './labyrinth-accuracy-export.js';
+import { FINGERPRINT_SPEC } from './labyrinth-recommendation.js';
 
 describe('hashPlayerName', () => {
     test('is stable: the same name always hashes the same', () => {
@@ -97,5 +111,51 @@ describe('buildAccuracyExport', () => {
 
     test('exportMeta says which sim model this build runs', () => {
         expect(exportMeta().fullKit).toBe(true);
+    });
+
+    test('exportMeta names the seed policy and the fingerprint spec', () => {
+        const meta = exportMeta();
+        expect(meta.seedPolicy).toBe('unseeded');
+        expect(meta.fingerprintSpec).toBe(FINGERPRINT_SPEC);
+        expect(FINGERPRINT_SPEC).toContain('djb2');
+    });
+});
+
+describe('pairing an export with its tick capture and sim config', () => {
+    afterEach(() => {
+        tick.ref = null;
+        setSimConfigSource(null);
+    });
+
+    test('with no saved capture and no sim module loaded, both stamps are null', () => {
+        const file = buildAccuracyExport({});
+        expect(file.capture).toBeNull();
+        expect(file.simConfig).toBeNull();
+    });
+
+    test('the last saved tick capture is stamped, so the two files can be paired', () => {
+        tick.ref = { captureId: 'abc-1', savedAt: 123, monsterHrid: '/monsters/cyclops', roomLevel: 206 };
+        expect(buildAccuracyExport({}).capture).toEqual(tick.ref);
+    });
+
+    test('the registered sim config rides along, read at export time', () => {
+        setSimConfigSource(() => ({
+            stopRule: { targetHalfWidth: 0.01, minTrials: 100, maxTrials: 20000 },
+            hours: 3,
+        }));
+        const file = buildAccuracyExport({});
+        expect(file.simConfig).toEqual({
+            stopRule: { targetHalfWidth: 0.01, minTrials: 100, maxTrials: 20000 },
+            hours: 3,
+        });
+    });
+
+    test('a sim-config source that throws leaves the stamp null rather than the export unbuilt', () => {
+        const quiet = vi.spyOn(console, 'error').mockImplementation(() => {});
+        setSimConfigSource(() => {
+            throw new Error('settings unavailable');
+        });
+        expect(buildAccuracyExport({}).simConfig).toBeNull();
+        quiet.mockRestore();
     });
 });

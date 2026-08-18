@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab captures and accuracy exports can be paired and audited
+
+Tick captures now carry a capture id, how the capture ended, ring-buffer drops (an overflowed capture no longer exports identically to a clean one), and stream-gap statistics; the accuracy export names the last saved capture, the sim stop rule, the seed policy, and a spec documenting what the build fingerprint hashes.
+
 ### Accuracy record: predictions stored at entry, model cohorts, calibration report, sanitized exports
 
 Each recorded lab fight now stores the clear prediction in effect when it happened plus a sim-model marker, so fights judged under the previous sim model are excluded from the headline numbers (with a count) instead of silently pooled — and a live prediction no longer retroactively judges history. The Accuracy tab gains a calibration card: reliability by probability band, Brier score and expected±sigma. Exports carry version/host/full-kit provenance and unrounded figures, and a new Sanitized export hashes names and strips ids for public bug reports.

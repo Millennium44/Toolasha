@@ -18,6 +18,7 @@ import { extractMonsterAttacks, summarizeSimAttacks, compareIncoming } from './l
 import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
+import { setSimConfigSource } from './labyrinth-accuracy-export.js';
 import { deriveObserved, predictedFromSim, compareLab } from './labyrinth-replay-check.js';
 import { roomXpPerHour } from './labyrinth-formulas.js';
 import { DISCARD_LEGACY } from './labyrinth-outcomes.js';
@@ -76,6 +77,49 @@ const DECISION_MAX_TRIALS = 4000;
 const MIN_REPLAY_FIGHTS = 3;
 /** At most this many rooms are replayed at once, so a Replay press is bounded */
 const MAX_REPLAY_GROUPS = 3;
+
+/**
+ * How tightly a room's clear chance has to be pinned down before its sim
+ * stops, in percentage points either side.
+ *
+ * This replaced a fixed span of simulated hours, which bought trials at a
+ * rate set by fight length and so measured a five-second room twenty times
+ * more finely than one running the full timeout — the slow rooms being
+ * exactly the marginal ones where the decision is closest.
+ * @returns {number}
+ */
+export function getSimPrecisionPct() {
+    const raw = Number(config.getSettingValue('labyrinthSimPrecision', DEFAULT_SIM_PRECISION_PCT));
+    return Math.min(10, Math.max(0.1, raw || DEFAULT_SIM_PRECISION_PCT));
+}
+
+/**
+ * Ceiling on a single room's sim, in simulated hours. Precision normally
+ * ends the run long before this; it exists so a room whose rate sits near a
+ * coin toss cannot run forever.
+ * @returns {number}
+ */
+export function getSimHours() {
+    const raw = Number(config.getSettingValue('labyrinthRecommendSimHours', 3));
+    return Math.min(100, Math.max(1, Math.floor(raw) || 3));
+}
+
+/**
+ * The stopping rule handed to the engine.
+ * @returns {{targetHalfWidth: number, minTrials: number, maxTrials: number}}
+ */
+export function getSimStopRule() {
+    return {
+        targetHalfWidth: getSimPrecisionPct() / 100,
+        minTrials: MIN_SIM_TRIALS,
+        maxTrials: MAX_SIM_TRIALS,
+    };
+}
+
+// Registered rather than imported from the export module: that direction would
+// put this module's whole sim/marketplace graph under a small pure one. Read at
+// export time, so the file carries the settings then in force.
+setSimConfigSource(() => ({ stopRule: getSimStopRule(), hours: getSimHours() }));
 
 /** Prototype methods mixed into LabyrinthClearRate */
 export const simCacheMethods = {
@@ -215,37 +259,22 @@ export const simCacheMethods = {
         }
     },
 
+    // The sim-config accessors are module functions above (exports read them
+    // too); mixed in unchanged so `this.getSimStopRule()` callers keep working.
+    getSimPrecisionPct,
+    getSimHours,
+    getSimStopRule,
+
     /**
-     * How tightly a room's clear chance has to be pinned down before its sim
-     * stops, in percentage points either side.
+     * Throw away every recorded fight, so the calibration replay starts fresh.
      *
-     * This replaced a fixed span of simulated hours, which bought trials at a
-     * rate set by fight length and so measured a five-second room twenty times
-     * more finely than one running the full timeout — the slow rooms being
-     * exactly the marginal ones where the decision is closest.
+     * Separate from `resetOutcomes` (the clear-chance tallies): the two are shown
+     * together under the Accuracy tab, and the Reset button clears both so the
+     * whole record can be restarted — which is also what its label has always
+     * promised. Clears every fingerprint, not just the current gear's.
      */
-    getSimPrecisionPct() {
-        const raw = Number(config.getSettingValue('labyrinthSimPrecision', DEFAULT_SIM_PRECISION_PCT));
-        return Math.min(10, Math.max(0.1, raw || DEFAULT_SIM_PRECISION_PCT));
-    },
-
-    /**
-     * Ceiling on a single room's sim, in simulated hours. Precision normally
-     * ends the run long before this; it exists so a room whose rate sits near a
-     * coin toss cannot run forever.
-     */
-    getSimHours() {
-        const raw = Number(config.getSettingValue('labyrinthRecommendSimHours', 3));
-        return Math.min(100, Math.max(1, Math.floor(raw) || 3));
-    },
-
-    /** The stopping rule handed to the engine */
-    getSimStopRule() {
-        return {
-            targetHalfWidth: this.getSimPrecisionPct() / 100,
-            minTrials: MIN_SIM_TRIALS,
-            maxTrials: MAX_SIM_TRIALS,
-        };
+    clearRecordedFights() {
+        labFightRecorder.clearRecording();
     },
 
     /**
@@ -260,20 +289,9 @@ export const simCacheMethods = {
      * you are wearing now — which is why it pools only the fights fought in that
      * same gear, by fingerprint.
      *
-     * @returns {Promise<{groups: Array<Object>, fingerprint: string}>}
+     * @returns {Promise<{groups: Array<Object>, pool: Object,
+     *   config: {stopRule: Object, hours: number, seedPolicy: string}}>}
      */
-    /**
-     * Throw away every recorded fight, so the calibration replay starts fresh.
-     *
-     * Separate from `resetOutcomes` (the clear-chance tallies): the two are shown
-     * together under the Accuracy tab, and the Reset button clears both so the
-     * whole record can be restarted — which is also what its label has always
-     * promised. Clears every fingerprint, not just the current gear's.
-     */
-    clearRecordedFights() {
-        labFightRecorder.clearRecording();
-    },
-
     async replayRecordedFights() {
         const fingerprint = this._snapshotContentFingerprint();
         const attempts = labFightRecorder.recordedAttempts(fingerprint);
@@ -318,7 +336,14 @@ export const simCacheMethods = {
         // What the pool holds for this gear, so the panel can say "12 fights over
         // 3 monsters, none with enough yet" when nothing cleared the bar
         const status = labFightRecorder.recordingStatus(fingerprint);
-        return { groups, pool: status };
+        // The rule the sims above ran under, for the export the result rides in.
+        // Unseeded: these runs take no fixed seed, so only the distribution —
+        // not the exact trial sequence — reproduces.
+        return {
+            groups,
+            pool: status,
+            config: { stopRule: this.getSimStopRule(), hours: this.getSimHours(), seedPolicy: 'unseeded' },
+        };
     },
 
     /**

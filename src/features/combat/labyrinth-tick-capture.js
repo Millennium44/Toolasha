@@ -22,6 +22,7 @@
  */
 
 import webSocketHook from '../../core/websocket.js';
+import { FINGERPRINT_SPEC } from './labyrinth-recommendation.js';
 
 /** Ticks kept before the oldest fall off — far more than one fight, bounded so a tab can't grow forever */
 const MAX_TICKS = 8000;
@@ -54,6 +55,19 @@ let lastBattleKey = null;
  * capture would sit offering the same download forever.
  */
 let savedAt = null;
+/**
+ * Names this capture in exports, so an accuracy file can say which tick file it
+ * pairs with. New on every start, stable for the capture's whole life.
+ */
+let captureId = null;
+/** Ticks the ring buffer trimmed away — 0 means the file holds everything heard */
+let ticksDropped = 0;
+/** 'manual' | 'auto_max_duration' | 'left_monster', or null while running / before any stop */
+let stoppedReason = null;
+/** Monotonic tail for captureId, so two starts in one millisecond still differ */
+let captureSeq = 0;
+/** The last capture written out as a file, for exports to pair against; survives clear/start */
+let lastSavedRef = null;
 
 /** The first monster's hrid in a `new_battle` payload, or null. */
 function firstMonsterHrid(payload) {
@@ -98,7 +112,7 @@ function push(type, payload) {
         if (targetMonster) {
             const hrid = firstMonsterHrid(payload);
             if (hrid && hrid !== targetMonster) {
-                stopCapture();
+                endCapture('left_monster');
                 return;
             }
         }
@@ -123,8 +137,12 @@ function push(type, payload) {
     }
     ticks.push({ at: Date.now() - startedAt, type, payload });
     // Keep the newest: a long capture that overflows should hold the recent
-    // fight, not the one it opened on
-    if (ticks.length > MAX_TICKS) ticks = ticks.slice(ticks.length - MAX_TICKS);
+    // fight, not the one it opened on. Counted, so an overflowed capture's file
+    // says it is a window, not the whole feed.
+    if (ticks.length > MAX_TICKS) {
+        ticksDropped += ticks.length - MAX_TICKS;
+        ticks = ticks.slice(ticks.length - MAX_TICKS);
+    }
 }
 
 /**
@@ -149,6 +167,9 @@ export function startCapture(ctx = null, { stopOnLeave = true } = {}) {
     duplicatesDiscarded = 0;
     lastBattleKey = null;
     savedAt = null;
+    captureId = `${Date.now().toString(36)}-${(captureSeq++).toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    ticksDropped = 0;
+    stoppedReason = null;
     context = ctx || null;
     targetMonster = stopOnLeave ? ctx?.monsterHrid || null : null;
 
@@ -162,11 +183,15 @@ export function startCapture(ctx = null, { stopOnLeave = true } = {}) {
     webSocketHook.on('new_battle', onNew);
     handlers = { onBattle, onNew };
 
-    autoStopTimer = setTimeout(() => stopCapture(), MAX_CAPTURE_MS);
+    autoStopTimer = setTimeout(() => endCapture('auto_max_duration'), MAX_CAPTURE_MS);
 }
 
-/** Stop recording. What was captured stays captured, for the file. */
-export function stopCapture() {
+/**
+ * The one stop path, so the file can say how the capture ended. Only a running
+ * capture takes the reason — a redundant stop must not relabel a finished one.
+ * @param {string} reason - 'manual' | 'auto_max_duration' | 'left_monster'
+ */
+function endCapture(reason) {
     if (autoStopTimer) {
         clearTimeout(autoStopTimer);
         autoStopTimer = null;
@@ -176,10 +201,16 @@ export function stopCapture() {
         webSocketHook.off('new_battle', handlers.onNew);
         handlers = null;
     }
+    if (capturing) stoppedReason = reason;
     capturing = false;
 }
 
-/** Throw away the captured ticks. */
+/** Stop recording. What was captured stays captured, for the file. */
+export function stopCapture() {
+    endCapture('manual');
+}
+
+/** Throw away the captured ticks. The ref to the last saved file survives. */
 export function clearCapture() {
     ticks = [];
     startedAt = 0;
@@ -188,12 +219,15 @@ export function clearCapture() {
     duplicatesDiscarded = 0;
     lastBattleKey = null;
     savedAt = null;
+    captureId = null;
+    ticksDropped = 0;
+    stoppedReason = null;
 }
 
 /**
  * How much has been captured, for the button to read.
  * @returns {{capturing: boolean, ticks: number, seconds: number, duplicatesDiscarded: number,
- *   savedAt: number|null}}
+ *   savedAt: number|null, captureId: string|null, ticksDropped: number, stoppedReason: string|null}}
  */
 export function captureStatus() {
     return {
@@ -202,6 +236,9 @@ export function captureStatus() {
         seconds: startedAt ? (Date.now() - startedAt) / 1000 : 0,
         duplicatesDiscarded,
         savedAt,
+        captureId,
+        ticksDropped,
+        stoppedReason,
     };
 }
 
@@ -225,6 +262,16 @@ function scriptVersion() {
  */
 export function captureFile() {
     const host = typeof location !== 'undefined' ? location.hostname || null : null;
+    // Stalls in the retained feed: a reader trusting tick cadence needs to know
+    // where the stream went quiet (tab throttled, connection dropped). One O(n)
+    // pass here, not per-tick bookkeeping.
+    let maxGapMs = null;
+    let gapsOver5s = 0;
+    for (let i = 1; i < ticks.length; i++) {
+        const gap = ticks[i].at - ticks[i - 1].at;
+        if (maxGapMs === null || gap > maxGapMs) maxGapMs = gap;
+        if (gap > 5000) gapsOver5s++;
+    }
     return {
         format: 'toolasha-labyrinth-tick-capture',
         version: 2,
@@ -233,8 +280,15 @@ export function captureFile() {
         isTestServer: host ? host.includes('test.') : null,
         recordedAt: startedAt || null,
         exportedAt: Date.now(),
+        savedAt,
+        captureId,
         context: context || null,
+        fingerprintSpec: FINGERPRINT_SPEC,
         duplicatesDiscarded,
+        ticksDropped,
+        stoppedReason,
+        maxGapMs,
+        gapsOver5s,
         ticks: ticks.map((tick) => ({ ...tick })),
     };
 }
@@ -255,11 +309,31 @@ export function downloadCapture() {
         // The ticks stay held (the uptime harness reuses a stopped capture),
         // but the button no longer needs to offer this download again
         savedAt = Date.now();
+        // The written file is now the one exports can pair against, so the ref
+        // outlives the clear-after-save the button does next
+        lastSavedRef = {
+            captureId,
+            savedAt,
+            monsterHrid: context?.monsterHrid ?? null,
+            roomLevel: context?.roomLevel ?? null,
+        };
         return true;
     } catch (error) {
         console.error('[LabyrinthTickCapture] Writing the capture failed:', error);
         return false;
     }
+}
+
+/**
+ * The most recently saved capture file, so an accuracy/replay export can name
+ * the tick file it pairs with. Null until a capture has been downloaded;
+ * survives clearCapture and later starts — it describes the file on disk, not
+ * the ticks in memory.
+ * @returns {{captureId: string|null, savedAt: number, monsterHrid: string|null,
+ *   roomLevel: number|null}|null}
+ */
+export function lastCaptureRef() {
+    return lastSavedRef ? { ...lastSavedRef } : null;
 }
 
 export default {
@@ -270,4 +344,5 @@ export default {
     captureStatus,
     captureFile,
     downloadCapture,
+    lastCaptureRef,
 };

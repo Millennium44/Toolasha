@@ -14,6 +14,37 @@
  */
 
 import { splitModelCohorts, calibrationReport } from './labyrinth-calibration.js';
+import tickCapture from './labyrinth-tick-capture.js';
+import { FINGERPRINT_SPEC } from './labyrinth-recommendation.js';
+
+/**
+ * Where the sim's stop rule and hour budget are read from at export time.
+ *
+ * Registered by the sim-cache module rather than imported from it: importing
+ * would drag the whole sim/marketplace graph under this small pure module, and
+ * this direction keeps the export buildable (with `simConfig: null`) when no
+ * sim module is loaded at all.
+ */
+let simConfigSource = null;
+
+/**
+ * Register the callback {@link buildAccuracyExport} reads its `simConfig` from.
+ * @param {function(): {stopRule: Object, hours: number}} source
+ */
+export function setSimConfigSource(source) {
+    simConfigSource = typeof source === 'function' ? source : null;
+}
+
+/** The registered sim config, or null when no source is registered / it fails. */
+function readSimConfig() {
+    if (!simConfigSource) return null;
+    try {
+        return simConfigSource();
+    } catch (error) {
+        console.error('[LabyrinthAccuracyExport] Reading the sim config failed:', error);
+        return null;
+    }
+}
 
 /** The script version, when the userscript sandbox is there to ask. */
 function scriptVersion() {
@@ -28,7 +59,7 @@ function scriptVersion() {
  * What produced an export and against which server — live and test do not
  * share balance, so a reader has to know which one a record measured.
  * @returns {{toolashaVersion: string|null, host: string|null, isTestServer: boolean|null,
- *   fullKit: boolean}}
+ *   fullKit: boolean, seedPolicy: string, fingerprintSpec: string}}
  */
 export function exportMeta() {
     const host = typeof location !== 'undefined' ? location.hostname || null : null;
@@ -38,6 +69,12 @@ export function exportMeta() {
         isTestServer: host ? host.includes('test.') : null,
         // The sim model this build runs; attempts carry their own marker
         fullKit: true,
+        // Replay sims run with no fixed seed, so a re-run will not reproduce
+        // the exact trial sequence — only the distribution
+        seedPolicy: 'unseeded',
+        // How the fingerprints in this file were computed, so a reader knows
+        // what a matching pair of them does and does not guarantee
+        fingerprintSpec: FINGERPRINT_SPEC,
     };
 }
 
@@ -122,6 +159,11 @@ export function buildAccuracyExport({ snapshot = null, attempts = [], replay = n
         bySubject: snapshot?.bySubject ?? [],
         // Over the current cohort only; the legacy count is reported, not pooled
         reliability: { ...calibrationReport(current), legacyExcluded: legacy.length },
+        // The tick-capture file this export can be paired with, when one was
+        // saved this session (guarded: test doubles may not carry the accessor)
+        capture: typeof tickCapture?.lastCaptureRef === 'function' ? tickCapture.lastCaptureRef() : null,
+        // The stop rule and hour budget the replay sims ran under
+        simConfig: readSimConfig(),
         attempts,
         replay,
     };
@@ -148,4 +190,4 @@ export function downloadJson(data, baseName) {
     }
 }
 
-export default { exportMeta, hashPlayerName, sanitizeExport, buildAccuracyExport, downloadJson };
+export default { exportMeta, hashPlayerName, sanitizeExport, buildAccuracyExport, downloadJson, setSimConfigSource };
