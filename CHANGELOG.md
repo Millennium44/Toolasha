@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The tradable-range clamp now computes the game's exact band
+
+The 8/14 hotfix defined the range as ±10% of value snapped outward to the price-increment ladder plus one increment per side. The ladder (`getBinnedPrice` in the game client — increments of roughly 0.17–0.5% of price, tiered by first digit) is now implemented as `priceIncrement`, and `bandFromValue` reproduces the game's real band bounds, verified against live captures from 16 coins to hundreds of billions. Every consumer of the clamp — tooltip prices, bulk sell, networth banding — tightens to the true range for free. The one remaining divergence is recalibration lag: a band chases a freshly moved value at ≤1% per hourly pass.
+
 ### A disconnected game no longer reads as a broken one
 
 Logging the account in from another tab (or any socket loss) replaces the game with a full-screen "Disconnected" message and tears down the header and nav — which the startup health check then reported as three missing anchors, "game update?". The canary check now stands down entirely while the connection message is on screen: no anchor means anything until the game is back.

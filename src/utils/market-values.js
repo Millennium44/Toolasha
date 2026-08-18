@@ -13,15 +13,15 @@
  *    below it cannot actually fill. A stale snapshot price parked outside the
  *    band would otherwise print an impossible profit or valuation.
  *
- * The range here is a multiplicative ~±10% approximation. The 8/14/2026 hotfix
- * widened the game's real range by one price increment on each side (so cheap
- * items get a proportionally wider band). We do not model that extra increment:
- * the game does not publish the range bounds — only the value — and the plugin
- * has no price-increment tier table (it drives the game's own +/- buttons). The
- * resulting error is bounded to one increment on a boundary price — a few coins
- * even on cheap items — so the band runs one increment tighter than the game's
- * on each edge. If the game ever exposes the increment or the range bounds
- * directly, widen {@link bandFromValue} by one increment each side.
+ * The range is computed the way the game computes it: ±10% of the value,
+ * snapped outward to the price-increment ladder and widened by one increment
+ * on each side (the 8/14/2026 hotfix — cheap items get a proportionally wider
+ * range). The ladder is the game client's own `getBinnedPrice` tiering, read
+ * out of its bundle and verified against live band bounds across nine decades
+ * of price on 8/18/2026 — see {@link priceIncrement}. One caveat survives:
+ * bands *recalibrate toward* the value at ≤1% per hourly pass, so right after
+ * a value moves, the game's actual band lags what this computes from the new
+ * value until the passes catch up.
  *
  * The map is reached through the game's own `localStorageUtil.getMarketItemValues()`
  * (via dataManager), which decompresses the localStorage blob for us — reading it
@@ -84,13 +84,46 @@ export function marketValueFor(itemHrid, enhancementLevel = 0) {
 }
 
 /**
- * The tradable range implied by a market value (~±10% around it).
+ * The marketplace's price increment at a price — the game client's own
+ * `getBinnedPrice` ladder, by first digit and digit count:
+ *
+ *   first digit 1-2 → 5×10^(digits−4)      (1,000-2,999: 5; 10,000-29,999: 50 …)
+ *   first digit 3-4 → 10^(digits−3)        (300-499: 1; 3,000-4,999: 10 …)
+ *   first digit 5-9 → 2×10^(digits−3)      (500-999: 2; 5,000-9,999: 20 …)
+ *
+ * with a floor of 1, so every increment is roughly 0.17-0.5% of the price.
+ * @param {number} price - Any price (fractions are floored, as the game does)
+ * @returns {number} The increment the ladder assigns that price
+ */
+export function priceIncrement(price) {
+    const whole = Math.floor(price);
+    if (!(whole > 0)) return 1;
+    const text = String(whole);
+    const digits = text.length;
+    const first = text[0];
+    if (first === '1' || first === '2') return digits >= 4 ? 5 * 10 ** (digits - 4) : 1;
+    if (first === '3' || first === '4') return digits >= 3 ? 10 ** (digits - 3) : 1;
+    return digits >= 3 ? 2 * 10 ** (digits - 3) : 1;
+}
+
+/**
+ * The tradable range implied by a market value, as the game computes it:
+ * ±10%, snapped outward to the increment ladder, then one increment wider on
+ * each side. The increment is taken from the raw ±10% figure before snapping —
+ * mirroring `getBinnedPrice`, which sizes the step from its input.
  * @param {number|null} value - Market value
  * @returns {{min:number, max:number}|null}
  */
 export function bandFromValue(value) {
     if (!(value > 0)) return null;
-    return { min: value / BAND_FACTOR, max: value * BAND_FACTOR };
+    const rawMax = value * BAND_FACTOR;
+    const maxStep = priceIncrement(rawMax);
+    const rawMin = value / BAND_FACTOR;
+    const minStep = priceIncrement(rawMin);
+    return {
+        min: Math.max(0, Math.floor(rawMin / minStep) * minStep - minStep),
+        max: Math.ceil(rawMax / maxStep) * maxStep + maxStep,
+    };
 }
 
 /**

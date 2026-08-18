@@ -17,10 +17,10 @@ import {
     refreshMarketValues,
     marketValueFor,
     bandFromValue,
+    priceIncrement,
     reconcileBook,
     clampToBand,
     _resetMarketValues,
-    BAND_FACTOR,
 } from './market-values.js';
 
 const payload = (version, values) => ({ marketValuesVersion: version, marketItemValues: values });
@@ -34,11 +34,39 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
+describe('priceIncrement', () => {
+    test("the ladder matches the game's getBinnedPrice tiering", () => {
+        // first digit 1-2: 5x10^(d-4); 3-4: 10^(d-3); 5-9: 2x10^(d-3); floor 1
+        expect(priceIncrement(7)).toBe(1);
+        expect(priceIncrement(117)).toBe(1);
+        expect(priceIncrement(450)).toBe(1);
+        expect(priceIncrement(500)).toBe(2);
+        expect(priceIncrement(1000)).toBe(5);
+        expect(priceIncrement(2999)).toBe(5);
+        expect(priceIncrement(3000)).toBe(10);
+        expect(priceIncrement(5000)).toBe(20);
+        expect(priceIncrement(44671)).toBe(100);
+        expect(priceIncrement(339020)).toBe(1000);
+        expect(priceIncrement(33110000000)).toBe(100000000);
+    });
+});
+
 describe('bandFromValue', () => {
-    test('is about ±10% around the value', () => {
-        const band = bandFromValue(1100);
-        expect(band.min).toBeCloseTo(1100 / BAND_FACTOR, 6);
-        expect(band.max).toBeCloseTo(1100 * BAND_FACTOR, 6);
+    test('reproduces the live band bounds measured across nine decades of price', () => {
+        // Exact bands read off the test server 8/18/2026, fully recalibrated
+        expect(bandFromValue(16)).toEqual({ min: 13, max: 19 }); // strawberry
+        expect(bandFromValue(107)).toEqual({ min: 96, max: 119 }); // burble cheese
+        expect(bandFromValue(40610)).toEqual({ min: 36800, max: 44800 }); // revive
+        expect(bandFromValue(308200)).toEqual({ min: 279500, max: 341000 }); // royal cloth
+        expect(bandFromValue(30100000000)).toEqual({ min: 27300000000, max: 33300000000 }); // umbral tunic
+        expect(bandFromValue(474200000000)).toEqual({ min: 430000000000, max: 524000000000 }); // adv. defense charm
+    });
+
+    test('one increment wider than the snapped-outward ten percent on each side', () => {
+        // 1100: raw max 1210 at step 5 -> 1215. The raw min is 1100/1.1 =
+        // 999.999... in floats, landing a ladder tier down (step 2) -> 996 —
+        // one coin narrower than exact-arithmetic 995, which errs safe
+        expect(bandFromValue(1100)).toEqual({ min: 996, max: 1215 });
     });
 
     test('null for a missing or non-positive value', () => {
@@ -122,8 +150,9 @@ describe('clampToBand', () => {
     test('clamps an out-of-band price to the nearest edge', () => {
         mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
         refreshMarketValues(0);
-        expect(clampToBand(5000, '/items/cheese')).toBeCloseTo(1000 * BAND_FACTOR, 6);
-        expect(clampToBand(100, '/items/cheese')).toBeCloseTo(1000 / BAND_FACTOR, 6);
+        // Value 1000 under the increment ladder: [906, 1105]
+        expect(clampToBand(5000, '/items/cheese')).toBe(1105);
+        expect(clampToBand(100, '/items/cheese')).toBe(906);
     });
 
     test('leaves an in-band price alone and never invents one', () => {
@@ -153,8 +182,8 @@ describe('reconcileBook', () => {
         refreshMarketValues(0);
 
         const { ask, bid } = reconcileBook(5000, 100, '/items/cheese');
-        expect(ask).toBeCloseTo(1000 * BAND_FACTOR, 6); // pulled down to band max
-        expect(bid).toBeCloseTo(1000 / BAND_FACTOR, 6); // pulled up to band min
+        expect(ask).toBe(1105); // pulled down to band max
+        expect(bid).toBe(906); // pulled up to band min
     });
 
     test('leaves an in-band price alone', () => {

@@ -211,7 +211,7 @@ describe('calculateItemValue', () => {
         mocks.marketValues = { marketValuesVersion: 1, marketItemValues: { '/items/wood': { 0: 1000 } } };
 
         const value = await calculateItemValue({ itemHrid: '/items/wood', enhancementLevel: 0, count: 1 });
-        expect(value).toBeCloseTo(1100, 6); // 1000 * 1.1, not 5000
+        expect(value).toBe(1105); // band max for value 1000 under the increment ladder, not 5000
     });
 });
 
