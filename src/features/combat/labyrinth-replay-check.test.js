@@ -79,6 +79,72 @@ describe('deriveObserved', () => {
         expect(groups).toHaveLength(0);
     });
 
+    test('the reconciled endpoint wins over a tick sum that missed the opening hit', () => {
+        // A recorder that caught the start knows the true figure: start − end
+        // + healed. The 3 Hz tick sum runs a few percent low when hits merge
+        // into one frame — here it missed 296 — and the endpoint recovers it.
+        const [g] = deriveObserved([
+            attempt({
+                monsterMaxHp: 14_320,
+                monsterHpStart: 14_320,
+                monsterHpEnd: 8_943,
+                monsterHealed: 0,
+                monsterDamage: 5_081,
+                playerDamageTaken: 500,
+                complete: true,
+            }),
+        ]);
+        expect(g.totalMonsterDamage).toBe(5_377);
+        // Player healing is not tracked, so the taken side has no endpoint to
+        // reconcile against and stays the tick-summed figure
+        expect(g.totalPlayerTaken).toBe(500);
+    });
+
+    test('monster healing raises the reconciled endpoint, cleared or not', () => {
+        const [lost] = deriveObserved([
+            attempt({
+                monsterMaxHp: 1_000,
+                monsterHpStart: 1_000,
+                monsterHpEnd: 400,
+                monsterHealed: 150,
+                monsterDamage: 700,
+                playerDamageTaken: 500,
+                complete: true,
+            }),
+        ]);
+        expect(lost.totalMonsterDamage).toBe(750); // 1000 − 400 + 150
+
+        const [won] = deriveObserved([
+            attempt({
+                outcome: 'clear',
+                cleared: true,
+                monsterMaxHp: 1_000,
+                monsterHpStart: 1_000,
+                monsterHpEnd: 120, // killing-blow tick never arrived
+                monsterHealed: 150,
+                monsterDamage: 900,
+                playerDamageTaken: 500,
+                complete: true,
+            }),
+        ]);
+        expect(won.totalMonsterDamage).toBe(1_150); // the whole bar plus what it healed back
+    });
+
+    test('incomplete new-format attempts are dropped and counted; legacy attempts stay eligible', () => {
+        const groups = deriveObserved([
+            attempt({ complete: true }),
+            attempt(), // legacy recording: no flag, judged under the old rules
+            attempt({ complete: false }), // joined mid-fight, not measured whole
+            attempt({ outcome: 'unknown' }),
+            attempt({ playerMaxHp: 2_000, playerHpStart: 400 }), // wounded start
+        ]);
+        expect(groups).toHaveLength(1);
+        expect(groups[0].fights).toBe(2);
+        expect(groups.droppedIncomplete).toBe(1);
+        expect(groups.droppedUnknownOutcome).toBe(1);
+        expect(groups.droppedNotCleanStart).toBe(1);
+    });
+
     test('nearby levels pool into one bucket, re-simmed at the median', () => {
         // Random labyrinth levels rarely repeat exactly, so a 10-wide band pools
         const [g] = deriveObserved([

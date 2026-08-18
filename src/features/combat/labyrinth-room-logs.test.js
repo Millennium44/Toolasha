@@ -531,6 +531,230 @@ describe('marking a point to measure from', () => {
     });
 });
 
+describe('the fight recorder path measures whole fights', () => {
+    const context = () => ({
+        runKey: 'run|10',
+        roomKey: '2,3',
+        floor: 10,
+        room: { monsterHrid: '/monsters/cyclops', recommendedLevel: 200, entryCount: 1 },
+    });
+
+    // The full start snapshot, `new_battle` spelling: long field names,
+    // players/monsters as arrays
+    const newBattle = (monsterHp, over = {}) => ({
+        players: [
+            {
+                currentHitpoints: 500,
+                maxHitpoints: 500,
+                atkCounter: 0,
+                currentManapoints: 100,
+                isPreparingAutoAttack: true,
+            },
+        ],
+        monsters: [{ currentHitpoints: monsterHp, maxHitpoints: 14320, dmgCounter: 0, critCounter: 0 }],
+        ...over,
+    });
+
+    // A battle_updated delta — sparse: either unit may be absent
+    const tick = ({ player, monster, battleId = 1 }) => ({
+        battleId,
+        pMap: player ? { 0: player } : {},
+        mMap: monster ? { 0: monster } : {},
+    });
+    const p = (cHP, atk = 1) => ({ cHP, mHP: 500, atkCounter: atk, cMP: 90 });
+    const m = (cHP, dmg = 0, crit = 0) => ({ cHP, mHP: 14320, dmgCounter: dmg, critCounter: crit });
+
+    let noted;
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000_000);
+        labyrinthRoomLogs.labContext = context();
+        labyrinthRoomLogs.inLabyrinthFight = () => true;
+        labyrinthRoomLogs.simSource = null;
+        labyrinthRoomLogs.roomData = null;
+        labyrinthRoomLogs.activeSession = null;
+        labyrinthRoomLogs.fight = null;
+        labyrinthRoomLogs.sessions = [];
+        noted = vi.spyOn(labFightRecorder, 'noteAttempt');
+    });
+
+    afterEach(() => {
+        // The singleton remembers its fight between tests, which is right for
+        // a recorder and wrong for a test
+        labyrinthRoomLogs.fight = null;
+        if (labyrinthRoomLogs.fightTimer) {
+            clearTimeout(labyrinthRoomLogs.fightTimer);
+            labyrinthRoomLogs.fightTimer = null;
+        }
+        labyrinthRoomLogs.flushReport();
+        labyrinthRoomLogs.activeSession = null;
+        labyrinthRoomLogs.sessions = [];
+        labyrinthRoomLogs.labContext = null;
+        labyrinthRoomLogs.simSource = null;
+        delete labyrinthRoomLogs.inLabyrinthFight;
+        noted.mockRestore();
+        labFightRecorder.clearRecording();
+        vi.useRealTimers();
+    });
+
+    test('the opening hit between the snapshot and the first retained tick is counted', () => {
+        // The reviewer's capture: monster spawns at 14320, the first retained
+        // battle_updated already shows 14024 — a 296 opening hit the recorder
+        // used to silently baseline away
+        labyrinthRoomLogs.onNewBattle(newBattle(14_320));
+        expect(labyrinthRoomLogs.fight.caughtStart).toBe(true);
+
+        vi.setSystemTime(1_001_000);
+        labyrinthRoomLogs.onBattleUpdated(tick({ player: p(500, 1), monster: m(14_024, 1) }));
+        vi.setSystemTime(1_040_000);
+        labyrinthRoomLogs.onBattleUpdated(tick({ player: p(0, 2), monster: m(8_943, 2) }));
+        labyrinthRoomLogs.resolveFight('stale');
+
+        const attempt = noted.mock.calls.at(-1)[0];
+        expect(attempt.monsterDamage).toBe(5_377); // 14320 − 8943, not 14024 − 8943
+        expect(attempt.monsterHpStart).toBe(14_320);
+        // Every point of endpoint damage was carried by the ticks
+        expect(attempt.unattributedDealt).toBe(0);
+        // The opening hit is attributed too, not only totalled
+        expect(attempt.playerHits).toBe(2);
+        expect(attempt.outcome).toBe('death');
+        expect(attempt.complete).toBe(true);
+        expect(attempt.resolveReason).toBe('stale');
+    });
+
+    test('consecutive new_battle snapshots split attempts even with an identical battleId', () => {
+        // The labyrinth reuses battleId 1 for every retry, so the snapshot is
+        // the only trustworthy boundary
+        labyrinthRoomLogs.onNewBattle({ ...newBattle(14_320), battleId: 1 });
+        vi.setSystemTime(1_005_000);
+        labyrinthRoomLogs.onBattleUpdated(tick({ player: p(400), monster: m(10_000, 1) }));
+
+        vi.setSystemTime(1_010_000);
+        labyrinthRoomLogs.onNewBattle({ ...newBattle(14_320), battleId: 1 });
+        expect(noted).toHaveBeenCalledTimes(1);
+        expect(noted.mock.calls[0][0].resolveReason).toBe('new_battle');
+
+        // The second fight is seeded from its own snapshot, and the reset back
+        // to full was not read as the first fight's healing
+        expect(labyrinthRoomLogs.fight.caughtStart).toBe(true);
+        expect(labyrinthRoomLogs.fight.prevMonsterHp).toBe(14_320);
+        expect(labyrinthRoomLogs.fight.monsterHealed).toBe(0);
+
+        vi.setSystemTime(1_015_000);
+        labyrinthRoomLogs.onBattleUpdated(tick({ player: p(0, 1), monster: m(9_000, 1) }));
+        labyrinthRoomLogs.resolveFight('stale');
+        expect(noted).toHaveBeenCalledTimes(2);
+        expect(noted.mock.calls[1][0].monsterDamage).toBe(5_320);
+    });
+
+    test('single-unit ticks advance the fight instead of being dropped', () => {
+        labyrinthRoomLogs.onNewBattle(newBattle(14_320));
+
+        vi.setSystemTime(1_001_000);
+        labyrinthRoomLogs.onBattleUpdated(tick({ monster: m(14_000, 1) })); // monster only
+        expect(labyrinthRoomLogs.fight.grossDealt).toBe(320);
+
+        vi.setSystemTime(1_002_000);
+        labyrinthRoomLogs.onBattleUpdated(tick({ player: p(450) })); // player only
+        expect(labyrinthRoomLogs.fight.grossTaken).toBe(50);
+
+        vi.setSystemTime(1_005_000);
+        labyrinthRoomLogs.onBattleUpdated(tick({ player: p(0, 2), monster: m(9_000, 2) }));
+        labyrinthRoomLogs.resolveFight('stale');
+
+        const attempt = noted.mock.calls.at(-1)[0];
+        expect(attempt.monsterDamage).toBe(5_320);
+        expect(attempt.playerDamageTaken).toBe(500);
+        // The monster-only tick's hit was attributed, not only totalled
+        expect(attempt.playerHits).toBe(2);
+        expect(attempt.unattributedDealt).toBe(0);
+    });
+
+    test('a fight joined mid-stream without a snapshot is marked incomplete', () => {
+        labyrinthRoomLogs.onBattleUpdated(tick({ player: p(400), monster: m(9_000, 1) }));
+        expect(labyrinthRoomLogs.fight.caughtStart).toBe(false);
+
+        vi.setSystemTime(1_030_000);
+        labyrinthRoomLogs.onBattleUpdated(tick({ player: p(0, 2), monster: m(5_000, 2) }));
+        labyrinthRoomLogs.resolveFight('room_switch');
+
+        const attempt = noted.mock.calls.at(-1)[0];
+        expect(attempt.outcome).toBe('death'); // known ending
+        expect(attempt.complete).toBe(false); // but not measured whole
+        expect(attempt.monsterHpStart).toBe(9_000); // where it was first seen, not full
+        expect(attempt.resolveReason).toBe('room_switch');
+    });
+
+    test('a fight cannot be opened from half a tick', () => {
+        labyrinthRoomLogs.onBattleUpdated(tick({ monster: m(9_000, 1) }));
+        expect(labyrinthRoomLogs.fight).toBeNull();
+    });
+
+    test('the retry gap after the last tick is not billed to the fight', () => {
+        labyrinthRoomLogs.onNewBattle(newBattle(14_320));
+        vi.setSystemTime(1_020_000);
+        labyrinthRoomLogs.onBattleUpdated(tick({ player: p(0, 1), monster: m(9_000, 1) }));
+
+        // Ticks stop; the stale timer files the fight 4 seconds later
+        vi.advanceTimersByTime(4_000);
+
+        const attempt = noted.mock.calls.at(-1)[0];
+        expect(attempt.seconds).toBe(20); // last tick − snapshot, not +4s of silence
+        expect(attempt.resolveReason).toBe('stale');
+    });
+
+    test('monster self-healing is recorded and reconciles the endpoints', () => {
+        labyrinthRoomLogs.onNewBattle(newBattle(14_320));
+        vi.setSystemTime(1_001_000);
+        labyrinthRoomLogs.onBattleUpdated(tick({ player: p(500, 1), monster: m(14_000, 1) }));
+        vi.setSystemTime(1_002_000);
+        labyrinthRoomLogs.onBattleUpdated(tick({ player: p(500, 1), monster: m(14_100, 1) })); // heals 100
+        vi.setSystemTime(1_010_000);
+        labyrinthRoomLogs.onBattleUpdated(tick({ player: p(0, 2), monster: m(9_000, 2) }));
+        labyrinthRoomLogs.resolveFight('stale');
+
+        const attempt = noted.mock.calls.at(-1)[0];
+        expect(attempt.monsterHealed).toBe(100);
+        // Drops: 320 + 5100; endpoints: 14320 − 9000 + 100 healed — the same
+        expect(attempt.monsterDamage).toBe(5_420);
+        expect(attempt.unattributedDealt).toBe(0);
+    });
+
+    test('a prediction landing mid-fight is still captured on ordinary ticks', () => {
+        labyrinthRoomLogs.onNewBattle(newBattle(14_320));
+        labyrinthRoomLogs.simSource = { forecast: () => ({ clearChance: 0.42 }) };
+        vi.setSystemTime(1_010_000);
+        labyrinthRoomLogs.onBattleUpdated(tick({ player: p(0, 1), monster: m(9_000, 1) }));
+        labyrinthRoomLogs.resolveFight('stale');
+
+        expect(noted.mock.calls.at(-1)[0].predicted).toBe(0.42);
+    });
+
+    test('unknown-outcome attempts stay out of the fight-length aggregate', () => {
+        const recorded = [];
+        labyrinthRoomLogs.simSource = { record: (entry) => recorded.push(entry) };
+        labyrinthRoomLogs.reportRoomResult({
+            subjectHrid: '/monsters/cyclops',
+            roomLevel: 200,
+            mode: 'combat',
+            completed: false,
+            startedAt: 0,
+            endedAt: 60_000,
+            xp: 0,
+            actions: [
+                { outcome: 'death', seconds: 40 },
+                // Filed by a room switch mid-fight: its clock stopped early
+                { outcome: 'unknown', seconds: 7, complete: false },
+            ],
+        });
+
+        expect(recorded[0].fights).toBe(1);
+        expect(recorded[0].fightSeconds).toBe(40);
+        expect(recorded[0].fightSquares).toBe(1_600);
+    });
+});
+
 describe('the capture button knows its three states', () => {
     beforeEach(() => {
         document.body.innerHTML = '';

@@ -200,6 +200,7 @@ class LabyrinthRoomLogs {
         this.progressHandler = null;
         this.labyrinthHandler = null;
         this.battleHandler = null;
+        this.newBattleHandler = null;
         this.panel = null;
         this.view = 'rooms';
         this.simSource = null;
@@ -314,6 +315,13 @@ class LabyrinthRoomLogs {
         this.battleHandler = (data) => this.onBattleUpdated(data);
         webSocketHook.on('battle_updated', this.battleHandler);
 
+        // The full start-of-fight snapshot. battle_updated alone joins every
+        // fight late — the monster HP lost before the first retained tick was
+        // never counted — so the snapshot is both the authoritative attempt
+        // boundary and the true baseline the first tick is measured against.
+        this.newBattleHandler = (data) => this.onNewBattle(data);
+        webSocketHook.on('new_battle', this.newBattleHandler);
+
         // The capture button's live tick count, and — once combat has moved on
         // and no battle tick will repaint it — the flip to "Save capture (N)"
         // when a capture stops by itself. A second's cadence is plenty for a
@@ -356,6 +364,10 @@ class LabyrinthRoomLogs {
             webSocketHook.off('battle_updated', this.battleHandler);
             this.battleHandler = null;
         }
+        if (this.newBattleHandler) {
+            webSocketHook.off('new_battle', this.newBattleHandler);
+            this.newBattleHandler = null;
+        }
         if (this.captureRefreshTimer) {
             clearInterval(this.captureRefreshTimer);
             this.captureRefreshTimer = null;
@@ -370,7 +382,7 @@ class LabyrinthRoomLogs {
             this.unregisterTab();
             this.unregisterTab = null;
         }
-        this.resolveFight();
+        this.resolveFight('feature_disabled');
         this.finalizeActiveSession('feature_disabled');
         document.getElementById(TAB_ID)?.remove();
         this.tabButton = null;
@@ -394,7 +406,7 @@ class LabyrinthRoomLogs {
     onLabyrinthUpdated(data) {
         const labyrinth = data?.labyrinth;
         if (!labyrinth) {
-            this.resolveFight();
+            this.resolveFight('left_labyrinth');
             this.finalizeActiveSession('left_labyrinth');
             this.labContext = null;
             return;
@@ -417,7 +429,7 @@ class LabyrinthRoomLogs {
 
         // Finalize the active session when the run or the current room changed
         if (this.activeSession && (this.activeSession.runKey !== runKey || this.activeSession.roomKey !== roomKey)) {
-            this.resolveFight();
+            this.resolveFight('room_switch');
             this.finalizeActiveSession('room_switch');
         }
     }
@@ -498,7 +510,7 @@ class LabyrinthRoomLogs {
      */
     reuseSession(sessionKey) {
         if (this.activeSession && this.activeSession.sessionKey !== sessionKey) {
-            this.resolveFight();
+            this.resolveFight('room_switch');
             this.finalizeActiveSession('room_switch');
         }
         return this.activeSession;
@@ -634,13 +646,167 @@ class LabyrinthRoomLogs {
     // -------------------------------------------------------------------------
 
     /**
+     * Open a new fight record for the recorder to accumulate into.
+     *
+     * `caughtStart` says which baseline the fight starts from: true when a
+     * `new_battle` snapshot supplied the real starting health (the fight is
+     * measured whole), false when the fight was joined at its first retained
+     * tick and whatever fell before it is unobservable.
+     *
+     * @param {Object} session - The combat session the fight belongs to
+     * @param {Object} start - `{battleId, caughtStart, playerMaxHp, playerHp,
+     *   monsterMaxHp, monsterHp, attrState, lastAtkCounter}`
+     */
+    openFight(session, start) {
+        const now = Date.now();
+        this.fight = {
+            session,
+            roomKey: session.roomKey,
+            monsterHrid: session.monsterHrid,
+            battleId: start.battleId,
+            caughtStart: start.caughtStart === true,
+            monsterMaxHp: start.monsterMaxHp,
+            // Absolute health at the fight's start, so the recorder can measure
+            // the damage each side dealt — you carry health between rooms, so
+            // a fight need not begin at full
+            playerMaxHp: start.playerMaxHp,
+            playerHpStart: start.playerHp,
+            monsterHpStart: start.monsterHp,
+            // Gross damage each side dealt, summed from the health that fell
+            // tick to tick. The endpoints alone give damage net of healing —
+            // and you regenerate through a fight — while the sim reports it
+            // gross, so a net-vs-gross comparison read as the sim over-hitting.
+            grossTaken: 0,
+            grossDealt: 0,
+            // Upward monster HP steps (life drain, guardian aura), so the
+            // endpoints can be reconciled against the summed drops: what the
+            // monster lost overall plus what it healed back is what you dealt
+            monsterHealed: 0,
+            // Per-hit tally, so the replay can split the damage gap into
+            // "landed fewer hits than the sim" (accuracy vs the monster's
+            // evasion) versus "each hit softer than the sim" (its mitigation).
+            // Read from the same dmgCounter/critCounter the wire already
+            // carries, via the shared attribution decoder.
+            attrState: start.attrState || newAttributionState(),
+            attrTally: {},
+            prevPlayerHp: start.playerHp,
+            prevMonsterHp: start.monsterHp,
+            lastMonsterHp: start.monsterHp,
+            // Seeded so a resolution before any tick classifies as unknown
+            // rather than reading absent fractions as a dead monster
+            monsterHpFraction: start.monsterMaxHp > 0 ? start.monsterHp / start.monsterMaxHp : 1,
+            playerHpFraction: start.playerMaxHp > 0 ? start.playerHp / start.playerMaxHp : 1,
+            playerHpEnd: start.playerHp,
+            monsterHpEnd: start.monsterHp,
+            startedAt: now,
+            battleStartedAt: now,
+            firstUpdateAt: null,
+            lastTickAt: null,
+        };
+        if (Number.isFinite(start.lastAtkCounter)) this.fight.lastAtkCounter = start.lastAtkCounter;
+
+        if (this.fightTimer) clearTimeout(this.fightTimer);
+        this.fightTimer = setTimeout(() => this.resolveFight('stale'), FIGHT_STALE_MS);
+    }
+
+    /**
+     * Seed attribution baselines from a `new_battle` snapshot, so the swings
+     * between the snapshot and the first retained tick are credited instead of
+     * silently becoming the baseline. `new_battle` spells its fields long
+     * (`currentHitpoints`, sometimes under `combatDetails`) where the per-tick
+     * `battle_updated` abbreviates (`cHP`); both spellings are read.
+     *
+     * @param {Object} state - From `newAttributionState`, mutated
+     * @param {Object} data - The `new_battle` payload
+     */
+    seedAttribution(state, data) {
+        const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+        noteActions(state, data?.players);
+        for (const [index, monster] of Object.entries(data?.monsters || {})) {
+            const details = monster?.combatDetails || {};
+            const hp = num(details.currentHitpoints ?? monster?.currentHitpoints ?? details.maxHitpoints);
+            if (hp === null) continue;
+            state.monstersHP[index] = hp;
+            state.dmgCounter[index] = num(details.dmgCounter ?? monster?.dmgCounter) ?? 0;
+            state.critCounter[index] = num(details.critCounter ?? monster?.critCounter) ?? 0;
+        }
+        for (const [index, player] of Object.entries(data?.players || {})) {
+            const details = player?.combatDetails || {};
+            const atk = num(details.atkCounter ?? player?.atkCounter ?? player?.attackAttemptCounter);
+            if (atk !== null) state.playersAtk[index] = atk;
+            const mp = num(details.currentManapoints ?? player?.currentManapoints ?? player?.cMP);
+            if (mp !== null) state.playersMP[index] = mp;
+        }
+    }
+
+    /**
+     * A labyrinth fight's opening statement: the full snapshot the server sends
+     * as the fight begins. The authoritative attempt boundary — battleId never
+     * changes in a labyrinth, so consecutive retries are told apart here, not
+     * guessed at from health jumps — and the true starting baseline, counting
+     * the damage the first retained `battle_updated` arrives too late to see.
+     *
+     * @param {Object} data - new_battle payload
+     */
+    onNewBattle(data) {
+        const context = this.labContext;
+        const room = context?.room;
+        if (!room?.monsterHrid || !this.inLabyrinthFight()) return;
+
+        const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+        const health = (unit) => {
+            const details = unit?.combatDetails || {};
+            const maxHp = num(details.maxHitpoints ?? unit?.maxHitpoints);
+            const hp = num(details.currentHitpoints ?? unit?.currentHitpoints) ?? maxHp;
+            return { hp, maxHp };
+        };
+        const unitAt = (units, index) => (Array.isArray(units) ? units[index] : units ? units[String(index)] : null);
+        const player = unitAt(data?.players, 0);
+        const monster = unitAt(data?.monsters, 0);
+        const playerHealth = health(player);
+        const monsterHealth = health(monster);
+        // A snapshot that cannot state both health bars cannot seed a fight;
+        // the heuristic tick path below will open it, flagged as joined late
+        if (!(playerHealth.maxHp > 0) || !(monsterHealth.maxHp > 0)) return;
+
+        const session = this.ensureCombatSession(context, room);
+        if (!session) return;
+
+        // Whatever was being watched has ended — the snapshot says so
+        this.resolveFight('new_battle');
+
+        const details = player?.combatDetails || {};
+        const attrState = newAttributionState();
+        this.seedAttribution(attrState, data);
+        this.openFight(session, {
+            battleId: data?.battleId,
+            caughtStart: true,
+            playerMaxHp: playerHealth.maxHp,
+            playerHp: playerHealth.hp,
+            monsterMaxHp: monsterHealth.maxHp,
+            monsterHp: monsterHealth.hp,
+            attrState,
+            lastAtkCounter: num(details.atkCounter ?? player?.atkCounter ?? player?.attackAttemptCounter),
+        });
+        this.renderIfOpen();
+    }
+
+    /**
      * Track a labyrinth fight for the room log.
+     *
+     * `battle_updated` is a sparse delta: a tick can carry only the player,
+     * only the monster, or both. A missing unit means unchanged — its side of
+     * the fight simply does not advance this tick — not a reason to drop the
+     * tick, which used to starve the recorder of about a fifth of them.
+     *
      * @param {Object} data - battle_updated payload
      */
     onBattleUpdated(data) {
         const player = data?.pMap?.['0'];
         const monster = data?.mMap?.['0'];
-        if (!player || !monster || !(monster.mHP > 0) || !(player.mHP > 0)) return;
+        const playerOk = !!player && player.mHP > 0;
+        const monsterOk = !!monster && monster.mHP > 0;
+        if (!playerOk && !monsterOk) return;
 
         const context = this.labContext;
         const room = context?.room;
@@ -649,86 +815,96 @@ class LabyrinthRoomLogs {
         const session = this.ensureCombatSession(context, room);
         if (!session) return;
 
-        const monsterHpFraction = monster.cHP / monster.mHP;
-        const playerHpFraction = player.cHP / player.mHP;
-        const atkCounter = Number(player.atkCounter) || 0;
+        const atkCounter = playerOk ? Number(player.atkCounter) || 0 : undefined;
 
         // A new session is always a new fight; otherwise defer to the shared
         // boundary test, which counts a monster-health jump only when it is the
         // leap to full a spawn makes — not the bump a self-healing monster (the
         // Dryad's life drain, a guardian aura) gives itself mid-fight, which used
         // to split one attempt into several at whatever low health it landed on.
-        const fight = this.fight;
-        const isNewFight =
-            !fight ||
-            fight.session !== session ||
-            isFreshLabyrinthFight(fight, {
+        // The heuristic reads monster health, so a tick without the monster
+        // cannot run it and continues the open fight instead. It is the
+        // fallback boundary — new_battle is authoritative — kept for fights
+        // joined mid-stream, where no snapshot was seen.
+        let fight = this.fight;
+        const sameSession = !!fight && fight.session === session;
+        let isNewFight = !sameSession;
+        if (sameSession && monsterOk) {
+            // A snapshot-seeded fight adopts the tick's spelling of the fields
+            // the heuristic compares, so a battleId or max-HP the snapshot did
+            // not carry cannot read as a fresh fight on the very first tick
+            if (fight.battleId === undefined || fight.battleId === null) fight.battleId = data.battleId;
+            if (!(fight.monsterMaxHp > 0)) fight.monsterMaxHp = monster.mHP;
+            isNewFight = isFreshLabyrinthFight(fight, {
                 battleId: data.battleId,
                 monsterMaxHp: monster.mHP,
                 monsterHp: monster.cHP,
                 atkCounter,
             });
+        }
 
         if (isNewFight) {
-            this.resolveFight(); // whatever was being watched has ended
-            this.fight = {
-                session,
-                roomKey: session.roomKey,
-                monsterHrid: session.monsterHrid,
+            // A fight cannot be opened from half a tick — wait for one that
+            // carries both sides, or for a new_battle snapshot
+            if (!playerOk || !monsterOk) return;
+            this.resolveFight('new_fight'); // whatever was being watched has ended
+            this.openFight(session, {
                 battleId: data.battleId,
-                monsterMaxHp: monster.mHP,
-                // Absolute health at the first tick, so the recorder can measure
-                // the damage each side dealt — you carry health between rooms, so
-                // a fight need not begin at full
+                // Joined at its first retained tick: damage dealt before this
+                // tick is unobservable, and the recorder must know that
+                caughtStart: false,
                 playerMaxHp: player.mHP,
-                playerHpStart: player.cHP,
-                // Gross damage each side dealt, summed from the health that fell
-                // tick to tick. The endpoints alone give damage net of healing —
-                // and you regenerate through a fight — while the sim reports it
-                // gross, so a net-vs-gross comparison read as the sim over-hitting.
-                grossTaken: 0,
-                grossDealt: 0,
-                // Per-hit tally, so the replay can split the damage gap into
-                // "landed fewer hits than the sim" (accuracy vs the monster's
-                // evasion) versus "each hit softer than the sim" (its mitigation).
-                // Read from the same dmgCounter/critCounter the wire already
-                // carries, via the shared attribution decoder.
-                attrState: newAttributionState(),
-                attrTally: {},
-                prevPlayerHp: player.cHP,
-                prevMonsterHp: monster.cHP,
-                startedAt: Date.now(),
-            };
+                playerHp: player.cHP,
+                monsterMaxHp: monster.mHP,
+                monsterHp: monster.cHP,
+            });
         }
+        fight = this.fight;
 
         // A swing is the monster's dmgCounter rising; a miss is a swing that left
         // its health untouched. filterNonDamaging:false so every swing counts,
-        // not only those during a damaging ability
+        // not only those during a damaging ability. The decoder tolerates a
+        // missing unit map — a sparse tick just contributes fewer events.
         try {
-            noteActions(this.fight.attrState, data.pMap);
-            const events = attributeTick({ pMap: data.pMap, mMap: data.mMap }, this.fight.attrState);
-            foldEvents(this.fight.attrTally, events, { filterNonDamaging: false });
+            noteActions(fight.attrState, data.pMap);
+            const events = attributeTick({ pMap: data.pMap, mMap: data.mMap }, fight.attrState);
+            foldEvents(fight.attrTally, events, { filterNonDamaging: false });
         } catch (error) {
             console.error('[LabyrinthRoomLogs] Attributing a fight tick failed:', error);
         }
 
         // Accumulate the drops, not the endpoints: a health bar that fell 300 and
-        // regenerated 100 took 300, not 200, and that is what the monster dealt
-        const takenStep = this.fight.prevPlayerHp - player.cHP;
-        if (takenStep > 0) this.fight.grossTaken += takenStep;
-        const dealtStep = this.fight.prevMonsterHp - monster.cHP;
-        if (dealtStep > 0) this.fight.grossDealt += dealtStep;
+        // regenerated 100 took 300, not 200, and that is what the monster dealt.
+        // Upward monster steps are its own healing, recorded so the endpoints
+        // reconcile: start − end + healed is the gross damage it took.
+        if (playerOk) {
+            const takenStep = fight.prevPlayerHp - player.cHP;
+            if (takenStep > 0) fight.grossTaken += takenStep;
+            Object.assign(fight, {
+                lastAtkCounter: atkCounter,
+                playerHpFraction: player.cHP / player.mHP,
+                playerHpEnd: player.cHP,
+                prevPlayerHp: player.cHP,
+            });
+        }
+        if (monsterOk) {
+            const dealtStep = fight.prevMonsterHp - monster.cHP;
+            if (dealtStep > 0) fight.grossDealt += dealtStep;
+            else if (dealtStep < 0) fight.monsterHealed -= dealtStep;
+            Object.assign(fight, {
+                lastMonsterHp: monster.cHP,
+                monsterHpFraction: monster.cHP / monster.mHP,
+                monsterHpEnd: monster.cHP,
+                prevMonsterHp: monster.cHP,
+            });
+        }
 
-        Object.assign(this.fight, {
-            lastMonsterHp: monster.cHP,
-            lastAtkCounter: atkCounter,
-            monsterHpFraction,
-            playerHpFraction,
-            playerHpEnd: player.cHP,
-            monsterHpEnd: monster.cHP,
-            prevPlayerHp: player.cHP,
-            prevMonsterHp: monster.cHP,
-        });
+        // The fight's clock: opened at the new_battle snapshot (or first seen
+        // tick) and read at the last tick, so the stale wait and any retry gap
+        // after the ending never bill to the fight
+        const now = Date.now();
+        if (fight.firstUpdateAt === null) fight.firstUpdateAt = now;
+        fight.lastTickAt = now;
 
         // The tile may not have been calculated when the room was entered, and
         // a prediction that arrives during the fight is still a prediction made
@@ -740,7 +916,7 @@ class LabyrinthRoomLogs {
         session.entryCount = Math.max(session.entryCount || 0, Math.floor(Number(room.entryCount) || 0));
 
         if (this.fightTimer) clearTimeout(this.fightTimer);
-        this.fightTimer = setTimeout(() => this.resolveFight(), FIGHT_STALE_MS);
+        this.fightTimer = setTimeout(() => this.resolveFight('stale'), FIGHT_STALE_MS);
 
         if (isNewFight) this.renderIfOpen();
     }
@@ -834,8 +1010,14 @@ class LabyrinthRoomLogs {
         return !!room.isCleared;
     }
 
-    /** File the fight being watched as an attempt, whatever became of it */
-    resolveFight() {
+    /**
+     * File the fight being watched as an attempt, whatever became of it.
+     * @param {string} [reason] - What ended the watch: 'new_battle' (the
+     *   authoritative boundary), 'new_fight' (the tick heuristic), 'stale'
+     *   (ticks stopped), or the interruption that filed it ('room_switch',
+     *   'left_labyrinth', 'feature_disabled')
+     */
+    resolveFight(reason = 'stale') {
         const fight = this.fight;
         this.fight = null;
         if (this.fightTimer) {
@@ -844,13 +1026,27 @@ class LabyrinthRoomLogs {
         }
         if (!fight) return;
 
+        const resolvedAt = Date.now();
+        // In-fight time runs from the battle's start to its last tick — never
+        // to now, which would bill up to the stale wait plus any retry or UI
+        // delay to the fight. Wall-clock only when no tick was ever seen.
+        const seconds =
+            Number.isFinite(fight.battleStartedAt) && Number.isFinite(fight.lastTickAt)
+                ? Math.max(0, (fight.lastTickAt - fight.battleStartedAt) / 1000)
+                : (resolvedAt - fight.startedAt) / 1000;
+
         const session = fight.session;
         const attempt = classifyFight({
             monsterHpFraction: fight.monsterHpFraction,
             playerHpFraction: fight.playerHpFraction,
-            seconds: (Date.now() - fight.startedAt) / 1000,
+            seconds,
             cleared: this.roomCleared(fight.roomKey, fight.monsterHrid),
         });
+        // Complete means the whole fight was measured: seeded from its
+        // new_battle snapshot AND resolved to a known ending. Anything else is
+        // a partial measurement, and aggregates must be able to say so.
+        attempt.complete = fight.caughtStart === true && attempt.outcome !== 'unknown';
+        attempt.resolveReason = reason;
 
         session.actions.push(attempt);
         if (session.actions.length > MAX_ATTEMPTS) {
@@ -858,7 +1054,17 @@ class LabyrinthRoomLogs {
             session.actions = session.actions.slice(session.actions.length - MAX_ATTEMPTS);
         }
         if (attempt.outcome === 'clear') session.cleared = true;
-        session.endedAt = Date.now();
+        session.endedAt = resolvedAt;
+
+        // Endpoint reconciliation: the monster's total HP loss plus what it
+        // healed back is exactly the gross damage dealt, so any residual over
+        // the tick-summed figure is damage the ticks failed to carry
+        const monsterHealed = Math.max(0, Number(fight.monsterHealed) || 0);
+        const endpointDealt =
+            Number.isFinite(fight.monsterHpStart) && Number.isFinite(fight.monsterHpEnd)
+                ? fight.monsterHpStart - fight.monsterHpEnd + monsterHealed
+                : null;
+        const unattributedDealt = endpointDealt === null ? null : endpointDealt - (Number(fight.grossDealt) || 0);
 
         // The calibration replay reads this. It is passive — the labyrinth gives
         // random rooms, so every fight is kept and the ones you meet often
@@ -882,6 +1088,20 @@ class LabyrinthRoomLogs {
             // totals, unlike the endpoints, which are net of your regen
             monsterDamage: fight.grossDealt,
             playerDamageTaken: fight.grossTaken,
+            // The endpoint reconciliation: where the fight really started, how
+            // much the monster healed back, and the residual the tick-summed
+            // figure missed (negative when the ticks somehow carried more)
+            monsterHpStart: fight.monsterHpStart,
+            monsterHealed,
+            unattributedDealt,
+            // The fight's own clock, so a reader can tell measured in-fight
+            // time from the wall-clock the resolution happened at
+            battleStartedAt: fight.battleStartedAt ?? null,
+            firstUpdateAt: fight.firstUpdateAt ?? null,
+            lastTickAt: fight.lastTickAt ?? null,
+            resolvedAt,
+            resolveReason: reason,
+            complete: attempt.complete,
             // Your swings on the monster, hits and misses, summed across the
             // fight — the replay reads hit-rate and damage-per-hit from these
             ...tallyHitsMisses(fight.attrTally),
@@ -968,8 +1188,11 @@ class LabyrinthRoomLogs {
         // over attempts needs hundreds of fights to say anything and a room
         // gives you ten; fight length is measured on every attempt, win or
         // lose, and the sim already predicts it — so a model that has the fight
-        // wrong shows up in a handful rather than in a season.
-        const fights = skilling ? [] : session.actions || [];
+        // wrong shows up in a handful rather than in a season. Only attempts
+        // with a known outcome: an 'unknown' was filed by a disable, a room
+        // switch or the stale timer mid-fight, and its truncated duration
+        // would read as the sim simulating fights too long.
+        const fights = skilling ? [] : (session.actions || []).filter((a) => a?.outcome && a.outcome !== 'unknown');
         const fightSeconds = fights.reduce((sum, attempt) => sum + (Number(attempt.seconds) || 0), 0);
         const fightSquares = fights.reduce((sum, attempt) => sum + (Number(attempt.seconds) || 0) ** 2, 0);
 

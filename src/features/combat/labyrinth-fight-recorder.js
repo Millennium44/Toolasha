@@ -116,9 +116,23 @@ function persist() {
  * @param {number} attempt.playerHpEnd - Your health on the last tick seen
  * @param {number} [attempt.monsterDamage] - Gross damage you dealt (summed drops)
  * @param {number} [attempt.playerDamageTaken] - Gross damage you took (summed drops)
+ * @param {number} [attempt.monsterHpStart] - The monster's health when the fight
+ *   began — the new_battle snapshot's figure when the start was caught
+ * @param {number} [attempt.monsterHealed] - Health the monster restored mid-fight
+ * @param {number} [attempt.unattributedDealt] - Endpoint-reconciled damage the
+ *   tick-summed figure missed; negative when the ticks carried more than the
+ *   endpoints — stored as-is either way, it is a data-quality reading
  * @param {number} [attempt.playerHits] - Your swings that landed on the monster
  * @param {number} [attempt.playerMisses] - Your swings that missed
  * @param {number} [attempt.playerCrits] - Your landed swings that critted
+ * @param {number} [attempt.battleStartedAt] - When the fight opened (ms epoch)
+ * @param {number} [attempt.firstUpdateAt] - First battle_updated processed
+ * @param {number} [attempt.lastTickAt] - Last battle_updated processed
+ * @param {number} [attempt.resolvedAt] - When the attempt was filed
+ * @param {string} [attempt.resolveReason] - What ended the watch ('new_battle',
+ *   'new_fight', 'stale', 'room_switch', 'left_labyrinth', 'feature_disabled')
+ * @param {boolean} [attempt.complete] - Whole fight measured: seeded from its
+ *   new_battle snapshot and resolved to a known outcome. Defaults false.
  * @param {string} [attempt.fingerprint] - The gear the fight was fought in
  * @param {number} [attempt.predicted] - The cached clear chance in effect when the
  *   fight was recorded (0..1), or absent when no sim had run for the room
@@ -138,6 +152,16 @@ export function noteAttempt(attempt) {
     const playerMisses = Number(attempt.playerMisses);
     const playerCrits = Number(attempt.playerCrits);
     const predicted = Number(attempt.predicted);
+    // Null when not measured, so a reader can tell "absent" from zero
+    const nonNegOrNull = (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) && n >= 0 ? n : null;
+    };
+    // unattributedDealt is a signed residual and stays signed
+    const numOrNull = (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+    };
 
     attempts.push({
         monsterHrid: String(attempt.monsterHrid),
@@ -153,6 +177,22 @@ export function noteAttempt(attempt) {
         playerHpEnd: Math.max(0, Number(attempt.playerHpEnd) || 0),
         monsterDamage: Number.isFinite(grossDealt) && grossDealt >= 0 ? grossDealt : null,
         playerDamageTaken: Number.isFinite(grossTaken) && grossTaken >= 0 ? grossTaken : null,
+        // The endpoint reconciliation, absent on recordings made before the
+        // fight's start was caught from its new_battle snapshot
+        monsterHpStart: nonNegOrNull(attempt.monsterHpStart),
+        monsterHealed: nonNegOrNull(attempt.monsterHealed),
+        unattributedDealt: numOrNull(attempt.unattributedDealt),
+        // The fight's own clock — measured in-fight time, not the wall-clock
+        // of the resolution that filed it
+        battleStartedAt: nonNegOrNull(attempt.battleStartedAt),
+        firstUpdateAt: nonNegOrNull(attempt.firstUpdateAt),
+        lastTickAt: nonNegOrNull(attempt.lastTickAt),
+        resolvedAt: nonNegOrNull(attempt.resolvedAt),
+        resolveReason: attempt.resolveReason ? String(attempt.resolveReason).slice(0, 32) : null,
+        // Whole fight measured: opened at its new_battle snapshot and resolved
+        // to a known outcome. False on partial fights and on the legacy path
+        // that joins at the first retained tick.
+        complete: attempt.complete === true,
         // Null on recordings made before hit-rate was tracked, so the replay can
         // tell "no swing data" from "zero hits landed"
         playerHits: Number.isFinite(playerHits) && playerHits >= 0 ? playerHits : null,

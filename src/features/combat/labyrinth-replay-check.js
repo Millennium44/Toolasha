@@ -141,14 +141,21 @@ function exchange(attempt) {
     if (Number.isFinite(attempt.monsterDamage) && Number.isFinite(attempt.playerDamageTaken)) {
         // Your damage output: the larger of the tick-summed drops and the
         // monster's endpoint HP loss. The summed feed is 3 Hz, so hits that
-        // merged into one frame go uncounted — a few % low. The monster does not
-        // regen through a lab fight, so its total HP lost is exact damage you
-        // dealt, a firmer floor. (A monster that healed would push its summed
-        // drops above the endpoint loss, and the max keeps that instead.) Damage
-        // you TOOK stays the summed figure: you regen, so an endpoint understates.
+        // merged into one frame go uncounted — a few % low. An attempt with
+        // the reconciliation fields carries the true start (`monsterHpStart`,
+        // from the new_battle snapshot) and what the monster healed back, so
+        // its endpoint figure IS the gross damage dealt; older recordings
+        // approximate the start with the monster's maximum and carry no healed
+        // figure. Damage you TOOK stays the summed figure either way: player
+        // healing is not tracked, so no endpoint reconciliation is possible on
+        // the taken side and its endpoints would understate by your regen.
+        const healed = Number.isFinite(attempt.monsterHealed) ? Math.max(0, attempt.monsterHealed) : 0;
+        const start = Number.isFinite(attempt.monsterHpStart)
+            ? attempt.monsterHpStart
+            : Number(attempt.monsterMaxHp) || 0;
         const endpointDealt = attempt.cleared
-            ? Number(attempt.monsterMaxHp) || 0
-            : Math.max(0, (Number(attempt.monsterMaxHp) || 0) - (Number(attempt.monsterHpEnd) || 0));
+            ? start + healed
+            : Math.max(0, start - (Number(attempt.monsterHpEnd) || 0) + healed);
         return {
             monsterDamage: Math.max(0, attempt.monsterDamage, endpointDealt),
             playerTaken: Math.max(0, attempt.playerDamageTaken),
@@ -168,19 +175,40 @@ function exchange(attempt) {
  * spending a sim on.
  *
  * @param {Array<Object>} attempts - From the recorder
- * @returns {Array<Object>} One entry per monster+level fought
+ * @returns {Array<Object>} One entry per monster+level fought. The array also
+ *   carries `droppedUnknownOutcome`, `droppedIncomplete` and
+ *   `droppedNotCleanStart` — how many attempts each filter excluded — so an
+ *   export can say what the pooled rates were derived from
  */
 export function deriveObserved(attempts) {
     const groups = new Map();
+    let droppedUnknownOutcome = 0;
+    let droppedIncomplete = 0;
+    let droppedNotCleanStart = 0;
 
     for (const attempt of attempts || []) {
         const seconds = Number(attempt?.seconds) || 0;
-        if (!attempt?.monsterHrid || seconds <= 0 || attempt.outcome === 'unknown') continue;
+        if (!attempt?.monsterHrid || seconds <= 0) continue;
+        if (attempt.outcome === 'unknown') {
+            droppedUnknownOutcome += 1;
+            continue;
+        }
+
+        // A new-format attempt says outright whether the whole fight was
+        // measured; a partial one would understate the rates it pooled into.
+        // Legacy attempts lack the flag and stay eligible under the old rules.
+        if (attempt.complete === false) {
+            droppedIncomplete += 1;
+            continue;
+        }
 
         // Drop a fight not seen from full — the player started it already hurt, so
         // it is not the fresh-start fight the sim models
         const maxHp = Number(attempt.playerMaxHp) || 0;
-        if (maxHp > 0 && Number(attempt.playerHpStart) < maxHp * CLEAN_START_HP_FRACTION) continue;
+        if (maxHp > 0 && Number(attempt.playerHpStart) < maxHp * CLEAN_START_HP_FRACTION) {
+            droppedNotCleanStart += 1;
+            continue;
+        }
 
         const level = Math.max(0, Math.floor(Number(attempt.roomLevel) || 0));
         const bucket = Math.round(level / LEVEL_BUCKET) * LEVEL_BUCKET;
@@ -264,6 +292,12 @@ export function deriveObserved(attempts) {
     }));
 
     out.sort((a, b) => b.fights - a.fights);
+    // Carried on the array itself: consumers that iterate or filter the groups
+    // are unaffected, and an export that wants the exclusion counts can read
+    // them off the same return
+    out.droppedUnknownOutcome = droppedUnknownOutcome;
+    out.droppedIncomplete = droppedIncomplete;
+    out.droppedNotCleanStart = droppedNotCleanStart;
     return out;
 }
 

@@ -110,6 +110,55 @@ describe('labyrinth fight recorder', () => {
         expect(recorder.recordedAttempts()[0].seconds).toBe(40);
     });
 
+    test('the reconciliation and timing fields are kept, and null on legacy callers', () => {
+        recorder.noteAttempt(
+            attempt({
+                monsterHpStart: 14_320,
+                monsterHealed: 100,
+                unattributedDealt: -12, // signed residual, stored as-is
+                battleStartedAt: 1_000_000,
+                firstUpdateAt: 1_001_000,
+                lastTickAt: 1_040_000,
+                resolvedAt: 1_044_000,
+                resolveReason: 'stale',
+                complete: true,
+            })
+        );
+        recorder.noteAttempt(attempt()); // a caller from before the fields existed
+        const [a, b] = recorder.recordedAttempts();
+        expect(a).toMatchObject({
+            monsterHpStart: 14_320,
+            monsterHealed: 100,
+            unattributedDealt: -12,
+            battleStartedAt: 1_000_000,
+            firstUpdateAt: 1_001_000,
+            lastTickAt: 1_040_000,
+            resolvedAt: 1_044_000,
+            resolveReason: 'stale',
+            complete: true,
+        });
+        expect(b).toMatchObject({
+            monsterHpStart: null,
+            monsterHealed: null,
+            unattributedDealt: null,
+            battleStartedAt: null,
+            firstUpdateAt: null,
+            lastTickAt: null,
+            resolvedAt: null,
+            resolveReason: null,
+        });
+        // A fight not stated to be complete is not one
+        expect(b.complete).toBe(false);
+    });
+
+    test('a nonsense reconciliation field reads as unmeasured, not as a figure', () => {
+        recorder.noteAttempt(attempt({ monsterHpStart: 'soon', monsterHealed: -5, complete: 'yes' }));
+        const [a] = recorder.recordedAttempts();
+        expect(a.monsterHpStart).toBeNull();
+        expect(a.monsterHealed).toBeNull(); // healing cannot be negative
+        expect(a.complete).toBe(false); // strictly boolean true, nothing truthy
+    });
+
     test('the prediction in effect at record time is stored, and null when there was none', () => {
         recorder.noteAttempt(attempt({ predicted: 0.42 }));
         recorder.noteAttempt(attempt()); // room never simmed

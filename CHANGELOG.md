@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab fight recorder: fights measured from their battle-start snapshot, with damage reconciliation
+
+The per-room fight recorder now opens each attempt on the game's `new_battle` snapshot instead of the first compact tick, so the opening hit is counted rather than silently becoming the baseline (a real capture showed 2.5% of monster damage missing this way). Sparse ticks carrying only one side now merge into the retained fight state instead of being skipped (~20% of ticks were dropped from hit attribution). Each attempt stores start HP, monster self-healing, an unattributed-damage residual reconciling summed events against HP endpoints, explicit timing boundaries (duration no longer bills up to 4s of retry delay), and a completeness flag — fights cut off by leaving the room or stopping the feature stay out of duration/DPS aggregates, and the replay check prefers reconciled endpoint totals while reporting how many fights it dropped and why.
+
 ### Lab live clear readout: one steady node instead of once-a-second flicker
 
 The in-header live clear-chance readout treated every sparse combat tick as a full snapshot and tore itself down whenever a tick carried only one side (~1 in 5 ticks), flashing and shifting the header — especially on mobile. It now keeps last-known state per side, updates one persistent node in place with tabular numerals and a preserved width reservation, shows a placeholder during the opening seconds instead of blinking, and resets only on real boundaries (`new_battle`, fight end, leaving, stale timeout, or the setting turning off). The skilling progress readout shares the same node-ensure helper, so a game header rerender restores either readout with its last text instead of blanking it.
