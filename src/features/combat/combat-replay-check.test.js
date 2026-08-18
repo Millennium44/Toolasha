@@ -99,6 +99,7 @@ import replayCheck, {
     applyLoadoutSnapshot,
     compareMetric,
     compareRun,
+    deathCheck,
     summaryLine,
     predictedSwings,
     sampleSizeFor,
@@ -593,6 +594,54 @@ describe('the whole comparison', () => {
     test('half a comparison is no comparison', () => {
         expect(compareRun(observed, null)).toBe(null);
         expect(compareRun(null, predicted)).toBe(null);
+    });
+});
+
+describe('the survival claim', () => {
+    const sim = (deaths) =>
+        predictFromSim({
+            simulatedTime: 3600 * 1e9,
+            encounters: 360,
+            deaths: deaths ? { player1: deaths } : {},
+            totalDamageDealt: { player1: 360_000, '/monsters/fly': 36_000 },
+            warnings: [],
+        });
+    const sample = (deaths, seconds = 3600) => ({ seconds, deaths });
+
+    test("the sim's death rate is billed over the hours actually observed", () => {
+        // 4 deaths per simulated hour, half an hour observed → ~2 expected
+        const check = deathCheck(sample(2, 1800), sim(4));
+        expect(check.expected).toBeCloseTo(2, 10);
+        expect(check.verdict).toBe('within-noise');
+    });
+
+    test('one real death against a prediction of zero is beyond noise by itself', () => {
+        // This is the failure idling trusts the sim about — no spread hides it
+        const check = deathCheck(sample(1), sim(0));
+        expect(check.expected).toBe(0);
+        expect(check.verdict).toBe('beyond-noise');
+    });
+
+    test('rare counts wear a Poisson band, not a percentage one', () => {
+        // Expected 9: ±2σ is ±6, so 16 observed is beyond and 14 is within —
+        // a percentage band would call both the same
+        expect(deathCheck(sample(16), sim(9)).verdict).toBe('beyond-noise');
+        expect(deathCheck(sample(14), sim(9)).verdict).toBe('within-noise');
+    });
+
+    test('no deaths anywhere is quietly consistent', () => {
+        expect(deathCheck(sample(0), sim(0)).verdict).toBe('within-noise');
+    });
+
+    test('no clock, no claim', () => {
+        expect(deathCheck({ seconds: 0, deaths: 1 }, sim(1))).toBe(null);
+        expect(deathCheck(sample(1), { seconds: 0, deaths: 1 })).toBe(null);
+    });
+
+    test('the whole comparison carries it', () => {
+        const observed = aggregateObservations([evenObservation({ seconds: 10, damageDealt: 900, fights: 6 })]);
+        const comparison = compareRun(observed, sim(0));
+        expect(comparison.deathCheck).toMatchObject({ observed: 0, expected: 0, verdict: 'within-noise' });
     });
 });
 

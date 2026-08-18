@@ -1182,6 +1182,42 @@ const FACTOR_HINTS = {
 };
 
 /**
+ * The sim's survival claim, checked against what happened.
+ *
+ * The sim has always predicted deaths and the recorder has always counted
+ * them, and nothing compared the two — the number that decides whether a
+ * zone is safe to idle was the one output going unchecked. Deaths are rare
+ * counts, so the spread is Poisson: about √expected either way, not the
+ * percentage band the rate metrics use.
+ *
+ * @param {Object} observed - From `aggregateObservations`
+ * @param {Object} predicted - From `predictFromSim`
+ * @returns {{expected:number, observed:number, sigma:number, verdict:string}|null}
+ *   Null when either clock is missing
+ */
+export function deathCheck(observed, predicted) {
+    const seconds = Number(observed?.seconds) || 0;
+    const predictedSeconds = Number(predicted?.seconds) || 0;
+    if (!(seconds > 0) || !(predictedSeconds > 0)) return null;
+
+    const observedDeaths = Number(observed.deaths) || 0;
+    const predictedDeaths = Number(predicted.deaths) || 0;
+    // The sim's death rate, billed over the hours actually observed
+    const expected = (predictedDeaths / predictedSeconds) * seconds;
+    const sigma = Math.sqrt(expected);
+    // A sim that says "never" has no spread to hide in: one real death against
+    // an expectation of zero is beyond noise by itself — and that is the
+    // failure that matters even once, because idling trusts the "never".
+    const verdict =
+        observedDeaths === 0 && expected === 0
+            ? 'within-noise'
+            : Math.abs(observedDeaths - expected) > 2 * sigma
+              ? 'beyond-noise'
+              : 'within-noise';
+    return { expected, observed: observedDeaths, sigma, verdict };
+}
+
+/**
  * The whole comparison.
  *
  * @param {Object} observed - From `aggregateObservations`
@@ -1225,6 +1261,9 @@ export function compareRun(observed, predicted) {
         // a band drawn round it would be a band round nothing.
         experience: comparableXp ? compare({ key: 'xpPerSecond', label: 'Combat XP / sec' }) : null,
         experienceBySkill: comparableXp ? skillSplit(observed, predicted) : [],
+        // The survival claim, checked on its own arithmetic (Poisson, not a
+        // percentage band) — see deathCheck
+        deathCheck: deathCheck(observed, predicted),
         // Observed only. Kept beside the comparison rather than in it, because
         // nothing here is being compared to anything.
         drops: dropRates(observed),
@@ -1946,6 +1985,24 @@ function drawComparison(body, comparison) {
                           ? `Inconclusive: inside the ±${metric.marginPct.toFixed(1)}% this sample can explain by ` +
                             'chance. Record more of the same zone to narrow it.'
                           : `Fewer than ${MIN_SAMPLE_FIGHTS} fights, so the spread says nothing yet.`)
+            )
+        );
+    }
+
+    // The survival claim, only when it has something to say: a row reading
+    // "0 vs ~0" on every safe zone would train the eye to skip it
+    const deaths = comparison.deathCheck;
+    if (deaths && (deaths.observed > 0 || deaths.expected >= 0.05)) {
+        const expectedText = deaths.expected < 0.05 ? '~0' : `~${deaths.expected.toFixed(1)}`;
+        card.appendChild(
+            panelLine(
+                'Deaths',
+                `${deaths.observed} vs ${expectedText} expected`,
+                verdictColor(deaths.verdict),
+                `At the sim's death rate this sample should hold about ${deaths.expected.toFixed(2)} deaths ` +
+                    `(±${Math.max(deaths.sigma, 0).toFixed(2)}, a rare count's own spread); it held ` +
+                    `${deaths.observed}. This is the number idling trusts — a death the sim did not predict ` +
+                    'matters even once.'
             )
         );
     }

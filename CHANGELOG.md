@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sim Accuracy checks the survival claim
+
+The sim has always predicted deaths and the recorder has always counted them, and nothing compared the two — the number that decides whether a zone is safe to idle was the one output going unchecked. The comparison now has a Deaths row: the sim's death rate billed over the hours actually observed, with a Poisson band (rare counts spread as √expected, not as a percentage), shown only when it has something to say. One real death against a predicted zero is beyond noise by itself.
+
 ### Zone predictions carry an engine cohort marker
 
 Every stored calibration pair and every Sim Accuracy history row is now stamped with the script version that made its prediction — the lab's cohort lesson applied to zones, where a sim fix mid-ledger used to read as prediction drift. The calibration panel counts pairs from older versions among its combat caveats, and the Past Checks table tags rows from a different version and says why they are not a trend. (One shared `scriptVersion()` helper now replaces the four private copies.)
