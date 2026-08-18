@@ -633,15 +633,15 @@ class ConsumablesPanel {
         const lab = dataManager.characterData?.characterLabyrinth || dataManager.characterData?.labyrinth;
 
         // The server states the final capacities outright on characterInfo
-        // (labyrinthTorchCap and friends, upgrades already applied) — the
-        // settings only stand in when the payload has not arrived
+        // (labyrinthTorchCap and friends, upgrades already applied) — nothing
+        // to configure. The base caps stand in only for the moment before the
+        // payload arrives.
         const info = dataManager.characterData?.characterInfo;
-        const cap = (field, key, fallback) =>
-            Number(info?.[field]) > 0 ? Number(info[field]) : Number(config.getSettingValue(key, fallback)) || 0;
+        const cap = (field, fallback) => (Number(info?.[field]) > 0 ? Number(info[field]) : fallback);
         const capacity = {
-            torch: cap('labyrinthTorchCap', 'consumables_labTorchMax', 100),
-            shroud: cap('labyrinthShroudCap', 'consumables_labShroudMax', 4),
-            beacon: cap('labyrinthBeaconCap', 'consumables_labBeaconMax', 5),
+            torch: cap('labyrinthTorchCap', 100),
+            shroud: cap('labyrinthShroudCap', 4),
+            beacon: cap('labyrinthBeaconCap', 5),
         };
         const needs = [];
         for (const kind of SUPPLY_KINDS) {
@@ -701,7 +701,7 @@ class ConsumablesPanel {
         runsBtn.textContent = `${this.labRuns} run${this.labRuns === 1 ? '' : 's'}`;
         runsBtn.title =
             'How many runs to stock for, at full consumption: the whole torch/shroud/beacon capacity and one ' +
-            'crate per slot, every run. Capacities are settings — set them to the "max" the Supplies row shows.';
+            'crate per slot, every run. Capacities are read from the game itself, upgrades included.';
         runsBtn.addEventListener('click', (event) => {
             event.stopPropagation();
             this._cycleLabRuns();

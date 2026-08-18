@@ -1857,6 +1857,19 @@ export function placeTrialBlock(root, card, block, name = '') {
         return 'fight-sidecar';
     }
 
+    // The skilling In Progress challenge row: the readout belongs BESIDE the
+    // card (reported preference), not exiled to its own line — the row has the
+    // width for both as long as the card is protected from shrinking and the
+    // block yields first. The card's flex-shrink is pinned at placement; the
+    // block's own sizing rides its base style, which _placeBlock reapplies.
+    const challengeRow = card?.closest?.('[class*="SkillingInstancePanel_challengeArea"]');
+    if (challengeRow && root?.contains?.(challengeRow)) {
+        card.style.flexShrink = '0';
+        block.dataset.mwiPlacement = 'row-sidecar';
+        card.insertAdjacentElement('afterend', block);
+        return 'row-sidecar';
+    }
+
     const container = card?.parentElement;
     if (!container || !root?.contains?.(container)) {
         card?.appendChild?.(block);
@@ -1971,6 +1984,11 @@ export function blockNearAnchor(block, anchor, root = null) {
     // and would re-place (and re-append) it on every pass.
     if (block?.parentElement?.classList?.contains(BOX_ROW_CLASS)) {
         return !root || root.contains(block);
+    }
+    // A row sidecar lives beside its card by request — adjacency IS its home,
+    // and the escape rule below would evict it from the very row it belongs in
+    if (block?.dataset?.mwiPlacement === 'row-sidecar') {
+        return !anchor?.isConnected || anchor.nextElementSibling === block;
     }
     // The live fight's sidecar is anchored on the first boss of the wave but
     // lives after the last, so adjacency to the anchor is the wrong test — it
@@ -2606,6 +2624,7 @@ class GuildTrials {
                 // reapplies the stored `cssText` on every later render, which
                 // wipes anything set on the element at placement time.
                 const inProgressCombat = !!fightMonsterGrid(tile.element);
+                const inSkillingRow = !!tile.element?.closest?.('[class*="SkillingInstancePanel_challengeArea"]');
                 this._placeBlock(root, key, {
                     // The card the block belongs beside, for the re-anchoring
                     // check below — the game tears cards down and remounts
@@ -2628,7 +2647,9 @@ class GuildTrials {
                         (inProgressCombat
                             ? 'grid-row:1; clear:none; width:220px; min-width:180px;' +
                               'max-width:220px; align-self:start;'
-                            : 'clear:both; min-width:min(260px, 100%); max-width:520px;') +
+                            : inSkillingRow
+                              ? 'flex:0 1 300px; min-width:170px; max-width:300px;' + 'align-self:center; clear:none;'
+                              : 'clear:both; min-width:min(260px, 100%); max-width:520px;') +
                         'margin:6px 0 8px; padding:6px 10px; background:rgba(0,0,0,0.25);' +
                         'border-radius:6px; font-size:11px; line-height:1.6;',
                     place: (block) => placeTrialBlock(root, tile.element, block, tile.name),
@@ -2933,7 +2954,8 @@ class GuildTrials {
             // own layout (the payout, the In Progress card readouts) still get
             // the full check, which is what re-places one out of a squashing row.
             const inBoxRow = existing.parentElement?.classList?.contains(BOX_ROW_CLASS);
-            if (!inBoxRow) {
+            const isSidecar = existing.dataset?.mwiPlacement === 'row-sidecar';
+            if (!inBoxRow && !isSidecar) {
                 const stuckInRow = existing.parentElement && isSquashingRow(existing.parentElement);
                 if (stuckInRow || (anchored && !anchored(existing))) {
                     withScrollKept(root, () => place(existing));
@@ -3262,9 +3284,13 @@ class GuildTrials {
                 return root.firstElementChild === block;
             },
             html: rows.join('') + this._controlsHTML(),
+            // Flat: the title, the four figures and the buttons flow on one
+            // wrapping line instead of stacking half the panel tall — each
+            // line() is a self-sizing chip once the container is a wrapping row
             style:
-                'margin:8px 0 4px; padding:8px 12px; background:rgba(0,0,0,0.25);' +
-                'border-radius:6px; font-size:12px; line-height:1.7;',
+                'display:flex; flex-wrap:wrap; align-items:center; column-gap:18px; row-gap:2px;' +
+                'margin:8px 0 4px; padding:5px 12px; background:rgba(0,0,0,0.25);' +
+                'border-radius:6px; font-size:12px; line-height:1.5;',
             place: (block) => {
                 // Under the game's own status row when there is one. Otherwise
                 // above the first card — but escaping any non-wrapping row it sits
