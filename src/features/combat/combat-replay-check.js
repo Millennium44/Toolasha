@@ -572,6 +572,28 @@ export function replayFights(ticks) {
                     const gained = fightGains(openedWith[index], totals[index]);
                     if (gained) current.gains[index] = gained;
                 }
+                // Endpoint reconciliation, the lab's honesty check ported: the
+                // wave's total HP loss plus what it healed back is exactly the
+                // gross damage it took, and the attribution's counter-gated
+                // figure is systematically under it (bleeds ring no counter,
+                // ticks merge at 3 Hz). The signed residual says by how much —
+                // read from `attribution.monstersHP` here, before the wave
+                // reset below wipes it, while it still holds the last readings.
+                const credited = Object.values(current.players).reduce((total, p) => total + (p.damage || 0), 0);
+                const startIndices = Object.keys(current.startHP || {});
+                if (startIndices.length) {
+                    let endpointDealt = current.healedUp;
+                    for (const index of startIndices) {
+                        const last = attribution.monstersHP[index];
+                        endpointDealt +=
+                            current.startHP[index] - (Number.isFinite(last) ? last : current.startHP[index]);
+                    }
+                    current.endpointDealt = endpointDealt;
+                    current.unattributedDealt = endpointDealt - credited;
+                } else {
+                    current.endpointDealt = null;
+                    current.unattributedDealt = null;
+                }
                 fights.push(current);
             }
             openedWith = totals;
@@ -609,11 +631,33 @@ export function replayFights(ticks) {
                 // Filled in by the battle that closes this one, since that is
                 // the first moment the gains of this fight are known
                 gains: {},
+                // The wave's HP baselines as the snapshot stated them, copied
+                // now because attributeTick overwrites the live map every tick.
+                // A monster first seen mid-fight joins at its first reading —
+                // the same baseline the attribution gives it, so a late join
+                // cannot manufacture residual.
+                startHP: { ...attribution.monstersHP },
+                // Upward HP steps — the wave healing itself — accumulated from
+                // the raw diffs, because the attribution's hit gate refuses
+                // counterless HP movement in either direction
+                healedUp: 0,
             };
             continue;
         }
 
         if (!current) continue;
+
+        // The heal/spawn pre-pass, before attributeTick moves the baselines
+        for (const [index, monster] of Object.entries(tick.payload?.mMap || {})) {
+            const health = Number(monster?.currentHitpoints ?? monster?.cHP);
+            if (!Number.isFinite(health)) continue;
+            const before = attribution.monstersHP[index];
+            if (before === undefined) {
+                current.startHP[index] = health;
+            } else if (health > before) {
+                current.healedUp += health - before;
+            }
+        }
 
         const events = attributeTick(tick.payload, attribution);
         // Bound per tick rather than read from the outer `monsters`: the wave is
@@ -728,6 +772,10 @@ export function observeRecording(recording, context = {}) {
             deaths: fight.taken[playerIndex]?.deaths || 0,
             kills: fight.kills,
             monsters: fight.monsters,
+            // The endpoint reconciliation, null on fights replayed before it
+            // existed — a reader tells "absent" from zero
+            endpointDealt: fight.endpointDealt ?? null,
+            unattributedDealt: fight.unattributedDealt ?? null,
         })),
     };
 }
@@ -764,6 +812,13 @@ export function aggregateObservations(observations) {
     // cannot be decomposed" rather than "this character never swung".
     const hits = fights.reduce((total, fight) => total + (fight.hits || 0), 0);
     const swings = fights.reduce((total, fight) => total + (fight.hits || 0) + (fight.misses || 0), 0);
+
+    // The endpoint reconciliation, over only the fights that carry it — a
+    // recording replayed before the residual existed contributes nothing
+    // rather than a phantom zero
+    const reconciled = fights.filter((fight) => Number.isFinite(fight.endpointDealt));
+    const endpointDealt = reconciled.reduce((total, fight) => total + fight.endpointDealt, 0);
+    const unattributedDealt = reconciled.reduce((total, fight) => total + (fight.unattributedDealt || 0), 0);
 
     // Experience and loot are summed over the fights whose gains were known,
     // and divided by *their* seconds rather than the run's: a sample where half
@@ -806,6 +861,12 @@ export function aggregateObservations(observations) {
         deaths,
         hits,
         swings,
+        // How much of the waves' endpoint HP loss the attribution credited.
+        // Null when no fight carries the reconciliation; the residual folds
+        // designed exclusions (bleeds) with 3 Hz merge loss, so it is a
+        // data-quality figure, not an error
+        endpointDealt: reconciled.length ? endpointDealt : null,
+        unattributedDealt: reconciled.length ? unattributedDealt : null,
         dps: seconds > 0 ? damageDealt / seconds : null,
         takenPerSecond: seconds > 0 ? damageTaken / seconds : null,
         secondsPerFight: fights.length ? seconds / fights.length : null,
@@ -2051,6 +2112,28 @@ function drawProvenance(body, observed) {
     if (observed.deaths) card.appendChild(panelLine('Deaths', String(observed.deaths), ROW_COLORS.bad));
     if (observed.truncated) {
         card.appendChild(panelLine('Truncated', 'a fight outran the tick limit and was dropped', ROW_COLORS.dim));
+    }
+    // Data quality, not an error: how much of the waves' endpoint HP loss the
+    // tick attribution actually credited. The gap folds designed exclusions
+    // (bleeds ring no hit counter) with 3 Hz merge loss — but it bounds how
+    // far observed DPS under-reads, which is exactly the direction the
+    // comparison would otherwise blame on the sim.
+    if (Number.isFinite(observed.unattributedDealt) && observed.endpointDealt > 0) {
+        const pct = (observed.unattributedDealt / observed.endpointDealt) * 100;
+        if (Math.abs(pct) >= 0.05) {
+            card.appendChild(
+                panelLine(
+                    'Unattributed',
+                    `${formatKMB(Math.round(observed.unattributedDealt))} of ` +
+                        `${formatKMB(Math.round(observed.endpointDealt))} dealt (${pct.toFixed(1)}%)`,
+                    Math.abs(pct) >= 10 ? ROW_COLORS.bad : ROW_COLORS.dim,
+                    'The waves lost this much more HP than the tick-by-tick attribution credited: bleeds and ' +
+                        'other counterless damage, plus hits the 3 Hz feed merged. It is measured from the HP ' +
+                        'endpoints, so it bounds how far the observed damage rate under-reads — a deviation ' +
+                        'smaller than this is not evidence against the sim.'
+                )
+            );
+        }
     }
     drawSaveButton(card);
 }

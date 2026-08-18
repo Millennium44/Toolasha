@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Zone fights reconcile their endpoints, and the panel states the attribution gap
+
+Every replayed zone fight now carries the lab's endpoint reconciliation: the wave's HP loss plus its self-healing is exactly the gross damage it took, and the signed residual over the counter-gated credited figure says how much the tick attribution missed (bleeds ring no hit counter; the 3 Hz feed merges frames). The recording card shows the gap as a data-quality line — it bounds how far observed DPS under-reads, which is exactly the direction that used to read as sim over-prediction.
+
 ### Zone recordings and Sim Accuracy exports say what produced them, and can go public
 
 Both zone export files (the Sim Accuracy bundle and the combat session inside it) are now stamped with script version, host and test-server flag — an offline reader could reconstruct neither, and live and test do not share balance. A new Sanitized save writes the same file with player identities hashed and character ids stripped out of the raw `new_battle` payloads (the summaries never carried names), for attaching to public bug reports.

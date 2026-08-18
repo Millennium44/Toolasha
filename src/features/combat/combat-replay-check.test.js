@@ -323,6 +323,89 @@ describe('the opening swing of every fight, which used to be invisible', () => {
     });
 });
 
+describe('the endpoint reconciliation', () => {
+    // The same wave shape the opener tests use: one monster, killed in hits
+    const battle = (openingHP = 100, maxHP = 100) => ({
+        at: 0,
+        type: 'new_battle',
+        payload: {
+            players: { 0: { name: 'Tester', isPreparingAutoAttack: true } },
+            monsters: { 0: { name: 'Fly', combatDetails: { currentHitpoints: openingHP, maxHitpoints: maxHP } } },
+        },
+    });
+    const hit = (at, counter, health) => ({
+        at,
+        type: 'battle_updated',
+        payload: {
+            pMap: { 0: { atkCounter: counter, isAutoAtk: true } },
+            mMap: { 0: { cHP: health, mHP: 100, dmgCounter: counter, critCounter: 0 } },
+        },
+    });
+    const close = (at) => ({ ...battle(), at });
+
+    test('a clean capture reconciles to zero', () => {
+        const [fight] = replayFights([battle(), hit(1000, 1, 80), hit(2000, 2, 60), hit(3000, 3, 0), close(4000)]);
+        expect(fight.endpointDealt).toBe(100);
+        expect(fight.unattributedDealt).toBe(0);
+    });
+
+    test('counterless damage the attribution refuses lands in the residual', () => {
+        // The bleed: health falls with no counter movement, so the hit gate
+        // refuses it — but the monster is still down those hitpoints
+        const bleed = {
+            at: 2000,
+            type: 'battle_updated',
+            payload: { mMap: { 0: { cHP: 55, mHP: 100, dmgCounter: 1, critCounter: 0 } } },
+        };
+        const [fight] = replayFights([battle(), hit(1000, 1, 80), bleed, hit(3000, 2, 30), close(4000)]);
+        expect(fight.players['0'].damage).toBe(45); // 20 + 25, the counted hits
+        expect(fight.endpointDealt).toBe(70); // 100 → 30, every point of it
+        expect(fight.unattributedDealt).toBe(25); // the bleed, by subtraction
+    });
+
+    test('a self-heal raises what the endpoints owe, not the residual', () => {
+        const healTick = {
+            at: 2000,
+            type: 'battle_updated',
+            payload: { mMap: { 0: { cHP: 90, mHP: 100, dmgCounter: 1, critCounter: 0 } } },
+        };
+        const [fight] = replayFights([battle(), hit(1000, 1, 80), healTick, hit(3000, 2, 70), close(4000)]);
+        expect(fight.healedUp).toBe(10);
+        // start − end + healed: 100 − 70 + 10 = 40, which is the two hits
+        expect(fight.endpointDealt).toBe(40);
+        expect(fight.unattributedDealt).toBe(0);
+    });
+
+    test('the real recording reconciles: residual present and non-negative', () => {
+        const fights = replayFights(recording.ticks);
+        for (const fight of fights) {
+            expect(Number.isFinite(fight.endpointDealt)).toBe(true);
+            expect(fight.unattributedDealt).toBeGreaterThanOrEqual(0);
+        }
+    });
+
+    test('the aggregate carries the sums, and the coverage is honest on the fixture', () => {
+        const observed = aggregateObservations([
+            observeRecording(recording, { zoneHrid: '/z', difficultyTier: 0, recordedAt: 1 }),
+        ]);
+        expect(observed.endpointDealt).toBeGreaterThan(0);
+        expect(observed.unattributedDealt).toBeGreaterThanOrEqual(0);
+        // The attribution can credit at most what the endpoints state
+        expect(observed.unattributedDealt).toBeLessThanOrEqual(observed.endpointDealt);
+    });
+
+    test('fights replayed before the residual existed aggregate as null, not zero', () => {
+        const legacy = observeRecording(recording, { zoneHrid: '/z', difficultyTier: 0, recordedAt: 1 });
+        for (const fight of legacy.fights) {
+            delete fight.endpointDealt;
+            delete fight.unattributedDealt;
+        }
+        const observed = aggregateObservations([legacy]);
+        expect(observed.endpointDealt).toBe(null);
+        expect(observed.unattributedDealt).toBe(null);
+    });
+});
+
 describe('an observation', () => {
     const observation = observeRecording(recording, {
         zoneHrid: '/actions/combat/fly',
@@ -343,6 +426,9 @@ describe('an observation', () => {
                     'damageDealt',
                     'damageTaken',
                     'deaths',
+                    // The endpoint reconciliation rides with each fight
+                    'endpointDealt',
+                    'unattributedDealt',
                     'hits',
                     'kills',
                     'misses',
