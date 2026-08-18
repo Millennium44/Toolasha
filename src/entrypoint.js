@@ -1899,6 +1899,10 @@ if (isCombatSimulatorPage()) {
         // The selector canary, callable directly for a spot-check without
         // waiting for the delayed health pass to run it on its own.
         canary: checkAnchorCanaries,
+        // Diff the whole selector registry against the game's stylesheets —
+        // the after-a-game-update sweep, without visiting a single screen.
+        // Extra selectors (a feature's private ones) can be handed in.
+        selectorAudit: (extra) => UI.selectorAudit.runSelectorAudit(extra),
         // The same, for the shape of the game data rather than the page
         schema: () => UI.schemaCanary.runSchemaCanary(),
         // The health report on demand, rather than only when a startup toast

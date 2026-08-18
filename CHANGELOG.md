@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### `Toolasha.debug.selectorAudit()` — the after-a-game-update sweep as one command
+
+The game's stylesheets carry every CSS-module class whether or not its element is drawn, so diffing the selector registry against them says what a game update broke without visiting a single screen — the technique that found four broken selectors on 2026-08-17, now a standing console command. Checks `class*=` prefixes and full hashed literals; anything else is reported as unchecked rather than silently passed.
+
 ### Sim Accuracy checks the survival claim
 
 The sim has always predicted deaths and the recorder has always counted them, and nothing compared the two — the number that decides whether a zone is safe to idle was the one output going unchecked. The comparison now has a Deaths row: the sim's death rate billed over the hours actually observed, with a Poisson band (rare counts spread as √expected, not as a percentage), shown only when it has something to say. One real death against a predicted zero is beyond noise by itself.

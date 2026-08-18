@@ -119,6 +119,9 @@ import accountView from '../features/account/index.js';
 // Dev tools
 import pformancePanel from '../features/dev/pformance-panel.js';
 import * as healthStatus from '../features/dev/health-status.js';
+// The selector audit rides beside the health tooling: same job (what did a
+// game update break), different evidence (the stylesheets, not the page)
+import * as selectorAudit from '../features/dev/selector-audit.js';
 // The websocket-shape canary. It lives in core/ because that is what it asserts
 // about, and is handed out here beside healthStatus because that is where its
 // findings go.
@@ -215,6 +218,7 @@ toolashaRoot.UI = {
     pformancePanel,
     healthStatus,
     schemaCanary,
+    selectorAudit,
     consumablesPanel,
     combatLevelPanel,
     ironCowFarmPanel,
