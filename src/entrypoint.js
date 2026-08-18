@@ -1080,6 +1080,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'labyrinthRunLedger',
+            name: 'Labyrinth Run Ledger',
+            category: 'Combat',
+            module: Combat.labyrinthRunLedger,
+            async: false,
+        },
+        {
             key: 'labyrinthBestLevel',
             name: 'Labyrinth Best Level',
             category: 'Combat',

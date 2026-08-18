@@ -56,6 +56,7 @@ import {
 } from '../../utils/consumable-forecast.js';
 import { dungeonEntryKey, heldInInventory, keyConsumableEntry } from '../../utils/dungeon-key-forecast.js';
 import { resolveSupplyHrids, readSupplyCounts, bestOwnedTier, SUPPLY_KINDS } from '../combat/labyrinth-supplies.js';
+import { rushFloorTable } from '../combat/labyrinth-run-ledger.js';
 import storage from '../../core/storage.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { estimateFillSeconds } from '../../utils/order-book.js';
@@ -126,6 +127,7 @@ class ConsumablesPanel {
         this._labRuns = Number(await storage.get('consumablesLabRuns', 'settings', 5)) || 5;
         // The last sim's measured consumable use, for rating food while idle
         this._simRates = await readScoped('simConsumableRates', 'combatExport', null).catch(() => null);
+        this._ledgerRuns = (await readScoped('labyrinthRunLedger', 'labyrinth', []).catch(() => [])) || [];
     }
 
     /** The duration everything is measured against */
@@ -711,6 +713,43 @@ class ConsumablesPanel {
         const runs = this.labRuns;
         for (const { itemHrid, perRun } of needs) {
             section.appendChild(this._labRow(itemHrid, perRun, runs, inventory));
+        }
+
+        // What recent runs actually left unspent, and what each rush-for-exit
+        // floor would cost against the torch capacity — the two readings that
+        // together answer "could the rush floor come down?"
+        const ledger = (this._ledgerRuns || []).slice(0, 5);
+        if (ledger.length) {
+            const line = document.createElement('div');
+            line.style.cssText = 'margin-top:3px; font-size:0.9em;';
+            line.style.color = COLORS.textDim;
+            const left = (kind) => ledger.map((run) => run.left?.[kind]).filter((n) => Number.isFinite(n));
+            const show = (kind, label) => {
+                const values = left(kind);
+                return values.length ? `${label} ${values.join(', ')}` : null;
+            };
+            const parts = [show('torch', '🔥'), show('shroud', '👘'), show('beacon', '🏮')].filter(Boolean);
+            line.textContent = `Left over after the last ${ledger.length} run${ledger.length === 1 ? '' : 's'} (newest first): ${parts.join(' · ')}`;
+
+            const info = dataManager.characterData?.characterInfo;
+            const deepest = Math.max(
+                Number(info?.labyrinthHighestFloor) || 0,
+                ...ledger.map((run) => Number(run.floor) || 0)
+            );
+            const torchCap = Number(info?.labyrinthTorchCap) || 0;
+            if (deepest > 0 && torchCap > 0) {
+                const table = rushFloorTable(deepest, torchCap)
+                    .map(
+                        (row) => `rush ≤${row.rushFloor}: ~${row.torches} torches${row.fits ? '' : ' — over capacity'}`
+                    )
+                    .join('\n');
+                line.title =
+                    `Torches a run to floor ${deepest} costs, one per room entered (grid math from the game ` +
+                    `guide: 4×4 on floor 1, +1 per floor to 8×8; rushed floors cross the shortest path, the ` +
+                    `rest are fully cleared), against your ${torchCap} capacity:\n${table}`;
+                line.style.textDecoration = 'underline dotted';
+            }
+            section.appendChild(line);
         }
         return section;
     }

@@ -40,6 +40,7 @@ import {
 } from '../features/combat/zone-uptime-harness.js';
 import { buildGameDataPayload } from '../features/combat-sim/combat-sim-adapter.js';
 import labyrinthTracker from '../features/combat/labyrinth-tracker.js';
+import labyrinthRunLedger from '../features/combat/labyrinth-run-ledger.js';
 import labyrinthBestLevel from '../features/combat/labyrinth-best-level.js';
 import labyrinthShopPrices from '../features/combat/labyrinth-shop-prices.js';
 import labyrinthClearRate from '../features/combat/labyrinth-clear-rate.js';
@@ -112,6 +113,7 @@ toolashaRoot.Combat = {
     portraitDps,
     partyProfileButton,
     labyrinthTracker,
+    labyrinthRunLedger,
     labyrinthBestLevel,
     labyrinthShopPrices,
     labyrinthClearRate,

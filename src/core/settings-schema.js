@@ -1928,6 +1928,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds colored timer annotations to "Key counts" messages (green if fast, red if slow)',
             },
+            labyrinthRunLedger: {
+                id: 'labyrinthRunLedger',
+                label: 'Labyrinth: record what each run leaves unspent',
+                type: 'checkbox',
+                default: true,
+                help: "Records each run's ending — the torches, shrouds and beacons it came back with and the deepest floor it reached — so the Consumables panel can say whether the rush-for-exit floor could come down. Kept per character, last 30 runs.",
+            },
             labyrinthTracker: {
                 id: 'labyrinthTracker',
                 label: 'Labyrinth best level tracker',

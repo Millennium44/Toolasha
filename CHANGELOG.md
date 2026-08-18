@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Each labyrinth run's leftovers are on the record
+
+A new run ledger records what every run came back with — the torches, shrouds and beacons left unspent and the deepest floor reached (last 30 runs, per character). The Consumables panel's Labyrinth block lists the recent leftovers, and its hover prices every rush-for-exit floor in torches — grid math straight from the game guide (4×4 on floor 1, one wider per floor to 8×8; a rush crosses the shortest corner-to-corner path, everything else is a full clear) against your torch capacity — so "could rush come down a floor?" is a read, not a calculation.
+
 ### Labyrinth capacities read themselves
 
 The server states the final torch/shroud/beacon capacities outright on `characterInfo` (`labyrinthTorchCap` and friends, upgrades already applied) — the Consumables panel's Labyrinth block now reads them from there, and the three capacity settings only stand in until the payload arrives.
