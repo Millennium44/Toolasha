@@ -24,6 +24,11 @@ export const GAME = {
 
     // Game Panel
     GAME_PANEL: 'div[class*="GamePage_gamePanel"]',
+    // The full-screen "Disconnected…" / "Connecting…" message (with its Refresh
+    // button) that replaces the game when the socket is gone — e.g. after the
+    // account logs in from another tab. While it is up, the header and nav are
+    // torn down, so their absence is a connection fact and not a selector break.
+    CONNECTION_MESSAGE: '[class*="GamePage_connectionMessage"]',
 
     // Skill Action Detail
     SKILL_ACTION_DETAIL: '[class*="SkillActionDetail_skillActionDetail"]',

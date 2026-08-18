@@ -317,6 +317,12 @@ function mergeFailures(...lists) {
  * @returns {Array<{key: string, name: string, reason: string}>} One entry per missing anchor
  */
 function checkAnchorCanaries() {
+    // A disconnected game is not a broken one. When the socket drops (another
+    // tab logs the account in, a server restart), the game replaces itself
+    // with a full-screen connection message and tears the header and nav down
+    // — three ungated anchors gone at once, none of them evidence of a game
+    // update. No anchor means anything until the game is back.
+    if (document.querySelector(GAME.CONNECTION_MESSAGE)) return [];
     const ANCHORS = [
         { key: 'canaryHeaderTotalLevel', name: 'Header (total level)', selector: GAME.TOTAL_LEVEL },
         { key: 'canaryGamePanel', name: 'Game panel wrapper', selector: GAME.GAME_PANEL },

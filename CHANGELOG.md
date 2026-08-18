@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A disconnected game no longer reads as a broken one
+
+Logging the account in from another tab (or any socket loss) replaces the game with a full-screen "Disconnected" message and tears down the header and nav — which the startup health check then reported as three missing anchors, "game update?". The canary check now stands down entirely while the connection message is on screen: no anchor means anything until the game is back.
+
 ### Tests: the two Markov-chain tests no longer time out under full-suite load
 
 `npm test` was intermittently failing the enhancement-config and equipment-savings-row chain tests — a timeout, not state pollution: each takes ~1 s alone (first mathjs chain of its block) and 14 s when the whole suite contends for the CPU. Vitest was also running every file twice by picking up the `.claude/worktrees` copies. Both tests now carry an explicit 30 s timeout, and the config excludes `.claude/**`.
@@ -198,19 +202,19 @@ The sim's player build is snapshot at fight start, before your precision self-bu
 
 ### Lab replay: two honesty fixes to the sim-vs-real comparison
 
-Both made the sim look weaker than it fights. (1) Your observed damage output now takes the larger of the tick-summed drops and the monster's endpoint HP loss — the 3 Hz feed misses hits that merged into one frame, and a monster that doesn't regen (most) has an exact HP-lost figure. (2) The sim's predicted per-fight rates (dps, damage taken, fight length) now divide by *in-fight* seconds, excluding the 3s restart interval the engine inserts between fights — matching the observed side's pure fight duration.
+Both made the sim look weaker than it fights. (1) Your observed damage output now takes the larger of the tick-summed drops and the monster's endpoint HP loss — the 3 Hz feed misses hits that merged into one frame, and a monster that doesn't regen (most) has an exact HP-lost figure. (2) The sim's predicted per-fight rates (dps, damage taken, fight length) now divide by _in-fight_ seconds, excluding the 3s restart interval the engine inserts between fights — matching the observed side's pure fight duration.
 
 ### Tick capture: stop when the fight leaves its monster
 
-A tick capture armed for a monster now ends itself the moment a fresh fight against a *different* monster begins — so clearing the room (or dying out of the labyrinth into your main-game action) no longer pollutes the file with a fight the harness isn't comparing against. Retries against the same monster keep recording; a general capture with no target monster still records until stopped.
+A tick capture armed for a monster now ends itself the moment a fresh fight against a _different_ monster begins — so clearing the room (or dying out of the labyrinth into your main-game action) no longer pollutes the file with a fight the harness isn't comparing against. Retries against the same monster keep recording; a general capture with no target monster still records until stopped.
 
 ### Lab skip-threshold table: always plan from your skill level, not the live run
 
-The skip-threshold table's clear-% badges simmed the *live run's* room level for a monster whenever you were in a labyrinth, so the numbers swung to whatever the current floor happened to roll instead of answering "what does my threshold clear". Both the skilling and combat rows now always sim `effective level + threshold − 1` (the skip-derived level), ignoring the live run — the grid overlay still shows the actual rooms. Removed the now-unused live-preferring helpers.
+The skip-threshold table's clear-% badges simmed the _live run's_ room level for a monster whenever you were in a labyrinth, so the numbers swung to whatever the current floor happened to roll instead of answering "what does my threshold clear". Both the skilling and combat rows now always sim `effective level + threshold − 1` (the skip-derived level), ignoring the live run — the grid overlay still shows the actual rooms. Removed the now-unused live-preferring helpers.
 
 ### Lab sim: monsters open abilities at half-cooldown, fixing over-estimated clear rates
 
-The sim gave a labyrinth monster a *random* first-cast delay (`[cd/2, cd)`, averaging 0.75×cooldown), but tick captures show the real game opens each ability at exactly **half its cooldown**, deterministically — Cyclops's specials at ~10s on a 20s cooldown, Toughness at ~15s on 30s, its guardian aura at 60s on 120s. That extra ~quarter-cooldown of delay robbed the monster of resistance-buff uptime (Toughness ≈ 48% sim vs ≈ 68% real), so the sim under-mitigated it, over-credited your damage per hit, and **over-estimated the clear rate** — the Cyclops bug. Labyrinth monsters now open at cd/2; zone sims keep the random de-sync a pack needs. Thanks to a Fable deep-dive for localizing it.
+The sim gave a labyrinth monster a _random_ first-cast delay (`[cd/2, cd)`, averaging 0.75×cooldown), but tick captures show the real game opens each ability at exactly **half its cooldown**, deterministically — Cyclops's specials at ~10s on a 20s cooldown, Toughness at ~15s on 30s, its guardian aura at 60s on 120s. That extra ~quarter-cooldown of delay robbed the monster of resistance-buff uptime (Toughness ≈ 48% sim vs ≈ 68% real), so the sim under-mitigated it, over-credited your damage per hit, and **over-estimated the clear rate** — the Cyclops bug. Labyrinth monsters now open at cd/2; zone sims keep the random de-sync a pack needs. Thanks to a Fable deep-dive for localizing it.
 
 ### Settings: a "What's new" button to reopen the update notes
 
@@ -230,7 +234,7 @@ The real-vs-sim attribution held the last special the monster cast and, because 
 
 ### Monster Stat Check: export the player build, and a copy-all button
 
-The discrepancy-log export now carries the player-build (you vs sim) result and the live buffs behind it, not just the monster side — a monster can match perfectly while the sim builds *you* wrong, and that half was missing from the export. Also surfaced the copy button (it was built but never mounted) and made it copy the whole session as text — player build plus every monster checked — so a bug report is one paste instead of several screenshots.
+The discrepancy-log export now carries the player-build (you vs sim) result and the live buffs behind it, not just the monster side — a monster can match perfectly while the sim builds _you_ wrong, and that half was missing from the export. Also surfaced the copy button (it was built but never mounted) and made it copy the whole session as text — player build plus every monster checked — so a bug report is one paste instead of several screenshots.
 
 ### Alchemy pins: smaller, less intrusive pin badges on touchscreens
 
@@ -238,7 +242,7 @@ On a touchscreen every item tile shows its pin (there's no hover to reveal it), 
 
 ### Labyrinth path: revealing more of the floor now ranks above torches
 
-The route planner treated "uncover more unknown rooms" as a sub-torch tiebreak that could never justify a single extra step, so it would skip a one-step detour that reveals a new room — even though an unknown room may hide a chest the planner can't yet see. Reveals now rank second, above torches (a shroud still trumps everything): the min-shroud base route is compared against routes that detour through one revealing room, and whichever uncovers the most *unique* unknown rooms — then the fewest torches — wins. One detour at a time, so it opens the floor up without carpet-revealing, and it never spends an extra shroud to reveal. This is done above the shortest-path cost, since a single Dijkstra cost can't rank reveals over torches without negative edges.
+The route planner treated "uncover more unknown rooms" as a sub-torch tiebreak that could never justify a single extra step, so it would skip a one-step detour that reveals a new room — even though an unknown room may hide a chest the planner can't yet see. Reveals now rank second, above torches (a shroud still trumps everything): the min-shroud base route is compared against routes that detour through one revealing room, and whichever uncovers the most _unique_ unknown rooms — then the fewest torches — wins. One detour at a time, so it opens the floor up without carpet-revealing, and it never spends an extra shroud to reveal. This is done above the shortest-path cost, since a single Dijkstra cost can't rank reveals over torches without negative edges.
 
 ### Lab Sim: fold guild-shrine max HP / MP buffs into the sim player
 
@@ -262,7 +266,7 @@ Read-only console diagnostic for tracing a cadence gap (the sim casting an abili
 
 ### Lab Sim: player build check — the sim's build of your character next to your live stats
 
-Closes the player-init gap. Every other check verifies how the sim builds the *monster*; none looked at how it builds *you* — the gear, ability levels and persistent buffs (teas/community/guild/house) that decide your damage and mitigation. A **"Check my build"** button in the Monster Stat Check panel runs a one-fight sim probe and reads back the sim player's resolved `combatDetails` at the one faithful moment (first combat start, after `generatePermanentBuffs()` + `reset(0)`, before any transient combat buff), then diffs it field-by-field against your live in-game stats from clicking yourself in combat. Both sides carry the persistent buffs, so a `⚠ off` row is a real build difference — a gear, ability-level or buff-init gap — not a "which side has the buff?" question. Reads at fight start, so a transient combat buff (fury) or a monster debuff on you shows as an expected gap. Needs the same flag-gated capture hook pattern as the blind sim, off for every normal sim (`combat-simulator.js` snapshots the player build only when the probe asks). When Max HP disagrees by more than 1%, the check logs the term-by-term breakdown (stamina level, flat HP from gear, % HP buff) plus your active buff list to the console, so the differing input — and the buff behind it — is visible rather than just the total.
+Closes the player-init gap. Every other check verifies how the sim builds the _monster_; none looked at how it builds _you_ — the gear, ability levels and persistent buffs (teas/community/guild/house) that decide your damage and mitigation. A **"Check my build"** button in the Monster Stat Check panel runs a one-fight sim probe and reads back the sim player's resolved `combatDetails` at the one faithful moment (first combat start, after `generatePermanentBuffs()` + `reset(0)`, before any transient combat buff), then diffs it field-by-field against your live in-game stats from clicking yourself in combat. Both sides carry the persistent buffs, so a `⚠ off` row is a real build difference — a gear, ability-level or buff-init gap — not a "which side has the buff?" question. Reads at fight start, so a transient combat buff (fury) or a monster debuff on you shows as an expected gap. Needs the same flag-gated capture hook pattern as the blind sim, off for every normal sim (`combat-simulator.js` snapshots the player build only when the probe asks). When Max HP disagrees by more than 1%, the check logs the term-by-term breakdown (stamina level, flat HP from gear, % HP buff) plus your active buff list to the console, so the differing input — and the buff behind it — is visible rather than just the total.
 
 ### Lab Sim: uptime harness — the monster's incoming damage, per ability, real vs sim
 
@@ -274,7 +278,7 @@ New opt-in diagnostic (off by default, under Combat Features). With it on, click
 
 - **The sim is built with the unit's active effects applied, so the comparison is buffed-against-buffed.** The game's `combatBuffMap` records are the engine's own buff shape, so the same self-buffs (Toughness, elusiveness) and player shreds (pestilent shot, puncture) fold into the sim's accuracy, evasion, damage, armour and resistance ratings the way the game's did. With effects on both sides every row should match, and a `⚠ off` means the sim genuinely disagrees — a real modelling gap, not a "which side has the buff?" question. A **Sim: buffed / baseline** toggle switches the sim column to the unbuffed baseline instead, where each row is read against the active effects (`↑ buff` / `↓ debuff`) so the raw effect the game applied is visible — useful for spotting a base-stat or scaling error the buffed view would mask. Both views are computed per click and travel with the history entry.
 - **The panel grows to fit, resizes, and copies.** Its height now grows to show the whole readout without a scrollbar (capped just under the viewport), it is resizable from the corner, and a ⧉ button copies the on-screen comparison — stat rows, active effects and the blind-sim diff — as plain text for pasting.
-- **A "Run blind sim" button checks whether the sim produces the effects at all.** The buffed comparison verifies the sim's stat math *given* the effects; this asks the deeper question — fed only the monster and its room level (never the live buffs), does the sim independently generate them? It runs a short blind fight in the sim worker with buff-capture on, then lists every effect either side has: `⚠ missing` (the game has it, the blind sim never produced it — an unmodelled ability or one its rotation never cast), `≠` different strength, `+` sim-only (usually timing), or a match. This is what catches "the sim never applies this monster's self-buff / your debuff", which the stat rows alone cannot. Needs a tiny, flag-gated capture hook in the combat engine (`CombatUnit.addBuff`) that is off for every normal sim.
+- **A "Run blind sim" button checks whether the sim produces the effects at all.** The buffed comparison verifies the sim's stat math _given_ the effects; this asks the deeper question — fed only the monster and its room level (never the live buffs), does the sim independently generate them? It runs a short blind fight in the sim worker with buff-capture on, then lists every effect either side has: `⚠ missing` (the game has it, the blind sim never produced it — an unmodelled ability or one its rotation never cast), `≠` different strength, `+` sim-only (usually timing), or a match. This is what catches "the sim never applies this monster's self-buff / your debuff", which the stat rows alone cannot. Needs a tiny, flag-gated capture hook in the combat engine (`CombatUnit.addBuff`) that is off for every normal sim.
 - **The log is now a labelled corpus: every distinct buff state is kept, not just the latest.** Each click is a deterministic test of the sim's stat arithmetic — the monster, the exact effects up, and the game's resolved totals — so keying the log by the effect set (not just monster+room) retains the monster unbuffed, part-stacked and fully stacked, each auto-diffed. The Cyclops-class bug (a buff wiped from the stat total) then flags on the first buffed sample, hands-free, and the exported log doubles as a regression fixture. An in-engine invariant test backs this up: `updateCombatDetails` must be idempotent and reconstructive (a fresh rebuild equals the incrementally-buffed unit).
 - **Session log you can page through, with discrepancies surfaced first.** Every clicked monster's comparison is kept for the session, deduped by monster, room level and effect set, and capped. A nav bar pages through them — ▲/▼ buttons or, while the pointer is over the panel, the ↑/↓ arrows — ordering the ones with a mismatch first (newest first), then the clean views, so paging lands on the problems before anything else. A `⚠ N` count, a red title, and the position/"how long ago" readout make a discrepancy view obvious; a fresh click jumps back to live. A **Show: all / ⚠ only** toggle is a non-destructive filter — it changes what you page through, never what is stored, so switching it can't lose views — and the nav controls stay visible even when the log is empty, so a filter can never strand you. **Clear** wipes the log; ⭳ downloads the log plus the current snapshot as JSON. The log and the view choices **persist across refreshes** (in the labyrinth store), so a survey carries over between sessions. `Toolasha.Debug.monsterStatCheck()` dumps the last comparison; `Toolasha.Debug.monsterStatCheckLog()` returns the whole log.
 
@@ -318,7 +322,7 @@ The render pass itself is lighter too: the whole-panel element scan for trial ca
 ### Lab Sim combat crates default to equipped too; recommendation & breakdown tooltips spell out the working
 
 - The **combat** sim's tea/coffee/food dropdowns had the same hardcoded-Expert bug as the skilling tab — so a fight was scored with an Expert coffee crate's **+15 combat levels** the character may not own. They now default to the equipped crates (manual pick still opts out), same as skilling.
-- The Automation-tab **recommendation badge** now has a full hover breakdown for skilling rooms — the room the recommended trigger maps to (and *why* it's `trigger − 1` above you), the effective level, the success formula, the clear, and the crate tiers — matching the Lab Sim's row breakdown.
+- The Automation-tab **recommendation badge** now has a full hover breakdown for skilling rooms — the room the recommended trigger maps to (and _why_ it's `trigger − 1` above you), the effective level, the success formula, the clear, and the crate tiers — matching the Lab Sim's row breakdown.
 - Both breakdowns now **name the crate tiers** driving the numbers and explain the `− 1` in words (a room is skipped once it's ≥ trigger above you, so the hardest you still fight is one below).
 
 ### Lab Sim skilling: crates default to what you have equipped, plus a per-row calc breakdown
@@ -412,7 +416,7 @@ The first time the fork runs on a browser that already carries Toolasha data, it
 
 ### Labyrinth tile controls: tidy wrapping on narrow/mobile panels
 
-The labyrinth calculator's control bar (Calculate / Precision / Path / Clear≥ / Shroud / Beacons / Clear) was one flex row that wrapped item by item, so on a narrow panel labels got orphaned from their inputs and it read as a cramped, uneven column (reported by Ana on mobile). Each control's pieces are now a nowrap group — a label with its input, a button with its field — so the bar wraps *between* controls into tidy rows and stays a single line when there's room.
+The labyrinth calculator's control bar (Calculate / Precision / Path / Clear≥ / Shroud / Beacons / Clear) was one flex row that wrapped item by item, so on a narrow panel labels got orphaned from their inputs and it read as a cramped, uneven column (reported by Ana on mobile). Each control's pieces are now a nowrap group — a label with its input, a button with its field — so the bar wraps _between_ controls into tidy rows and stays a single line when there's room.
 
 ### Fix: live clear-chance readout no longer shifts the fight header (mobile)
 
@@ -449,7 +453,7 @@ All four persist as settings and are scoped to their tab; the live labyrinth til
 
 ### Fix: item tooltip went fully blank when "market prices" was turned off
 
-The whole tooltip module (prices, profit, expected value, enhancement path/milestones, ability status, gathering) was gated at startup on only `itemTooltip_prices` or pin-to-top being on, so anyone who turned market prices off but left profit/EV/enhancement on got a bare game tooltip with none of the Toolasha sections — the DOM observer never started. Init and the two "anything to do?" guards now key off *any* enabled tooltip feature, and market data loads whenever a price-consuming section is on. Turning prices off now hides just the price line, as intended.
+The whole tooltip module (prices, profit, expected value, enhancement path/milestones, ability status, gathering) was gated at startup on only `itemTooltip_prices` or pin-to-top being on, so anyone who turned market prices off but left profit/EV/enhancement on got a bare game tooltip with none of the Toolasha sections — the DOM observer never started. Init and the two "anything to do?" guards now key off _any_ enabled tooltip feature, and market data loads whenever a price-consuming section is on. Turning prices off now hides just the price line, as intended.
 
 ### Item tooltip: option to cost profit from the direct recipe only
 
@@ -826,7 +830,7 @@ Each row of the all-zones Results table now has a ⌖ button that sets that zone
 
 ### Upgrade advisor: path boots (base and refined) are offered and simmed at +7
 
-The upgrade advisor simmed a proposed gear swap at the current piece's enhancement level, so path boots (Pathbreaker/Pathfinder/Pathseeker) were quoted at whatever your worn boots are (e.g. +10). They're only obtainable at +7, so a swap to them is now always simmed and priced at +7 — the refined variants override the usual +10 refined floor. The refined path boots are now also *offered*: the crafting-chain walk only reaches the base boot (refined is one hop further), so each base path-boot swap now gets a refined sibling in the table, at +7.
+The upgrade advisor simmed a proposed gear swap at the current piece's enhancement level, so path boots (Pathbreaker/Pathfinder/Pathseeker) were quoted at whatever your worn boots are (e.g. +10). They're only obtainable at +7, so a swap to them is now always simmed and priced at +7 — the refined variants override the usual +10 refined floor. The refined path boots are now also _offered_: the crafting-chain walk only reaches the base boot (refined is one hop further), so each base path-boot swap now gets a refined sibling in the table, at +7.
 
 ### Enhancement XP/hr panel: get a route for any item, even one you don't own
 
@@ -882,7 +886,7 @@ No Record button any more — every combat fight is kept automatically, per char
 
 ### Labyrinth: a fight recorder and a calibration replay
 
-The Sim accuracy record says *whether* a room's clear chance is wrong, not *why* — a timeout and a death are both "lost", and the fixes are opposite. This adds the decomposition.
+The Sim accuracy record says _whether_ a room's clear chance is wrong, not _why_ — a timeout and a death are both "lost", and the fixes are opposite. This adds the decomposition.
 
 - **Replay** re-sims the recorded rooms and puts your real damage/s, the monster's, the clear rate and the fight length beside the sim's, each with a noise-aware verdict and a one-line diagnosis of which side the sim gets wrong. **Save comparison** downloads the whole check as one file.
 - **Capture** saves the raw tick feed of a fight — stun uptime, ability cadence, per-hit damage — for mechanism-level analysis (previously console-only).
@@ -1032,7 +1036,7 @@ The test-server trial rework grants partial rewards for an unfinished tier when 
 
 ### Undercut alerts stop adding market-API load; rate-limit failures are now visible
 
-The game rate-limits its `marketplace.json` file — a burst of requests (often several userscripts hitting it at once) trips a temporary CloudFront 403 block. The undercut-alert feature had a configurable "re-fetch market snapshot every 1–15 minutes" setting (default 5) that *forced* a fresh fetch on that timer, which could contribute to that load.
+The game rate-limits its `marketplace.json` file — a burst of requests (often several userscripts hitting it at once) trips a temporary CloudFront 403 block. The undercut-alert feature had a configurable "re-fetch market snapshot every 1–15 minutes" setting (default 5) that _forced_ a fresh fetch on that timer, which could contribute to that load.
 
 - **Removed the "re-fetch market snapshot every (minutes)" setting.** The snapshot refresh is now fixed at the market cache's own 15-minute cadence and uses the cache-respecting fetch, so it never pulls faster than the cache would on its own — it only touches the network when the 15-minute cache has actually expired. Undercut alerts still work; they just no longer add fetches beyond the normal cache. Nothing to reconfigure — the old setting simply disappears.
 - **Rate-limit failures are now called out.** When a market fetch fails with a 403 (or 429), the console explains it's a rate-limit — not a Toolasha bug on its own — and the on-screen network alert says "Market API rate-limited — using cached prices" instead of a generic "outdated data" message. Toolasha keeps serving cached prices and retries on the normal cadence.
@@ -1060,8 +1064,8 @@ A triage of the 62 modules the bundle-sharing checker flags found several more s
 
 ### Loadout-driven features (net-worth exclusions, bulk-sell protection, profit label) work again in the packaged build
 
-- **Features that read saved loadout snapshots now work in the multi-bundle build.** Outside the combat bundle each consumer had its own empty copy of the loadout store (only the combat bundle's copy is fed by the `loadouts_updated` websocket), so anything reading loadouts elsewhere saw nothing. Loadouts don't hold items — their gear is already counted as equipped or inventory — so this is not about adding loadout value; it's the features built *on* loadouts:
-    - **Net-worth loadout *exclusions* silently did nothing.** If you excluded a loadout, its items were still counted (net worth over-stated), and the exclusion popup listed no loadouts to pick.
+- **Features that read saved loadout snapshots now work in the multi-bundle build.** Outside the combat bundle each consumer had its own empty copy of the loadout store (only the combat bundle's copy is fed by the `loadouts_updated` websocket), so anything reading loadouts elsewhere saw nothing. Loadouts don't hold items — their gear is already counted as equipped or inventory — so this is not about adding loadout value; it's the features built _on_ loadouts:
+    - **Net-worth loadout _exclusions_ silently did nothing.** If you excluded a loadout, its items were still counted (net worth over-stated), and the exclusion popup listed no loadouts to pick.
     - **Bulk-sell no longer protected loadout gear** — items saved in a loadout could appear in sell suggestions.
     - **The profit panel's "Loadout: …" label** showed "Equipped" instead of the active loadout's name (display only — profit numbers were never affected).
     - All now read the shared loadout store through the bundle bridge (the pattern the sim adopted in 2.92.0). The dev-standalone build was never affected.
@@ -1771,7 +1775,7 @@ A triage of the 62 modules the bundle-sharing checker flags found several more s
 
 - **Guild XP tracker (6.5s)**.
 
-### PFormance can now say *when*, not just *how long*
+### PFormance can now say _when_, not just _how long_
 
 - **A Startup section**.
 
@@ -1869,7 +1873,7 @@ A triage of the 62 modules the bundle-sharing checker flags found several more s
 
 ### The Lab Simulator applies the default monster's loadout
 
-- Picking a monster applies the labyrinth loadout assigned to it, but the monster the panel *opens* on was never picked, so it opened on whatever gear happened to be equipped…
+- Picking a monster applies the labyrinth loadout assigned to it, but the monster the panel _opens_ on was never picked, so it opened on whatever gear happened to be equipped…
 
 ### Everything — All Fights, per gold
 
@@ -1921,7 +1925,7 @@ A triage of the 62 modules the bundle-sharing checker flags found several more s
 
 ### Mark a point to measure from, instead of throwing the record away
 
-- Reset was the only way to answer "has it been right *since* I changed something?", and it answers it by destroying everything that came before.
+- Reset was the only way to answer "has it been right _since_ I changed something?", and it answers it by destroying everything that came before.
 
 ### And each room type opens on a click
 
@@ -2838,7 +2842,7 @@ It now watches **which selector was clicked**. A menu opens because something wa
 
 ### Fixed: the labyrinth fight record read as empty until you entered the labyrinth
 
-- `Toolasha.Debug.labAccuracy()` reported "0 fights recorded" on a fresh session even with a full record stored. Loading only happened on the way *in* — when a labyrinth message arrived to be folded — so anything that merely **read** the record saw nothing until then. The console table and a tile's "Actually Cleared" row both read it.
+- `Toolasha.Debug.labAccuracy()` reported "0 fights recorded" on a fresh session even with a full record stored. Loading only happened on the way _in_ — when a labyrinth message arrived to be folded — so anything that merely **read** the record saw nothing until then. The console table and a tile's "Actually Cleared" row both read it.
 - It is now loaded on demand by whatever asks for it. Call it as `await Toolasha.Debug.labAccuracy()`, since it may have to fetch first.
 
 ### Price history panel, ingested from mooket II
@@ -2974,7 +2978,7 @@ It now watches **which selector was clicked**. A menu opens because something wa
 
 ### Combat skip-level recommendations decide a side instead of measuring a rate
 
-- The Automation tab's **Recommend** button binary-searches a skip threshold per monster, and every probe only asks whether that level clears above or below your target rate. Since sims began stopping on precision, each probe was measuring the level to ±1% to answer a yes/no question. Probes now stop as soon as the interval clears the bar: one that is decisively on a side settles in about 40 fights where measuring it takes hundreds to thousands, so most of a binary search runs roughly **ten times faster** — and the probes near the bar get *more* dependable, since they keep going until genuinely decided rather than stopping at a fixed width.
+- The Automation tab's **Recommend** button binary-searches a skip threshold per monster, and every probe only asks whether that level clears above or below your target rate. Since sims began stopping on precision, each probe was measuring the level to ±1% to answer a yes/no question. Probes now stop as soon as the interval clears the bar: one that is decisively on a side settles in about 40 fights where measuring it takes hundreds to thousands, so most of a binary search runs roughly **ten times faster** — and the probes near the bar get _more_ dependable, since they keep going until genuinely decided rather than stopping at a fixed width.
 - **Decided and measured results are cached separately.** A decided one is deliberately coarse — 40 fights can leave ±12 points — so letting a tile badge read it would present that as a measurement. A measured result already in hand is still reused for a decision when its interval clears the bar.
 - Skilling and enhancing skip levels are unchanged: those are closed-form, with no simulation to budget.
 
@@ -3135,7 +3139,7 @@ It now watches **which selector was clicked**. A menu opens because something wa
 
 ### Lab Sim always evaluates Anchorbound and the matching top-tier armor
 
-- Whenever the Lab Sim upgrade analysis includes equipment, it now always sims the **Anchorbound plate body and legs** and the **top-tier body/legs that suit the loadout's weapon style** — each piece alone, each set as a pair, and the cross-set pairs (Anchorbound body with the other set's legs and vice versa). Duplicates collapse when Anchorbound *is* the style match, and any combination you already wear is skipped rather than simmed as a no-op.
+- Whenever the Lab Sim upgrade analysis includes equipment, it now always sims the **Anchorbound plate body and legs** and the **top-tier body/legs that suit the loadout's weapon style** — each piece alone, each set as a pair, and the cross-set pairs (Anchorbound body with the other set's legs and vice versa). Duplicates collapse when Anchorbound _is_ the style match, and any combination you already wear is skipped rather than simmed as a no-op.
 - The tier progression only ever steps one rung from what's equipped, so a player in decent gear never saw these comparisons. They're forced in regardless of what's worn.
 - **Enhancement levels come from what you own**: the level equipped in the analyzed loadout, else the best copy in your inventory, else **+7** so the comparison still runs for gear you haven't bought. Copies equipped elsewhere and empty stacks are ignored.
 - Style matching reads the weapon from either the two-hand or main-hand slot, and "top tier" is the highest item level actually present rather than a hardcoded 95, so a future tier doesn't leave this pinned to old gear. Refined variants are skipped — they share their base item level but cost far more to reach a usable enhancement. When nothing at the top tier matches your style, style-neutral armor is used instead.
@@ -3167,13 +3171,13 @@ It now watches **which selector was clicked**. A menu opens because something wa
 ### Food search now starts from your equipped tiers and steps down
 
 - Instead of binary-searching each slot's whole pool from the bottom up, the search is **anchored at what you have equipped**: if your current setup survives, each slot walks down one tier at a time within its type until survival breaks, then settles on the last tier that held. The first trial is free — the analysis baseline already simmed your exact food on the same seed.
-- If your current setup does *not* survive, the failing dimension's slots climb instead: deaths raise the HP-type slots, running dry raises the mana-type slots, one tier at a time until it holds. Targets only relax when even the top tiers can't get there, same as before.
+- If your current setup does _not_ survive, the failing dimension's slots climb instead: deaths raise the HP-type slots, running dry raises the mana-type slots, one tier at a time until it holds. Targets only relax when even the top tiers can't get there, same as before.
 - This keeps recommendations local to your setup — a one-tier downgrade like "Star Fruit Gummy → Plum Gummy" — and makes the sim count proportional to how far your tiers can actually drop, not to the size of the food catalog.
 
 ### Food search minimizes slots sequentially so shared mana budgets hold
 
-- The per-slot searches each ran with the *other* slots held at their top tier. With two mana sources (a gummy and a yogurt), each got minimized against a top-tier partner it wasn't actually going to have — the two proven minima failed together, the confirming sim caught it, and the fallback then recommended the **top tier of every type at once** (the "upgrade all three, +90K/hr" card).
-- Slots are now minimized **sequentially**: each slot is fixed at its proven minimum before the next slot is searched, so later searches see the real, already-shrunk earlier choices. The final combination is one the search itself simmed and passed — no more optimistic combinations, and the everything-at-top fallback is gone (a slot only stays at top tier when nothing below it passes *in context*).
+- The per-slot searches each ran with the _other_ slots held at their top tier. With two mana sources (a gummy and a yogurt), each got minimized against a top-tier partner it wasn't actually going to have — the two proven minima failed together, the confirming sim caught it, and the fallback then recommended the **top tier of every type at once** (the "upgrade all three, +90K/hr" card).
+- Slots are now minimized **sequentially**: each slot is fixed at its proven minimum before the next slot is searched, so later searches see the real, already-shrunk earlier choices. The final combination is one the search itself simmed and passed — no more optimistic combinations, and the everything-at-top fallback is gone (a slot only stays at top tier when nothing below it passes _in context_).
 - The cheapest-per-point swap after the search now guards itself: if the swapped combination fails its confirming sim, the result reverts to the proven tiers instead of escalating.
 - Regression-tested on the failing shape: two mana slots whose minima each pass beside a top-tier partner but fail together must resolve to a one-slot tier bump, never to top tiers across the board.
 
@@ -3181,7 +3185,7 @@ It now watches **which selector was clicked**. A menu opens because something wa
 
 - The first version of the food search collapsed all three food slots down to one HP item plus one MP item. For setups that rely on more slots (two HP foods, or an extra mana source), even the "best available" probe ran out of mana — and since the search relaxes its targets to whatever the best probe achieves, a 49%-out-of-mana recommendation could "pass" while your real setup sat at 0%.
 - The search is now slot-templated: **each equipped food slot keeps its exact food type** (HP instant only competes against HP instant, MP over-time against MP over-time), buff foods are never touched, and only the tier within each type is varied. A slot can also come back as "empty (not needed here)" when the zone doesn't require it.
-- Out-of-mana and deaths are both hard requirements at every step — targets only relax when even the best tiers of *your own* food types can't meet them, and the card says so explicitly per shortfall.
+- Out-of-mana and deaths are both hard requirements at every step — targets only relax when even the best tiers of _your own_ food types can't meet them, and the card says so explicitly per shortfall.
 - **Keeping your current food is always a candidate**: if it's viable and no more expensive than the searched pick, the card now says to keep it instead of recommending a sidegrade. The card also shows per-slot changes as "current → replacement" lines.
 - Regression-tested against the exact failure: a low-tier mana drink leaving 49% of the run out of mana must lose to the same-type higher tier, never be recommended for a 5K/hr saving.
 
@@ -3224,7 +3228,7 @@ It now watches **which selector was clicked**. A menu opens because something wa
 
 ### Philosopher's accessories recommended at +5
 
-- Combat Sim and Lab Sim (combat **and** skilling analysis) now always offer the Philosopher's necklace / ring / earrings at **+5** for jewelry slots, no matter how enhanced the worn accessory is. Previously the tier path only ever proposed a swap at the *current* enhancement level — so wearing +12 jewelry hid the cheap entry point behind a +12 rebuy. When a same-slot philo swap at a higher level is also generated, the +5 version supersedes it.
+- Combat Sim and Lab Sim (combat **and** skilling analysis) now always offer the Philosopher's necklace / ring / earrings at **+5** for jewelry slots, no matter how enhanced the worn accessory is. Previously the tier path only ever proposed a swap at the _current_ enhancement level — so wearing +12 jewelry hid the cheap entry point behind a +12 rebuy. When a same-slot philo swap at a higher level is also generated, the +5 version supersedes it.
 
 ### Ability dictionary button now actually appears
 
@@ -3380,7 +3384,7 @@ It now watches **which selector was clicked**. A menu opens because something wa
 ### Loadout character cards keep your name, outfit, and real ability levels
 
 - **Name and avatar/outfit fixed**: the sheet builder only knew where profile-share data keeps the character identity (`sharableCharacter`); your own character data nests it under `character`, so loadout cards rendered as a default "Player" with the default avatar. The builder now checks both.
-- **Ability levels fixed**: loadout cards looked levels up in the *currently equipped* ability list, so any loadout ability you don't have equipped right now (e.g. Insanity) showed as Lv 1. Levels now come from the full learned-abilities list, with the equipped list as an overlay.
+- **Ability levels fixed**: loadout cards looked levels up in the _currently equipped_ ability list, so any loadout ability you don't have equipped right now (e.g. Insanity) showed as Lv 1. Levels now come from the full learned-abilities list, with the equipped list as an overlay.
 
 ### Beacon planner prefers multiple independent routes
 
@@ -7474,4 +7478,4 @@ Full audit of the codebase; every finding adversarially verified before fixing.
 
 ---
 
-*Older entries have been trimmed. Full history is available in the [git log](https://github.com/Celasha/Toolasha/commits/main).*
+_Older entries have been trimmed. Full history is available in the [git log](https://github.com/Celasha/Toolasha/commits/main)._
