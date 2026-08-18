@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### CI: production bundles share one copy of the new utils again
+
+The band clamp had Core importing a Utils module, which inlined a second copy of the band cache (and server-gate) into the Core bundle — Core loads before Utils, so it can never treat Utils globals as externals; the clamp is now late-bound off `Toolasha.Utils.marketValues` at call time, passing prices through unbanded for the few startup milliseconds before Utils lands. The shared `scriptVersion()` helper joins the Utils externals map so combat/sim/ui stop carrying private copies. Dev builds were unaffected (they bundle everything); only `npm run build`'s sharing check caught it, which is what it is for.
+
 ### A Pool tab browses the recorded fights
 
 The recorder's pool — 160+ fights and counting — surfaced only through the Replay's top-three current-gear groups. A third tab beside Rooms/Accuracy now browses all of it: per monster and level, win rate, fight length, both damage rates, crit rate, the complete fraction and the mean attribution residual, with click-to-expand recent attempts, a this-gear/all-gear toggle, and a Save pool export that embeds the summary beside the raw attempts. Read-only and unfiltered — incomplete and wounded-start fights are part of what the pool holds — with no second destructive path: clearing stays on Accuracy's two-click Reset.

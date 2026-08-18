@@ -11,6 +11,7 @@ import * as efficiency from '../utils/efficiency.js';
 import * as profitHelpers from '../utils/profit-helpers.js';
 import * as profitConstants from '../utils/profit-constants.js';
 import * as serverGate from '../utils/server-gate.js';
+import * as scriptVersion from '../utils/script-version.js';
 import * as dom from '../utils/dom.js';
 import * as mobile from '../utils/mobile.js';
 import * as domObserverHelpers from '../utils/dom-observer-helpers.js';
@@ -131,6 +132,7 @@ toolashaRoot.Utils = {
     profitHelpers,
     profitConstants,
     serverGate,
+    scriptVersion,
     dom,
     mobile,
     domObserverHelpers,

@@ -6,7 +6,18 @@
 import connectionState from '../core/connection-state.js';
 import storage from '../core/storage.js';
 import networkAlert from '../features/market/network-alert.js';
-import { refreshMarketValues, clampToBand } from '../utils/market-values.js';
+
+/**
+ * The band module, late-bound off the Utils bundle. Core loads before Utils,
+ * so a module import here would inline a second copy of the band cache into
+ * the Core bundle — exactly the duplication the bundle-sharing check forbids.
+ * Before Utils lands (a few ms at startup) prices pass through unbanded,
+ * which is what they always were.
+ * @returns {Object|null} `Toolasha.Utils.marketValues`, or null before Utils loads
+ */
+function marketValues() {
+    return (typeof window !== 'undefined' && window.Toolasha?.Utils?.marketValues) || null;
+}
 
 /**
  * MarketAPI class handles fetching and caching market price data
@@ -211,7 +222,8 @@ class MarketAPI {
         // reach — clamp it to the band here, once, and every caller (present
         // and future) inherits banded prices. A missing side stays null: the
         // band never invents a price where the book has none.
-        refreshMarketValues();
+        const bands = marketValues();
+        bands?.refreshMarketValues();
         const normalizeMarketPriceValue = (value) => {
             if (typeof value !== 'number') {
                 return null;
@@ -221,7 +233,7 @@ class MarketAPI {
                 return null;
             }
 
-            return clampToBand(value, itemHrid, enhancementLevel);
+            return bands ? bands.clampToBand(value, itemHrid, enhancementLevel) : value;
         };
 
         // Check for fresh patch first

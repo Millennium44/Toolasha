@@ -23,15 +23,22 @@ const createMocks = (isConnected) => {
         },
     }));
 
-    // Pass-through band by default; a test that wants clamping swaps `band` in
+    // The band module is late-bound off window.Toolasha.Utils (Core loads
+    // before Utils, so the API cannot import it) — tests install it the same
+    // way the page does. Pass-through by default; swap `band.current` in.
     const band = { current: null };
-    vi.doMock('../utils/market-values.js', () => ({
-        refreshMarketValues: vi.fn(),
-        clampToBand: (price) => {
-            if (typeof price !== 'number' || !band.current) return price ?? null;
-            return Math.min(Math.max(price, band.current.min), band.current.max);
+    globalThis.window = globalThis.window || globalThis;
+    globalThis.window.Toolasha = {
+        Utils: {
+            marketValues: {
+                refreshMarketValues: vi.fn(),
+                clampToBand: (price) => {
+                    if (typeof price !== 'number' || !band.current) return price ?? null;
+                    return Math.min(Math.max(price, band.current.min), band.current.max);
+                },
+            },
         },
-    }));
+    };
 
     return { getJSON, show, band };
 };
@@ -148,6 +155,16 @@ describe('MarketAPI getPrice bands', () => {
 
     test('without a band everything passes through untouched', async () => {
         createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.marketData = { '/items/x': { 0: { a: 5000, b: 100 } } };
+        marketAPI.lastFetchTimestamp = 1000;
+        marketAPI.pricePatchs = {};
+        expect(marketAPI.getPrice('/items/x', 0)).toEqual({ ask: 5000, bid: 100 });
+    });
+
+    test('before the Utils bundle lands, prices pass through as they always did', async () => {
+        createMocks(true);
+        delete globalThis.window.Toolasha;
         const { default: marketAPI } = await import('./marketplace.js');
         marketAPI.marketData = { '/items/x': { 0: { a: 5000, b: 100 } } };
         marketAPI.lastFetchTimestamp = 1000;
