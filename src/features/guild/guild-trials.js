@@ -1722,7 +1722,9 @@ function isSquashingRow(el) {
     if (!el || typeof getComputedStyle !== 'function') return false;
     const style = getComputedStyle(el);
     if (!(style?.display || '').includes('flex')) return false;
-    if ((style?.flexWrap || '').includes('wrap')) return false;
+    // startsWith, not includes: 'nowrap' contains 'wrap', and reading it as a
+    // wrapping row is how every squash guard in this file silently stood down
+    if ((style?.flexWrap || '').startsWith('wrap')) return false;
     const direction = style?.flexDirection || 'row';
     return direction === 'row' || direction === 'row-reverse';
 }
@@ -1909,7 +1911,10 @@ export function placeTrialBlock(root, card, block, name = '') {
     }
 
     if (display.includes('flex')) {
-        const wraps = (style?.flexWrap || '').includes('wrap');
+        // startsWith: 'nowrap' contains 'wrap', which sent every non-wrapping
+        // row down the wrapping path — a block dropped beside the card with
+        // flex-basis 100% in a row that cannot wrap just squashes the card
+        const wraps = (style?.flexWrap || '').startsWith('wrap');
         if (!wraps) return afterContainer();
         block.style.flexBasis = '100%';
         block.style.width = '100%';

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The trial readout stops squashing the skilling card
+
+Both flex-wrap guards in the trial-block placement asked whether the style _contains_ "wrap" — and 'nowrap' does. Every non-wrapping row therefore read as wrapping: the escape-the-row logic never fired, the stuck-in-a-row detector never detected, and the In Progress readout was planted beside the skilling card inside its non-wrapping row, squashing the card to a sliver. Both guards now ask for a value that _starts with_ "wrap", verified against the live trial.
+
 ### CI: the format workflow stops failing runs that had nothing to do
 
 Format Release Please committed through the repo's pre-commit hook, which re-ran lint-staged over what the workflow itself had just formatted; when that normalization left nothing staged, lint-staged hard-failed and reddened the run. The workflow now commits with the hook skipped (the formatting already happened two steps up) and treats an emptied staged set as the no-op it is.
