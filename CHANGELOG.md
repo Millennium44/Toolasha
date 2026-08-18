@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth capacities read themselves
+
+The server states the final torch/shroud/beacon capacities outright on `characterInfo` (`labyrinthTorchCap` and friends, upgrades already applied) — the Consumables panel's Labyrinth block now reads them from there, and the three capacity settings only stand in until the payload arrives.
+
 ### The Consumables panel plans while idle, and insta sells report the real average
 
 With nothing being fought, the panel now plans from the default combat loadout instead of shrugging (setting, on by default): drinks rated arithmetically from buff duration and drink concentration, food rated from the last combat sim's measured use — which now survives reloads as a small per-zone summary saved when a sim finishes — with the simmed zone named in the heading, and food listed unrated until a sim has run. Bulk sell's depth-walked insta price is also now reported as what the fill actually earns — each unit sells at the best remaining bid, so the chip shows the volume-weighted average and names the walked floor separately.

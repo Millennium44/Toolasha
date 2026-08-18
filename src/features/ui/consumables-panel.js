@@ -630,10 +630,16 @@ class ConsumablesPanel {
         const counts = readSupplyCounts(inventory, hrids);
         const lab = dataManager.characterData?.characterLabyrinth || dataManager.characterData?.labyrinth;
 
+        // The server states the final capacities outright on characterInfo
+        // (labyrinthTorchCap and friends, upgrades already applied) — the
+        // settings only stand in when the payload has not arrived
+        const info = dataManager.characterData?.characterInfo;
+        const cap = (field, key, fallback) =>
+            Number(info?.[field]) > 0 ? Number(info[field]) : Number(config.getSettingValue(key, fallback)) || 0;
         const capacity = {
-            torch: Number(config.getSettingValue('consumables_labTorchMax', 100)) || 0,
-            shroud: Number(config.getSettingValue('consumables_labShroudMax', 4)) || 0,
-            beacon: Number(config.getSettingValue('consumables_labBeaconMax', 5)) || 0,
+            torch: cap('labyrinthTorchCap', 'consumables_labTorchMax', 100),
+            shroud: cap('labyrinthShroudCap', 'consumables_labShroudMax', 4),
+            beacon: cap('labyrinthBeaconCap', 'consumables_labBeaconMax', 5),
         };
         const needs = [];
         for (const kind of SUPPLY_KINDS) {
