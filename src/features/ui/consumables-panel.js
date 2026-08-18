@@ -55,6 +55,8 @@ import {
     buyStrategy,
 } from '../../utils/consumable-forecast.js';
 import { dungeonEntryKey, heldInInventory, keyConsumableEntry } from '../../utils/dungeon-key-forecast.js';
+import { resolveSupplyHrids, readSupplyCounts, bestOwnedTier, SUPPLY_KINDS } from '../combat/labyrinth-supplies.js';
+import storage from '../../core/storage.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { estimateFillSeconds } from '../../utils/order-book.js';
 import { openShoppingList } from './consumables-shopping-list.js';
@@ -119,6 +121,7 @@ class ConsumablesPanel {
     /** Read back the duration everything is measured against */
     async loadSettings() {
         await loadTarget(() => this._render());
+        this._labRuns = Number(await storage.get('consumablesLabRuns', 'settings', 5)) || 5;
     }
 
     /** The duration everything is measured against */
@@ -279,25 +282,61 @@ class ConsumablesPanel {
     }
 
     /**
-     * Send the shortfall to the marketplace, quantity already filled in.
+     * Send the shortfall to the marketplace, quantity already filled in — and,
+     * when the setting says so, straight into the form the recommendation
+     * points at, the way the Bulk Sell Assistant opens sell forms in reverse.
      *
-     * Opening the buy modal rather than buying: this is a decision about
-     * spending coins, and a panel that spends them for you is a panel you have
-     * to watch. The recommendation of order-against-instant rides along in the
-     * tooltip, where it informs the decision without making it.
+     * Opening the form rather than buying: this is a decision about spending
+     * coins, and a panel that spends them for you is a panel you have to
+     * watch. Nothing is bought until the game's own confirm button is pressed;
+     * the recommendation only decides which form is standing open when you
+     * decide.
      *
      * @param {Object} entry - The forecast being topped up
      * @param {number} count - How many are missing
+     * @param {Object|null} [strategy] - From `buyStrategy`, for which form to open
      */
-    _buy(entry, count) {
+    _buy(entry, count, strategy = null) {
         if (!count) return;
         try {
             this.hide({ remember: false });
             this.autofill.setQuantity(count);
             navigateToMarketplace(entry.itemHrid);
+            this._openRecommendedForm(strategy);
         } catch (error) {
             console.error('[ConsumablesPanel] Opening the marketplace failed:', error);
         }
+    }
+
+    /**
+     * Click the button the recommendation points at, once the item page is up.
+     *
+     * Late-bound through the market bundle's shortcuts (this panel lives in the
+     * UI bundle), and best-effort throughout: if the setting is off, the
+     * shortcuts are not loaded, or the button never appears, the result is
+     * exactly the old behaviour — the item open in the marketplace with the
+     * quantity parked, waiting for a hand.
+     *
+     * @param {Object|null} strategy - From `buyStrategy`
+     */
+    _openRecommendedForm(strategy) {
+        if (!strategy || !config.getSetting('market_consumableBuyOpenRecommended')) return;
+        const shortcuts = window.Toolasha?.Market?.marketplaceShortcuts;
+        if (!shortcuts) return;
+
+        // The navigation itself takes a beat; the shortcuts' own click helpers
+        // then poll for the button, so this only has to not fire too early
+        setTimeout(() => {
+            const open =
+                strategy.mode === 'instant'
+                    ? shortcuts.clickInstantActionButton?.('Buy')
+                    : shortcuts.clickListingButton?.('+ New Buy Listing', 'Button_buy');
+            open?.catch?.(() => {
+                // No matching button (an empty book's Buy Now has nothing to
+                // take) — the marketplace is open and the quantity is parked,
+                // which is the old behaviour and still useful
+            });
+        }, 400);
     }
 
     _create() {
@@ -438,10 +477,205 @@ class ConsumablesPanel {
             // from what a run actually used, so there is nothing to measure yet
             empty.textContent = 'No consumable data yet. Fight something with food or drinks equipped.';
             this.bodyEl.appendChild(empty);
-            return;
         }
 
         for (const player of players) this.bodyEl.appendChild(this._playerSection(player));
+
+        try {
+            const lab = this._labSection();
+            if (lab) this.bodyEl.appendChild(lab);
+        } catch (error) {
+            console.error('[ConsumablesPanel] Building the labyrinth section failed:', error);
+        }
+    }
+
+    /** How many runs the labyrinth section is measured against */
+    get labRuns() {
+        return this._labRuns || 5;
+    }
+
+    /** Cycle the run target and remember it, the way the duration target works */
+    _cycleLabRuns() {
+        const steps = [1, 3, 5, 10, 25];
+        this._labRuns = steps[(steps.indexOf(this.labRuns) + 1) % steps.length];
+        storage.set('consumablesLabRuns', this._labRuns, 'settings').catch(() => {});
+        this._render();
+    }
+
+    /**
+     * What one labyrinth run consumes, planned as full consumption.
+     *
+     * Per the game's own model: a run takes in up to its capacity of torches,
+     * shrouds and beacons (base 100/4/5, raised by the capacity upgrades — the
+     * capacities are settings, since the upgrade levels are not in any payload
+     * this reads), plus exactly one crate per selected crate slot. Planned as
+     * fully spent, which is the ceiling a restock should be sized for.
+     *
+     * @returns {Array<{itemHrid: string, perRun: number}>} Empty when the game
+     *   data needed to name the items is not up yet
+     */
+    _labNeedsPerRun() {
+        const itemMap = dataManager.getInitClientData?.()?.itemDetailMap;
+        if (!itemMap) return [];
+        const hrids = resolveSupplyHrids(itemMap);
+        const inventory = dataManager.getInventory?.();
+        const counts = readSupplyCounts(inventory, hrids);
+        const lab = dataManager.characterData?.characterLabyrinth || dataManager.characterData?.labyrinth;
+
+        const capacity = {
+            torch: Number(config.getSettingValue('consumables_labTorchMax', 100)) || 0,
+            shroud: Number(config.getSettingValue('consumables_labShroudMax', 4)) || 0,
+            beacon: Number(config.getSettingValue('consumables_labBeaconMax', 5)) || 0,
+        };
+        const needs = [];
+        for (const kind of SUPPLY_KINDS) {
+            if (!(capacity[kind] > 0)) continue;
+            // The tier the last run actually carried names the item; what is
+            // held, then the basic tier, stand in before any run has said
+            const hrid = lab?.[`${kind}ItemHrid`] || bestOwnedTier(counts, kind, hrids) || hrids[kind][0];
+            needs.push({ itemHrid: hrid, perRun: capacity[kind] });
+        }
+        // One crate per selected slot per run — the slots the run itself names
+        for (const slot of ['teaCrateItemHrid', 'coffeeCrateItemHrid', 'foodCrateItemHrid']) {
+            if (lab?.[slot]) needs.push({ itemHrid: lab[slot], perRun: 1 });
+        }
+        return needs;
+    }
+
+    /**
+     * The Labyrinth block: what X runs consume, against what the bag holds.
+     *
+     * Same columns as the combat rows, re-read for runs: Per day becomes per
+     * run, Lasts becomes how many whole runs the held pile covers, and the Buy
+     * link makes the same order-or-instant judgement every other Buy link does.
+     *
+     * @returns {HTMLElement|null} Null when nothing names the lab's items yet
+     */
+    _labSection() {
+        const needs = this._labNeedsPerRun();
+        if (!needs.length) return null;
+
+        const section = document.createElement('div');
+        section.style.marginBottom = '12px';
+
+        const heading = document.createElement('div');
+        Object.assign(heading.style, {
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: '8px',
+            borderBottom: `1px solid ${COLORS.border}`,
+            paddingBottom: '3px',
+            marginBottom: '5px',
+        });
+        const name = document.createElement('span');
+        name.textContent = 'Labyrinth';
+        name.style.fontWeight = 'bold';
+        name.style.color = COLORS.accent;
+
+        const runsBtn = document.createElement('button');
+        Object.assign(runsBtn.style, {
+            background: 'rgba(255, 255, 255, 0.07)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.accent,
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '1px 8px',
+        });
+        runsBtn.textContent = `${this.labRuns} run${this.labRuns === 1 ? '' : 's'}`;
+        runsBtn.title =
+            'How many runs to stock for, at full consumption: the whole torch/shroud/beacon capacity and one ' +
+            'crate per slot, every run. Capacities are settings — set them to the "max" the Supplies row shows.';
+        runsBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this._cycleLabRuns();
+        });
+        heading.append(name, runsBtn);
+        section.appendChild(heading);
+
+        const inventory = dataManager.getInventory?.() || [];
+        const runs = this.labRuns;
+        for (const { itemHrid, perRun } of needs) {
+            section.appendChild(this._labRow(itemHrid, perRun, runs, inventory));
+        }
+        return section;
+    }
+
+    /**
+     * One labyrinth item: held, per-run, the buy decision for X runs, and how
+     * many whole runs the held pile already covers.
+     *
+     * @param {string} itemHrid - The item
+     * @param {number} perRun - Full consumption per run
+     * @param {number} runs - The run target
+     * @param {Array<Object>} inventory - dataManager.getInventory() shape
+     * @returns {HTMLElement}
+     */
+    _labRow(itemHrid, perRun, runs, inventory) {
+        const row = this._grid();
+        row.style.padding = '2px 0';
+
+        const held = heldInInventory(inventory, itemHrid);
+        const needCount = Math.max(0, Math.ceil(perRun * runs) - held);
+        const prices = getItemPrices(itemHrid);
+        const ask = Number(prices?.ask) > 0 ? Number(prices.ask) : null;
+        const bid = Number(prices?.bid) > 0 ? Number(prices.bid) : null;
+
+        const heldCell = this._cell(formatLargeNumber(held));
+
+        const icon = itemIcon(itemHrid, 18);
+        linkToMarketplace(icon, itemHrid, navigateToMarketplace);
+        const name = document.createElement('span');
+        name.textContent = dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop();
+        Object.assign(name.style, { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+        linkToMarketplace(name, itemHrid, navigateToMarketplace);
+
+        const perRunCell = this._cell(`${formatLargeNumber(perRun)}/run`);
+        perRunCell.style.color = COLORS.textDim;
+
+        const cost = this._cell(ask === null ? '—' : formatLargeNumber(Math.round(ask * perRun)));
+        cost.style.color = COLORS.textDim;
+        cost.title =
+            ask === null ? 'No price known.' : `~${Math.round(ask * perRun).toLocaleString()} coins per run at ask.`;
+
+        const buy = this._cell(needCount ? formatLargeNumber(needCount) : '✓');
+        buy.style.color = needCount ? ROW_COLORS.gold : ROW_COLORS.good;
+        if (needCount) {
+            const readNumber = (key, fallback) => {
+                const raw = Number(config.getSettingValue(key, fallback));
+                return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
+            };
+            const strategy = buyStrategy({
+                count: needCount,
+                ask,
+                bid,
+                // A lab restock has no running-out clock — the run starts when
+                // you start it — so urgency never forces an instant buy here
+                secondsLeft: Infinity,
+                fillSeconds: this._fillSeconds(itemHrid, needCount),
+                maxSpreadPct: readNumber('market_consumableBuyMaxSpreadPct', 2),
+                minSavingCoins: readNumber('market_consumableBuyMinSaving', 0),
+                minOrderValue: readNumber('market_consumableBuyMinOrderValue', 0),
+            });
+            buy.textContent = `${formatLargeNumber(needCount)} ${strategy.mode === 'order' ? '⏳' : '⚡'}`;
+            buy.style.cursor = 'pointer';
+            buy.style.textDecoration = 'underline dotted';
+            buy.title =
+                `Buy ${needCount.toLocaleString()} for ${runs} run${runs === 1 ? '' : 's'}` +
+                (ask === null ? '' : ` — about ${Math.round(ask * needCount).toLocaleString()} coins`) +
+                `.\n${strategy.mode === 'order' ? 'Place an order' : 'Buy now'}: ${strategy.reason}`;
+            buy.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this._buy({ itemHrid }, needCount, strategy);
+            });
+        }
+
+        const runsHeld = perRun > 0 ? Math.floor(held / perRun) : 0;
+        const lasts = this._cell(`${formatLargeNumber(runsHeld)} run${runsHeld === 1 ? '' : 's'}`);
+        lasts.style.color = runsHeld >= runs ? ROW_COLORS.good : ROW_COLORS.bad;
+
+        row.append(heldCell, icon, name, perRunCell, cost, buy, lasts);
+        return row;
     }
 
     /**
@@ -578,12 +812,22 @@ class ConsumablesPanel {
         buy.style.color = need.count ? ROW_COLORS.gold : ROW_COLORS.good;
 
         if (need.count) {
+            const readNumber = (key, fallback) => {
+                const raw = Number(config.getSettingValue(key, fallback));
+                return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
+            };
             const strategy = buyStrategy({
                 count: need.count,
                 ask: entry.price,
                 bid: entry.costPerDaySides.bid && entry.perDay ? entry.costPerDaySides.bid / entry.perDay : null,
                 secondsLeft: entry.secondsLeft,
                 fillSeconds: this._fillSeconds(entry.itemHrid, need.count),
+                // The bulk sell assistant's rules, mirrored for buying and read
+                // from their own settings so this panel and the settings page
+                // can never disagree
+                maxSpreadPct: readNumber('market_consumableBuyMaxSpreadPct', 2),
+                minSavingCoins: readNumber('market_consumableBuyMinSaving', 0),
+                minOrderValue: readNumber('market_consumableBuyMinOrderValue', 0),
             });
 
             // The recommendation is on the face of it, because it is the whole
@@ -591,14 +835,18 @@ class ConsumablesPanel {
             buy.textContent = `${formatLargeNumber(need.count)} ${strategy.mode === 'order' ? '⏳' : '⚡'}`;
             buy.style.cursor = 'pointer';
             buy.style.textDecoration = 'underline dotted';
+            const opens = config.getSetting('market_consumableBuyOpenRecommended')
+                ? `\nOpens the ${strategy.mode === 'order' ? 'buy-listing' : 'Buy Now'} form with the quantity filled in.`
+                : '';
             buy.title =
                 `Buy ${need.count.toLocaleString()}` +
                 (need.cost === null ? '' : ` for about ${Math.round(need.cost).toLocaleString()} coins`) +
                 `.\n${strategy.mode === 'order' ? 'Place an order' : 'Buy now'}: ${strategy.reason}` +
+                opens +
                 (strategy.measured ? '' : '\nOpen it in the marketplace once to measure its queue.');
             buy.addEventListener('click', (event) => {
                 event.stopPropagation();
-                this._buy(entry, need.count);
+                this._buy(entry, need.count, strategy);
             });
         }
 

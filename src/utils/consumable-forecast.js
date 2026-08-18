@@ -258,11 +258,15 @@ export function drinkRatePerDay(durationNs, drinkConcentration = 0) {
 /**
  * Whether to place a buy order or simply take the ask.
  *
- * The same judgement the bulk sell assistant makes in the other direction. A
- * buy order at bid saves the spread but only pays out if it fills, and a fill
- * that arrives after you have already run out has saved you nothing — so
- * urgency beats price. Above the threshold the saving is worth the wait; below
- * it, the spread is rounding and waiting is a worse deal than paying it.
+ * The bulk sell assistant's judgement, mirrored: an order at the bid saves the
+ * spread but only pays out if it fills, and a fill that arrives after you have
+ * already run out has saved you nothing — so urgency beats price. Past urgency
+ * the rules are the sell side's, each turned around: a spread that is a sliver
+ * of the ask, a saving that is pocket change in absolute coins, or an order so
+ * small it is not worth one of the finite order slots, all say pay the ask and
+ * be done. What survives every rule is worth queueing for, and the answer
+ * carries `savingPerHour` — the saving divided by the expected wait — so
+ * callers can rank restocks by what each hour of patience actually pays.
  *
  * @param {Object} input - What is being bought
  * @param {number} input.count - How many are needed
@@ -270,37 +274,82 @@ export function drinkRatePerDay(durationNs, drinkConcentration = 0) {
  * @param {number|null} input.bid - Price an order would sit at
  * @param {number} input.secondsLeft - Until the current stock runs out
  * @param {number|null} [input.fillSeconds] - Measured fill time; null falls back to an assumption
- * @param {number} [input.minSaving] - Spread below which the saving is not worth waiting for
- * @returns {{mode: string, saving: number, measured: boolean, reason: string}} `order` or `instant`
+ * @param {number} [input.maxSpreadPct] - Buy instantly when the spread is at most
+ *   this percentage of the ask (the sell side's spread rule, mirrored). 0 turns it off.
+ * @param {number} [input.minSavingCoins] - Buy instantly when the whole order's
+ *   saving — (ask − bid) × count — is under this many coins. 0 turns it off.
+ * @param {number} [input.minOrderValue] - Buy instantly when the order's total
+ *   (bid × count) is under this — too small to be worth an order slot. 0 turns it off.
+ * @returns {{mode: string, saving: number, savingPerHour: number|null, measured: boolean, reason: string}}
+ *   `order` or `instant`
  */
-export function buyStrategy({ count, ask, bid, secondsLeft, fillSeconds = null, minSaving = 0.02 }) {
+export function buyStrategy({
+    count,
+    ask,
+    bid,
+    secondsLeft,
+    fillSeconds = null,
+    maxSpreadPct = 2,
+    minSavingCoins = 0,
+    minOrderValue = 0,
+}) {
     // Only reached when no order book has been seen for this item. Six hours is
     // a placeholder, not a measurement, and the caller is told which it got so
     // it can say so rather than presenting a guess as an estimate
     const measured = Number.isFinite(fillSeconds);
     const waitSeconds = measured ? fillSeconds : 6 * 3600;
     if (!(count > 0) || !(ask > 0)) {
-        return { mode: 'instant', saving: 0, measured, reason: 'No price to compare.' };
+        return { mode: 'instant', saving: 0, savingPerHour: null, measured, reason: 'No price to compare.' };
     }
     if (!(bid > 0)) {
-        return { mode: 'instant', saving: 0, measured, reason: 'Nothing bid, so an order has nothing to sit at.' };
+        return {
+            mode: 'instant',
+            saving: 0,
+            savingPerHour: null,
+            measured,
+            reason: 'Nothing bid, so an order has nothing to sit at.',
+        };
     }
 
     const saving = (ask - bid) * count;
-    const spread = (ask - bid) / ask;
+    const spreadPct = ((ask - bid) / ask) * 100;
+    // What each hour of patience pays. The wait can be zero when the front of
+    // the queue is measured as already clearing — that is not an infinite rate,
+    // it is a fill so fast the order is as good as instant
+    const savingPerHour = waitSeconds > 0 ? saving / (waitSeconds / 3600) : saving;
+    const instant = (reason) => ({ mode: 'instant', saving, savingPerHour, measured, reason });
 
     // Running out before an order would plausibly fill makes the saving
     // theoretical — you cannot spend a discount you did not receive in time
     if (secondsLeft < waitSeconds) {
         const how = measured ? 'the book says it would fill in' : 'an order is assumed to take';
-        return { mode: 'instant', saving, measured, reason: `Runs out before ${how} ${formatWait(waitSeconds)}.` };
+        return instant(`Runs out before ${how} ${formatWait(waitSeconds)}.`);
     }
-    if (spread < minSaving) {
-        return { mode: 'instant', saving, measured, reason: 'The spread is too thin to be worth waiting for.' };
+    if (minOrderValue > 0 && bid * count < minOrderValue) {
+        return instant(
+            `The whole order is under ${Math.round(minOrderValue).toLocaleString()} coins — not worth an order slot.`
+        );
+    }
+    if (maxSpreadPct > 0 && spreadPct <= maxSpreadPct) {
+        return instant(`The spread (${spreadPct.toFixed(1)}%) is too thin to be worth waiting for.`);
+    }
+    if (minSavingCoins > 0 && saving < minSavingCoins) {
+        return instant(
+            `Waiting saves only ~${Math.round(saving).toLocaleString()} coins, under the ` +
+                `${Math.round(minSavingCoins).toLocaleString()} you asked an order to be worth.`
+        );
     }
 
     const fills = measured ? `Fills in about ${formatWait(waitSeconds)}. ` : 'No order book seen for this item yet. ';
-    return { mode: 'order', saving, measured, reason: `${fills}Saves about ${Math.round(saving).toLocaleString()}.` };
+    return {
+        mode: 'order',
+        saving,
+        savingPerHour,
+        measured,
+        reason:
+            `${fills}Saves about ${Math.round(saving).toLocaleString()} ` +
+            `(~${Math.round(savingPerHour).toLocaleString()}/hour of waiting).`,
+    };
 }
 
 /**

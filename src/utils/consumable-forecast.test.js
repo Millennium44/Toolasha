@@ -276,6 +276,36 @@ describe('buyStrategy', () => {
     test('nothing to buy needs no strategy', () => {
         expect(buyStrategy({ ...base, count: 0 }).mode).toBe('instant');
     });
+
+    test('the spread rule is configurable, and 0 turns it off', () => {
+        // 9.1% spread: refused at a 10% threshold, allowed with the rule off
+        expect(buyStrategy({ ...base, maxSpreadPct: 10 }).mode).toBe('instant');
+        expect(buyStrategy({ ...base, bid: 109, maxSpreadPct: 0 }).mode).toBe('order');
+    });
+
+    test('a saving under the coin floor is taken at ask (the premium rule, mirrored)', () => {
+        // Saves 1,000 — worth an order at a 500-coin floor, not at 5,000
+        expect(buyStrategy({ ...base, minSavingCoins: 500 }).mode).toBe('order');
+        const refused = buyStrategy({ ...base, minSavingCoins: 5000 });
+        expect(refused.mode).toBe('instant');
+        expect(refused.reason).toMatch(/saves only/i);
+    });
+
+    test('an order too small for a slot is taken at ask (the stack-value rule, mirrored)', () => {
+        // bid x count = 10,000: under a 50,000 floor, fine under 5,000
+        const refused = buyStrategy({ ...base, minOrderValue: 50000 });
+        expect(refused.mode).toBe('instant');
+        expect(refused.reason).toMatch(/order slot/);
+        expect(buyStrategy({ ...base, minOrderValue: 5000 }).mode).toBe('order');
+    });
+
+    test('what an hour of patience pays rides along for ranking', () => {
+        // Saving 1,000 over a measured 2-hour fill: 500/hour
+        const result = buyStrategy({ ...base, fillSeconds: 2 * 3600 });
+        expect(result.mode).toBe('order');
+        expect(result.savingPerHour).toBe(500);
+        expect(result.reason).toMatch(/hour of waiting/);
+    });
 });
 
 describe('buyStrategy and a measured fill time', () => {
