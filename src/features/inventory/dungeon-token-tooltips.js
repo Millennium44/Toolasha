@@ -100,10 +100,10 @@ class DungeonTokenTooltips {
         }
         tooltipElement.dataset.dungeonProcessed = 'true';
 
-        const collectionContent = tooltipElement.querySelector('div.Collection_tooltipContent__2IcSJ');
+        const collectionContent = tooltipElement.querySelector('div[class*="Collection_tooltipContent"]');
         const isCollectionTooltip = !!collectionContent;
 
-        const nameElement = tooltipElement.querySelector('div.ItemTooltipText_name__2JAHA');
+        const nameElement = tooltipElement.querySelector('div[class*="ItemTooltipText_name"]');
         const isItemTooltip = !!nameElement;
 
         if (!isCollectionTooltip && !isItemTooltip) {
@@ -112,7 +112,7 @@ class DungeonTokenTooltips {
 
         let itemName;
         if (isCollectionTooltip) {
-            const collectionNameElement = tooltipElement.querySelector('div.Collection_name__10aep');
+            const collectionNameElement = tooltipElement.querySelector('div[class*="Collection_name"]');
             if (!collectionNameElement) {
                 return;
             }
@@ -371,8 +371,8 @@ class DungeonTokenTooltips {
      */
     _injectShopTable(tooltipElement, shopItems, title, efficiencyLabel, isCollectionTooltip = false) {
         const tooltipText = isCollectionTooltip
-            ? tooltipElement.querySelector('.Collection_tooltipContent__2IcSJ')
-            : tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
+            ? tooltipElement.querySelector('[class*="Collection_tooltipContent"]')
+            : tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
 
         if (!tooltipText || tooltipText.querySelector('.dungeon-token-shop-injected')) return;
 
@@ -424,8 +424,8 @@ class DungeonTokenTooltips {
      */
     _injectSimpleValue(tooltipElement, valueLine, detailLine, isCollectionTooltip = false) {
         const tooltipText = isCollectionTooltip
-            ? tooltipElement.querySelector('.Collection_tooltipContent__2IcSJ')
-            : tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
+            ? tooltipElement.querySelector('[class*="Collection_tooltipContent"]')
+            : tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
 
         if (!tooltipText || tooltipText.querySelector('.dungeon-token-shop-injected')) return;
 

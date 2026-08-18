@@ -42,6 +42,12 @@ const REGEX_ENHANCEMENT_LEVEL = /\+(\d+)$/;
 const REGEX_ENHANCEMENT_STRIP = /\s*\+\d+$/;
 const REGEX_REFINED_STAR = /\s*★/g;
 
+// Once-per-session canary for tooltip shape drift. Tooltips are hover-transient,
+// so the startup anchor canary can never see one — this in-handler check is the
+// only place a rename of the tooltip content classes can be caught instead of
+// failing every price injection silently, one bare return at a time.
+let tooltipShapeWarned = false;
+
 // Every section this module injects has its own toggle, but they all share one
 // DOM observer and the same "anything to do?" guards. Init and those guards key
 // off this list so that enabling any one feature — even with prices off — still
@@ -225,12 +231,30 @@ class TooltipPrices {
      */
     async handleTooltip(tooltipElement) {
         // Check if it's a collection tooltip
-        const collectionContent = tooltipElement.querySelector('div.Collection_tooltipContent__2IcSJ');
+        const collectionContent = tooltipElement.querySelector('div[class*="Collection_tooltipContent"]');
         const isCollectionTooltip = !!collectionContent;
 
         // Check if it's a regular item tooltip
-        const nameElement = tooltipElement.querySelector('div.ItemTooltipText_name__2JAHA');
+        const nameElement = tooltipElement.querySelector('div[class*="ItemTooltipText_name"]');
         const isItemTooltip = !!nameElement;
+
+        // Drift canary: the popper carries item-tooltip (or collection-tooltip)
+        // content, but the class this file keys everything on did not match — a
+        // game rename of the name/content classes. Without this, every price,
+        // profit and enhancement injection would just stop, with nothing said.
+        if (
+            !tooltipShapeWarned &&
+            !isItemTooltip &&
+            !isCollectionTooltip &&
+            tooltipElement.querySelector('[class*="ItemTooltipText_"], [class*="Collection_tooltip"]')
+        ) {
+            tooltipShapeWarned = true;
+            console.warn(
+                '[TooltipPrices] A game tooltip rendered content this script no longer recognizes — ' +
+                    'the game may have renamed its tooltip classes. Price/profit tooltip injections ' +
+                    'are likely broken until the selectors are updated.'
+            );
+        }
 
         // Hovering an ability itself (in a loadout / ability slot / another
         // player's profile), not its book item: the game's tooltip shows level
@@ -292,7 +316,7 @@ class TooltipPrices {
         // Extract item name from appropriate element
         let itemName;
         if (isCollectionTooltip) {
-            const collectionNameElement = tooltipElement.querySelector('div.Collection_name__10aep');
+            const collectionNameElement = tooltipElement.querySelector('div[class*="Collection_name"]');
             if (!collectionNameElement) {
                 return; // No name element in collection tooltip
             }
@@ -312,7 +336,7 @@ class TooltipPrices {
         // Item changed (or first visit) — remove any previously injected elements so
         // stale data from the previous item doesn't bleed through.
         if (tooltipElement.dataset.pricesProcessedItem) {
-            const tooltipText = tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
+            const tooltipText = tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
             if (tooltipText) {
                 const staleSelectors = [
                     '.market-price-injected',
@@ -432,7 +456,7 @@ class TooltipPrices {
             if (enhancementConfig) {
                 const milestonesHTML = buildEnhancementMilestonesHTML(itemHrid, enhancementConfig);
                 if (milestonesHTML) {
-                    const tooltipText = tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
+                    const tooltipText = tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
                     if (tooltipText && !tooltipText.querySelector('.mwi-enhancement-milestones')) {
                         const div = dom.createStyledDiv(
                             { color: config.COLOR_TOOLTIP_INFO },
@@ -472,7 +496,7 @@ class TooltipPrices {
      * @returns {number} Enhancement level (0 if not enhanced)
      */
     extractEnhancementLevel(tooltipElement) {
-        const nameElement = tooltipElement.querySelector('div.ItemTooltipText_name__2JAHA');
+        const nameElement = tooltipElement.querySelector('div[class*="ItemTooltipText_name"]');
         if (!nameElement) {
             return 0;
         }
@@ -494,7 +518,7 @@ class TooltipPrices {
      * @param {Object} enhancementData - Enhancement analysis data
      */
     injectEnhancementDisplay(tooltipElement, enhancementData) {
-        const tooltipText = tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
+        const tooltipText = tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
 
         if (!tooltipText) {
             return;
@@ -526,7 +550,7 @@ class TooltipPrices {
         // Try to find the item HRID from the tooltip's data attributes or content
         // The game uses React, so we need to find the HRID from the displayed name
 
-        const nameElement = tooltipElement.querySelector('div.ItemTooltipText_name__2JAHA');
+        const nameElement = tooltipElement.querySelector('div[class*="ItemTooltipText_name"]');
         if (!nameElement) {
             return null;
         }
@@ -651,8 +675,8 @@ class TooltipPrices {
         itemHrid = null
     ) {
         const tooltipText = isCollectionTooltip
-            ? tooltipElement.querySelector('.Collection_tooltipContent__2IcSJ')
-            : tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
+            ? tooltipElement.querySelector('[class*="Collection_tooltipContent"]')
+            : tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
 
         if (!tooltipText) {
             console.warn('[TooltipPrices] Could not find tooltip text container');
@@ -712,8 +736,8 @@ class TooltipPrices {
      */
     injectProfitDisplay(tooltipElement, profitData, isCollectionTooltip = false) {
         const tooltipText = isCollectionTooltip
-            ? tooltipElement.querySelector('.Collection_tooltipContent__2IcSJ')
-            : tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
+            ? tooltipElement.querySelector('[class*="Collection_tooltipContent"]')
+            : tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
 
         if (!tooltipText) {
             return;
@@ -940,8 +964,8 @@ class TooltipPrices {
      */
     injectExpectedValueDisplay(tooltipElement, evData, isCollectionTooltip = false, keyPrice = 0, keyName = null) {
         const tooltipText = isCollectionTooltip
-            ? tooltipElement.querySelector('.Collection_tooltipContent__2IcSJ')
-            : tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
+            ? tooltipElement.querySelector('[class*="Collection_tooltipContent"]')
+            : tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
 
         if (!tooltipText) {
             return;
@@ -1139,8 +1163,8 @@ class TooltipPrices {
      */
     injectGatheringDisplay(tooltipElement, gatheringData, isCollectionTooltip = false) {
         const tooltipText = isCollectionTooltip
-            ? tooltipElement.querySelector('.Collection_tooltipContent__2IcSJ')
-            : tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
+            ? tooltipElement.querySelector('[class*="Collection_tooltipContent"]')
+            : tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
 
         if (!tooltipText) {
             return;
@@ -1231,8 +1255,8 @@ class TooltipPrices {
      */
     async injectMultiActionProfitDisplay(tooltipElement, itemHrid, enhancementLevel, isCollectionTooltip = false) {
         const tooltipText = isCollectionTooltip
-            ? tooltipElement.querySelector('.Collection_tooltipContent__2IcSJ')
-            : tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
+            ? tooltipElement.querySelector('[class*="Collection_tooltipContent"]')
+            : tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
 
         if (!tooltipText) {
             return;
@@ -1437,8 +1461,8 @@ class TooltipPrices {
      */
     injectAbilityStatusDisplay(tooltipElement, abilityStatus, isCollectionTooltip) {
         const tooltipText = isCollectionTooltip
-            ? tooltipElement.querySelector('div.Collection_tooltipContent__2IcSJ')
-            : tooltipElement.querySelector('div.ItemTooltipText_itemTooltipText__zFq3A');
+            ? tooltipElement.querySelector('div[class*="Collection_tooltipContent"]')
+            : tooltipElement.querySelector('div[class*="ItemTooltipText_itemTooltipText"]');
 
         if (!tooltipText) {
             return;

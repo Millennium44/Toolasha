@@ -119,6 +119,9 @@ export const GAME = {
     // Enhancement
     PROTECTION_ITEM_INPUT: '[class*="protectionItemInputContainer"]',
 
+    // Shared profile popup (the modal another player's name opens)
+    SHARABLE_PROFILE_OVERVIEW: 'div[class*="SharableProfile_overviewTab"]',
+
     // Tooltips
     MUI_TOOLTIP: '.MuiTooltip-tooltip',
 };

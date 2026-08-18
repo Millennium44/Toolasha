@@ -136,7 +136,7 @@ class CombatScore {
      */
     async waitForProfilePanel() {
         for (let i = 0; i < 20; i++) {
-            const panel = document.querySelector('div.SharableProfile_overviewTab__W4dCV');
+            const panel = document.querySelector('div[class*="SharableProfile_overviewTab"]');
             if (panel) {
                 return panel;
             }
@@ -1054,7 +1054,7 @@ class CombatScore {
             () => {
                 if (
                     !document.body.contains(modal) ||
-                    !document.querySelector('div.SharableProfile_overviewTab__W4dCV')
+                    !document.querySelector('div[class*="SharableProfile_overviewTab"]')
                 ) {
                     panel.remove();
                     this.currentAbilitiesPanel = null;
@@ -1085,7 +1085,7 @@ class CombatScore {
             () => {
                 if (
                     !document.body.contains(modal) ||
-                    !document.querySelector('div.SharableProfile_overviewTab__W4dCV')
+                    !document.querySelector('div[class*="SharableProfile_overviewTab"]')
                 ) {
                     panel.remove();
                     this.currentPanel = null;

@@ -414,6 +414,25 @@ function checkAnchorCanaries() {
             failures.push({ key, name, reason: 'selector missing — game update?' });
         }
     }
+
+    // The React fiber root. Fifteen features climb it for game methods
+    // (profile popups, marketplace navigation, chat commands, task tools),
+    // every one via the legacy `_reactRootContainer` key — which a React 18
+    // createRoot migration renames to `__reactContainer$<random>` in one
+    // stroke, failing all of them to null with no error. Not a selector, so
+    // it cannot ride the ANCHORS table; gated on the game page having
+    // rendered (the panel wrapper), the same way the table gates on `when`.
+    const rootEl = document.getElementById('root');
+    if (rootEl && document.querySelector(GAME.GAME_PANEL)) {
+        const fiber = rootEl._reactRootContainer?.current || rootEl._reactRootContainer?._internalRoot?.current;
+        if (!fiber) {
+            failures.push({
+                key: 'canaryFiberRoot',
+                name: 'React fiber root (game internals)',
+                reason: 'fiber key missing — game React update?',
+            });
+        }
+    }
     return failures;
 }
 
@@ -961,7 +980,10 @@ function registerFeatures() {
             category: 'Profile',
             module: Combat.combatScore,
             async: false,
-            healthCheck: () => injectedInto('div.SharableProfile_overviewTab__W4dCV', '#mwi-combat-score-panel'),
+            // Prefix-matched: anchoring this on the same hashed selector the
+            // feature itself uses meant a game rehash blinded check and feature
+            // together — the one failure the health pass exists to catch
+            healthCheck: () => injectedInto('div[class*="SharableProfile_overviewTab"]', '#mwi-combat-score-panel'),
         },
         {
             key: 'characterCardButton',

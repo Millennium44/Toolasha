@@ -17,7 +17,7 @@
  * believed the first time it is wrong.
  */
 
-import { describe, test, expect, beforeAll, beforeEach } from 'vitest';
+import { describe, test, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { GAME } from './utils/selectors.js';
 
 /** Settings the fake config answers with; mutated per test */
@@ -289,6 +289,40 @@ describe('the selector canary', () => {
         const failures = canary();
         expect(failures).toHaveLength(1);
         expect(failures[0].reason).toBe('selector missing — game update?');
+    });
+
+    describe('the React fiber root canary', () => {
+        afterEach(() => {
+            document.getElementById('root')?.remove();
+        });
+
+        const gameRoot = () => {
+            const root = document.createElement('div');
+            root.id = 'root';
+            document.body.appendChild(root);
+            return root;
+        };
+
+        test('a game page whose root lost the legacy fiber key is the alarm', () => {
+            allAnchorsPresent();
+            gameRoot(); // no _reactRootContainer — a createRoot migration
+            const failures = canary();
+            expect(failures.map((f) => f.key)).toContain('canaryFiberRoot');
+            expect(failures.find((f) => f.key === 'canaryFiberRoot').reason).toBe(
+                'fiber key missing — game React update?'
+            );
+        });
+
+        test('a reachable fiber is healthy', () => {
+            allAnchorsPresent();
+            gameRoot()._reactRootContainer = { current: {} };
+            expect(canary().map((f) => f.key)).not.toContain('canaryFiberRoot');
+        });
+
+        test('no root element is no evidence — the game page never rendered', () => {
+            allAnchorsPresent();
+            expect(canary().map((f) => f.key)).not.toContain('canaryFiberRoot');
+        });
     });
 
     test('does not canary a screen-specific selector — only the ever-present ones', () => {

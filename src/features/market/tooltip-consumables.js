@@ -114,7 +114,7 @@ class TooltipConsumables {
      */
     async handleTooltip(tooltipElement) {
         // Check if it's an item tooltip
-        const nameElement = tooltipElement.querySelector('div.ItemTooltipText_name__2JAHA');
+        const nameElement = tooltipElement.querySelector('div[class*="ItemTooltipText_name"]');
 
         if (!nameElement) {
             return; // Not an item tooltip
@@ -169,7 +169,7 @@ class TooltipConsumables {
      * @returns {string|null} Item HRID or null
      */
     extractItemHrid(tooltipElement) {
-        const nameElement = tooltipElement.querySelector('div.ItemTooltipText_name__2JAHA');
+        const nameElement = tooltipElement.querySelector('div[class*="ItemTooltipText_name"]');
         if (!nameElement) {
             return null;
         }
@@ -271,7 +271,7 @@ class TooltipConsumables {
      * @param {Object} stats - Consumable stats
      */
     injectConsumableDisplay(tooltipElement, stats) {
-        const tooltipText = tooltipElement.querySelector('.ItemTooltipText_itemTooltipText__zFq3A');
+        const tooltipText = tooltipElement.querySelector('[class*="ItemTooltipText_itemTooltipText"]');
 
         if (!tooltipText) {
             return;

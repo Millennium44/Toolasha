@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Canaries for the failure modes the health pass could not see
+
+Three blind spots closed. A React-migration canary now checks the fiber root's legacy key — fifteen features climb it for game methods, and a game React upgrade would fail them all to null with no error. The combat-score health check no longer anchors on the same hashed class the feature itself uses (a game rehash blinded check and feature together); the profile selectors are prefix-matched throughout. And the tooltip stack — hover-transient, so unreachable by the startup canary — de-hashes its content selectors and warns once per session if a tooltip renders content the script no longer recognizes, instead of every price injection just stopping.
+
 ### Stale hardcoded class hashes replaced with prefix matches
 
 `NavigationBar_active__2Oj_e` and `Modal_modalContent__Iw0Yv` no longer exist (the game's build hashes moved), so the pinned-actions page silently stopped clearing the game's nav highlight, and the combat-score modal lookup always fell through to its coarse fallback. Both now prefix-match, and the nav restore puts back exactly the class it removed.
