@@ -44,6 +44,12 @@ describe('auditSelector', () => {
         expect(auditSelector('#mwi-panel', CLASSES).status).toBe('unchecked');
     });
 
+    test('a MUI prefix is unchecked — real, but never in the module-class inventory', () => {
+        // Live run 2026-08-17: MuiTabs-flexContainer read as broken until
+        // non-module-shaped prefixes were routed here
+        expect(auditSelector('[class*="MuiTabs-flexContainer"]', CLASSES).status).toBe('unchecked');
+    });
+
     test('class^= (starts-with) prefixes are audited the same way', () => {
         expect(auditSelector('[class^="ChatMessage_name"]', CLASSES).status).toBe('ok');
         expect(auditSelector('[class^="ChatMessage_username"]', CLASSES).status).toBe('broken');

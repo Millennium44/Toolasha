@@ -57,7 +57,12 @@ export function collectStylesheetClasses(doc = document) {
  */
 export function auditSelector(selector, classSet) {
     const text = String(selector);
-    const prefixes = [...text.matchAll(/class[*^]?=["']([^"']+)["']/g)].map((match) => match[1]);
+    // Only CSS-module-shaped prefixes (Component_name) can be judged against
+    // the module-class inventory — a MUI prefix like MuiTabs-flexContainer is
+    // real but never enters the set, and judging it there is a false alarm
+    const prefixes = [...text.matchAll(/class[*^]?=["']([^"']+)["']/g)]
+        .map((match) => match[1])
+        .filter((prefix) => /^[A-Z][A-Za-z]*_[A-Za-z]/.test(prefix));
     const hashed = [...text.matchAll(/\.([A-Za-z]+_[A-Za-z0-9]+__[A-Za-z0-9_-]+)/g)].map((match) => match[1]);
     if (!prefixes.length && !hashed.length) return { status: 'unchecked', missing: [] };
 
