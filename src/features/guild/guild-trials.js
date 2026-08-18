@@ -1065,18 +1065,35 @@ export function renderTrialBlock(
     const unit = analysis.kind === 'combat' ? 'dmg' : 'work';
     const rows = [];
 
-    // Nothing has started. One line, and the countdown the header already
-    // states, because everything else on this card would be about the absence
-    // of data rather than about the trial
+    // Nothing has started. One line, the countdown the header already states —
+    // and the one number that CAN be said in advance: a combat trial opens on
+    // tier 1 with the whole hour ahead, so the captured loadouts price a rough
+    // projection before anything is measured.
     if (phase === 'scheduled') {
         const when = Number.isFinite(startsInMs) && startsInMs > 0 ? ` — starts in ${formatEta(startsInMs)}` : '';
-        return line(
-            'Trial',
-            `scheduled${when}`,
-            DIM,
-            'The guild panel says this cycle has not started. Nothing is measured until it does, and ' +
-                'anything this script already holds belongs to the previous cycle.'
-        );
+        const scheduledRows = [
+            line(
+                'Trial',
+                `scheduled${when}`,
+                DIM,
+                'The guild panel says this cycle has not started. Nothing is measured until it does, and ' +
+                    'anything this script already holds belongs to the previous cycle.'
+            ),
+        ];
+        if (forecast && forecast.tier !== null) {
+            scheduledRows.push(
+                line(
+                    'If it started now',
+                    `~T${forecast.tiersCleared}${Number.isFinite(forecast.enragedFrom) ? ' · fully enraged' : ''}`,
+                    WARN,
+                    'Walked from tier 1 over a full hour, at the party damage estimated from the loadouts ' +
+                        'captured so far' +
+                        (forecast.coverage ? ` (${forecast.coverage.known} of ${forecast.coverage.of} members)` : '') +
+                        ' — a rough shape before anything is measured, priced from the game’s own tier data.'
+                )
+            );
+        }
+        return scheduledRows.join('');
     }
 
     // Over. Results only: what it reached, what that is worth, and the rate it
@@ -2595,7 +2612,7 @@ class GuildTrials {
                         participating: ownParticipation(tile.name),
                         phase: tilePhase,
                         startsInMs: status?.startsInMs ?? null,
-                        forecast: this._forecast(tile, analysis, participants),
+                        forecast: this._forecast(tile, analysis, participants, tilePhase),
                         looseForecast: looseTrialForecast(record, { timeLeftMs }),
                     }),
                     // Wide enough that a label and a figure fit on one line, and
@@ -2725,7 +2742,7 @@ class GuildTrials {
      * @param {number} participants - Members signed up
      * @returns {Object|null} The forecast
      */
-    _forecast(tile, analysis, participants) {
+    _forecast(tile, analysis, participants, phase = null) {
         try {
             // Scoped exactly as the block is: a Hedgehog forecast must not run
             // on the Chameleon fight's measured DPS
@@ -2744,6 +2761,8 @@ class GuildTrials {
                 participants,
                 loadouts: guildLoadoutCapture.seen?.() || [],
                 measuredDps,
+                // A scheduled trial forecasts from tier 1 with the whole hour
+                scheduled: phase === 'scheduled',
             });
             // Pushed to the per-player panel, which draws the same conclusion
             // beside the split rather than working it out a second time

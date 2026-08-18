@@ -81,6 +81,9 @@ export const PARTICIPANT_HP_STEP = 0.01;
  */
 export const ENRAGE_MS = 10 * 60_000;
 
+/** A trial runs up to an hour — the clock a not-yet-started forecast spends */
+export const TRIAL_DURATION_MS = 60 * 60_000;
+
 /**
  * The health one tier's monsters have, all of them together.
  *
@@ -484,6 +487,7 @@ export function forecastTrial({
     participants = 0,
     loadouts = [],
     measuredDps = null,
+    scheduled = false,
 } = {}) {
     const nothing = (reason) => ({
         tier: null,
@@ -494,8 +498,18 @@ export function forecastTrial({
         reason,
     });
 
-    const tier = Number.isFinite(analysis?.tier) ? analysis.tier : null;
-    const timeLeftMs = Number.isFinite(analysis?.timeLeftMs) ? analysis.timeLeftMs : null;
+    // A trial that has not started has no live tier or clock to read — but it
+    // does not need one: every trial opens on tier 1 with the whole hour ahead
+    // of it, which is exactly the case this module's ladder walk was built for.
+    // The skilling gate below still holds (nothing is measured before the
+    // start), so a scheduled forecast is the combat estimate off captured
+    // loadouts, priced from the game's own tier data.
+    const tier = Number.isFinite(analysis?.tier) ? analysis.tier : scheduled ? 1 : null;
+    const timeLeftMs = Number.isFinite(analysis?.timeLeftMs)
+        ? analysis.timeLeftMs
+        : scheduled
+          ? TRIAL_DURATION_MS
+          : null;
     if (tier === null) return nothing('the tier is not known — open the Trials tab once');
     if (timeLeftMs === null) return nothing('no clock on the tab, so there is no hour to spend');
 

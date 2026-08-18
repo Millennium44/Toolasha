@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A scheduled trial gets a forecast before it starts
+
+A combat trial that has not started needs no live tier or clock to be projected — every trial opens on tier 1 with the whole hour ahead of it, which is exactly the case the ladder walk was built for. The scheduled card now shows "If it started now: ~T*n*" from the party damage estimated off captured loadouts, priced from the game's own tier data, with the coverage caveat. Scheduled skilling trials still refuse honestly: nothing is measured before the start.
+
 ### The crit-rate tiebreaker the replay promised is now a row
 
 The recorder has kept each fight's crit count since it learned to; the replay never read it. The sim engine now counts landed crits per source (additive `crits` field, merged across worker chunks), and the lab replay compares your real crit share of landed hits against the sim's — the tiebreaker on a soft-hit gap: fewer real crits than predicted says the sim over-credits your crit roll, a matching rate points the gap at the monster's mitigation, and the diagnosis sentence now says which. Results from engines without the counter skip the row rather than comparing against a fabricated zero.

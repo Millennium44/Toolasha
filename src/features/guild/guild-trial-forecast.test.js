@@ -378,6 +378,40 @@ describe('forecastTrial', () => {
         expect(forecast.coverage).toEqual({ known: 2, of: 5 });
     });
 
+    test('a scheduled trial forecasts from tier 1 over the whole hour', () => {
+        // No live tier, no clock — nothing to read, but nothing needed: every
+        // trial opens on tier 1 with the hour ahead of it
+        const scheduled = forecastTrial({
+            analysis: analysis({ tier: null, timeLeftMs: null }),
+            clientData,
+            name: 'Trial Chameleon',
+            participants: 3,
+            measuredDps: 2000,
+            scheduled: true,
+        });
+        expect(scheduled.tier).toBeGreaterThanOrEqual(1);
+        expect(scheduled.reason).toBeNull();
+
+        // Without the flag the gates hold exactly as before
+        const unscheduled = forecastTrial({
+            analysis: analysis({ tier: null, timeLeftMs: null }),
+            clientData,
+            name: 'Trial Chameleon',
+            measuredDps: 2000,
+        });
+        expect(unscheduled.source).toBe('none');
+        expect(unscheduled.reason).toContain('tier is not known');
+    });
+
+    test('a scheduled skilling trial still refuses honestly — nothing is measured yet', () => {
+        const forecast = forecastTrial({
+            analysis: analysis({ kind: 'skilling', tier: null, timeLeftMs: null, rate: null }),
+            scheduled: true,
+        });
+        expect(forecast.source).toBe('none');
+        expect(forecast.reason).toContain('measured fill rate');
+    });
+
     test('a skilling trial is only projected from a measured fill rate', () => {
         const withoutRate = forecastTrial({ analysis: analysis({ kind: 'skilling', rate: null }) });
         expect(withoutRate.source).toBe('none');
