@@ -110,6 +110,10 @@ export function bandFromValue(value) {
 export function clampToBand(price, itemHrid, enhancementLevel = 0) {
     if (typeof price !== 'number' || price < 0) return price ?? null;
     if (!isMarketplacePatchLive()) return price;
+    // Self-sufficient: direct order-book consumers call this without going
+    // through getPrice, and a clamp against an empty cache would be a no-op.
+    // The refresh is throttled and version-guarded, so this is cheap.
+    refreshMarketValues();
     const band = bandFromValue(marketValueFor(itemHrid, enhancementLevel));
     if (!band) return price;
     return Math.min(Math.max(price, band.min), band.max);

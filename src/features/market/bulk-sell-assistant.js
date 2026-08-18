@@ -22,6 +22,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { clampToBand } from '../../utils/market-values.js';
 import marketAPI from '../../api/marketplace.js';
 import {
     loadConfig as loadTabConfig,
@@ -80,6 +81,13 @@ const TUNABLES = [
         label: 'Insta-sell when the spread is under',
         suffix: '%',
         title: 'When the best ask and best bid are within this percentage of each other, a listing earns only a sliver over selling instantly — not worth the slot and the wait. 0 turns the rule off.',
+    },
+    {
+        key: 'market_bulkSellMinPatientPremium',
+        fallback: 0,
+        label: 'Insta-sell when a listing earns under',
+        suffix: 'coins',
+        title: 'The same idea in coins: what the whole stack would earn by waiting in the queue instead of selling instantly — (ask − bid) × count, after the 5% tax. Under this amount, insta-sell. 0 turns the rule off.',
     },
 ];
 const MS_PER_DAY = 86400000;
@@ -957,6 +965,7 @@ class BulkSellAssistant {
         const supplyRatio = readNumberSetting('market_bulkSellSupplyRatio', 1);
         const minListingValue = readNumberSetting('market_bulkSellMinListingValue', 1500000);
         const maxSpreadPct = readNumberSetting('market_bulkSellMaxSpreadPct', 0);
+        const minPatientPremium = readNumberSetting('market_bulkSellMinPatientPremium', 0);
 
         let frontAskDays = 0;
         const created = asks[0]?.createdTimestamp;
@@ -964,20 +973,36 @@ class BulkSellAssistant {
             frontAskDays = Math.max(0, (Date.now() - new Date(created).getTime()) / MS_PER_DAY);
         }
 
-        // Value the stack at the ask (what a listing would target)
-        const stackValue = this.current.count * (asks[0]?.price ?? bids[0]?.price ?? 0);
+        // The patient side is priced at what a listing could actually reach: a
+        // listing outside the game's tradable range is rejected by the server,
+        // so an unclamped ask overstates what waiting earns and can wrongly
+        // choose listing. The bid stays raw on purpose — insta fills against
+        // the real resting bid, wherever it happens to sit.
+        const askRaw = asks[0]?.price ?? null;
+        const askPrice = clampToBand(askRaw, this.current.itemHrid, this.current.enhancementLevel) ?? 0;
+        const bidPrice = bids[0]?.price ?? 0;
+
+        // Value the stack at the (banded) ask — what a listing would target
+        const stackValue = this.current.count * (askPrice || bidPrice || 0);
         // The listing's whole edge over insta-selling is the ask−bid spread.
         // With the game's finer price increments that edge is often a sliver,
-        // and a sliver is not worth a listing slot plus the queue wait.
-        const askPrice = asks[0]?.price ?? 0;
-        const bidPrice = bids[0]?.price ?? 0;
+        // and a sliver is not worth a listing slot plus the queue wait. Stated
+        // both ways: as a share of the ask, and as the after-tax coins the
+        // whole stack would earn by waiting.
         const spreadPct = askPrice > 0 && bidPrice > 0 ? ((askPrice - bidPrice) / askPrice) * 100 : null;
+        const patientPremium =
+            askPrice > 0 && bidPrice > 0
+                ? Math.max(0, (askPrice - bidPrice) * this.current.count * (1 - MARKET_TAX))
+                : null;
         const supplyTriggered = supplyRatio > 0 && askQty > bidQty * supplyRatio;
         const ageTriggered = queueDaysLimit > 0 && frontAskDays > queueDaysLimit;
         const valueTriggered = minListingValue > 0 && stackValue < minListingValue;
         const spreadTriggered = maxSpreadPct > 0 && spreadPct !== null && spreadPct <= maxSpreadPct;
-        const insta = (supplyTriggered || ageTriggered || valueTriggered || spreadTriggered) && bids.length > 0;
-        const price = insta ? bids[0].price : (asks[0]?.price ?? bids[0]?.price ?? 0);
+        const premiumTriggered = minPatientPremium > 0 && patientPremium !== null && patientPremium < minPatientPremium;
+        const insta =
+            (supplyTriggered || ageTriggered || valueTriggered || spreadTriggered || premiumTriggered) &&
+            bids.length > 0;
+        const price = insta ? bids[0].price : askPrice || bidPrice || 0;
 
         const ratioLabel = supplyRatio === 1 ? '' : ` ×${supplyRatio}`;
         const reason = insta
@@ -987,7 +1012,9 @@ class BulkSellAssistant {
                   ? `ask queue ~${frontAskDays.toFixed(1)}d`
                   : valueTriggered
                     ? `stack ${formatKMB(stackValue)} < ${formatKMB(minListingValue)} min`
-                    : `spread ${spreadPct.toFixed(1)}% ≤ ${maxSpreadPct}%`
+                    : spreadTriggered
+                      ? `spread ${spreadPct.toFixed(1)}% ≤ ${maxSpreadPct}%`
+                      : `listing earns ~${formatKMB(Math.round(patientPremium))} < ${formatKMB(minPatientPremium)} premium`
             : 'queue ok';
         this.decision = { insta, price, reason };
 

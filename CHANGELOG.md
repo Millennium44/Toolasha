@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bulk sell: the spread rule in coins, and the band prices the patient side
+
+A fifth insta-sell rule states the spread idea in absolute coins: what the whole stack would earn by waiting — (ask − bid) × count after the 5% tax — insta-sells under a configurable amount, which sees what a percentage cannot (a cheap-item mountain still earns its listing; an expensive single with a hairline spread does not). The decision now prices the patient side at the band-clamped ask — a listing outside the tradable range is rejected by the server, so an unclamped stale ask overstated what waiting earns — while the insta price stays the real resting bid. The my-listings Top Order Price from a stale cached book is banded the same way.
+
 ### A scheduled trial gets a forecast before it starts
 
 A combat trial that has not started needs no live tier or clock to be projected — every trial opens on tier 1 with the whole hour ahead of it, which is exactly the case the ladder walk was built for. The scheduled card now shows "If it started now: ~T*n*" from the party damage estimated off captured loadouts, priced from the game's own tier data, with the coverage caveat. Scheduled skilling trials still refuse honestly: nothing is measured before the start.

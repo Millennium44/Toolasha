@@ -42,6 +42,14 @@ vi.mock('../inventory/custom-tabs/custom-tabs-data.js', () => ({
     collectItemsAboveTab: () => new Set(),
 }));
 const shortcuts = vi.hoisted(() => ({ insta: [], listing: [] }));
+// A settable tradable band for the decision tests; null = no band, pass-through
+const band = vi.hoisted(() => ({ value: null }));
+vi.mock('../../utils/market-values.js', () => ({
+    clampToBand: (price) => {
+        if (typeof price !== 'number' || band.value === null) return price ?? null;
+        return Math.min(Math.max(price, band.value.min), band.value.max);
+    },
+}));
 vi.mock('./marketplace-shortcuts.js', () => ({
     default: {
         clickInstantActionButton: (label) => {
@@ -227,6 +235,8 @@ describe('the insta-vs-listing decision', () => {
         settings['market_bulkSellQueueDays'] = 0;
         settings['market_bulkSellMinListingValue'] = 0;
         settings['market_bulkSellMaxSpreadPct'] = 0;
+        settings['market_bulkSellMinPatientPremium'] = 0;
+        band.value = null;
         bulkSell.state = 'preparing';
         bulkSell.current = { itemHrid: '/items/cheese', enhancementLevel: 0, count: 5 };
     });
@@ -267,5 +277,74 @@ describe('the insta-vs-listing decision', () => {
         });
         expect(bulkSell.decision.insta).toBe(false);
         expect(shortcuts.listing).toHaveLength(1);
+    });
+
+    describe('the patient-premium rule — the same idea in coins', () => {
+        test('a stack whose listing earns under the threshold insta-sells, with the premium named', () => {
+            // (100 − 90) × 5 × 0.95 = 47.5 after tax
+            settings['market_bulkSellMinPatientPremium'] = 100;
+            bulkSell._decideAndOpen(book(100, 90));
+            expect(bulkSell.decision.insta).toBe(true);
+            expect(bulkSell.decision.price).toBe(90);
+            expect(bulkSell.decision.reason).toContain('premium');
+        });
+
+        test('at or over the threshold it lists — the comparison is strict', () => {
+            settings['market_bulkSellMinPatientPremium'] = 47.5;
+            bulkSell._decideAndOpen(book(100, 90));
+            expect(bulkSell.decision.insta).toBe(false);
+        });
+
+        test('a cheap-item mountain still earns its listing', () => {
+            // ask 3 / bid 2 is a 33% spread, but on 100k items the wait pays
+            // 95,000 after tax — coins see what a percentage cannot
+            settings['market_bulkSellMinPatientPremium'] = 10_000;
+            bulkSell.current = { itemHrid: '/items/cheese', enhancementLevel: 0, count: 100_000 };
+            bulkSell._decideAndOpen(book(3, 2));
+            expect(bulkSell.decision.insta).toBe(false);
+        });
+
+        test('an expensive single with a hairline spread is not worth a slot', () => {
+            // (1,000,000 − 999,000) × 1 × 0.95 = 950
+            settings['market_bulkSellMinPatientPremium'] = 5_000;
+            bulkSell.current = { itemHrid: '/items/cheese', enhancementLevel: 0, count: 1 };
+            bulkSell._decideAndOpen(book(1_000_000, 999_000));
+            expect(bulkSell.decision.insta).toBe(true);
+        });
+
+        test('0 turns the rule off', () => {
+            bulkSell._decideAndOpen(book(100, 99));
+            expect(bulkSell.decision.insta).toBe(false);
+        });
+    });
+
+    describe('the tradable band prices the patient side', () => {
+        test('a stale above-band ask is judged at the band edge, and listed at it', () => {
+            // Official value 50 → band max 55: the 100 ask could never fill,
+            // so the spread that matters is 55 vs 49
+            band.value = { min: 45, max: 55 };
+            settings['market_bulkSellMaxSpreadPct'] = 15;
+            bulkSell._decideAndOpen(book(100, 49));
+            // (55 − 49) / 55 ≈ 10.9% ≤ 15% → insta; unclamped it would be 51%
+            expect(bulkSell.decision.insta).toBe(true);
+            expect(bulkSell.decision.reason).toContain('spread 10.9%');
+        });
+
+        test('the listing price a non-insta decision opens with is the banded ask', () => {
+            band.value = { min: 45, max: 55 };
+            bulkSell._decideAndOpen(book(100, 49));
+            expect(bulkSell.decision.insta).toBe(false);
+            expect(bulkSell.decision.price).toBe(55);
+        });
+
+        test('the insta price stays the real resting bid, wherever it sits', () => {
+            // A bid above the band still pays what it says — insta fills
+            // against the actual order, not against a theory of it
+            band.value = { min: 45, max: 55 };
+            settings['market_bulkSellMaxSpreadPct'] = 100;
+            bulkSell._decideAndOpen(book(54, 60));
+            expect(bulkSell.decision.insta).toBe(true);
+            expect(bulkSell.decision.price).toBe(60);
+        });
     });
 });

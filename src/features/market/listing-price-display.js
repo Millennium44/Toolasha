@@ -20,6 +20,7 @@ const MY_LISTINGS_SURFACE = { surface: 'myListings' };
 import { coinFormatter, formatKMB, formatRelativeTime } from '../../utils/formatters.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
+import { clampToBand } from '../../utils/market-values.js';
 
 /**
  * Create a styled table cell for the listings table.
@@ -1092,7 +1093,11 @@ class ListingPriceDisplay {
                 if (orderBook) {
                     const topOrders = isSell ? orderBook.asks : orderBook.bids;
                     const topCompeting = topOrders?.find((o) => !ownListingIds.has(o.listingId));
-                    if (topCompeting) bookPrice = topCompeting.price;
+                    // Banded: a days-stale cached book can quote a price the
+                    // tradable range has since moved away from, and no order
+                    // could reach it today. The other two sources come through
+                    // marketAPI.getPrice, which already clamps.
+                    if (topCompeting) bookPrice = clampToBand(topCompeting.price, itemHrid, enhancementLevel);
                 }
             }
         }

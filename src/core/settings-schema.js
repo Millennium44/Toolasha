@@ -1243,6 +1243,14 @@ export const settingsGroups = {
                 max: 100,
                 help: 'Insta-sell when the gap between the best ask and the best bid is at most this percentage of the ask — with the finer price increments, a listing often earns only a sliver over selling instantly, and this rule says that sliver is not worth a listing slot and the wait. E.g. 2 insta-sells whenever ask and bid are within 2% of each other. 0 turns this rule off. Default: 0.',
             },
+            market_bulkSellMinPatientPremium: {
+                id: 'market_bulkSellMinPatientPremium',
+                label: 'Market: Bulk sell insta-sell when a listing earns under (coins)',
+                type: 'number',
+                default: 0,
+                min: 0,
+                help: 'The spread rule in absolute coins: what the whole stack would earn by waiting in the sell queue instead of insta-selling — (ask − bid) × count, after the 5% tax. Under this amount the Bulk Sell Assistant insta-sells: the premium is not worth a listing slot and the wait. 0 turns this rule off. Default: 0.',
+            },
             market_bulkSellVendorCheck: {
                 id: 'market_bulkSellVendorCheck',
                 label: 'Market: Bulk sell to vendor when market is no better',
