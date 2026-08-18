@@ -1335,7 +1335,8 @@ describe('what a run costs, through the real Markov chain', () => {
 
         expect(costs.every((cost) => cost > 0)).toBe(true);
         for (let i = 1; i < costs.length; i++) expect(costs[i]).toBeLessThanOrEqual(costs[i - 1]);
-    });
+        // Seven real chains: ~1 s alone, far past vitest's 5 s default under full-suite load
+    }, 30_000);
 
     test('the two levels the report was about, the right way round', () => {
         const fromFive = enhancementCost('/items/sinister_cape', 7, 5);

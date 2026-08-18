@@ -192,7 +192,9 @@ describe('detected stats reaching a prediction surface', () => {
         // The shipped level 140 against a level 42 item would have been +4.9% of advantage
         // on top of a level 8 Observatory — an entirely different run
         expect(run.successMultiplier).toBeLessThan(1.05);
-    });
+        // Loading mathjs and running the first chain takes ~1 s alone and well over vitest's
+        // 5 s default when the whole suite is contending for the CPU
+    }, 30_000);
 });
 
 describe('getProRatesParams', () => {

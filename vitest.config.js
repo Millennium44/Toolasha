@@ -23,6 +23,9 @@ export default defineConfig({
         globals: true,
         environment: 'node',
         setupFiles: ['./vitest.setup.js'],
+        // Agent worktrees live under .claude/worktrees and carry a full copy of src/, so
+        // without this the suite runs every test twice and the mathjs-heavy ones time out.
+        exclude: ['**/node_modules/**', '**/dist/**', '.claude/**'],
         coverage: {
             provider: 'v8',
             reporter: ['text', 'json', 'html'],
