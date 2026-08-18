@@ -120,7 +120,8 @@ class CombatScore {
 
         // Find the modal container
         const modalContainer =
-            profilePanel.closest('.Modal_modalContent__Iw0Yv') ||
+            // Prefix match — the hashed spelling went stale with a game update
+            profilePanel.closest('[class*="Modal_modalContent"]') ||
             profilePanel.closest('[class*="Modal"]') ||
             profilePanel.parentElement;
 

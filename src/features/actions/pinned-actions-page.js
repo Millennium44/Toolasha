@@ -192,6 +192,7 @@ class PinnedActionsPage {
 
         // Game nav deactivation (so clicking the previously-active skill re-triggers navigation)
         this.deactivatedNavItem = null;
+        this.deactivatedNavClass = null; // the exact hashed class removed, for restore
 
         // Nav click interceptor (hides pinned page when user clicks a game nav item)
         this.navClickInterceptor = null;
@@ -1123,6 +1124,7 @@ class PinnedActionsPage {
             this.restoreGameNav();
         } else {
             this.deactivatedNavItem = null;
+            this.deactivatedNavClass = null;
         }
     }
 
@@ -1144,12 +1146,18 @@ class PinnedActionsPage {
     /**
      * Remove the active class from the game's currently-selected nav item
      * so that clicking it again triggers a real navigation event.
+     *
+     * Prefix match, because the class carries a build hash that changes with
+     * game updates (a hardcoded hash here went stale once already) — and the
+     * matched name is remembered so restore puts back exactly what was removed.
      */
     deactivateGameNav() {
-        const activeNav = document.querySelector('.NavigationBar_active__2Oj_e');
-        if (activeNav) {
+        const activeNav = document.querySelector('[class*="NavigationBar_active"]');
+        const activeClass = activeNav && [...activeNav.classList].find((c) => c.includes('NavigationBar_active'));
+        if (activeClass) {
             this.deactivatedNavItem = activeNav;
-            activeNav.classList.remove('NavigationBar_active__2Oj_e');
+            this.deactivatedNavClass = activeClass;
+            activeNav.classList.remove(activeClass);
         }
     }
 
@@ -1157,10 +1165,11 @@ class PinnedActionsPage {
      * Restore the active class to the nav item we deactivated
      */
     restoreGameNav() {
-        if (this.deactivatedNavItem) {
-            this.deactivatedNavItem.classList.add('NavigationBar_active__2Oj_e');
-            this.deactivatedNavItem = null;
+        if (this.deactivatedNavItem && this.deactivatedNavClass) {
+            this.deactivatedNavItem.classList.add(this.deactivatedNavClass);
         }
+        this.deactivatedNavItem = null;
+        this.deactivatedNavClass = null;
     }
 
     /**

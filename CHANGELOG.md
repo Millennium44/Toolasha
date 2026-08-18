@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Stale hardcoded class hashes replaced with prefix matches
+
+`NavigationBar_active__2Oj_e` and `Modal_modalContent__Iw0Yv` no longer exist (the game's build hashes moved), so the pinned-actions page silently stopped clearing the game's nav highlight, and the combat-score modal lookup always fell through to its coarse fallback. Both now prefix-match, and the nav restore puts back exactly the class it removed.
+
 ### Two game-DOM selectors caught up with the game (found by a live-DOM audit)
 
 The game renamed the chat sender element `ChatMessage_username` → `ChatMessage_name`, silently disabling the dungeon tracker's player-message filter — and timestamped player messages also slip its text fallback, so player chatter could be misread as system lines during chat-history backfill. The filter now matches old and new spellings plus the inner `CharacterName_*` element. The collection panel watcher looked for `Collection_collections`, which no longer exists (`Collection_collectionContainer` is the panel), so the rescan-on-filter-toggle path never attached; it now watches both.
