@@ -300,7 +300,10 @@ export function captureFile() {
 export function downloadCapture() {
     if (!ticks.length) return false;
     try {
-        const blob = new Blob([JSON.stringify(captureFile())], { type: 'application/json' });
+        // Stamped into the file itself, so what is on disk agrees with the
+        // savedAt an accuracy export quotes for it — not only the in-memory copy
+        const now = Date.now();
+        const blob = new Blob([JSON.stringify({ ...captureFile(), savedAt: now })], { type: 'application/json' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         link.download = `toolasha-labyrinth-ticks-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
@@ -308,7 +311,7 @@ export function downloadCapture() {
         URL.revokeObjectURL(link.href);
         // The ticks stay held (the uptime harness reuses a stopped capture),
         // but the button no longer needs to offer this download again
-        savedAt = Date.now();
+        savedAt = now;
         // The written file is now the one exports can pair against, so the ref
         // outlives the clear-after-save the button does next
         lastSavedRef = {

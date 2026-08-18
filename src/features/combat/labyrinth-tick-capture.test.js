@@ -203,7 +203,15 @@ describe('the file says which capture it is, and how the capture ended', () => {
     });
 
     test('the file carries savedAt, and lastCaptureRef survives the clear after a save', () => {
-        vi.stubGlobal('Blob', class {});
+        const written = [];
+        vi.stubGlobal(
+            'Blob',
+            class {
+                constructor(parts) {
+                    written.push(parts.join(''));
+                }
+            }
+        );
         vi.stubGlobal('URL', { createObjectURL: () => 'blob:x', revokeObjectURL: () => {} });
         vi.stubGlobal('document', { createElement: () => ({ click: () => {} }) });
 
@@ -223,6 +231,8 @@ describe('the file says which capture it is, and how the capture ended', () => {
             monsterHrid: '/monsters/cyclops',
             roomLevel: 206,
         });
+        // The file on disk says when it was saved, and agrees with the ref
+        expect(JSON.parse(written.at(-1)).savedAt).toBe(ref.savedAt);
 
         // The ref names the file on disk, so throwing away the held ticks —
         // and even starting a new capture — must not lose it

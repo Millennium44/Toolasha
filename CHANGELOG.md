@@ -12,6 +12,10 @@ The room-log recorder learned which room it was standing in only from `labyrinth
 
 Also: the cross-bundle globals test now resolves its paths portably, so the suite runs on Windows checkouts.
 
+### Lab tick capture file carries its own savedAt
+
+The saved capture file was serialized a moment before the save was stamped, so it always said `savedAt: null` while the accuracy export quoted a real time for the same capture id. The stamp is now written into the file.
+
 ### Opt-in raw trial diagnostic trace, paired with the summary export
 
 A new setting (default off) captures the raw trial combat stream — battle starts, spectator ticks, battle ends and trial stats — deduplicated, ring-bounded, and downloadable from the trials controls as gzipped NDJSON with gap/drop/mid-fight metadata. The normal trial export stamps the trace id so the two files can be paired. Off by default because the file is large and contains raw combat data with participant names.
