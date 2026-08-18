@@ -110,6 +110,27 @@ function widenedMarginPct(values) {
 }
 
 /**
+ * The 95% binomial margin on a pooled rate, as a percent of that rate, widened
+ * by the sim's own run-to-run noise like every other band here.
+ *
+ * For the crit rate: per-fight crit ratios have tiny, unequal denominators —
+ * a fight with three landed hits swings its ratio by a third per crit — so the
+ * honest band comes from the pooled trial count, not the fight-to-fight
+ * spread. Null when the rate is zero or there are no trials ("cannot say",
+ * the same contract as relMarginPct — a 0% observed rate reads insufficient
+ * rather than pretending a band around nothing).
+ *
+ * @param {number} rate - Pooled successes / trials, 0..1
+ * @param {number} trials - Pooled trial count (landed hits, for crits)
+ * @returns {number|null}
+ */
+export function binomialMarginPct(rate, trials) {
+    if (!(trials > 0) || !(rate > 0)) return null;
+    const stdErr = Math.sqrt((rate * (1 - rate)) / trials);
+    return Math.hypot(((Z95 * stdErr) / rate) * 100, SIM_NOISE_FLOOR_PCT);
+}
+
+/**
  * Signed deviation of an observed value from a predicted one, as a percent of
  * the prediction. Positive means observed ran higher than the sim expected.
  *
@@ -276,13 +297,19 @@ export function deriveObserved(attempts) {
             }
             // The crit share of landed hits — the tiebreaker on a soft-hit
             // gap: a low real crit rate says the sim over-credits crits, a
-            // matching one points the gap at the monster's mitigation
-            const crits = Number(attempt.playerCrits);
-            if (Number.isFinite(crits) && hits > 0) {
-                group.totalPlayerCrits += crits;
-                group.totalCritDataHits += hits;
-                group.critDataFights += 1;
-                group.critRateSamples.push(crits / hits);
+            // matching one points the gap at the monster's mitigation.
+            // Tested on the RAW value: crits arrived later than hits, so a
+            // legacy fight stores null — and Number(null) is 0, which would
+            // read as a real zero-crit fight and poison the rate. A count
+            // above the hits is a decoder glitch, dropped the same way.
+            if (Number.isFinite(attempt.playerCrits) && hits > 0) {
+                const crits = Number(attempt.playerCrits);
+                if (crits >= 0 && crits <= hits) {
+                    group.totalPlayerCrits += crits;
+                    group.totalCritDataHits += hits;
+                    group.critDataFights += 1;
+                    group.critRateSamples.push(crits / hits);
+                }
             }
         }
     }
@@ -363,10 +390,13 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
         }
     }
 
-    // The sim's landed crits, counted per source since the crit-rate port.
-    // Null on a result from an engine that predates the counter, so the row
-    // is skipped rather than compared against a fabricated zero.
-    const simCrits = Number.isFinite(simResult.crits?.[playerHrid]) ? simResult.crits[playerHrid] : null;
+    // The sim's landed crits. The property's PRESENCE is the discriminator —
+    // an engine that counts crits always creates the map, so a run that never
+    // critted reads as a real 0% (a finding, if you crit), while a cached
+    // result from an engine without the counter reads as "no data" and the
+    // row is skipped rather than compared against a fabricated zero.
+    const hasCritData = simResult.crits !== undefined;
+    const simCrits = hasCritData ? Number(simResult.crits?.[playerHrid]) || 0 : null;
 
     return {
         dps: dealt / rateSeconds,
@@ -375,7 +405,7 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
         clearRate: attempts > 0 ? wins / attempts : 0,
         hitRate: simHits + simMisses > 0 ? simHits / (simHits + simMisses) : null,
         dmgPerHit: simHits > 0 ? dealt / simHits : null,
-        critRate: simCrits !== null && simHits > 0 ? simCrits / simHits : null,
+        critRate: hasCritData && simHits > 0 ? simCrits / simHits : null,
         attempts,
         wins,
         simSeconds,
@@ -401,8 +431,17 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
  *   deviation, so a rate short only by the bias is not called "below".
  * @returns {Object}
  */
-function compareMetric(key, label, observed, predicted, samples, fights, downwardBiasPct = 0) {
-    const marginPct = widenedMarginPct(samples);
+function compareMetric(
+    key,
+    label,
+    observed,
+    predicted,
+    samples,
+    fights,
+    downwardBiasPct = 0,
+    marginPctOverride = null
+) {
+    const marginPct = marginPctOverride ?? widenedMarginPct(samples);
     const dev = deviationPct(observed, predicted);
     // The verdict judges the bias-corrected deviation; the row still shows the
     // raw one, since the observed figure it displays is the real measured rate.
@@ -575,7 +614,11 @@ export function compareLab(observed, predicted) {
                   observed.critRate,
                   predicted.critRate,
                   observed.critRateSamples,
-                  observed.critDataFights
+                  observed.critDataFights,
+                  0,
+                  // Binomial over the pooled hits — per-fight ratios have
+                  // denominators too small to band honestly
+                  binomialMarginPct(observed.critRate, observed.totalCritDataHits)
               )
             : null;
 

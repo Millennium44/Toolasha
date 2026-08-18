@@ -1873,7 +1873,7 @@ class LabyrinthRoomLogs {
     /** How a replay metric value reads, by which metric it is */
     formatReplayValue(key, value) {
         if (!Number.isFinite(value)) return '—';
-        if (key === 'clearRate' || key === 'hitRate') return `${Math.round(value * 100)}%`;
+        if (key === 'clearRate' || key === 'hitRate' || key === 'critRate') return `${Math.round(value * 100)}%`;
         if (key === 'secondsPerFight') return `${value.toFixed(1)}s`;
         if (key === 'dmgPerHit') return formatKMB(value);
         return `${formatKMB(value)}/s`;

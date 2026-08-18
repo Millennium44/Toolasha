@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Crit row hardening
+
+Three fixes from adversarial review of the new crit comparison: a legacy fight's stored `playerCrits: null` no longer reads as a real zero (the `Number(null)` trap — three unmeasured fights would have halved a true rate), an engine that counts crits but saw none now reads as a real 0% instead of "no data" (property presence is the discriminator), and the crit band is binomial over the pooled landed hits rather than fight-to-fight ratio spread, whose per-fight denominators are too small to band honestly.
+
 ### Bulk sell: the spread rule in coins, and the band prices the patient side
 
 A fifth insta-sell rule states the spread idea in absolute coins: what the whole stack would earn by waiting — (ask − bid) × count after the 5% tax — insta-sells under a configurable amount, which sees what a percentage cannot (a cheap-item mountain still earns its listing; an expensive single with a hairline spread does not). The decision now prices the patient side at the band-clamped ask — a listing outside the tradable range is rejected by the server, so an unclamped stale ask overstated what waiting earns — while the insta price stays the real resting bid. The my-listings Top Order Price from a stale cached book is banded the same way.

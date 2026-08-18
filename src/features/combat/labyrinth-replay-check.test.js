@@ -6,7 +6,14 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { deriveObserved, predictedFromSim, compareLab, deviationPct, relMarginPct } from './labyrinth-replay-check.js';
+import {
+    deriveObserved,
+    predictedFromSim,
+    compareLab,
+    deviationPct,
+    relMarginPct,
+    binomialMarginPct,
+} from './labyrinth-replay-check.js';
 
 function attempt(overrides = {}) {
     return {
@@ -373,6 +380,70 @@ describe('the damage gap decomposes into accuracy and mitigation', () => {
             const [g] = deriveObserved(swingLosses()); // hits, no playerCrits
             expect(g.critRate).toBeNull();
             expect(g.critDataFights).toBe(0);
+        });
+
+        test('a stored null is not a zero — the Number(null) trap', () => {
+            // The recorder stores playerCrits: null on legacy fights, and
+            // Number(null) is 0 — pooled in, three unmeasured fights would
+            // halve a real 25% rate
+            const mixed = [
+                ...critLosses().slice(0, 3),
+                ...Array.from({ length: 3 }, () =>
+                    attempt({
+                        monsterMaxHp: 100000,
+                        monsterHpEnd: 92000,
+                        seconds: 50,
+                        playerHits: 40,
+                        playerMisses: 10,
+                        playerCrits: null,
+                    })
+                ),
+            ];
+            const [g] = deriveObserved(mixed);
+            expect(g.hitDataFights).toBe(6);
+            expect(g.critDataFights).toBe(3);
+            expect(g.critRate).toBeCloseTo(0.25, 5);
+        });
+
+        test('more crits than hits is a decoder glitch, dropped from the crit pool only', () => {
+            const glitch = [
+                ...critLosses().slice(0, 2),
+                attempt({
+                    monsterMaxHp: 100000,
+                    monsterHpEnd: 92000,
+                    seconds: 50,
+                    playerHits: 10,
+                    playerMisses: 0,
+                    playerCrits: 99,
+                }),
+            ];
+            const [g] = deriveObserved(glitch);
+            expect(g.critDataFights).toBe(2);
+            expect(g.hitDataFights).toBe(3); // still counts for hit data
+        });
+
+        test('an engine with the counter and a run that never crit reads as a real 0%', () => {
+            const predicted = predictedFromSim(
+                {
+                    simulatedTime: 100e9,
+                    labyAttemptCount: 1,
+                    encounters: 1,
+                    totalDamageDealt: { player1: 1500, '/monsters/cyclops': 0 },
+                    attacks: { player1: { '/monsters/cyclops': { '/abilities/auto': { 100: 15 } } } },
+                    crits: {}, // the counter exists; this player never critted
+                },
+                { playerHrid: 'player1', monsterHrid: '/monsters/cyclops' }
+            );
+            expect(predicted.critRate).toBe(0);
+        });
+
+        test('the crit band is binomial over the pooled hits, and tightens with them', () => {
+            expect(binomialMarginPct(0.25, 0)).toBeNull();
+            expect(binomialMarginPct(0, 100)).toBeNull();
+            const wide = binomialMarginPct(0.25, 40);
+            const tight = binomialMarginPct(0.25, 4000);
+            expect(wide).toBeGreaterThan(tight);
+            expect(tight).toBeGreaterThanOrEqual(2); // never under the sim noise floor
         });
     });
 });
