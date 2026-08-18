@@ -192,6 +192,29 @@ toolashaRoot.Debug = {
         }
         return result;
     },
+    // Run the Sim Accuracy check from the console — the same run the panel's
+    // Check button starts, retained sim result included. The zone uptime
+    // harness below needs one to have run.
+    simAccuracyCheck: async () => {
+        const comparison = await replayCheck.check();
+        if (!comparison) {
+            console.warn(`[SimAccuracy] ${replayCheck.error || 'The check could not run.'}`);
+            return null;
+        }
+        console.table(
+            comparison.metrics.map((metric) => ({
+                metric: metric.label ?? metric.key,
+                real: typeof metric.real === 'number' ? Number(metric.real.toFixed(2)) : (metric.real ?? '—'),
+                sim:
+                    typeof metric.predicted === 'number'
+                        ? Number(metric.predicted.toFixed(2))
+                        : (metric.predicted ?? '—'),
+                'dev%': metric.deviationPct === null ? '—' : Number(metric.deviationPct.toFixed(1)),
+                verdict: metric.verdict,
+            }))
+        );
+        return comparison;
+    },
     // The zone edition: decompose a recorded zone session's incoming damage per
     // monster and per ability, against the sim the Sim Accuracy check already
     // ran. Record zone combat, run the panel check, then type this.

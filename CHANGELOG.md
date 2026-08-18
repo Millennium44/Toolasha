@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### The uptime harness reaches zones
 
-`Toolasha.Debug.zoneUptimeHarness()` decomposes a recorded zone session's incoming damage per monster and per ability — real (from the recorder's counters) beside sim — reusing the lab harness's comparison unchanged and the very SimResult the Sim Accuracy check already ran, so it costs no second simulation. Multi-monster waves keep cast counts exact per monster; simultaneous swings share one payoff queue; damage-over-time is one wave-level row because the feed cannot say whose bleed it was. Counterless legacy recordings, parties, mixed builds, and foreign-zone recordings are refused by name instead of graded.
+`Toolasha.Debug.zoneUptimeHarness()` decomposes a recorded zone session's incoming damage per monster and per ability — real (from the recorder's counters) beside sim — reusing the lab harness's comparison unchanged and the very SimResult the Sim Accuracy check already ran, so it costs no second simulation. Multi-monster waves keep cast counts exact per monster; simultaneous swings share one payoff queue; damage-over-time is one wave-level row because the feed cannot say whose bleed it was. Counterless legacy recordings, parties, mixed builds, and foreign-zone recordings are refused by name instead of graded. `Toolasha.Debug.simAccuracyCheck()` runs the panel's check from the console, so the whole record-check-decompose loop can be driven without the overlay.
 
 ### CI: production bundles share one copy of the new utils again
 
