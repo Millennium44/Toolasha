@@ -27,8 +27,18 @@ import portraitDps from '../features/combat/portrait-dps.js';
 import partyProfileButton from '../features/combat/party-profile-button.js';
 // Side-effect import: registers the Build Score overlay row
 import '../features/profile/build-score-row.js';
-// Side-effect import: registers the Sim Accuracy overlay row and its panel
-import '../features/combat/combat-replay-check.js';
+// Registers the Sim Accuracy overlay row and its panel; the instance is read
+// by the zone uptime harness for the sim result the check retained
+import replayCheck from '../features/combat/combat-replay-check.js';
+import {
+    waveHridsOf,
+    nonDamagingByHrid,
+    extractWaveIncoming,
+    mergeWaveIncoming,
+    compareZoneIncoming,
+    zoneUptimeMismatches,
+} from '../features/combat/zone-uptime-harness.js';
+import { buildGameDataPayload } from '../features/combat-sim/combat-sim-adapter.js';
 import labyrinthTracker from '../features/combat/labyrinth-tracker.js';
 import labyrinthBestLevel from '../features/combat/labyrinth-best-level.js';
 import labyrinthShopPrices from '../features/combat/labyrinth-shop-prices.js';
@@ -181,6 +191,77 @@ toolashaRoot.Debug = {
             );
         }
         return result;
+    },
+    // The zone edition: decompose a recorded zone session's incoming damage per
+    // monster and per ability, against the sim the Sim Accuracy check already
+    // ran. Record zone combat, run the panel check, then type this.
+    zoneUptimeHarness: async () => {
+        const session = combatRecorder.sessionFile();
+        const segments = (session?.segments || []).filter((entry) => entry.ticksIncluded && entry.ticks?.length);
+        if (!segments.length) {
+            console.warn('[ZoneUptime] No recorded ticks — press Record during zone combat first.');
+            return null;
+        }
+        const simResult = replayCheck.lastSimResult;
+        if (!simResult) {
+            console.warn('[ZoneUptime] No sim on hand — run the Sim Accuracy check first, then this.');
+            return null;
+        }
+
+        const gameData = buildGameDataPayload();
+        const hrids = new Set();
+        for (const entry of segments) {
+            for (const hrid of waveHridsOf(entry.ticks)) hrids.add(hrid);
+        }
+        const nonDamaging = nonDamagingByHrid(gameData, hrids);
+        const real = mergeWaveIncoming(segments.map((entry) => extractWaveIncoming(entry.ticks, { nonDamaging })));
+        if (!real.usable) {
+            console.warn(`[ZoneUptime] The recording cannot be decomposed: ${real.reason}`);
+            return null;
+        }
+
+        const zoneHrid = replayCheck.observed()?.zoneHrid || null;
+        const mismatches = zoneUptimeMismatches(real, {
+            zoneHrid,
+            gameData,
+            segmentLoadouts: segments.map((entry) => entry.loadout ?? null),
+        });
+        if (mismatches.length) {
+            console.warn(
+                `[ZoneUptime] Recording and sim do not describe the same fight (${mismatches.join(', ')}) — not comparing.`
+            );
+            return { real, mismatches };
+        }
+
+        const result = compareZoneIncoming(real, simResult);
+        const fightsLabel = `${real.fights} fight${real.fights === 1 ? '' : 's'}${real.partialFights ? ` (+${real.partialFights} partial excluded)` : ''}`;
+        console.log(`[ZoneUptime] ${zoneHrid} — incoming damage per monster per ability, real vs sim (${fightsLabel})`);
+        const tableRow = (row) => ({
+            ability: row.ability,
+            'real cast%': row.real?.castSharePct != null ? Math.round(row.real.castSharePct) : '—',
+            'sim cast%': row.sim?.castSharePct != null ? Math.round(row.sim.castSharePct) : '—',
+            'real dmg%': row.real ? Math.round(row.real.dmgSharePct) : '—',
+            'sim dmg%': row.sim ? Math.round(row.sim.dmgSharePct) : '—',
+            'real mean': row.real ? Math.round(row.real.meanDmgPerCast ?? row.real.meanPerTick) : '—',
+            'sim mean': row.sim ? Math.round(row.sim.meanDmgPerCast ?? row.sim.meanPerTick) : '—',
+            verdict: row.verdict,
+        });
+        for (const section of result.sections) {
+            console.log(
+                `[ZoneUptime] ${section.monsterHrid} — ${section.fights} fight${section.fights === 1 ? '' : 's'}`
+            );
+            console.table(section.rows.map(tableRow));
+        }
+        if (result.dotRow) {
+            console.log('[ZoneUptime] Damage over time (wave-level — the feed cannot say whose bleed):');
+            console.table([tableRow(result.dotRow)]);
+        }
+        if (result.simOnlyHrids.length) {
+            console.log(
+                `[ZoneUptime] Sim-only monsters (not seen in this recording's waves): ${result.simOnlyHrids.join(', ')}`
+            );
+        }
+        return { real, ...result };
     },
     // Dump a monster's raw ability kit from live game data — the cast order, each
     // ability's cooldown, and its defaultCombatTriggers (the gates that decide

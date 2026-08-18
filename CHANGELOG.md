@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The uptime harness reaches zones
+
+`Toolasha.Debug.zoneUptimeHarness()` decomposes a recorded zone session's incoming damage per monster and per ability — real (from the recorder's counters) beside sim — reusing the lab harness's comparison unchanged and the very SimResult the Sim Accuracy check already ran, so it costs no second simulation. Multi-monster waves keep cast counts exact per monster; simultaneous swings share one payoff queue; damage-over-time is one wave-level row because the feed cannot say whose bleed it was. Counterless legacy recordings, parties, mixed builds, and foreign-zone recordings are refused by name instead of graded.
+
 ### CI: production bundles share one copy of the new utils again
 
 The band clamp had Core importing a Utils module, which inlined a second copy of the band cache (and server-gate) into the Core bundle — Core loads before Utils, so it can never treat Utils globals as externals; the clamp is now late-bound off `Toolasha.Utils.marketValues` at call time, passing prices through unbanded for the few startup milliseconds before Utils lands. The shared `scriptVersion()` helper joins the Utils externals map so combat/sim/ui stop carrying private copies. Dev builds were unaffected (they bundle everything); only `npm run build`'s sharing check caught it, which is what it is for.

@@ -1624,6 +1624,10 @@ class ReplayCheck {
         this.running = false;
         this.error = null;
         this.progress = 0;
+        // The full SimResult behind the latest comparison, kept so downstream
+        // decompositions (the zone uptime harness) can read its per-ability
+        // attack histograms without paying for a second simulation.
+        this.lastSimResult = null;
     }
 
     /**
@@ -1950,6 +1954,7 @@ class ReplayCheck {
                 }
             );
 
+            this.lastSimResult = simResult;
             this.comparison = compareRun(observed, predictFromSim(simResult));
             await this.rememberCheck(this.comparison);
             return this.comparison;
@@ -1974,6 +1979,7 @@ class ReplayCheck {
         this.observations = [];
         this.history = [];
         this.comparison = null;
+        this.lastSimResult = null;
         this.error = null;
         await writeScoped(STORAGE_KEY, [], 'settings');
         await writeScoped(HISTORY_KEY, [], 'settings');
@@ -1995,6 +2001,7 @@ class ReplayCheck {
         this.observations = [];
         this.history = [];
         this.comparison = null;
+        this.lastSimResult = null;
         this.loaded = false;
         resetRecordTargetCache();
     }

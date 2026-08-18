@@ -975,6 +975,17 @@ describe('what the check simulates', () => {
         });
     });
 
+    test('the check retains the SimResult it decomposed, for the zone uptime harness', () => {
+        // The harness decomposes the very sim whose headline the panel shows —
+        // retaining it is what makes the decomposition free (no second sim)
+        game.simResult = simResult;
+        replayCheck.observations = [evenObservation({ fights: 6 })];
+
+        return replayCheck.check().then(() => {
+            expect(replayCheck.lastSimResult).toBe(simResult);
+        });
+    });
+
     test('with task damage off, because the feed never said the monster was a task', () => {
         // `taskDamage` only applies while what you are fighting is your active
         // combat task. Nothing on the feed says whether it was, so a replay
