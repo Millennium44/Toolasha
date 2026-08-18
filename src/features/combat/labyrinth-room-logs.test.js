@@ -686,6 +686,42 @@ describe('the fight recorder path measures whole fights', () => {
         expect(attempt.resolveReason).toBe('room_switch');
     });
 
+    test('a page loaded mid-fight learns its room from the init payload, so the fight is watched', async () => {
+        // No labyrinth_updated has arrived: only the init character data says
+        // which room the character is standing in
+        const { default: dataManager } = await import('../../core/data-manager.js');
+        labyrinthRoomLogs.labContext = null;
+        dataManager.characterData = {
+            labyrinth: {
+                isActive: true,
+                currentFloor: 10,
+                startedAt: 'run',
+                pathData: JSON.stringify([{ x: 2, y: 3 }]),
+                roomData: { 3: { 2: { monsterHrid: '/monsters/cyclops', recommendedLevel: 200, entryCount: 3 } } },
+            },
+        };
+        try {
+            labyrinthRoomLogs.seedFromCharacterData();
+            expect(labyrinthRoomLogs.labContext).toMatchObject({ runKey: 'run|10', roomKey: '2,3' });
+            expect(labyrinthRoomLogs.labContext.room.monsterHrid).toBe('/monsters/cyclops');
+
+            // The tick heuristic opens the fight — late, and honest about it
+            labyrinthRoomLogs.onBattleUpdated(tick({ player: p(400), monster: m(9_000, 1) }));
+            expect(labyrinthRoomLogs.fight.caughtStart).toBe(false);
+            vi.setSystemTime(1_030_000);
+            labyrinthRoomLogs.onBattleUpdated(tick({ player: p(0, 2), monster: m(5_000, 2) }));
+            labyrinthRoomLogs.onNewBattle(newBattle(14_320)); // the retry files it
+            expect(noted.mock.calls.at(-1)[0]).toMatchObject({ complete: false, resolveReason: 'new_battle' });
+
+            // Seeding never overrides a context an update message has set
+            dataManager.characterData.labyrinth.pathData = JSON.stringify([{ x: 0, y: 0 }]);
+            labyrinthRoomLogs.seedFromCharacterData();
+            expect(labyrinthRoomLogs.labContext.roomKey).toBe('2,3');
+        } finally {
+            delete dataManager.characterData;
+        }
+    });
+
     test('a fight cannot be opened from half a tick', () => {
         labyrinthRoomLogs.onBattleUpdated(tick({ monster: m(9_000, 1) }));
         expect(labyrinthRoomLogs.fight).toBeNull();

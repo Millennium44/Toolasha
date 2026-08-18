@@ -322,6 +322,11 @@ class LabyrinthRoomLogs {
         this.newBattleHandler = (data) => this.onNewBattle(data);
         webSocketHook.on('new_battle', this.newBattleHandler);
 
+        // A page reloaded mid-room gets no labyrinth_updated until the next
+        // boundary, so without this the fight in progress goes unwatched
+        // entirely instead of being filed as joined late
+        this.seedFromCharacterData();
+
         // The capture button's live tick count, and — once combat has moved on
         // and no battle tick will repaint it — the flip to "Save capture (N)"
         // when a capture stops by itself. A second's cadence is plenty for a
@@ -432,6 +437,23 @@ class LabyrinthRoomLogs {
             this.resolveFight('room_switch');
             this.finalizeActiveSession('room_switch');
         }
+    }
+
+    /**
+     * Which room the character is standing in, read from the init payload.
+     *
+     * `labyrinth_updated` only arrives when the run changes, so a page loaded in
+     * the middle of a fight would otherwise drop every tick until the attempt
+     * ended — the fight would not be recorded as joined late; it would not be
+     * recorded at all. The init payload carries the same labyrinth object the
+     * update message does (either spelling of its key), so it seeds the same way.
+     */
+    seedFromCharacterData() {
+        if (this.labContext) return;
+        const characterData = dataManager.characterData;
+        const labyrinth = characterData?.characterLabyrinth || characterData?.labyrinth;
+        if (!labyrinth || labyrinth.isActive === false || !labyrinth.roomData) return;
+        this.onLabyrinthUpdated({ labyrinth });
     }
 
     parsePathData(pathData) {

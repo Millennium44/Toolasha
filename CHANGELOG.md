@@ -6,6 +6,12 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab fight recorder: a page reloaded mid-fight now watches the fight it lands in
+
+The room-log recorder learned which room it was standing in only from `labyrinth_updated`, which does not arrive after a reload until the attempt ends — so a fight joined by refreshing the page was not recorded as joined late; it was not recorded at all. The recorder now seeds its room context from the init character payload, so that fight is filed with `complete: false` like any other late join.
+
+Also: the cross-bundle globals test now resolves its paths portably, so the suite runs on Windows checkouts.
+
 ### Opt-in raw trial diagnostic trace, paired with the summary export
 
 A new setting (default off) captures the raw trial combat stream — battle starts, spectator ticks, battle ends and trial stats — deduplicated, ring-bounded, and downloadable from the trials controls as gzipped NDJSON with gap/drop/mid-fight metadata. The normal trial export stamps the trace id so the two files can be paired. Off by default because the file is large and contains raw combat data with participant names.
