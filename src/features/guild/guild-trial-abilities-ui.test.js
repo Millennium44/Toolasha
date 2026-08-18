@@ -57,22 +57,20 @@ vi.mock('./guild-loadout-capture.js', () => ({
     },
 }));
 
-/** The roster cycler, reduced to the one control the panel defaults to */
-const skills = vi.hoisted(() => ({ openNextUnitCalls: 0 }));
-
-vi.mock('./guild-member-skills.js', () => ({
-    default: {
-        openNextUnit: () => {
-            skills.openNextUnitCalls += 1;
-            return { opened: null, how: 'no-unit' };
-        },
-    },
-}));
-
 const { guildTrialAbilities } = await import('./guild-trial-abilities.js');
 const feature = (await import('./guild-trial-abilities-ui.js')).default;
-const { guildTrialAbilitiesPanel, setControls, openTrialAbilitiesPanel, tierRangeLabel, headerLine, completionLine } =
-    await import('./guild-trial-abilities-ui.js');
+const {
+    guildTrialAbilitiesPanel,
+    setControls,
+    openTrialAbilitiesPanel,
+    openNextTrialUnit,
+    retryTrialUnit,
+    resetTrialUnitRequests,
+    tierRangeLabel,
+    headerLine,
+    completionLine,
+} = await import('./guild-trial-abilities-ui.js');
+const { REQUEST_TIMEOUT_MS } = await import('./guild-member-skills.js');
 
 const NOW = 1_800_000_000_000;
 
@@ -135,7 +133,7 @@ describe('trial abilities panel', () => {
         };
         capture.listeners = [];
         capture.players = {};
-        skills.openNextUnitCalls = 0;
+        resetTrialUnitRequests();
     });
 
     afterEach(() => {
@@ -245,17 +243,98 @@ describe('trial abilities panel', () => {
         expect(text()).not.toContain(FAILED);
     });
 
+    /** A unit box as the game draws one, recording clicks into `log` */
+    function unitBox(kind, name, log) {
+        const box = document.createElement('div');
+        box.className = kind === 'combat' ? 'CombatUnit_combatUnit__1m3XT' : 'MiniUnit_miniUnit__379cK';
+        const nameEl = document.createElement('div');
+        nameEl.className = kind === 'combat' ? 'CombatUnit_name__1SlO1' : 'MiniUnit_name__3Rczb';
+        nameEl.textContent = name;
+        box.appendChild(nameEl);
+        box.addEventListener('click', () => log.push(name));
+        return box;
+    }
+
+    /**
+     * A spectated trial fight, structured as the real DOM draws it: the
+     * watcher's own full card plus mini units in the players area, and a
+     * "Trial …" boss in the monsters grid anchoring the whole thing.
+     * @returns {{clicks: string[]}} The clicks the units received
+     */
+    function fightView(miniNames, { boss = 'Trial Chameleon', self = null } = {}) {
+        const clicks = [];
+        const panel = document.createElement('div');
+        panel.className = 'BattlePanel_battlePanel__1yPCP';
+
+        const players = document.createElement('div');
+        if (self) players.appendChild(unitBox('combat', self, clicks));
+        for (const name of miniNames) players.appendChild(unitBox('mini', name, clicks));
+
+        const monsters = document.createElement('div');
+        monsters.className = 'BattlePanel_combatUnitGrid__2hTAM';
+        if (boss) monsters.appendChild(unitBox('combat', boss, clicks));
+
+        panel.append(players, monsters);
+        document.body.appendChild(panel);
+        return { clicks };
+    }
+
     // Runs before anything calls setControls: the defaults are under test
-    test('the default controls drive the roster cycler the repo already has', async () => {
+    test('the default controls click outstanding fighters even when the roster store holds fresh sheets', async () => {
         await feature.initialize('Cats');
-        guildTrialAbilities.setRoster(['Alice']);
+        guildTrialAbilities.setRoster(['Me', 'Ada']);
+        // The roster feature would call both of these "fresh" — a new_battle
+        // kit and a stat-only popup sighting, seconds old — and its cycler
+        // would therefore never click either. The trial session accepts
+        // neither source, so the trial's own cycler must still click them,
+        // the watcher's own full card included.
+        capture.players.me = snapshot('Me', 1, [], { source: 'new_battle' });
+        capture.players.ada = snapshot('Ada', 2, [], { abilitiesAuthoritative: false, source: 'popup' });
+        const { clicks } = fightView(['Ada'], { self: 'Me' });
 
         guildTrialAbilitiesPanel.show();
         button('Open next Battle Info').click();
-        expect(skills.openNextUnitCalls).toBe(1);
-        button('Retry current player').click();
-        expect(skills.openNextUnitCalls).toBe(2);
+        button('Open next Battle Info').click();
+        expect(clicks).toEqual(['Me', 'Ada']);
         expect(text()).not.toContain(FAILED);
+    });
+
+    test('a captured player is skipped; an unanswered request is retried after its window, never skipped', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Ann', 'Bob']);
+        guildTrialAbilities.recordCapture(snapshot('Ann', 1, []));
+        const { clicks } = fightView(['Ann', 'Bob']);
+
+        expect(openNextTrialUnit(NOW)).toMatchObject({ opened: 'Bob', how: 'unit' });
+        // Asked a moment ago: in flight, so neither re-clicked nor skipped
+        expect(openNextTrialUnit(NOW + 1000)).toMatchObject({ opened: null, how: 'awaiting' });
+        // The window lapsed with no sheet: the same player is offered again
+        expect(openNextTrialUnit(NOW + REQUEST_TIMEOUT_MS)).toMatchObject({ opened: 'Bob', how: 'unit' });
+        expect(clicks).toEqual(['Bob', 'Bob']);
+    });
+
+    test('retry re-asks at once, and a landed sheet both captures and clears the in-flight window', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Bob', 'Cara']);
+        const { clicks } = fightView(['Bob', 'Cara']);
+
+        expect(openNextTrialUnit(NOW)).toMatchObject({ opened: 'Bob', how: 'unit' });
+        // The retry button's gesture: the request window is ignored
+        expect(retryTrialUnit('Bob', NOW + 1000)).toMatchObject({ opened: 'Bob', how: 'unit' });
+
+        guildTrialAbilitiesPanel.show();
+        land(snapshot('Bob', 1, []));
+        // Bob answered: captured, out of the cycle; the next click moves on
+        expect(text()).toContain('1/2 captured');
+        expect(openNextTrialUnit(NOW + 2000)).toMatchObject({ opened: 'Cara', how: 'unit' });
+        expect(clicks).toEqual(['Bob', 'Bob', 'Cara']);
+    });
+
+    test('with no fight on screen the cycler answers no-unit and clicks nothing', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Ann']);
+        expect(openNextTrialUnit(NOW)).toEqual({ opened: null, how: 'no-unit' });
+        expect(retryTrialUnit('Ann', NOW)).toEqual({ opened: null, how: 'no-unit' });
     });
 
     test('the controls invoke their callbacks, and retry names the outstanding player', async () => {

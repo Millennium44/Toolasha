@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The trial abilities cycler stops being starved by fresh roster sheets
+
+"Open next Battle Info" drove the roster feature's cycler, which skips any fighter whose combat sheet is fresh in the shared loadout store — so sheets from `new_battle` or stat-only popups (which the trial session rejects) left the panel at 0/8 with nothing clickable. The trial panel now has its own cycler gated only by the session's outstanding list: it clicks every uncaptured participant, the local player's own card included, and re-offers anyone whose fetch never answered once a 20s window lapses. "Retry current player" re-asks immediately.
+
 ### The payout strip sits above the whole trial view
 
 Placed before the monsters area, the payout became a middle column between the roster field and the fight field, pushing the fight into horizontal overflow. It now escapes the whole battle row and sits above both fields, full width, with the Party DPS sidecar back beside the boss cards.

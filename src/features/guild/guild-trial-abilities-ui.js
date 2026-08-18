@@ -13,7 +13,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
-import guildMemberSkills from './guild-member-skills.js';
+import { findBattleUnits, REQUEST_TIMEOUT_MS } from './guild-member-skills.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
@@ -89,17 +89,84 @@ export function sortParticipants(participants, complete) {
 }
 
 /**
+ * When each outstanding player's unit was last clicked, lowercased name → clock.
+ *
+ * The trial's own request ledger, deliberately separate from the roster
+ * feature's. It only debounces: a click younger than
+ * {@link REQUEST_TIMEOUT_MS} is a request still in flight, and once the window
+ * lapses the player is simply offered again — a fetch that never answered is
+ * retried, never skipped.
+ */
+const trialUnitRequests = {};
+
+/** Forget every in-flight stamp — a recapture owes nobody a wait */
+export function resetTrialUnitRequests() {
+    for (const key of Object.keys(trialUnitRequests)) delete trialUnitRequests[key];
+}
+
+/**
+ * Click the next outstanding trial participant's unit box.
+ *
+ * Gated by the *trial session's* outstanding list and nothing else. The roster
+ * cycler in `guild-member-skills.js` skips any fighter whose combat sheet is
+ * fresh in the shared loadout store — right for the roster panel, and exactly
+ * what starved this panel: a sheet from `new_battle` or a stat-only popup
+ * counts as fresh there while the trial session (which only accepts the
+ * trial's own Battle Info) still needs the player. Here a player the session
+ * has not captured is always clickable, the local player's own full card
+ * included, however fresh their sheet looks to the roster feature.
+ *
+ * @param {number} [now] - Clock
+ * @returns {{opened: string|null, how: 'unit'|'awaiting'|'no-unit'}} What happened
+ */
+export function openNextTrialUnit(now = Date.now()) {
+    const state = guildTrialAbilities.state();
+    const units = findBattleUnits(state.outstanding);
+    for (const unit of units) {
+        const key = unit.name.toLowerCase();
+        if (now - (Number(trialUnitRequests[key]) || 0) < REQUEST_TIMEOUT_MS) continue;
+        trialUnitRequests[key] = now;
+        unit.el.click();
+        return { opened: unit.name, how: 'unit' };
+    }
+    // Every outstanding fighter on screen was asked moments ago — the answer
+    // is a wait or (after the window) a retry, never a skip
+    return { opened: null, how: units.length ? 'awaiting' : 'no-unit' };
+}
+
+/**
+ * Click one outstanding player's unit again, ignoring the request window.
+ *
+ * The "Retry current player" gesture: a capture that timed out or came back
+ * without abilities is asked for again on demand.
+ *
+ * @param {string|null} [name] - Who to retry; defaults to the first outstanding unit
+ * @param {number} [now] - Clock
+ * @returns {{opened: string|null, how: 'unit'|'no-unit'}} What happened
+ */
+export function retryTrialUnit(name = null, now = Date.now()) {
+    const state = guildTrialAbilities.state();
+    const units = findBattleUnits(state.outstanding);
+    const wanted = String(name || '')
+        .trim()
+        .toLowerCase();
+    const unit = (wanted && units.find((entry) => entry.name.toLowerCase() === wanted)) || units[0] || null;
+    if (!unit) return { opened: null, how: 'no-unit' };
+    trialUnitRequests[unit.name.toLowerCase()] = now;
+    unit.el.click();
+    return { opened: unit.name, how: 'unit' };
+}
+
+/**
  * The controls, replaceable by the orchestrator.
  *
- * Defaults use the roster cycler `guild-member-skills.js` already exposes:
- * `openNextUnit()` clicks the next due fighter's unit box, which is what makes
- * the game send a Battle Info sheet. "Retry" is the same gesture aimed at the
- * player still outstanding — the cycler re-offers a timed-out player once its
- * request window lapses, so a retry never silently skips anyone.
+ * Defaults use the trial's own cycler above: one click opens one outstanding
+ * participant's Battle Info, which is what makes the game send the sheet.
+ * "Retry" is the same gesture aimed at a named player, window ignored.
  */
 const controls = {
-    openNext: () => guildMemberSkills.openNextUnit?.(),
-    retryCurrent: () => guildMemberSkills.openNextUnit?.(),
+    openNext: () => openNextTrialUnit(),
+    retryCurrent: (name) => retryTrialUnit(name),
 };
 
 /**
@@ -334,6 +401,7 @@ function drawControls(body, state) {
             'Throw this session’s captures away and collect the roster again from nothing.',
             () => {
                 guildTrialAbilities.recapture();
+                resetTrialUnitRequests();
                 guildTrialAbilitiesPanel.render();
             }
         )
@@ -386,6 +454,13 @@ function onCapturedEvent(event) {
         // Battle Info popups, the same source for every participant.
         if (snapshot.source === 'new_battle') return;
         guildTrialAbilities.recordCapture(snapshot);
+        // An answered request is over: the next click moves on to the next
+        // player at once instead of waiting out the request window. Only an
+        // authoritative sheet clears it — a stat-only popup sighting leaves
+        // the window standing so the same popup is not hammered.
+        if (snapshot.abilitiesAuthoritative === true && event.name) {
+            delete trialUnitRequests[String(event.name).toLowerCase()];
+        }
         guildTrialAbilitiesPanel.render();
     } catch (error) {
         console.error('[GuildTrialAbilitiesUI] Handling a capture failed:', error);
