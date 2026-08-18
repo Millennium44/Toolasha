@@ -94,6 +94,9 @@ vi.mock('../../core/storage.js', () => ({
             game.store[key] = value;
             return true;
         },
+        // Panel geometry, reached when a test opens the abilities panel
+        getJSON: async (_key, _store, fallback = null) => fallback,
+        setJSON: async () => true,
         delete: async (key) => {
             delete game.store[key];
             return true;
@@ -140,6 +143,12 @@ vi.mock('./guild-trial-recorder.js', () => ({
         get recording() {
             return game.recorder.recording;
         },
+        // The finished-trial readout reads the split off the recorder's
+        // persisted session — the open one first, the stored one otherwise
+        get session() {
+            return game.recorder.session ?? null;
+        },
+        loadSession: async () => game.recorder.session ?? null,
     },
     buildTrialExport: async () => ({ exportedAt: 'now', bundle: true }),
     downloadTrialExport: (bundle) => game.recorder.downloads.push(bundle),
@@ -187,6 +196,7 @@ const {
     breakdownFor,
     fightSidecarColumn,
     guildTrials,
+    lastTrialPlayerRows,
     looseTrialForecast,
     mergeWaveTiles,
     ownParticipation,
@@ -199,6 +209,9 @@ const {
     withScrollKept,
 } = await import('./guild-trials.js');
 const trialsFeature = (await import('./guild-trials.js')).default;
+// Real, not mocked: the Abilities button feeds it, and the guard under test is
+// about what the button must NOT feed it after the fight is torn down
+const guildTrialAbilities = (await import('./guild-trial-abilities.js')).default;
 
 const { NOTICE_BOARD_NAME } = await import('./guild-notice-board.fixture.js');
 const { forecastTrial } = await import('./guild-trial-forecast.js');
@@ -1366,6 +1379,27 @@ describe('the panel, end to end', () => {
         expect(text()).not.toContain('Treasury');
         // And the roster button is offered
         expect([...document.querySelectorAll('button')].some((b) => b.textContent.includes('Roster'))).toBe(true);
+    });
+
+    test('the Abilities button keeps the last roster once the fight is torn down', () => {
+        // After the trial ends the damage breakdown has nobody in it, and the
+        // button used to feed that empty list in — blanking the panel's
+        // completed view of the roster it had just finished capturing
+        fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
+        guildTrialAbilities.setRoster(['Alice', 'Bob']);
+        guildTrialAbilities.setTier(4);
+        game.breakdown = { roster: {}, tier: null };
+
+        const button = [...document.querySelectorAll('button')].find((el) => el.textContent.includes('Abilities'));
+        button.click();
+
+        expect(guildTrialAbilities.roster.map((member) => member.name)).toEqual(['Alice', 'Bob']);
+        expect(guildTrialAbilities.currentTier).toBe(4);
+
+        // The module is a real singleton; leave it as the other tests expect it
+        guildTrialAbilities.roster = [];
+        guildTrialAbilities.session = null;
+        guildTrialAbilities.currentTier = null;
     });
 
     test('with nothing to price the token payout against, the bare count is all that shows', () => {
@@ -2643,6 +2677,113 @@ describe('the panel, end to end', () => {
         expect(body).not.toContain('On pace for');
         expect(body).not.toContain('Tier clears in');
         expect(body).not.toContain('scheduled');
+    });
+
+    describe('the finished trial outlives its cards', () => {
+        /** Sample a live combat trial twice, so the record holds a rate and points */
+        const runTrial = () => {
+            const root = buildTab([{ name: 'Trial Chameleon', level: 140, points: 1200, bar: '618,000 / 618,000' }]);
+            fire(root);
+            root.querySelector('[class*="ProgressBar_text"]').textContent = '518,000 / 618,000';
+            vi.setSystemTime(now + 10_000);
+            fire(root);
+        };
+
+        /** The game tears the cards down: the tab is a trials tab with nothing on it */
+        const tearDown = (at = now + 60_000) => {
+            document.body.innerHTML = '<div class="GuildPanel_trialsContent__a">No trials in progress</div>';
+            vi.setSystemTime(at);
+            fire();
+        };
+
+        test('the readouts survive the cards being torn down', () => {
+            runTrial();
+            tearDown();
+
+            // The final readings, from the record — headed as finished business
+            expect(text()).toContain('Last trial');
+            expect(text()).toContain('Final party DPS');
+            expect(text()).toContain('Trial Chameleon');
+            expect(text()).toContain('Banked');
+            expect(text()).toContain('ago');
+            // The payout strip survives too, with the stated points intact
+            expect(text()).toContain('Trial payout');
+            expect(text()).toContain('Guild Points banked1,200');
+            // And nothing pretends to be live
+            expect(text()).not.toContain('On pace for');
+            expect(text()).not.toContain('measuring');
+        });
+
+        test('a completed-phase render writes no new samples', () => {
+            runTrial();
+            const record = guildTrials.record.tiles['combat::trial chameleon'];
+            const samples = record.samples.length;
+            const pointSamples = record.pointSamples.length;
+
+            tearDown();
+            tearDown(now + 120_000);
+
+            const after = guildTrials.record.tiles['combat::trial chameleon'];
+            expect(after.samples).toHaveLength(samples);
+            expect(after.pointSamples).toHaveLength(pointSamples);
+        });
+
+        test('the next trial’s cards replace the summary', () => {
+            runTrial();
+            tearDown();
+            expect(text()).toContain('Last trial');
+
+            vi.setSystemTime(now + 120_000);
+            fire(buildTab([{ name: 'Trial Milking', level: 110, bar: '1,000 / 4,000' }]));
+
+            expect(text()).not.toContain('Last trial');
+            expect(text()).toContain('Trial payout');
+        });
+
+        test('an empty record still draws nothing on an empty tab', () => {
+            tearDown();
+            expect(document.querySelectorAll('.mwi-trial-info')).toHaveLength(0);
+        });
+
+        test('the per-player split comes back from the recorder session', () => {
+            game.recorder.session = {
+                weekStart: trialWeekStart(now),
+                startedAt: now,
+                endedAt: now + 50_000,
+                snapshots: [
+                    {
+                        t: now + 50_000,
+                        seconds: 100,
+                        totalDamage: 120_000,
+                        players: [
+                            { name: 'Orven', damage: 90_000, deaths: 0 },
+                            { name: 'MillenniumTest', damage: 30_000, deaths: 1 },
+                        ],
+                    },
+                ],
+            };
+            runTrial();
+            tearDown();
+
+            expect(text()).toContain('Per player · final');
+            expect(text()).toContain('Orven');
+            expect(text()).toContain('75%');
+            expect(text()).toContain('MillenniumTest');
+            expect(text()).toContain('1✝');
+        });
+
+        test('another week’s session is not borrowed for the split', () => {
+            game.recorder.session = {
+                weekStart: trialWeekStart(now) - 7 * 24 * 3600_000,
+                snapshots: [{ t: now, seconds: 10, totalDamage: 100, players: [{ name: 'Ghost', damage: 100 }] }],
+            };
+            runTrial();
+            tearDown();
+
+            expect(text()).toContain('Last trial');
+            expect(text()).not.toContain('Per player · final');
+            expect(text()).not.toContain('Ghost');
+        });
     });
 });
 
@@ -4407,6 +4548,45 @@ describe('renderTrialPlayers', () => {
             {}
         );
         expect(renderTrialBlock(skilling, 0, breakdown)).not.toContain('Per player');
+    });
+});
+
+describe('lastTrialPlayerRows', () => {
+    test('rows come off the snapshot, damage-sorted, shares of its own total', () => {
+        const rows = lastTrialPlayerRows({
+            t: now,
+            seconds: 200,
+            totalDamage: 100_000,
+            players: [
+                { name: 'Mill', damage: 25_000, deaths: 2 },
+                { name: 'Orven', damage: 75_000, deaths: 0 },
+            ],
+        });
+
+        const html = rows.join('');
+        expect(html).toContain('Per player · final');
+        // Sorted by damage, not input order
+        expect(html.indexOf('Orven')).toBeLessThan(html.indexOf('Mill'));
+        // Shares of the snapshot's own attributed total
+        expect(html).toContain('75%');
+        expect(html).toContain('25%');
+        // Damage over the snapshot's seconds, and deaths marked
+        expect(html).toContain('375/s');
+        expect(html).toContain('2✝');
+    });
+
+    test('nothing persisted is no rows, never a header over nothing', () => {
+        expect(lastTrialPlayerRows(null)).toEqual([]);
+        expect(lastTrialPlayerRows({ players: [] })).toEqual([]);
+        // A roster of zeroes is an absence, not a leaderboard of nothing
+        expect(lastTrialPlayerRows({ seconds: 10, players: [{ name: 'Idle', damage: 0, deaths: 0 }] })).toEqual([]);
+    });
+
+    test('a snapshot with no clock still states the damage', () => {
+        const html = lastTrialPlayerRows({ players: [{ name: 'Orven', damage: 12_345, deaths: 0 }] }).join('');
+        expect(html).toContain('Orven');
+        expect(html).toContain('12.3K');
+        expect(html).toContain('100%');
     });
 });
 

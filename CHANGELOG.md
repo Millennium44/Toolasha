@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The finished trial's readouts stay viewable until the next one starts
+
+When a trial ends the game tears the fight down and zeroes the cards, and every readout anchored to them vanished with them. The trials tab now draws a "Last trial" summary from the persisted record — final Party DPS/fill rate, banked tiers, stated points, and the recorder session's final per-player split — plus the payout strip, marked as finished with when the figures were last read, until the next trial's cards arrive. The Trial Abilities panel likewise keeps the last trial's completed roster (now surviving reloads, with a "From the last trial" header note) instead of blanking; a new trial's first capture still starts a fresh session. Display persistence only — a completed-phase render writes nothing.
+
 ### Your own "Seen loadouts" row stops reading "seen Just now" forever
 
 The Guild Roster's loadout store folded the local player's own `new_battle` snapshot on every wave of their personal fights, so their row was perpetually fresh and the "open your Battle Info" prompt never reappeared. The local player's loadout now refreshes only when their Battle Info is actually opened (`battle_unit_fetched` or the popup scrape) — the same discipline the Trial Abilities panel already keeps. Teammates' `new_battle` sightings still fold as before.

@@ -1548,6 +1548,56 @@ function playerRow(name, value, color, title) {
 }
 
 /**
+ * The recorded session's final per-player readings, as rows.
+ *
+ * The live per-player split dies with the fight view — the game tears the
+ * battle down the moment the trial ends — but the recorder keeps thinned
+ * snapshots of the same breakdown every fifteen seconds, persisted across
+ * reloads, and the last snapshot is the final reading. Shares are recomputed
+ * from the snapshot's own damage totals so the rows can never disagree with
+ * themselves; a player the snapshot credits with nothing gets no row, because
+ * a zero here would be a claim rather than an absence.
+ *
+ * Pure, and exported for tests: it takes a snapshot and returns markup, and
+ * never touches the recorder, the clock or storage.
+ *
+ * @param {Object|null} snapshot - A `thinBreakdown` snapshot from the recorder
+ * @returns {string[]} Rows of HTML; empty when nothing persisted is worth a row
+ */
+export function lastTrialPlayerRows(snapshot) {
+    const players = Array.isArray(snapshot?.players)
+        ? snapshot.players.filter((player) => Number(player?.damage) > 0 || Number(player?.deaths) > 0)
+        : [];
+    if (!players.length) return [];
+
+    const total = players.reduce((sum, player) => sum + (Number(player.damage) || 0), 0);
+    const seconds = Number(snapshot.seconds);
+    const rows = [
+        `<div style="margin-top:4px; color:${ACCENT}; font-weight:600;" title="The recorded session’s final ` +
+            `per-player split — the last snapshot the trial recorder kept before the fight was torn down. ` +
+            `Shares are of the damage the snapshot itself attributes.">Per player · final</div>`,
+    ];
+
+    for (const player of [...players].sort((a, b) => (Number(b.damage) || 0) - (Number(a.damage) || 0))) {
+        const damage = Number(player.damage) || 0;
+        const share = total > 0 ? `${((damage / total) * 100).toFixed(0)}%` : '—';
+        const dps = seconds > 0 ? `${num(damage / seconds)}/s` : num(damage);
+        const deaths = player.deaths > 0 ? ` · ${player.deaths}✝` : '';
+        rows.push(
+            playerRow(
+                player.name,
+                `${dps} · ${share}${deaths}`,
+                player.deaths > 0 ? WARN : GOOD,
+                `${formatWithSeparator(Math.round(damage))} damage across the recorded session, ` +
+                    `${player.deaths || 0} death${player.deaths === 1 ? '' : 's'}. A final reading, not a live one.`
+            )
+        );
+    }
+
+    return rows;
+}
+
+/**
  * The one card a kind-wide footer can belong to, or nothing.
  *
  * The In Progress tab draws the player's own action stats once, in a footer,
@@ -2094,6 +2144,10 @@ class GuildTrials {
         this.watchedPool = null;
         /** How strong a claim the card that owns the guild-report context has */
         this.contextRank = 0;
+        /** The recorder's last session, read back once for the finished-trial readout */
+        this.lastSession = null;
+        /** Whether that one-shot read has been made (or is in flight) */
+        this.lastSessionChecked = false;
     }
 
     async initialize() {
@@ -2285,6 +2339,10 @@ class GuildTrials {
             guildTrialAlerts.reset?.();
             guildMemberSkills.forget?.();
             this.phase = null;
+            // The recorder session cached for the last-trial readout is the
+            // departing character's; the arriving one is asked for afresh
+            this.lastSession = null;
+            this.lastSessionChecked = false;
 
             // Re-read for whoever arrives. Not awaited on this path — the
             // character's own id lands on the same message that triggered this
@@ -2614,14 +2672,6 @@ class GuildTrials {
             // is. Blocks are matched by key and updated in place instead, and
             // only a block whose trial has gone is removed. See `_placeBlock`.
             const drawn = new Set();
-            if (!tiles.length) {
-                // No cards, but the archive still has last cycles' figures to
-                // show — a trial tab between weeks is exactly when they are asked for
-                if (this._renderHistory(root, now)) drawn.add('history');
-                this._reapBlocks(root, drawn);
-                return;
-            }
-
             const timeLeftMs = this._timeLeftMs(root);
             const bonuses = this._payoutBonuses();
 
@@ -2648,6 +2698,26 @@ class GuildTrials {
                 }
                 return analyses.get(cacheKey);
             };
+
+            if (!tiles.length) {
+                // No cards — but the readings did not stop being true when the
+                // game tore the DOM that carried them down. The record still
+                // holds the finished trial's final figures, so they are drawn
+                // from it, plainly marked as finished, until the next trial has
+                // cards of its own (the normal path below draws then) or the
+                // record empties — a week roll-over, or `_healStaleRecord`
+                // archiving when the next cycle reads Scheduled. Render-only:
+                // the sampling loop above saw no tiles, so nothing was written.
+                if (this._renderLastTrial(root, counts, analysisFor, now)) drawn.add('last-trial');
+                if (this._renderPayout(root, this._payoutTrials(status, counts, analysisFor), null, bonuses)) {
+                    drawn.add('payout');
+                }
+                // The archive still has last cycles' figures to show — a trial
+                // tab between weeks is exactly when they are asked for
+                if (this._renderHistory(root, now, bonuses)) drawn.add('history');
+                this._reapBlocks(root, drawn);
+                return;
+            }
 
             for (const tile of tiles) {
                 const record = this.record.tiles[tileKey(tile)];
@@ -3385,7 +3455,10 @@ class GuildTrials {
         });
 
         // Kept while it is on screen: by the time the cycle reads "Completed"
-        // the cards have been zeroed and there would be nothing left to report
+        // the cards have been zeroed and there would be nothing left to report.
+        // (The on-screen display no longer has that gap — `_renderLastTrial`
+        // redraws the finished figures from the record — but this alert hook
+        // still wants them noted while they are live.)
         guildTrialAlerts.notePayout?.({
             guildPoints: banked.guildPoints,
             eligibleTokens: projected.eligibleTokens,
@@ -3419,6 +3492,124 @@ class GuildTrials {
                 treasuryBonus: resolved.treasury.bonus,
             })
         );
+    }
+
+    /**
+     * The finished trial's readouts, drawn from the record after the game has
+     * torn its cards down.
+     *
+     * When a trial ends the fight view is dismantled and the cards zeroed, and
+     * every block anchored to them goes blank or goes away — while the final
+     * Party DPS, the banked tiers, the stated points and the per-player split
+     * are all still in persisted state (the trial record, and the recorder's
+     * session snapshots). This renders those, headed as the finished trial's
+     * results with when they were last read, and stands down by itself the
+     * moment the next trial puts cards on screen or the record empties.
+     *
+     * Render-only, deliberately: a Completed-phase render must never write new
+     * samples, and nothing here touches the record or the recorder.
+     *
+     * @param {Element} root - The trials content element
+     * @param {Object} counts - Sign-ups per trial hrid
+     * @param {Function} analysisFor - The render pass's shared, memoised analyser
+     * @param {number} [now] - Clock
+     * @returns {boolean} Whether a last-trial block is on screen
+     */
+    _renderLastTrial(root, counts, analysisFor, now = Date.now()) {
+        const entries = Object.entries(this.record?.tiles || {}).filter(([, record]) => {
+            if (!record?.name) return false;
+            return Boolean(
+                record.samples?.length ||
+                record.pointSamples?.length ||
+                Number.isFinite(record.tier) ||
+                Number.isFinite(record.points) ||
+                Object.keys(record.pointsByTier || {}).length
+            );
+        });
+        if (!entries.length) return false;
+
+        // When the figures were last read — the closest thing to an end time
+        // the record carries. The trial ended at or after the last reading.
+        let lastReadAt = null;
+        for (const [, record] of entries) {
+            for (const sample of [...(record.samples || []), ...(record.pointSamples || [])]) {
+                if (Number.isFinite(sample?.t) && (lastReadAt === null || sample.t > lastReadAt)) {
+                    lastReadAt = sample.t;
+                }
+            }
+        }
+        const allCompleted = entries.every(([, record]) => record.completed);
+        const ago = Number.isFinite(lastReadAt) && now > lastReadAt ? formatEta(now - lastReadAt) : null;
+        const when = ago ? ` · ${allCompleted ? 'ended' : 'last read'} ${ago} ago` : '';
+
+        // The per-player split, from the recorder's persisted session. Read
+        // back once; until it lands the rows are simply absent rather than
+        // promised. Not attributed to a named trial — the snapshot does not
+        // say whose fight it was — so it is one section after the trials.
+        this._primeLastSession();
+
+        const rows = [
+            `<div style="color:${ACCENT}; font-weight:700; margin-bottom:2px;" ` +
+                'title="The trial is over and the game has taken its cards down. These are the final ' +
+                'readings this script recorded, kept until the next trial’s cards arrive. Nothing here ' +
+                `is live.">Last trial — ${allCompleted ? 'finished' : 'final readings'}${when}</div>`,
+        ];
+        let anyCombat = false;
+        for (const [key, record] of entries) {
+            const hrid = matchTrialHrid(record.name, Object.keys(counts));
+            const participants = record.signups?.signed ?? (hrid ? counts[hrid] : 0);
+            const analysis = analysisFor(key, record, participants, 'completed');
+            if (record.kind === 'combat') anyCombat = true;
+            rows.push(trialBlockHeading(record.name));
+            rows.push(renderTrialBlock(analysis, participants, breakdownFor(record.name), { phase: 'completed' }));
+        }
+        if (anyCombat) rows.push(...lastTrialPlayerRows(this._lastSessionSnapshot()));
+
+        this._placeBlock(root, 'last-trial', {
+            html: rows.join(''),
+            style:
+                'clear:both; min-width:min(260px, 100%); max-width:520px;' +
+                'margin:8px 0 4px; padding:6px 10px; background:rgba(0,0,0,0.25);' +
+                'border-radius:6px; font-size:11px; line-height:1.6;',
+            place: (block) => root.insertAdjacentElement('beforeend', block),
+        });
+        return true;
+    }
+
+    /**
+     * Make sure the recorder's last session has been asked for, once.
+     *
+     * The recorder's own open session is the freshest answer and free; the
+     * persisted one needs an IndexedDB read, which must not happen per render
+     * pass — so it is a one-shot, and a session that turns out not to exist is
+     * remembered as checked rather than asked for again every tick.
+     */
+    _primeLastSession() {
+        const open = guildTrialRecorder.session;
+        if (open?.snapshots?.length) {
+            this.lastSession = open;
+            return;
+        }
+        if (this.lastSessionChecked) return;
+        this.lastSessionChecked = true;
+        Promise.resolve(guildTrialRecorder.loadSession?.())
+            .then((session) => {
+                if (session) this.lastSession = session;
+            })
+            .catch(() => {});
+    }
+
+    /**
+     * The last snapshot of the recorder session, when it is this week's.
+     * @returns {Object|null} A `thinBreakdown` snapshot, or null
+     */
+    _lastSessionSnapshot() {
+        const session = this.lastSession;
+        if (!session) return null;
+        // Another week's session is another trial's split, however well it kept
+        if (Number.isFinite(session.weekStart) && session.weekStart !== this.record?.weekStart) return null;
+        const snapshots = Array.isArray(session.snapshots) ? session.snapshots : [];
+        return snapshots.length ? snapshots[snapshots.length - 1] : null;
     }
 
     /**
@@ -3547,10 +3738,14 @@ class GuildTrials {
         });
         on('abilities', () => {
             // The roster and tier feed happens at open — the panel keeps itself
-            // current from capture events after that.
+            // current from capture events after that. Only a roster that exists
+            // is fed: after the trial ends the fight is torn down and the
+            // breakdown has nobody, and feeding the empty list would blank the
+            // panel's completed view of the last trial's captures.
             const breakdown = guildTrialDamage.breakdown?.() || {};
-            guildTrialAbilities.setRoster?.(Object.values(breakdown.roster || {}));
-            guildTrialAbilities.setTier?.(breakdown.tier ?? null);
+            const roster = Object.values(breakdown.roster || {});
+            if (roster.length) guildTrialAbilities.setRoster?.(roster);
+            if (breakdown.tier !== null && breakdown.tier !== undefined) guildTrialAbilities.setTier?.(breakdown.tier);
             openTrialAbilitiesPanel();
         });
         on('scoreboard', () => guildTrialScoreboard.toggle());
@@ -3935,6 +4130,8 @@ class GuildTrials {
         // In-memory only: the persisted copy stays, and the next initialize
         // reads it back
         this.workBases = {};
+        this.lastSession = null;
+        this.lastSessionChecked = false;
         this.initialized = false;
     }
 }

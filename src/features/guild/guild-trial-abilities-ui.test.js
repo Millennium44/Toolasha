@@ -57,7 +57,7 @@ vi.mock('./guild-loadout-capture.js', () => ({
     },
 }));
 
-const { guildTrialAbilities } = await import('./guild-trial-abilities.js');
+const { guildTrialAbilities, SESSION_MAX_AGE_MS } = await import('./guild-trial-abilities.js');
 const feature = (await import('./guild-trial-abilities-ui.js')).default;
 const {
     guildTrialAbilitiesPanel,
@@ -69,6 +69,7 @@ const {
     tierRangeLabel,
     headerLine,
     completionLine,
+    staleSessionNote,
 } = await import('./guild-trial-abilities-ui.js');
 const { REQUEST_TIMEOUT_MS } = await import('./guild-member-skills.js');
 const memberSkills = (await import('./guild-member-skills.js')).default;
@@ -172,6 +173,34 @@ describe('trial abilities panel', () => {
         expect(completionLine({ complete: false })).toBeNull();
         expect(tierRangeLabel([5, 4, 5])).toBe('T4-T5');
         expect(headerLine({ capturedCount: 42, rosterCount: 50 })).toBe('Trial abilities — 42/50 captured');
+    });
+
+    test('a session outliving the trial hour is named as the last trial’s', async () => {
+        // The trial ended and the panel is opened afterwards: the completed
+        // roster stays viewable, headed as the last trial's rather than posing
+        // as a capture of one that is not running
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Alice']);
+        guildTrialAbilities.setTier(4);
+        guildTrialAbilities.recordCapture(snapshot('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 70 }]));
+
+        vi.setSystemTime(NOW + SESSION_MAX_AGE_MS + 30 * 60_000);
+        openTrialAbilitiesPanel();
+
+        expect(text()).toContain('From the last trial');
+        expect(text()).toContain('1/1 captured');
+        expect(text()).toContain('Fierce Aura');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('staleSessionNote speaks only past the trial hour', () => {
+        expect(staleSessionNote({ startedAt: NOW }, NOW + SESSION_MAX_AGE_MS - 1)).toBeNull();
+        expect(staleSessionNote({ startedAt: null }, NOW)).toBeNull();
+        expect(staleSessionNote(null, NOW)).toBeNull();
+
+        const note = staleSessionNote({ startedAt: NOW }, NOW + 2 * 60 * 60_000);
+        expect(note).toContain('From the last trial');
+        expect(note).toContain('2h');
     });
 
     test('coverage says Unknown before completion and MISSING only after', async () => {

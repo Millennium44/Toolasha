@@ -5,8 +5,16 @@
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
+/** What storage answers with, and the last thing written to it */
+const disk = vi.hoisted(() => ({ value: null, saved: null }));
+
 vi.mock('../../core/storage.js', () => ({
-    default: { get: async () => null, set: async () => {} },
+    default: {
+        get: async () => disk.value,
+        set: async (key, value) => {
+            disk.saved = value;
+        },
+    },
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -226,6 +234,91 @@ describe('what counts as captured', () => {
         const view = s.state(GAME);
         expect(view.capturedCount).toBe(1);
         expect(view.auras['/abilities/fierce_aura'].provider).toBe('Alice');
+    });
+});
+
+describe('the finished trial survives a reload', () => {
+    beforeEach(() => {
+        disk.value = null;
+        disk.saved = null;
+    });
+
+    /** A completed 2/2 session as an earlier page-load persisted it */
+    const storedSession = (startedAt) => ({
+        startedAt,
+        guildName: 'Cats',
+        captureTier: 4,
+        capturedTiers: [4],
+        completedAt: startedAt + 60_000,
+        players: {
+            'id:1': {
+                characterId: 1,
+                name: 'Alice',
+                capturedAt: startedAt + 30_000,
+                capturedTier: 4,
+                source: 'battle_unit_fetched',
+                abilitiesAuthoritative: true,
+                abilities: [{ hrid: '/abilities/fierce_aura', level: 70 }],
+            },
+            'id:2': {
+                characterId: 2,
+                name: 'Bob',
+                capturedAt: startedAt + 60_000,
+                capturedTier: 4,
+                source: 'battle_unit_fetched',
+                abilitiesAuthoritative: true,
+                abilities: [],
+            },
+        },
+        roster: [
+            { characterId: 1, name: 'Alice' },
+            { characterId: 2, name: 'Bob' },
+        ],
+    });
+
+    test('a session older than the trial hour is kept, roster and all', async () => {
+        // Two hours on: the trial is over, and the completed 8/8 view is
+        // exactly what the panel is asked for — until the next trial's first
+        // capture starts a fresh session
+        disk.value = storedSession(NOW - 2 * 60 * 60_000);
+
+        const s = new GuildTrialAbilities();
+        await s.initialize('Cats');
+
+        expect(s.session?.startedAt).toBe(NOW - 2 * 60 * 60_000);
+        expect(s.roster.map((member) => member.name)).toEqual(['Alice', 'Bob']);
+        const view = s.state(GAME);
+        expect(view.capturedCount).toBe(2);
+        expect(view.complete).toBe(true);
+        expect(view.auras['/abilities/fierce_aura'].provider).toBe('Alice');
+    });
+
+    test('a wrong-guild session is still not adopted', async () => {
+        disk.value = storedSession(NOW - 10 * 60_000);
+
+        const s = new GuildTrialAbilities();
+        await s.initialize('Dogs');
+
+        expect(s.session).toBeNull();
+        expect(s.roster).toEqual([]);
+    });
+
+    test('the next trial’s first capture still starts a fresh session', async () => {
+        disk.value = storedSession(NOW - 2 * 60 * 60_000);
+
+        const s = new GuildTrialAbilities();
+        await s.initialize('Cats');
+        s.recordCapture(snap('Cara', 3, []), { at: NOW });
+
+        expect(s.session.startedAt).toBe(NOW);
+        expect(Object.keys(s.session.players)).toEqual(['id:3']);
+    });
+
+    test('the roster rides along with every persisted session', () => {
+        const s = session(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, []), { at: NOW });
+
+        expect(disk.saved?.roster?.map((member) => member.name)).toEqual(['Alice', 'Bob']);
     });
 });
 

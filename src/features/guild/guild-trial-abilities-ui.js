@@ -14,7 +14,8 @@
 import dataManager from '../../core/data-manager.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildMemberSkills, { findBattleUnits, REQUEST_TIMEOUT_MS } from './guild-member-skills.js';
-import guildTrialAbilities from './guild-trial-abilities.js';
+import guildTrialAbilities, { SESSION_MAX_AGE_MS } from './guild-trial-abilities.js';
+import { formatEta } from '../../utils/progress-eta.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
@@ -71,6 +72,29 @@ export function completionLine(state) {
     const mixed = new Set((state.capturedTiers || []).map(String)).size > 1;
     const where = range ? (mixed ? ` across ${range}` : ` on ${range}`) : '';
     return `${state.capturedCount}/${state.rosterCount} captured${where}`;
+}
+
+/**
+ * The header's last-trial caption, once the session is older than a trial.
+ *
+ * A trial runs an hour, so a session past {@link SESSION_MAX_AGE_MS} belongs
+ * to a trial that has ended — kept on purpose (the completed roster and its
+ * aura coverage are exactly what is asked for after the hour) and named as
+ * such, because a reader must never mistake it for the next trial's capture.
+ * The next trial's first capture starts a fresh session by itself.
+ *
+ * @param {Object} state - From `guildTrialAbilities.state()`
+ * @param {number} [now] - Clock
+ * @returns {string|null} The caption, or null while the session is current
+ */
+export function staleSessionNote(state, now = Date.now()) {
+    if (!Number.isFinite(state?.startedAt)) return null;
+    const age = now - state.startedAt;
+    if (age <= SESSION_MAX_AGE_MS) return null;
+    return (
+        `From the last trial — captured ${formatEta(age)} ago, and the trial has ended. ` +
+        'A new trial’s first capture starts a fresh session; Recapture starts one now.'
+    );
 }
 
 /**
@@ -214,6 +238,11 @@ function abilityName(hrid, abilityDetailMap) {
  */
 function drawHeader(body, state) {
     const card = panelCard(body, headerLine(state), ACCENT);
+
+    // Said first, because it reframes every claim below it: these are the
+    // last trial's captures, kept viewable until the next trial replaces them
+    const lastTrial = staleSessionNote(state);
+    if (lastTrial) card.appendChild(panelNote(lastTrial));
 
     if (!state.rosterCount) {
         card.appendChild(panelNote('No trial roster yet — the participants are fed in when a trial is on.'));

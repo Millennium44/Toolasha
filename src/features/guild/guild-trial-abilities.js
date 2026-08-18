@@ -232,8 +232,15 @@ class GuildTrialAbilities {
     }
 
     /**
-     * Load the persisted session, keeping it only when it is this guild's and
-     * still inside the trial hour.
+     * Load the persisted session, keeping it as long as it is this guild's.
+     *
+     * A session older than the trial hour is kept too, deliberately: the panel
+     * is asked for *after* a trial at least as often as during one, and the
+     * completed roster with its kits and aura coverage is exactly what the
+     * asker wants to see — headed as the last trial's, which the panel does
+     * off the session's age. It cannot pose as the next trial's: the first
+     * capture past {@link SESSION_MAX_AGE_MS} starts a fresh session
+     * ({@link recordCapture}), as do {@link noteTrialStart} and the button.
      *
      * @param {string|null} [guildName] - The key the session is stored under
      * @returns {Promise<void>}
@@ -243,10 +250,16 @@ class GuildTrialAbilities {
         this.initialized = true;
         try {
             const stored = await storage.get(sessionStorageKey(this.guildName), SESSION_STORE, null);
-            const fresh = Number.isFinite(stored?.startedAt) && Date.now() - stored.startedAt <= SESSION_MAX_AGE_MS;
+            const usable = Number.isFinite(stored?.startedAt);
             const sameGuild = !stored?.guildName || !this.guildName || stored.guildName === this.guildName;
-            if (fresh && sameGuild) {
+            if (usable && sameGuild) {
                 this.session = { ...stored, capturedTiers: [...(stored.capturedTiers || [])] };
+                // The roster is fed in live and dies with the page; the copy
+                // persisted beside the session is what lets a reload keep
+                // showing the completed 8/8 view instead of "no roster yet"
+                if (!this.roster.length && Array.isArray(stored.roster)) {
+                    this.roster = normalizeRoster(stored.roster);
+                }
                 // Entries that slipped in from a personal fight's new_battle
                 // (the local player's own zone kit) are not trial captures —
                 // demote them to "needs Battle Info" so the row re-captures
@@ -538,7 +551,11 @@ class GuildTrialAbilities {
     _persist() {
         if (!this.session) return;
         storage
-            .set(sessionStorageKey(this.guildName), this.session, SESSION_STORE)
+            // The current roster rides along so a reload can restore the
+            // joined view — it is display state, not part of the session's
+            // reset rules, which is why it is stamped here rather than kept
+            // on the session object itself
+            .set(sessionStorageKey(this.guildName), { ...this.session, roster: [...this.roster] }, SESSION_STORE)
             .catch((error) => console.error('[GuildTrialAbilities] Saving the session failed:', error));
     }
 }
