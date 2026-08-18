@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### CI: the format workflow stops failing runs that had nothing to do
+
+Format Release Please committed through the repo's pre-commit hook, which re-ran lint-staged over what the workflow itself had just formatted; when that normalization left nothing staged, lint-staged hard-failed and reddened the run. The workflow now commits with the hook skipped (the formatting already happened two steps up) and treats an emptied staged set as the no-op it is.
+
 ### Each labyrinth run's leftovers are on the record
 
 A new run ledger records what every run came back with — the torches, shrouds and beacons left unspent and the deepest floor reached (last 30 runs, per character). The Consumables panel's Labyrinth block lists the recent leftovers, and its hover prices every rush-for-exit floor in torches — grid math straight from the game guide (4×4 on floor 1, one wider per floor to 8×8; a rush crosses the shortest corner-to-corner path, everything else is a full clear) against your torch capacity — so "could rush come down a floor?" is a read, not a calculation.

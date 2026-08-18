@@ -47,5 +47,18 @@ jobs:
                   git config user.name "github-actions[bot]"
                   git config user.email "github-actions[bot]@users.noreply.github.com"
                   git add -A
-                  git commit -m "chore: sync version and format release notes"
+
+                  # The pre-commit hook re-runs lint-staged over what this
+                  # workflow just formatted — pure redundancy here, and its
+                  # normalization can leave the staged set empty, which
+                  # lint-staged treats as a hard failure ("Prevented an empty
+                  # git commit") and reddens a run that had nothing to do.
+                  # The formatting already happened two steps up; commit
+                  # without the hook, and treat a staged set the add emptied
+                  # as the no-op it is.
+                  if git diff --cached --quiet; then
+                    echo "Formatting normalized to no staged change — nothing to commit."
+                    exit 0
+                  fi
+                  git commit --no-verify -m "chore: sync version and format release notes"
                   git push
