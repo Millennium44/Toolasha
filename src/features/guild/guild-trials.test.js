@@ -185,6 +185,7 @@ const {
     analyseTrial,
     blockNearAnchor,
     breakdownFor,
+    fightSidecarColumn,
     guildTrials,
     looseTrialForecast,
     mergeWaveTiles,
@@ -798,9 +799,50 @@ describe('placeTrialBlock', () => {
         expect(grid.lastElementChild).toBe(block);
         expect(block.previousElementSibling).toBe(cards[3]);
         expect(block.style.gridRow).toBe('1');
+        // Explicitly the column after the four auto-placed bosses — never left
+        // to auto-placement, which fills the first free cell instead
+        expect(block.style.gridColumn).toBe('5');
         // Not gathered into a mirrored row, and the payout block is left where it was
         expect(grid.querySelector('.mwi-trial-box-row')).toBeNull();
         expect(grid.firstElementChild).toBe(document.getElementById('payout'));
+    });
+
+    test('a wave of explicitly-centred bosses puts the sidecar to their right, never their left', () => {
+        // The live 2× Trial Badger wave: the game centres the two cards at
+        // columns 2 and 3 of its four-column grid, leaving column 1 free —
+        // auto-placement dropped the sidecar there, LEFT of the cards.
+        const { root, cards } = fightLayout(2);
+        cards[0].style.gridColumn = '2';
+        cards[1].style.gridColumn = '3';
+        const block = newBlock();
+
+        expect(placeTrialBlock(root, cards[0], block, 'Trial Badger')).toBe('fight-sidecar');
+        expect(block.style.gridColumn).toBe('4');
+        expect(block.style.gridRow).toBe('1');
+    });
+
+    test('fightSidecarColumn reads the wave shape, ignoring our own injected blocks', () => {
+        // A single auto-placed boss: the sidecar sits at column 2
+        expect(fightSidecarColumn(fightLayout(1).grid)).toBe(2);
+        // Four auto-placed monsters (Trial Swarm): column 5
+        expect(fightSidecarColumn(fightLayout(4).grid)).toBe(5);
+
+        // Two bosses spanning explicit columns: the sidecar follows the last line
+        const spanned = fightLayout(2);
+        spanned.cards[0].style.gridColumnStart = '2';
+        spanned.cards[0].style.gridColumnEnd = '3';
+        spanned.cards[1].style.gridColumnStart = '3';
+        spanned.cards[1].style.gridColumnEnd = '5';
+        expect(fightSidecarColumn(spanned.grid)).toBe(5);
+
+        // Our own blocks in the grid (the payout in old DOMs, the sidecar
+        // itself on a re-place) never push the column further right
+        const crowded = fightLayout(2);
+        const sidecar = newBlock();
+        crowded.grid.appendChild(sidecar);
+        expect(fightSidecarColumn(crowded.grid)).toBe(3);
+
+        expect(fightSidecarColumn(null)).toBe(1);
     });
 
     test('a composite wave anchored on the monsters area finds the grid beneath it', () => {

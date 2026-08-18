@@ -1836,6 +1836,48 @@ function fightMonsterGrid(card) {
     return card.closest?.(GRID) || monstersArea.querySelector?.(GRID) || null;
 }
 
+/**
+ * The grid column just past the wave's boss cards — the sidecar's column.
+ *
+ * `grid-row:1` alone left the sidecar's column to auto-placement, and
+ * auto-placement fills the *first free cell*: a wave whose boss cards carry
+ * explicit columns (two Trial Badgers centred at columns 2–3) leaves column 1
+ * free, and the sidecar was drawn to the LEFT of the cards. The column is
+ * therefore computed per wave: boss cards with explicit grid columns state
+ * where they end, auto-placed ones fill 1..n in order, and the sidecar takes
+ * the column after the last of either — a single boss puts it at 2, two
+ * badgers at 3 (or past their explicit columns), a four-monster swarm at 5.
+ *
+ * Only the game's own cards count. Our injected blocks (the sidecar itself on
+ * a re-place, the payout in old DOMs) all carry an `mwi-` class and are not
+ * bosses, so they must not push the column further right.
+ *
+ * @param {Element} grid - The `BattlePanel_combatUnitGrid` element
+ * @returns {number} 1-based grid column line for the sidecar
+ */
+export function fightSidecarColumn(grid) {
+    let autoPlaced = 0;
+    let lastExplicit = 0;
+    for (const child of grid?.children || []) {
+        if (String(child.className || '').includes('mwi-')) continue;
+        const computed = typeof getComputedStyle === 'function' ? getComputedStyle(child) : null;
+        const read = (prop) => child.style?.[prop] || computed?.[prop] || '';
+        let startText = read('gridColumnStart');
+        let endText = read('gridColumnEnd');
+        if (!startText && !endText) {
+            // The `grid-column` shorthand, for engines that do not expand it
+            [startText = '', endText = ''] = String(read('gridColumn')).split('/');
+        }
+        const start = parseInt(startText, 10);
+        const end = parseInt(endText, 10);
+        // `grid-column-end` is the line *after* the card; a bare start occupies one column
+        if (Number.isFinite(end)) lastExplicit = Math.max(lastExplicit, end - 1);
+        else if (Number.isFinite(start)) lastExplicit = Math.max(lastExplicit, start);
+        else autoPlaced += 1;
+    }
+    return Math.max(autoPlaced, lastExplicit) + 1;
+}
+
 export function placeTrialBlock(root, card, block, name = '') {
     // Belt and braces over the anchor filter in `readTrialTiles`. The reported
     // failure drew this whole block inside the boss's stat popup, which is
@@ -1849,10 +1891,14 @@ export function placeTrialBlock(root, card, block, name = '') {
     // together. Appended, never inserted after the anchor card — a wave of
     // several bosses folds into one tile anchored on the *first* of them, and
     // the block belongs after the last. `grid-row:1` keeps it on the bosses'
-    // row instead of wrapping to a line of its own.
+    // row instead of wrapping to a line of its own, and the explicit
+    // `grid-column` puts it to the RIGHT of every boss card whatever the wave
+    // shape — auto-placement would drop it into the first *free* cell, which
+    // for a wave of explicitly-centred cards is the column to their left.
     const fightGrid = fightMonsterGrid(card);
     if (fightGrid && root?.contains?.(fightGrid)) {
         block.style.gridRow = '1';
+        block.style.gridColumn = String(fightSidecarColumn(fightGrid));
         fightGrid.appendChild(block);
         return 'fight-sidecar';
     }
@@ -2623,7 +2669,7 @@ class GuildTrials {
                 // sizing has to be part of the base style: `_placeBlock`
                 // reapplies the stored `cssText` on every later render, which
                 // wipes anything set on the element at placement time.
-                const inProgressCombat = !!fightMonsterGrid(tile.element);
+                const fightGrid = fightMonsterGrid(tile.element);
                 const inSkillingRow = !!tile.element?.closest?.('[class*="SkillingInstancePanel_challengeArea"]');
                 this._placeBlock(root, key, {
                     // The card the block belongs beside, for the re-anchoring
@@ -2642,13 +2688,19 @@ class GuildTrials {
                     // Wide enough that a label and a figure fit on one line, and
                     // capped so it cannot stretch a whole panel — the reported
                     // screenshot was this block one card wide and a mile tall
+                    // The sidecar's grid column is part of the style string on
+                    // purpose: `_placeBlock` reapplies this cssText every pass,
+                    // which would wipe a column set only at placement time —
+                    // and recomputing it here is what keeps the column right
+                    // when a wave boundary changes the boss card count without
+                    // displacing the block.
                     style:
                         'position:static; display:block; box-sizing:border-box;' +
-                        (inProgressCombat
-                            ? 'grid-row:1; clear:none; width:220px; min-width:180px;' +
-                              'max-width:220px; align-self:start;'
+                        (fightGrid
+                            ? `grid-row:1; grid-column:${fightSidecarColumn(fightGrid)}; ` +
+                              'clear:none; width:220px; min-width:180px; max-width:220px; align-self:start;'
                             : inSkillingRow
-                              ? 'flex:0 1 300px; min-width:170px; max-width:300px;' + 'align-self:center; clear:none;'
+                              ? 'flex:0 1 300px; min-width:170px; max-width:300px; align-self:center; clear:none;'
                               : 'clear:both; min-width:min(260px, 100%); max-width:520px;') +
                         'margin:6px 0 8px; padding:6px 10px; background:rgba(0,0,0,0.25);' +
                         'border-radius:6px; font-size:11px; line-height:1.6;',
