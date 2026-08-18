@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The uptime harness checks your own abilities too
+
+The labyrinth room panel's uptime harness gains an outgoing section: the same per-ability real-vs-sim decomposition, run on YOUR swings (paid off by the monster's damage counter) from the same tick capture and the same sim run as the incoming table. Heals and self-buffs count as casts but never absorb a hit's damage; your bleeds land on the shared damage-over-time row. The `Toolasha.Debug.uptimeHarness` console helper prints both directions.
+
 ### The finished trial's readouts stay viewable until the next one starts
 
 When a trial ends the game tears the fight down and zeroes the cards, and every readout anchored to them vanished with them. The trials tab now draws a "Last trial" summary from the persisted record — final Party DPS/fill rate, banked tiers, stated points, and the recorder session's final per-player split — plus the payout strip, marked as finished with when the figures were last read, until the next trial's cards arrive. The Trial Abilities panel likewise keeps the last trial's completed roster (now surviving reloads, with a "From the last trial" header note) instead of blanking; a new trial's first capture still starts a fresh session. Display persistence only — a completed-phase render writes nothing.

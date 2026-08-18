@@ -1,6 +1,7 @@
 import { describe, test, expect } from 'vitest';
 import {
     extractMonsterAttacks,
+    extractPlayerAttacks,
     summarizeSimAttacks,
     compareIncoming,
     describeFights,
@@ -324,6 +325,211 @@ describe('compareIncoming — damage-over-time rows', () => {
         });
         const { rows } = compareIncoming(thin, sim);
         expect(rows.find((r) => r.ability === 'damageOverTime').verdict).toBe('inconclusive');
+    });
+});
+
+/**
+ * A tick for the OUTGOING direction: the player (index 0) swinging at the
+ * monster (index 0). `p` carries the player's attack counter and label fields,
+ * `m` the monster's health and damage-taken counter.
+ */
+function ptick(at, p, m) {
+    return {
+        at,
+        payload: {
+            pMap: { 0: { ...p } },
+            mMap: { 0: { ...m } },
+        },
+    };
+}
+
+describe('extractPlayerAttacks', () => {
+    test('labels the player’s swings by ability and pays them off from the monster’s dmgCounter', () => {
+        // The two-direction fixture: the same ladder as incoming, roles swapped.
+        // A cast ability swings at one tick and resolves on the next (the
+        // monster's dmgCounter rises, its HP falls).
+        const ticks = [
+            ptick(0, { atkCounter: 0, abilityHrid: '/abilities/fireball' }, { cHP: 1000, dmgCounter: 0 }),
+            ptick(100, { atkCounter: 1, isAutoAtk: true }, { cHP: 1000, dmgCounter: 0 }), // fireball swing, not landed yet
+            ptick(200, { atkCounter: 1, isAutoAtk: true }, { cHP: 850, dmgCounter: 1 }), // fireball resolves for 150
+            ptick(300, { atkCounter: 2, isAutoAtk: true }, { cHP: 800, dmgCounter: 2 }), // auto lands for 50
+        ];
+        const { byAbility } = extractPlayerAttacks(ticks);
+        expect(byAbility['/abilities/fireball']).toMatchObject({ casts: 1, hits: 1, damage: 150 });
+        expect(byAbility.autoAttack).toMatchObject({ casts: 1, hits: 1, damage: 50 });
+        expect(byAbility.damageOverTime).toBeUndefined();
+    });
+
+    test('the same ticks decompose both directions independently', () => {
+        // One fixture carrying both sides' counters: the incoming read must not
+        // disturb the outgoing one, and vice versa.
+        const both = (at, p, m) => ({ at, payload: { pMap: { 0: { ...p } }, mMap: { 0: { ...m } } } });
+        const ticks = [
+            both(
+                0,
+                { atkCounter: 0, abilityHrid: '/abilities/smash', cHP: 500, dmgCounter: 0 },
+                { atkCounter: 0, abilityHrid: '/abilities/bite', cHP: 1000, dmgCounter: 0 }
+            ),
+            both(
+                100,
+                { atkCounter: 1, isAutoAtk: true, cHP: 440, dmgCounter: 1 }, // took the bite for 60
+                { atkCounter: 1, isAutoAtk: true, cHP: 900, dmgCounter: 1 } // took the smash for 100
+            ),
+        ];
+        expect(extractPlayerAttacks(ticks).byAbility['/abilities/smash']).toMatchObject({
+            casts: 1,
+            hits: 1,
+            damage: 100,
+        });
+        expect(extractMonsterAttacks(ticks).byAbility['/abilities/bite']).toMatchObject({
+            casts: 1,
+            hits: 1,
+            damage: 60,
+        });
+    });
+
+    test('a heal or self-buff is a cast that never joins the payoff queue', () => {
+        // The player casts Rejuvenate (a heal — no monster dmgCounter rise),
+        // then autos for 100. Without the guard, the heal's queued slot would
+        // swallow the auto's damage.
+        const ticks = [
+            ptick(0, { atkCounter: 0, abilityHrid: '/abilities/rejuvenate' }, { cHP: 1000, dmgCounter: 0 }),
+            ptick(100, { atkCounter: 1, isAutoAtk: true }, { cHP: 1000, dmgCounter: 0 }), // heal cast, no hit rings
+            ptick(200, { atkCounter: 2, isAutoAtk: true }, { cHP: 1000, dmgCounter: 0 }), // auto swing
+            ptick(300, { atkCounter: 2, isAutoAtk: true }, { cHP: 900, dmgCounter: 1 }), // auto resolves for 100
+        ];
+        const { byAbility } = extractPlayerAttacks(ticks, {
+            nonDamaging: new Set(['/abilities/rejuvenate']),
+        });
+        expect(byAbility['/abilities/rejuvenate']).toMatchObject({ casts: 1, hits: 0, damage: 0 });
+        expect(byAbility.autoAttack).toMatchObject({ casts: 1, hits: 1, damage: 100 });
+    });
+
+    test('an auto after a special is autoAttack, not the lingering special', () => {
+        const ticks = [
+            ptick(0, { atkCounter: 0, abilityHrid: '/abilities/cleave' }, { cHP: 1000, dmgCounter: 0 }),
+            ptick(100, { atkCounter: 1, isAutoAtk: true }, { cHP: 880, dmgCounter: 1 }), // cleave landed (120)
+            ptick(200, { atkCounter: 2, isAutoAtk: true }, { cHP: 830, dmgCounter: 2 }), // auto (50)
+            ptick(300, { atkCounter: 3, isAutoAtk: true }, { cHP: 780, dmgCounter: 3 }), // auto (50)
+        ];
+        const { byAbility } = extractPlayerAttacks(ticks);
+        expect(byAbility['/abilities/cleave']).toMatchObject({ casts: 1, hits: 1, damage: 120 });
+        expect(byAbility.autoAttack).toMatchObject({ casts: 2, hits: 2, damage: 100 });
+    });
+
+    test('a monster dmgCounter rise with no swing pending is the player’s DoT', () => {
+        const ticks = [
+            ptick(0, { atkCounter: 5, isAutoAtk: true }, { cHP: 1000, dmgCounter: 10 }),
+            ptick(100, { atkCounter: 5, isAutoAtk: true }, { cHP: 940, dmgCounter: 11 }), // bleed tick, 60
+        ];
+        const { byAbility } = extractPlayerAttacks(ticks);
+        expect(byAbility.damageOverTime).toMatchObject({ hits: 1, damage: 60 });
+    });
+
+    test('a resolution with the monster’s health flat is a miss', () => {
+        const ticks = [
+            ptick(0, { atkCounter: 0, isAutoAtk: true }, { cHP: 1000, dmgCounter: 0 }),
+            ptick(100, { atkCounter: 1, isAutoAtk: true }, { cHP: 1000, dmgCounter: 0 }), // swing
+            ptick(200, { atkCounter: 1, isAutoAtk: true }, { cHP: 1000, dmgCounter: 1 }), // resolves, HP flat
+        ];
+        const { byAbility } = extractPlayerAttacks(ticks);
+        expect(byAbility.autoAttack).toMatchObject({ casts: 1, hits: 0, misses: 1 });
+    });
+
+    test('the opening swing after a new_battle is measured, not spent as a baseline', () => {
+        const start = (at) => ({
+            at,
+            type: 'new_battle',
+            payload: {
+                battleId: 1,
+                players: [
+                    {
+                        attackAttemptCounter: 1,
+                        damageSplatCounter: 0,
+                        currentHitpoints: 500,
+                        isPreparingAutoAttack: true,
+                    },
+                ],
+                monsters: [{ attackAttemptCounter: 1, damageSplatCounter: 3, currentHitpoints: 1000 }],
+            },
+        });
+        const ticks = [
+            // Leading partial: a fight already in progress, excluded from the aggregate
+            ptick(0, { atkCounter: 8, isAutoAtk: true, cHP: 300 }, { cHP: 400, dmgCounter: 20 }),
+            ptick(100, { atkCounter: 9, isAutoAtk: true, cHP: 300 }, { cHP: 300, dmgCounter: 21 }),
+            start(10_000),
+            // The FIRST compact tick already carries the opening swing and its
+            // 80-damage hit relative to the start snapshot
+            ptick(10_500, { atkCounter: 2, isAutoAtk: true, cHP: 500 }, { cHP: 920, dmgCounter: 4 }),
+            ptick(11_000, { atkCounter: 3, isAutoAtk: true, cHP: 500 }, { cHP: 0, dmgCounter: 5 }), // killing blow, 920
+        ];
+        const out = extractPlayerAttacks(ticks);
+        expect(out.fights).toBe(1);
+        expect(out.partialFights).toBe(1);
+        expect(out.captureStartedMidFight).toBe(true);
+        expect(out.attempts.map((a) => a.outcome)).toEqual(['unknown', 'win']);
+        expect(out.byAbility.autoAttack).toMatchObject({ casts: 2, hits: 2 });
+        expect(out.byAbility.autoAttack.damage).toBeCloseTo(80 + 920, 5);
+    });
+
+    test('a player counter drop with no start message is a new fight, not a burst', () => {
+        const ticks = [
+            ptick(0, { atkCounter: 5, isAutoAtk: true }, { cHP: 1000, dmgCounter: 10 }),
+            ptick(100, { atkCounter: 6, isAutoAtk: true }, { cHP: 950, dmgCounter: 11 }), // 50
+            ptick(200, { atkCounter: 0, isAutoAtk: true }, { cHP: 1000, dmgCounter: 0 }), // respawn — reset
+            ptick(300, { atkCounter: 1, isAutoAtk: true }, { cHP: 940, dmgCounter: 1 }), // 60
+        ];
+        const { byAbility, fights } = extractPlayerAttacks(ticks);
+        expect(byAbility.autoAttack.hits).toBe(2);
+        expect(byAbility.autoAttack.damage).toBe(110);
+        expect(fights).toBeGreaterThanOrEqual(2);
+    });
+
+    test('a monster-gone gap resets the baselines rather than crediting a spike', () => {
+        // Between fights the monster entry vanishes and its HP snaps back to max
+        // on respawn; the next hit must be measured from the re-seeded baseline.
+        const ticks = [
+            ptick(0, { atkCounter: 3, isAutoAtk: true }, { cHP: 200, dmgCounter: 5 }),
+            { at: 100, payload: { pMap: { 0: { atkCounter: 3, isAutoAtk: true } }, mMap: {} } }, // monster gone
+            ptick(200, { atkCounter: 3, isAutoAtk: true }, { cHP: 1000, dmgCounter: 5 }), // re-seed at full HP
+            ptick(300, { atkCounter: 4, isAutoAtk: true }, { cHP: 1000, dmgCounter: 5 }), // swing
+            ptick(400, { atkCounter: 4, isAutoAtk: true }, { cHP: 930, dmgCounter: 6 }), // resolves for 70, not 70+800
+        ];
+        const { byAbility } = extractPlayerAttacks(ticks);
+        expect(byAbility.autoAttack.damage).toBe(70);
+    });
+
+    test('two resolutions on one merged tick split the monster’s drop evenly', () => {
+        const ticks = [
+            ptick(0, { atkCounter: 0, isAutoAtk: true }, { cHP: 1000, dmgCounter: 0 }),
+            ptick(100, { atkCounter: 2, isAutoAtk: true }, { cHP: 1000, dmgCounter: 0 }), // two swings queued
+            ptick(200, { atkCounter: 2, isAutoAtk: true }, { cHP: 800, dmgCounter: 2 }), // both land, 100 each
+        ];
+        const { byAbility } = extractPlayerAttacks(ticks);
+        expect(byAbility.autoAttack).toMatchObject({ casts: 2, hits: 2, damage: 200 });
+        expect(byAbility.autoAttack.samples).toEqual([100, 100]);
+    });
+
+    test('compareIncoming grades the outgoing direction unchanged', () => {
+        // The comparison is direction-agnostic given byAbility maps: feed it the
+        // player's real decomposition against the sim's player→monster tally.
+        const ticks = [];
+        let atk = 0;
+        let dmg = 0;
+        let hp = 10000;
+        ticks.push(ptick(0, { atkCounter: 0, isAutoAtk: true }, { cHP: hp, dmgCounter: 0 }));
+        for (let n = 0; n < 6; n++) {
+            atk += 1;
+            dmg += 1;
+            hp -= 100;
+            ticks.push(ptick(100 * (n + 1), { atkCounter: atk, isAutoAtk: true }, { cHP: hp, dmgCounter: dmg }));
+        }
+        const real = extractPlayerAttacks(ticks);
+        // The sim lands every auto for half as much → sim-under on the mean.
+        const sim = summarizeSimAttacks({ autoAttack: { 50: 6 } });
+        const { rows } = compareIncoming(real, sim);
+        expect(rows[0].ability).toBe('autoAttack');
+        expect(rows[0].verdict).toBe('sim-under');
     });
 });
 

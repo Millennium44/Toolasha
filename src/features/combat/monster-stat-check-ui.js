@@ -461,7 +461,14 @@ class MonsterStatCheckPanel {
             if (usable) {
                 const result = await labyrinthClearRate.uptimeHarness(snap.hrid, snap.roomLevel, capture.ticks);
                 snap.uptime = result
-                    ? { rows: result.comparison.rows, fightsLabel: describeFights(result.real), at: Date.now() }
+                    ? {
+                          rows: result.comparison.rows,
+                          // The other direction, from the same capture and the
+                          // same sim run: the sim's model of YOUR abilities.
+                          outgoingRows: result.outgoing?.comparison?.rows || null,
+                          fightsLabel: describeFights(result.real),
+                          at: Date.now(),
+                      }
                     : { error: 'Sim run failed.' };
             } else {
                 // Arm a capture bound to this monster, room and build. When a
@@ -654,15 +661,22 @@ class MonsterStatCheckPanel {
         }
         if (snapshot.uptime?.rows?.length) {
             const fights = snapshot.uptime.fightsLabel ? ` (${snapshot.uptime.fightsLabel})` : '';
-            lines.push(`Uptime harness — incoming damage / ability (real vs sim)${fights}:`);
             const pct = (v) => (v == null || !Number.isFinite(v) ? '—' : `${Math.round(v)}%`);
-            for (const r of snapshot.uptime.rows) {
-                const rd = pct(r.real?.dmgSharePct);
-                const sd = pct(r.sim?.dmgSharePct);
-                const rc = pct(r.real?.castSharePct);
-                const sc = pct(r.sim?.castSharePct);
-                const n = r.samples != null ? `, n=${r.samples}` : '';
-                lines.push(`  ${r.ability}: dmg ${rd}/${sd}, cast ${rc}/${sc}${n} — ${r.verdict}`);
+            const pushRows = (rows) => {
+                for (const r of rows) {
+                    const rd = pct(r.real?.dmgSharePct);
+                    const sd = pct(r.sim?.dmgSharePct);
+                    const rc = pct(r.real?.castSharePct);
+                    const sc = pct(r.sim?.castSharePct);
+                    const n = r.samples != null ? `, n=${r.samples}` : '';
+                    lines.push(`  ${r.ability}: dmg ${rd}/${sd}, cast ${rc}/${sc}${n} — ${r.verdict}`);
+                }
+            };
+            lines.push(`Uptime harness — incoming damage / ability (real vs sim)${fights}:`);
+            pushRows(snapshot.uptime.rows);
+            if (snapshot.uptime.outgoingRows?.length) {
+                lines.push(`Uptime harness — outgoing damage / ability (real vs sim)${fights}:`);
+                pushRows(snapshot.uptime.outgoingRows);
             }
         }
         return lines.join('\n');
@@ -1139,52 +1153,28 @@ class MonsterStatCheckPanel {
                 none.textContent = 'No attacks found in the capture.';
                 wrap.appendChild(none);
             } else {
-                const header = document.createElement('div');
-                header.style.cssText =
-                    'display:grid; grid-template-columns:1.3fr 0.9fr 0.9fr auto; gap:4px; font-size:0.64rem; color:rgba(255,255,255,0.4); padding:1px 0;';
-                header.innerHTML =
-                    '<span>ability</span><span style="text-align:right;">real dmg%</span><span style="text-align:right;">sim dmg%</span><span></span>';
-                wrap.appendChild(header);
+                this._uptimeTable(wrap, up.rows, false);
 
-                for (const r of up.rows) {
-                    const style = UPTIME_VERDICT[r.verdict] || UPTIME_VERDICT.ok;
-                    const line = document.createElement('div');
-                    line.style.cssText =
-                        'display:grid; grid-template-columns:1.3fr 0.9fr 0.9fr auto; gap:4px; align-items:baseline; font-size:0.74rem; padding:1px 0;';
-                    const num = (v) => (v == null || !Number.isFinite(v) ? '—' : `${Math.round(v)}`);
-                    const pct = (v) => (v == null || !Number.isFinite(v) ? '—' : `${Math.round(v)}%`);
-                    const name = document.createElement('span');
-                    name.textContent = r.ability;
-                    name.style.cssText = 'overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-                    // Cast share, means and sample size on hover, so the row
-                    // stays compact. Cast share is '—' for the DoT row, whose
-                    // ticks are not casts.
-                    name.title =
-                        `casts: real ${pct(r.real?.castSharePct)} / sim ${pct(r.sim?.castSharePct)}` +
-                        `  ·  mean/cast: real ${num(r.real?.meanDmgPerCast)} / sim ${num(r.sim?.meanDmgPerCast)}` +
-                        `  ·  mean/hit: real ${num(r.real?.meanDmgPerHit)} / sim ${num(r.sim?.meanDmgPerHit)}` +
-                        `  ·  ${r.samples ?? 0} real casts`;
-                    const g = document.createElement('span');
-                    g.textContent = pct(r.real?.dmgSharePct);
-                    g.style.cssText = 'text-align:right; font-variant-numeric:tabular-nums;';
-                    const s = document.createElement('span');
-                    s.textContent = pct(r.sim?.dmgSharePct);
-                    s.style.cssText =
-                        'text-align:right; font-variant-numeric:tabular-nums; color:rgba(255,255,255,0.75);';
-                    const v = document.createElement('span');
-                    v.textContent = style.glyph;
-                    v.style.cssText = `text-align:right; color:${style.color};`;
-                    v.title = UPTIME_TITLE[r.verdict] || r.verdict;
-                    line.append(name, g, s, v);
-                    wrap.appendChild(line);
+                // The other direction from the same capture and sim run: your
+                // swings paid off by the monster's damage counter — the sim's
+                // model of YOUR abilities, checked the same way.
+                const outHead = document.createElement('div');
+                outHead.style.cssText =
+                    'font-size:0.68rem; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.4); margin:8px 0 2px;';
+                outHead.textContent = 'Uptime harness — outgoing damage / ability';
+                wrap.appendChild(outHead);
+                if (up.outgoingRows?.length) {
+                    this._uptimeTable(wrap, up.outgoingRows, true);
+                } else {
+                    const none = document.createElement('div');
+                    none.style.cssText = 'font-size:0.72rem; color:rgba(255,255,255,0.5);';
+                    // null = a result saved before the outgoing direction
+                    // existed; [] = a run that genuinely found no swings.
+                    none.textContent = up.outgoingRows
+                        ? 'No attacks of yours found in the capture.'
+                        : 'Re-run the harness to compute the outgoing direction.';
+                    wrap.appendChild(none);
                 }
-                const key = document.createElement('div');
-                key.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
-                key.innerHTML =
-                    '<span style="color:#e56b6b;">⚠ sim-under</span> = sim gives this ability a smaller share of incoming damage than reality (or lands it for a smaller mean). ' +
-                    '<span style="color:rgba(255,255,255,0.5);">?</span> = too few real casts to grade. ' +
-                    'Hover for cast%, means and sample size: a matching cast% with a damage gap is a per-cast magnitude (buff-uptime) issue, a cast% gap is cadence.';
-                wrap.appendChild(key);
             }
         }
 
@@ -1205,6 +1195,63 @@ class MonsterStatCheckPanel {
         wrap.appendChild(btn);
 
         footer.appendChild(wrap);
+    }
+
+    /**
+     * One direction's harness table: column header, a row per ability with the
+     * hover detail, and the legend. Identical for both directions except the
+     * wording of whose damage the shares describe.
+     * @param {HTMLElement} wrap - Where the table lands
+     * @param {Array<Object>} rows - Comparison rows (from compareIncoming)
+     * @param {boolean} outgoing - True for the player→monster direction
+     */
+    _uptimeTable(wrap, rows, outgoing) {
+        const header = document.createElement('div');
+        header.style.cssText =
+            'display:grid; grid-template-columns:1.3fr 0.9fr 0.9fr auto; gap:4px; font-size:0.64rem; color:rgba(255,255,255,0.4); padding:1px 0;';
+        header.innerHTML =
+            '<span>ability</span><span style="text-align:right;">real dmg%</span><span style="text-align:right;">sim dmg%</span><span></span>';
+        wrap.appendChild(header);
+
+        for (const r of rows) {
+            const style = UPTIME_VERDICT[r.verdict] || UPTIME_VERDICT.ok;
+            const line = document.createElement('div');
+            line.style.cssText =
+                'display:grid; grid-template-columns:1.3fr 0.9fr 0.9fr auto; gap:4px; align-items:baseline; font-size:0.74rem; padding:1px 0;';
+            const num = (v) => (v == null || !Number.isFinite(v) ? '—' : `${Math.round(v)}`);
+            const pct = (v) => (v == null || !Number.isFinite(v) ? '—' : `${Math.round(v)}%`);
+            const name = document.createElement('span');
+            name.textContent = r.ability;
+            name.style.cssText = 'overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+            // Cast share, means and sample size on hover, so the row
+            // stays compact. Cast share is '—' for the DoT row, whose
+            // ticks are not casts.
+            name.title =
+                `casts: real ${pct(r.real?.castSharePct)} / sim ${pct(r.sim?.castSharePct)}` +
+                `  ·  mean/cast: real ${num(r.real?.meanDmgPerCast)} / sim ${num(r.sim?.meanDmgPerCast)}` +
+                `  ·  mean/hit: real ${num(r.real?.meanDmgPerHit)} / sim ${num(r.sim?.meanDmgPerHit)}` +
+                `  ·  ${r.samples ?? 0} real casts`;
+            const g = document.createElement('span');
+            g.textContent = pct(r.real?.dmgSharePct);
+            g.style.cssText = 'text-align:right; font-variant-numeric:tabular-nums;';
+            const s = document.createElement('span');
+            s.textContent = pct(r.sim?.dmgSharePct);
+            s.style.cssText = 'text-align:right; font-variant-numeric:tabular-nums; color:rgba(255,255,255,0.75);';
+            const v = document.createElement('span');
+            v.textContent = style.glyph;
+            v.style.cssText = `text-align:right; color:${style.color};`;
+            v.title = UPTIME_TITLE[r.verdict] || r.verdict;
+            line.append(name, g, s, v);
+            wrap.appendChild(line);
+        }
+        const key = document.createElement('div');
+        key.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
+        const whose = outgoing ? 'your outgoing damage' : 'incoming damage';
+        key.innerHTML =
+            `<span style="color:#e56b6b;">⚠ sim-under</span> = sim gives this ability a smaller share of ${whose} than reality (or lands it for a smaller mean). ` +
+            '<span style="color:rgba(255,255,255,0.5);">?</span> = too few real casts to grade. ' +
+            'Hover for cast%, means and sample size: a matching cast% with a damage gap is a per-cast magnitude (buff-uptime) issue, a cast% gap is cadence.';
+        wrap.appendChild(key);
     }
 
     /** Boost as a short string: a ratio as a percent, else the flat value. */

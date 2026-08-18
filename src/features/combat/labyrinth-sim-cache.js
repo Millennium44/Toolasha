@@ -14,7 +14,12 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { buildGameDataPayload, getCommunityBuffs } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation, runBlindBuffProbe, runPlayerStatProbe } from '../combat-sim/combat-sim-runner.js';
-import { extractMonsterAttacks, summarizeSimAttacks, compareIncoming } from './labyrinth-uptime-harness.js';
+import {
+    extractMonsterAttacks,
+    extractPlayerAttacks,
+    summarizeSimAttacks,
+    compareIncoming,
+} from './labyrinth-uptime-harness.js';
 import { wilsonInterval, decidedAgainst } from '../combat-sim/engine/wilson.js';
 import loadoutSnapshot from './loadout-snapshot.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
@@ -39,6 +44,30 @@ function nonDamagingAbilities(gameData, monsterHrid) {
     const abilityMap = gameData?.abilityDetailMap || {};
     for (const entry of monster?.abilities || []) {
         const hrid = entry?.abilityHrid;
+        const def = hrid && abilityMap[hrid];
+        if (!def) continue;
+        const dealsDamage = (def.abilityEffects || []).some((e) => e.effectType === '/ability_effect_types/damage');
+        if (!dealsDamage) set.add(hrid);
+    }
+    return set;
+}
+
+/**
+ * The PLAYER's equipped ability hrids that deal no damage — heals (Rejuvenate),
+ * self-buffs and auras. The outgoing uptime harness counts their casts but must
+ * not queue them for a damage payoff: a heal rings no monster damage counter,
+ * so a queued slot for it would swallow the next real swing's damage. Read off
+ * the same ability list the sim's player is built from, so both sides of the
+ * comparison agree on what the player can cast.
+ * @param {Object} gameData - `{abilityDetailMap}`
+ * @param {Object} dto - A player DTO (`abilities: [{hrid, level}|null]`)
+ * @returns {Set<string>}
+ */
+function nonDamagingPlayerAbilities(gameData, dto) {
+    const set = new Set();
+    const abilityMap = gameData?.abilityDetailMap || {};
+    for (const entry of dto?.abilities || []) {
+        const hrid = entry?.hrid;
         const def = hrid && abilityMap[hrid];
         if (!def) continue;
         const dealsDamage = (def.abilityEffects || []).some((e) => e.effectType === '/ability_effect_types/damage');
@@ -197,14 +226,18 @@ export const simCacheMethods = {
     },
 
     /**
-     * Decompose the monster's incoming damage per ability, real (from a tick
-     * capture) vs sim, to localise a timing/uptime gap. Runs a normal sim (many
-     * fights, for a good histogram) with the current build, reads its per-ability
-     * attack tallies, and compares shares against the captured fight.
+     * Decompose the fight's damage per ability in BOTH directions, real (from a
+     * tick capture) vs sim, to localise a timing/uptime gap. Runs one normal sim
+     * (many fights, for a good histogram) with the current build, reads its
+     * per-ability attack tallies for both the monster→player and player→monster
+     * pairs, and compares shares against the captured fight — incoming verifies
+     * the sim's model of the monster, outgoing its model of YOUR rotation and
+     * per-cast damage, from the same capture and the same sim run.
      * @param {string} monsterHrid
      * @param {number} roomLevel
      * @param {Array<Object>} ticks - A tick capture's `ticks`
-     * @returns {Promise<{comparison: Object, real: Object, sim: Object}|null>}
+     * @returns {Promise<{comparison: Object, real: Object, sim: Object,
+     *   outgoing: {comparison: Object, real: Object, sim: Object}}|null>}
      */
     async uptimeHarness(monsterHrid, roomLevel, ticks) {
         const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
@@ -227,7 +260,16 @@ export const simCacheMethods = {
         });
         const real = extractMonsterAttacks(ticks, { nonDamaging: nonDamagingAbilities(gameData, monsterHrid) });
         const sim = summarizeSimAttacks(simResult?.attacks?.[monsterHrid]?.[playerHrid]);
-        return { comparison: compareIncoming(real, sim), real, sim };
+        // The outgoing direction, from the SAME capture and the SAME sim run —
+        // the attack tallies already hold the player→monster pair.
+        const outReal = extractPlayerAttacks(ticks, { nonDamaging: nonDamagingPlayerAbilities(gameData, dto) });
+        const outSim = summarizeSimAttacks(simResult?.attacks?.[playerHrid]?.[monsterHrid]);
+        return {
+            comparison: compareIncoming(real, sim),
+            real,
+            sim,
+            outgoing: { comparison: compareIncoming(outReal, outSim), real: outReal, sim: outSim },
+        };
     },
 
     /**

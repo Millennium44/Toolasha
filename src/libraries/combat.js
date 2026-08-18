@@ -178,9 +178,8 @@ toolashaRoot.Debug = {
         }
         const result = await labyrinthClearRate.uptimeHarness(monsterHrid, roomLevel ?? 0, capture.ticks);
         if (result) {
-            console.log(`[UptimeHarness] ${monsterHrid} room ${roomLevel} — incoming damage per ability, real vs sim`);
-            console.table(
-                result.comparison.rows.map((row) => ({
+            const tableRows = (rows) =>
+                rows.map((row) => ({
                     ability: row.ability,
                     'real cast%': row.real ? Math.round(row.real.castSharePct) : '—',
                     'sim cast%': row.sim ? Math.round(row.sim.castSharePct) : '—',
@@ -189,8 +188,15 @@ toolashaRoot.Debug = {
                     'real mean': row.real ? Math.round(row.real.meanDmgPerCast) : '—',
                     'sim mean': row.sim ? Math.round(row.sim.meanDmgPerCast) : '—',
                     verdict: row.verdict,
-                }))
-            );
+                }));
+            console.log(`[UptimeHarness] ${monsterHrid} room ${roomLevel} — incoming damage per ability, real vs sim`);
+            console.table(tableRows(result.comparison.rows));
+            if (result.outgoing?.comparison?.rows) {
+                console.log(
+                    `[UptimeHarness] ${monsterHrid} room ${roomLevel} — YOUR outgoing damage per ability, real vs sim`
+                );
+                console.table(tableRows(result.outgoing.comparison.rows));
+            }
         }
         return result;
     },

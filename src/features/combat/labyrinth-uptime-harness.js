@@ -33,10 +33,17 @@
  * The 3 Hz tick feed occasionally merges two hits into one health delta, so
  * treat per-cast means as slightly coarsened; cast *counts* come from the
  * attack counter and stay exact.
+ *
+ * The same decomposition runs in the other direction too: the PLAYER's swings
+ * (`pMap.atkCounter`, labelled by `abilityHrid`/`isAutoAtk` the same way) paid
+ * off by the MONSTER's `dmgCounter` rises, verifying the sim's model of the
+ * player's rotation and per-cast damage. The extraction is one
+ * direction-parameterized core; {@link extractMonsterAttacks} and
+ * {@link extractPlayerAttacks} pick the roles.
  */
 
 /**
- * Extract the monster's outgoing attacks (the player's incoming damage) from a
+ * Extract one side's outgoing attacks (the other side's incoming damage) from a
  * tick-capture tick list.
  *
  * ## Attempts, not one long fight
@@ -60,36 +67,45 @@
  *
  * @param {Array<Object>} ticks - Capture ticks (`battle_updated` and
  *   `new_battle`), as recorded
- * @param {Object} [opts] - `{monsterIndex='0', playerIndex='0', nonDamaging}`,
- *   where `nonDamaging` is a Set of ability hrids that deal no damage (buffs,
- *   debuffs) — counted as casts but never credited incoming damage
+ * @param {Object} opts - `{monsterIndex='0', playerIndex='0', nonDamaging,
+ *   playerAttacks=false}`: `nonDamaging` is a Set of the ATTACKER's ability
+ *   hrids that deal no damage (buffs, heals, debuffs) — counted as casts but
+ *   never credited damage; `playerAttacks` picks the direction — false reads
+ *   the monster's swings paid off by the player's dmgCounter, true the
+ *   player's swings paid off by the monster's.
  * @returns {{durationMs: number, fights: number, partialFights: number,
  *   captureStartedMidFight: boolean, attempts: Array<Object>, byAbility: Object}}
  *   `byAbility[ability] = {casts, hits, misses, damage, samples: number[]}`,
  *   aggregated over complete attempts only; `attempts[n]` carries per-attempt
  *   `{complete, outcome, startAt, endAt, byAbility}`
  */
-export function extractMonsterAttacks(ticks, opts = {}) {
+function extractAttacks(ticks, opts) {
     const mi = opts.monsterIndex ?? '0';
     const pi = opts.playerIndex ?? '0';
-    // Ability hrids that deal no damage — a monster's self-buffs and debuffs
-    // (Toughness, a guardian aura, a smoke burst). They still take a turn, so
-    // they count as casts, but they land no hit: queueing one would let the next
-    // real swing's damage pay off the buff's slot, crediting incoming damage to
-    // an ability that cannot deal any. Empty set = label everything as it comes.
+    // Which side swings and which side's damage counter pays the swings off.
+    const playerAttacks = opts.playerAttacks === true;
+    // Ability hrids that deal no damage — the attacker's self-buffs, heals and
+    // debuffs (a monster's Toughness or guardian aura; the player's Rejuvenate
+    // or an aura). They still take a turn, so they count as casts, but they land
+    // no hit: queueing one would let the next real swing's damage pay off the
+    // buff's slot, crediting damage to an ability that cannot deal any. Empty
+    // set = label everything as it comes.
     const nonDamaging = opts.nonDamaging instanceof Set ? opts.nonDamaging : new Set();
 
-    // Prefer the player's damage counter. A resolved incoming attack is
-    // `dmgCounter` **rising** — which, unlike a health drop, is immune to regen,
-    // survives the health snapshot lagging the swing (the counter is exact even
-    // when the HP number that tick is stale), and states a miss (`dmgCounter` up,
-    // health flat) as plainly as a hit. The monster's own `atkCounter` names the
+    // The defender's compact entry (the side taking the damage), per tick.
+    const defenderOf = (tick) => (playerAttacks ? tick?.payload?.mMap?.[mi] : tick?.payload?.pMap?.[pi]);
+
+    // Prefer the defender's damage counter. A resolved attack is `dmgCounter`
+    // **rising** — which, unlike a health drop, is immune to regen, survives
+    // the health snapshot lagging the swing (the counter is exact even when the
+    // HP number that tick is stale), and states a miss (`dmgCounter` up, health
+    // flat) as plainly as a hit. The attacker's own `atkCounter` names the
     // swing but its damage lands a tick or two later for a cast ability, so the
     // swings queue up and each is paid off by the next resolution (FIFO). This is
-    // the same signal the damage panel and calibration replay attribute from,
-    // pointed at the monster→player direction. When the capture lacks the counter
-    // we fall back to health drops, labelling by the ability prepared before.
-    const hasDmgCounter = (ticks || []).some((t) => Number.isFinite(Number(t?.payload?.pMap?.[pi]?.dmgCounter)));
+    // the same signal the damage panel and calibration replay attribute from.
+    // When the capture lacks the counter we fall back to health drops,
+    // labelling by the ability prepared before.
+    const hasDmgCounter = (ticks || []).some((t) => Number.isFinite(Number(defenderOf(t)?.dmgCounter)));
 
     // Only a capture that carries start messages can tell a fight-in-progress
     // from a fight it saw open. An old capture with none is read as before:
@@ -97,21 +113,21 @@ export function extractMonsterAttacks(ticks, opts = {}) {
     // capture "all partial" would empty the aggregate it was recorded for.
     const hasStarts = (ticks || []).some((t) => t?.type === 'new_battle');
 
-    let prevMatk;
-    let prevMLabel;
-    let prevPHP;
-    let prevPdmg;
+    let prevAtk;
+    let prevLabel;
+    let prevDefHP;
+    let prevDefDmg;
     let firstAt;
     let lastAt;
     // Swings awaiting their resolution, oldest first — each holds the ability the
-    // monster was preparing when it swung.
+    // attacker was preparing when it swung.
     const pending = [];
 
     const resetBaselines = () => {
-        prevMatk = undefined;
-        prevMLabel = undefined;
-        prevPHP = undefined;
-        prevPdmg = undefined;
+        prevAtk = undefined;
+        prevLabel = undefined;
+        prevDefHP = undefined;
+        prevDefDmg = undefined;
         pending.length = 0;
     };
 
@@ -160,34 +176,41 @@ export function extractMonsterAttacks(ticks, opts = {}) {
             resetBaselines();
             const startMonster = unitAt(tick?.payload?.monsters, mi);
             const startPlayer = unitAt(tick?.payload?.players, pi);
-            if (Number.isFinite(Number(startMonster?.attackAttemptCounter))) {
-                prevMatk = Number(startMonster.attackAttemptCounter);
+            const startAttacker = playerAttacks ? startPlayer : startMonster;
+            const startDefender = playerAttacks ? startMonster : startPlayer;
+            if (Number.isFinite(Number(startAttacker?.attackAttemptCounter))) {
+                prevAtk = Number(startAttacker.attackAttemptCounter);
             }
-            if (Number.isFinite(Number(startPlayer?.damageSplatCounter))) {
-                prevPdmg = Number(startPlayer.damageSplatCounter);
+            if (Number.isFinite(Number(startDefender?.damageSplatCounter))) {
+                prevDefDmg = Number(startDefender.damageSplatCounter);
+            }
+            if (Number.isFinite(Number(startDefender?.currentHitpoints))) {
+                prevDefHP = Number(startDefender.currentHitpoints);
             }
             if (Number.isFinite(Number(startPlayer?.currentHitpoints))) {
-                prevPHP = Number(startPlayer.currentHitpoints);
-                current.lastPHP = prevPHP;
+                current.lastPHP = Number(startPlayer.currentHitpoints);
             }
             if (Number.isFinite(Number(startMonster?.currentHitpoints))) {
                 current.lastMHP = Number(startMonster.currentHitpoints);
             }
-            if (startMonster?.preparingAbilityHrid) prevMLabel = startMonster.preparingAbilityHrid;
-            else if (startMonster?.isPreparingAutoAttack) prevMLabel = 'autoAttack';
+            if (startAttacker?.preparingAbilityHrid) prevLabel = startAttacker.preparingAbilityHrid;
+            else if (startAttacker?.isPreparingAutoAttack) prevLabel = 'autoAttack';
             continue;
         }
 
         const monster = tick?.payload?.mMap?.[mi];
         const player = tick?.payload?.pMap?.[pi];
         if (!monster) {
-            // Monster gone between fights, or a brief render gap: the health
-            // readings around it snap to stale/max values, so drop ALL running
-            // baselines — health included — and re-seed cleanly on the next
-            // spawn rather than reading a giant drop off a corrupted baseline.
+            // Monster gone between fights, or a brief render gap — whichever
+            // role it plays here: the health readings around it snap to
+            // stale/max values, so drop ALL running baselines — health included
+            // — and re-seed cleanly on the next spawn rather than reading a
+            // giant drop off a corrupted baseline.
             resetBaselines();
             continue;
         }
+        const attacker = playerAttacks ? player : monster;
+        const defender = playerAttacks ? monster : player;
 
         // Compact ticks before any `new_battle` are a fight already in progress
         // when recording began — kept, flagged, and excluded from the aggregate.
@@ -196,30 +219,30 @@ export function extractMonsterAttacks(ticks, opts = {}) {
         if (!current) openAttempt(!hasStarts, at);
         if (Number.isFinite(at)) current.endAt = at;
 
-        const matk = Number(monster.atkCounter);
-        const php = player && Number.isFinite(Number(player.cHP)) ? Number(player.cHP) : null;
-        const pdmg = player && Number.isFinite(Number(player.dmgCounter)) ? Number(player.dmgCounter) : null;
-        if (php != null) current.lastPHP = php;
+        const atk = attacker ? Number(attacker.atkCounter) : NaN;
+        const dhp = defender && Number.isFinite(Number(defender.cHP)) ? Number(defender.cHP) : null;
+        const ddmg = defender && Number.isFinite(Number(defender.dmgCounter)) ? Number(defender.dmgCounter) : null;
+        if (player && Number.isFinite(Number(player.cHP))) current.lastPHP = Number(player.cHP);
         if (Number.isFinite(Number(monster.cHP))) current.lastMHP = Number(monster.cHP);
 
         // Respawn with no start message — the counter of last resort for old
         // captures. New attempt; drop the baselines so the reset is not read as
         // a burst of attacks.
-        if (prevMatk !== undefined && Number.isFinite(matk) && matk < prevMatk) {
+        if (prevAtk !== undefined && Number.isFinite(atk) && atk < prevAtk) {
             openAttempt(true, at);
             resetBaselines();
         }
 
         if (hasDmgCounter) {
-            // The monster's swings drive cast share, labelled by the ability it
+            // The attacker's swings drive cast share, labelled by the ability it
             // was preparing before the swing (the hit was cast by what came
             // before it, not the next thing already being wound up).
-            if (prevMatk !== undefined && Number.isFinite(matk) && matk > prevMatk) {
-                const label = prevMLabel || monster.abilityHrid || 'autoAttack';
+            if (prevAtk !== undefined && Number.isFinite(atk) && atk > prevAtk) {
+                const label = prevLabel || attacker.abilityHrid || 'autoAttack';
                 const dealsDamage = !nonDamaging.has(label);
-                for (let n = 0; n < matk - prevMatk; n++) {
+                for (let n = 0; n < atk - prevAtk; n++) {
                     rec(label).casts += 1;
-                    // A buff/debuff takes a turn but lands no hit, so it never
+                    // A buff/heal takes a turn but lands no hit, so it never
                     // joins the queue the next resolution pays off.
                     if (dealsDamage) pending.push(label);
                 }
@@ -228,9 +251,9 @@ export function extractMonsterAttacks(ticks, opts = {}) {
             // The attacks that actually connected this tick, from the exact
             // counter. Each pays off the oldest pending swing; a resolution with
             // no swing waiting is a damage-over-time tick.
-            if (prevPdmg !== undefined && pdmg !== null && pdmg > prevPdmg) {
-                const count = pdmg - prevPdmg;
-                const drop = prevPHP != null && php != null ? Math.max(0, prevPHP - php) : 0;
+            if (prevDefDmg !== undefined && ddmg !== null && ddmg > prevDefDmg) {
+                const count = ddmg - prevDefDmg;
+                const drop = prevDefHP != null && dhp != null ? Math.max(0, prevDefHP - dhp) : 0;
                 const per = count > 0 ? drop / count : 0; // even split across a merged tick
                 for (let n = 0; n < count; n++) {
                     const label = pending.length ? pending.shift() : 'damageOverTime';
@@ -247,13 +270,13 @@ export function extractMonsterAttacks(ticks, opts = {}) {
             }
         } else {
             // Health-drop fallback, for a capture with no damage counter.
-            const drop = prevPHP != null && php != null ? prevPHP - php : 0;
-            if (prevMatk !== undefined && Number.isFinite(matk) && matk > prevMatk) {
-                const label = prevMLabel || monster.abilityHrid || 'autoAttack';
+            const drop = prevDefHP != null && dhp != null ? prevDefHP - dhp : 0;
+            if (prevAtk !== undefined && Number.isFinite(atk) && atk > prevAtk) {
+                const label = prevLabel || attacker.abilityHrid || 'autoAttack';
                 const r = rec(label);
-                r.casts += matk - prevMatk;
+                r.casts += atk - prevAtk;
                 if (nonDamaging.has(label)) {
-                    // A buff/debuff cast lands no hit; a health drop this tick is
+                    // A buff/heal cast lands no hit; a health drop this tick is
                     // something else resolving (a damage-over-time), not this cast.
                     if (drop > 0) {
                         const dot = rec('damageOverTime');
@@ -266,10 +289,10 @@ export function extractMonsterAttacks(ticks, opts = {}) {
                     r.damage += drop;
                     r.samples.push(drop);
                 } else {
-                    r.misses += matk - prevMatk;
+                    r.misses += atk - prevAtk;
                 }
                 current.sawAttack = true;
-            } else if (prevMatk !== undefined && drop > 0) {
+            } else if (prevAtk !== undefined && drop > 0) {
                 const r = rec('damageOverTime');
                 r.hits += 1;
                 r.damage += drop;
@@ -277,18 +300,18 @@ export function extractMonsterAttacks(ticks, opts = {}) {
             }
         }
 
-        if (Number.isFinite(matk)) prevMatk = matk;
-        // What the monster is doing this tick, so the NEXT swing is labelled by
+        if (Number.isFinite(atk)) prevAtk = atk;
+        // What the attacker is doing this tick, so the NEXT swing is labelled by
         // it. The payload names a special in abilityHrid only on its cast tick and
         // never persists it, marking ordinary swings with isAutoAtk instead — so
         // an auto-attack tick must reset the label to autoAttack. Without this the
         // last special sticks and every following auto inherits it, inflating
         // special cast-share past what the cooldowns physically allow (an auto
         // share the fight length cannot produce) and starving autoAttack.
-        if (monster.abilityHrid) prevMLabel = monster.abilityHrid;
-        else if (monster.isAutoAtk) prevMLabel = 'autoAttack';
-        if (php != null) prevPHP = php;
-        if (pdmg != null) prevPdmg = pdmg;
+        if (attacker?.abilityHrid) prevLabel = attacker.abilityHrid;
+        else if (attacker?.isAutoAtk) prevLabel = 'autoAttack';
+        if (dhp != null) prevDefHP = dhp;
+        if (ddmg != null) prevDefDmg = ddmg;
     }
 
     closeAttempt();
@@ -323,6 +346,41 @@ export function extractMonsterAttacks(ticks, opts = {}) {
         attempts,
         byAbility: aggregate,
     };
+}
+
+/**
+ * Extract the monster's outgoing attacks (the player's incoming damage): the
+ * monster's `atkCounter` swings paid off FIFO by the player's `dmgCounter`
+ * rises, damage read off the player's health drops.
+ *
+ * @param {Array<Object>} ticks - Capture ticks, as recorded
+ * @param {Object} [opts] - `{monsterIndex='0', playerIndex='0', nonDamaging}`,
+ *   where `nonDamaging` is a Set of the MONSTER's ability hrids that deal no
+ *   damage (buffs, debuffs) — counted as casts but never credited damage
+ * @returns {Object} See {@link extractAttacks}
+ */
+export function extractMonsterAttacks(ticks, opts = {}) {
+    return extractAttacks(ticks, { ...opts, playerAttacks: false });
+}
+
+/**
+ * Extract the player's outgoing attacks (the monster's incoming damage) — the
+ * same ladder pointed the other way: the player's `atkCounter` swings,
+ * labelled by `abilityHrid`/`isAutoAtk` exactly as the monster's are, paid off
+ * FIFO by the MONSTER's `dmgCounter` rises with the monster's health drop as
+ * the damage. A player heal or self-buff (Rejuvenate, an aura) rings no
+ * monster counter — it is a cast with no queued hit, which is what
+ * `nonDamaging` marks. A bleed the player deals lands as a counter rise with
+ * no swing pending: the same `damageOverTime` row the incoming side keeps.
+ *
+ * @param {Array<Object>} ticks - Capture ticks, as recorded
+ * @param {Object} [opts] - `{monsterIndex='0', playerIndex='0', nonDamaging}`,
+ *   where `nonDamaging` is a Set of the PLAYER's ability hrids that deal no
+ *   damage (heals, self-buffs, auras)
+ * @returns {Object} See {@link extractAttacks}
+ */
+export function extractPlayerAttacks(ticks, opts = {}) {
+    return extractAttacks(ticks, { ...opts, playerAttacks: true });
 }
 
 /**
@@ -409,9 +467,11 @@ export function describeFights(real) {
 }
 
 /**
- * Per-ability real-vs-sim comparison of the monster's attacks — cast share,
+ * Per-ability real-vs-sim comparison of one side's attacks — cast share,
  * damage share, and mean damage per cast and per hit, all unit-free so no time
- * alignment is needed. Rows are ordered by real damage share (what hurts most,
+ * alignment is needed. Direction-agnostic given `byAbility` maps: the incoming
+ * direction feeds it {@link extractMonsterAttacks}, the outgoing direction
+ * {@link extractPlayerAttacks}, against the matching sim attack pair. Rows are ordered by real damage share (what hurts most,
  * first). Each row carries `samples` (the real casts behind it — ticks for the
  * DoT row); a row under {@link MIN_REAL_CASTS} grades `inconclusive` rather
  * than passing a share gap off as a finding.
