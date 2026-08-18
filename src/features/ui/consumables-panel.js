@@ -70,7 +70,7 @@ import { readScoped } from '../../utils/character-key.js';
 const PANEL_ID = 'toolasha-consumables-panel';
 
 /** The Buy-all walk's floating "next item" chip — outside the panel, which hides itself to go shopping */
-const LAB_BUY_CHIP_ID = 'toolasha-lab-buy-next';
+const BUY_CHIP_ID = 'toolasha-lab-buy-next';
 const GEOMETRY_KEY = 'consumablesPanel';
 const DEFAULT_PANEL = { width: 520, height: 420 };
 const REFRESH_MS = 5000;
@@ -118,14 +118,17 @@ class ConsumablesPanel {
      */
     async _refreshStoredReadings() {
         try {
-            const [rates, ledger] = await Promise.all([
+            const [rates, byZone, ledger] = await Promise.all([
                 readScoped('simConsumableRates', 'combatExport', null).catch(() => null),
+                readScoped('simConsumableRatesByZone', 'combatExport', {}).catch(() => ({})),
                 readScoped('labyrinthRunLedger', 'labyrinth', []).catch(() => []),
             ]);
             const changed =
                 JSON.stringify(rates) !== JSON.stringify(this._simRates) ||
+                JSON.stringify(byZone) !== JSON.stringify(this._simRatesByZone) ||
                 JSON.stringify(ledger) !== JSON.stringify(this._ledgerRuns);
             this._simRates = rates;
+            this._simRatesByZone = byZone || {};
             this._ledgerRuns = ledger || [];
             if (changed && this.panel) this._render();
         } catch {
@@ -152,8 +155,13 @@ class ConsumablesPanel {
     async loadSettings() {
         await loadTarget(() => this._render());
         this._labRuns = Number(await storage.get('consumablesLabRuns', 'settings', 5)) || 5;
-        // The last sim's measured consumable use, for rating food while idle
+        // The idle plan's pins: which loadout to plan for, which simmed zone rates its food
+        this._idleLoadoutName = await storage.get('consumablesIdleLoadout', 'settings', null);
+        this._idleZoneKey = await storage.get('consumablesIdleZone', 'settings', 'last');
+        // The sims' measured consumable use, for rating food while idle
         this._simRates = await readScoped('simConsumableRates', 'combatExport', null).catch(() => null);
+        this._simRatesByZone =
+            (await readScoped('simConsumableRatesByZone', 'combatExport', {}).catch(() => ({}))) || {};
         this._ledgerRuns = (await readScoped('labyrinthRunLedger', 'labyrinth', []).catch(() => [])) || [];
     }
 
@@ -391,15 +399,46 @@ class ConsumablesPanel {
      * one form.
      * @param {Array<{itemHrid: string, count: number}>} queue - Items still short
      */
-    _startLabBuyAll(queue) {
-        this._labBuyQueue = queue.slice();
-        this._advanceLabBuyQueue();
+    /**
+     * A heading's "Buy all ▶" button for a walkable shortfall, or null when
+     * fewer than two rows are short — a single row's own link already does
+     * the job.
+     * @param {Array<{itemHrid: string, count: number, secondsLeft?: number}>} queue - Items short, in row order
+     * @returns {HTMLElement|null}
+     */
+    _buyAllButton(queue) {
+        if (!queue || queue.length < 2) return null;
+        const buyAll = document.createElement('button');
+        Object.assign(buyAll.style, {
+            background: 'rgba(255, 255, 255, 0.07)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: ROW_COLORS.gold,
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '1px 8px',
+        });
+        buyAll.textContent = 'Buy all ▶';
+        buyAll.title =
+            `${queue.length} items short. Opens each item's recommended buy form in turn — a floating ` +
+            'Next chip steps to the following item whenever you are ready. Nothing is bought until ' +
+            "the game's own confirm button is pressed.";
+        buyAll.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this._startBuyAll(queue);
+        });
+        return buyAll;
+    }
+
+    _startBuyAll(queue) {
+        this._buyQueue = queue.slice();
+        this._advanceBuyQueue();
     }
 
     /** Open the queue's next buy form and re-offer the chip for the one after */
-    _advanceLabBuyQueue() {
-        this._removeLabBuyChip();
-        const next = this._labBuyQueue?.shift();
+    _advanceBuyQueue() {
+        this._removeBuyChip();
+        const next = this._buyQueue?.shift();
         if (!next) return;
         // Priced at open time, not at queue time — the earlier buys in the
         // walk may themselves have moved the book
@@ -410,24 +449,25 @@ class ConsumablesPanel {
             count: next.count,
             ask,
             bid,
-            secondsLeft: Infinity,
+            // The lab has no running-out clock; combat rows pass their own
+            secondsLeft: Number.isFinite(next.secondsLeft) ? next.secondsLeft : Infinity,
             fillSeconds: this._fillSeconds(next.itemHrid, next.count),
             maxSpreadPct: this._buyNumber('market_consumableBuyMaxSpreadPct', 2),
             minSavingCoins: this._buyNumber('market_consumableBuyMinSaving', 0),
             minOrderValue: this._buyNumber('market_consumableBuyMinOrderValue', 0),
         });
         this._buy({ itemHrid: next.itemHrid }, next.count, strategy);
-        this._showLabBuyChip();
+        this._showBuyChip();
     }
 
     /** The floating "next item" chip; absent when the walk is done */
-    _showLabBuyChip() {
-        if (!this._labBuyQueue?.length) return;
-        const next = this._labBuyQueue[0];
+    _showBuyChip() {
+        if (!this._buyQueue?.length) return;
+        const next = this._buyQueue[0];
         const itemName = dataManager.getItemDetails?.(next.itemHrid)?.name || next.itemHrid.split('/').pop();
 
         const chip = document.createElement('div');
-        chip.id = LAB_BUY_CHIP_ID;
+        chip.id = BUY_CHIP_ID;
         Object.assign(chip.style, {
             position: 'fixed',
             bottom: '18px',
@@ -452,9 +492,9 @@ class ConsumablesPanel {
             fontSize: '12px',
             padding: '0',
         });
-        advance.textContent = `▶ Next: ${itemName} (${this._labBuyQueue.length} left)`;
+        advance.textContent = `▶ Next: ${itemName} (${this._buyQueue.length} left)`;
         advance.title = 'Open this item’s recommended buy form.';
-        advance.addEventListener('click', () => this._advanceLabBuyQueue());
+        advance.addEventListener('click', () => this._advanceBuyQueue());
 
         const dismiss = document.createElement('button');
         Object.assign(dismiss.style, {
@@ -468,16 +508,16 @@ class ConsumablesPanel {
         dismiss.textContent = '✕';
         dismiss.title = 'Stop here — the rest of the shortfall stays on the panel.';
         dismiss.addEventListener('click', () => {
-            this._labBuyQueue = [];
-            this._removeLabBuyChip();
+            this._buyQueue = [];
+            this._removeBuyChip();
         });
 
         chip.append(advance, dismiss);
         document.body.appendChild(chip);
     }
 
-    _removeLabBuyChip() {
-        document.getElementById(LAB_BUY_CHIP_ID)?.remove();
+    _removeBuyChip() {
+        document.getElementById(BUY_CHIP_ID)?.remove();
     }
 
     _create() {
@@ -659,10 +699,11 @@ class ConsumablesPanel {
                 Number(b.isDefault) - Number(a.isDefault) ||
                 (a.ordinal || 0) - (b.ordinal || 0)
         );
-        const loadout = combat[0];
-        if (!loadout) return null;
+        if (!combat.length) return null;
+        // The pinned loadout when it still exists, the default otherwise
+        const loadout = combat.find((snap) => snap.name === this._idleLoadoutName) || combat[0];
 
-        const sim = this._simRates || null;
+        const sim = this._idleRates();
         const itemMap = dataManager.getInitClientData?.()?.itemDetailMap;
         const inventory = dataManager.getInventory?.();
         const concentration = this._idleConcentration();
@@ -693,21 +734,43 @@ class ConsumablesPanel {
             marginBottom: '5px',
         });
         const name = document.createElement('span');
-        name.textContent = 'Idle plan — default loadout';
+        name.textContent = 'Idle plan';
         name.style.fontWeight = 'bold';
         name.style.color = COLORS.accent;
+
+        // Which loadout to plan for, and which simmed zone rates its food —
+        // both pinned, so the plan compares against the fight you intend
+        // rather than whatever happened to be simmed or equipped last
+        const loadoutPick = this._idleSelect(
+            combat.map((snap) => ({ value: snap.name, label: snap.isDefault ? `${snap.name} ★` : snap.name })),
+            loadout.name,
+            'Which combat loadout the idle plan is drawn from.',
+            (value) => {
+                this._idleLoadoutName = value;
+                storage.set('consumablesIdleLoadout', value, 'settings').catch(() => {});
+            }
+        );
+        const zonePick = this._idleSelect(
+            this._zoneOptions(),
+            this._idleZoneKey || 'last',
+            'Which simmed zone rates the food. Drinks are arithmetic and need no sim.',
+            (value) => {
+                this._idleZoneKey = value;
+                storage.set('consumablesIdleZone', value, 'settings').catch(() => {});
+            }
+        );
+
         const source = document.createElement('span');
         source.style.marginLeft = 'auto';
         source.style.color = COLORS.textDim;
         source.textContent = sim
-            ? `food rated from last sim (${dataManager.getInitClientData()?.actionDetailMap?.[sim.zoneHrid]?.name || sim.zoneHrid || 'unknown zone'})`
-            : 'food unrated — run a sim to rate it';
-        heading.append(name, source);
-        section.appendChild(heading);
-        section.appendChild(this._columnHeadings());
+            ? `food rated from sim (${this._zoneLabel(sim)})`
+            : this._idleZoneKey && this._idleZoneKey !== 'last'
+              ? 'pinned zone unsimmed — run a sim there to rate food'
+              : 'food unrated — run a sim to rate it';
 
-        for (const { itemHrid, perDay } of entries) {
-            const entry = forecast(
+        const forecasts = entries.map(({ itemHrid, perDay }) =>
+            forecast(
                 {
                     itemHrid,
                     itemName: dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop(),
@@ -716,10 +779,113 @@ class ConsumablesPanel {
                     consumedPerDay: perDay > 0 ? Math.ceil(perDay) : 0,
                 },
                 getItemPrices(itemHrid)
-            );
+            )
+        );
+        const shortfall = forecasts
+            .map((entry) => ({
+                ...refillFor(entry, this.target.seconds),
+                itemHrid: entry.itemHrid,
+                secondsLeft: entry.secondsLeft,
+            }))
+            .filter((item) => item.count > 0);
+        const buyAll = this._buyAllButton(shortfall);
+
+        heading.append(name, loadoutPick, zonePick, ...(buyAll ? [buyAll] : []), source);
+        section.appendChild(heading);
+        section.appendChild(this._columnHeadings());
+
+        for (const entry of forecasts) {
             section.appendChild(this._entryRow(entry, false));
         }
         return section;
+    }
+
+    /**
+     * The rates the idle plan's food is judged by: the pinned zone's sim when
+     * one is pinned and has been simmed, the latest sim otherwise. A pinned
+     * zone that has never been simmed rates nothing — silently borrowing
+     * another zone's appetite would defeat the pin.
+     * @returns {Object|null} A `{zoneHrid, difficultyTier, savedAt, perHour}` record
+     */
+    _idleRates() {
+        const key = this._idleZoneKey;
+        if (key && key !== 'last') return this._simRatesByZone?.[key] || null;
+        return this._simRates || null;
+    }
+
+    /**
+     * The zones there are sim rates for, newest first, behind "Last sim".
+     * @returns {Array<{value: string, label: string}>}
+     */
+    _zoneOptions() {
+        const byZone = this._simRatesByZone || {};
+        const options = [{ value: 'last', label: 'Last sim' }];
+        const keys = Object.keys(byZone).sort((a, b) => (byZone[b]?.savedAt || 0) - (byZone[a]?.savedAt || 0));
+        for (const key of keys) {
+            options.push({ value: key, label: this._zoneLabel(byZone[key]) });
+        }
+        // A pinned zone whose record was cleared still lists, so the pin is
+        // visible rather than silently reverting the dropdown to Last sim
+        if (this._idleZoneKey && this._idleZoneKey !== 'last' && !byZone[this._idleZoneKey]) {
+            options.push({
+                value: this._idleZoneKey,
+                label: `${this._idleZoneKey.split('|')[0].split('/').pop()} (unsimmed)`,
+            });
+        }
+        return options;
+    }
+
+    /**
+     * "Zone name · T2" for a rates record.
+     * @param {Object} rates - A `{zoneHrid, difficultyTier}` record
+     * @returns {string}
+     */
+    _zoneLabel(rates) {
+        const zoneName =
+            dataManager.getInitClientData?.()?.actionDetailMap?.[rates?.zoneHrid]?.name ||
+            rates?.zoneHrid?.split('/')?.pop() ||
+            'unknown zone';
+        const tier = Number(rates?.difficultyTier) || 0;
+        return tier > 0 ? `${zoneName} · T${tier}` : zoneName;
+    }
+
+    /**
+     * A heading-sized dropdown, styled like the runs button.
+     * @param {Array<{value: string, label: string}>} options - What to offer
+     * @param {string} selected - The current value
+     * @param {string} title - Hover text
+     * @param {Function} onChange - Given the new value; the panel re-renders after
+     * @returns {HTMLSelectElement}
+     */
+    _idleSelect(options, selected, title, onChange) {
+        const select = document.createElement('select');
+        Object.assign(select.style, {
+            background: 'rgba(255, 255, 255, 0.07)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.accent,
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '1px 4px',
+            maxWidth: '140px',
+        });
+        select.title = title;
+        for (const { value, label } of options) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = label;
+            // The game's dark theme does not reach native dropdown lists
+            option.style.background = '#101420';
+            option.style.color = COLORS.text;
+            select.appendChild(option);
+        }
+        select.value = selected;
+        select.addEventListener('click', (event) => event.stopPropagation());
+        select.addEventListener('change', () => {
+            onChange(select.value);
+            this._render();
+        });
+        return select;
     }
 
     /** Drink concentration off worn gear, for the idle plan's arithmetic rates */
@@ -851,30 +1017,9 @@ class ConsumablesPanel {
                 count: Math.max(0, Math.ceil(perRun * runs) - heldInInventory(inventory, itemHrid)),
             }))
             .filter((q) => q.count > 0);
-        if (queue.length > 1) {
-            const buyAll = document.createElement('button');
-            Object.assign(buyAll.style, {
-                background: 'rgba(255, 255, 255, 0.07)',
-                border: `1px solid ${COLORS.border}`,
-                borderRadius: '3px',
-                color: ROW_COLORS.gold,
-                cursor: 'pointer',
-                fontSize: '11px',
-                padding: '1px 8px',
-            });
-            buyAll.textContent = 'Buy all ▶';
-            buyAll.title =
-                `${queue.length} items short for ${runs} run${runs === 1 ? '' : 's'}. Opens each item's ` +
-                'recommended buy form in turn — a floating Next chip steps to the following item whenever ' +
-                "you are ready. Nothing is bought until the game's own confirm button is pressed.";
-            buyAll.addEventListener('click', (event) => {
-                event.stopPropagation();
-                this._startLabBuyAll(queue);
-            });
-            heading.append(name, runsBtn, buyAll);
-        } else {
-            heading.append(name, runsBtn);
-        }
+        const buyAll = this._buyAllButton(queue);
+        if (buyAll) heading.append(name, runsBtn, buyAll);
+        else heading.append(name, runsBtn);
         section.appendChild(heading);
 
         for (const { itemHrid, perRun } of needs) {
@@ -1006,6 +1151,18 @@ class ConsumablesPanel {
         const sides = costPerDaySides(player.forecasts);
         const need = refillAll(player.forecasts, this.target.seconds);
 
+        // What each row is short of — the list the marketplace tabs, the Buy
+        // all walk and the footer are all built from, worked out once so none
+        // of them can differ from the rows
+        const shortfall = player.forecasts
+            .map((entry) => ({
+                ...refillFor(entry, this.target.seconds),
+                itemHrid: entry.itemHrid,
+                name: entry.name,
+                secondsLeft: entry.secondsLeft,
+            }))
+            .filter((item) => item.count > 0);
+
         const heading = document.createElement('div');
         Object.assign(heading.style, {
             display: 'flex',
@@ -1033,19 +1190,17 @@ class ConsumablesPanel {
             stops.style.color = COLORS.textDim;
         }
 
-        heading.append(name, stops);
+        // Only your own shortfall is walkable — a party member's supplies are
+        // theirs to buy, so their sections stay read-only
+        const buyAll = player.isCurrent ? this._buyAllButton(shortfall) : null;
+        if (buyAll) heading.append(name, buyAll, stops);
+        else heading.append(name, stops);
         section.appendChild(heading);
 
         section.appendChild(this._columnHeadings());
         for (const entry of player.forecasts) {
             section.appendChild(this._entryRow(entry, entry === soonest));
         }
-
-        // What each row is short of, which is the list the marketplace tabs are
-        // built from — worked out here so the footer and the rows cannot differ
-        const shortfall = player.forecasts
-            .map((entry) => ({ ...refillFor(entry, this.target.seconds), itemHrid: entry.itemHrid, name: entry.name }))
-            .filter((item) => item.count > 0);
 
         section.appendChild(this._footer(sides, need, shortfall));
         return section;

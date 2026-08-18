@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The idle plan is pinnable, and every Consumables section gets the Buy all walk
+
+The Idle plan heading gains two dropdowns: which combat loadout to plan for (default-starred, no longer hardwired to the default) and which simmed zone-and-tier rates its food — sims now file their measured rates per zone, so pinning "this zone at this tier" keeps that rating even as other zones are simmed. A pinned zone that has never been simmed says so instead of borrowing another zone's appetite. The Buy all walk added for the lab now also sits on your own combat section and the idle plan whenever two or more rows are short.
+
 ### The Consumables panel's lab shortfall gets a Buy all walk, and sim rates land without a reload
 
 "Buy all ▶" on the Labyrinth heading walks the whole shortfall the way the Bulk Sell Assistant walks sell forms, in reverse: each step opens one item's recommended buy form, and a floating Next chip steps to the following item on your click — one click, one form, nothing bought until the game's own confirm. The panel also re-reads the sim's measured consumable rates (and the run ledger) every time it opens, so a just-finished sim rates the idle plan's food immediately instead of after the next page load.

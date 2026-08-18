@@ -3673,16 +3673,22 @@ class CombatSimUI {
                 if (Number(count) > 0) perHour[itemHrid] = Number(count) / simHours;
             }
             if (!Object.keys(perHour).length) return;
-            writeScoped(
-                'simConsumableRates',
-                {
-                    zoneHrid: simResult.zoneName || null,
-                    difficultyTier: simResult.difficultyTier ?? 0,
-                    savedAt: Date.now(),
-                    perHour,
-                },
-                'combatExport'
-            ).catch(() => {});
+            const record = {
+                zoneHrid: simResult.zoneName || null,
+                difficultyTier: simResult.difficultyTier ?? 0,
+                savedAt: Date.now(),
+                perHour,
+            };
+            writeScoped('simConsumableRates', record, 'combatExport').catch(() => {});
+            // Also filed under the zone itself, so the Consumables panel can
+            // pin "always rate my food from this zone at this tier" and keep
+            // that rating across sims of other zones
+            const zoneKey = `${record.zoneHrid || 'unknown'}|${record.difficultyTier}`;
+            readScoped('simConsumableRatesByZone', 'combatExport', {})
+                .then((byZone) =>
+                    writeScoped('simConsumableRatesByZone', { ...(byZone || {}), [zoneKey]: record }, 'combatExport')
+                )
+                .catch(() => {});
         } catch (error) {
             console.error('[CombatSimUI] Persisting consumable rates failed:', error);
         }
