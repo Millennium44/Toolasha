@@ -108,6 +108,7 @@ vi.mock('../../core/storage.js', () => ({
 }));
 
 const { default: labyrinthClearRate } = await import('./labyrinth-clear-rate.js');
+const { default: configMock } = await import('../../core/config.js');
 
 describe('normalizeChance', () => {
     test('passes through ratios and converts percent-form values', () => {
@@ -1673,6 +1674,18 @@ describe('the live clear chance on the attempt bar', () => {
         mMap: { 0: { cHP: Math.round(2000 * monsterFraction), mHP: 2000 } },
     });
 
+    /** A sparse delta carrying only the player — about a fifth of real ticks do */
+    const playerTick = (playerFraction, atkCounter) => ({
+        battleId: 'b1',
+        pMap: { 0: { cHP: Math.round(1000 * playerFraction), mHP: 1000, cMP: 500, mMP: 500, atkCounter } },
+    });
+
+    /** ...and one carrying only the monster */
+    const monsterTick = (monsterFraction) => ({
+        battleId: 'b1',
+        mMap: { 0: { cHP: Math.round(2000 * monsterFraction), mHP: 2000 } },
+    });
+
     const liveText = () => document.querySelector(LIVE_SELECTOR)?.textContent || '';
 
     beforeEach(() => {
@@ -1683,16 +1696,28 @@ describe('the live clear chance on the attempt bar', () => {
         labyrinthClearRate._fight = null;
         labyrinthClearRate._replay = null;
         labyrinthClearRate._liveCombatDrawnAt = 0;
+        labyrinthClearRate._liveNodeMaxWidth = 0;
+        labyrinthClearRate._headerReadoutText = {};
         labyrinthClearRate.roomData = null;
         labyrinthClearRate._pathData = null;
     });
 
     afterEach(() => {
+        if (labyrinthClearRate._liveCombatTimeout) {
+            clearTimeout(labyrinthClearRate._liveCombatTimeout);
+            labyrinthClearRate._liveCombatTimeout = null;
+        }
+        if (labyrinthClearRate.liveProgressTimeout) {
+            clearTimeout(labyrinthClearRate.liveProgressTimeout);
+            labyrinthClearRate.liveProgressTimeout = null;
+        }
         vi.useRealTimers();
         document.body.innerHTML = '';
         labyrinthClearRate._fight = null;
         labyrinthClearRate._replay = null;
         labyrinthClearRate._liveCombatDrawnAt = 0;
+        labyrinthClearRate._liveNodeMaxWidth = 0;
+        labyrinthClearRate._headerReadoutText = {};
         labyrinthClearRate.roomData = null;
         labyrinthClearRate._pathData = null;
     });
@@ -1732,7 +1757,10 @@ describe('the live clear chance on the attempt bar', () => {
         for (const step of lumpy) {
             runTicks([step]);
             const text = liveText();
-            if (text) shown.push(text.replace(/\|.*$/, '').trim());
+            // Before MIN_ELAPSED_SECONDS the node now holds a placeholder
+            // instead of clearing; only quoted chances belong to this check
+            expect(text).toBeTruthy();
+            if (!text.includes('…')) shown.push(text.replace(/\|.*$/, '').trim());
         }
 
         expect(shown.length).toBeGreaterThan(2);
@@ -1822,6 +1850,198 @@ describe('the live clear chance on the attempt bar', () => {
         runTicks([[0.38, 0.68]]);
 
         expect(liveText()).toContain('Clear ~63%');
+    });
+
+    /** Full ticks from full health, past MIN_ELAPSED so a chance is quoted */
+    function openFight() {
+        runTicks([
+            [1, 1],
+            [0.9, 0.95],
+            [0.8, 0.9],
+            [0.7, 0.85],
+            [0.6, 0.8],
+            [0.5, 0.75],
+            [0.4, 0.7],
+        ]);
+    }
+
+    test('a player-only delta keeps the node up, refreshes the stale timer, and retains the monster', () => {
+        buildActionBar();
+        openFight();
+        const node = document.querySelector(LIVE_SELECTOR);
+        expect(node).not.toBeNull();
+
+        // Twelve seconds of player-only ticks, each inside the 5s stale window:
+        // every one must refresh the timer or the readout expires mid-fight
+        for (let i = 1; i <= 3; i++) {
+            vi.advanceTimersByTime(4000);
+            labyrinthClearRate._liveCombatDrawnAt = 0;
+            labyrinthClearRate.onBattleUpdated(playerTick(0.7 - i * 0.05, ++atk));
+        }
+
+        expect(document.querySelector(LIVE_SELECTOR)).toBe(node);
+        expect(labyrinthClearRate._fight.lastPlayer.cHP).toBe(550);
+        // The monster's side carried over from the last tick that had it
+        expect(labyrinthClearRate._fight.lastMonster.cHP).toBe(800);
+        expect(liveText()).toBeTruthy();
+    });
+
+    test('a monster-only delta does the same for the other side', () => {
+        buildActionBar();
+        openFight();
+        const node = document.querySelector(LIVE_SELECTOR);
+
+        for (let i = 1; i <= 3; i++) {
+            vi.advanceTimersByTime(4000);
+            labyrinthClearRate._liveCombatDrawnAt = 0;
+            labyrinthClearRate.onBattleUpdated(monsterTick(0.4 - i * 0.05));
+        }
+
+        expect(document.querySelector(LIVE_SELECTOR)).toBe(node);
+        expect(labyrinthClearRate._fight.lastMonster.cHP).toBe(500);
+        expect(labyrinthClearRate._fight.lastPlayer.cHP).toBe(700);
+        expect(liveText()).toBeTruthy();
+    });
+
+    test('alternating single-unit deltas update one node in place, with zero removals', () => {
+        buildActionBar();
+        openFight();
+        const node = document.querySelector(LIVE_SELECTOR);
+        const removeSpy = vi.spyOn(node, 'remove');
+
+        const texts = new Set([node.textContent]);
+        let monsterFraction = 0.4;
+        let playerFraction = 0.7;
+        for (let i = 0; i < 6; i++) {
+            vi.advanceTimersByTime(1000);
+            labyrinthClearRate._liveCombatDrawnAt = 0;
+            const data =
+                i % 2 === 0 ? monsterTick((monsterFraction -= 0.04)) : playerTick((playerFraction -= 0.03), ++atk);
+            labyrinthClearRate.onBattleUpdated(data);
+            expect(document.querySelectorAll(LIVE_SELECTOR)).toHaveLength(1);
+            expect(document.querySelector(LIVE_SELECTOR)).toBe(node);
+            texts.add(node.textContent);
+        }
+
+        expect(removeSpy).not.toHaveBeenCalled();
+        // The text moved (the room clock alone ticks every draw) — in place
+        expect(texts.size).toBeGreaterThan(1);
+    });
+
+    test('the first seconds show a placeholder in a stable node instead of blinking', () => {
+        buildActionBar();
+        runTicks([[1, 1]]);
+        const node = document.querySelector(LIVE_SELECTOR);
+        expect(node).not.toBeNull();
+        expect(node.textContent).toContain('Clear …');
+
+        runTicks([
+            [0.97, 0.99],
+            [0.95, 0.97],
+        ]);
+        expect(document.querySelectorAll(LIVE_SELECTOR)).toHaveLength(1);
+        expect(document.querySelector(LIVE_SELECTOR)).toBe(node);
+        expect(node.textContent).toContain('Clear …');
+    });
+
+    test('new_battle starts a fresh attempt record without duplicate nodes', () => {
+        buildActionBar();
+        openFight();
+        const oldStart = labyrinthClearRate._fight.startedAt;
+        labyrinthClearRate._liveNodeMaxWidth = 57;
+
+        vi.advanceTimersByTime(1000);
+        labyrinthClearRate.onNewBattle({
+            battleId: 'b1',
+            monsters: [{ hrid: '/monsters/mimic', maxHitpoints: 2000, currentHitpoints: 2000 }],
+            players: [{ maxHitpoints: 1000, currentHitpoints: 820 }],
+        });
+
+        const fight = labyrinthClearRate._fight;
+        expect(fight.startedAt).toBeGreaterThan(oldStart);
+        expect(fight.caughtStart).toBe(true);
+        expect(fight.firstMonsterFraction).toBe(1);
+        expect(fight.firstPlayerFraction).toBeCloseTo(0.82, 9);
+        // New fight, new monster name: the width ratchet starts over
+        expect(labyrinthClearRate._liveNodeMaxWidth).toBe(0);
+
+        // The next tick continues the seeded attempt rather than re-baselining
+        runTicks([[0.99, 0.81]]);
+        expect(labyrinthClearRate._fight).toBe(fight);
+        expect(document.querySelectorAll(LIVE_SELECTOR)).toHaveLength(1);
+    });
+
+    test('the width ratchet survives sparse ticks and a header rerender, and resets on the stale boundary', () => {
+        buildActionBar();
+        openFight();
+        // happy-dom measures scrollWidth as 0, so pin a width the fight earned
+        labyrinthClearRate._liveNodeMaxWidth = 57;
+
+        vi.advanceTimersByTime(1000);
+        labyrinthClearRate._liveCombatDrawnAt = 0;
+        labyrinthClearRate.onBattleUpdated(monsterTick(0.38));
+        const node = document.querySelector(LIVE_SELECTOR);
+        expect(labyrinthClearRate._liveNodeMaxWidth).toBe(57);
+        expect(node.style.minWidth).toBe('57px');
+
+        // The game rerender swallows the node mid-throttle; the next tick
+        // re-seats it with the text and width it had, without a fresh draw
+        const before = node.textContent;
+        node.remove();
+        vi.advanceTimersByTime(200);
+        labyrinthClearRate.onBattleUpdated(monsterTick(0.36));
+        const restored = document.querySelector(LIVE_SELECTOR);
+        expect(restored).not.toBeNull();
+        expect(restored.textContent).toBe(before);
+        expect(restored.style.minWidth).toBe('57px');
+
+        // Ticks stopping is a real boundary: readout down, ratchet reset
+        vi.advanceTimersByTime(5001);
+        expect(document.querySelector(LIVE_SELECTOR)).toBeNull();
+        expect(labyrinthClearRate._liveNodeMaxWidth).toBe(0);
+    });
+
+    test('a tick with the setting off takes the readout down at once', () => {
+        buildActionBar();
+        openFight();
+        expect(document.querySelector(LIVE_SELECTOR)).not.toBeNull();
+
+        configMock.getSetting.mockReturnValueOnce(false);
+        vi.advanceTimersByTime(1000);
+        labyrinthClearRate._liveCombatDrawnAt = 0;
+        labyrinthClearRate.onBattleUpdated(tick(0.35, 0.65, ++atk));
+
+        expect(document.querySelector(LIVE_SELECTOR)).toBeNull();
+    });
+
+    test('the skilling readout lost to a header rerender is restored on the next progress message', () => {
+        buildActionBar('Labyrinth - Cheesesmithing');
+        const progress = {
+            targetLevel: null,
+            successRate: 0.8,
+            doubleProgressChance: 0.1,
+            actionTimeMs: 10000,
+            actionCounter: 2,
+            currentWorkValue: 30,
+            targetWorkValue: 100,
+            progressPerAction: 10,
+        };
+
+        labyrinthClearRate.refreshLiveProgress(progress);
+        const node = document.querySelector('.mwi-labyrinth-live-progress');
+        expect(node).not.toBeNull();
+        const before = node.textContent;
+        expect(before).toContain('Clear');
+
+        // The header rerender wipes the span; the next message — even one the
+        // math cannot use — re-seats it with the text it showed
+        node.remove();
+        labyrinthClearRate.refreshLiveProgress({ ...progress, targetWorkValue: 0 });
+        const restored = document.querySelector('.mwi-labyrinth-live-progress');
+        expect(restored).not.toBeNull();
+        expect(restored.textContent).toBe(before);
+
+        labyrinthClearRate.clearLiveProgress();
     });
 });
 

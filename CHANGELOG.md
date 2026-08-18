@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab live clear readout: one steady node instead of once-a-second flicker
+
+The in-header live clear-chance readout treated every sparse combat tick as a full snapshot and tore itself down whenever a tick carried only one side (~1 in 5 ticks), flashing and shifting the header — especially on mobile. It now keeps last-known state per side, updates one persistent node in place with tabular numerals and a preserved width reservation, shows a placeholder during the opening seconds instead of blinking, and resets only on real boundaries (`new_battle`, fight end, leaving, stale timeout, or the setting turning off). The skilling progress readout shares the same node-ensure helper, so a game header rerender restores either readout with its last text instead of blanking it.
+
 ### Trial exports: mana history survives refreshes, and exports say what produced them
 
 The recorder's persisted snapshots now carry each player's mana metrics (spent, restored, dry spells, time at zero), lowest-health fraction and cast counts alongside deaths, so the mana story survives a refresh instead of living only in the in-memory breakdown. The trial export file is now stamped with a format name, schema version, script version, host and test-server flag.

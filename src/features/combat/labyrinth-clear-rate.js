@@ -90,6 +90,15 @@ const PREVIEW_WATCHDOG_MS = 500;
 const TILE_BADGE_CLASS = 'mwi-labyrinth-tile-badge';
 const ATTEMPT_BADGE_CLASS = 'mwi-labyrinth-attempt-badge';
 const LIVE_COMBAT_CLASS = 'mwi-labyrinth-live-combat';
+// inline-block + never-shrinking min-width so the readout keeps a stable
+// footprint: the clear band flipping between "75–100%?" and "100%" (and the
+// seconds ticking down) otherwise changes this element's width every second
+// and reflows the whole centered header — most visibly on mobile.
+// tabular-nums so the ticking digits themselves hold their width.
+const LIVE_COMBAT_CSS =
+    'color:#fff; font-size:0.875rem; display:inline-block; text-align:left; white-space:nowrap; ' +
+    'font-variant-numeric:tabular-nums;';
+const LIVE_PROGRESS_CSS = 'color:#fff; font-size:0.875rem;';
 /** Combat ticks arrive ~3/s, so this only expires once the fight is over */
 const LIVE_COMBAT_STALE_MS = 5000;
 /** Ticks are far faster than anyone reads; the readout is drawn at this rate */
@@ -136,9 +145,14 @@ class LabyrinthClearRate {
         this._fight = null;
         this._liveCombatTimeout = null;
         this._liveCombatDrawnAt = 0;
+        this._liveNodeMaxWidth = 0;
+        // Last text each header readout showed, keyed by node class, so a node
+        // the game's own rerender discarded is restored with what it said
+        this._headerReadoutText = {};
         this._replay = null;
         this._replayRunning = false;
         this.battleHandler = null;
+        this.newBattleHandler = null;
         this._previewAnchor = null;
         this._previewWatchdog = null;
         this._previewScrollHandler = null;
@@ -187,6 +201,9 @@ class LabyrinthClearRate {
 
         this.battleHandler = (data) => this.onBattleUpdated(data);
         webSocketHook.on('battle_updated', this.battleHandler);
+
+        this.newBattleHandler = (data) => this.onNewBattle(data);
+        webSocketHook.on('new_battle', this.newBattleHandler);
 
         // The room log shows fights beside the rate that was predicted for them,
         // and owns none of that: the sims and the fight record both live here.
@@ -351,6 +368,11 @@ class LabyrinthClearRate {
         if (this.battleHandler) {
             webSocketHook.off('battle_updated', this.battleHandler);
             this.battleHandler = null;
+        }
+
+        if (this.newBattleHandler) {
+            webSocketHook.off('new_battle', this.newBattleHandler);
+            this.newBattleHandler = null;
         }
 
         this.clearLiveProgress();
@@ -1561,15 +1583,41 @@ class LabyrinthClearRate {
 
     /**
      * Track a labyrinth fight and show the odds of clearing it.
+     *
+     * battle_updated is a sparse delta — around a fifth of real ticks carry
+     * only one side. A missing unit means unchanged, never fight over: each
+     * tick is merged into the last-known unit state, and the readout only
+     * comes down on a real boundary (fight left, ticks gone stale, a new
+     * battle, the setting turned off) — a thin tick must not remove it.
+     *
      * @param {Object} data - battle_updated payload
      */
     onBattleUpdated(data) {
-        if (!config.getSetting('labyrinthLiveProgress')) return;
-
-        const player = data?.pMap?.['0'];
-        const monster = data?.mMap?.['0'];
-        if (!player || !monster || !(monster.mHP > 0) || !(player.mHP > 0) || !this.inLabyrinthFight()) {
+        if (!config.getSetting('labyrinthLiveProgress')) {
+            // Turned off mid-fight, the readout comes down now — not whenever
+            // the stale timer would have got round to it
             this.clearLiveCombat();
+            return;
+        }
+        if (!this.inLabyrinthFight()) {
+            this.clearLiveCombat();
+            return;
+        }
+
+        const fight = this._fight;
+        const tickPlayer = data?.pMap?.['0'];
+        const tickMonster = data?.mMap?.['0'];
+        const player = tickPlayer ? { ...fight?.lastPlayer, ...tickPlayer } : fight?.lastPlayer || null;
+        const monster = tickMonster ? { ...fight?.lastMonster, ...tickMonster } : fight?.lastMonster || null;
+
+        // A tick the merge cannot make a whole fight out of cannot open one —
+        // and must not close one either. For an open fight it is still a
+        // heartbeat: the stale timer refreshes and the node stays put.
+        if (!player || !monster || !(monster.mHP > 0) || !(player.mHP > 0)) {
+            if (fight) {
+                this._armLiveCombatStaleTimer();
+                this._ensureLiveCombatNode();
+            }
             return;
         }
 
@@ -1577,12 +1625,11 @@ class LabyrinthClearRate {
         // signal: an attack counter that reset, a monster maximum that changed,
         // or the monster's health leaping back to full. That last one counts only
         // the spawn's jump from low to full, not the bump a self-healing monster
-        // gives itself mid-fight — see isFreshLabyrinthFight. Without a boundary at
-        // all, retrying a room kept the previous attempt's record: a start time
-        // minutes old, and a rate so slow it read as no chance.
-        const fight = this._fight;
+        // gives itself mid-fight — see isFreshLabyrinthFight. new_battle is the
+        // announced boundary (onNewBattle); this heuristic covers fights joined
+        // mid-stream and whatever the socket never announced.
         const isNewFight = isFreshLabyrinthFight(fight, {
-            battleId: data.battleId,
+            battleId: data.battleId ?? fight?.battleId,
             monsterMaxHp: monster.mHP,
             monsterHp: monster.cHP,
             atkCounter: Number(player.atkCounter) || 0,
@@ -1590,7 +1637,7 @@ class LabyrinthClearRate {
 
         if (isNewFight) {
             this._fight = {
-                battleId: data.battleId,
+                battleId: data.battleId ?? fight?.battleId,
                 monsterMaxHp: monster.mHP,
                 startedAt: Date.now(),
                 // Rates are measured from here, wherever "here" is. Only a fight
@@ -1602,6 +1649,8 @@ class LabyrinthClearRate {
                 firstPlayerFraction: player.cHP / player.mHP,
             };
         }
+        this._fight.lastPlayer = player;
+        this._fight.lastMonster = monster;
         this._fight.lastMonsterHp = monster.cHP;
         this._fight.lastAtkCounter = Number(player.atkCounter) || 0;
 
@@ -1644,35 +1693,42 @@ class LabyrinthClearRate {
             observedSeconds,
             elapsedSeconds: started.caughtStart ? observedSeconds : 0,
         });
-        if (!text) {
-            this.clearLiveCombat();
-            return;
-        }
 
         // battle_updated stops arriving the moment the fight ends, and nothing
         // else would take the readout down — so it expires itself. Refreshed
         // before the redraw throttle, because a tick we chose not to draw is
         // still the fight telling us it is alive.
-        if (this._liveCombatTimeout) clearTimeout(this._liveCombatTimeout);
-        this._liveCombatTimeout = setTimeout(() => this.clearLiveCombat(), LIVE_COMBAT_STALE_MS);
+        this._armLiveCombatStaleTimer();
 
         // Ticks arrive several times a second and the estimate moves on every
         // one of them, which reads as flicker rather than as information. Nobody
         // is deciding anything on the difference between two readings a third of
-        // a second apart, so only one per second is drawn.
+        // a second apart, so only one per second is drawn. A skipped draw still
+        // re-seats the node: the game re-rendering the header takes the span
+        // with it, and the next tick is the repair.
         const now = Date.now();
-        if (this._liveCombatDrawnAt && now - this._liveCombatDrawnAt < LIVE_COMBAT_REDRAW_MS) return;
+        if (this._liveCombatDrawnAt && now - this._liveCombatDrawnAt < LIVE_COMBAT_REDRAW_MS) {
+            this._ensureLiveCombatNode();
+            return;
+        }
         this._liveCombatDrawnAt = now;
 
-        const clock = estimate.timerKnown ? ` | ${Math.round(estimate.remainingSeconds)}s left` : '';
+        const clock = estimate?.timerKnown ? ` | ${Math.round(estimate.remainingSeconds)}s left` : '';
+        if (!text) {
+            // Before MIN_ELAPSED_SECONDS there is no chance worth quoting. A
+            // placeholder holds the slot instead of blinking the node in and
+            // out at every fight's start.
+            this.renderLiveNode(` [Clear …${clock}]`, ['Sizing up this fight — too early to quote a chance']);
+            return;
+        }
         this.renderLiveNode(
             ` [${text}${clock}]`,
             [
                 `You ${player.cHP}/${player.mHP} · ${monster.cHP}/${monster.mHP} monster`,
-                Number.isFinite(estimate.killSeconds)
+                Number.isFinite(estimate?.killSeconds)
                     ? `Kill in ~${Math.round(estimate.killSeconds)}s`
                     : 'Not killing it',
-                Number.isFinite(estimate.deathSeconds)
+                Number.isFinite(estimate?.deathSeconds)
                     ? `Dead in ~${Math.round(estimate.deathSeconds)}s`
                     : 'Taking no damage',
                 fresh
@@ -1682,8 +1738,8 @@ class LabyrinthClearRate {
                     ? `Latest reading ${(estimate.clearChance * 100).toFixed(0)}%, averaged to ` +
                       `${(display.smoothed * 100).toFixed(0)}% — health arrives in lumps, so a single reading swings`
                     : '',
-                fresh ? `Extrapolated from health lost: ${(estimate.clearChance * 100).toFixed(0)}%` : '',
-                estimate.timerKnown
+                fresh && estimate ? `Extrapolated from health lost: ${(estimate.clearChance * 100).toFixed(0)}%` : '',
+                estimate?.timerKnown
                     ? `${Math.round(estimate.remainingSeconds)}s left on the room timer`
                     : 'Joined this fight in progress, so the room timer is unknown and left out',
                 fresh
@@ -1818,7 +1874,55 @@ class LabyrinthClearRate {
             });
     }
 
-    /** Drop the combat readout and forget the fight it described */
+    /**
+     * A new battle is the boundary the socket announces outright, where the
+     * tick heuristic only ever infers one. The old readout comes down and the
+     * fight record restarts, seeded from the snapshot where it carries enough
+     * to seed from — a battle announced at its start has a knowable clock.
+     * @param {Object} data - new_battle payload
+     */
+    onNewBattle(data) {
+        if (!config.getSetting('labyrinthLiveProgress')) return;
+        this.clearLiveCombat();
+        this._fight = null;
+        if (!this.inLabyrinthFight()) return;
+
+        const monsters = Array.isArray(data?.monsters) ? data.monsters : Object.values(data?.monsters || {});
+        const monsterMaxHp = Number(monsters[0]?.maxHitpoints ?? monsters[0]?.combatDetails?.maxHitpoints);
+        if (!(monsterMaxHp > 0)) return; // the first tick opens the fight instead
+        const monsterHp = Number(monsters[0]?.currentHitpoints ?? monsters[0]?.combatDetails?.currentHitpoints);
+        const players = Array.isArray(data?.players) ? data.players : Object.values(data?.players || {});
+        const playerMaxHp = Number(players[0]?.maxHitpoints ?? players[0]?.combatDetails?.maxHitpoints);
+        const playerHp = Number(players[0]?.currentHitpoints ?? players[0]?.combatDetails?.currentHitpoints);
+
+        this._fight = {
+            battleId: data?.battleId,
+            monsterMaxHp,
+            startedAt: Date.now(),
+            caughtStart: true,
+            firstMonsterFraction: monsterHp > 0 ? Math.min(1, monsterHp / monsterMaxHp) : 1,
+            firstPlayerFraction: playerMaxHp > 0 && playerHp > 0 ? Math.min(1, playerHp / playerMaxHp) : 1,
+            lastMonsterHp: monsterHp > 0 ? monsterHp : monsterMaxHp,
+            lastAtkCounter: 0,
+        };
+    }
+
+    /**
+     * (Re)start the countdown that takes the combat readout down once ticks
+     * stop arriving — every tick of an open fight is a heartbeat, whether or
+     * not it carried anything worth drawing.
+     */
+    _armLiveCombatStaleTimer() {
+        if (this._liveCombatTimeout) clearTimeout(this._liveCombatTimeout);
+        this._liveCombatTimeout = setTimeout(() => this.clearLiveCombat(), LIVE_COMBAT_STALE_MS);
+    }
+
+    /**
+     * Drop the combat readout and forget the fight it described. Only called
+     * on real boundaries — fight left, stale timeout, new battle, the setting
+     * turned off, teardown. A tick with nothing usable for an open fight takes
+     * the soft path in onBattleUpdated instead, which keeps node and width.
+     */
     clearLiveCombat() {
         if (this._liveCombatTimeout) {
             clearTimeout(this._liveCombatTimeout);
@@ -1828,7 +1932,59 @@ class LabyrinthClearRate {
         this._liveCombatDrawnAt = 0;
         // The next fight's readout starts sizing itself from scratch.
         this._liveNodeMaxWidth = 0;
+        delete this._headerReadoutText[LIVE_COMBAT_CLASS];
         document.querySelectorAll(`.${LIVE_COMBAT_CLASS}`).forEach((el) => el.remove());
+    }
+
+    /**
+     * The header slot beside the action name that both live readouts write
+     * into, looked up and repaired in one place so the combat and skilling
+     * paths cannot diverge. The game re-rendering the header silently discards
+     * the span; re-creating it here restores the last text it showed, so the
+     * repair does not wait for the next full redraw. Ensure-on-update, not a
+     * MutationObserver — see _previewWatchdogTick for why this file asks
+     * instead of watching.
+     * @param {string} className - The readout's own class
+     * @param {string} cssText - The readout's own style
+     * @returns {HTMLElement|null} The attached node, or null without a header
+     */
+    _ensureHeaderReadout(className, cssText) {
+        const host =
+            document.querySelector("div[class*='Header_actionName'] div[class*='Header_displayName']") ||
+            document.querySelector("div[class*='Header_actionName']");
+        if (!host) return null;
+
+        let node = host.querySelector(`.${className}`);
+        if (!node) {
+            node = document.createElement('span');
+            node.className = className;
+            node.style.cssText = cssText;
+            const last = this._headerReadoutText[className];
+            if (last) {
+                node.textContent = last.text;
+                node.title = last.title;
+            }
+            host.appendChild(node);
+        }
+        return node;
+    }
+
+    /** Write a readout and remember it, so _ensureHeaderReadout can restore it */
+    _writeHeaderReadout(node, text, title) {
+        node.textContent = text;
+        node.title = title;
+        this._headerReadoutText[node.className] = { text, title };
+    }
+
+    /**
+     * Re-seat the combat readout without redrawing it, keeping the reserved
+     * width the fight has earned so far.
+     * @returns {HTMLElement|null} The attached node, or null without a header
+     */
+    _ensureLiveCombatNode() {
+        const node = this._ensureHeaderReadout(LIVE_COMBAT_CLASS, LIVE_COMBAT_CSS);
+        if (node && this._liveNodeMaxWidth > 0) node.style.minWidth = `${this._liveNodeMaxWidth}px`;
+        return node;
     }
 
     /**
@@ -1839,26 +1995,9 @@ class LabyrinthClearRate {
      * @param {string[]} tooltipLines - Hover detail
      */
     renderLiveNode(text, tooltipLines) {
-        const host =
-            document.querySelector("div[class*='Header_actionName'] div[class*='Header_displayName']") ||
-            document.querySelector("div[class*='Header_actionName']");
-        if (!host) return;
-
-        let node = host.querySelector(`.${LIVE_COMBAT_CLASS}`);
-        if (!node) {
-            node = document.createElement('span');
-            node.className = LIVE_COMBAT_CLASS;
-            // inline-block + never-shrinking min-width so the readout keeps a
-            // stable footprint: the clear band flipping between "75–100%?" and
-            // "100%" (and the seconds ticking down) otherwise changes this
-            // element's width every second and reflows the whole centered
-            // header — most visibly on mobile.
-            node.style.cssText =
-                'color:#fff; font-size:0.875rem; display:inline-block; text-align:left; white-space:nowrap;';
-            host.appendChild(node);
-        }
-        node.textContent = text;
-        node.title = tooltipLines.join('\n');
+        const node = this._ensureLiveCombatNode();
+        if (!node) return;
+        this._writeHeaderReadout(node, text, tooltipLines.join('\n'));
 
         // Grow the reserved width to the widest content seen this fight, and
         // never shrink it — measured at min-width:0, then pinned to the max, so
@@ -1964,32 +2103,23 @@ class LabyrinthClearRate {
         const staleMs = Math.max(LIVE_PROGRESS_STALE_MS, actionTimeMs * 2 + 2000);
         this.liveProgressTimeout = setTimeout(() => this.clearLiveProgress(), staleMs);
 
+        // Seated before the estimate guard: a game rerender that swallowed the
+        // node is repaired — with the last text it showed — even by a progress
+        // message the math cannot use.
+        const node = this._ensureHeaderReadout(LIVE_PROGRESS_CLASS, LIVE_PROGRESS_CSS);
+        if (!node) return;
+
         const estimate = this.computeLiveEstimate(progress);
         if (!estimate) return;
-
-        const host =
-            document.querySelector("div[class*='Header_actionName'] div[class*='Header_displayName']") ||
-            document.querySelector("div[class*='Header_actionName']");
-        if (!host) return;
-
-        let node = host.querySelector(`.${LIVE_PROGRESS_CLASS}`);
-        if (!node) {
-            node = document.createElement('span');
-            node.className = LIVE_PROGRESS_CLASS;
-            node.style.cssText = 'color:#fff; font-size:0.875rem;';
-            host.appendChild(node);
-        }
 
         const chancePct = (estimate.clearChance * 100).toFixed(1);
         const actionText = estimate.actionCounter > 0 ? ` | #${estimate.actionCounter}` : '';
         // Only past the first, since every room is on its first try until it is not
         const tries = this.currentRoomAttempts();
         const tryText = tries > 1 ? ` | Attempt #${tries}` : '';
-        if (estimate.isEnhancing) {
-            node.textContent = ` [Clear ${chancePct}% | +${estimate.currentLevel}/+${estimate.targetLevel} | ${estimate.attemptsLeft} left${actionText}${tryText}]`;
-        } else {
-            node.textContent = ` [Clear ${chancePct}% | ${estimate.attemptsLeft} left${actionText}${tryText}]`;
-        }
+        const text = estimate.isEnhancing
+            ? ` [Clear ${chancePct}% | +${estimate.currentLevel}/+${estimate.targetLevel} | ${estimate.attemptsLeft} left${actionText}${tryText}]`
+            : ` [Clear ${chancePct}% | ${estimate.attemptsLeft} left${actionText}${tryText}]`;
 
         const tooltipLines = [
             `Success: ${(estimate.successChance * 100).toFixed(1)}% | Double: ${(estimate.doubleChance * 100).toFixed(1)}%`,
@@ -2001,7 +2131,7 @@ class LabyrinthClearRate {
         } else {
             tooltipLines.push(`Progress: ${estimate.currentWorkValue}/${estimate.targetWorkValue}`);
         }
-        node.title = tooltipLines.join('\n');
+        this._writeHeaderReadout(node, text, tooltipLines.join('\n'));
     }
 
     /**
@@ -2012,6 +2142,7 @@ class LabyrinthClearRate {
             clearTimeout(this.liveProgressTimeout);
             this.liveProgressTimeout = null;
         }
+        delete this._headerReadoutText[LIVE_PROGRESS_CLASS];
         document.querySelectorAll(`.${LIVE_PROGRESS_CLASS}`).forEach((el) => el.remove());
     }
 
