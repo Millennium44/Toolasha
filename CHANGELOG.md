@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial Abilities panel: every participant's kit and party-wide aura coverage
+
+A new Abilities panel on the trials controls shows each trial participant's equipped abilities as Battle Info sheets are captured, one per player per one-hour trial (tier changes, slot reshuffles and deaths never invalidate a capture — players are keyed by character id). An "Equipped aura coverage" section names the highest equipped copy of each aura and its provider, flags redundant copies, and declares an aura MISSING only once every current participant has an authoritative capture — before that it reads Unknown, so a partial capture can never claim an aura is absent. The coverage-aware snapshot rides in the trial export.
+
 ### Lab fight recorder: fights measured from their battle-start snapshot, with damage reconciliation
 
 The per-room fight recorder now opens each attempt on the game's `new_battle` snapshot instead of the first compact tick, so the opening hit is counted rather than silently becoming the baseline (a real capture showed 2.5% of monster damage missing this way). Sparse ticks carrying only one side now merge into the retained fight state instead of being skipped (~20% of ticks were dropped from hit attribution). Each attempt stores start HP, monster self-healing, an unattributed-damage residual reconciling summed events against HP endpoints, explicit timing boundaries (duration no longer bills up to 4s of retry delay), and a completeness flag — fights cut off by leaving the room or stopping the feature stay out of duration/DPS aggregates, and the replay check prefers reconciled endpoint totals while reporting how many fights it dropped and why.
