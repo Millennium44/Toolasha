@@ -247,6 +247,21 @@ class GuildTrialAbilities {
             const sameGuild = !stored?.guildName || !this.guildName || stored.guildName === this.guildName;
             if (fresh && sameGuild) {
                 this.session = { ...stored, capturedTiers: [...(stored.capturedTiers || [])] };
+                // Entries that slipped in from a personal fight's new_battle
+                // (the local player's own zone kit) are not trial captures —
+                // demote them to "needs Battle Info" so the row re-captures
+                // from the same source as everyone else
+                for (const [key, entry] of Object.entries(this.session.players || {})) {
+                    if (entry?.source === 'new_battle') {
+                        this.session.players[key] = {
+                            ...entry,
+                            abilities: null,
+                            abilitiesAuthoritative: false,
+                            capturedAt: null,
+                            capturedTier: null,
+                        };
+                    }
+                }
             }
         } catch (error) {
             console.error('[GuildTrialAbilities] Reading the stored session failed:', error);

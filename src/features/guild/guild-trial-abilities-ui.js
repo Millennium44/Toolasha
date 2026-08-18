@@ -378,6 +378,13 @@ function onCapturedEvent(event) {
         if (!event?.name) return;
         const snapshot = guildLoadoutCapture.forPlayer?.(event.name);
         if (!snapshot) return;
+        // Your own zone fight's `new_battle` carries your combatAbilities —
+        // your *current* kit, not the one this trial was entered with — and
+        // folding it in marked the local player "captured" with the wrong
+        // abilities while everyone else honestly said "needs Battle Info".
+        // The trial session takes only what the trial itself can show: the
+        // Battle Info popups, the same source for every participant.
+        if (snapshot.source === 'new_battle') return;
         guildTrialAbilities.recordCapture(snapshot);
         guildTrialAbilitiesPanel.render();
     } catch (error) {

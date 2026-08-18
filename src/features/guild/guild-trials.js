@@ -3280,7 +3280,15 @@ class GuildTrials {
             anchored: (block) => {
                 const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
                 if (statusRow) return statusRow.nextElementSibling === block;
-                if (firstTile?.isConnected) return block.nextElementSibling === escapeSquashingRows(root, firstTile);
+                if (firstTile?.isConnected) {
+                    // A combat fight's card lives inside the boss unit grid; a
+                    // payout dropped in there becomes a grid item fighting the
+                    // DPS sidecar for a cell. Its home is above the whole
+                    // monsters area, full width.
+                    const monstersArea = firstTile.closest?.('[class*="BattlePanel_monstersArea"]');
+                    if (monstersArea) return block.nextElementSibling === monstersArea;
+                    return block.nextElementSibling === escapeSquashingRows(root, firstTile);
+                }
                 return root.firstElementChild === block;
             },
             html: rows.join('') + this._controlsHTML(),
@@ -3298,8 +3306,15 @@ class GuildTrials {
                 // roster instead of squeezing in beside the card (the skilling
                 // panel nests the card two rows deep).
                 const statusRow = root.querySelector('[class*="GuildPanel_eventStatusRow"]');
+                const monstersArea = firstTile?.closest?.('[class*="BattlePanel_monstersArea"]');
                 if (statusRow) {
                     statusRow.insertAdjacentElement('afterend', block);
+                } else if (monstersArea?.parentElement && root.contains(monstersArea)) {
+                    // Above the whole fight, never inside its unit grid — a
+                    // grid-item payout lands in a boss-card-sized cell and
+                    // overlaps the DPS sidecar
+                    block.style.width = '100%';
+                    monstersArea.insertAdjacentElement('beforebegin', block);
                 } else if (firstTile?.isConnected) {
                     block.style.width = '100%';
                     escapeSquashingRows(root, firstTile).insertAdjacentElement('beforebegin', block);
