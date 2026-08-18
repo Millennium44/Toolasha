@@ -275,6 +275,14 @@ function mergeSimResults(results) {
             }
         }
 
+        // Landed crits (per source, summed)
+        if (r.crits) {
+            if (!merged.crits) merged.crits = {};
+            for (const [sourceHrid, count] of Object.entries(r.crits)) {
+                merged.crits[sourceHrid] = (merged.crits[sourceHrid] || 0) + count;
+            }
+        }
+
         // Mana run out (OR across chunks — if any chunk went OOM, mark as true)
         if (r.playerRanOutOfMana) {
             if (!merged.playerRanOutOfMana) merged.playerRanOutOfMana = {};

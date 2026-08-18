@@ -232,12 +232,19 @@ export function deriveObserved(attempts) {
                 totalPlayerMisses: 0,
                 totalHitDataDealt: 0,
                 hitDataFights: 0,
+                // Crits accumulate over their own fights: an attempt can carry
+                // hit counts without a crit count (recorded between the two
+                // features landing), and folding it in would drag the rate down
+                totalPlayerCrits: 0,
+                totalCritDataHits: 0,
+                critDataFights: 0,
                 dpsSamples: [],
                 takenSamples: [],
                 secondsSamples: [],
                 clearSamples: [],
                 hitRateSamples: [],
                 dmgPerHitSamples: [],
+                critRateSamples: [],
             };
             groups.set(key, group);
         }
@@ -267,6 +274,16 @@ export function deriveObserved(attempts) {
                 group.totalHitDataDealt += monsterDamage;
                 group.dmgPerHitSamples.push(monsterDamage / hits);
             }
+            // The crit share of landed hits — the tiebreaker on a soft-hit
+            // gap: a low real crit rate says the sim over-credits crits, a
+            // matching one points the gap at the monster's mitigation
+            const crits = Number(attempt.playerCrits);
+            if (Number.isFinite(crits) && hits > 0) {
+                group.totalPlayerCrits += crits;
+                group.totalCritDataHits += hits;
+                group.critDataFights += 1;
+                group.critRateSamples.push(crits / hits);
+            }
         }
     }
 
@@ -289,6 +306,8 @@ export function deriveObserved(attempts) {
                 : null,
         dmgPerHit: group.totalPlayerHits > 0 ? group.totalHitDataDealt / group.totalPlayerHits : null,
         hitDataFights: group.hitDataFights,
+        critRate: group.totalCritDataHits > 0 ? group.totalPlayerCrits / group.totalCritDataHits : null,
+        critDataFights: group.critDataFights,
     }));
 
     out.sort((a, b) => b.fights - a.fights);
@@ -344,6 +363,11 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
         }
     }
 
+    // The sim's landed crits, counted per source since the crit-rate port.
+    // Null on a result from an engine that predates the counter, so the row
+    // is skipped rather than compared against a fabricated zero.
+    const simCrits = Number.isFinite(simResult.crits?.[playerHrid]) ? simResult.crits[playerHrid] : null;
+
     return {
         dps: dealt / rateSeconds,
         takenPerSecond: taken / rateSeconds,
@@ -351,6 +375,7 @@ export function predictedFromSim(simResult, { playerHrid, monsterHrid } = {}) {
         clearRate: attempts > 0 ? wins / attempts : 0,
         hitRate: simHits + simMisses > 0 ? simHits / (simHits + simMisses) : null,
         dmgPerHit: simHits > 0 ? dealt / simHits : null,
+        critRate: simCrits !== null && simHits > 0 ? simCrits / simHits : null,
         attempts,
         wins,
         simSeconds,
@@ -404,7 +429,7 @@ function compareMetric(key, label, observed, predicted, samples, fights, downwar
  * @param {Object} [split] - `{hitRate, dmgPerHit}` metrics, when swing data exists
  * @returns {string}
  */
-function diagnose(dps, taken, clear, { hitRate = null, dmgPerHit = null } = {}) {
+function diagnose(dps, taken, clear, { hitRate = null, dmgPerHit = null, critRate = null } = {}) {
     // Both damage metrics err in either direction, and each direction is a
     // different finding. `below` on your damage means the sim credited you more
     // than you delivered; `below` on the monster's means it credited the monster
@@ -419,6 +444,11 @@ function diagnose(dps, taken, clear, { hitRate = null, dmgPerHit = null } = {}) 
     // or armour is under-modelled — a buff like Toughness).
     const missingHits = hitRate?.verdict === 'below';
     const softHits = dmgPerHit?.verdict === 'below';
+    // The crit tiebreaker on a soft-hit gap: crits are the player's own roll,
+    // so a real crit rate under the sim's means the damage roll itself is
+    // over-credited — the gap is not the monster's mitigation at all
+    const fewCrits = critRate?.verdict === 'below';
+    const critsMatch = critRate?.verdict === 'consistent';
     let because = '';
     if (missingHits && softHits) {
         because =
@@ -426,9 +456,14 @@ function diagnose(dps, taken, clear, { hitRate = null, dmgPerHit = null } = {}) 
     } else if (missingHits) {
         because =
             ' — you land fewer hits than it predicts, so its evasion runs light (an unmodelled evasion buff like Guardian Aura)';
+    } else if (softHits && fewCrits) {
+        because =
+            ' — each hit lands softer than it predicts and you crit less than it predicts, so the sim over-credits ' +
+            'your crits rather than under-modelling the monster';
     } else if (softHits) {
         because =
-            ' — each hit lands softer than it predicts, so its mitigation runs light (an unmodelled resistance/armour buff like Toughness)';
+            ' — each hit lands softer than it predicts, so its mitigation runs light (an unmodelled resistance/armour buff like Toughness)' +
+            (critsMatch ? '; your crit rate matches, which rules the crit roll out' : '');
     }
 
     if (yourDamage === 'over' && monsterDamage === 'under') {
@@ -529,10 +564,25 @@ export function compareLab(observed, predicted) {
                   observed.hitDataFights
               )
             : null;
+    // The crit share of landed hits, the soft-hit tiebreaker: a real crit rate
+    // below the sim's says the damage roll is over-credited by crits (not the
+    // monster's mitigation); a matching one points a soft-hit gap at the monster
+    const critRate =
+        observed.critDataFights > 0 && observed.critRate !== null && Number.isFinite(predicted?.critRate)
+            ? compareMetric(
+                  'critRate',
+                  'Your crit rate',
+                  observed.critRate,
+                  predicted.critRate,
+                  observed.critRateSamples,
+                  observed.critDataFights
+              )
+            : null;
 
     const metrics = [dps, taken, clear, seconds];
     if (hitRate) metrics.push(hitRate);
     if (dmgPerHit) metrics.push(dmgPerHit);
+    if (critRate) metrics.push(critRate);
 
     return {
         monsterHrid: observed.monsterHrid,
@@ -553,7 +603,7 @@ export function compareLab(observed, predicted) {
             unfinishedAttempts: predicted.unfinishedAttempts ?? null,
             stoppedOnPrecision: predicted.stoppedOnPrecision ?? null,
         },
-        diagnosis: diagnose(dps, taken, clear, { hitRate, dmgPerHit }),
+        diagnosis: diagnose(dps, taken, clear, { hitRate, dmgPerHit, critRate }),
     };
 }
 

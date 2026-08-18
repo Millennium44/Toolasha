@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The crit-rate tiebreaker the replay promised is now a row
+
+The recorder has kept each fight's crit count since it learned to; the replay never read it. The sim engine now counts landed crits per source (additive `crits` field, merged across worker chunks), and the lab replay compares your real crit share of landed hits against the sim's — the tiebreaker on a soft-hit gap: fewer real crits than predicted says the sim over-credits your crit roll, a matching rate points the gap at the monster's mitigation, and the diagnosis sentence now says which. Results from engines without the counter skip the row rather than comparing against a fabricated zero.
+
 ### Dead scrapers deleted, and starts-with selectors normalized
 
 The character-sheet DOM extractors and the loadout-panel scrapers had no callers left (both paths read the WebSocket cache now) and their selector-miss behavior returned valid-shaped emptiness — a trap for anyone rewiring them; deleted rather than kept plausible, along with the unused `isPartySelected()`. The `class^=` (starts-with) ChatMessage and QueuedActions selectors become the repo-standard `class*=`, so a class the game prepends can no longer defeat them.

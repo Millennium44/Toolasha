@@ -6,6 +6,8 @@ class SimResult {
         this.experienceGained = {};
         this.encounters = 0;
         this.attacks = {};
+        /** Landed critical hits per source, the predicted half of the crit-rate check */
+        this.crits = {};
         this.consumablesUsed = {};
         this.hitpointsGained = {};
         this.manapointsGained = {};
@@ -135,7 +137,7 @@ class SimResult {
         this.encounters++;
     }
 
-    addAttack(source, target, ability, hit) {
+    addAttack(source, target, ability, hit, isCrit = false) {
         if (!this.attacks[source.hrid]) {
             this.attacks[source.hrid] = {};
         }
@@ -154,6 +156,13 @@ class SimResult {
 
         if (hit !== 'miss') {
             this.totalDamageDealt[source.hrid] = (this.totalDamageDealt[source.hrid] || 0) + hit;
+            // Counted beside the histogram rather than in it: the histogram
+            // keys are damage values, and folding crit-ness into the key would
+            // double its cardinality for one bit. The recorder keeps the real
+            // crit count per fight; this is the predicted side of that row.
+            if (isCrit) {
+                this.crits[source.hrid] = (this.crits[source.hrid] || 0) + 1;
+            }
         }
     }
 

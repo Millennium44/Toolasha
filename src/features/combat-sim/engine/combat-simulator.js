@@ -669,7 +669,8 @@ class CombatSimulator {
                     source,
                     target,
                     'autoAttack',
-                    attackResult.didHit ? attackResult.damageDone : 'miss'
+                    attackResult.didHit ? attackResult.damageDone : 'miss',
+                    attackResult.didHit && attackResult.isCrit
                 );
             }
 
@@ -1494,7 +1495,8 @@ class CombatSimulator {
                     tempSource,
                     tempTarget,
                     'parry',
-                    attackResult.didHit ? attackResult.damageDone : 'miss'
+                    attackResult.didHit ? attackResult.damageDone : 'miss',
+                    attackResult.didHit && attackResult.isCrit
                 );
 
                 if (attackResult.lifeStealHeal > 0) {
@@ -1706,7 +1708,8 @@ class CombatSimulator {
                     source,
                     target,
                     ability.hrid,
-                    attackResult.didHit ? attackResult.damageDone : 'miss'
+                    attackResult.didHit ? attackResult.damageDone : 'miss',
+                    attackResult.didHit && attackResult.isCrit
                 );
 
                 if (attackResult.thornDamageDone > 0) {

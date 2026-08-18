@@ -298,6 +298,83 @@ describe('the damage gap decomposes into accuracy and mitigation', () => {
         expect(result.metrics.find((m) => m.key === 'hitRate')).toBeUndefined();
         expect(result.metrics.find((m) => m.key === 'dmgPerHit')).toBeUndefined();
     });
+
+    describe('the crit tiebreaker on a soft-hit gap', () => {
+        // Same six fights, with 10 of each fight's 40 hits critting (25%)
+        const critLosses = () =>
+            Array.from({ length: 6 }, () =>
+                attempt({
+                    monsterMaxHp: 100000,
+                    monsterHpEnd: 92000,
+                    seconds: 50,
+                    playerHits: 40,
+                    playerMisses: 10,
+                    playerCrits: 10,
+                })
+            );
+
+        test('the observed crit rate is derived from the recorded crits', () => {
+            const [g] = deriveObserved(critLosses());
+            expect(g.critRate).toBeCloseTo(0.25, 5);
+            expect(g.critDataFights).toBe(6);
+        });
+
+        test('the sim side reads its crit counter over its landed hits', () => {
+            const predicted = predictedFromSim(
+                {
+                    simulatedTime: 100e9,
+                    labyAttemptCount: 1,
+                    encounters: 1,
+                    totalDamageDealt: { player1: 1500, '/monsters/cyclops': 0 },
+                    attacks: { player1: { '/monsters/cyclops': { '/abilities/auto': { miss: 5, 100: 15 } } } },
+                    crits: { player1: 6 },
+                },
+                { playerHrid: 'player1', monsterHrid: '/monsters/cyclops' }
+            );
+            expect(predicted.critRate).toBeCloseTo(6 / 15, 5);
+        });
+
+        test('a result from an engine without the counter skips the row, not zeroes it', () => {
+            const predicted = predictedFromSim(
+                {
+                    simulatedTime: 100e9,
+                    labyAttemptCount: 1,
+                    encounters: 1,
+                    totalDamageDealt: { player1: 1500, '/monsters/cyclops': 0 },
+                    attacks: { player1: { '/monsters/cyclops': { '/abilities/auto': { 100: 15 } } } },
+                },
+                { playerHrid: 'player1', monsterHrid: '/monsters/cyclops' }
+            );
+            expect(predicted.critRate).toBeNull();
+            const result = compareLab(deriveObserved(critLosses())[0], predictedLike());
+            expect(result.metrics.find((m) => m.key === 'critRate')).toBeUndefined();
+        });
+
+        test('soft hits with fewer crits than predicted blames the crit roll, not the monster', () => {
+            const result = compareLab(
+                deriveObserved(critLosses())[0],
+                predictedLike({ dps: 200, dmgPerHit: 260, critRate: 0.5 })
+            );
+            const crit = result.metrics.find((m) => m.key === 'critRate');
+            expect(crit.verdict).toBe('below');
+            expect(result.diagnosis).toMatch(/over-credits\s+your crits/i);
+        });
+
+        test('soft hits with a matching crit rate rules the crit roll out by name', () => {
+            const result = compareLab(
+                deriveObserved(critLosses())[0],
+                predictedLike({ dps: 200, dmgPerHit: 260, critRate: 0.25 })
+            );
+            expect(result.diagnosis).toMatch(/mitigation/i);
+            expect(result.diagnosis).toMatch(/rules the crit roll out/i);
+        });
+
+        test('fights recorded before crits were kept contribute no crit data', () => {
+            const [g] = deriveObserved(swingLosses()); // hits, no playerCrits
+            expect(g.critRate).toBeNull();
+            expect(g.critDataFights).toBe(0);
+        });
+    });
 });
 
 describe('deviationPct / relMarginPct', () => {
