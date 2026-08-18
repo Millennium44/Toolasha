@@ -29,9 +29,13 @@
 
 import { describe, test, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, dirname, resolve, relative } from 'node:path';
+import { join, dirname, resolve, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../..', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../..', import.meta.url));
+
+/** Repo-relative, always with forward slashes — the paths below are split on '/' */
+const rel = (path) => relative(ROOT, path).split(sep).join('/');
 const LIBRARIES = ['core', 'utils', 'sim', 'market', 'actions', 'combat', 'ui'];
 
 /**
@@ -58,7 +62,7 @@ function importsOf(file) {
 
     return [...source.matchAll(/from\s*'(\.[^']+\.js)'|import\s*'(\.[^']+\.js)'/g)]
         .map((match) => match[1] || match[2])
-        .map((specifier) => relative(ROOT, resolve(here, specifier)));
+        .map((specifier) => rel(resolve(here, specifier)));
 }
 
 /**
@@ -103,7 +107,7 @@ function sourceFiles(directory) {
     for (const entry of readdirSync(directory)) {
         const path = join(directory, entry);
         if (statSync(path).isDirectory()) found.push(...sourceFiles(path));
-        else if (entry.endsWith('.js') && !entry.endsWith('.test.js')) found.push(relative(ROOT, path));
+        else if (entry.endsWith('.js') && !entry.endsWith('.test.js')) found.push(rel(path));
     }
     return found;
 }
@@ -234,7 +238,7 @@ function bridgeOwnerOf(prop) {
         }
         const match = new RegExp(`import\\s+${prop}\\s+from\\s*'(\\.[^']+\\.js)'`).exec(source);
         if (!match) continue;
-        return { file: relative(ROOT, resolve(dirname(join(ROOT, libPath)), match[1])), owner };
+        return { file: rel(resolve(dirname(join(ROOT, libPath)), match[1])), owner };
     }
     return null;
 }
