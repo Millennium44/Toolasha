@@ -1449,6 +1449,36 @@ describe('rebuilding history from the chat log', () => {
         expect(result.teams).toEqual(['Alice']);
     });
 
+    test("player chatter under the game's current markup is skipped too", async () => {
+        // The game renamed ChatMessage_username to ChatMessage_name with a
+        // CharacterName element inside, and player messages open with a
+        // [timestamp] — which also defeats the text fallback. Only the class
+        // check can catch these; live DOM verified 2026-08-17.
+        chatLog([
+            { text: '[08/04 10:00:00 AM] Battle started: Chimerical Den' },
+            { text: '[08/04 10:00:05 AM] Key counts: [Alice - 12]' },
+            { text: '[08/04 10:04:37 AM] Key counts: [Alice - 11]' },
+        ]);
+        const chatter = document.createElement('div');
+        chatter.className = 'ChatMessage_chatMessage__abc';
+        const name = document.createElement('span');
+        name.className = 'ChatMessage_name__1UZ8t';
+        const inner = document.createElement('span');
+        inner.className = 'CharacterName_name__1amXp';
+        inner.textContent = 'Mallory';
+        name.appendChild(inner);
+        chatter.appendChild(name);
+        const body = document.createElement('span');
+        body.textContent = '[08/04 10:02:00 AM] Mallory: Key counts: [Mallory - 99]';
+        chatter.appendChild(body);
+        document.body.insertBefore(chatter, document.body.children[2]);
+
+        const result = await tracker.backfillFromChatHistory();
+
+        expect(result.runsAdded).toBe(1);
+        expect(result.teams).toEqual(['Alice']);
+    });
+
     test('three key counts in a row are two runs', async () => {
         chatLog([
             { text: '[08/04 10:00:00 AM] Battle started: Chimerical Den' },

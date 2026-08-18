@@ -443,8 +443,14 @@ class DungeonTracker {
                     const text = msg.textContent || '';
 
                     // FILTER: Skip player messages
-                    // Check for username element (player messages have a username child element)
-                    const hasUsername = msg.querySelector('[class*="ChatMessage_username"]') !== null;
+                    // Player messages carry the sender's name element; system messages
+                    // carry only a timestamp. The game renamed ChatMessage_username to
+                    // ChatMessage_name (with a CharacterName_* element inside) — match
+                    // all spellings so the filter survives either direction.
+                    const hasUsername =
+                        msg.querySelector(
+                            '[class*="ChatMessage_username"], [class*="ChatMessage_name"], [class*="CharacterName_"]'
+                        ) !== null;
                     if (hasUsername) {
                         continue; // Skip player messages
                     }
@@ -1478,8 +1484,14 @@ class DungeonTracker {
                 const text = msg.textContent || '';
 
                 // FILTER: Skip player messages
-                // Check for username element (player messages have a username child element)
-                const hasUsername = msg.querySelector('[class*="ChatMessage_username"]') !== null;
+                // Player messages carry the sender's name element; system messages
+                // carry only a timestamp. The game renamed ChatMessage_username to
+                // ChatMessage_name (with a CharacterName_* element inside) — match
+                // all spellings so the filter survives either direction.
+                const hasUsername =
+                    msg.querySelector(
+                        '[class*="ChatMessage_username"], [class*="ChatMessage_name"], [class*="CharacterName_"]'
+                    ) !== null;
                 if (hasUsername) {
                     continue; // Skip player messages
                 }

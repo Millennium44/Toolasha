@@ -60,15 +60,23 @@ class CollectionNavigation {
         this.unregisterHandlers.push(unregisterTiles);
 
         // Watch for the collection panel appearing so we can attach a rescan observer
-        // (covers filter checkbox toggles that show/hide existing tiles without re-adding them)
-        const unregisterPanel = domObserver.onClass('CollectionNavigation', 'Collection_collections', (panel) => {
-            this.attachPanelObserver(panel);
-            this.rescanGrayTiles(panel);
-        });
+        // (covers filter checkbox toggles that show/hide existing tiles without re-adding them).
+        // The game's panel class is Collection_collectionContainer; the old
+        // Collection_collections spelling is kept in case it returns.
+        const unregisterPanel = domObserver.onClass(
+            'CollectionNavigation',
+            ['Collection_collectionContainer', 'Collection_collections'],
+            (panel) => {
+                this.attachPanelObserver(panel);
+                this.rescanGrayTiles(panel);
+            }
+        );
         this.unregisterHandlers.push(unregisterPanel);
 
         // Also attach to any panel already in the DOM
-        const existingPanel = document.querySelector('[class*="Collection_collections"]');
+        const existingPanel = document.querySelector(
+            '[class*="Collection_collectionContainer"], [class*="Collection_collections"]'
+        );
         if (existingPanel) {
             this.attachPanelObserver(existingPanel);
         }
@@ -388,6 +396,9 @@ class CollectionNavigation {
 }
 
 const collectionNavigation = new CollectionNavigation();
+
+/** The singleton itself, for tests — the default export is the feature shell */
+export { collectionNavigation };
 
 export default {
     initialize: () => collectionNavigation.initialize(),

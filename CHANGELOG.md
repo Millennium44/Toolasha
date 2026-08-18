@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Two game-DOM selectors caught up with the game (found by a live-DOM audit)
+
+The game renamed the chat sender element `ChatMessage_username` → `ChatMessage_name`, silently disabling the dungeon tracker's player-message filter — and timestamped player messages also slip its text fallback, so player chatter could be misread as system lines during chat-history backfill. The filter now matches old and new spellings plus the inner `CharacterName_*` element. The collection panel watcher looked for `Collection_collections`, which no longer exists (`Collection_collectionContainer` is the panel), so the rescan-on-filter-toggle path never attached; it now watches both.
+
 ### Lab fight recorder: a page reloaded mid-fight now watches the fight it lands in
 
 The room-log recorder learned which room it was standing in only from `labyrinth_updated`, which does not arrive after a reload until the attempt ends — so a fight joined by refreshing the page was not recorded as joined late; it was not recorded at all. The recorder now seeds its room context from the init character payload, so that fight is filed with `complete: false` like any other late join.
