@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The trial diagnostic trace survives reloads and holds a full-hour fight
+
+The opt-in trial trace no longer lives only in memory: events are kept as pre-stringified NDJSON lines and flushed to character-scoped IndexedDB chunks (gzipped, every 500 events or 10 seconds), so a mid-fight reload resumes the same trace and a 50-player hour (~36k ticks) fits comfortably. A trace idle for over 3 hours is discarded on startup; event and stored-byte caps evict oldest chunks as runaway protection, and the export stitches chunks plus unflushed events back into one file.
+
 ### The idle plan is pinnable, and every Consumables section gets the Buy all walk
 
 The Idle plan heading gains two dropdowns: which combat loadout to plan for (default-starred, no longer hardwired to the default) and which simmed zone-and-tier rates its food — sims now file their measured rates per zone, so pinning "this zone at this tier" keeps that rating even as other zones are simmed. A pinned zone that has never been simmed says so instead of borrowing another zone's appetite. The Buy all walk added for the lab now also sits on your own combat section and the idle plan whenever two or more rows are short.

@@ -9,9 +9,16 @@
  * timeline offline.
  *
  * Opt-in (`guildTrialDiagnosticTrace`, default off), because the file is large
- * and carries raw combat data with participant names in it. Memory only — a
- * trace is for exporting, not for keeping, and persisting a stream this size
- * would be the wrong kind of durable.
+ * and carries raw combat data with participant names in it.
+ *
+ * Persisted, not memory-only: a full-hour 50-player fight is ~36,000 ticks at
+ * the observed ~10/s cadence, each tick 2–4KB of JSON — holding that as parsed
+ * objects in a tab that must also render the fight is what used to make the
+ * trace the thing that killed the evidence. Events are kept as pre-stringified
+ * NDJSON lines, flushed to IndexedDB in gzipped chunks, and re-adopted on
+ * reload, so a mid-fight refresh loses at most one flush interval instead of
+ * the whole trace. Keys are character-scoped — two characters in two tabs each
+ * keep their own trace.
  *
  * The websocket hook deliberately exempts `new_guild_battle` and
  * `guild_battle_updated` from its content-hash dedup (consecutive ticks open
@@ -21,8 +28,10 @@
  */
 
 import config from '../../core/config.js';
+import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
-import { compressionAvailable, gzipText } from '../sync/sync-compress.js';
+import { compressionAvailable, gzipText, gunzipToText } from '../sync/sync-compress.js';
+import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
 import { scriptVersion } from '../../utils/script-version.js';
 
 /** The settings toggle the capture is gated on */
@@ -32,11 +41,26 @@ export const TRACE_SETTING = 'guildTrialDiagnosticTrace';
 export const TRACE_FORMAT = 'toolasha-guild-trial-trace';
 
 /**
- * Events kept before the oldest fall off. A trial hour of the spectator
- * firehose (~2/s) is well under this; the cap only exists so a tab left open
- * across many sessions cannot grow without bound.
+ * Events kept across chunks before the oldest whole chunks fall off. A trial
+ * hour of the 50-player firehose (~36k ticks) is well under this; the cap only
+ * exists so a runaway stream cannot grow without bound.
  */
 export const MAX_EVENTS = 200_000;
+
+/**
+ * Stored-bytes ceiling across chunks, enforced the same way as the event cap.
+ * A full hour gzips to ~10–15MB; this is runaway protection, not a budget.
+ */
+export const MAX_STORED_BYTES = 64 * 1024 * 1024;
+
+/** Pending lines that force a flush to IndexedDB */
+export const FLUSH_EVENTS = 500;
+
+/** How long pending lines may sit unflushed before the next message flushes them */
+export const FLUSH_INTERVAL_MS = 10_000;
+
+/** How recent a persisted trace must be for a reload to resume it rather than discard it */
+export const RESUME_WINDOW_MS = 3 * 60 * 60 * 1000;
 
 /**
  * The trial battle stream, verbatim. Mirrors the names `guild-trial-damage.js`
@@ -54,29 +78,73 @@ export const TRACE_MESSAGES = [
 /** The message whose absence at the head of a trace means the fight was joined late */
 const BOUNDARY_MESSAGE = 'new_guild_battle';
 
+/** Object store the chunks and manifest live in */
+const TRACE_STORE = 'guildHistory';
+
+/** Base key of the manifest record (character-scoped through writeScoped/readScoped) */
+const MANIFEST_BASE = 'trialTraceManifest';
+
 /** Monotonic tail for traceId, so two starts in one millisecond still differ */
 let traceSeq = 0;
+
+/**
+ * Base key of one chunk record.
+ * @param {number} seq - The chunk's sequence number
+ * @returns {string} Unscoped chunk key
+ */
+function chunkBase(seq) {
+    return `trialTraceChunk_${seq}`;
+}
 
 class GuildTrialTrace {
     /**
      * @param {Object} [options] - Test seams; the singleton takes the defaults
-     * @param {number} [options.maxEvents] - Ring-buffer cap
+     * @param {number} [options.maxEvents] - Total retained-event cap across chunks and pending
+     * @param {number} [options.maxStoredBytes] - Total stored chunk bytes cap
+     * @param {number} [options.flushEvents] - Pending lines that force a flush
+     * @param {number} [options.flushIntervalMs] - Age of pending lines that forces a flush
+     * @param {number} [options.resumeWindowMs] - How recent a persisted trace must be to resume
      */
-    constructor({ maxEvents = MAX_EVENTS } = {}) {
+    constructor({
+        maxEvents = MAX_EVENTS,
+        maxStoredBytes = MAX_STORED_BYTES,
+        flushEvents = FLUSH_EVENTS,
+        flushIntervalMs = FLUSH_INTERVAL_MS,
+        resumeWindowMs = RESUME_WINDOW_MS,
+    } = {}) {
         this.maxEvents = maxEvents;
+        this.maxStoredBytes = maxStoredBytes;
+        this.flushEvents = flushEvents;
+        this.flushIntervalMs = flushIntervalMs;
+        this.resumeWindowMs = resumeWindowMs;
         this.initialized = false;
         this.handlers = null;
+        this._restored = false;
+        this._restorePromise = Promise.resolve();
         this._reset();
     }
 
     /** Empty-trace state, shared by the constructor and {@link clear} */
     _reset() {
-        this.events = [];
+        this.pending = []; // unflushed NDJSON lines
+        this.chunks = []; // persisted chunks, oldest first: {seq, events, bytes}
+        this.nextSeq = 0;
+        this.storedBytes = 0;
+        this.eventCount = 0; // retained events: persisted chunks + pending
         this.traceId = null;
         this.startedAt = 0;
         this.duplicatesDiscarded = 0;
         this.eventsDropped = 0;
+        this.maxGapMs = null;
+        this.gapsOver5s = 0;
+        this.firstEventType = null;
+        this.lastEventAt = 0;
+        this.lastFlushAt = 0;
+        this.resumed = false;
         this.lastGuildBattleKey = null;
+        this._queue = []; // messages that arrived before the restore settled
+        this._flushChain = Promise.resolve();
+        this._flushQueued = false;
     }
 
     /** Whether the opt-in toggle is on right now */
@@ -84,10 +152,17 @@ class GuildTrialTrace {
         return config.getSetting(TRACE_SETTING, false);
     }
 
-    /** Listen for the trial stream. Capture itself stays gated on the setting per message. */
+    /**
+     * Listen for the trial stream and adopt or discard any persisted trace.
+     * Capture itself stays gated on the setting per message. The restore is
+     * async so it cannot block feature init; messages that arrive before it
+     * settles are queued and replayed through the normal path afterwards, so an
+     * early tick can never both start a fresh trace and adopt the old one.
+     */
     initialize() {
         if (this.initialized) return;
         this.initialized = true;
+        this._restored = false;
 
         this.handlers = new Map();
         for (const type of TRACE_MESSAGES) {
@@ -95,9 +170,27 @@ class GuildTrialTrace {
             this.handlers.set(type, handler);
             webSocketHook.on(type, handler);
         }
+
+        this._restorePromise = this._restore()
+            .catch((error) => console.error('[GuildTrialTrace] Restoring the persisted trace failed:', error))
+            .then(() => {
+                this._restored = true;
+                const queued = this._queue;
+                this._queue = [];
+                for (const message of queued) this._record(message.type, message.data, message.at);
+            });
     }
 
-    /** Let go of every listener. The buffer is kept — an export can still read it. */
+    /**
+     * Settles once any persisted trace has been adopted or discarded and the
+     * queued early messages have been replayed.
+     * @returns {Promise<void>}
+     */
+    whenReady() {
+        return this._restorePromise;
+    }
+
+    /** Let go of every listener. The buffer and the persisted chunks are kept — an export can still read them. */
     cleanup() {
         if (this.handlers) {
             for (const [type, handler] of this.handlers) webSocketHook.off(type, handler);
@@ -107,11 +200,54 @@ class GuildTrialTrace {
     }
 
     /**
-     * One message off the stream, kept as received.
-     *
-     * Gated on the setting at message time rather than at subscribe time, so
-     * turning the toggle off mid-session stops the capture without discarding
-     * what is already held, and turning it on starts one without a re-init.
+     * Read the persisted manifest: resume a trace whose stream went quiet less
+     * than the resume window ago, delete anything older. A live in-memory trace
+     * (re-initialize without a reload) is never overwritten.
+     */
+    async _restore() {
+        const manifest = await readScoped(MANIFEST_BASE, TRACE_STORE, null);
+        if (!manifest || this.traceId) return;
+
+        const fresh =
+            typeof manifest.lastEventAt === 'number' && Date.now() - manifest.lastEventAt <= this.resumeWindowMs;
+        if (!fresh) {
+            for (const seq of manifest.chunkSeqs || []) {
+                await storage.delete(characterKey(chunkBase(seq)), TRACE_STORE);
+            }
+            await storage.delete(characterKey(MANIFEST_BASE), TRACE_STORE);
+            return;
+        }
+
+        const stats = Array.isArray(manifest.chunkStats)
+            ? manifest.chunkStats
+            : (manifest.chunkSeqs || []).map((seq) => ({ seq, events: 0, bytes: 0 }));
+        this.chunks = stats.map((chunk) => ({
+            seq: chunk.seq,
+            events: chunk.events || 0,
+            bytes: chunk.bytes || 0,
+        }));
+        this.storedBytes = this.chunks.reduce((sum, chunk) => sum + chunk.bytes, 0);
+        // Recomputed from the chunks rather than read back: pending lines the
+        // old tab had not flushed died with it and must not be counted
+        this.eventCount = this.chunks.reduce((sum, chunk) => sum + chunk.events, 0);
+        this.nextSeq = this.chunks.length ? Math.max(...this.chunks.map((chunk) => chunk.seq)) + 1 : 0;
+        this.traceId = manifest.traceId;
+        this.startedAt = manifest.startedAt || 0;
+        this.duplicatesDiscarded = manifest.duplicatesDiscarded || 0;
+        this.eventsDropped = manifest.eventsDropped || 0;
+        this.maxGapMs = typeof manifest.maxGapMs === 'number' ? manifest.maxGapMs : null;
+        this.gapsOver5s = manifest.gapsOver5s || 0;
+        this.firstEventType = manifest.firstEventType || null;
+        this.lastEventAt = manifest.lastEventAt;
+        this.lastFlushAt = Date.now();
+        this.resumed = true;
+    }
+
+    /**
+     * One message off the stream. Gated on the setting at message time rather
+     * than at subscribe time, so turning the toggle off mid-session stops the
+     * capture without discarding what is already held, and turning it on starts
+     * one without a re-init.
      *
      * @param {string} type - The message name
      * @param {Object} data - The payload, exactly as the hook delivered it
@@ -119,14 +255,34 @@ class GuildTrialTrace {
     _onMessage(type, data) {
         try {
             if (!this._enabled()) return;
+            if (!this._restored) {
+                // The restore has not settled: hold the message with its real
+                // arrival time so replaying it cannot start a trace the restore
+                // is about to adopt over
+                this._queue.push({ type, data, at: Date.now() });
+                return;
+            }
+            this._record(type, data, Date.now());
+        } catch (error) {
+            console.error('[GuildTrialTrace] Recording a trial message failed:', error);
+        }
+    }
 
-            const now = Date.now();
+    /**
+     * Keep one message: dedup, count, stringify once, and flush when due.
+     * @param {string} type - The message name
+     * @param {Object} data - The payload
+     * @param {number} at - When the message arrived
+     */
+    _record(type, data, at) {
+        try {
             if (!this.traceId) {
                 // The trace starts on the first trial event, whatever it is — a
                 // spectator joining mid-fight still gets a trace, and the file
                 // says so via startedMidFight
-                this.traceId = `${now.toString(36)}-${(traceSeq++).toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-                this.startedAt = now;
+                this.traceId = `${at.toString(36)}-${(traceSeq++).toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+                this.startedAt = at;
+                this.lastFlushAt = at;
             }
 
             if (type === 'guild_battle_updated') {
@@ -147,27 +303,154 @@ class GuildTrialTrace {
                 if (key !== null) this.lastGuildBattleKey = key;
             }
 
-            this.events.push({ at: now, rel: now - this.startedAt, type, payload: data });
-            // Keep the newest: an overflowed trace should hold the recent trial,
-            // and the count says the file is a window, not the whole feed
-            if (this.events.length > this.maxEvents) {
-                this.eventsDropped += this.events.length - this.maxEvents;
-                this.events = this.events.slice(this.events.length - this.maxEvents);
+            if (this.lastEventAt) {
+                // Stalls in the feed, tracked as the stream goes by — a reader
+                // trusting tick cadence needs to know where it went quiet (tab
+                // throttled, fight view closed, page reloaded)
+                const gap = at - this.lastEventAt;
+                if (this.maxGapMs === null || gap > this.maxGapMs) this.maxGapMs = gap;
+                if (gap > 5000) this.gapsOver5s++;
+            }
+            if (!this.firstEventType) this.firstEventType = type;
+
+            this.pending.push(JSON.stringify({ at, rel: at - this.startedAt, type, payload: data }));
+            this.eventCount++;
+            this.lastEventAt = at;
+
+            // A write failure keeps lines pending for a retry; do not let a dead
+            // IndexedDB grow the buffer past the cap the chunks are held to
+            if (this.pending.length > this.maxEvents) {
+                const excess = this.pending.length - this.maxEvents;
+                this.pending.splice(0, excess);
+                this.eventsDropped += excess;
+                this.eventCount -= excess;
+            }
+
+            if (
+                this.pending.length >= this.flushEvents ||
+                at - this.lastFlushAt >= this.flushIntervalMs ||
+                type === 'end_guild_battle'
+            ) {
+                this._scheduleFlush();
             }
         } catch (error) {
             console.error('[GuildTrialTrace] Recording a trial message failed:', error);
         }
     }
 
+    /** Queue one flush behind any in flight. Never throws into the message handler. */
+    _scheduleFlush() {
+        if (this._flushQueued) return;
+        this._flushQueued = true;
+        this._flushChain = this._flushChain
+            .then(() => {
+                this._flushQueued = false;
+                return this._flushNow();
+            })
+            .catch((error) => console.error('[GuildTrialTrace] Flushing the trace failed:', error));
+    }
+
+    /** Write pending lines out as one chunk, evict over caps, update the manifest. */
+    async _flushNow() {
+        const lines = this.pending;
+        if (lines.length) {
+            this.pending = [];
+            const seq = this.nextSeq++;
+            const text = lines.join('\n');
+            try {
+                const gz = compressionAvailable();
+                const data = gz ? await gzipText(text) : text;
+                const bytes = gz ? data.byteLength : text.length;
+                const ok = await writeScoped(
+                    chunkBase(seq),
+                    { seq, events: lines.length, gz, data },
+                    TRACE_STORE,
+                    true
+                );
+                if (!ok) throw new Error('storage refused the chunk write');
+                this.chunks.push({ seq, events: lines.length, bytes });
+                this.storedBytes += bytes;
+            } catch (error) {
+                console.error('[GuildTrialTrace] Persisting a trace chunk failed:', error);
+                // Back into pending, ahead of anything recorded meanwhile — the
+                // next flush retries, and capture never stops over a bad write
+                this.pending = lines.concat(this.pending);
+                this.lastFlushAt = Date.now();
+                return;
+            }
+        }
+        await this._evictOverCaps();
+        await this._writeManifest();
+        this.lastFlushAt = Date.now();
+    }
+
     /**
-     * How much has been traced, for a button to read.
+     * Drop the oldest whole chunks while either cap is exceeded, counting their
+     * events as dropped. The newest chunk is always kept — an overflowed trace
+     * should hold the recent fight, and the count says the file is a window.
+     */
+    async _evictOverCaps() {
+        while (this.chunks.length > 1 && (this.eventCount > this.maxEvents || this.storedBytes > this.maxStoredBytes)) {
+            const oldest = this.chunks.shift();
+            this.eventCount -= oldest.events;
+            this.eventsDropped += oldest.events;
+            this.storedBytes -= oldest.bytes;
+            try {
+                await storage.delete(characterKey(chunkBase(oldest.seq)), TRACE_STORE);
+            } catch (error) {
+                console.error('[GuildTrialTrace] Evicting an old trace chunk failed:', error);
+            }
+        }
+    }
+
+    /** Persist the trace's identity and counters so a reload can pick it back up. */
+    async _writeManifest() {
+        try {
+            await writeScoped(
+                MANIFEST_BASE,
+                {
+                    traceId: this.traceId,
+                    startedAt: this.startedAt,
+                    chunkSeqs: this.chunks.map((chunk) => chunk.seq),
+                    chunkStats: this.chunks.map((chunk) => ({ ...chunk })),
+                    storedBytes: this.storedBytes,
+                    eventCount: this.eventCount,
+                    duplicatesDiscarded: this.duplicatesDiscarded,
+                    eventsDropped: this.eventsDropped,
+                    maxGapMs: this.maxGapMs,
+                    gapsOver5s: this.gapsOver5s,
+                    firstEventType: this.firstEventType,
+                    lastEventAt: this.lastEventAt,
+                    resumed: this.resumed,
+                },
+                TRACE_STORE,
+                true
+            );
+        } catch (error) {
+            console.error('[GuildTrialTrace] Writing the trace manifest failed:', error);
+        }
+    }
+
+    /** Settle the restore and every flush queued so far, including ones queued while waiting. */
+    async _settle() {
+        await this._restorePromise;
+        let chain;
+        do {
+            chain = this._flushChain;
+            await chain;
+        } while (chain !== this._flushChain);
+    }
+
+    /**
+     * How much has been traced, for a button to read. Counts persisted chunks
+     * plus the unflushed pending lines.
      * @returns {{running: boolean, eventCount: number, duplicatesDiscarded: number,
      *   eventsDropped: number, traceId: string|null, startedAt: number|null}}
      */
     status() {
         return {
             running: Boolean(this.initialized && this.traceId && this._enabled()),
-            eventCount: this.events.length,
+            eventCount: this.eventCount,
             duplicatesDiscarded: this.duplicatesDiscarded,
             eventsDropped: this.eventsDropped,
             traceId: this.traceId,
@@ -185,78 +468,99 @@ class GuildTrialTrace {
         return this.traceId;
     }
 
-    /** Throw the trace away. The next trial event starts a fresh one, with a new id. */
-    clear() {
+    /**
+     * Throw the trace away, in memory and in IndexedDB. The next trial event
+     * starts a fresh one, with a new id.
+     * @returns {Promise<void>}
+     */
+    async clear() {
+        try {
+            await this._settle();
+        } catch {
+            // A wedged flush must not make the trace unclearable
+        }
+        const seqs = this.chunks.map((chunk) => chunk.seq);
+        const restored = this._restored;
         this._reset();
+        this._restored = restored;
+        try {
+            for (const seq of seqs) await storage.delete(characterKey(chunkBase(seq)), TRACE_STORE);
+            await storage.delete(characterKey(MANIFEST_BASE), TRACE_STORE);
+        } catch (error) {
+            console.error('[GuildTrialTrace] Clearing the persisted trace failed:', error);
+        }
     }
 
     /**
-     * The whole trace in a shape safe to write out and read back.
-     *
-     * Carries what a reader needs to trust the stream: which script produced it,
-     * against which server, how many repeated ticks were dropped, whether the
-     * ring trimmed anything, where the stream went quiet, and whether the first
-     * event caught the fight already in progress.
-     *
-     * @returns {Object} Metadata plus the ordered events
+     * The trace metadata a reader needs to trust the stream: which script
+     * produced it, against which server, how many repeated ticks were dropped,
+     * whether the caps trimmed anything, where the stream went quiet, whether
+     * the first event caught the fight already in progress, and whether the
+     * trace was stitched back together across a reload.
+     * @returns {Object} The metadata object, without events
      */
-    buildTraceFile() {
+    _buildMetadata() {
         const host = typeof location !== 'undefined' ? location.hostname || null : null;
-        // Stalls in the retained feed: one O(n) pass at export, not per-event
-        // bookkeeping. A reader trusting tick cadence needs to know where the
-        // stream went quiet (tab throttled, fight view closed).
-        let maxGapMs = null;
-        let gapsOver5s = 0;
-        for (let i = 1; i < this.events.length; i++) {
-            const gap = this.events[i].at - this.events[i - 1].at;
-            if (maxGapMs === null || gap > maxGapMs) maxGapMs = gap;
-            if (gap > 5000) gapsOver5s++;
-        }
         return {
             format: TRACE_FORMAT,
-            version: 1,
+            version: 2,
             traceId: this.traceId,
             toolashaVersion: scriptVersion(),
             host,
             isTestServer: host ? host.includes('test.') : null,
             recordedAt: this.startedAt || null,
             exportedAt: Date.now(),
-            eventCount: this.events.length,
+            eventCount: this.eventCount,
             duplicatesDiscarded: this.duplicatesDiscarded,
             eventsDropped: this.eventsDropped,
-            maxGapMs,
-            gapsOver5s,
+            maxGapMs: this.maxGapMs,
+            gapsOver5s: this.gapsOver5s,
             // The tier-opening message is the only boundary marker; a trace that
             // does not begin with one caught the fight already running
-            startedMidFight: this.events.length ? this.events[0].type !== BOUNDARY_MESSAGE : null,
-            events: this.events.map((event) => ({ ...event })),
+            startedMidFight: this.firstEventType ? this.firstEventType !== BOUNDARY_MESSAGE : null,
+            resumedAcrossReloads: this.resumed,
+            chunkCount: this.chunks.length,
         };
     }
 
     /**
-     * The trace as NDJSON: the metadata object on the first line (without
-     * `events`), then one JSON line per event — a reader can stream a large
-     * file line by line rather than parsing one giant object.
-     * @returns {string}
+     * The whole trace as NDJSON: the metadata object on the first line, then
+     * one JSON line per event — persisted chunks stitched back in order, the
+     * unflushed pending lines after them. A reader can stream a large file line
+     * by line rather than parsing one giant object.
+     * @returns {Promise<string>}
      */
-    buildTraceNdjson() {
-        const file = this.buildTraceFile();
-        const { events, ...metadata } = file;
-        const lines = [JSON.stringify(metadata)];
-        for (const event of events) lines.push(JSON.stringify(event));
-        return lines.join('\n') + '\n';
+    async buildTraceNdjson() {
+        await this._settle();
+        const parts = [JSON.stringify(this._buildMetadata())];
+        for (const chunk of this.chunks) {
+            try {
+                const record = await readScoped(chunkBase(chunk.seq), TRACE_STORE, null);
+                if (!record) {
+                    console.error(`[GuildTrialTrace] Trace chunk ${chunk.seq} is missing from storage`);
+                    continue;
+                }
+                const text = record.gz ? await gunzipToText(record.data) : record.data;
+                if (text) parts.push(text);
+            } catch (error) {
+                console.error(`[GuildTrialTrace] Reading trace chunk ${chunk.seq} failed:`, error);
+            }
+        }
+        for (const line of this.pending) parts.push(line);
+        return parts.join('\n') + '\n';
     }
 
     /**
      * Write the trace out as a file — gzipped NDJSON where the environment can
-     * compress, plain NDJSON where it cannot. The buffer is kept afterwards; a
+     * compress, plain NDJSON where it cannot. The trace is kept afterwards; a
      * second press downloads the same trace again.
      * @returns {Promise<boolean>} Whether there was anything to write
      */
     async exportTrace() {
-        if (!this.events.length) return false;
         try {
-            const text = this.buildTraceNdjson();
+            await this._settle();
+            if (!this.eventCount) return false;
+            const text = await this.buildTraceNdjson();
             const gzip = compressionAvailable();
             const content = gzip ? await gzipText(text) : text;
             const type = gzip ? 'application/gzip' : 'application/x-ndjson';
