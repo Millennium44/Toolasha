@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The Consumables panel's lab shortfall gets a Buy all walk, and sim rates land without a reload
+
+"Buy all ▶" on the Labyrinth heading walks the whole shortfall the way the Bulk Sell Assistant walks sell forms, in reverse: each step opens one item's recommended buy form, and a floating Next chip steps to the following item on your click — one click, one form, nothing bought until the game's own confirm. The panel also re-reads the sim's measured consumable rates (and the run ledger) every time it opens, so a just-finished sim rates the idle plan's food immediately instead of after the next page load.
+
 ### The labyrinth tick capture runs for an hour before stopping itself
 
 The unattended auto-stop was 15 minutes, which yielded only ~40 casts of each monster special — too thin for the harness's hit-rate and cadence verdicts to separate signal from noise. It's now 60 minutes; the 8,000-tick ring holds ~95 minutes at observed lab tick rates, so nothing is dropped. Manual stop and leaving the monster still end it early as before.

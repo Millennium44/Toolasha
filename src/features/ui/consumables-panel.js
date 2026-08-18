@@ -68,6 +68,9 @@ import { getDrinkConcentration } from '../../utils/tea-parser.js';
 import { readScoped } from '../../utils/character-key.js';
 
 const PANEL_ID = 'toolasha-consumables-panel';
+
+/** The Buy-all walk's floating "next item" chip — outside the panel, which hides itself to go shopping */
+const LAB_BUY_CHIP_ID = 'toolasha-lab-buy-next';
 const GEOMETRY_KEY = 'consumablesPanel';
 const DEFAULT_PANEL = { width: 520, height: 420 };
 const REFRESH_MS = 5000;
@@ -99,11 +102,35 @@ class ConsumablesPanel {
      */
     show({ remember = true } = {}) {
         if (remember) saveOpenState(GEOMETRY_KEY, true);
+        this._refreshStoredReadings();
         if (this.panel && document.body.contains(this.panel)) {
             bringPanelToFront(this.panel);
             return;
         }
         this._create();
+    }
+
+    /**
+     * Re-read what other modules write while the panel is closed — the sim's
+     * measured consumable rates and the lab run ledger — so a finished sim
+     * rates the idle plan's food on the panel's next open rather than on the
+     * next page load.
+     */
+    async _refreshStoredReadings() {
+        try {
+            const [rates, ledger] = await Promise.all([
+                readScoped('simConsumableRates', 'combatExport', null).catch(() => null),
+                readScoped('labyrinthRunLedger', 'labyrinth', []).catch(() => []),
+            ]);
+            const changed =
+                JSON.stringify(rates) !== JSON.stringify(this._simRates) ||
+                JSON.stringify(ledger) !== JSON.stringify(this._ledgerRuns);
+            this._simRates = rates;
+            this._ledgerRuns = ledger || [];
+            if (changed && this.panel) this._render();
+        } catch {
+            // Stale readings render exactly what the last open rendered
+        }
     }
 
     hide({ remember = true } = {}) {
@@ -343,6 +370,114 @@ class ConsumablesPanel {
                 // which is the old behaviour and still useful
             });
         }, 400);
+    }
+
+    /**
+     * The three buy-decision settings, read the same way everywhere.
+     * @param {string} key - Setting key
+     * @param {number} fallback - Used when unset or nonsense
+     * @returns {number}
+     */
+    _buyNumber(key, fallback) {
+        const raw = Number(config.getSettingValue(key, fallback));
+        return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
+    }
+
+    /**
+     * Walk the lab shortfall one item at a time — the Bulk Sell Assistant's
+     * Next-flow in reverse. Each step opens one item's recommended buy form
+     * (nothing is bought until the game's own confirm is pressed), and a
+     * floating chip offers the next item whenever you are ready: one click,
+     * one form.
+     * @param {Array<{itemHrid: string, count: number}>} queue - Items still short
+     */
+    _startLabBuyAll(queue) {
+        this._labBuyQueue = queue.slice();
+        this._advanceLabBuyQueue();
+    }
+
+    /** Open the queue's next buy form and re-offer the chip for the one after */
+    _advanceLabBuyQueue() {
+        this._removeLabBuyChip();
+        const next = this._labBuyQueue?.shift();
+        if (!next) return;
+        // Priced at open time, not at queue time — the earlier buys in the
+        // walk may themselves have moved the book
+        const prices = getItemPrices(next.itemHrid);
+        const ask = Number(prices?.ask) > 0 ? Number(prices.ask) : null;
+        const bid = Number(prices?.bid) > 0 ? Number(prices.bid) : null;
+        const strategy = buyStrategy({
+            count: next.count,
+            ask,
+            bid,
+            secondsLeft: Infinity,
+            fillSeconds: this._fillSeconds(next.itemHrid, next.count),
+            maxSpreadPct: this._buyNumber('market_consumableBuyMaxSpreadPct', 2),
+            minSavingCoins: this._buyNumber('market_consumableBuyMinSaving', 0),
+            minOrderValue: this._buyNumber('market_consumableBuyMinOrderValue', 0),
+        });
+        this._buy({ itemHrid: next.itemHrid }, next.count, strategy);
+        this._showLabBuyChip();
+    }
+
+    /** The floating "next item" chip; absent when the walk is done */
+    _showLabBuyChip() {
+        if (!this._labBuyQueue?.length) return;
+        const next = this._labBuyQueue[0];
+        const itemName = dataManager.getItemDetails?.(next.itemHrid)?.name || next.itemHrid.split('/').pop();
+
+        const chip = document.createElement('div');
+        chip.id = LAB_BUY_CHIP_ID;
+        Object.assign(chip.style, {
+            position: 'fixed',
+            bottom: '18px',
+            right: '18px',
+            zIndex: String(config.Z_FLOATING_PANEL),
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            background: COLORS.background,
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '4px',
+            padding: '6px 10px',
+            fontSize: '12px',
+        });
+
+        const advance = document.createElement('button');
+        Object.assign(advance.style, {
+            background: 'none',
+            border: 'none',
+            color: COLORS.accent,
+            cursor: 'pointer',
+            fontSize: '12px',
+            padding: '0',
+        });
+        advance.textContent = `▶ Next: ${itemName} (${this._labBuyQueue.length} left)`;
+        advance.title = 'Open this item’s recommended buy form.';
+        advance.addEventListener('click', () => this._advanceLabBuyQueue());
+
+        const dismiss = document.createElement('button');
+        Object.assign(dismiss.style, {
+            background: 'none',
+            border: 'none',
+            color: COLORS.textDim,
+            cursor: 'pointer',
+            fontSize: '12px',
+            padding: '0',
+        });
+        dismiss.textContent = '✕';
+        dismiss.title = 'Stop here — the rest of the shortfall stays on the panel.';
+        dismiss.addEventListener('click', () => {
+            this._labBuyQueue = [];
+            this._removeLabBuyChip();
+        });
+
+        chip.append(advance, dismiss);
+        document.body.appendChild(chip);
+    }
+
+    _removeLabBuyChip() {
+        document.getElementById(LAB_BUY_CHIP_ID)?.remove();
     }
 
     _create() {
@@ -706,11 +841,42 @@ class ConsumablesPanel {
             event.stopPropagation();
             this._cycleLabRuns();
         });
-        heading.append(name, runsBtn);
-        section.appendChild(heading);
-
         const inventory = dataManager.getInventory?.() || [];
         const runs = this.labRuns;
+
+        // The walkable shortfall: every item short for the run target, in row order
+        const queue = needs
+            .map(({ itemHrid, perRun }) => ({
+                itemHrid,
+                count: Math.max(0, Math.ceil(perRun * runs) - heldInInventory(inventory, itemHrid)),
+            }))
+            .filter((q) => q.count > 0);
+        if (queue.length > 1) {
+            const buyAll = document.createElement('button');
+            Object.assign(buyAll.style, {
+                background: 'rgba(255, 255, 255, 0.07)',
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '3px',
+                color: ROW_COLORS.gold,
+                cursor: 'pointer',
+                fontSize: '11px',
+                padding: '1px 8px',
+            });
+            buyAll.textContent = 'Buy all ▶';
+            buyAll.title =
+                `${queue.length} items short for ${runs} run${runs === 1 ? '' : 's'}. Opens each item's ` +
+                'recommended buy form in turn — a floating Next chip steps to the following item whenever ' +
+                "you are ready. Nothing is bought until the game's own confirm button is pressed.";
+            buyAll.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this._startLabBuyAll(queue);
+            });
+            heading.append(name, runsBtn, buyAll);
+        } else {
+            heading.append(name, runsBtn);
+        }
+        section.appendChild(heading);
+
         for (const { itemHrid, perRun } of needs) {
             section.appendChild(this._labRow(itemHrid, perRun, runs, inventory));
         }
@@ -794,10 +960,6 @@ class ConsumablesPanel {
         const buy = this._cell(needCount ? formatLargeNumber(needCount) : '✓');
         buy.style.color = needCount ? ROW_COLORS.gold : ROW_COLORS.good;
         if (needCount) {
-            const readNumber = (key, fallback) => {
-                const raw = Number(config.getSettingValue(key, fallback));
-                return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
-            };
             const strategy = buyStrategy({
                 count: needCount,
                 ask,
@@ -806,9 +968,9 @@ class ConsumablesPanel {
                 // you start it — so urgency never forces an instant buy here
                 secondsLeft: Infinity,
                 fillSeconds: this._fillSeconds(itemHrid, needCount),
-                maxSpreadPct: readNumber('market_consumableBuyMaxSpreadPct', 2),
-                minSavingCoins: readNumber('market_consumableBuyMinSaving', 0),
-                minOrderValue: readNumber('market_consumableBuyMinOrderValue', 0),
+                maxSpreadPct: this._buyNumber('market_consumableBuyMaxSpreadPct', 2),
+                minSavingCoins: this._buyNumber('market_consumableBuyMinSaving', 0),
+                minOrderValue: this._buyNumber('market_consumableBuyMinOrderValue', 0),
             });
             buy.textContent = `${formatLargeNumber(needCount)} ${strategy.mode === 'order' ? '⏳' : '⚡'}`;
             buy.style.cursor = 'pointer';
@@ -965,10 +1127,6 @@ class ConsumablesPanel {
         buy.style.color = need.count ? ROW_COLORS.gold : ROW_COLORS.good;
 
         if (need.count) {
-            const readNumber = (key, fallback) => {
-                const raw = Number(config.getSettingValue(key, fallback));
-                return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
-            };
             const strategy = buyStrategy({
                 count: need.count,
                 ask: entry.price,
@@ -978,9 +1136,9 @@ class ConsumablesPanel {
                 // The bulk sell assistant's rules, mirrored for buying and read
                 // from their own settings so this panel and the settings page
                 // can never disagree
-                maxSpreadPct: readNumber('market_consumableBuyMaxSpreadPct', 2),
-                minSavingCoins: readNumber('market_consumableBuyMinSaving', 0),
-                minOrderValue: readNumber('market_consumableBuyMinOrderValue', 0),
+                maxSpreadPct: this._buyNumber('market_consumableBuyMaxSpreadPct', 2),
+                minSavingCoins: this._buyNumber('market_consumableBuyMinSaving', 0),
+                minOrderValue: this._buyNumber('market_consumableBuyMinOrderValue', 0),
             });
 
             // The recommendation is on the face of it, because it is the whole
