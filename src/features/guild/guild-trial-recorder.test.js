@@ -18,6 +18,7 @@ const game = vi.hoisted(() => ({
     characterId: 30404,
     loadouts: { players: {}, updatedAt: 0 },
     record: { weekStart: 0, tiles: {} },
+    traceId: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -56,6 +57,12 @@ vi.mock('./guild-trials-store.js', () => ({
 }));
 vi.mock('./guild-member-skills.js', () => ({
     default: { all: () => ({ ada: { name: 'Ada', skills: { '/skills/alchemy': 90 } } }) },
+}));
+vi.mock('./guild-trial-trace.js', () => ({
+    default: { activeTraceId: () => game.traceId },
+}));
+vi.mock('./guild-trial-abilities.js', () => ({
+    default: { exportSnapshot: () => game.abilitiesSnapshot },
 }));
 
 const {
@@ -121,6 +128,8 @@ beforeEach(() => {
     game.settings = { guildTrialAutoRecord: true };
     game.store = {};
     game.breakdown = breakdown();
+    game.traceId = null;
+    game.abilitiesSnapshot = null;
     guildTrialRecorder.session = null;
     guildTrialRecorder.lastActivityAt = 0;
     guildTrialRecorder.phase = null;
@@ -527,6 +536,24 @@ describe('the export bundle', () => {
         } finally {
             delete globalThis.GM_info;
         }
+    });
+
+    test('stamps the diagnostic trace id, so the two files can be paired', async () => {
+        game.traceId = 'trace-abc-123';
+        const bundle = await buildTrialExport({});
+        expect(bundle.traceId).toBe('trace-abc-123');
+    });
+
+    test('the trace id is null when no trace has run', async () => {
+        const bundle = await buildTrialExport({});
+        expect(bundle.traceId).toBeNull();
+    });
+
+    test('embeds the trial abilities snapshot, null when no session exists', async () => {
+        expect((await buildTrialExport({})).trialAbilities).toBeNull();
+        game.abilitiesSnapshot = { complete: false, unknownAuras: ['/abilities/mystic_aura'] };
+        const bundle = await buildTrialExport({});
+        expect(bundle.trialAbilities).toEqual({ complete: false, unknownAuras: ['/abilities/mystic_aura'] });
     });
 
     test('the last session is read back off storage when none is in hand', async () => {

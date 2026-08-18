@@ -140,6 +140,9 @@ import guildTrialRecorder, { buildTrialExport, downloadTrialExport } from './gui
 import guildTrialScoreboard from './guild-trial-scoreboard.js';
 import { guildRosterPanel } from './guild-roster-view.js';
 import guildMemberSkills from './guild-member-skills.js';
+import guildTrialTrace from './guild-trial-trace.js';
+import guildTrialAbilities from './guild-trial-abilities.js';
+import guildTrialAbilitiesFeature, { openTrialAbilitiesPanel } from './guild-trial-abilities-ui.js';
 import { forecastTrial } from './guild-trial-forecast.js';
 import guildTrialAlerts from '../notifications/guild-trial-alerts.js';
 import { describeGuildTokenGold } from './guild-token-value.js';
@@ -2083,6 +2086,8 @@ class GuildTrials {
         guildTrialAlerts.initialize?.();
         guildTrialRecorder.initialize(this.guildName);
         guildMemberSkills.initialize(this.guildName).catch(() => {});
+        guildTrialTrace.initialize?.();
+        guildTrialAbilitiesFeature.initialize(this.guildName).catch(() => {});
         // One bucket for every character in the tab is what poisoned a guild's
         // record in the first place; nothing writes to it now, so it goes
         purgeLegacyTrialRecord().catch(() => {});
@@ -2092,6 +2097,7 @@ class GuildTrials {
         this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
         this.guildName = this._resolveGuildName();
         guildTrialRecorder.setGuildName(this.guildName);
+        guildTrialAbilities.setGuildName?.(this.guildName);
         // Three independent storage reads, awaited together rather than one
         // after another: serially they were three IndexedDB round trips before
         // the first panel could carry stored samples, which is a visible slice
@@ -2188,6 +2194,7 @@ class GuildTrials {
             guildTrialDamage.reset?.();
             guildTrialRecorder.forget?.();
             guildTrialRecorder.setGuildName?.(null);
+            guildTrialAbilities.setGuildName?.(null);
             guildLoadoutCapture.setGuildName?.(null)?.catch?.(() => {});
             guildTrialAlerts.reset?.();
             guildMemberSkills.forget?.();
@@ -2211,6 +2218,7 @@ class GuildTrials {
         // guild's. `_adoptGuildName` merges it onto the guild's key later, once
         // a name has arrived that belongs to *this* character.
         guildTrialRecorder.setGuildName(null);
+        guildTrialAbilities.setGuildName?.(null);
         const stored = await loadTrialRecord(null, Date.now(), characterId, { guildId: this._guildId() });
 
         // Another switch may have happened while the read was in flight
@@ -2286,6 +2294,7 @@ class GuildTrials {
             this.record = mergeTrialRecords(stored, this.record);
             this.guildName = name;
             guildTrialRecorder.setGuildName(name);
+            guildTrialAbilities.setGuildName?.(name);
             guildMemberSkills.setGuildName(name).catch(() => {});
             guildLoadoutCapture.setGuildName?.(name)?.catch?.(() => {});
             await saveTrialRecord(name, this.record, this.characterId, { guildId: this._guildId() });
@@ -3357,7 +3366,21 @@ class GuildTrials {
                           'unless that is switched off in settings.'
             ) +
             button('export', '⤓ Export', ACCENT, 'Download everything captured this week as one JSON file.') +
+            (config.getSetting('guildTrialDiagnosticTrace', false)
+                ? button(
+                      'trace',
+                      '⤓ Trace',
+                      ACCENT,
+                      'Download the raw trial combat stream captured this session as gzipped NDJSON. Large.'
+                  )
+                : '') +
             button('scoreboard', 'Per-player', ACCENT, 'Damage and healing per player, ranked.') +
+            button(
+                'abilities',
+                'Abilities',
+                ACCENT,
+                'Each participant’s equipped abilities and party-wide aura coverage, captured one Battle Info at a time.'
+            ) +
             button(
                 'roster',
                 'Roster',
@@ -3394,6 +3417,17 @@ class GuildTrials {
         on('export', async () => {
             const bundle = await buildTrialExport({ guildName: this.guildName });
             downloadTrialExport(bundle);
+        });
+        on('trace', async () => {
+            await guildTrialTrace.exportTrace();
+        });
+        on('abilities', () => {
+            // The roster and tier feed happens at open — the panel keeps itself
+            // current from capture events after that.
+            const breakdown = guildTrialDamage.breakdown?.() || {};
+            guildTrialAbilities.setRoster?.(Object.values(breakdown.roster || {}));
+            guildTrialAbilities.setTier?.(breakdown.tier ?? null);
+            openTrialAbilitiesPanel();
         });
         on('scoreboard', () => guildTrialScoreboard.toggle());
         on('roster', () => guildRosterPanel.toggle());
@@ -3768,6 +3802,8 @@ class GuildTrials {
         guildTrialSkilling.cleanup();
         guildTrialStatsModal.cleanup();
         guildTrialRecorder.cleanup();
+        guildTrialTrace.cleanup?.();
+        guildTrialAbilitiesFeature.cleanup();
         guildTrialScoreboard.close();
         guildLoadoutCapture.cleanup();
         this.blockHtml.clear();

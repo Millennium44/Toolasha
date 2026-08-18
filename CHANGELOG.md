@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Opt-in raw trial diagnostic trace, paired with the summary export
+
+A new setting (default off) captures the raw trial combat stream — battle starts, spectator ticks, battle ends and trial stats — deduplicated, ring-bounded, and downloadable from the trials controls as gzipped NDJSON with gap/drop/mid-fight metadata. The normal trial export stamps the trace id so the two files can be paired. Off by default because the file is large and contains raw combat data with participant names.
+
 ### Trial Abilities panel: every participant's kit and party-wide aura coverage
 
 A new Abilities panel on the trials controls shows each trial participant's equipped abilities as Battle Info sheets are captured, one per player per one-hour trial (tier changes, slot reshuffles and deaths never invalidate a capture — players are keyed by character id). An "Equipped aura coverage" section names the highest equipped copy of each aura and its provider, flags redundant copies, and declares an aura MISSING only once every current participant has an authoritative capture — before that it reads Unknown, so a partial capture can never claim an aura is absent. The coverage-aware snapshot rides in the trial export.

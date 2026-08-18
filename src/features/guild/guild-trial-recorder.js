@@ -44,6 +44,8 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import guildTrialDamage, { compareTrialStats } from './guild-trial-damage.js';
 import guildTrialSkilling from './guild-trial-skilling.js';
 import guildTrialStatsModal from './guild-trial-stats-modal.js';
+import guildTrialTrace from './guild-trial-trace.js';
+import guildTrialAbilities from './guild-trial-abilities.js';
 import { loadLoadouts } from './guild-loadouts.js';
 import { supportCoverage } from './guild-trial-support.js';
 import guildMemberSkills from './guild-member-skills.js';
@@ -506,6 +508,11 @@ export async function buildTrialExport({ guildName = null } = {}) {
             reported: trialDamage?.reported,
             measured: trialDamage?.reportedMeasured,
         }),
+        // Pairs this bundle with the opt-in raw diagnostic trace recorded
+        // alongside it — the trace file carries the same id. Null when none.
+        traceId: guildTrialTrace.activeTraceId?.() ?? null,
+        // Coverage-aware: a partial session lists unknownAuras, never missingAuras
+        trialAbilities: guildTrialAbilities.exportSnapshot?.() ?? null,
     };
 }
 

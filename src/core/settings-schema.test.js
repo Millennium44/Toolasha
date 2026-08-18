@@ -9,6 +9,18 @@
 import { describe, test, expect } from 'vitest';
 import { getSettingDefinition } from './settings-schema.js';
 
+describe('guild trial defaults', () => {
+    test('the raw diagnostic trace is opt-in, and its help states the cost plainly', () => {
+        const setting = getSettingDefinition('guildTrialDiagnosticTrace');
+        // A default-on trace would have every player holding a large buffer of
+        // raw combat data — with participant names in it — that almost none of
+        // them will ever export
+        expect(setting.default).toBe(false);
+        expect(setting.help).toMatch(/large/i);
+        expect(setting.help).toMatch(/participant names/i);
+    });
+});
+
 describe('labyrinth defaults', () => {
     test('the path planner assumes the worst about a room it cannot see', () => {
         const setting = getSettingDefinition('labyrinthPathUnknownMode');

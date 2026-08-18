@@ -2810,6 +2810,17 @@ export const settingsGroups = {
                     'shows a live reading, so the whole hour is captured without having to press anything. ' +
                     'The Record button on the trials block starts and stops one by hand either way.',
             },
+            guildTrialDiagnosticTrace: {
+                id: 'guildTrialDiagnosticTrace',
+                label: 'Guild Trials: Keep a raw diagnostic trace of trial combat',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'Records every trial battle message exactly as it arrives, for exporting as a file an external ' +
+                    'reviewer can reconstruct the fight from. The file is large — an hour of the spectator stream ' +
+                    'is thousands of ticks — and it contains raw combat data, including participant names. ' +
+                    'Nothing is uploaded anywhere; the trace lives in memory until you export or clear it.',
+            },
             guildTrialsBuildersHallBonus: {
                 id: 'guildTrialsBuildersHallBonus',
                 label: 'Guild Trials: Builders Hall bonus override (%)',
