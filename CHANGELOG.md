@@ -561,86 +561,80 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.13.0](https://github.com/Millennium44/Toolasha/compare/v3.12.1...v3.13.0) (2026-08-18)
 
-
 ### Features
 
-* a labyrinth run ledger records what each run leaves unspent ([c5d68b1](https://github.com/Millennium44/Toolasha/commit/c5d68b1f378982f674ff056c25c635e0bab4cb0c))
-* a Pool tab browses the recorded fight pool ([fa4bc4c](https://github.com/Millennium44/Toolasha/commit/fa4bc4c13debb60d20e86a741523cf48b5d512df))
-* a scheduled combat trial gets a forecast before it starts ([612a92a](https://github.com/Millennium44/Toolasha/commit/612a92a74d1bb4b2b789279854cfc78efd651e11))
-* bulk sell gains a coins-denominated premium rule, and the band prices the patient side ([9b76623](https://github.com/Millennium44/Toolasha/commit/9b7662371a1377dbceebbe89a44bdc022dff9fc5))
-* bulk sell insta-sells inside a spread threshold, and cached prices are banded at the source ([0e7b999](https://github.com/Millennium44/Toolasha/commit/0e7b999ad5c9d97361e705cd5b9d13fa3150e871))
-* calibration cohorts with stored predictions, richer and sanitizable accuracy exports ([1ebb3d8](https://github.com/Millennium44/Toolasha/commit/1ebb3d8638c08e4b4c91ca09bb14bcfd8946751b))
-* consumables buy like bulk sell sells, and a labyrinth runs plan ([1ff234a](https://github.com/Millennium44/Toolasha/commit/1ff234a20be28a90fe68ac42785aeb6c498f0f13))
-* fiber-root canary, self-blind-proof combat-score health check, tooltip drift warning ([f595ff1](https://github.com/Millennium44/Toolasha/commit/f595ff143d579b0c2dd66b86e71720d4b8bd0f1e))
-* lab captures carry capture id, stop reason, drop and gap stats; accuracy exports name their capture, sim stop rule and fingerprint spec ([3acff7d](https://github.com/Millennium44/Toolasha/commit/3acff7da618536763100f9d20a5a99a0cbb593fd))
-* loadout ability provenance guards captured kits; Battle Info cycler advances on capture events ([9da08e3](https://github.com/Millennium44/Toolasha/commit/9da08e37dbe39fa177314021d261026b807c836a))
-* opt-in raw trial combat trace export, paired to the summary by trace id ([91aba76](https://github.com/Millennium44/Toolasha/commit/91aba76af03b3b7312dd5e21d5011ad42c3c3847))
-* the consumables panel plans from the default loadout while idle ([be39ca3](https://github.com/Millennium44/Toolasha/commit/be39ca3e00cf0cbe52b9b0e91e76d93d74a4c74b))
-* the finished trial's readouts stay viewable until the next one starts ([5e11cd7](https://github.com/Millennium44/Toolasha/commit/5e11cd74968b3a29e0fb0e1ffa6b5f86afd2ac5c))
-* the lab replay compares crit rates — the soft-hit tiebreaker, wired end to end ([761b7c0](https://github.com/Millennium44/Toolasha/commit/761b7c083f70bc477f73bd9e5ebeb744e35d8d76))
-* the sim accuracy check runs from the console too ([30c0807](https://github.com/Millennium44/Toolasha/commit/30c080711d1ab8649a314908938af468e4026271))
-* the Sim Accuracy panel checks the sim's survival claim ([eb4bcf4](https://github.com/Millennium44/Toolasha/commit/eb4bcf4fe9aa219d98f631bc133659f5e7edb3ef))
-* the sim accuracy panel draws the incoming-damage decomposition ([90d587a](https://github.com/Millennium44/Toolasha/commit/90d587acaa2a9d4c4e659cddc7c76e435b1289c0))
-* the tradable-range clamp computes the game's exact band ([1f57b97](https://github.com/Millennium44/Toolasha/commit/1f57b97a5ab1f99bcf9287ceb29ce2aaa026baa5))
-* Toolasha.debug.selectorAudit() diffs the selector registry against the game's stylesheets ([e9714a8](https://github.com/Millennium44/Toolasha/commit/e9714a85e4f0470a71a65c3490ea9055adcaf7f5))
-* Trial Abilities panel shows each participant's kit and party-wide aura coverage ([bd71a2c](https://github.com/Millennium44/Toolasha/commit/bd71a2ca7c7e66fd1759e8bc787ffc74550e156d))
-* trial party DPS panel sits beside the final boss in live fights ([15a4679](https://github.com/Millennium44/Toolasha/commit/15a46797366511f40095dd98563e597299ea51fc))
-* trial readout rides beside the card, the payout flattens, and the capacity settings retire ([a1cafa3](https://github.com/Millennium44/Toolasha/commit/a1cafa32c4e2209537322012870ad6943b505088))
-* trial snapshots persist mana and support metrics; trial exports stamped with version and host ([eb8635b](https://github.com/Millennium44/Toolasha/commit/eb8635bef72b7884af9a38e970b7e6aa3969265a))
-* uptime harness statistics, context-bound captures, honest blind-probe verdicts ([66490ae](https://github.com/Millennium44/Toolasha/commit/66490ae554372b51cd0f29aed8bbccfaa31cda04))
-* zone exports carry provenance and offer a sanitized twin ([4bc9564](https://github.com/Millennium44/Toolasha/commit/4bc9564c66eb9b0d48677dbc556b021db9f99411))
-* zone fights carry the endpoint-reconciliation residual, shown as a data-quality line ([b24e92f](https://github.com/Millennium44/Toolasha/commit/b24e92f702ed17440b52600fa0f51ee9e7c96134))
-* zone predictions and check history carry an engine cohort marker ([9bfe020](https://github.com/Millennium44/Toolasha/commit/9bfe020944e1392e6916058b2f9c6da6f5a66876))
-* zone sim accuracy decomposes incoming damage per monster ability ([ea85809](https://github.com/Millennium44/Toolasha/commit/ea858096057202072b50f7785f40da2e1b7075d4))
-
+- a labyrinth run ledger records what each run leaves unspent ([c5d68b1](https://github.com/Millennium44/Toolasha/commit/c5d68b1f378982f674ff056c25c635e0bab4cb0c))
+- a Pool tab browses the recorded fight pool ([fa4bc4c](https://github.com/Millennium44/Toolasha/commit/fa4bc4c13debb60d20e86a741523cf48b5d512df))
+- a scheduled combat trial gets a forecast before it starts ([612a92a](https://github.com/Millennium44/Toolasha/commit/612a92a74d1bb4b2b789279854cfc78efd651e11))
+- bulk sell gains a coins-denominated premium rule, and the band prices the patient side ([9b76623](https://github.com/Millennium44/Toolasha/commit/9b7662371a1377dbceebbe89a44bdc022dff9fc5))
+- bulk sell insta-sells inside a spread threshold, and cached prices are banded at the source ([0e7b999](https://github.com/Millennium44/Toolasha/commit/0e7b999ad5c9d97361e705cd5b9d13fa3150e871))
+- calibration cohorts with stored predictions, richer and sanitizable accuracy exports ([1ebb3d8](https://github.com/Millennium44/Toolasha/commit/1ebb3d8638c08e4b4c91ca09bb14bcfd8946751b))
+- consumables buy like bulk sell sells, and a labyrinth runs plan ([1ff234a](https://github.com/Millennium44/Toolasha/commit/1ff234a20be28a90fe68ac42785aeb6c498f0f13))
+- fiber-root canary, self-blind-proof combat-score health check, tooltip drift warning ([f595ff1](https://github.com/Millennium44/Toolasha/commit/f595ff143d579b0c2dd66b86e71720d4b8bd0f1e))
+- lab captures carry capture id, stop reason, drop and gap stats; accuracy exports name their capture, sim stop rule and fingerprint spec ([3acff7d](https://github.com/Millennium44/Toolasha/commit/3acff7da618536763100f9d20a5a99a0cbb593fd))
+- loadout ability provenance guards captured kits; Battle Info cycler advances on capture events ([9da08e3](https://github.com/Millennium44/Toolasha/commit/9da08e37dbe39fa177314021d261026b807c836a))
+- opt-in raw trial combat trace export, paired to the summary by trace id ([91aba76](https://github.com/Millennium44/Toolasha/commit/91aba76af03b3b7312dd5e21d5011ad42c3c3847))
+- the consumables panel plans from the default loadout while idle ([be39ca3](https://github.com/Millennium44/Toolasha/commit/be39ca3e00cf0cbe52b9b0e91e76d93d74a4c74b))
+- the finished trial's readouts stay viewable until the next one starts ([5e11cd7](https://github.com/Millennium44/Toolasha/commit/5e11cd74968b3a29e0fb0e1ffa6b5f86afd2ac5c))
+- the lab replay compares crit rates — the soft-hit tiebreaker, wired end to end ([761b7c0](https://github.com/Millennium44/Toolasha/commit/761b7c083f70bc477f73bd9e5ebeb744e35d8d76))
+- the sim accuracy check runs from the console too ([30c0807](https://github.com/Millennium44/Toolasha/commit/30c080711d1ab8649a314908938af468e4026271))
+- the Sim Accuracy panel checks the sim's survival claim ([eb4bcf4](https://github.com/Millennium44/Toolasha/commit/eb4bcf4fe9aa219d98f631bc133659f5e7edb3ef))
+- the sim accuracy panel draws the incoming-damage decomposition ([90d587a](https://github.com/Millennium44/Toolasha/commit/90d587acaa2a9d4c4e659cddc7c76e435b1289c0))
+- the tradable-range clamp computes the game's exact band ([1f57b97](https://github.com/Millennium44/Toolasha/commit/1f57b97a5ab1f99bcf9287ceb29ce2aaa026baa5))
+- Toolasha.debug.selectorAudit() diffs the selector registry against the game's stylesheets ([e9714a8](https://github.com/Millennium44/Toolasha/commit/e9714a85e4f0470a71a65c3490ea9055adcaf7f5))
+- Trial Abilities panel shows each participant's kit and party-wide aura coverage ([bd71a2c](https://github.com/Millennium44/Toolasha/commit/bd71a2ca7c7e66fd1759e8bc787ffc74550e156d))
+- trial party DPS panel sits beside the final boss in live fights ([15a4679](https://github.com/Millennium44/Toolasha/commit/15a46797366511f40095dd98563e597299ea51fc))
+- trial readout rides beside the card, the payout flattens, and the capacity settings retire ([a1cafa3](https://github.com/Millennium44/Toolasha/commit/a1cafa32c4e2209537322012870ad6943b505088))
+- trial snapshots persist mana and support metrics; trial exports stamped with version and host ([eb8635b](https://github.com/Millennium44/Toolasha/commit/eb8635bef72b7884af9a38e970b7e6aa3969265a))
+- uptime harness statistics, context-bound captures, honest blind-probe verdicts ([66490ae](https://github.com/Millennium44/Toolasha/commit/66490ae554372b51cd0f29aed8bbccfaa31cda04))
+- zone exports carry provenance and offer a sanitized twin ([4bc9564](https://github.com/Millennium44/Toolasha/commit/4bc9564c66eb9b0d48677dbc556b021db9f99411))
+- zone fights carry the endpoint-reconciliation residual, shown as a data-quality line ([b24e92f](https://github.com/Millennium44/Toolasha/commit/b24e92f702ed17440b52600fa0f51ee9e7c96134))
+- zone predictions and check history carry an engine cohort marker ([9bfe020](https://github.com/Millennium44/Toolasha/commit/9bfe020944e1392e6916058b2f9c6da6f5a66876))
+- zone sim accuracy decomposes incoming damage per monster ability ([ea85809](https://github.com/Millennium44/Toolasha/commit/ea858096057202072b50f7785f40da2e1b7075d4))
 
 ### Bug Fixes
 
-* anchor canaries stand down while the game is disconnected ([087e030](https://github.com/Millennium44/Toolasha/commit/087e030648b0130d188a3a8c84f1874bee193929))
-* bulk sell prices insta sells to depth and waits for its own Next click ([2429fde](https://github.com/Millennium44/Toolasha/commit/2429fdece3ad94e9e5839cb21d2b136266c73dac))
-* chat player-message filter and collection panel watcher match the game's current class names ([b20e3fc](https://github.com/Millennium44/Toolasha/commit/b20e3fc3b22c1f6870df0a9141f0af14c805815c))
-* crit row survives legacy nulls, zero-crit runs, and small denominators ([1909e54](https://github.com/Millennium44/Toolasha/commit/1909e541283e0fff29d62530f60b7ac6c3d7dc98))
-* fold offense buffs once, restore stat history intact, keep auto-stopped captures savable ([bec03e1](https://github.com/Millennium44/Toolasha/commit/bec03e156da7ae4dbfb3da2db09d6f0a22759fa0))
-* lab fight recorder seeds attempts from the battle-start snapshot and reconciles endpoint damage ([ee1d3b0](https://github.com/Millennium44/Toolasha/commit/ee1d3b000b8fc33ca35fb105026e26b802d5942b))
-* lab fight recorder seeds its room from the init payload, so a page reloaded mid-fight watches the fight it lands in ([879c2aa](https://github.com/Millennium44/Toolasha/commit/879c2aaefed1e10fc3db5405decd3d8259eed3fc))
-* lab live clear readout keeps one steady node through sparse combat ticks ([70ede31](https://github.com/Millennium44/Toolasha/commit/70ede31392818c81a66e2001ee35fd20db30fd96))
-* lab tick capture file carries the savedAt it is stamped with ([04f0ce2](https://github.com/Millennium44/Toolasha/commit/04f0ce2b7ed9028bf1f85b318c462a24e74e835e))
-* labyrinth capacities read from characterInfo instead of asking ([0aa4ba2](https://github.com/Millennium44/Toolasha/commit/0aa4ba23d6cf416d4511d1e00841e4f97c3fe6f9))
-* multiplier buttons attach to the rebuilt price control ([6804f11](https://github.com/Millennium44/Toolasha/commit/6804f110a2183d7ce26435ff148c9f8084e76b98))
-* production bundles share one copy of the band and version utils ([fd7b328](https://github.com/Millennium44/Toolasha/commit/fd7b328093e13dfa570222e6f484b5a91751cad3))
-* selectorAudit treats non-module prefixes as unchecked, not broken ([d9a6e36](https://github.com/Millennium44/Toolasha/commit/d9a6e364af3170244b716d5c6a1fe41329f98bd4))
-* stale hardcoded class hashes replaced with prefix matches ([cad0654](https://github.com/Millennium44/Toolasha/commit/cad0654527dc3b8fc2e1b8136918a5c1c60c1156))
-* the Party DPS sidecar takes the column after the last boss card ([f6662b5](https://github.com/Millennium44/Toolasha/commit/f6662b5b5de6a59e3bff037ef5874b032e4bf5ef))
-* the trial abilities cycler ignores the roster's freshness gate ([a858205](https://github.com/Millennium44/Toolasha/commit/a858205b91f611c4d1f36b6f9fe6c3d6c584da3c))
-* the trial abilities panel captures your kit from the trial, not your zone fight ([5bc39a7](https://github.com/Millennium44/Toolasha/commit/5bc39a7482b2cd4a21fd7c620ad470f009ccfc13))
-* the trial cycler falls back to the roster's Battle Info opener ([84effe5](https://github.com/Millennium44/Toolasha/commit/84effe52da747a50305855551645913c27f2e5fc))
-* the trial payout sits above the whole battle row ([3fb1001](https://github.com/Millennium44/Toolasha/commit/3fb100166a001201dba8990117e30d89d5ac4714))
-* trial readout placement reads nowrap as the non-wrapping row it is ([ec09aaa](https://github.com/Millennium44/Toolasha/commit/ec09aaaeb7c3d43453179f53786d0ccf5f71261c))
-* uptime harness segments capture retries into attempts seeded from their start snapshots ([0b6a800](https://github.com/Millennium44/Toolasha/commit/0b6a80008bbd285001cfad7e0075efb960e18c8d))
-* your own Seen loadouts row ages honestly instead of reading Just now forever ([bbed3e2](https://github.com/Millennium44/Toolasha/commit/bbed3e2f3785cab2bac269c11715b4a84cb502e5))
-
+- anchor canaries stand down while the game is disconnected ([087e030](https://github.com/Millennium44/Toolasha/commit/087e030648b0130d188a3a8c84f1874bee193929))
+- bulk sell prices insta sells to depth and waits for its own Next click ([2429fde](https://github.com/Millennium44/Toolasha/commit/2429fdece3ad94e9e5839cb21d2b136266c73dac))
+- chat player-message filter and collection panel watcher match the game's current class names ([b20e3fc](https://github.com/Millennium44/Toolasha/commit/b20e3fc3b22c1f6870df0a9141f0af14c805815c))
+- crit row survives legacy nulls, zero-crit runs, and small denominators ([1909e54](https://github.com/Millennium44/Toolasha/commit/1909e541283e0fff29d62530f60b7ac6c3d7dc98))
+- fold offense buffs once, restore stat history intact, keep auto-stopped captures savable ([bec03e1](https://github.com/Millennium44/Toolasha/commit/bec03e156da7ae4dbfb3da2db09d6f0a22759fa0))
+- lab fight recorder seeds attempts from the battle-start snapshot and reconciles endpoint damage ([ee1d3b0](https://github.com/Millennium44/Toolasha/commit/ee1d3b000b8fc33ca35fb105026e26b802d5942b))
+- lab fight recorder seeds its room from the init payload, so a page reloaded mid-fight watches the fight it lands in ([879c2aa](https://github.com/Millennium44/Toolasha/commit/879c2aaefed1e10fc3db5405decd3d8259eed3fc))
+- lab live clear readout keeps one steady node through sparse combat ticks ([70ede31](https://github.com/Millennium44/Toolasha/commit/70ede31392818c81a66e2001ee35fd20db30fd96))
+- lab tick capture file carries the savedAt it is stamped with ([04f0ce2](https://github.com/Millennium44/Toolasha/commit/04f0ce2b7ed9028bf1f85b318c462a24e74e835e))
+- labyrinth capacities read from characterInfo instead of asking ([0aa4ba2](https://github.com/Millennium44/Toolasha/commit/0aa4ba23d6cf416d4511d1e00841e4f97c3fe6f9))
+- multiplier buttons attach to the rebuilt price control ([6804f11](https://github.com/Millennium44/Toolasha/commit/6804f110a2183d7ce26435ff148c9f8084e76b98))
+- production bundles share one copy of the band and version utils ([fd7b328](https://github.com/Millennium44/Toolasha/commit/fd7b328093e13dfa570222e6f484b5a91751cad3))
+- selectorAudit treats non-module prefixes as unchecked, not broken ([d9a6e36](https://github.com/Millennium44/Toolasha/commit/d9a6e364af3170244b716d5c6a1fe41329f98bd4))
+- stale hardcoded class hashes replaced with prefix matches ([cad0654](https://github.com/Millennium44/Toolasha/commit/cad0654527dc3b8fc2e1b8136918a5c1c60c1156))
+- the Party DPS sidecar takes the column after the last boss card ([f6662b5](https://github.com/Millennium44/Toolasha/commit/f6662b5b5de6a59e3bff037ef5874b032e4bf5ef))
+- the trial abilities cycler ignores the roster's freshness gate ([a858205](https://github.com/Millennium44/Toolasha/commit/a858205b91f611c4d1f36b6f9fe6c3d6c584da3c))
+- the trial abilities panel captures your kit from the trial, not your zone fight ([5bc39a7](https://github.com/Millennium44/Toolasha/commit/5bc39a7482b2cd4a21fd7c620ad470f009ccfc13))
+- the trial cycler falls back to the roster's Battle Info opener ([84effe5](https://github.com/Millennium44/Toolasha/commit/84effe52da747a50305855551645913c27f2e5fc))
+- the trial payout sits above the whole battle row ([3fb1001](https://github.com/Millennium44/Toolasha/commit/3fb100166a001201dba8990117e30d89d5ac4714))
+- trial readout placement reads nowrap as the non-wrapping row it is ([ec09aaa](https://github.com/Millennium44/Toolasha/commit/ec09aaaeb7c3d43453179f53786d0ccf5f71261c))
+- uptime harness segments capture retries into attempts seeded from their start snapshots ([0b6a800](https://github.com/Millennium44/Toolasha/commit/0b6a80008bbd285001cfad7e0075efb960e18c8d))
+- your own Seen loadouts row ages honestly instead of reading Just now forever ([bbed3e2](https://github.com/Millennium44/Toolasha/commit/bbed3e2f3785cab2bac269c11715b4a84cb502e5))
 
 ### Code Refactoring
 
-* delete the dead DOM scrapers and normalize starts-with selectors ([a6167df](https://github.com/Millennium44/Toolasha/commit/a6167dfc0b46746e910b8bc8064cefa62efb420d))
-
+- delete the dead DOM scrapers and normalize starts-with selectors ([a6167df](https://github.com/Millennium44/Toolasha/commit/a6167dfc0b46746e910b8bc8064cefa62efb420d))
 
 ### Tests
 
-* cross-bundle globals test resolves repo paths portably ([47003cc](https://github.com/Millennium44/Toolasha/commit/47003cc3f5cd782317f98d5e6e9f39de29c545cf))
-* regenerate recorded fixtures with synthetic data, add a hygiene check ([3611598](https://github.com/Millennium44/Toolasha/commit/3611598bc6375ea0ae7e07de7dfa4219e7215923))
-* the two chain tests get a timeout that survives full-suite load ([eb0aab7](https://github.com/Millennium44/Toolasha/commit/eb0aab792643dd572f82c12a2922d222878ac44f))
-
+- cross-bundle globals test resolves repo paths portably ([47003cc](https://github.com/Millennium44/Toolasha/commit/47003cc3f5cd782317f98d5e6e9f39de29c545cf))
+- regenerate recorded fixtures with synthetic data, add a hygiene check ([3611598](https://github.com/Millennium44/Toolasha/commit/3611598bc6375ea0ae7e07de7dfa4219e7215923))
+- the two chain tests get a timeout that survives full-suite load ([eb0aab7](https://github.com/Millennium44/Toolasha/commit/eb0aab792643dd572f82c12a2922d222878ac44f))
 
 ### Continuous Integration
 
-* format workflow commits without re-running the pre-commit hook ([850e2a1](https://github.com/Millennium44/Toolasha/commit/850e2a14ed18b78dc7c3822fa59c0085536f6ab1))
-
+- format workflow commits without re-running the pre-commit hook ([850e2a1](https://github.com/Millennium44/Toolasha/commit/850e2a14ed18b78dc7c3822fa59c0085536f6ab1))
 
 ### Miscellaneous Chores
 
-* one-shot tag maintenance workflow ([cd214d7](https://github.com/Millennium44/Toolasha/commit/cd214d772e93b52588251201c10eddc5af6c874a))
-* remove one-shot maintenance workflow ([4093e0a](https://github.com/Millennium44/Toolasha/commit/4093e0afe774f211a1e789be8a470d81b8fdfd0e))
+- one-shot tag maintenance workflow ([cd214d7](https://github.com/Millennium44/Toolasha/commit/cd214d772e93b52588251201c10eddc5af6c874a))
+- remove one-shot maintenance workflow ([4093e0a](https://github.com/Millennium44/Toolasha/commit/4093e0afe774f211a1e789be8a470d81b8fdfd0e))
 
 ## [3.12.1](https://github.com/Millennium44/Toolasha/compare/v3.12.0...v3.12.1) (2026-08-17)
 
