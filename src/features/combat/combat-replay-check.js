@@ -202,6 +202,7 @@ import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatRelativeTime, formatKMB } from '../../utils/formatters.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { scriptVersion } from '../../utils/script-version.js';
+import { hashPlayerName } from './labyrinth-accuracy-export.js';
 
 /** Below this many fights the spread of the sample says nothing about the mean */
 export const MIN_SAMPLE_FIGHTS = 3;
@@ -1760,10 +1761,17 @@ class ReplayCheck {
     exportFile() {
         const observed = this.observed();
         const session = combatRecorder.sessionFile?.() ?? null;
+        const host = typeof location !== 'undefined' ? location.hostname || null : null;
 
         return {
             format: 'toolasha-sim-accuracy',
             version: 1,
+            // Which script produced it, against which server — an offline
+            // reader cannot reconstruct either from the numbers, and live and
+            // test do not share balance
+            toolashaVersion: scriptVersion(),
+            host,
+            isTestServer: host ? host.includes('test.') : null,
             exportedAt: Date.now(),
             simHours: SIM_HOURS,
             simNoiseFloorPct: SIM_NOISE_FLOOR_PCT,
@@ -2145,21 +2153,88 @@ function drawSaveButton(card) {
         replayCheckPanel.render();
     });
 
+    const sanitized = document.createElement('button');
+    sanitized.textContent = 'Sanitized';
+    sanitized.title =
+        'The same file with player identities hashed and character ids stripped — use this one when attaching ' +
+        'the recording to a public bug report. The kit, the fights and the numbers are untouched.';
+    Object.assign(sanitized.style, {
+        background: 'none',
+        border: `1px solid ${ROW_COLORS.dim}`,
+        borderRadius: '4px',
+        color: ROW_COLORS.dim,
+        padding: '2px 8px',
+        marginLeft: '4px',
+        cursor: 'pointer',
+        fontSize: '11px',
+    });
+    sanitized.addEventListener('click', () => {
+        downloadExport({ sanitized: true });
+        replayCheckPanel.render();
+    });
+
     row.appendChild(save);
+    row.appendChild(sanitized);
     card.appendChild(row);
+}
+
+/**
+ * One raw battle unit, stripped of who it is.
+ *
+ * The recorder's summaries carry no names, but the raw `new_battle` payloads
+ * kept in the segments do — a player unit names its character outright. The
+ * sanitized export hashes the name (stable, so two files from one character
+ * still correlate) and drops the character object and id; everything a re-sim
+ * reads — hitpoints, abilities, combatDetails — stays.
+ *
+ * @param {Object} unit - A player unit from a new_battle payload
+ * @returns {Object} The same unit, anonymous
+ */
+function sanitizeBattleUnit(unit) {
+    if (!unit || typeof unit !== 'object') return unit;
+    const { character, characterID, ...rest } = unit;
+    void character;
+    void characterID;
+    if (typeof rest.name === 'string' && rest.name) rest.name = hashPlayerName(rest.name);
+    return rest;
+}
+
+/**
+ * The export, fit for a public bug report.
+ *
+ * @param {Object} file - From `exportFile`
+ * @returns {Object} A deep copy with player identities hashed/stripped
+ */
+export function sanitizeExportFile(file) {
+    const clone = JSON.parse(JSON.stringify(file));
+    for (const segment of clone.recording?.segments || []) {
+        for (const tick of segment?.ticks || []) {
+            const players = tick?.type === 'new_battle' ? tick.payload?.players : null;
+            if (!players) continue;
+            tick.payload.players = Array.isArray(players)
+                ? players.map(sanitizeBattleUnit)
+                : Object.fromEntries(Object.entries(players).map(([key, unit]) => [key, sanitizeBattleUnit(unit)]));
+        }
+    }
+    clone.sanitized = true;
+    return clone;
 }
 
 /**
  * Write the export out.
  *
+ * @param {Object} [options]
+ * @param {boolean} [options.sanitized=false] - Hash/strip player identities first
  * @returns {boolean} Whether a file was written
  */
-export function downloadExport() {
+export function downloadExport({ sanitized = false } = {}) {
     try {
-        const blob = new Blob([JSON.stringify(replayCheck.exportFile())], { type: 'application/json' });
+        const file = sanitized ? sanitizeExportFile(replayCheck.exportFile()) : replayCheck.exportFile();
+        const name = sanitized ? 'toolasha-sim-accuracy-sanitized' : 'toolasha-sim-accuracy';
+        const blob = new Blob([JSON.stringify(file)], { type: 'application/json' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
-        link.download = `toolasha-sim-accuracy-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+        link.download = `${name}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
         link.click();
         URL.revokeObjectURL(link.href);
         return true;

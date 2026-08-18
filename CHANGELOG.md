@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Zone recordings and Sim Accuracy exports say what produced them, and can go public
+
+Both zone export files (the Sim Accuracy bundle and the combat session inside it) are now stamped with script version, host and test-server flag — an offline reader could reconstruct neither, and live and test do not share balance. A new Sanitized save writes the same file with player identities hashed and character ids stripped out of the raw `new_battle` payloads (the summaries never carried names), for attaching to public bug reports.
+
 ### `Toolasha.debug.selectorAudit()` — the after-a-game-update sweep as one command
 
 The game's stylesheets carry every CSS-module class whether or not its element is drawn, so diffing the selector registry against them says what a game update broke without visiting a single screen — the technique that found four broken selectors on 2026-08-17, now a standing console command. Checks `class*=` prefixes and full hashed literals; anything else is reported as unchecked rather than silently passed.

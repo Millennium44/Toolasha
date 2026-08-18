@@ -115,6 +115,7 @@ import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import { describeMonsterPanel } from '../../utils/battle-panel-monsters.js';
 import { webSocketHook as sharedWebSocketHook } from '../../utils/bundle-bridge.js';
+import { scriptVersion } from '../../utils/script-version.js';
 
 /**
  * Ticks per segment.
@@ -732,9 +733,15 @@ export function sessionFile() {
         ...segments.map(segmentEntry),
         segmentEntry({ ...live, fights: segmentFights, tickCount: live.ticks.length, summary: summarizeSegment(live) }),
     ];
+    const host = typeof location !== 'undefined' ? location.hostname || null : null;
     return {
         format: 'toolasha-combat-session',
         version: 1,
+        // Which script produced it, against which server — live and test do
+        // not share balance, and a reader cannot tell from the fights alone
+        toolashaVersion: scriptVersion(),
+        host,
+        isTestServer: host ? host.includes('test.') : null,
         recordedAt: recordingStartedAt || null,
         exportedAt: Date.now(),
         seconds: recordingStartedAt ? (Date.now() - recordingStartedAt) / 1000 : 0,

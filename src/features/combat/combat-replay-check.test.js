@@ -100,6 +100,7 @@ import replayCheck, {
     compareMetric,
     compareRun,
     deathCheck,
+    sanitizeExportFile,
     summaryLine,
     predictedSwings,
     sampleSizeFor,
@@ -594,6 +595,61 @@ describe('the whole comparison', () => {
     test('half a comparison is no comparison', () => {
         expect(compareRun(observed, null)).toBe(null);
         expect(compareRun(null, predicted)).toBe(null);
+    });
+});
+
+describe('the sanitized export', () => {
+    const file = () => ({
+        format: 'toolasha-sim-accuracy',
+        observations: [{ fights: 3 }],
+        recording: {
+            segments: [
+                {
+                    ticks: [
+                        {
+                            type: 'new_battle',
+                            payload: {
+                                players: [
+                                    { name: 'RealName', character: { id: 7, name: 'RealName' }, currentHitpoints: 500 },
+                                ],
+                                monsters: [{ name: 'Fly', hrid: '/monsters/fly' }],
+                            },
+                        },
+                        { type: 'battle_updated', payload: { pMap: { 0: { cHP: 400 } } } },
+                    ],
+                },
+                { ticks: null, summary: { fights: 2 } },
+            ],
+        },
+    });
+
+    test('player identities are hashed and stripped; the fight itself is untouched', () => {
+        const clean = sanitizeExportFile(file());
+        const [player] = clean.recording.segments[0].ticks[0].payload.players;
+        expect(player.name).toMatch(/^p[0-9a-f]{8}$/);
+        expect(player.character).toBeUndefined();
+        expect(player.currentHitpoints).toBe(500);
+        // The monster keeps its name — game content is not an identity
+        expect(clean.recording.segments[0].ticks[0].payload.monsters[0].name).toBe('Fly');
+        expect(clean.sanitized).toBe(true);
+    });
+
+    test('the original file is left alone, and tick-less segments are tolerated', () => {
+        const original = file();
+        sanitizeExportFile(original);
+        expect(original.recording.segments[0].ticks[0].payload.players[0].name).toBe('RealName');
+        expect(sanitizeExportFile({ recording: null }).sanitized).toBe(true);
+    });
+
+    test('object-keyed player maps are sanitized the same way', () => {
+        const keyed = file();
+        keyed.recording.segments[0].ticks[0].payload.players = {
+            0: { name: 'RealName', characterID: 7, currentHitpoints: 500 },
+        };
+        const clean = sanitizeExportFile(keyed);
+        const player = clean.recording.segments[0].ticks[0].payload.players[0];
+        expect(player.name).toMatch(/^p[0-9a-f]{8}$/);
+        expect(player.characterID).toBeUndefined();
     });
 });
 
