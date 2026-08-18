@@ -121,7 +121,7 @@ class BulkSellAssistant {
         this.isInitialized = false;
         this.watcher = null;
         this.chip = null;
-        this.state = 'idle'; // idle | preparing | awaiting_confirm | done
+        this.state = 'idle'; // idle | preparing | awaiting_confirm | awaiting_next | done
         this.queue = [];
         this.index = 0;
         this.current = null;
@@ -728,12 +728,21 @@ class BulkSellAssistant {
             status.textContent = `${progress} · ${verb} ${this.current.count}× ${this.current.name} @ ${formatKMB(d?.price || 0)} (${d?.reason}) — ${confirmHint}`;
             mainBtn.textContent = '⏭ Skip';
             mainBtn.title = 'Close the modal and skip this item';
+        } else if (this.state === 'awaiting_next') {
+            status.textContent = `${progress} · ${this.current?.name || ''} dealt with — press Next for the next item`;
+            mainBtn.textContent = '▶ Next';
+            mainBtn.title = 'Open the next item. Its own click, so one click never does two game actions.';
         }
     }
 
     _onMainClick() {
         if (this.state === 'idle' || this.state === 'done') {
             this._start();
+        } else if (this.state === 'awaiting_next') {
+            this.index++;
+            this.state = 'preparing';
+            this._render();
+            this._prepareCurrent();
         } else {
             this._skip('skipped');
         }
@@ -1002,7 +1011,24 @@ class BulkSellAssistant {
         const insta =
             (supplyTriggered || ageTriggered || valueTriggered || spreadTriggered || premiumTriggered) &&
             bids.length > 0;
-        const price = insta ? bids[0].price : askPrice || bidPrice || 0;
+
+        // The top bid's price only holds for the top bid's quantity. An insta
+        // sell of the whole stack fills every bid at or above the price the
+        // form names, so the price is walked down the book until the depth
+        // covers the count — otherwise the modal claims a price the trade
+        // cannot get and sells only part of the stack.
+        let instaPrice = bids[0]?.price ?? 0;
+        let depthShort = false;
+        if (insta) {
+            let covered = 0;
+            for (const row of bids) {
+                covered += Math.max(0, (row.orderQuantity ?? row.quantity ?? 0) - (row.filledQuantity ?? 0));
+                instaPrice = row.price;
+                if (covered >= this.current.count) break;
+            }
+            depthShort = covered < this.current.count;
+        }
+        const price = insta ? instaPrice : askPrice || bidPrice || 0;
 
         const ratioLabel = supplyRatio === 1 ? '' : ` ×${supplyRatio}`;
         const reason = insta
@@ -1016,7 +1042,11 @@ class BulkSellAssistant {
                       ? `spread ${spreadPct.toFixed(1)}% ≤ ${maxSpreadPct}%`
                       : `listing earns ~${formatKMB(Math.round(patientPremium))} < ${formatKMB(minPatientPremium)} premium`
             : 'queue ok';
-        this.decision = { insta, price, reason };
+        const depthNote =
+            insta && instaPrice < (bids[0]?.price ?? 0)
+                ? `; priced to ${formatKMB(instaPrice)} so the depth covers the stack${depthShort ? ' (book still short)' : ''}`
+                : '';
+        this.decision = { insta, price, reason: reason + depthNote };
 
         const open = insta
             ? marketplaceShortcuts.clickInstantActionButton('Sell')
@@ -1105,6 +1135,28 @@ class BulkSellAssistant {
             nativeInputValueSetter.call(input, String(count));
             input.dispatchEvent(new Event('input', { bubbles: true }));
         }, 120);
+
+        // An insta sell's price must be the depth-walked one, not the game's
+        // best-bid default: Sell Now fills every bid at or above the price the
+        // form names, and the default only clears the top level's quantity.
+        // The rebuilt price control sleeps as a display div until clicked, so
+        // wake it first and write on the next beat.
+        if (text.includes('Sell Now') && this.decision?.insta && this.decision.price > 0) {
+            const price = this.decision.price;
+            setTimeout(() => {
+                const priceRow = modal.querySelector('div[class*="MarketplacePanel_priceInputs"]');
+                if (!priceRow) return;
+                if (!priceRow.querySelector('input')) {
+                    priceRow.querySelector('div[class*="MarketplacePanel_priceDisplay"]')?.click();
+                }
+                setTimeout(() => {
+                    const priceInput = priceRow.querySelector('input');
+                    if (!priceInput) return;
+                    nativeInputValueSetter.call(priceInput, String(price));
+                    priceInput.dispatchEvent(new Event('input', { bubbles: true }));
+                }, 150);
+            }, 200);
+        }
     }
 
     /**
@@ -1126,8 +1178,13 @@ class BulkSellAssistant {
             } else if (seen) {
                 clearInterval(this.modalPoll);
                 this.modalPoll = null;
-                this.index++;
-                this.advanceTimeout = setTimeout(() => this._prepareCurrent(), 400);
+                // Not straight to the next item: the click that closed this
+                // modal has already done its one game action (the sale), and
+                // opening the next item's book is another. The run waits for
+                // its own Next press, so every server action has a click of
+                // its own.
+                this.state = 'awaiting_next';
+                this._render();
             }
         }, 200);
     }

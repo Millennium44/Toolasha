@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The Consumables panel buys the way Bulk Sell sells
+
+The Buy links' order-or-instant call now runs the bulk-sell rulebook in reverse — a configurable spread floor, a minimum saving in coins, and a minimum order value all say "pay the ask", urgency still overrules everything, and the tooltip prices each hour of patience (saving ÷ expected fill time). A link now opens the very form its ⚡/⏳ recommendation points at with the quantity filled in (setting, on by default; nothing is bought until the game's own confirm). A new Labyrinth block plans full consumption per run — the whole torch/shroud/beacon capacity (capacities are settings: base 100/4/5 plus your upgrades) and one crate per selected slot — against a cycling 1/3/5/10/25-run target.
+
+### Bulk sell: depth-priced insta sells, and a Next click of its own
+
+An insta-sell's price now walks down the bid book until the depth covers the whole stack — the top bid's price only ever held for the top bid's quantity — and writes that price into the Sell Now form (waking the rebuilt price control first). And the run no longer opens the next item off the back of the confirm click: that click's one game action was the sale, so the chip now waits for its own Next press before opening the next book.
+
 ### The ÷2/×2 buttons survive the rebuilt price control
 
 The 8/14 game update replaced the listing form's price input with a display that only swaps a real input in when clicked, so the multiplier buttons silently stopped attaching to the price row. They attach again, and each press wakes the display first when it has to. The other market automations came through the rebuild untouched — auto-fill-price drives the game's own steppers and auto-click-max never touched the price row — verified live on both listing forms.
