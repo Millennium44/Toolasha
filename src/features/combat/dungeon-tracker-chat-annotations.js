@@ -119,7 +119,7 @@ class DungeonTrackerChatAnnotations {
         this.initComplete = false;
 
         // Remove existing annotation spans and reset DOM flags so messages can be re-annotated
-        document.querySelectorAll('[class^="ChatMessage_chatMessage"]').forEach((msg) => {
+        document.querySelectorAll('[class*="ChatMessage_chatMessage"]').forEach((msg) => {
             msg.querySelectorAll('.dungeon-timer-annotation, .dungeon-timer-average').forEach((s) => s.remove());
             delete msg.dataset.timerAppended;
             delete msg.dataset.avgAppended;
@@ -193,9 +193,9 @@ class DungeonTrackerChatAnnotations {
                     for (const node of mutation.addedNodes) {
                         if (!(node instanceof HTMLElement)) continue;
 
-                        const msg = node.matches?.('[class^="ChatMessage_chatMessage"]')
+                        const msg = node.matches?.('[class*="ChatMessage_chatMessage"]')
                             ? node
-                            : node.querySelector?.('[class^="ChatMessage_chatMessage"]');
+                            : node.querySelector?.('[class*="ChatMessage_chatMessage"]');
 
                         if (msg) {
                             hasNewMessage = true;
@@ -606,7 +606,7 @@ class DungeonTrackerChatAnnotations {
      */
     extractChatEvents() {
         // Query ALL chat messages (matches working DRT script - no tab filtering)
-        const nodes = [...document.querySelectorAll('[class^="ChatMessage_chatMessage"]')];
+        const nodes = [...document.querySelectorAll('[class*="ChatMessage_chatMessage"]')];
         const events = [];
 
         for (const node of nodes) {
@@ -717,25 +717,6 @@ class DungeonTrackerChatAnnotations {
         // Final fallback
         console.warn('[Dungeon Tracker Debug] ALL PRIORITIES FAILED for index', currentIndex, '-> Unknown');
         return 'Unknown';
-    }
-
-    /**
-     * Check if party chat is currently selected
-     * @returns {boolean} True if party chat is visible
-     */
-    isPartySelected() {
-        const selectedTabEl = document.querySelector(
-            `.Chat_tabsComponentContainer__3ZoKe .MuiButtonBase-root[aria-selected="true"]`
-        );
-        const tabsEl = document.querySelector(
-            '.Chat_tabsComponentContainer__3ZoKe .TabsComponent_tabPanelsContainer__26mzo'
-        );
-        return (
-            selectedTabEl &&
-            tabsEl &&
-            selectedTabEl.textContent.includes('Party') &&
-            !tabsEl.classList.contains('TabsComponent_hidden__255ag')
-        );
     }
 
     /**
@@ -957,7 +938,7 @@ class DungeonTrackerChatAnnotations {
         annotations.forEach((annotation) => annotation.remove());
 
         // Clear processed markers from chat messages
-        const processedMessages = document.querySelectorAll('[class^="ChatMessage_chatMessage"][data-processed="1"]');
+        const processedMessages = document.querySelectorAll('[class*="ChatMessage_chatMessage"][data-processed="1"]');
         processedMessages.forEach((msg) => {
             delete msg.dataset.processed;
             delete msg.dataset.timerAppended;

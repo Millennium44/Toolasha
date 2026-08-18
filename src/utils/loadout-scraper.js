@@ -1,39 +1,16 @@
 /**
  * Loadout Scraper Utilities
  *
- * Shared DOM scraping helpers for reading equipment, abilities, and consumables
- * from the game's LoadoutsPanel_selectedLoadout element.
+ * What the inventory can say about a loadout without touching the DOM.
  *
- * Used by loadout-export-button.js and loadout-snapshot.js.
+ * This file once carried DOM scrapers for the LoadoutsPanel element; they had
+ * no callers left (loadouts are read from the WebSocket cache now) and their
+ * selector-miss behavior returned valid-shaped emptiness — a trap for anyone
+ * rewiring them. Deleted rather than kept plausible. Used by
+ * skilling-optimizer-ui.js.
  */
 
 import dataManager from '../core/data-manager.js';
-
-/**
- * Extract item HRID from an SVG use href attribute
- * e.g. "items_sprite.9c39e2ec.svg#griffin_bulwark_refined" → "/items/griffin_bulwark_refined"
- * @param {string} href
- * @returns {string|null}
- */
-export function itemHridFromUseHref(href) {
-    if (!href || !href.includes('items_sprite')) return null;
-    const fragment = href.split('#')[1];
-    if (!fragment) return null;
-    return `/items/${fragment}`;
-}
-
-/**
- * Extract ability HRID from an SVG use href attribute
- * e.g. "abilities_sprite.fdd1b4de.svg#invincible" → "/abilities/invincible"
- * @param {string} href
- * @returns {string|null}
- */
-export function abilityHridFromUseHref(href) {
-    if (!href || !href.includes('abilities_sprite')) return null;
-    const fragment = href.split('#')[1];
-    if (!fragment) return null;
-    return `/abilities/${fragment}`;
-}
 
 /**
  * Build a map of itemHrid → highest enhancementLevel across all character items.
@@ -89,125 +66,4 @@ export function getItemLocationHrid(itemHrid) {
     const equipType = detail.equipmentDetail?.type;
     if (!equipType) return null;
     return EQUIPMENT_TYPE_TO_LOCATION[equipType] || null;
-}
-
-/**
- * Scrape equipment items from the selected loadout element
- * @param {Element} selectedLoadout
- * @returns {Array<{itemLocationHrid, itemHrid, enhancementLevel}>}
- */
-export function scrapeEquipment(selectedLoadout) {
-    const equipDiv = selectedLoadout.querySelector('[class*="LoadoutsPanel_equipment"]');
-    if (!equipDiv) return [];
-
-    const enhancementMap = buildEnhancementLevelMap();
-    const equipment = [];
-    const uses = equipDiv.querySelectorAll('use');
-
-    for (const use of uses) {
-        const href = use.getAttribute('href') || use.getAttribute('xlink:href') || '';
-        const itemHrid = itemHridFromUseHref(href);
-        if (!itemHrid) continue;
-
-        const itemLocationHrid = getItemLocationHrid(itemHrid);
-        if (!itemLocationHrid) continue;
-
-        const enhancementLevel = enhancementMap.get(itemHrid) ?? 0;
-        equipment.push({ itemLocationHrid, itemHrid, enhancementLevel });
-    }
-    return equipment;
-}
-
-/**
- * Scrape abilities from the selected loadout element
- * @param {Element} selectedLoadout
- * @param {Object} clientData - initClientData for isSpecialAbility lookup
- * @returns {Array<{abilityHrid, level}>} 5-slot array, slot 0 = special
- */
-export function scrapeAbilities(selectedLoadout, clientData) {
-    const abilitiesDiv = selectedLoadout.querySelector('[class*="LoadoutsPanel_abilities"]');
-
-    // Build 5-slot array (slot 0 = special, 1-4 = normal)
-    const slots = [
-        { abilityHrid: '', level: 1 },
-        { abilityHrid: '', level: 1 },
-        { abilityHrid: '', level: 1 },
-        { abilityHrid: '', level: 1 },
-        { abilityHrid: '', level: 1 },
-    ];
-
-    if (!abilitiesDiv) return slots;
-
-    // Each ability is a container with an SVG use + level text
-    const abilityContainers = abilitiesDiv.querySelectorAll('[class*="Ability_ability"]');
-
-    let normalIndex = 1;
-
-    for (const container of abilityContainers) {
-        const use = container.querySelector('use');
-        if (!use) continue;
-
-        const href = use.getAttribute('href') || use.getAttribute('xlink:href') || '';
-        const abilityHrid = abilityHridFromUseHref(href);
-        if (!abilityHrid) continue;
-
-        // Parse level from ".Ability_level__" element: "Lv.59" → 59
-        const levelEl = container.querySelector('[class*="Ability_level"]');
-        let level = 1;
-        if (levelEl) {
-            const match = levelEl.textContent.trim().match(/\d+/);
-            if (match) level = parseInt(match[0], 10);
-        }
-
-        if (clientData?.abilityDetailMap && !clientData.abilityDetailMap[abilityHrid]) {
-            console.error(`[LoadoutScraper] Ability not found in abilityDetailMap: ${abilityHrid}`);
-        }
-        const isSpecial = clientData?.abilityDetailMap?.[abilityHrid]?.isSpecialAbility || false;
-
-        if (isSpecial) {
-            slots[0] = { abilityHrid, level };
-        } else if (normalIndex < 5) {
-            slots[normalIndex++] = { abilityHrid, level };
-        }
-    }
-
-    return slots;
-}
-
-/**
- * Scrape consumables (food/drinks) from the selected loadout element
- * @param {Element} selectedLoadout
- * @param {Object} clientData - initClientData for item type lookup
- * @returns {{ food: Array, drinks: Array }}
- */
-export function scrapeConsumables(selectedLoadout, clientData) {
-    const consumablesDiv = selectedLoadout.querySelector('[class*="LoadoutsPanel_consumables"]');
-
-    const food = [{ itemHrid: '' }, { itemHrid: '' }, { itemHrid: '' }];
-    const drinks = [{ itemHrid: '' }, { itemHrid: '' }, { itemHrid: '' }];
-
-    if (!consumablesDiv) return { food, drinks };
-
-    const uses = consumablesDiv.querySelectorAll('use');
-    let foodIndex = 0;
-    let drinkIndex = 0;
-
-    for (const use of uses) {
-        const href = use.getAttribute('href') || use.getAttribute('xlink:href') || '';
-        const itemHrid = itemHridFromUseHref(href);
-        if (!itemHrid) continue;
-
-        const isDrink =
-            itemHrid.includes('/drinks/') ||
-            itemHrid.includes('coffee') ||
-            clientData?.itemDetailMap?.[itemHrid]?.type === 'drink';
-
-        if (isDrink && drinkIndex < 3) {
-            drinks[drinkIndex++] = { itemHrid };
-        } else if (!isDrink && foodIndex < 3) {
-            food[foodIndex++] = { itemHrid };
-        }
-    }
-
-    return { food, drinks };
 }

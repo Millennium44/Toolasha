@@ -436,7 +436,7 @@ class DungeonTracker {
 
             // FALLBACK: If no messages in memory, scan DOM (for messages that arrived before script loaded)
             if (!latestKeyCountsMap) {
-                const messages = document.querySelectorAll('[class^="ChatMessage_chatMessage"]');
+                const messages = document.querySelectorAll('[class*="ChatMessage_chatMessage"]');
 
                 // Scan all messages to find Battle started and most recent key counts
                 for (const msg of messages) {
@@ -1476,7 +1476,7 @@ class DungeonTracker {
      */
     async backfillFromChatHistory() {
         try {
-            const messages = document.querySelectorAll('[class^="ChatMessage_chatMessage"]');
+            const messages = document.querySelectorAll('[class*="ChatMessage_chatMessage"]');
             const events = [];
 
             // Extract all relevant events: key counts, party failed, battle ended, battle started

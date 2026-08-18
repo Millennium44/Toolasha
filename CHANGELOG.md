@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Dead scrapers deleted, and starts-with selectors normalized
+
+The character-sheet DOM extractors and the loadout-panel scrapers had no callers left (both paths read the WebSocket cache now) and their selector-miss behavior returned valid-shaped emptiness — a trap for anyone rewiring them; deleted rather than kept plausible, along with the unused `isPartySelected()`. The `class^=` (starts-with) ChatMessage and QueuedActions selectors become the repo-standard `class*=`, so a class the game prepends can no longer defeat them.
+
 ### Zone fights reconcile their endpoints, and the panel states the attribution gap
 
 Every replayed zone fight now carries the lab's endpoint reconciliation: the wave's HP loss plus its self-healing is exactly the gross damage it took, and the signed residual over the counter-gated credited figure says how much the tick attribution missed (bleeds ring no hit counter; the 3 Hz feed merges frames). The recording card shows the gap as a data-quality line — it bounds how far observed DPS under-reads, which is exactly the direction that used to read as sim over-prediction.

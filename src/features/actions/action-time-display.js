@@ -277,7 +277,7 @@ class ActionTimeDisplay {
             const currentActions = dataManager.getCurrentActions();
             if (!currentActions || currentActions.length === 0) return;
 
-            const actionDivs = tooltipContent.querySelectorAll('[class^="QueuedActions_action__"]');
+            const actionDivs = tooltipContent.querySelectorAll('[class*="QueuedActions_action__"]');
             if (actionDivs.length === 0) return;
 
             // Prevent duplicate injection
@@ -2094,7 +2094,7 @@ class ActionTimeDisplay {
             }
 
             // Find all action divs in the queue (individual actions only, not wrapper or text containers)
-            const actionDivs = queueMenu.querySelectorAll('[class^="QueuedActions_action__"]');
+            const actionDivs = queueMenu.querySelectorAll('[class*="QueuedActions_action__"]');
             if (actionDivs.length === 0) {
                 return;
             }
