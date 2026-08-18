@@ -736,8 +736,29 @@ class MarketplaceShortcuts {
             for (const row of [priceRow, quantityRow]) {
                 if (!row) continue;
 
-                const input = row.querySelector('input');
-                if (!input) continue;
+                // The 8/14/2026 update rebuilt the price control as a display
+                // div that only swaps its real <input> in when clicked, so "no
+                // input in the row" no longer means "no field" — it means the
+                // field is asleep. The buttons go in either way; each press
+                // resolves the input at click time, waking the display first
+                // when it has to.
+                const hasField =
+                    row.querySelector('input') || row.querySelector('div[class*="MarketplacePanel_priceDisplay"]');
+                if (!hasField) continue;
+
+                const withInput = (apply) => {
+                    const input = row.querySelector('input');
+                    if (input) {
+                        apply(input);
+                        return;
+                    }
+                    row.querySelector('div[class*="MarketplacePanel_priceDisplay"]')?.click();
+                    const wakeTimeout = setTimeout(() => {
+                        const revealed = row.querySelector('input');
+                        if (revealed) apply(revealed);
+                    }, 120);
+                    this.timerRegistry.registerTimeout(wakeTimeout);
+                };
 
                 const buttonContainers = row.querySelectorAll('div[class*="MarketplacePanel_buttonContainer"]');
                 if (buttonContainers.length < 2) continue;
@@ -756,8 +777,10 @@ class MarketplaceShortcuts {
                 divideBtn.addEventListener('click', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    const current = parseInt(input.value) || 0;
-                    setReactInputValue(input, Math.max(1, Math.floor(current / 2)));
+                    withInput((input) => {
+                        const current = parseInt(input.value) || 0;
+                        setReactInputValue(input, Math.max(1, Math.floor(current / 2)));
+                    });
                 });
                 divideWrapper.appendChild(divideBtn);
 
@@ -769,8 +792,10 @@ class MarketplaceShortcuts {
                 multiplyBtn.addEventListener('click', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    const current = parseInt(input.value) || 0;
-                    setReactInputValue(input, current * 2);
+                    withInput((input) => {
+                        const current = parseInt(input.value) || 0;
+                        setReactInputValue(input, current * 2);
+                    });
                 });
                 multiplyWrapper.appendChild(multiplyBtn);
 
