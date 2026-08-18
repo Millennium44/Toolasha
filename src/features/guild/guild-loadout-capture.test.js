@@ -16,6 +16,7 @@ const game = vi.hoisted(() => ({
     clientData: {},
     store: {},
     characterId: 'char-1',
+    characterName: null,
     wsHandlers: {},
     observers: {},
 }));
@@ -24,6 +25,7 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => game.clientData,
         getCurrentCharacterId: () => game.characterId,
+        getCurrentCharacterName: () => game.characterName,
     },
 }));
 vi.mock('../../core/storage.js', () => ({
@@ -146,6 +148,7 @@ describe('the capture', () => {
     beforeEach(async () => {
         game.store = {};
         game.characterId = 'char-1';
+        game.characterName = null;
         game.clientData = {};
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-08-04T12:00:00Z'));
@@ -200,6 +203,50 @@ describe('the capture', () => {
                 .map((entry) => entry.name)
                 .sort()
         ).toEqual(['Moo', 'Tib']);
+    });
+
+    test('the local player’s own new_battle is skipped, matched by id', () => {
+        game.characterName = 'Me';
+        game.wsHandlers.new_battle({
+            players: [
+                { character: { id: 'char-1', name: 'Me' }, combatDetails: { maxHitpoints: 4000, combatStats: {} } },
+                { character: { id: 'char-9', name: 'Tib' }, combatDetails: { maxHitpoints: 4120, combatStats: {} } },
+            ],
+        });
+
+        // The teammate is exactly what the message is for; the local player's
+        // own row must wait for their Battle Info to actually be opened
+        expect(guildLoadoutCapture.seen().map((entry) => entry.name)).toEqual(['Tib']);
+    });
+
+    test('the local player’s own new_battle is skipped by name when the entry carries no id', () => {
+        game.characterName = 'Me';
+        game.wsHandlers.new_battle({
+            players: [
+                { character: { name: 'ME' }, combatDetails: { maxHitpoints: 4000, combatStats: {} } },
+                { character: { name: 'Moo' }, combatDetails: { maxHitpoints: 3000, combatStats: {} } },
+            ],
+        });
+
+        expect(guildLoadoutCapture.seen().map((entry) => entry.name)).toEqual(['Moo']);
+    });
+
+    test('the local player’s Battle Info still folds, socket and popup alike', () => {
+        game.characterName = 'Me';
+        game.wsHandlers.battle_unit_fetched({
+            unit: {
+                character: { id: 'char-1', name: 'Me' },
+                combatDetails: { combatLevel: 150, maxHitpoints: 4000, combatStats: {} },
+                combatAbilities: [],
+            },
+        });
+        expect(guildLoadoutCapture.forPlayer('Me')?.source).toBe('battle_unit_fetched');
+
+        vi.advanceTimersByTime(POPUP_SOCKET_WINDOW_MS + 1000);
+        game.observers.Modal_modalContent(
+            modal([['Me - Lv.150'], ['Armor', '62'], ['Parry', '2%'], ['Threat', '3%'], ['Tenacity', '4%']])
+        );
+        expect(guildLoadoutCapture.forPlayer('Me')?.source).toBe('popup');
     });
 
     test('the scrape stands down when the socket has just answered', () => {

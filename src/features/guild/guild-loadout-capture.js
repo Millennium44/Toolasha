@@ -41,6 +41,7 @@ import {
     foldLoadout,
     isMonsterUnit,
     loadLoadouts,
+    loadoutKey,
     loadoutList,
     purgeMonsterLoadouts,
     saveLoadouts,
@@ -354,10 +355,47 @@ class GuildLoadoutCapture {
      */
     _onNewBattle(message) {
         try {
-            for (const loadout of extractPartyLoadouts(message)) this._note(loadout);
+            for (const loadout of extractPartyLoadouts(message)) {
+                // The local player's own `new_battle` fires on every wave of
+                // their personal fights, which kept their own row pinned at
+                // "seen Just now" forever — a freshness the sheet never earned,
+                // and one that hid the "open your Battle Info" prompt. The same
+                // discipline the trial abilities panel keeps: the local
+                // player's loadout refreshes only when their Battle Info is
+                // actually opened (`battle_unit_fetched` or the popup scrape).
+                // Everyone *else* in the party keeps folding — a teammate's
+                // sighting is exactly what this message is for.
+                if (this._isLocalPlayer(loadout)) continue;
+                this._note(loadout);
+            }
         } catch (error) {
             console.error('[GuildLoadouts] Reading a party roster failed:', error);
         }
+    }
+
+    /**
+     * Whether a snapshot is the local player's own.
+     *
+     * Matched on the character id when both sides have one, and on the name
+     * otherwise — a `new_battle` player entry does not always carry an id, and
+     * the name comparison uses {@link loadoutKey} so it is exactly as
+     * case-insensitive as the store the snapshot would land in.
+     *
+     * @param {Object} loadout - A snapshot from {@link extractPartyLoadouts}
+     * @returns {boolean} True when it is the current character
+     */
+    _isLocalPlayer(loadout) {
+        if (!loadout) return false;
+
+        const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+        if (characterId != null && loadout.characterId != null) {
+            return String(loadout.characterId) === String(characterId);
+        }
+
+        const name = dataManager.getCurrentCharacterName?.() ?? dataManager.characterData?.characterInfo?.name ?? null;
+        if (name && loadout.name) return loadoutKey(loadout.name) === loadoutKey(name);
+
+        return false;
     }
 
     /**

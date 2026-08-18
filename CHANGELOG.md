@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Your own "Seen loadouts" row stops reading "seen Just now" forever
+
+The Guild Roster's loadout store folded the local player's own `new_battle` snapshot on every wave of their personal fights, so their row was perpetually fresh and the "open your Battle Info" prompt never reappeared. The local player's loadout now refreshes only when their Battle Info is actually opened (`battle_unit_fetched` or the popup scrape) — the same discipline the Trial Abilities panel already keeps. Teammates' `new_battle` sightings still fold as before.
+
 ### The trial cycler falls back to the roster's Battle Info opener
 
 At a live trial, "Open next Battle Info" found no clickable trial units while the Guild Roster's "Open …'s battle info" button worked on the same screen. When the trial finder comes up empty, the cycler now reuses that roster opener as a fallback (same routine, not a copy), stamping the click into the trial's own retry window so nobody gets hammered or skipped.
