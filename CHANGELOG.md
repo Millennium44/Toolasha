@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The labyrinth tick capture runs for an hour before stopping itself
+
+The unattended auto-stop was 15 minutes, which yielded only ~40 casts of each monster special — too thin for the harness's hit-rate and cadence verdicts to separate signal from noise. It's now 60 minutes; the 8,000-tick ring holds ~95 minutes at observed lab tick rates, so nothing is dropped. Manual stop and leaving the monster still end it early as before.
+
 ### The uptime harness checks your own abilities too
 
 The labyrinth room panel's uptime harness gains an outgoing section: the same per-ability real-vs-sim decomposition, run on YOUR swings (paid off by the monster's damage counter) from the same tick capture and the same sim run as the incoming table. Heals and self-buffs count as casts but never absorb a hit's damage; your bleeds land on the shared damage-over-time row. The `Toolasha.Debug.uptimeHarness` console helper prints both directions.

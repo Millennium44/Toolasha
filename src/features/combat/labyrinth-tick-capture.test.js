@@ -134,7 +134,7 @@ describe('the file says which capture it is, and how the capture ended', () => {
         expect(capture.captureFile().stoppedReason).toBe('manual');
 
         capture.startCapture();
-        vi.advanceTimersByTime(15 * 60 * 1000);
+        vi.advanceTimersByTime(60 * 60 * 1000);
         expect(capture.isCapturing()).toBe(false);
         expect(capture.captureFile().stoppedReason).toBe('auto_max_duration');
         // The button's stop on an already-finished capture must not rewrite why

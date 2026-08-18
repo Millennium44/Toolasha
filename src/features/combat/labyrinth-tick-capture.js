@@ -28,8 +28,13 @@ import { scriptVersion } from '../../utils/script-version.js';
 /** Ticks kept before the oldest fall off — far more than one fight, bounded so a tab can't grow forever */
 const MAX_TICKS = 8000;
 
-/** A capture nobody stopped stops itself here, so an armed one is never left running */
-const MAX_CAPTURE_MS = 15 * 60 * 1000;
+/**
+ * A capture nobody stopped stops itself here, so an armed one is never left running.
+ * Sized so the harness can collect enough fights for its cadence/hit-rate verdicts
+ * to firm up (15 min gave ~40 casts of each special — ~2σ territory); the 8000-tick
+ * ring holds ~95 min at observed lab tick rates, so an hour never drops ticks.
+ */
+const MAX_CAPTURE_MS = 60 * 60 * 1000;
 
 let capturing = false;
 let startedAt = 0;
