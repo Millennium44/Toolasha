@@ -158,6 +158,14 @@ describe('extractLoadout', () => {
         expect(loadout.at).toBe(now);
     });
 
+    test('says whether the payload itself spoke about abilities', () => {
+        // A `combatAbilities` array — even an empty one — is an authoritative
+        // statement of the kit; a payload without it says nothing about it
+        expect(extractLoadout(unitMessage()).abilitiesAuthoritative).toBe(true);
+        expect(extractLoadout(unitMessage({ combatAbilities: [] })).abilitiesAuthoritative).toBe(true);
+        expect(extractLoadout(unitMessage({ combatAbilities: undefined })).abilitiesAuthoritative).toBe(false);
+    });
+
     test('the end-of-session message carries no sheet and produces nothing', () => {
         const message = { unit: { character: { name: 'Tib' }, totalLootMap: { 0: { itemHrid: '/items/coin' } } } };
         expect(extractLoadout(message)).toBeNull();
@@ -288,6 +296,81 @@ describe('foldLoadout', () => {
     test('a snapshot without a name changes nothing', () => {
         const record = foldLoadout({ players: { tib: { name: 'Tib', at: now } }, updatedAt: now }, null);
         expect(Object.keys(record.players)).toEqual(['tib']);
+    });
+
+    describe('the ability kit survives sightings that never looked at it', () => {
+        const kit = [{ hrid: '/abilities/fireball', level: 40, label: 'Fireball' }];
+        const socketSighting = {
+            name: 'Tib',
+            at: now,
+            rows: [1, 2, 3],
+            abilities: kit,
+            abilitiesAuthoritative: true,
+            source: 'battle_unit_fetched',
+        };
+
+        test('a popup scrape keeps the captured kit, its flag and its date', () => {
+            const scrape = { name: 'Tib', at: now + 1000, rows: [1], abilities: [], source: 'popup' };
+            const record = foldLoadout(foldLoadout(null, socketSighting), scrape);
+
+            const stored = record.players.tib;
+            // The stats are still newest-wins…
+            expect(stored.source).toBe('popup');
+            expect(stored.at).toBe(now + 1000);
+            // …but the kit is the one the socket actually read, dated to then
+            expect(stored.abilities).toEqual(kit);
+            expect(stored.abilitiesAuthoritative).toBe(true);
+            expect(stored.abilitiesAt).toBe(now);
+        });
+
+        test('a stat-only socket payload preserves the kit too', () => {
+            const statOnly = {
+                name: 'Tib',
+                at: now + 1000,
+                rows: [1],
+                abilities: [],
+                abilitiesAuthoritative: false,
+                source: 'battle_unit_fetched',
+            };
+            const record = foldLoadout(foldLoadout(null, socketSighting), statOnly);
+
+            expect(record.players.tib.abilities).toEqual(kit);
+            expect(record.players.tib.abilitiesAuthoritative).toBe(true);
+        });
+
+        test('an authoritative empty array is a genuine empty kit and overwrites', () => {
+            const unequipped = {
+                name: 'Tib',
+                at: now + 1000,
+                rows: [1],
+                abilities: [],
+                abilitiesAuthoritative: true,
+                source: 'battle_unit_fetched',
+            };
+            const record = foldLoadout(foldLoadout(null, socketSighting), unequipped);
+
+            expect(record.players.tib.abilities).toEqual([]);
+            expect(record.players.tib.abilitiesAuthoritative).toBe(true);
+            expect(record.players.tib.abilitiesAt).toBe(now + 1000);
+        });
+
+        test('a newer authoritative kit replaces an older one, stamped to its own moment', () => {
+            const newer = { ...socketSighting, at: now + 5000, abilities: [{ hrid: '/abilities/frost_surge' }] };
+            const record = foldLoadout(foldLoadout(null, socketSighting), newer);
+
+            expect(record.players.tib.abilities).toEqual([{ hrid: '/abilities/frost_surge' }]);
+            expect(record.players.tib.abilitiesAt).toBe(now + 5000);
+        });
+
+        test('a record stored before the flag existed is treated as non-authoritative', () => {
+            const legacy = { players: { tib: { name: 'Tib', at: now, abilities: kit } }, updatedAt: now };
+            const scrape = { name: 'Tib', at: now + 1000, rows: [1], abilities: [], source: 'popup' };
+
+            // No stored flag, so newest-wins stands exactly as it did before
+            const record = foldLoadout(legacy, scrape);
+            expect(record.players.tib.abilities).toEqual([]);
+            expect(record.players.tib.abilitiesAuthoritative).toBe(false);
+        });
     });
 });
 

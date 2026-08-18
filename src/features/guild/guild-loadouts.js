@@ -211,11 +211,17 @@ export function readAbilities(list) {
  * a combat session carrying loot totals and no stats, and a record written from
  * that would replace a real sheet with an empty one and date it now.
  *
+ * `abilitiesAuthoritative` records whether the payload itself carried a
+ * `combatAbilities` array — including an empty one, which is a genuine claim of
+ * an empty kit. A payload without the array says nothing about the kit, and
+ * {@link foldLoadout} uses the difference to keep a real ability list from
+ * being erased by a sighting that never looked at abilities.
+ *
  * @param {Object} payload - A `battle_unit_fetched` message, or a unit from one
  * @param {Object} [options] - Context
  * @param {number} [options.at] - When it was seen
  * @param {string} [options.source] - Where it came from, for the caption
- * @returns {Object|null} `{name, characterId, level, rows, abilities, stats, source, at}`
+ * @returns {Object|null} `{name, characterId, level, rows, abilities, abilitiesAuthoritative, stats, source, at}`
  */
 export function extractLoadout(payload, { at = Date.now(), source = 'battle_unit_fetched' } = {}) {
     const unit = payload?.unit || payload;
@@ -244,6 +250,7 @@ export function extractLoadout(payload, { at = Date.now(), source = 'battle_unit
         level: Number.isFinite(level) ? level : null,
         rows,
         abilities,
+        abilitiesAuthoritative: Array.isArray(unit.combatAbilities),
         // The raw numbers as well as the rows: a later comparison between two
         // members wants the values, not the strings they were drawn as
         stats: { ...stats },
@@ -314,11 +321,18 @@ export function loadoutKey(name) {
 /**
  * Fold a snapshot into a record, on a copy.
  *
- * Newest wins outright, including when the newer one is thinner. A popup scrape
- * with six rows replacing a socket snapshot with thirty is a real loss of
- * detail, and it is still the more honest record: the thin one is what was
- * actually seen most recently, and preferring the fat one would date old numbers
- * to now.
+ * Newest wins outright for the stat sheet, including when the newer one is
+ * thinner: the thin sighting is what was actually seen most recently, and
+ * preferring the fat one would date old numbers to now.
+ *
+ * The ability kit is the one exception. Only a payload that itself carried a
+ * `combatAbilities` array is *authoritative* about the kit (the flag is stamped
+ * by {@link extractLoadout}); a popup scrape or a stat-only payload says nothing
+ * about abilities, and letting its empty list replace a real kit erased what a
+ * socket sighting had captured. So a non-authoritative snapshot folding over an
+ * authoritative one keeps the stored `abilities`, the flag, and `abilitiesAt` —
+ * the moment the kit was actually read. An authoritative snapshot always takes
+ * over, empty array included: an authoritative empty kit is a genuine empty kit.
  *
  * @param {Object|null} record - Existing record (not mutated)
  * @param {Object|null} loadout - From {@link extractLoadout}
@@ -334,7 +348,15 @@ export function foldLoadout(record, loadout) {
         return { players, updatedAt: record?.updatedAt ?? 0 };
     }
 
-    players[key] = { ...loadout };
+    const folded = { ...loadout, abilitiesAuthoritative: loadout.abilitiesAuthoritative === true };
+    if (folded.abilitiesAuthoritative) {
+        folded.abilitiesAt = loadout.at ?? null;
+    } else if (existing?.abilitiesAuthoritative) {
+        folded.abilities = existing.abilities;
+        folded.abilitiesAuthoritative = true;
+        folded.abilitiesAt = existing.abilitiesAt ?? existing.at ?? null;
+    }
+    players[key] = folded;
 
     // Oldest sightings fall off the end rather than the record growing without
     // bound across every guild an account has ever been in

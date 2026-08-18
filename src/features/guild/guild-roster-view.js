@@ -594,6 +594,9 @@ export function registerGuildRosterRow() {
     });
 }
 
+/** Unsubscribe from the loadout capture's events; set in `initialize` */
+let offCaptured = null;
+
 export default {
     name: 'Guild Roster',
     initialize: async () => {
@@ -602,6 +605,16 @@ export default {
         // Idempotent, and the trials feature starts it too: either being on is
         // reason enough to be writing down what goes past
         await guildLoadoutCapture.initialize();
+        // A landed sheet redraws the open panel at once — the Battle Info
+        // cycler was waiting out the 3s refresh tick before offering the next
+        // fighter. The timer stays as the fallback; `render` is a no-op while
+        // the panel is closed, and nothing here opens the next popup — that is
+        // still one player per explicit click.
+        offCaptured = guildLoadoutCapture.onCaptured?.(() => guildRosterPanel.render()) ?? null;
     },
-    cleanup: () => guildRosterPanel.hide({ remember: false }),
+    cleanup: () => {
+        offCaptured?.();
+        offCaptured = null;
+        guildRosterPanel.hide({ remember: false });
+    },
 };

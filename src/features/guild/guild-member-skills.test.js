@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ store: {}, members: [], wsHandlers: {}, loadouts: [] }));
+const game = vi.hoisted(() => ({ store: {}, members: [], wsHandlers: {}, loadouts: [], capturedListeners: [] }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
@@ -37,7 +37,16 @@ vi.mock('./guild-xp-tracker.js', () => ({
     guildXPTracker: { getMemberList: () => game.members },
 }));
 vi.mock('./guild-loadout-capture.js', () => ({
-    default: { seen: () => game.loadouts },
+    default: {
+        seen: () => game.loadouts,
+        onCaptured: (listener) => {
+            game.capturedListeners.push(listener);
+            return () => {
+                const index = game.capturedListeners.indexOf(listener);
+                if (index !== -1) game.capturedListeners.splice(index, 1);
+            };
+        },
+    },
 }));
 
 const {
@@ -79,6 +88,7 @@ beforeEach(async () => {
     game.members = [{ name: 'Ada' }, { name: 'Bo' }, { name: 'Cy' }];
     game.wsHandlers = {};
     game.loadouts = [];
+    game.capturedListeners = [];
     guildMemberSkills.unitRequests = {};
     guildMemberSkills.forget();
     guildMemberSkills.initialized = false;
@@ -477,5 +487,53 @@ describe('people in the battle come first', () => {
         const result = guildMemberSkills.openNext(now);
         expect(result.how).not.toBe('unit');
         expect(result.opened).toBe('Ada');
+    });
+
+    test('a landed sheet ends the in-flight suppression at once', () => {
+        // The leak: a captured sheet left its member "in flight" for the rest
+        // of the 20s window, suppressing the very redraw the click earned
+        fightView([['Bo', '2,612/2,612']]);
+        guildMemberSkills.openNextUnit(now);
+        expect(guildMemberSkills.unitRequests.bo).toBe(now);
+        expect(guildMemberSkills.nextBattleUnit(now)).toBeNull();
+
+        for (const listener of game.capturedListeners) {
+            listener({ name: 'Bo', source: 'battle_unit_fetched', abilitiesAuthoritative: true, at: now });
+        }
+
+        expect(guildMemberSkills.unitRequests.bo).toBeUndefined();
+        // With nothing fresh in the store, the unit is clickable again now —
+        // not after the request window expires
+        expect(guildMemberSkills.nextBattleUnit(now)?.name).toBe('Bo');
+    });
+
+    test('redo all clears the unit suppression along with the profile requests', () => {
+        guildMemberSkills.requests = { ada: now };
+        guildMemberSkills.unitRequests = { bo: now };
+
+        guildMemberSkills.redoAll(now);
+
+        expect(guildMemberSkills.requests).toEqual({});
+        expect(guildMemberSkills.unitRequests).toEqual({});
+    });
+
+    test('forgetting the character drops both kinds of in-flight request', () => {
+        guildMemberSkills.requests = { ada: now };
+        guildMemberSkills.unitRequests = { bo: now };
+
+        guildMemberSkills.forget();
+
+        expect(guildMemberSkills.requests).toEqual({});
+        expect(guildMemberSkills.unitRequests).toEqual({});
+    });
+
+    test('cleanup unsubscribes from the capture, and initialize resubscribes', async () => {
+        expect(game.capturedListeners).toHaveLength(1);
+
+        guildMemberSkills.cleanup();
+        expect(game.capturedListeners).toHaveLength(0);
+
+        await guildMemberSkills.initialize('Milky Way');
+        expect(game.capturedListeners).toHaveLength(1);
     });
 });

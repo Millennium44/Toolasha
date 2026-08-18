@@ -96,6 +96,9 @@ describe('readUnitPopup', () => {
 
         const loadout = readUnitPopup(popup, 5);
         expect(loadout).toMatchObject({ name: 'Tib', level: 150, source: 'popup', at: 5 });
+        // The scrape cannot read the ability icons, and must say so rather
+        // than claiming an empty kit
+        expect(loadout.abilitiesAuthoritative).toBe(false);
         expect(loadout.rows).toEqual([
             { label: 'Armor', value: '62' },
             { label: 'Magic Evasion', value: '1,240' },
@@ -218,6 +221,76 @@ describe('the capture', () => {
         expect(guildLoadoutCapture.forPlayer('Tib').source).toBe('popup');
     });
 
+    test('a popup taking over does not erase a kit the socket captured', () => {
+        game.wsHandlers.battle_unit_fetched({
+            unit: {
+                character: { name: 'Tib' },
+                combatDetails: { maxHitpoints: 4120, combatStats: {} },
+                combatAbilities: [{ abilityHrid: '/abilities/fireball', level: 40 }],
+            },
+        });
+        expect(guildLoadoutCapture.forPlayer('Tib').abilities).toHaveLength(1);
+
+        vi.advanceTimersByTime(POPUP_SOCKET_WINDOW_MS + 1000);
+        game.observers.Modal_modalContent(
+            modal([['Tib - Lv.150'], ['Armor', '62'], ['Parry', '2%'], ['Threat', '3%'], ['Tenacity', '4%']])
+        );
+
+        const stored = guildLoadoutCapture.forPlayer('Tib');
+        expect(stored.source).toBe('popup');
+        expect(stored.abilities).toHaveLength(1);
+        expect(stored.abilitiesAuthoritative).toBe(true);
+    });
+
+    test('a recorded loadout is announced, and an unsubscribed listener hears nothing more', () => {
+        const heard = [];
+        const off = guildLoadoutCapture.onCaptured((event) => heard.push(event));
+
+        game.wsHandlers.battle_unit_fetched({
+            unit: {
+                character: { id: 'char-9', name: 'Tib' },
+                combatDetails: { combatLevel: 150, maxHitpoints: 4120, combatStats: {} },
+                combatAbilities: [{ abilityHrid: '/abilities/fireball', level: 40 }],
+            },
+        });
+
+        expect(heard).toEqual([
+            {
+                characterId: 'char-9',
+                name: 'Tib',
+                source: 'battle_unit_fetched',
+                abilitiesAuthoritative: true,
+                at: Date.now(),
+            },
+        ]);
+        // Announced before the debounced save could possibly have run
+        expect(game.store[guildLoadoutsStorageKey('char-1')]).toBeUndefined();
+
+        off();
+        game.wsHandlers.new_battle({
+            players: [{ character: { name: 'Moo' }, combatDetails: { maxHitpoints: 3000, combatStats: {} } }],
+        });
+        expect(heard).toHaveLength(1);
+    });
+
+    test('a listener that throws is logged and does not silence the rest', () => {
+        const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const heard = [];
+        guildLoadoutCapture.onCaptured(() => {
+            throw new Error('boom');
+        });
+        guildLoadoutCapture.onCaptured((event) => heard.push(event.name));
+
+        game.wsHandlers.battle_unit_fetched({
+            unit: { character: { name: 'Tib' }, combatDetails: { maxHitpoints: 4120, combatStats: {} } },
+        });
+
+        expect(heard).toEqual(['Tib']);
+        expect(errors).toHaveBeenCalled();
+        expect(guildLoadoutCapture.forPlayer('Tib')).toBeTruthy();
+        errors.mockRestore();
+    });
+
     test('an alt does not inherit this character’s sightings', async () => {
         game.wsHandlers.battle_unit_fetched({
             unit: { character: { name: 'Tib' }, combatDetails: { maxHitpoints: 4120, combatStats: {} } },
@@ -260,6 +333,16 @@ describe('two owners', () => {
 
         guildLoadoutCapture.cleanup();
         expect(game.wsHandlers.battle_unit_fetched).toBeUndefined();
+    });
+
+    test('the last cleanup clears the capture listeners with the socket ones', async () => {
+        game.wsHandlers = {};
+        await guildLoadoutCapture.initialize();
+        guildLoadoutCapture.onCaptured(() => {});
+        expect(guildLoadoutCapture.listeners.size).toBe(1);
+
+        guildLoadoutCapture.cleanup();
+        expect(guildLoadoutCapture.listeners.size).toBe(0);
     });
 });
 

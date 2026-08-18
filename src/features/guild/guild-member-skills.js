@@ -257,6 +257,8 @@ class GuildMemberSkills {
         this.guildName = null;
         this.captures = {};
         this.onProfile = null;
+        /** Unsubscribe from the loadout capture's events; see {@link initialize} */
+        this.offCaptured = null;
         /** name → when their profile was asked for, so a click in flight is not a click done */
         this.requests = {};
         /** name → when their battle unit was clicked; a sheet in flight is not a sheet held */
@@ -276,6 +278,10 @@ class GuildMemberSkills {
             this.initialized = true;
             this.onProfile = (message) => this._onProfile(message);
             webSocketHook.on('profile_shared', this.onProfile);
+            // The moment a clicked unit's sheet lands, that member's in-flight
+            // suppression is over — without this the 20s request window kept
+            // suppressing a member whose sheet had already arrived
+            this.offCaptured = guildLoadoutCapture.onCaptured?.((event) => this._onUnitCaptured(event)) ?? null;
         }
         await this.load();
     }
@@ -283,6 +289,8 @@ class GuildMemberSkills {
     cleanup() {
         if (this.onProfile) webSocketHook.off('profile_shared', this.onProfile);
         this.onProfile = null;
+        this.offCaptured?.();
+        this.offCaptured = null;
         this.initialized = false;
     }
 
@@ -290,7 +298,17 @@ class GuildMemberSkills {
     forget() {
         this.captures = {};
         this.requests = {};
+        this.unitRequests = {};
         this.dueBefore = 0;
+    }
+
+    /**
+     * A combat sheet arrived, so its member is no longer awaited.
+     * @param {{name: string|null}} event - From `guildLoadoutCapture.onCaptured`
+     */
+    _onUnitCaptured(event) {
+        const key = String(event?.name || '').toLowerCase();
+        if (key) delete this.unitRequests[key];
     }
 
     /**
@@ -352,6 +370,9 @@ class GuildMemberSkills {
     redoAll(at = Date.now()) {
         this.dueBefore = at;
         this.requests = {};
+        // The unit suppression too, or a redo leaves up to 20s of "in flight"
+        // standing between the button and a fighter everybody wants re-read
+        this.unitRequests = {};
         return Object.keys(this.captures).length;
     }
 

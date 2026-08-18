@@ -51,6 +51,19 @@ vi.mock('./guild-member-skills.js', () => ({
         },
     },
 }));
+vi.mock('./guild-loadout-capture.js', () => ({
+    default: {
+        initialize: async () => {},
+        seen: () => [],
+        onCaptured: (listener) => {
+            tracker.capturedListeners.push(listener);
+            return () => {
+                const index = tracker.capturedListeners.indexOf(listener);
+                if (index !== -1) tracker.capturedListeners.splice(index, 1);
+            };
+        },
+    },
+}));
 vi.mock('./guild-xp-tracker.js', () => ({
     guildXPTracker: {
         getOwnGuildName: () => tracker.guildName,
@@ -62,6 +75,7 @@ vi.mock('./guild-xp-tracker.js', () => ({
 }));
 
 tracker.rows = [];
+tracker.capturedListeners = [];
 tracker.cycler = { logged: 0, total: 0, next: null, stale: 0 };
 tracker.cyclerResult = { opened: null, how: 'done' };
 tracker.opened = [];
@@ -70,6 +84,7 @@ tracker.unit = null;
 tracker.unitResult = null;
 tracker.openedUnits = [];
 
+const rosterModule = await import('./guild-roster-view.js');
 const {
     filterSeenToRoster,
     drawProfileCycler,
@@ -84,7 +99,8 @@ const {
     guildRosterPanel,
     registerGuildRosterRow,
     WINDOW_7D,
-} = await import('./guild-roster-view.js');
+} = rosterModule;
+const guildRosterFeature = rosterModule.default;
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
@@ -521,6 +537,34 @@ describe('the panel and tile', () => {
         expect(container.textContent).toContain('Bob');
         expect(container.textContent).toContain('1 quiet');
         expect(typeof tile.onOpen).toBe('function');
+    });
+});
+
+describe('a captured loadout redraws the panel at once', () => {
+    beforeEach(() => {
+        tracker.capturedListeners = [];
+        tracker.rows = [];
+    });
+
+    afterEach(() => {
+        guildRosterFeature.cleanup();
+    });
+
+    test('the feature subscribes, the event renders, and cleanup unsubscribes', async () => {
+        await guildRosterFeature.initialize();
+        expect(tracker.capturedListeners).toHaveLength(1);
+
+        // The defect: the Battle Info cycler sat waiting on the panel's 3s
+        // refresh tick after a sheet had already landed
+        const render = vi.spyOn(guildRosterPanel, 'render').mockImplementation(() => {});
+        for (const listener of tracker.capturedListeners) {
+            listener({ name: 'Bo', source: 'battle_unit_fetched', abilitiesAuthoritative: true, at: now });
+        }
+        expect(render).toHaveBeenCalledTimes(1);
+        render.mockRestore();
+
+        guildRosterFeature.cleanup();
+        expect(tracker.capturedListeners).toHaveLength(0);
     });
 });
 

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial loadouts: ability provenance, and the Battle Info cycler advances the moment a sheet lands
+
+Captured loadouts now record whether the ability kit came from an authoritative source; a stat-only popup scrape can no longer erase a previously captured real kit (an authoritative empty kit still counts as truly empty). The loadout capture emits an event when a sheet is recorded: the roster panel redraws immediately and the player's request suppression clears, instead of waiting out a 3s redraw timer — and "redo all"/character switches no longer leave stale 20s unit suppressions behind.
+
 ### Lab captures and accuracy exports can be paired and audited
 
 Tick captures now carry a capture id, how the capture ended, ring-buffer drops (an overflowed capture no longer exports identically to a clean one), and stream-gap statistics; the accuracy export names the last saved capture, the sim stop rule, the seed policy, and a spec documenting what the build fingerprint hashes.

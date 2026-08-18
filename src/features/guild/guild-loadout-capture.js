@@ -132,7 +132,19 @@ export function readUnitPopup(root, at = Date.now()) {
     // not a loadout, whichever way it arrived
     if (isMonsterUnit({ name })) return null;
 
-    return { name, characterId: null, level, rows, abilities: [], stats: {}, source: 'popup', at };
+    // The empty list is "not read", not "none equipped" — `abilitiesAuthoritative`
+    // is what keeps foldLoadout from erasing a kit a socket payload captured
+    return {
+        name,
+        characterId: null,
+        level,
+        rows,
+        abilities: [],
+        abilitiesAuthoritative: false,
+        stats: {},
+        source: 'popup',
+        at,
+    };
 }
 
 class GuildLoadoutCapture {
@@ -150,6 +162,45 @@ class GuildLoadoutCapture {
         this.saveQueued = false;
         /** How many features are currently relying on this; see {@link cleanup} */
         this.owners = 0;
+        /** Who hears about each recorded loadout; see {@link onCaptured} */
+        this.listeners = new Set();
+    }
+
+    /**
+     * Hear about every loadout the moment it is recorded — before the batched
+     * save, so a panel can redraw without waiting on either the debounce or its
+     * own refresh timer.
+     *
+     * @param {Function} listener - Called with
+     *   `{characterId, name, source, abilitiesAuthoritative, at}`
+     * @returns {Function} Unsubscribe
+     */
+    onCaptured(listener) {
+        if (typeof listener !== 'function') return () => {};
+        this.listeners.add(listener);
+        return () => this.listeners.delete(listener);
+    }
+
+    /**
+     * Tell the listeners a loadout landed. One failing listener must not
+     * silence the rest, or the capture itself.
+     * @param {Object} loadout - The snapshot just folded into the record
+     */
+    _emitCaptured(loadout) {
+        const event = {
+            characterId: loadout?.characterId ?? null,
+            name: loadout?.name ?? null,
+            source: loadout?.source ?? null,
+            abilitiesAuthoritative: loadout?.abilitiesAuthoritative === true,
+            at: loadout?.at ?? null,
+        };
+        for (const listener of this.listeners) {
+            try {
+                listener(event);
+            } catch (error) {
+                console.error('[GuildLoadoutCapture] A capture listener failed:', error);
+            }
+        }
     }
 
     /**
@@ -209,6 +260,7 @@ class GuildLoadoutCapture {
         this.unregister = [];
         this.timers.clearAll();
         this.saveQueued = false;
+        this.listeners.clear();
         this.initialized = false;
     }
 
@@ -341,6 +393,7 @@ class GuildLoadoutCapture {
         }
 
         this.record = foldLoadout(this.record, loadout);
+        this._emitCaptured(loadout);
         this._queueSave();
     }
 
@@ -356,6 +409,7 @@ class GuildLoadoutCapture {
             // Another switch may have happened while the read was in flight
             if (characterId !== this.characterId) return;
             this.record = foldLoadout(record, loadout);
+            this._emitCaptured(loadout);
             this._queueSave();
         } catch (error) {
             console.error('[GuildLoadouts] Reloading after a character switch failed:', error);
