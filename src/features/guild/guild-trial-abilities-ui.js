@@ -13,7 +13,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
-import { findBattleUnits, REQUEST_TIMEOUT_MS } from './guild-member-skills.js';
+import guildMemberSkills, { findBattleUnits, REQUEST_TIMEOUT_MS } from './guild-member-skills.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
@@ -116,6 +116,15 @@ export function resetTrialUnitRequests() {
  * has not captured is always clickable, the local player's own full card
  * included, however fresh their sheet looks to the roster feature.
  *
+ * When the trial finder sees no unit boxes at all, the roster panel's own
+ * opener ({@link guildMemberSkills.openNextUnit}) is invoked instead — the
+ * exact routine behind the roster's "Open …'s battle info" button, which was
+ * observed working at a live trial where this finder came up empty. Reused,
+ * not reimplemented: it carries its own request window, so the fallback can
+ * no more hammer a player than the button can. A fallback click is stamped
+ * into the trial's own ledger too, so the moment the finder does see units
+ * the same player is not immediately re-asked inside the window.
+ *
  * @param {number} [now] - Clock
  * @returns {{opened: string|null, how: 'unit'|'awaiting'|'no-unit'}} What happened
  */
@@ -129,9 +138,19 @@ export function openNextTrialUnit(now = Date.now()) {
         unit.el.click();
         return { opened: unit.name, how: 'unit' };
     }
-    // Every outstanding fighter on screen was asked moments ago — the answer
-    // is a wait or (after the window) a retry, never a skip
-    return { opened: null, how: units.length ? 'awaiting' : 'no-unit' };
+    if (units.length) {
+        // Every outstanding fighter on screen was asked moments ago — the
+        // answer is a wait or (after the window) a retry, never a skip
+        return { opened: null, how: 'awaiting' };
+    }
+
+    // No trial units found — fall back to the roster cycler's opener
+    const fallback = guildMemberSkills.openNextUnit?.(now);
+    if (fallback?.opened) {
+        trialUnitRequests[String(fallback.opened).toLowerCase()] = now;
+        return { opened: fallback.opened, how: 'unit' };
+    }
+    return { opened: null, how: 'no-unit' };
 }
 
 /**

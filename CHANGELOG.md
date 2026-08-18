@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The trial cycler falls back to the roster's Battle Info opener
+
+At a live trial, "Open next Battle Info" found no clickable trial units while the Guild Roster's "Open …'s battle info" button worked on the same screen. When the trial finder comes up empty, the cycler now reuses that roster opener as a fallback (same routine, not a copy), stamping the click into the trial's own retry window so nobody gets hammered or skipped.
+
 ### The Party DPS sidecar sits to the right of the boss cards on every wave shape
 
 `grid-row:1` left the sidecar's column to auto-placement, which fills the first _free_ cell — a 2× Trial Badger wave with its cards centred left column 1 free, and the readout rendered LEFT of the bosses. The sidecar now gets an explicit `grid-column` computed per wave from the boss cards' own columns (one boss → 2, two centred badgers → 4, a four-monster swarm → 5), recomputed on every render pass so wave boundaries and boss remounts keep it to the right of the last card at its usual ~220px width.

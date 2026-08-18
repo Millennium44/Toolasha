@@ -71,6 +71,7 @@ const {
     completionLine,
 } = await import('./guild-trial-abilities-ui.js');
 const { REQUEST_TIMEOUT_MS } = await import('./guild-member-skills.js');
+const memberSkills = (await import('./guild-member-skills.js')).default;
 
 const NOW = 1_800_000_000_000;
 
@@ -137,6 +138,7 @@ describe('trial abilities panel', () => {
     });
 
     afterEach(() => {
+        vi.restoreAllMocks();
         feature.cleanup();
         // A panel remembers its state between openings; a test must not
         guildTrialAbilities.session = null;
@@ -333,8 +335,45 @@ describe('trial abilities panel', () => {
     test('with no fight on screen the cycler answers no-unit and clicks nothing', async () => {
         await feature.initialize('Cats');
         guildTrialAbilities.setRoster(['Ann']);
+        vi.spyOn(memberSkills, 'openNextUnit').mockReturnValue({ opened: null, how: 'no-unit', logged: 0, total: 0 });
         expect(openNextTrialUnit(NOW)).toEqual({ opened: null, how: 'no-unit' });
         expect(retryTrialUnit('Ann', NOW)).toEqual({ opened: null, how: 'no-unit' });
+    });
+
+    test('when the trial finder sees no units, the roster opener is reused as the fallback', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Ann', 'Bob']);
+        // No fight view fixture: findBattleUnits genuinely finds nothing, as
+        // observed at a live trial where the roster button still worked
+        const openNextUnit = vi
+            .spyOn(memberSkills, 'openNextUnit')
+            .mockReturnValue({ opened: 'Ann', how: 'unit', logged: 0, total: 2 });
+
+        expect(openNextTrialUnit(NOW)).toEqual({ opened: 'Ann', how: 'unit' });
+        expect(openNextUnit).toHaveBeenCalledWith(NOW);
+
+        // The fallback click starts the trial's own request window: when the
+        // finder does see units again, Ann is in flight, not re-asked
+        openNextUnit.mockReturnValue({ opened: null, how: 'no-unit', logged: 0, total: 2 });
+        const { clicks } = fightView(['Ann', 'Bob']);
+        expect(openNextTrialUnit(NOW + 1000)).toEqual({ opened: 'Bob', how: 'unit' });
+        expect(clicks).toEqual(['Bob']);
+        // ...and the window lapsing offers Ann again, never skips her
+        expect(openNextTrialUnit(NOW + REQUEST_TIMEOUT_MS)).toEqual({ opened: 'Ann', how: 'unit' });
+    });
+
+    test('the fallback is not consulted while the trial finder is offering units', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Ann']);
+        const openNextUnit = vi.spyOn(memberSkills, 'openNextUnit');
+        const { clicks } = fightView(['Ann']);
+
+        expect(openNextTrialUnit(NOW)).toEqual({ opened: 'Ann', how: 'unit' });
+        // Ann is in flight: the answer is a wait, not a detour through the
+        // roster cycler's freshness rules
+        expect(openNextTrialUnit(NOW + 1000)).toEqual({ opened: null, how: 'awaiting' });
+        expect(openNextUnit).not.toHaveBeenCalled();
+        expect(clicks).toEqual(['Ann']);
     });
 
     test('the controls invoke their callbacks, and retry names the outstanding player', async () => {
