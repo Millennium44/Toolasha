@@ -861,3 +861,94 @@ describe('the capture button knows its three states', () => {
         expect(labyrinthRoomLogs.captureButton.title).toContain('7 repeated ticks discarded');
     });
 });
+
+describe('the pool tab browses what the recorder holds', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+        labyrinthRoomLogs.panel = null;
+        labyrinthRoomLogs.expandedPoolGroups = new Set();
+        labyrinthRoomLogs.poolAllGear = false;
+        labyrinthRoomLogs.simSource = { fingerprint: () => 'fp-now' };
+        labFightRecorder.clearRecording();
+        const base = {
+            monsterName: 'Cyclops',
+            roomLevel: 200,
+            seconds: 50,
+            outcome: 'death',
+            cleared: false,
+            monsterMaxHp: 10_000,
+            monsterHpEnd: 6_000,
+            playerMaxHp: 500,
+            playerHpStart: 500,
+            playerHpEnd: 0,
+            monsterDamage: 4_000,
+            playerDamageTaken: 500,
+            complete: true,
+            fingerprint: 'fp-now',
+        };
+        for (let i = 0; i < 4; i++) labFightRecorder.noteAttempt({ ...base, monsterHrid: '/monsters/cyclops' });
+        labFightRecorder.noteAttempt({
+            ...base,
+            monsterHrid: '/monsters/dryad',
+            monsterName: 'Dryad',
+            fingerprint: 'fp-old',
+        });
+        labyrinthRoomLogs.ensurePanel();
+        labyrinthRoomLogs.view = 'pool';
+    });
+
+    afterEach(() => {
+        labFightRecorder.clearRecording();
+        labyrinthRoomLogs.simSource = null;
+        labyrinthRoomLogs.view = 'rooms';
+        labyrinthRoomLogs.panel = null;
+    });
+
+    const listText = () => labyrinthRoomLogs.panel.querySelector('.mwi-lab-logs-list').textContent;
+
+    test('this gear by default, with the group summary drawn', () => {
+        labyrinthRoomLogs.render(false);
+        const text = listText();
+        expect(text).toContain('4 fights over 1 monster/level group');
+        expect(text).toContain('Cyclops');
+        expect(text).not.toContain('Dryad'); // other gear
+        expect(text).toContain('win 0%');
+        expect(text).toContain('complete 100%');
+    });
+
+    test('the gear toggle widens the scope to everything recorded', () => {
+        labyrinthRoomLogs.poolAllGear = true;
+        labyrinthRoomLogs.render(false);
+        const text = listText();
+        expect(text).toContain('5 fights over 2 monster/level groups');
+        expect(text).toContain('Dryad');
+    });
+
+    test('expanding a group lists its recent attempts', () => {
+        labyrinthRoomLogs.expandedPoolGroups.add('/monsters/cyclops:200');
+        labyrinthRoomLogs.render(false);
+        expect(listText()).toContain('lvl 200 · 50s');
+    });
+
+    test('the clear button hides on the pool view — its reset lives on Accuracy', () => {
+        labyrinthRoomLogs.render(false);
+        labyrinthRoomLogs.paintChrome();
+        expect(labyrinthRoomLogs.clearButton.style.display).toBe('none');
+    });
+
+    test('Save pool hands the recorder the summary to embed', () => {
+        const spy = vi.spyOn(labFightRecorder, 'downloadRecording').mockReturnValue(true);
+        labyrinthRoomLogs.render(false);
+        const save = [...labyrinthRoomLogs.panel.querySelectorAll('button')].find((b) => b.textContent === 'Save pool');
+        save.click();
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(spy.mock.calls[0][0].poolSummary.length).toBeGreaterThan(0);
+        spy.mockRestore();
+    });
+
+    test('nothing recorded on this gear says so rather than drawing a blank', () => {
+        labFightRecorder.clearRecording();
+        labyrinthRoomLogs.render(false);
+        expect(listText()).toContain('No fights recorded on this gear yet');
+    });
+});

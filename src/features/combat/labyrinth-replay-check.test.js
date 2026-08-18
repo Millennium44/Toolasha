@@ -13,6 +13,7 @@ import {
     deviationPct,
     relMarginPct,
     binomialMarginPct,
+    summarizePool,
 } from './labyrinth-replay-check.js';
 
 function attempt(overrides = {}) {
@@ -526,5 +527,61 @@ describe('compareLab verdicts and diagnosis', () => {
         expect(taken.verdict).toBe('consistent');
         // The shown deviation is still the honest raw figure, not bias-adjusted.
         expect(taken.deviationPct).toBeCloseTo(-3.846, 2);
+    });
+});
+
+describe('summarizePool', () => {
+    test('nothing is filtered but malformed rows — the pool shows what it holds', () => {
+        const [g] = summarizePool([
+            attempt({ outcome: 'clear', cleared: true, monsterHpEnd: 0 }),
+            attempt({ complete: false }), // deriveObserved would drop this
+            attempt({ playerHpStart: 100 }), // and this (wounded start)
+            attempt({ monsterHrid: null }), // malformed: the only drop
+        ]);
+        expect(g.fights).toBe(3);
+        expect(g.clears).toBe(1);
+        expect(g.winRate).toBeCloseTo(1 / 3, 5);
+    });
+
+    test('the outcome split, the complete fraction and the gear count are stated', () => {
+        const [g] = summarizePool([
+            attempt({ outcome: 'clear', cleared: true, monsterHpEnd: 0, complete: true, fingerprint: 'a' }),
+            attempt({ outcome: 'death', complete: true, fingerprint: 'a' }),
+            attempt({ outcome: 'timeout', complete: false, fingerprint: 'b' }),
+        ]);
+        expect(g.outcomes).toEqual({ clear: 1, death: 1, timeout: 1 });
+        expect(g.completeFraction).toBeCloseTo(2 / 3, 5);
+        expect(g.gearCount).toBe(2);
+    });
+
+    test('the residual mean is over measured fights only, and stays signed', () => {
+        const [g] = summarizePool([
+            attempt({ unattributedDealt: 30 }),
+            attempt({ unattributedDealt: -10 }),
+            attempt({ unattributedDealt: null }), // unmeasured, not a zero
+        ]);
+        expect(g.residualFights).toBe(2);
+        expect(g.residualMean).toBeCloseTo(10, 5);
+    });
+
+    test('crit pooling follows the comparison rules — raw nulls stay out', () => {
+        const [g] = summarizePool([
+            attempt({ playerHits: 20, playerMisses: 0, playerCrits: 5 }),
+            attempt({ playerHits: 20, playerMisses: 0, playerCrits: null }),
+        ]);
+        expect(g.critDataFights).toBe(1);
+        expect(g.critRate).toBeCloseTo(0.25, 5);
+    });
+
+    test('groups sort most-fought first and carry their level span', () => {
+        const groups = summarizePool([
+            attempt({ monsterHrid: '/monsters/dryad', roomLevel: 341 }),
+            attempt({ roomLevel: 196 }),
+            attempt({ roomLevel: 204 }),
+        ]);
+        expect(groups[0].monsterHrid).toBe('/monsters/cyclops');
+        expect(groups[0].levelLow).toBe(196);
+        expect(groups[0].levelHigh).toBe(204);
+        expect(groups[1].fights).toBe(1);
     });
 });

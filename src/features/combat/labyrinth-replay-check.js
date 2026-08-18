@@ -348,6 +348,111 @@ export function deriveObserved(attempts) {
 }
 
 /**
+ * The recorder's whole pool, summarised for browsing — no sims, no verdicts.
+ *
+ * Unlike {@link deriveObserved} this drops nothing but malformed rows:
+ * incomplete fights, wounded starts and unknown-model attempts are part of
+ * what the pool holds, and a browse view that quietly filtered them would
+ * misstate what has accumulated. (The recorder never stores unknown
+ * outcomes, so every attempt here cleared, died or timed out.)
+ *
+ * @param {Array<Object>} attempts - From the recorder
+ * @returns {Array<Object>} One summary per monster+level bucket, most-fought first
+ */
+export function summarizePool(attempts) {
+    const groups = new Map();
+
+    for (const attempt of attempts || []) {
+        const seconds = Number(attempt?.seconds) || 0;
+        if (!attempt?.monsterHrid || seconds <= 0) continue;
+
+        const level = Math.max(0, Math.floor(Number(attempt.roomLevel) || 0));
+        const bucket = Math.round(level / LEVEL_BUCKET) * LEVEL_BUCKET;
+        const key = `${attempt.monsterHrid}:${bucket}`;
+        let group = groups.get(key);
+        if (!group) {
+            group = {
+                monsterHrid: attempt.monsterHrid,
+                monsterName: attempt.monsterName || null,
+                bucket,
+                levels: [],
+                fights: 0,
+                clears: 0,
+                outcomes: {},
+                totalSeconds: 0,
+                totalDealt: 0,
+                totalTaken: 0,
+                totalCrits: 0,
+                totalCritHits: 0,
+                critDataFights: 0,
+                completeFights: 0,
+                residualTotal: 0,
+                residualFights: 0,
+                fingerprints: new Set(),
+                attempts: [],
+            };
+            groups.set(key, group);
+        }
+
+        const { monsterDamage, playerTaken } = exchange(attempt);
+        group.levels.push(level);
+        group.fights += 1;
+        group.clears += attempt.cleared ? 1 : 0;
+        const outcome = String(attempt.outcome || 'unknown');
+        group.outcomes[outcome] = (group.outcomes[outcome] || 0) + 1;
+        group.totalSeconds += seconds;
+        group.totalDealt += monsterDamage;
+        group.totalTaken += playerTaken;
+        if (attempt.complete === true) group.completeFights += 1;
+        if (attempt.fingerprint) group.fingerprints.add(attempt.fingerprint);
+        // Same accumulation rules as the comparison: raw finiteness (a stored
+        // null is not a zero), and never more crits than hits
+        const hits = Number(attempt.playerHits);
+        if (Number.isFinite(attempt.playerCrits) && Number.isFinite(hits) && hits > 0) {
+            const crits = Number(attempt.playerCrits);
+            if (crits >= 0 && crits <= hits) {
+                group.totalCrits += crits;
+                group.totalCritHits += hits;
+                group.critDataFights += 1;
+            }
+        }
+        // The residual is signed and null when unmeasured
+        if (Number.isFinite(attempt.unattributedDealt)) {
+            group.residualTotal += attempt.unattributedDealt;
+            group.residualFights += 1;
+        }
+        group.attempts.push(attempt);
+    }
+
+    const out = [...groups.values()].map((group) => ({
+        monsterHrid: group.monsterHrid,
+        monsterName: group.monsterName,
+        bucket: group.bucket,
+        roomLevel: median(group.levels),
+        levelLow: Math.min(...group.levels),
+        levelHigh: Math.max(...group.levels),
+        fights: group.fights,
+        clears: group.clears,
+        winRate: group.fights > 0 ? group.clears / group.fights : 0,
+        outcomes: group.outcomes,
+        meanSeconds: group.fights > 0 ? group.totalSeconds / group.fights : 0,
+        dps: group.totalSeconds > 0 ? group.totalDealt / group.totalSeconds : 0,
+        takenPerSecond: group.totalSeconds > 0 ? group.totalTaken / group.totalSeconds : 0,
+        critRate: group.totalCritHits > 0 ? group.totalCrits / group.totalCritHits : null,
+        critDataFights: group.critDataFights,
+        completeFights: group.completeFights,
+        completeFraction: group.fights > 0 ? group.completeFights / group.fights : 0,
+        residualMean: group.residualFights > 0 ? group.residualTotal / group.residualFights : null,
+        residualFights: group.residualFights,
+        gearCount: group.fingerprints.size,
+        attempts: group.attempts,
+    }));
+
+    out.sort((a, b) => b.fights - a.fights);
+    return out;
+}
+
+/**
  * The same four rates, read off a labyrinth sim result.
  *
  * `totalDamageDealt` is keyed by the unit that dealt it, so your DTO's hrid is

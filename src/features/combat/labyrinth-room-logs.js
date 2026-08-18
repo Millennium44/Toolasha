@@ -26,6 +26,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import { classifyFight, fightTally, failureShape, isFreshLabyrinthFight } from './labyrinth-fight-log.js';
+import { summarizePool } from './labyrinth-replay-check.js';
 import labFightRecorder from './labyrinth-fight-recorder.js';
 import { newAttributionState, noteActions, attributeTick, foldEvents } from '../../utils/damage-attribution.js';
 import labTickCapture from './labyrinth-tick-capture.js';
@@ -203,6 +204,9 @@ class LabyrinthRoomLogs {
         this.newBattleHandler = null;
         this.panel = null;
         this.view = 'rooms';
+        /** Pool tab state: which groups are expanded, and the gear scope */
+        this.expandedPoolGroups = new Set();
+        this.poolAllGear = false;
         this.simSource = null;
         this.fight = null;
         this.fightTimer = null;
@@ -1383,9 +1387,11 @@ class LabyrinthRoomLogs {
         this.tabButtons = {
             rooms: this.makeTab('Rooms', 'rooms'),
             accuracy: this.makeTab('Accuracy', 'accuracy'),
+            pool: this.makeTab('Pool', 'pool'),
         };
         tabs.appendChild(this.tabButtons.rooms);
         tabs.appendChild(this.tabButtons.accuracy);
+        tabs.appendChild(this.tabButtons.pool);
 
         const actions = document.createElement('div');
         actions.style.cssText = 'display:inline-flex; align-items:center; flex-wrap:wrap; gap:4px 6px;';
@@ -1535,6 +1541,9 @@ class LabyrinthRoomLogs {
         // one run and is on screen already
         if (this.exportButton) this.exportButton.style.display = accuracy ? '' : 'none';
         if (this.sanitizedButton) this.sanitizedButton.style.display = accuracy ? '' : 'none';
+        // The pool is read-only browsing; it is cleared from Accuracy's own
+        // two-click Reset, and a second destructive path would be a footgun
+        this.clearButton.style.display = this.view === 'pool' ? 'none' : '';
         this.clearButton.textContent = accuracy ? (this.resetArmed ? 'Sure?' : 'Reset') : 'Clear';
         this.clearButton.title = accuracy
             ? 'Throw away every recorded fight and start the accuracy record over'
@@ -1794,10 +1803,170 @@ class LabyrinthRoomLogs {
 
         if (this.view === 'accuracy') {
             this.renderAccuracy().then(restore).catch(restore);
+        } else if (this.view === 'pool') {
+            this.renderPool();
+            restore();
         } else {
             this.renderPanel();
             restore();
         }
+    }
+
+    /**
+     * The recorder's pool, browsable: what has accumulated per monster and
+     * level, with nothing filtered — incomplete and wounded-start fights are
+     * part of what the pool holds. Read-only and synchronous: sims and
+     * verdicts are the Replay button's job.
+     */
+    renderPool() {
+        const panel = this.ensurePanel();
+        const list = panel.querySelector('.mwi-lab-logs-list');
+        if (!list) return;
+        this.renderToken++;
+        list.textContent = '';
+
+        const fingerprint = this.simSource?.fingerprint?.() || null;
+        const attempts = labFightRecorder.recordedAttempts(this.poolAllGear ? undefined : fingerprint || undefined);
+        const all = labFightRecorder.recordedAttempts();
+
+        // Header: what the pool holds, the gear scope, and the save hook
+        const header = document.createElement('div');
+        header.style.cssText =
+            'padding:4px 2px 3px; border-bottom:1px solid rgba(146,182,255,0.25); font-size:11px; color:#cfe0ff;';
+        const scopeLine = document.createElement('div');
+        scopeLine.style.cssText = 'display:flex; align-items:baseline; justify-content:space-between; gap:8px;';
+        const title = document.createElement('span');
+        const groups = summarizePool(attempts);
+        title.textContent = `${attempts.length} fight${attempts.length === 1 ? '' : 's'} over ${groups.length} monster/level group${groups.length === 1 ? '' : 's'}`;
+        scopeLine.appendChild(title);
+
+        const toggle = document.createElement('span');
+        toggle.style.cssText = 'color:#9ec4ff; cursor:pointer; text-decoration:underline; font-size:10px;';
+        toggle.textContent = this.poolAllGear
+            ? `all gear (${all.length} total) — show this gear only`
+            : 'this gear — show all gear';
+        toggle.addEventListener('click', () => {
+            this.poolAllGear = !this.poolAllGear;
+            this.render(false);
+        });
+        scopeLine.appendChild(toggle);
+        header.appendChild(scopeLine);
+
+        const save = document.createElement('button');
+        save.textContent = 'Save pool';
+        save.title =
+            'Download the whole recorded pool as JSON with this summary embedded. The file always carries ' +
+            'every attempt, whatever the gear filter above shows.';
+        save.style.cssText =
+            'margin-top:3px; height:18px; border:0; border-radius:4px; background:rgba(255,255,255,0.12); ' +
+            'color:#fff; font-size:10px; cursor:pointer; padding:0 6px;';
+        save.addEventListener('click', () => {
+            const wrote = labFightRecorder.downloadRecording({ poolSummary: groups, ...this.exportIdentity() });
+            this.flashButton(save, wrote ? 'Saved ✓' : 'Nothing yet', 'Save pool');
+        });
+        header.appendChild(save);
+        list.appendChild(header);
+
+        if (!attempts.length) {
+            list.appendChild(
+                this.makeNote(
+                    this.poolAllGear
+                        ? 'No fights recorded yet. They accumulate automatically as you fight combat rooms.'
+                        : 'No fights recorded on this gear yet — try "show all gear", or fight some combat rooms.'
+                )
+            );
+            return;
+        }
+
+        const MAX_POOL_GROUPS = 40;
+        for (const group of groups.slice(0, MAX_POOL_GROUPS)) {
+            list.appendChild(this.renderPoolGroup(group));
+        }
+        if (groups.length > MAX_POOL_GROUPS) {
+            list.appendChild(
+                this.makeNote(`${groups.length - MAX_POOL_GROUPS} more monster/level groups — most-fought shown`)
+            );
+        }
+    }
+
+    /** One pool group: the summary line, and the recent attempts on click */
+    renderPoolGroup(group) {
+        const key = `${group.monsterHrid}:${group.bucket}`;
+        const card = document.createElement('div');
+        card.style.cssText =
+            'margin-top:4px; padding:4px 6px; border:1px solid rgba(146,182,255,0.2); border-radius:6px; ' +
+            'font-size:11px; color:#e8f0ff; cursor:pointer;';
+
+        const span =
+            group.levelLow === group.levelHigh ? `lvl ${group.roomLevel}` : `lvl ${group.levelLow}–${group.levelHigh}`;
+        const head = document.createElement('div');
+        head.style.cssText = 'display:flex; justify-content:space-between; gap:8px; font-weight:700;';
+        head.textContent = `${group.monsterName || group.monsterHrid.split('/').pop()} · ${span}`;
+        const score = document.createElement('span');
+        score.textContent = `${group.clears}/${group.fights}`;
+        score.style.color = group.winRate >= 0.5 ? '#7ddf8f' : '#ff9d9d';
+        head.appendChild(score);
+        card.appendChild(head);
+
+        const line1 = document.createElement('div');
+        line1.style.cssText = 'color:#cfe0ff;';
+        line1.textContent =
+            `win ${Math.round(group.winRate * 100)}% · ${group.meanSeconds.toFixed(1)}s/fight · ` +
+            `dealt ${formatKMB(group.dps)}/s · taken ${formatKMB(group.takenPerSecond)}/s`;
+        card.appendChild(line1);
+
+        const line2 = document.createElement('div');
+        line2.style.cssText = 'color:rgba(207,224,255,0.65); font-size:10px;';
+        const bits = [
+            group.critRate !== null ? `crit ${Math.round(group.critRate * 100)}% (${group.critDataFights})` : 'crit —',
+            group.residualFights > 0
+                ? `residual ${group.residualMean >= 0 ? '+' : ''}${formatKMB(Math.round(group.residualMean))} (${group.residualFights})`
+                : null,
+            `complete ${Math.round(group.completeFraction * 100)}%`,
+            this.poolAllGear && group.gearCount > 1 ? `${group.gearCount} gear` : null,
+        ].filter(Boolean);
+        line2.textContent = bits.join(' · ');
+        card.appendChild(line2);
+
+        const outcomes = Object.entries(group.outcomes)
+            .map(([outcome, count]) => `${count} ${outcome}`)
+            .join(', ');
+        card.title = [
+            outcomes,
+            'residual: endpoint-reconciled damage the tick sum missed — a data-quality reading, not a rate',
+            'complete: measured whole — opened at its new_battle snapshot and resolved to a known outcome',
+            'Click to show the most recent attempts.',
+        ].join('\n');
+
+        card.addEventListener('click', () => {
+            if (this.expandedPoolGroups.has(key)) this.expandedPoolGroups.delete(key);
+            else this.expandedPoolGroups.add(key);
+            this.render();
+        });
+
+        if (this.expandedPoolGroups.has(key)) {
+            const MAX_POOL_ATTEMPT_ROWS = 15;
+            for (const attempt of group.attempts.slice(-MAX_POOL_ATTEMPT_ROWS).reverse()) {
+                const row = document.createElement('div');
+                row.style.cssText =
+                    'display:flex; gap:6px; align-items:baseline; font-size:10px; color:#cfe0ff; ' +
+                    'padding:1px 0 0 8px;';
+                const chip = document.createElement('span');
+                chip.textContent = attempt.outcome;
+                chip.style.color = OUTCOME_COLORS[attempt.outcome] || '#cfe0ff';
+                row.appendChild(chip);
+                const detail = document.createElement('span');
+                const dealt = Number.isFinite(attempt.monsterDamage) ? attempt.monsterDamage : null;
+                detail.textContent =
+                    `lvl ${attempt.roomLevel} · ${Number(attempt.seconds).toFixed(0)}s` +
+                    (dealt !== null ? ` · ${formatKMB(dealt)} dealt` : '') +
+                    (attempt.complete !== true ? ' · partial' : '');
+                row.appendChild(detail);
+                card.appendChild(row);
+            }
+        }
+
+        return card;
     }
 
     renderPanel() {
