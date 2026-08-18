@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bulk sell: insta-sell when the spread is a sliver, and banded prices everywhere
+
+A fourth insta-sell rule (`Insta-sell when the spread is under X%`, default off): with the game's finer price increments a listing often earns only a sliver over selling instantly, and inside the threshold that sliver is not worth a listing slot and the queue wait. And every cached price the script serves — all ~65 call sites — is now clamped into the game's tradable range at the one place they all read from (`marketAPI.getPrice`), so a stale snapshot price parked outside the band can no longer print a profit or valuation no order could actually reach. A missing side stays missing: the band never invents a price.
+
 ### Canaries for the failure modes the health pass could not see
 
 Three blind spots closed. A React-migration canary now checks the fiber root's legacy key — fifteen features climb it for game methods, and a game React upgrade would fail them all to null with no error. The combat-score health check no longer anchors on the same hashed class the feature itself uses (a game rehash blinded check and feature together); the profile selectors are prefix-matched throughout. And the tooltip stack — hover-transient, so unreachable by the startup canary — de-hashes its content selectors and warns once per session if a tooltip renders content the script no longer recognizes, instead of every price injection just stopping.

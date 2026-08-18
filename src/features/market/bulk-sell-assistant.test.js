@@ -41,7 +41,19 @@ vi.mock('../inventory/custom-tabs/custom-tabs-data.js', () => ({
     collectTabItems: () => new Set(),
     collectItemsAboveTab: () => new Set(),
 }));
-vi.mock('./marketplace-shortcuts.js', () => ({ default: {} }));
+const shortcuts = vi.hoisted(() => ({ insta: [], listing: [] }));
+vi.mock('./marketplace-shortcuts.js', () => ({
+    default: {
+        clickInstantActionButton: (label) => {
+            shortcuts.insta.push(label);
+            return new Promise(() => {}); // never settles — the decision is what's under test
+        },
+        clickListingButton: (label) => {
+            shortcuts.listing.push(label);
+            return new Promise(() => {});
+        },
+    },
+}));
 vi.mock('../combat/loadout-snapshot.js', () => ({
     default: { getAllSnapshots: () => game.loadouts },
 }));
@@ -197,5 +209,63 @@ describe('gear saved into a loadout', () => {
         await bulkSell._start();
 
         expect(queued().length).toBeGreaterThan(0);
+    });
+});
+
+describe('the insta-vs-listing decision', () => {
+    // A balanced, fresh, high-value book: none of the other three rules fire,
+    // so what happens is the spread rule's doing alone
+    const book = (askPrice, bidPrice) => ({
+        asks: [{ price: askPrice, orderQuantity: 10, filledQuantity: 0, createdTimestamp: new Date().toISOString() }],
+        bids: [{ price: bidPrice, orderQuantity: 10, filledQuantity: 0 }],
+    });
+
+    beforeEach(() => {
+        shortcuts.insta.length = 0;
+        shortcuts.listing.length = 0;
+        settings['market_bulkSellSupplyRatio'] = 0;
+        settings['market_bulkSellQueueDays'] = 0;
+        settings['market_bulkSellMinListingValue'] = 0;
+        settings['market_bulkSellMaxSpreadPct'] = 0;
+        bulkSell.state = 'preparing';
+        bulkSell.current = { itemHrid: '/items/cheese', enhancementLevel: 0, count: 5 };
+    });
+
+    test('with the spread rule off, a tight spread still lists', () => {
+        bulkSell._decideAndOpen(book(100, 99));
+        expect(bulkSell.decision.insta).toBe(false);
+        expect(shortcuts.listing).toHaveLength(1);
+    });
+
+    test('a spread inside the threshold insta-sells at the bid, and says why', () => {
+        settings['market_bulkSellMaxSpreadPct'] = 2;
+        bulkSell._decideAndOpen(book(100, 99));
+        expect(bulkSell.decision.insta).toBe(true);
+        expect(bulkSell.decision.price).toBe(99);
+        expect(bulkSell.decision.reason).toContain('spread 1.0%');
+        expect(shortcuts.insta).toHaveLength(1);
+    });
+
+    test('a spread past the threshold lists as before', () => {
+        settings['market_bulkSellMaxSpreadPct'] = 2;
+        bulkSell._decideAndOpen(book(100, 90));
+        expect(bulkSell.decision.insta).toBe(false);
+        expect(shortcuts.listing).toHaveLength(1);
+    });
+
+    test('the boundary counts as within — "under X%" includes X itself', () => {
+        settings['market_bulkSellMaxSpreadPct'] = 2;
+        bulkSell._decideAndOpen(book(100, 98));
+        expect(bulkSell.decision.insta).toBe(true);
+    });
+
+    test('no bids means nothing to insta into, whatever the spread rule says', () => {
+        settings['market_bulkSellMaxSpreadPct'] = 50;
+        bulkSell._decideAndOpen({
+            asks: [{ price: 100, orderQuantity: 10, filledQuantity: 0, createdTimestamp: new Date().toISOString() }],
+            bids: [],
+        });
+        expect(bulkSell.decision.insta).toBe(false);
+        expect(shortcuts.listing).toHaveLength(1);
     });
 });

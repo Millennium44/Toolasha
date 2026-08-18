@@ -23,7 +23,17 @@ const createMocks = (isConnected) => {
         },
     }));
 
-    return { getJSON, show };
+    // Pass-through band by default; a test that wants clamping swaps `band` in
+    const band = { current: null };
+    vi.doMock('../utils/market-values.js', () => ({
+        refreshMarketValues: vi.fn(),
+        clampToBand: (price) => {
+            if (typeof price !== 'number' || !band.current) return price ?? null;
+            return Math.min(Math.max(price, band.current.min), band.current.max);
+        },
+    }));
+
+    return { getJSON, show, band };
 };
 
 describe('MarketAPI fetch', () => {
@@ -94,6 +104,55 @@ describe('MarketAPI fetch', () => {
 
         warn.mockRestore();
         error.mockRestore();
+    });
+});
+
+describe('MarketAPI getPrice bands', () => {
+    beforeEach(() => {
+        vi.resetModules();
+        vi.stubGlobal('fetch', vi.fn());
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    test('snapshot prices outside the tradable range are clamped to its edges', async () => {
+        const { band } = createMocks(true);
+        band.current = { min: 900, max: 1100 };
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.marketData = { '/items/x': { 0: { a: 5000, b: 100 } } };
+        marketAPI.lastFetchTimestamp = 1000;
+        marketAPI.pricePatchs = {};
+        expect(marketAPI.getPrice('/items/x', 0)).toEqual({ ask: 1100, bid: 900 });
+    });
+
+    test('patched (write-through) prices are banded the same way', async () => {
+        const { band } = createMocks(true);
+        band.current = { min: 900, max: 1100 };
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.lastFetchTimestamp = 1000;
+        marketAPI.pricePatchs = { '/items/x:0': { a: 5000, b: 100, timestamp: 2000 } };
+        expect(marketAPI.getPrice('/items/x', 0)).toEqual({ ask: 1100, bid: 900 });
+    });
+
+    test('a missing side stays null — the band never invents a price', async () => {
+        const { band } = createMocks(true);
+        band.current = { min: 900, max: 1100 };
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.marketData = { '/items/x': { 0: { a: 1000, b: -1 } } };
+        marketAPI.lastFetchTimestamp = 1000;
+        marketAPI.pricePatchs = {};
+        expect(marketAPI.getPrice('/items/x', 0)).toEqual({ ask: 1000, bid: null });
+    });
+
+    test('without a band everything passes through untouched', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        marketAPI.marketData = { '/items/x': { 0: { a: 5000, b: 100 } } };
+        marketAPI.lastFetchTimestamp = 1000;
+        marketAPI.pricePatchs = {};
+        expect(marketAPI.getPrice('/items/x', 0)).toEqual({ ask: 5000, bid: 100 });
     });
 });
 

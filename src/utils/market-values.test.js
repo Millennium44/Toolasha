@@ -18,6 +18,7 @@ import {
     marketValueFor,
     bandFromValue,
     reconcileBook,
+    clampToBand,
     _resetMarketValues,
     BAND_FACTOR,
 } from './market-values.js';
@@ -103,6 +104,35 @@ describe('reading the official value map', () => {
         mocks.throws = true;
         refreshMarketValues(40_000);
         expect(marketValueFor('/items/cheese')).toBe(500);
+    });
+});
+
+describe('clampToBand', () => {
+    test('passes through untouched until the patch is live', () => {
+        mocks.patchLive = false;
+        expect(clampToBand(5000, '/items/cheese')).toBe(5000);
+    });
+
+    test('passes through when the item has no official value', () => {
+        mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
+        refreshMarketValues(0);
+        expect(clampToBand(5000, '/items/unknown')).toBe(5000);
+    });
+
+    test('clamps an out-of-band price to the nearest edge', () => {
+        mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
+        refreshMarketValues(0);
+        expect(clampToBand(5000, '/items/cheese')).toBeCloseTo(1000 * BAND_FACTOR, 6);
+        expect(clampToBand(100, '/items/cheese')).toBeCloseTo(1000 / BAND_FACTOR, 6);
+    });
+
+    test('leaves an in-band price alone and never invents one', () => {
+        mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
+        refreshMarketValues(0);
+        expect(clampToBand(1050, '/items/cheese')).toBe(1050);
+        // A missing price stays missing — null means "no market" to callers
+        expect(clampToBand(null, '/items/cheese')).toBeNull();
+        expect(clampToBand(undefined, '/items/cheese')).toBeNull();
     });
 });
 

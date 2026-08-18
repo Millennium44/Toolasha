@@ -94,6 +94,28 @@ export function bandFromValue(value) {
 }
 
 /**
+ * Clamp one price into the item's tradable range, when one is known.
+ *
+ * The single-price face of {@link reconcileBook}: a present price parked
+ * outside the band is pulled to the nearest edge (as far as an order could
+ * actually reach); a missing price stays missing — this never invents a
+ * price, so callers that treat null as "no market" keep that meaning.
+ * Pass-through until the patch is live or when the item has no official value.
+ *
+ * @param {number|null} price - A raw ask or bid
+ * @param {string} itemHrid - Item HRID
+ * @param {number} [enhancementLevel=0] - Enhancement level
+ * @returns {number|null} The price, banded when a band is known
+ */
+export function clampToBand(price, itemHrid, enhancementLevel = 0) {
+    if (typeof price !== 'number' || price < 0) return price ?? null;
+    if (!isMarketplacePatchLive()) return price;
+    const band = bandFromValue(marketValueFor(itemHrid, enhancementLevel));
+    if (!band) return price;
+    return Math.min(Math.max(price, band.min), band.max);
+}
+
+/**
  * Reconcile a raw order-book ask/bid pair against the official value.
  *
  * A pass-through until the patch is live or when the item has no official value.

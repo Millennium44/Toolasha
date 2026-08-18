@@ -1214,7 +1214,7 @@ export const settingsGroups = {
                 label: 'Market: Bulk Sell Assistant',
                 type: 'checkbox',
                 default: false,
-                help: 'Adds a Bulk Sell button to the marketplace tab bar (next to Market History) that opens a floating panel for selling every tradable inventory item — most valuable stack first, optionally limited to one Toolasha inventory tab — via a prefilled sell modal for each: one confirm click per item, always in the same place. Insta-sells per the queue-age and supply-ratio rules below; otherwise posts a sell listing.',
+                help: 'Adds a Bulk Sell button to the marketplace tab bar (next to Market History) that opens a floating panel for selling every tradable inventory item — most valuable stack first, optionally limited to one Toolasha inventory tab — via a prefilled sell modal for each: one confirm click per item, always in the same place. Insta-sells per the queue-age, supply-ratio, minimum-value and spread rules below; otherwise posts a sell listing.',
             },
             market_bulkSellQueueDays: {
                 id: 'market_bulkSellQueueDays',
@@ -1233,6 +1233,15 @@ export const settingsGroups = {
                 min: 0,
                 max: 100,
                 help: 'Insta-sell when sell-order supply exceeds buy-order demand × this ratio. 1 = insta-sell whenever sell orders outnumber buy orders; 2 = only when supply is at least double demand; 0 turns this rule off (only the queue-age rule insta-sells). Default: 1.',
+            },
+            market_bulkSellMaxSpreadPct: {
+                id: 'market_bulkSellMaxSpreadPct',
+                label: 'Market: Bulk sell insta-sell when the spread is under (%)',
+                type: 'number',
+                default: 0,
+                min: 0,
+                max: 100,
+                help: 'Insta-sell when the gap between the best ask and the best bid is at most this percentage of the ask — with the finer price increments, a listing often earns only a sliver over selling instantly, and this rule says that sliver is not worth a listing slot and the wait. E.g. 2 insta-sells whenever ask and bid are within 2% of each other. 0 turns this rule off. Default: 0.',
             },
             market_bulkSellVendorCheck: {
                 id: 'market_bulkSellVendorCheck',

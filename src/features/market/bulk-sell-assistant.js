@@ -7,9 +7,11 @@
  * Start builds a queue of tradable inventory items —
  * optionally limited to one Toolasha custom inventory tab (children included);
  * for each item it navigates to its order book, decides between insta-selling
- * (ask supply exceeds bid demand, or the front of the ask queue is older than
- * the configured threshold — the queue isn't moving) and posting a sell
- * listing, then opens the matching modal with the quantity prefilled.
+ * (ask supply exceeds bid demand, the front of the ask queue is older than
+ * the configured threshold — the queue isn't moving —, the stack is under the
+ * minimum listing value, or the ask−bid spread is under the configured
+ * percentage) and posting a sell listing, then opens the matching modal with
+ * the quantity prefilled.
  * Confirming (or closing) the modal advances to the next item automatically,
  * so after Start every sale is exactly one click on the game's confirm button
  * — always in the same place. The assistant never confirms a sale itself.
@@ -71,6 +73,13 @@ const TUNABLES = [
         label: 'Insta-sell when the front ask is older than',
         suffix: 'days',
         title: 'A sell queue whose front listing has waited this long is not moving, so joining it would not sell either. 0 turns the rule off.',
+    },
+    {
+        key: 'market_bulkSellMaxSpreadPct',
+        fallback: 0,
+        label: 'Insta-sell when the spread is under',
+        suffix: '%',
+        title: 'When the best ask and best bid are within this percentage of each other, a listing earns only a sliver over selling instantly — not worth the slot and the wait. 0 turns the rule off.',
     },
 ];
 const MS_PER_DAY = 86400000;
@@ -916,10 +925,13 @@ class BulkSellAssistant {
     /**
      * Decide insta-sell vs listing per the order book, then open the matching
      * game modal (the quantity is prefilled when it appears).
-     * Three configurable insta-sell rules (any one triggers, 0 disables it):
+     * Four configurable insta-sell rules (any one triggers, 0 disables it):
      * ask supply exceeds bid demand × the supply ratio, the front ask listing
-     * has waited longer than the queue-age limit (queue isn't moving), or the
-     * stack is worth less than the minimum listing value (not worth a slot).
+     * has waited longer than the queue-age limit (queue isn't moving), the
+     * stack is worth less than the minimum listing value (not worth a slot),
+     * or the ask−bid spread is at most the configured percentage of the ask
+     * (a listing's whole edge over insta-selling is the spread, and a sliver
+     * of an edge is not worth the slot and the wait).
      */
     _decideAndOpen(book) {
         const asks = book?.asks || [];
@@ -944,6 +956,7 @@ class BulkSellAssistant {
         const queueDaysLimit = readNumberSetting('market_bulkSellQueueDays', 2);
         const supplyRatio = readNumberSetting('market_bulkSellSupplyRatio', 1);
         const minListingValue = readNumberSetting('market_bulkSellMinListingValue', 1500000);
+        const maxSpreadPct = readNumberSetting('market_bulkSellMaxSpreadPct', 0);
 
         let frontAskDays = 0;
         const created = asks[0]?.createdTimestamp;
@@ -953,10 +966,17 @@ class BulkSellAssistant {
 
         // Value the stack at the ask (what a listing would target)
         const stackValue = this.current.count * (asks[0]?.price ?? bids[0]?.price ?? 0);
+        // The listing's whole edge over insta-selling is the ask−bid spread.
+        // With the game's finer price increments that edge is often a sliver,
+        // and a sliver is not worth a listing slot plus the queue wait.
+        const askPrice = asks[0]?.price ?? 0;
+        const bidPrice = bids[0]?.price ?? 0;
+        const spreadPct = askPrice > 0 && bidPrice > 0 ? ((askPrice - bidPrice) / askPrice) * 100 : null;
         const supplyTriggered = supplyRatio > 0 && askQty > bidQty * supplyRatio;
         const ageTriggered = queueDaysLimit > 0 && frontAskDays > queueDaysLimit;
         const valueTriggered = minListingValue > 0 && stackValue < minListingValue;
-        const insta = (supplyTriggered || ageTriggered || valueTriggered) && bids.length > 0;
+        const spreadTriggered = maxSpreadPct > 0 && spreadPct !== null && spreadPct <= maxSpreadPct;
+        const insta = (supplyTriggered || ageTriggered || valueTriggered || spreadTriggered) && bids.length > 0;
         const price = insta ? bids[0].price : (asks[0]?.price ?? bids[0]?.price ?? 0);
 
         const ratioLabel = supplyRatio === 1 ? '' : ` ×${supplyRatio}`;
@@ -965,7 +985,9 @@ class BulkSellAssistant {
                 ? `supply ${formatKMB(askQty)} > demand ${formatKMB(bidQty)}${ratioLabel}`
                 : ageTriggered
                   ? `ask queue ~${frontAskDays.toFixed(1)}d`
-                  : `stack ${formatKMB(stackValue)} < ${formatKMB(minListingValue)} min`
+                  : valueTriggered
+                    ? `stack ${formatKMB(stackValue)} < ${formatKMB(minListingValue)} min`
+                    : `spread ${spreadPct.toFixed(1)}% ≤ ${maxSpreadPct}%`
             : 'queue ok';
         this.decision = { insta, price, reason };
 

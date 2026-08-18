@@ -6,6 +6,7 @@
 import connectionState from '../core/connection-state.js';
 import storage from '../core/storage.js';
 import networkAlert from '../features/market/network-alert.js';
+import { refreshMarketValues, clampToBand } from '../utils/market-values.js';
 
 /**
  * MarketAPI class handles fetching and caching market price data
@@ -205,6 +206,12 @@ class MarketAPI {
      * @returns {Object|null} { ask: number, bid: number } or null if not found
      */
     getPrice(itemHrid, enhancementLevel = 0) {
+        // Every price this returns is a cached snapshot, so a figure parked
+        // outside the game's tradable range is one no order could actually
+        // reach — clamp it to the band here, once, and every caller (present
+        // and future) inherits banded prices. A missing side stays null: the
+        // band never invents a price where the book has none.
+        refreshMarketValues();
         const normalizeMarketPriceValue = (value) => {
             if (typeof value !== 'number') {
                 return null;
@@ -214,7 +221,7 @@ class MarketAPI {
                 return null;
             }
 
-            return value;
+            return clampToBand(value, itemHrid, enhancementLevel);
         };
 
         // Check for fresh patch first
