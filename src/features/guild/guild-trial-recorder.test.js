@@ -92,7 +92,22 @@ function breakdown(overrides = {}) {
         support: {
             players: [
                 { index: '0', name: 'Tib', healingDone: 0, damageTaken: 90_000 },
-                { index: '1', name: 'Moo', healingDone: 40_000, damageTaken: 1_000 },
+                {
+                    index: '1',
+                    name: 'Moo',
+                    healingDone: 40_000,
+                    damageTaken: 1_000,
+                    manaSpent: 12_000,
+                    manaRestored: 3_000,
+                    manaOuts: 2,
+                    emptyManaMs: 30_000,
+                    outOfMana: true,
+                    lowestHealthFraction: 0.4,
+                    casts: 80,
+                    healCasts: 50,
+                    buffCasts: 5,
+                    castsByAbility: { '/abilities/heal': 50 },
+                },
             ],
             unattributedHealing: 500,
         },
@@ -124,8 +139,44 @@ describe('thinBreakdown', () => {
 
         expect(snapshot).toMatchObject({ t: now, seconds: 60, totalDamage: 500_000, partyDps: 8333 });
         expect(snapshot.players).toEqual([
-            { index: '0', name: 'Tib', damage: 300_000, deaths: 0, healingDone: 0, damageTaken: 90_000 },
-            { index: '1', name: 'Moo', damage: 200_000, deaths: 1, healingDone: 40_000, damageTaken: 1_000 },
+            {
+                index: '0',
+                name: 'Tib',
+                damage: 300_000,
+                deaths: 0,
+                healingDone: 0,
+                damageTaken: 90_000,
+                // A support row that never said anything about mana reads as
+                // the zeros it is, not as absent fields
+                manaSpent: 0,
+                manaRestored: 0,
+                manaOuts: 0,
+                emptyManaMs: 0,
+                outOfMana: false,
+                lowestHealthFraction: null,
+                casts: 0,
+                healCasts: 0,
+                buffCasts: 0,
+            },
+            {
+                index: '1',
+                name: 'Moo',
+                damage: 200_000,
+                deaths: 1,
+                healingDone: 40_000,
+                damageTaken: 1_000,
+                manaSpent: 12_000,
+                manaRestored: 3_000,
+                manaOuts: 2,
+                emptyManaMs: 30_000,
+                outOfMana: true,
+                lowestHealthFraction: 0.4,
+                casts: 80,
+                healCasts: 50,
+                buffCasts: 5,
+                // and deliberately no castsByAbility — a map per player per
+                // fifteen seconds is what the thinning exists to avoid
+            },
         ]);
     });
 
@@ -454,6 +505,28 @@ describe('the export bundle', () => {
         expect(bundle.session.startedBy).toBe('button');
         expect(bundle.coverage.damageMitigated).toMatch(/not carried/);
         expect(bundle.memberSkills.ada.skills['/skills/alchemy']).toBe(90);
+    });
+
+    test('names its format, version and origin, with no userscript sandbox to ask', async () => {
+        const bundle = await buildTrialExport({ guildName: 'Milky Way' });
+
+        expect(bundle.format).toBe('toolasha-guild-trial');
+        expect(bundle.version).toBe(1);
+        // No GM_info in a test environment: null, not a throw
+        expect(bundle.toolashaVersion).toBeNull();
+        // happy-dom serves a hostname, and it is not the test server's
+        expect(bundle.host).toBe(location.hostname);
+        expect(bundle.isTestServer).toBe(false);
+    });
+
+    test('carries the running script version when GM_info is there', async () => {
+        globalThis.GM_info = { script: { version: '9.9.9' } };
+        try {
+            const bundle = await buildTrialExport({});
+            expect(bundle.toolashaVersion).toBe('9.9.9');
+        } finally {
+            delete globalThis.GM_info;
+        }
     });
 
     test('the last session is read back off storage when none is in hand', async () => {

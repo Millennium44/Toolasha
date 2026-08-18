@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial exports: mana history survives refreshes, and exports say what produced them
+
+The recorder's persisted snapshots now carry each player's mana metrics (spent, restored, dry spells, time at zero), lowest-health fraction and cast counts alongside deaths, so the mana story survives a refresh instead of living only in the in-memory breakdown. The trial export file is now stamped with a format name, schema version, script version, host and test-server flag.
+
 ### Trial loadouts: ability provenance, and the Battle Info cycler advances the moment a sheet lands
 
 Captured loadouts now record whether the ability kit came from an authoritative source; a stat-only popup scrape can no longer erase a previously captured real kit (an authoritative empty kit still counts as truly empty). The loadout capture emits an event when a sheet is recorded: the roster panel redraws immediately and the player's request suppression clears, instead of waiting out a 3s redraw timer — and "redo all"/character switches no longer leave stale 20s unit suppressions behind.

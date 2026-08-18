@@ -116,14 +116,31 @@ export function thinBreakdown(breakdown, at) {
         fights: breakdown?.fights ?? 0,
         totalDamage: breakdown?.totalDamage ?? 0,
         partyDps: breakdown?.partyDps ?? null,
-        players: (breakdown?.players || []).map((player) => ({
-            index: player.index,
-            name: player.name,
-            damage: player.damage,
-            deaths: player.deaths,
-            healingDone: supportOf(player.index)?.healingDone ?? 0,
-            damageTaken: supportOf(player.index)?.damageTaken ?? 0,
-        })),
+        players: (breakdown?.players || []).map((player) => {
+            const row = supportOf(player.index);
+            // Every figure below is cumulative for the session, as the live
+            // breakdown keeps it — a snapshot is a reading of the totals, so a
+            // reader diffs consecutive snapshots and never sums them.
+            // `castsByAbility` is deliberately not kept: a map per player per
+            // fifteen seconds is the storage this thinning exists to avoid.
+            return {
+                index: player.index,
+                name: player.name,
+                damage: player.damage,
+                deaths: player.deaths,
+                healingDone: row?.healingDone ?? 0,
+                damageTaken: row?.damageTaken ?? 0,
+                manaSpent: row?.manaSpent ?? 0,
+                manaRestored: row?.manaRestored ?? 0,
+                manaOuts: row?.manaOuts ?? 0,
+                emptyManaMs: row?.emptyManaMs ?? 0,
+                outOfMana: row?.outOfMana ?? false,
+                lowestHealthFraction: row?.lowestHealthFraction ?? null,
+                casts: row?.casts ?? 0,
+                healCasts: row?.healCasts ?? 0,
+                buffCasts: row?.buffCasts ?? 0,
+            };
+        }),
     };
 }
 
@@ -420,6 +437,18 @@ class GuildTrialRecorder {
 const guildTrialRecorder = new GuildTrialRecorder();
 
 /**
+ * The script version, when the userscript sandbox is there to ask.
+ * @returns {string|null} The `@version` of the running build
+ */
+function scriptVersion() {
+    try {
+        return typeof GM_info !== 'undefined' ? GM_info?.script?.version || null : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Everything the trials feature knows right now, as one object.
  *
  * The single builder behind both the console helper and the panel's download
@@ -440,8 +469,16 @@ export async function buildTrialExport({ guildName = null } = {}) {
     const loadouts = characterId ? await loadLoadouts(characterId) : null;
     const trialDamage = guildTrialDamage.breakdown?.() ?? null;
     const session = await guildTrialRecorder.loadSession();
+    const host = typeof location !== 'undefined' ? location.hostname || null : null;
 
     return {
+        // Which reader this bundle is for, which script produced it, and
+        // against which server — live and test do not share balance
+        format: 'toolasha-guild-trial',
+        version: 1,
+        toolashaVersion: scriptVersion(),
+        host,
+        isTestServer: host ? host.includes('test.') : null,
         exportedAt: new Date().toISOString(),
         guildName,
         characterId,
