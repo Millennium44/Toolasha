@@ -2510,6 +2510,14 @@ class GuildTrials {
      * it is — it costs nothing, and deleting the only other copy of a record on
      * the strength of a name that has just arrived is not a trade worth making.
      *
+     * That absorption is right for `default → a name` and wrong for `one name →
+     * another`, which is the same call because the only guard was
+     * `name !== this.guildName`. A character who leaves one guild and joins
+     * another without reloading took the merge path and wrote the guild they
+     * left's tiles under the guild they joined's key — stamped as the new
+     * guild, which also defeats the `foreign` provenance check on the next
+     * load. A genuine guild change therefore replaces rather than merges.
+     *
      * @returns {Promise<void>}
      */
     async _adoptGuildName() {
@@ -2518,10 +2526,19 @@ class GuildTrials {
 
         this.adopting = true;
         try {
+            const changing = this.guildName !== null;
             const stored = await loadTrialRecord(name, Date.now(), this.characterId, { guildId: this._guildId() });
-            // The name is adopted either way; a record under it that could not
-            // be read now is folded in by the next save's re-read
-            this._adoptStored(stored);
+            if (changing) {
+                // Nothing in hand belongs to the arriving guild. An unreadable
+                // read starts the week empty and is flagged, exactly as the
+                // arriving-character path does
+                this.record = stored ?? emptyRecord(trialWeekStart(Date.now()), { guildId: this._guildId() });
+                this.recordUnread = stored === null;
+            } else {
+                // The name is adopted either way; a record under it that could
+                // not be read now is folded in by the next save's re-read
+                this._adoptStored(stored);
+            }
             this.guildName = name;
             guildTrialRecorder.setGuildName(name);
             guildTrialAbilities.setGuildName?.(name);

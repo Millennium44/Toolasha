@@ -627,8 +627,20 @@ class GuildXPTracker {
         if (!guild) return;
 
         const name = guild.name;
+        const previous = this.ownGuildName;
         this.ownGuildName = name;
         this.guildCreatedAt = guild.createdAt;
+
+        // A guild change mid-session. The map in hand is the guild just left's
+        // key, and `_persist` below would write the whole of it — every series
+        // it holds — under `guildXP_<new guild>`. The arriving guild's own
+        // record is read instead, as `_onCharacterInit` already does
+        if (previous && previous !== name) {
+            const loaded = await this._loadMap(`guildXP_${name}`, {});
+            // Another change may have landed while the read was in flight
+            if (this.ownGuildName !== name) return;
+            this.guildXPHistory = loaded;
+        }
         this.guildType = guild.guildType || this.guildType;
         this.currentWeekStartAt = guild.currentWeekStartAt || this.currentWeekStartAt;
 

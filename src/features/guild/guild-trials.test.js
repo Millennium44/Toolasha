@@ -1410,6 +1410,40 @@ describe('the panel, end to end', () => {
         guildTrialAbilities.currentTier = null;
     });
 
+    test('a trial going live starts a fresh capture session; a page opened onto one does not', () => {
+        // The capture session used to begin at whichever capture happened to be
+        // first, so its sixty-five-minute clock could run out in the middle of
+        // the next trial — or keep the last trial's kits alive through it
+        fire(buildTab([{ name: 'Trial Chameleon', level: 140, bar: '618,000 / 618,000' }]));
+        guildTrials.phase = null;
+        guildTrialAbilities.setRoster(['Alice']);
+        guildTrialAbilities.recordCapture(
+            {
+                name: 'Alice',
+                characterId: 1,
+                abilities: [],
+                abilitiesAuthoritative: true,
+                source: 'battle_unit_fetched',
+            },
+            { at: now, now }
+        );
+
+        // A page opened onto a trial already running keeps what it restored:
+        // the session in hand is this trial's
+        guildTrials._noteLifecycle({ phase: 'live' }, [], now + 1000);
+        expect(Object.keys(guildTrialAbilities.session.players)).toEqual(['id:1']);
+
+        // A trial *beginning* is the deterministic reset
+        guildTrials._noteLifecycle({ phase: 'scheduled' }, [], now + 10 * 60_000);
+        guildTrials._noteLifecycle({ phase: 'live' }, [], now + 20 * 60_000);
+        expect(guildTrialAbilities.session.players).toEqual({});
+        expect(guildTrialAbilities.session.startedAt).toBe(now + 20 * 60_000);
+
+        guildTrials.phase = null;
+        guildTrialAbilities.roster = [];
+        guildTrialAbilities.session = null;
+    });
+
     test('with nothing to price the token payout against, the bare count is all that shows', () => {
         fire(buildTab([{ name: 'Trial Chameleon', level: 140, points: 1200, bar: '618,000 / 618,000' }]));
 
@@ -2408,6 +2442,30 @@ describe('the panel, end to end', () => {
         expect(guildTrials.guildName).toBe('Milky Way');
         expect(Object.keys(game.store)).toContain('guildTrials_Milky Way');
         game.guildName = 'Milky Way';
+    });
+
+    test('changing guild without changing character does not carry the tiles across', async () => {
+        // The same leak as the loadouts one, one module over: `_adoptGuildName`
+        // merged whatever was in hand onto the arriving guild's key, and its
+        // only guard was that the name had changed — which is exactly what a
+        // guild switch is
+        trialsFeature.cleanup();
+        game.characterId = 111;
+        game.guildName = 'Testmaxxing';
+        game.store = {};
+        await trialsFeature.initialize();
+
+        fire(buildTab([{ name: 'Alchemy', level: 170, bar: '18,850 / 65,280' }]));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(guildTrials.record.tiles['skilling::alchemy']).toBeTruthy();
+
+        game.guildName = 'SuperMoo';
+        fire(buildTab([{ name: 'Milking', level: 130, bar: '0 / 65,280' }]));
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(guildTrials.guildName).toBe('SuperMoo');
+        expect(guildTrials.record.tiles['skilling::alchemy']).toBeUndefined();
+        expect(game.store['guildTrials_SuperMoo']?.tiles?.['skilling::alchemy']).toBeUndefined();
     });
 
     test('a watched fight feeds the pool to a card the game draws no bar on', async () => {

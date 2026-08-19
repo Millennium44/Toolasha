@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild trial records, sessions and XP switch guilds cleanly
+
+Changing guild without changing character used to carry the guild you left into the guild you joined: the trial record was merged onto the new guild's key (and stamped as the new guild's, which defeats the foreign-record check), an open recorder session was written under the new guild's key, and the guild XP map was copied across wholesale. Each now starts from the arriving guild's own record, and the guild you left keeps its own for if you go back.
+
 ### Seen loadouts stay in the guild they were seen in, and monsters are never members
 
 Changing guild used to hand the new guild the old guild's whole roster: the character-only record was adopted wholesale onto the new guild's key the first time it was empty. A guild key now takes only sightings from this session before its name arrived, the character-only key stops accumulating duplicates once a guild key exists (and is left on disk as legacy rather than deleted), and each guild's own record stays intact for if you go back. Battle Info sheets for monsters — any name the game data lists, not just trial bosses — are refused on capture and purged from anything already stored.

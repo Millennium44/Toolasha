@@ -181,9 +181,21 @@ class GuildTrialRecorder {
         this.initialized = false;
     }
 
-    /** @param {string|null} guildName - The key sessions are stored under */
+    /**
+     * @param {string|null} guildName - The key sessions are stored under
+     *
+     * A name arriving over a *different* name is a guild change, and the open
+     * session was recorded inside the guild being left. `_persist` resolves
+     * `trialSessionStorageKey(this.guildName, …)` afresh on every write, so
+     * keeping the session would file the departed guild's snapshots under
+     * `guildTrialSession_<new guild>`. Adopting a name over `null` is the
+     * ordinary lazy adoption and keeps the session, which was recorded in this
+     * guild before its name arrived.
+     */
     setGuildName(guildName) {
-        this.guildName = guildName || null;
+        const next = guildName || null;
+        if (this.guildName && next && this.guildName !== next) this.forget();
+        this.guildName = next;
         this.characterId = dataManager.getCurrentCharacterId?.() ?? null;
     }
 

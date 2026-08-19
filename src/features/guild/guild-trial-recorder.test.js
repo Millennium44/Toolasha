@@ -495,6 +495,29 @@ describe('a character switch', () => {
     });
 });
 
+describe('a guild switch', () => {
+    test('the open session goes with the guild it was recorded in', () => {
+        guildTrialRecorder.setGuildName('Testmaxxing');
+        guildTrialRecorder.start('button');
+        expect(guildTrialRecorder.recording).toBe(true);
+
+        // `_persist` resolves the key afresh on every write, so a session kept
+        // across this would land under `guildTrialSession_SuperMoo`
+        guildTrialRecorder.setGuildName('SuperMoo');
+
+        expect(guildTrialRecorder.session).toBeNull();
+        expect(guildTrialRecorder.guildName).toBe('SuperMoo');
+    });
+
+    test('a name arriving over none is the ordinary adoption and keeps the session', () => {
+        guildTrialRecorder.setGuildName(null);
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.setGuildName('SuperMoo');
+
+        expect(guildTrialRecorder.recording).toBe(true);
+    });
+});
+
 describe('the export bundle', () => {
     test('carries everything it used to, plus the session and the coverage note', async () => {
         guildTrialRecorder.start('button');

@@ -308,6 +308,24 @@ describe('the XP history cannot be wiped by a failed read or a stale copy', () =
         expect(stored('memberXP_g3')).toBeUndefined(); // refused, not written blind
     });
 
+    test('changing guild reads the new guild’s record instead of copying the old one across', async () => {
+        // `_persist` writes the whole `guildName → series` map under the key
+        // of whichever guild is current, so the map in hand has to be the
+        // arriving guild's before the write
+        guildXPTracker.ownGuildName = 'Testmaxxing';
+        guildXPTracker.guildXPHistory = { Testmaxxing: [{ t: 1, xp: 100 }] };
+        storageMock.store.set('guildXP_SuperMoo', { SuperMoo: [{ t: 1, xp: 5 }] });
+
+        await guildXPTracker._onGuildUpdated({ guild: { name: 'SuperMoo', experience: 6 } });
+        await guildXPTracker._saveChains.get('guildXP_SuperMoo');
+
+        expect(Object.keys(guildXPTracker.guildXPHistory)).toEqual(['SuperMoo']);
+        expect(stored('guildXP_SuperMoo').Testmaxxing).toBeUndefined();
+        expect(stored('guildXP_SuperMoo').SuperMoo.map((s) => s.xp)).toEqual([5, 6]);
+        // The guild they left keeps its own, for if they go back
+        expect(stored('guildXP_Testmaxxing')).toBeUndefined();
+    });
+
     test('resetMemberData is an intentional clear and writes as-is', async () => {
         storageMock.store.set(MEMBER_KEY, { 101: [{ t: 1, xp: 1 }] });
         guildXPTracker.ownGuildID = 'g1';
