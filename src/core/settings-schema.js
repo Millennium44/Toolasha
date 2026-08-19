@@ -2559,11 +2559,11 @@ export const settingsGroups = {
                 id: 'taskAutoReroll_belowPar',
                 label: 'Also flag tasks rating below the board ("Below par")',
                 type: 'checkbox',
-                default: true,
+                default: false,
                 help:
                     'With the reminder on, also give the red border and a "Below par" badge to any task whose ' +
-                    'rate sits below the board median by more than its next reroll would cost. Off leaves only ' +
-                    'your auto-reroll list flagged.',
+                    'rate sits below the board median by more than its next reroll would cost. Off (the default) ' +
+                    'leaves only your auto-reroll list flagged.',
             },
             tasks_rerollWalk: {
                 id: 'tasks_rerollWalk',

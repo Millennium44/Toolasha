@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### The "Below par" flag has its own switch
 
-The task auto-reroll reminder flagged two things under one setting: your auto-reroll list ("Reroll!") and any task rating below the board median by more than its next reroll costs ("Below par"). The second now has its own toggle (on by default), so the red border can be kept for the list alone. The reroll walk's widget also no longer feeds its own renders back into its board watcher, which froze the Tasks page.
+The task auto-reroll reminder flagged two things under one setting: your auto-reroll list ("Reroll!") and any task rating below the board median by more than its next reroll costs ("Below par"). The second now has its own toggle, off by default, so the red border is kept for the list alone unless asked for. The reroll walk's widget also no longer feeds its own renders back into its board watcher, which froze the Tasks page.
 
 ### The Consumables Buy-all walk gets its own floating panel
 

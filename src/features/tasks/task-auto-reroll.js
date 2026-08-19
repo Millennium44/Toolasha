@@ -218,7 +218,7 @@ class TaskAutoReroll {
         // and the task simply not being worth its slot next to the others
         const isBlacklisted = Boolean(hrid && this.autoRerollHrids.has(hrid));
         const isBelowBoard =
-            board && config.getSetting('taskAutoReroll_belowPar') !== false
+            board && config.getSetting('taskAutoReroll_belowPar') === true
                 ? this._ratesBelowBoard(taskCard, quest, board)
                 : false;
         const shouldReroll = isBlacklisted || isBelowBoard;
