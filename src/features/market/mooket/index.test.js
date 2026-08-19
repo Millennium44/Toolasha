@@ -75,11 +75,16 @@ vi.mock('../../../core/data-manager.js', () => ({
 }));
 vi.mock('../../../core/config.js', () => ({ default: { getSetting: () => false, onSettingChange: () => {} } }));
 vi.mock('../../../api/marketplace.js', () => ({ default: { on: () => {}, off: () => {}, marketData: {} } }));
+// The real registry's API — the mock used to offer `cleanup()`, which the
+// real one does not have, and that is how a `cleanupRegistry.cleanup()` call
+// in disable() passed every test and threw in the game
 vi.mock('../../../utils/cleanup-registry.js', () => ({
     createCleanupRegistry: () => ({
         registerCleanup: () => {},
         registerInterval: () => {},
-        cleanup: () => {},
+        registerTimeout: () => {},
+        registerListener: () => {},
+        cleanupAll: () => {},
     }),
 }));
 vi.mock('../../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
@@ -270,5 +275,30 @@ describe('splitting the watchlist out of the panel prefs', () => {
         expect(settings().get(PREFS_KEY)).toEqual({ x: 40, days: 30 });
         expect(settings().has('mooketWatchlist')).toBe(false);
         expect(panel.watchlist).toEqual([]);
+    });
+});
+
+describe('disable() always leaves the feature re-initialisable', () => {
+    test('a disable that throws part-way still clears isInitialized, and a stray click cannot throw', () => {
+        panel.isInitialized = true;
+        // Node environment: the panel only needs `remove()` and `style` here
+        panel.panel = { remove() {}, style: {} };
+        // Force a failure inside disable, the way the misnamed registry call did
+        const saved = panel.cleanupRegistry;
+        panel.cleanupRegistry = {
+            cleanupAll: () => {
+                throw new Error('boom');
+            },
+        };
+        try {
+            expect(() => panel.disable()).not.toThrow();
+        } finally {
+            panel.cleanupRegistry = saved;
+        }
+        expect(panel.isInitialized).toBe(false);
+        expect(panel.panel).toBeNull();
+        // The History tab's click path with no panel up
+        panel.prefs.open = true;
+        expect(() => panel.applyOpenState()).not.toThrow();
     });
 });

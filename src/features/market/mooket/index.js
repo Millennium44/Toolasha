@@ -172,18 +172,29 @@ class MarketHistoryPanel {
     }
 
     disable() {
-        this.chart?.destroy();
-        this.chart = null;
-        this.minimizeCtl?.destroy();
-        this.minimizeCtl = null;
-        this.panel?.remove();
-        this.panel = null;
-        this.overlay?.remove();
-        this.overlay = null;
-        marketHistoryAPI.disconnect();
-        marketPriceStore.cleanup();
-        this.cleanupRegistry.cleanup();
-        this.isInitialized = false;
+        // Whatever fails in here, the feature must end up disabled: a throw
+        // part-way once left `isInitialized` true with the panel already
+        // removed, so the next initialize() returned early and every History
+        // click after that read `.style` off a null panel until a refresh
+        try {
+            this.chart?.destroy();
+            this.chart = null;
+            this.minimizeCtl?.destroy();
+            this.minimizeCtl = null;
+            this.panel?.remove();
+            this.panel = null;
+            this.overlay?.remove();
+            this.overlay = null;
+            this.tabButton?.remove();
+            this.tabButton = null;
+            marketHistoryAPI.disconnect();
+            marketPriceStore.cleanup();
+            this.cleanupRegistry.cleanupAll();
+        } catch (error) {
+            console.error('[MarketHistory] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 
     /**
@@ -428,6 +439,10 @@ class MarketHistoryPanel {
     }
 
     applyOpenState() {
+        // A click that arrives while the feature is down (between a disable
+        // and its re-initialise) has no panel to show; doing nothing beats
+        // throwing out of the tab's click handler
+        if (!this.panel) return;
         const open = this.prefs.open;
         this.panel.style.display = open ? 'flex' : 'none';
         this.panel.style.height = `${this.prefs.h}px`;

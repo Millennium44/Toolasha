@@ -150,7 +150,7 @@ class MyListingsPriceRefresh {
         this.button = null;
         this.status = null;
         this.busy = false;
-        this.cleanupRegistry.cleanup();
+        this.cleanupRegistry.cleanupAll();
         this.isInitialized = false;
     }
 

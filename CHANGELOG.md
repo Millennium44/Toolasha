@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### The marketplace History tab stops "breaking until a refresh"
 
-The price-history panel's half-second poll hid the panel unless the FIRST marketplace element in the DOM was on screen, and the History / Bulk Sell tabs were put into the FIRST tab bar found — so when the game leaves a second, hidden marketplace behind after some navigations, the History tab opened a panel that was hidden again at once (or sat in a bar nobody could see) until a refresh. Both now prefer the visible marketplace.
+Switching character (an ironcow to the main, say) disables every feature and re-initialises it; the price-history panel's disable threw on a misnamed cleanup call after it had already removed its panel, so it never marked itself disabled, the re-initialise skipped it, and every History click after that failed on the missing panel until a refresh. The call is fixed (in the My Listings price refresh too), disable now always ends disabled, and a click with no panel up does nothing instead of throwing. The panel's poll and the History / Bulk Sell tabs also now prefer the visible marketplace when the game leaves a hidden one in the DOM.
 
 ### The build check's buff fold can no longer count a persistent buff twice
 
