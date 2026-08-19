@@ -159,26 +159,32 @@ class ActionCountdown {
     }
 
     disable() {
-        this._stopLoop();
-        if (this.textEl && this.totalTime) {
-            const span = this.textEl.querySelector('span');
-            if (span) {
-                span.textContent = this.totalTime.toFixed(1) + 's';
+        try {
+            this._stopLoop();
+            if (this.textEl && this.totalTime) {
+                const span = this.textEl.querySelector('span');
+                if (span) {
+                    span.textContent = this.totalTime.toFixed(1) + 's';
+                }
             }
+            if (this.actionCompletedHandler) {
+                dataManager.off('action_completed', this.actionCompletedHandler);
+                this.actionCompletedHandler = null;
+            }
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
+            this.textEl = null;
+            this.fillBar = null;
+            this.totalTime = null;
+            this.lastCompletedAt = null;
+            this.initialized = false;
+        } catch (error) {
+            console.error('[Action Bar Countdown] Disable failed part-way:', error);
+        } finally {
+            this.initialized = false;
         }
-        if (this.actionCompletedHandler) {
-            dataManager.off('action_completed', this.actionCompletedHandler);
-            this.actionCompletedHandler = null;
-        }
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
-        this.textEl = null;
-        this.fillBar = null;
-        this.totalTime = null;
-        this.lastCompletedAt = null;
-        this.initialized = false;
     }
 }
 

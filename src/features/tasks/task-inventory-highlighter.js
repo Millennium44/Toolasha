@@ -362,7 +362,13 @@ class TaskInventoryHighlighter {
      * Disable the feature
      */
     disable() {
-        this.cleanup();
+        try {
+            this.cleanup();
+        } catch (error) {
+            console.error('[Task Inventory Highlighter] Disable failed part-way:', error);
+        } finally {
+            this.initialized = false;
+        }
     }
 }
 

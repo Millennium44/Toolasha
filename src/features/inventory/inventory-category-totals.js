@@ -52,16 +52,22 @@ class InventoryCategoryTotals {
     }
 
     disable() {
-        if (!this.isInitialized) {
-            return;
+        try {
+            if (!this.isInitialized) {
+                return;
+            }
+
+            inventoryBadgeManager.unregisterProvider('inventory-category-totals');
+            document.querySelectorAll(`.mwi-category-total`).forEach((el) => el.remove());
+            dom.removeStyles(CSS_ID);
+
+            this.isInitialized = false;
+            this.pendingUpdate = false;
+        } catch (error) {
+            console.error('[Inventory Category Totals] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-
-        inventoryBadgeManager.unregisterProvider('inventory-category-totals');
-        document.querySelectorAll(`.mwi-category-total`).forEach((el) => el.remove());
-        dom.removeStyles(CSS_ID);
-
-        this.isInitialized = false;
-        this.pendingUpdate = false;
     }
 
     scheduleUpdate() {

@@ -1611,15 +1611,22 @@ class TooltipPrices {
      * Disable the feature
      */
     disable() {
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
+        try {
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
+
+            uninstallEnhancementSourceToggle();
+
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Tooltip Prices] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
         }
-
-        uninstallEnhancementSourceToggle();
-
-        this.isActive = false;
-        this.isInitialized = false;
     }
 }
 

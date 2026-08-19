@@ -234,22 +234,29 @@ class EquipmentLevelDisplay {
      * Disable the feature
      */
     disable() {
-        if (this.unregisterHandler) {
-            this.unregisterHandler();
-            this.unregisterHandler = null;
+        try {
+            if (this.unregisterHandler) {
+                this.unregisterHandler();
+                this.unregisterHandler = null;
+            }
+
+            // Remove all level overlays
+            const overlays = document.querySelectorAll('div.script_itemLevel');
+            for (const overlay of overlays) {
+                overlay.remove();
+            }
+
+            // Clear processed tracking
+            this.processedHrefs = new WeakMap();
+
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Equipment Level Display] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
         }
-
-        // Remove all level overlays
-        const overlays = document.querySelectorAll('div.script_itemLevel');
-        for (const overlay of overlays) {
-            overlay.remove();
-        }
-
-        // Clear processed tracking
-        this.processedHrefs = new WeakMap();
-
-        this.isActive = false;
-        this.isInitialized = false;
     }
 }
 

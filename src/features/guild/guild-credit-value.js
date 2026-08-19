@@ -1114,5 +1114,13 @@ const guildCreditValue = new GuildCreditValue();
 export default {
     name: 'Guild Credit Value',
     initialize: () => guildCreditValue.initialize(),
-    cleanup: () => guildCreditValue.cleanup(),
+    cleanup: () => {
+        try {
+            return guildCreditValue.cleanup();
+        } catch (error) {
+            console.error('[Guild Credit Value] Disable failed part-way:', error);
+        } finally {
+            guildCreditValue.initialized = false;
+        }
+    },
 };

@@ -326,5 +326,13 @@ const inventoryCountDisplay = new InventoryCountDisplay();
 export default {
     name: 'Inventory Count Display',
     initialize: () => inventoryCountDisplay.initialize(),
-    cleanup: () => inventoryCountDisplay.disable(),
+    cleanup: () => {
+        try {
+            return inventoryCountDisplay.disable();
+        } catch (error) {
+            console.error('[Inventory Count Display] Disable failed part-way:', error);
+        } finally {
+            inventoryCountDisplay.isInitialized = false;
+        }
+    },
 };

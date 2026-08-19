@@ -209,20 +209,26 @@ class TransmuteRates {
      * Disable the feature and clean up
      */
     disable() {
-        // Clear any pending injection timeouts
-        clearTimeout(this.injectTimeout);
-        this.timerRegistry.clearAll();
+        try {
+            // Clear any pending injection timeouts
+            clearTimeout(this.injectTimeout);
+            this.timerRegistry.clearAll();
 
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
 
-        // Remove all injected rate displays
-        document.querySelectorAll('.mwi-transmute-rate').forEach((elem) => elem.remove());
+            // Remove all injected rate displays
+            document.querySelectorAll('.mwi-transmute-rate').forEach((elem) => elem.remove());
 
-        // Clear cache
-        this.nameToHridCache.clear();
+            // Clear cache
+            this.nameToHridCache.clear();
 
-        this.isInitialized = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Transmute Rates] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 }
 

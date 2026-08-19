@@ -1243,29 +1243,35 @@ class PinnedActionsPage {
      * Disable the feature and clean up
      */
     disable() {
-        if (this.isActive) {
-            this.hidePage();
-        }
+        try {
+            if (this.isActive) {
+                this.hidePage();
+            }
 
-        if (this.navButton) {
-            this.navButton.remove();
-            this.navButton = null;
-        }
+            if (this.navButton) {
+                this.navButton.remove();
+                this.navButton = null;
+            }
 
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
 
-        if (this.navigationObserver) {
-            this.navigationObserver.disconnect();
-            this.navigationObserver = null;
-        }
+            if (this.navigationObserver) {
+                this.navigationObserver.disconnect();
+                this.navigationObserver = null;
+            }
 
-        this.closeFilterPopup();
-        this.stopNavClickInterceptor();
-        this.timerRegistry.clearAll();
-        this.navInjected = false;
+            this.closeFilterPopup();
+            this.stopNavClickInterceptor();
+            this.timerRegistry.clearAll();
+            this.navInjected = false;
+        } catch (error) {
+            console.error('[Pinned Actions Page] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+        }
     }
 }
 

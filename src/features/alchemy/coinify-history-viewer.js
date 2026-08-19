@@ -1456,5 +1456,13 @@ const coinifyHistoryViewer = new CoinifyHistoryViewer();
 export default {
     name: 'Coinify History Viewer',
     initialize: () => coinifyHistoryViewer.initialize(),
-    cleanup: () => coinifyHistoryViewer.disable(),
+    cleanup: () => {
+        try {
+            return coinifyHistoryViewer.disable();
+        } catch (error) {
+            console.error('[Coinify History Viewer] Disable failed part-way:', error);
+        } finally {
+            coinifyHistoryViewer.isInitialized = false;
+        }
+    },
 };

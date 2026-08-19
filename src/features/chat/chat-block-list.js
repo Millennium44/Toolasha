@@ -78,5 +78,13 @@ export { chatBlockList };
 export default {
     name: 'Chat Block List',
     initialize: () => chatBlockList.initialize(),
-    cleanup: () => chatBlockList.disable(),
+    cleanup: () => {
+        try {
+            return chatBlockList.disable();
+        } catch (error) {
+            console.error('[Chat Block List] Disable failed part-way:', error);
+        } finally {
+            chatBlockList.isInitialized = false;
+        }
+    },
 };

@@ -842,18 +842,24 @@ class TaskIcons {
      * Disable and cleanup (called by feature registry during character switch)
      */
     disable() {
-        if (this.characterSwitchingHandler) {
-            dataManager.off('character_switching', this.characterSwitchingHandler);
-            this.characterSwitchingHandler = null;
-        }
+        try {
+            if (this.characterSwitchingHandler) {
+                dataManager.off('character_switching', this.characterSwitchingHandler);
+                this.characterSwitchingHandler = null;
+            }
 
-        if (this.filterChangeHandler) {
-            document.removeEventListener('mwi-task-icon-filter-changed', this.filterChangeHandler);
-            this.filterChangeHandler = null;
-        }
+            if (this.filterChangeHandler) {
+                document.removeEventListener('mwi-task-icon-filter-changed', this.filterChangeHandler);
+                this.filterChangeHandler = null;
+            }
 
-        // Run cleanup
-        this.cleanup();
+            // Run cleanup
+            this.cleanup();
+        } catch (error) {
+            console.error('[Task Icons] Disable failed part-way:', error);
+        } finally {
+            this.initialized = false;
+        }
     }
 }
 

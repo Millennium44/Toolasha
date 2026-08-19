@@ -1509,29 +1509,36 @@ class CombatScore {
      * Disable the feature
      */
     disable() {
-        if (this.profileSharedHandler) {
-            webSocketHook.off('profile_shared', this.profileSharedHandler);
-            this.profileSharedHandler = null;
+        try {
+            if (this.profileSharedHandler) {
+                webSocketHook.off('profile_shared', this.profileSharedHandler);
+                this.profileSharedHandler = null;
+            }
+
+            this.timerRegistry.clearAll();
+
+            if (this.currentPanel) {
+                this.currentPanel.remove();
+                this.currentPanel = null;
+            }
+
+            if (this.currentAbilitiesPanel) {
+                this.currentAbilitiesPanel.remove();
+                this.currentAbilitiesPanel = null;
+            }
+
+            // The pool recreates itself on the next batch; idle workers should not
+            // outlive the feature that spawned them
+            terminateWorkerPool();
+
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Combat Score] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
         }
-
-        this.timerRegistry.clearAll();
-
-        if (this.currentPanel) {
-            this.currentPanel.remove();
-            this.currentPanel = null;
-        }
-
-        if (this.currentAbilitiesPanel) {
-            this.currentAbilitiesPanel.remove();
-            this.currentAbilitiesPanel = null;
-        }
-
-        // The pool recreates itself on the next batch; idle workers should not
-        // outlive the feature that spawned them
-        terminateWorkerPool();
-
-        this.isActive = false;
-        this.isInitialized = false;
     }
 }
 

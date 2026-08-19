@@ -541,21 +541,27 @@ class TradeLedgerView {
      * Disable the feature and remove its DOM
      */
     disable() {
-        if (this.tabCleanupObserver) {
-            this.tabCleanupObserver();
-            this.tabCleanupObserver = null;
+        try {
+            if (this.tabCleanupObserver) {
+                this.tabCleanupObserver();
+                this.tabCleanupObserver = null;
+            }
+            if (this.marketplaceTab) {
+                this.marketplaceTab.remove();
+                this.marketplaceTab = null;
+            }
+            this.minimizeCtl?.destroy();
+            this.minimizeCtl = null;
+            if (this.modal) {
+                this.modal.remove();
+                this.modal = null;
+            }
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Trade Ledger View] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        if (this.marketplaceTab) {
-            this.marketplaceTab.remove();
-            this.marketplaceTab = null;
-        }
-        this.minimizeCtl?.destroy();
-        this.minimizeCtl = null;
-        if (this.modal) {
-            this.modal.remove();
-            this.modal = null;
-        }
-        this.isInitialized = false;
     }
 }
 

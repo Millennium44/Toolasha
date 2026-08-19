@@ -3137,7 +3137,15 @@ export { labyrinthRoomLogs };
 export default {
     name: 'Labyrinth Room Logs',
     initialize: () => labyrinthRoomLogs.initialize(),
-    disable: () => labyrinthRoomLogs.disable(),
+    disable: () => {
+        try {
+            return labyrinthRoomLogs.disable();
+        } catch (error) {
+            console.error('[Labyrinth Room Logs] Disable failed part-way:', error);
+        } finally {
+            labyrinthRoomLogs.isInitialized = false;
+        }
+    },
     togglePanel: () => labyrinthRoomLogs.togglePanel(),
     useSimSource: (source) => labyrinthRoomLogs.useSimSource(source),
 };

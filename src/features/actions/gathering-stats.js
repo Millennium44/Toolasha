@@ -665,49 +665,55 @@ class GatheringStats {
      * Disable the gathering stats display
      */
     disable() {
-        // Clear debounce timers
-        clearTimeout(this.itemsUpdatedDebounceTimer);
-        clearTimeout(this.actionCompletedDebounceTimer);
-        clearTimeout(this.consumablesUpdatedDebounceTimer);
-        clearTimeout(this.indicatorUpdateDebounceTimer);
-        this.itemsUpdatedDebounceTimer = null;
-        this.actionCompletedDebounceTimer = null;
-        this.consumablesUpdatedDebounceTimer = null;
-        this.indicatorUpdateDebounceTimer = null;
+        try {
+            // Clear debounce timers
+            clearTimeout(this.itemsUpdatedDebounceTimer);
+            clearTimeout(this.actionCompletedDebounceTimer);
+            clearTimeout(this.consumablesUpdatedDebounceTimer);
+            clearTimeout(this.indicatorUpdateDebounceTimer);
+            this.itemsUpdatedDebounceTimer = null;
+            this.actionCompletedDebounceTimer = null;
+            this.consumablesUpdatedDebounceTimer = null;
+            this.indicatorUpdateDebounceTimer = null;
 
-        if (this.itemsUpdatedHandler) {
-            dataManager.off('items_updated', this.itemsUpdatedHandler);
-            this.itemsUpdatedHandler = null;
+            if (this.itemsUpdatedHandler) {
+                dataManager.off('items_updated', this.itemsUpdatedHandler);
+                this.itemsUpdatedHandler = null;
+            }
+
+            if (this.consumablesUpdatedHandler) {
+                dataManager.off('consumables_updated', this.consumablesUpdatedHandler);
+                this.consumablesUpdatedHandler = null;
+            }
+            if (this.characterSwitchingHandler) {
+                dataManager.off('character_switching', this.characterSwitchingHandler);
+                this.characterSwitchingHandler = null;
+            }
+
+            if (this.pricingModeHandler) {
+                config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
+                this.pricingModeHandler = null;
+            }
+
+            // Clear all DOM references
+            this.clearAllReferences();
+
+            // Remove DOM observer
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
+
+            // Remove all injected elements
+            document.querySelectorAll('.mwi-gathering-stats').forEach((el) => el.remove());
+            this.actionElements.clear();
+
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Gathering Stats] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-
-        if (this.consumablesUpdatedHandler) {
-            dataManager.off('consumables_updated', this.consumablesUpdatedHandler);
-            this.consumablesUpdatedHandler = null;
-        }
-        if (this.characterSwitchingHandler) {
-            dataManager.off('character_switching', this.characterSwitchingHandler);
-            this.characterSwitchingHandler = null;
-        }
-
-        if (this.pricingModeHandler) {
-            config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-            this.pricingModeHandler = null;
-        }
-
-        // Clear all DOM references
-        this.clearAllReferences();
-
-        // Remove DOM observer
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
-
-        // Remove all injected elements
-        document.querySelectorAll('.mwi-gathering-stats').forEach((el) => el.remove());
-        this.actionElements.clear();
-
-        this.isInitialized = false;
     }
 }
 

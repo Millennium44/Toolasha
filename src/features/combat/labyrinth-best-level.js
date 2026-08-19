@@ -72,34 +72,40 @@ class LabyrinthBestLevel {
      * Disable and clean up
      */
     disable() {
-        if (this.catchupTimer) {
-            clearTimeout(this.catchupTimer);
-            this.catchupTimer = null;
+        try {
+            if (this.catchupTimer) {
+                clearTimeout(this.catchupTimer);
+                this.catchupTimer = null;
+            }
+
+            if (this.updateHandler) {
+                labyrinthTracker.offUpdate(this.updateHandler);
+                this.updateHandler = null;
+            }
+
+            if (this.automationButton && this.automationClickHandler) {
+                this.automationButton.removeEventListener('click', this.automationClickHandler);
+                this.automationClickHandler = null;
+                this.automationButton = null;
+            }
+
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
+
+            document.querySelectorAll('.mwi-labyrinth-best').forEach((el) => el.remove());
+            pruneEmptyAnnotationContainers();
+
+            if (this.styleEl) {
+                this.styleEl.remove();
+                this.styleEl = null;
+            }
+
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Labyrinth Best Level] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-
-        if (this.updateHandler) {
-            labyrinthTracker.offUpdate(this.updateHandler);
-            this.updateHandler = null;
-        }
-
-        if (this.automationButton && this.automationClickHandler) {
-            this.automationButton.removeEventListener('click', this.automationClickHandler);
-            this.automationClickHandler = null;
-            this.automationButton = null;
-        }
-
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
-
-        document.querySelectorAll('.mwi-labyrinth-best').forEach((el) => el.remove());
-        pruneEmptyAnnotationContainers();
-
-        if (this.styleEl) {
-            this.styleEl.remove();
-            this.styleEl = null;
-        }
-
-        this.isInitialized = false;
     }
 
     /**

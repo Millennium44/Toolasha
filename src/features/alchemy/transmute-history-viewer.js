@@ -1491,5 +1491,13 @@ const transmuteHistoryViewer = new TransmuteHistoryViewer();
 export default {
     name: 'Transmute History Viewer',
     initialize: () => transmuteHistoryViewer.initialize(),
-    cleanup: () => transmuteHistoryViewer.disable(),
+    cleanup: () => {
+        try {
+            return transmuteHistoryViewer.disable();
+        } catch (error) {
+            console.error('[Transmute History Viewer] Disable failed part-way:', error);
+        } finally {
+            transmuteHistoryViewer.isInitialized = false;
+        }
+    },
 };

@@ -542,5 +542,13 @@ export { xpTracker };
 export default {
     name: 'XP/hr Tracker',
     initialize: () => xpTracker.initialize(),
-    cleanup: () => xpTracker.disable(),
+    cleanup: () => {
+        try {
+            return xpTracker.disable();
+        } catch (error) {
+            console.error('[XP/hr Tracker] Disable failed part-way:', error);
+        } finally {
+            xpTracker.initialized = false;
+        }
+    },
 };

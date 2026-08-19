@@ -125,11 +125,18 @@ class AutoClickMax {
      * Disable and cleanup
      */
     disable() {
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
-        this.processedModals = new WeakSet();
-        this.isActive = false;
-        this.isInitialized = false;
+        try {
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
+            this.processedModals = new WeakSet();
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Auto Click Max] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
+        }
     }
 }
 

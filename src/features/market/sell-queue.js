@@ -315,22 +315,28 @@ function initialize() {
 }
 
 function cleanup() {
-    if (contextMenuHandler) {
-        document.removeEventListener('contextmenu', contextMenuHandler, true);
-        contextMenuHandler = null;
+    try {
+        if (contextMenuHandler) {
+            document.removeEventListener('contextmenu', contextMenuHandler, true);
+            contextMenuHandler = null;
+        }
+        if (tooltipObserverUnregister) {
+            tooltipObserverUnregister();
+            tooltipObserverUnregister = null;
+        }
+        if (cleanupObserver) {
+            cleanupObserver();
+            cleanupObserver = null;
+        }
+        handleMarketplaceCleanup();
+        timerRegistry.clearAll();
+        currentItemHrid = null;
+        isActive = false;
+    } catch (error) {
+        console.error('[Sell Queue] Disable failed part-way:', error);
+    } finally {
+        isActive = false;
     }
-    if (tooltipObserverUnregister) {
-        tooltipObserverUnregister();
-        tooltipObserverUnregister = null;
-    }
-    if (cleanupObserver) {
-        cleanupObserver();
-        cleanupObserver = null;
-    }
-    handleMarketplaceCleanup();
-    timerRegistry.clearAll();
-    currentItemHrid = null;
-    isActive = false;
 }
 
 config.onSettingChange('sellQueue', (value) => {

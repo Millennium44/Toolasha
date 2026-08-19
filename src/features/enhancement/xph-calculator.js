@@ -542,18 +542,24 @@ class XPHCalculator {
     }
 
     disable() {
-        this.unregisterHandlers.forEach((fn) => fn());
-        this.unregisterHandlers = [];
-        this.timerRegistry.clearAll();
-        this.minimizeCtl?.destroy();
-        this.minimizeCtl = null;
-        if (this.panel) {
-            unregisterFloatingPanel(this.panel);
-            this.panel.remove();
-            this.panel = null;
+        try {
+            this.unregisterHandlers.forEach((fn) => fn());
+            this.unregisterHandlers = [];
+            this.timerRegistry.clearAll();
+            this.minimizeCtl?.destroy();
+            this.minimizeCtl = null;
+            if (this.panel) {
+                unregisterFloatingPanel(this.panel);
+                this.panel.remove();
+                this.panel = null;
+            }
+            document.querySelectorAll(`.${BTN_CLASS}`).forEach((el) => el.remove());
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Enhancement XPH Calculator] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        document.querySelectorAll(`.${BTN_CLASS}`).forEach((el) => el.remove());
-        this.isInitialized = false;
     }
 }
 

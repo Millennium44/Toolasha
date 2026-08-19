@@ -75,17 +75,23 @@ class LabSim {
     }
 
     disable() {
-        for (const unregister of this.unregisterHandlers) {
-            unregister();
+        try {
+            for (const unregister of this.unregisterHandlers) {
+                unregister();
+            }
+            this.unregisterHandlers = [];
+
+            cancelSimulation();
+            labSimUI.destroy();
+
+            document.querySelectorAll(`.${BUTTON_CLASS}`).forEach((btn) => btn.remove());
+
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Lab Simulator] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        this.unregisterHandlers = [];
-
-        cancelSimulation();
-        labSimUI.destroy();
-
-        document.querySelectorAll(`.${BUTTON_CLASS}`).forEach((btn) => btn.remove());
-
-        this.isInitialized = false;
     }
 }
 

@@ -561,9 +561,15 @@ class CommandPalette {
     }
 
     cleanup() {
-        document.removeEventListener('keydown', this.onKeyDown, true);
-        this.close();
-        this.initialized = false;
+        try {
+            document.removeEventListener('keydown', this.onKeyDown, true);
+            this.close();
+            this.initialized = false;
+        } catch (error) {
+            console.error('[Command Palette] Disable failed part-way:', error);
+        } finally {
+            this.initialized = false;
+        }
     }
 
     /** Whether the palette is on screen */

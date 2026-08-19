@@ -110,22 +110,28 @@ class TaskClaimCollector {
     }
 
     disable() {
-        if (this.mutationObserver) {
-            this.mutationObserver.disconnect();
-            this.mutationObserver = null;
-        }
+        try {
+            if (this.mutationObserver) {
+                this.mutationObserver.disconnect();
+                this.mutationObserver = null;
+            }
 
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
 
-        if (this.proxyButton) {
-            this.proxyButton.remove();
-            this.proxyButton = null;
-        }
+            if (this.proxyButton) {
+                this.proxyButton.remove();
+                this.proxyButton = null;
+            }
 
-        this.initialized = false;
+            this.initialized = false;
+        } catch (error) {
+            console.error('[Task Claim Collector] Disable failed part-way:', error);
+        } finally {
+            this.initialized = false;
+        }
     }
 }
 

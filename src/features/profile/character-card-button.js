@@ -287,14 +287,21 @@ class CharacterCardButton {
      * Disable the feature
      */
     disable() {
-        // Remove button from DOM if present
-        const button = document.getElementById('mwi-character-card-btn');
-        if (button) {
-            button.remove();
-        }
+        try {
+            // Remove button from DOM if present
+            const button = document.getElementById('mwi-character-card-btn');
+            if (button) {
+                button.remove();
+            }
 
-        this.isActive = false;
-        this.isInitialized = false;
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Character Card Button] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
+        }
     }
 }
 

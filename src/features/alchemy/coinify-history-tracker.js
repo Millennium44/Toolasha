@@ -364,5 +364,13 @@ export { coinifyHistoryTracker };
 export default {
     name: 'Coinify History Tracker',
     initialize: () => coinifyHistoryTracker.initialize(),
-    cleanup: () => coinifyHistoryTracker.disable(),
+    cleanup: () => {
+        try {
+            return coinifyHistoryTracker.disable();
+        } catch (error) {
+            console.error('[Coinify History Tracker] Disable failed part-way:', error);
+        } finally {
+            coinifyHistoryTracker.isInitialized = false;
+        }
+    },
 };

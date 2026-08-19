@@ -75,18 +75,24 @@ class AlchemyBestItems {
     }
 
     disable() {
-        if (this.tabWatcher) {
-            this.tabWatcher();
-            this.tabWatcher = null;
+        try {
+            if (this.tabWatcher) {
+                this.tabWatcher();
+                this.tabWatcher = null;
+            }
+            if (this.alchemyTab?.parentNode) {
+                this.alchemyTab.remove();
+                this.alchemyTab = null;
+            }
+            if (this.modal?.parentNode) this.modal.remove();
+            this.modal = null;
+            this.cachedRankings = {};
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Alchemy Best Items] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        if (this.alchemyTab?.parentNode) {
-            this.alchemyTab.remove();
-            this.alchemyTab = null;
-        }
-        if (this.modal?.parentNode) this.modal.remove();
-        this.modal = null;
-        this.cachedRankings = {};
-        this.isInitialized = false;
     }
 
     /**

@@ -650,6 +650,12 @@ export default {
         alchemyActionProtection.disable();
     },
     disable: () => {
-        alchemyActionProtection.disable();
+        try {
+            alchemyActionProtection.disable();
+        } catch (error) {
+            console.error('[Alchemy Action Protection] Disable failed part-way:', error);
+        } finally {
+            alchemyActionProtection.isInitialized = false;
+        }
     },
 };

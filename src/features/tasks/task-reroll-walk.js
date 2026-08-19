@@ -946,7 +946,13 @@ export default {
         taskRerollWalk.disable();
     },
     disable: () => {
-        taskRerollWalk.disable();
+        try {
+            taskRerollWalk.disable();
+        } catch (error) {
+            console.error('[Task Reroll Walk] Disable failed part-way:', error);
+        } finally {
+            taskRerollWalk.isInitialized = false;
+        }
     },
     /** The walk itself, for tests and for anything that wants to drive it */
     walk: taskRerollWalk,

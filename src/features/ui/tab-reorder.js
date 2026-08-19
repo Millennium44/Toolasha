@@ -238,6 +238,12 @@ export default {
         tabReorder.disable();
     },
     disable: () => {
-        tabReorder.disable();
+        try {
+            tabReorder.disable();
+        } catch (error) {
+            console.error('[Tab Reorder] Disable failed part-way:', error);
+        } finally {
+            tabReorder.isInitialized = false;
+        }
     },
 };

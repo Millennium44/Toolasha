@@ -117,17 +117,23 @@ class ExternalLinks {
      * Disable the external links feature
      */
     disable() {
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
+        try {
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
+
+            // Remove added links (tagged with our marker class when created)
+            document.querySelectorAll('.mwi-external-link').forEach((link) => link.remove());
+
+            // Clear the WeakSet (create new instance)
+            this.addedContainers = new WeakSet();
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[External Links] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-
-        // Remove added links (tagged with our marker class when created)
-        document.querySelectorAll('.mwi-external-link').forEach((link) => link.remove());
-
-        // Clear the WeakSet (create new instance)
-        this.addedContainers = new WeakSet();
-        this.isInitialized = false;
     }
 }
 

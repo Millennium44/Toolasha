@@ -195,28 +195,34 @@ class CombatBattleCounter {
     }
 
     disable() {
-        if (this.newBattleHandler) {
-            webSocketHook.off('new_battle', this.newBattleHandler);
-            this.newBattleHandler = null;
+        try {
+            if (this.newBattleHandler) {
+                webSocketHook.off('new_battle', this.newBattleHandler);
+                this.newBattleHandler = null;
+            }
+            if (this.labyrinthHandler) {
+                webSocketHook.off('labyrinth_updated', this.labyrinthHandler);
+                this.labyrinthHandler = null;
+            }
+            if (this._onActionsUpdated) {
+                dataManager.off('actions_updated', this._onActionsUpdated);
+                this._onActionsUpdated = null;
+            }
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
+            document.getElementById(COUNTER_ID)?.remove();
+            this.battleId = 0;
+            this.currentWave = 0;
+            this.isDungeon = false;
+            this.labyrinthAttempt = 0;
+            this.initialized = false;
+        } catch (error) {
+            console.error('[Combat Battle Counter] Disable failed part-way:', error);
+        } finally {
+            this.initialized = false;
         }
-        if (this.labyrinthHandler) {
-            webSocketHook.off('labyrinth_updated', this.labyrinthHandler);
-            this.labyrinthHandler = null;
-        }
-        if (this._onActionsUpdated) {
-            dataManager.off('actions_updated', this._onActionsUpdated);
-            this._onActionsUpdated = null;
-        }
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
-        document.getElementById(COUNTER_ID)?.remove();
-        this.battleId = 0;
-        this.currentWave = 0;
-        this.isDungeon = false;
-        this.labyrinthAttempt = 0;
-        this.initialized = false;
     }
 }
 

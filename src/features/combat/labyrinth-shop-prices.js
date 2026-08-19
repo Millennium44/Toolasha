@@ -49,23 +49,29 @@ class LabyrinthShopPrices {
     }
 
     disable() {
-        if (this.catchupTimer) {
-            clearTimeout(this.catchupTimer);
-            this.catchupTimer = null;
+        try {
+            if (this.catchupTimer) {
+                clearTimeout(this.catchupTimer);
+                this.catchupTimer = null;
+            }
+
+            if (this.shopButton && this.shopClickHandler) {
+                this.shopButton.removeEventListener('click', this.shopClickHandler);
+                this.shopClickHandler = null;
+                this.shopButton = null;
+            }
+
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
+
+            document.querySelectorAll('.mwi-labyrinth-shop-price').forEach((el) => el.remove());
+
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Labyrinth Shop Prices] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-
-        if (this.shopButton && this.shopClickHandler) {
-            this.shopButton.removeEventListener('click', this.shopClickHandler);
-            this.shopClickHandler = null;
-            this.shopButton = null;
-        }
-
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
-
-        document.querySelectorAll('.mwi-labyrinth-shop-price').forEach((el) => el.remove());
-
-        this.isInitialized = false;
     }
 
     /**

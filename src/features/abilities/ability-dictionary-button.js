@@ -150,6 +150,12 @@ export default {
         abilityDictionaryButton.disable();
     },
     disable: () => {
-        abilityDictionaryButton.disable();
+        try {
+            abilityDictionaryButton.disable();
+        } catch (error) {
+            console.error('[Ability Dictionary Button] Disable failed part-way:', error);
+        } finally {
+            abilityDictionaryButton.isInitialized = false;
+        }
     },
 };

@@ -426,8 +426,14 @@ class OverlayPanel {
     }
 
     disable() {
-        this._removePanel();
-        this.isInitialized = false;
+        try {
+            this._removePanel();
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Overlay Panel] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 
     /** Whether the panel is not merely built but actually in the document */

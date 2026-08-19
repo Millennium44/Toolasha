@@ -99,7 +99,13 @@ class OverlayTabButton {
     }
 
     disable() {
-        this.cleanup();
+        try {
+            this.cleanup();
+        } catch (error) {
+            console.error('[Overlay Tab Button] Disable failed part-way:', error);
+        } finally {
+            this.initialized = false;
+        }
     }
 
     /**

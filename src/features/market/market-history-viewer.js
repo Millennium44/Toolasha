@@ -2906,53 +2906,59 @@ class MarketHistoryViewer {
      * Disable the feature
      */
     disable() {
-        if (this.unsubscribeMarkers) {
-            this.unsubscribeMarkers();
-            this.unsubscribeMarkers = null;
-        }
+        try {
+            if (this.unsubscribeMarkers) {
+                this.unsubscribeMarkers();
+                this.unsubscribeMarkers = null;
+            }
 
-        // Disconnect the marketplace-tab watcher and remove the injected tab
-        // (nulling the watcher lets addMarketplaceTab recreate it on re-init)
-        if (this.tabCleanupObserver) {
-            this.tabCleanupObserver();
-            this.tabCleanupObserver = null;
-        }
-        if (this.marketplaceTab) {
-            this.marketplaceTab.remove();
-            this.marketplaceTab = null;
-        }
+            // Disconnect the marketplace-tab watcher and remove the injected tab
+            // (nulling the watcher lets addMarketplaceTab recreate it on re-init)
+            if (this.tabCleanupObserver) {
+                this.tabCleanupObserver();
+                this.tabCleanupObserver = null;
+            }
+            if (this.marketplaceTab) {
+                this.marketplaceTab.remove();
+                this.marketplaceTab = null;
+            }
 
-        // Clean up any active filter popup and its event listener
-        if (this.activeFilterPopup) {
-            this.activeFilterPopup.remove();
-            this.activeFilterPopup = null;
-            this.activeFilterButton = null;
+            // Clean up any active filter popup and its event listener
+            if (this.activeFilterPopup) {
+                this.activeFilterPopup.remove();
+                this.activeFilterPopup = null;
+                this.activeFilterButton = null;
+            }
+            if (this.popupCloseHandler) {
+                document.removeEventListener('click', this.popupCloseHandler);
+                this.popupCloseHandler = null;
+            }
+
+            this.timerRegistry.clearAll();
+
+            // Remove modal and all its event listeners
+            if (this.modal) {
+                this.modal.remove();
+                this.modal = null;
+            }
+
+            // Remove settings button
+            const button = document.querySelector('.mwi-market-history-button');
+            if (button) {
+                button.remove();
+            }
+
+            // Clear data references
+            this.listings = [];
+            this.filteredListings = [];
+            this.cachedDateRange = null;
+
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Market History Viewer] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        if (this.popupCloseHandler) {
-            document.removeEventListener('click', this.popupCloseHandler);
-            this.popupCloseHandler = null;
-        }
-
-        this.timerRegistry.clearAll();
-
-        // Remove modal and all its event listeners
-        if (this.modal) {
-            this.modal.remove();
-            this.modal = null;
-        }
-
-        // Remove settings button
-        const button = document.querySelector('.mwi-market-history-button');
-        if (button) {
-            button.remove();
-        }
-
-        // Clear data references
-        this.listings = [];
-        this.filteredListings = [];
-        this.cachedDateRange = null;
-
-        this.isInitialized = false;
     }
 }
 

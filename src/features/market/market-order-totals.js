@@ -288,18 +288,24 @@ class MarketOrderTotals {
      * Disable the feature
      */
     disable() {
-        if (this.unregisterWebSocket) {
-            this.unregisterWebSocket();
-            this.unregisterWebSocket = null;
-        }
+        try {
+            if (this.unregisterWebSocket) {
+                this.unregisterWebSocket();
+                this.unregisterWebSocket = null;
+            }
 
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
 
-        this.clearDisplay();
-        this.isInitialized = false;
+            this.clearDisplay();
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Market Order Totals] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 }
 

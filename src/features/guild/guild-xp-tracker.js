@@ -1024,7 +1024,15 @@ const guildXPTracker = new GuildXPTracker();
 export default {
     name: 'Guild XP Tracker',
     initialize: () => guildXPTracker.initialize(),
-    cleanup: () => guildXPTracker.disable(),
+    cleanup: () => {
+        try {
+            return guildXPTracker.disable();
+        } catch (error) {
+            console.error('[Guild XP Tracker] Disable failed part-way:', error);
+        } finally {
+            guildXPTracker.initialized = false;
+        }
+    },
     resetMemberData: () => guildXPTracker.resetMemberData(),
     getRawMemberSample: (name) => guildXPTracker.getRawMemberSample(name),
     debugState: () => guildXPTracker.debugState(),

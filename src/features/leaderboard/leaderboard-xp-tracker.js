@@ -454,7 +454,15 @@ const leaderboardXPTracker = new LeaderboardXPTracker();
 export default {
     name: 'Leaderboard XP Tracker',
     initialize: () => leaderboardXPTracker.initialize(),
-    cleanup: () => leaderboardXPTracker.disable(),
+    cleanup: () => {
+        try {
+            return leaderboardXPTracker.disable();
+        } catch (error) {
+            console.error('[Leaderboard XP Tracker] Disable failed part-way:', error);
+        } finally {
+            leaderboardXPTracker.initialized = false;
+        }
+    },
 };
 
 export { leaderboardXPTracker };

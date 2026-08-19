@@ -2690,42 +2690,49 @@ class TaskProfitDisplay {
      * Disable the feature
      */
     disable() {
-        // Cancel pending timeouts so they cannot recreate UI after disable
-        this.timerRegistry.clearAll();
+        try {
+            // Cancel pending timeouts so they cannot recreate UI after disable
+            this.timerRegistry.clearAll();
 
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
 
-        if (this.retryHandler) {
-            dataManager.off('character_initialized', this.retryHandler);
-            this.retryHandler = null;
-        }
-
-        if (this.marketDataRetryHandler) {
-            dataManager.off('expected_value_initialized', this.marketDataRetryHandler);
-            this.marketDataRetryHandler = null;
-        }
-
-        // Clear pending tasks
-        this.pendingTaskNodes.clear();
-
-        // Clean up event listeners before removing profit displays
-        document.querySelectorAll(TOOLASHA.TASK_PROFIT).forEach((el) => {
-            const listeners = this.eventListeners.get(el);
-            if (listeners) {
-                listeners.forEach((listener, element) => {
-                    element.removeEventListener('click', listener);
-                });
-                this.eventListeners.delete(el);
+            if (this.retryHandler) {
+                dataManager.off('character_initialized', this.retryHandler);
+                this.retryHandler = null;
             }
-            el.remove();
-        });
 
-        // Remove queued indicators
-        document.querySelectorAll('.mwi-task-queued-indicator').forEach((el) => el.remove());
+            if (this.marketDataRetryHandler) {
+                dataManager.off('expected_value_initialized', this.marketDataRetryHandler);
+                this.marketDataRetryHandler = null;
+            }
 
-        this.isActive = false;
-        this.isInitialized = false;
+            // Clear pending tasks
+            this.pendingTaskNodes.clear();
+
+            // Clean up event listeners before removing profit displays
+            document.querySelectorAll(TOOLASHA.TASK_PROFIT).forEach((el) => {
+                const listeners = this.eventListeners.get(el);
+                if (listeners) {
+                    listeners.forEach((listener, element) => {
+                        element.removeEventListener('click', listener);
+                    });
+                    this.eventListeners.delete(el);
+                }
+                el.remove();
+            });
+
+            // Remove queued indicators
+            document.querySelectorAll('.mwi-task-queued-indicator').forEach((el) => el.remove());
+
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Task Profit Display] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
+        }
     }
 }
 

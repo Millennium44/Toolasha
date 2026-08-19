@@ -253,7 +253,13 @@ class RequiredMaterials {
     }
 
     disable() {
-        this.cleanup();
+        try {
+            this.cleanup();
+        } catch (error) {
+            console.error('[Required Materials] Disable failed part-way:', error);
+        } finally {
+            this.initialized = false;
+        }
     }
 }
 

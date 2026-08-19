@@ -79,19 +79,25 @@ class CombatSim {
      * Disable the combat simulator feature and clean up
      */
     disable() {
-        for (const unregister of this.unregisterHandlers) {
-            unregister();
+        try {
+            for (const unregister of this.unregisterHandlers) {
+                unregister();
+            }
+            this.unregisterHandlers = [];
+
+            cancelSimulation();
+            cancelAllZonesSimulation();
+            combatSimUI.destroy();
+
+            // Remove all injected buttons
+            document.querySelectorAll(`.${BUTTON_CLASS}`).forEach((btn) => btn.remove());
+
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Combat Simulator] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        this.unregisterHandlers = [];
-
-        cancelSimulation();
-        cancelAllZonesSimulation();
-        combatSimUI.destroy();
-
-        // Remove all injected buttons
-        document.querySelectorAll(`.${BUTTON_CLASS}`).forEach((btn) => btn.remove());
-
-        this.isInitialized = false;
     }
 }
 

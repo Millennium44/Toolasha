@@ -162,5 +162,13 @@ const draggableModals = new DraggableModals();
 export default {
     name: 'Draggable Modals',
     initialize: () => draggableModals.initialize(),
-    cleanup: () => draggableModals.disable(),
+    cleanup: () => {
+        try {
+            return draggableModals.disable();
+        } catch (error) {
+            console.error('[Draggable Modals] Disable failed part-way:', error);
+        } finally {
+            draggableModals.initialized = false;
+        }
+    },
 };

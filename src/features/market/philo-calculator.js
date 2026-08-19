@@ -148,8 +148,14 @@ class PhiloCalculator {
      * Disable / cleanup the feature
      */
     disable() {
-        this.closeModal();
-        this.isInitialized = false;
+        try {
+            this.closeModal();
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Philo Calculator] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 
     /**

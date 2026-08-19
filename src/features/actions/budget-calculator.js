@@ -455,18 +455,24 @@ class BudgetCalculator {
     }
 
     disable() {
-        this.unregisterHandlers.forEach((fn) => fn());
-        this.unregisterHandlers = [];
-        this.timerRegistry.clearAll();
+        try {
+            this.unregisterHandlers.forEach((fn) => fn());
+            this.unregisterHandlers = [];
+            this.timerRegistry.clearAll();
 
-        document.querySelectorAll(`#${UI_ID}`).forEach((el) => el.remove());
-        document.getElementById('mwi-budget-modal-overlay')?.remove();
+            document.querySelectorAll(`#${UI_ID}`).forEach((el) => el.remove());
+            document.getElementById('mwi-budget-modal-overlay')?.remove();
 
-        // Disconnect all panel observers
-        // (WeakMap entries are cleaned up automatically as panels are GC'd)
+            // Disconnect all panel observers
+            // (WeakMap entries are cleaned up automatically as panels are GC'd)
 
-        this.processedPanels = new WeakSet();
-        this.isInitialized = false;
+            this.processedPanels = new WeakSet();
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Budget Calculator] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 }
 

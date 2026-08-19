@@ -832,16 +832,22 @@ class QuickInputButtons {
      * Disable quick input buttons and cleanup observers/listeners
      */
     disable() {
-        this.cleanupRegistry.cleanupAll();
-        document.querySelectorAll('.mwi-collapsible-section').forEach((section) => section.remove());
-        document.querySelectorAll('.mwi-quick-input-btn').forEach((button) => button.remove());
-        document.querySelectorAll('[class*="SkillActionDetail_regularComponent"]').forEach((el) => {
-            el.style.maxHeight = '';
-            el.style.overflowY = '';
-            const content = el.querySelector('[class*="SkillActionDetail_content"]');
-            if (content) content.style.overflow = '';
-        });
-        this.isInitialized = false;
+        try {
+            this.cleanupRegistry.cleanupAll();
+            document.querySelectorAll('.mwi-collapsible-section').forEach((section) => section.remove());
+            document.querySelectorAll('.mwi-quick-input-btn').forEach((button) => button.remove());
+            document.querySelectorAll('[class*="SkillActionDetail_regularComponent"]').forEach((el) => {
+                el.style.maxHeight = '';
+                el.style.overflowY = '';
+                const content = el.querySelector('[class*="SkillActionDetail_content"]');
+                if (content) content.style.overflow = '';
+            });
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Quick Input Buttons] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 
     /**

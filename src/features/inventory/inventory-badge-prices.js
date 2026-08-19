@@ -246,27 +246,33 @@ class InventoryBadgePrices {
      * Disable and cleanup
      */
     disable() {
-        // Clear debounce timer
-        clearTimeout(this.itemsUpdatedDebounceTimer);
-        this.itemsUpdatedDebounceTimer = null;
+        try {
+            // Clear debounce timer
+            clearTimeout(this.itemsUpdatedDebounceTimer);
+            this.itemsUpdatedDebounceTimer = null;
 
-        if (this.itemsUpdatedHandler) {
-            dataManager.off('items_updated', this.itemsUpdatedHandler);
-            this.itemsUpdatedHandler = null;
+            if (this.itemsUpdatedHandler) {
+                dataManager.off('items_updated', this.itemsUpdatedHandler);
+                this.itemsUpdatedHandler = null;
+            }
+
+            inventoryBadgeManager.unregisterProvider('inventory-badge-prices');
+
+            const badges = document.querySelectorAll('.mwi-badge-price-bid, .mwi-badge-price-ask');
+            badges.forEach((badge) => badge.remove());
+
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
+
+            this.timerRegistry.clearAll();
+
+            this.currentInventoryElem = null;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Inventory Badge Prices] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-
-        inventoryBadgeManager.unregisterProvider('inventory-badge-prices');
-
-        const badges = document.querySelectorAll('.mwi-badge-price-bid, .mwi-badge-price-ask');
-        badges.forEach((badge) => badge.remove());
-
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
-
-        this.timerRegistry.clearAll();
-
-        this.currentInventoryElem = null;
-        this.isInitialized = false;
     }
 }
 

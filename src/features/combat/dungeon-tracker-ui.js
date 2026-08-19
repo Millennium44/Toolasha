@@ -788,68 +788,74 @@ class DungeonTrackerUI {
      * Cleanup for character switching
      */
     cleanup() {
-        // Immediately hide UI to prevent visual artifacts during character switch
-        this.hide();
+        try {
+            // Immediately hide UI to prevent visual artifacts during character switch
+            this.hide();
 
-        if (this.dungeonUpdateHandler) {
-            dungeonTracker.offUpdate(this.dungeonUpdateHandler);
-            this.dungeonUpdateHandler = null;
-        }
-
-        if (this.characterSwitchingHandler) {
-            dataManager.off('character_switching', this.characterSwitchingHandler);
-            this.characterSwitchingHandler = null;
-        }
-
-        // Clear update interval
-        if (this.updateInterval) {
-            clearInterval(this.updateInterval);
-            this.updateInterval = null;
-        }
-
-        this.timerRegistry.clearAll();
-
-        // Force remove ALL dungeon tracker containers (handles duplicates from memory leak)
-        const allContainers = document.querySelectorAll('#mwi-dungeon-tracker');
-        if (allContainers.length > 1) {
-            console.warn(
-                `[Toolasha Dungeon Tracker UI] Found ${allContainers.length} UI containers, removing all (memory leak detected)`
-            );
-        }
-        allContainers.forEach((container) => container.remove());
-
-        if (this.container) {
-            unregisterFloatingPanel(this.container);
-        }
-
-        if (this.interactions && this.interactions.cleanup) {
-            this.interactions.cleanup();
-        }
-
-        // Clear instance reference
-        this.container = null;
-
-        // Clean up module references (destroy Chart.js instances before dropping them)
-        if (this.chart) {
-            if (this.chart.chartInstance) {
-                this.chart.chartInstance.destroy();
-                this.chart.chartInstance = null;
+            if (this.dungeonUpdateHandler) {
+                dungeonTracker.offUpdate(this.dungeonUpdateHandler);
+                this.dungeonUpdateHandler = null;
             }
-            if (this.chart.modalChartInstance) {
-                this.chart.modalChartInstance.destroy();
-                this.chart.modalChartInstance = null;
-            }
-            this.chart = null;
-        }
-        if (this.history) {
-            this.history = null;
-        }
-        if (this.interactions) {
-            this.interactions = null;
-        }
 
-        // Reset initialization flag
-        this.isInitialized = false;
+            if (this.characterSwitchingHandler) {
+                dataManager.off('character_switching', this.characterSwitchingHandler);
+                this.characterSwitchingHandler = null;
+            }
+
+            // Clear update interval
+            if (this.updateInterval) {
+                clearInterval(this.updateInterval);
+                this.updateInterval = null;
+            }
+
+            this.timerRegistry.clearAll();
+
+            // Force remove ALL dungeon tracker containers (handles duplicates from memory leak)
+            const allContainers = document.querySelectorAll('#mwi-dungeon-tracker');
+            if (allContainers.length > 1) {
+                console.warn(
+                    `[Toolasha Dungeon Tracker UI] Found ${allContainers.length} UI containers, removing all (memory leak detected)`
+                );
+            }
+            allContainers.forEach((container) => container.remove());
+
+            if (this.container) {
+                unregisterFloatingPanel(this.container);
+            }
+
+            if (this.interactions && this.interactions.cleanup) {
+                this.interactions.cleanup();
+            }
+
+            // Clear instance reference
+            this.container = null;
+
+            // Clean up module references (destroy Chart.js instances before dropping them)
+            if (this.chart) {
+                if (this.chart.chartInstance) {
+                    this.chart.chartInstance.destroy();
+                    this.chart.chartInstance = null;
+                }
+                if (this.chart.modalChartInstance) {
+                    this.chart.modalChartInstance.destroy();
+                    this.chart.modalChartInstance = null;
+                }
+                this.chart = null;
+            }
+            if (this.history) {
+                this.history = null;
+            }
+            if (this.interactions) {
+                this.interactions = null;
+            }
+
+            // Reset initialization flag
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Dungeon Tracker UI] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 
     /**

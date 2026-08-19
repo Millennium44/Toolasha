@@ -321,15 +321,21 @@ class TradeLedgerStore {
      * Stop recording (keeps stored data)
      */
     disable() {
-        if (this.initHandler) {
-            dataManager.off('character_initialized', this.initHandler);
-            this.initHandler = null;
+        try {
+            if (this.initHandler) {
+                dataManager.off('character_initialized', this.initHandler);
+                this.initHandler = null;
+            }
+            if (this.updateHandler) {
+                dataManager.off('market_listings_updated', this.updateHandler);
+                this.updateHandler = null;
+            }
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Trade Ledger] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        if (this.updateHandler) {
-            dataManager.off('market_listings_updated', this.updateHandler);
-            this.updateHandler = null;
-        }
-        this.isInitialized = false;
     }
 
     /**

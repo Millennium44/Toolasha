@@ -402,5 +402,13 @@ export { collectionNavigation };
 
 export default {
     initialize: () => collectionNavigation.initialize(),
-    disable: () => collectionNavigation.disable(),
+    disable: () => {
+        try {
+            return collectionNavigation.disable();
+        } catch (error) {
+            console.error('[Collection Navigation] Disable failed part-way:', error);
+        } finally {
+            collectionNavigation.isInitialized = false;
+        }
+    },
 };

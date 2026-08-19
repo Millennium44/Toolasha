@@ -327,13 +327,20 @@ class AbilityBookCalculator {
      * Disable the feature
      */
     disable() {
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
+        try {
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
+            this.autofillManager.cleanup();
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Ability Book Calculator] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
         }
-        this.autofillManager.cleanup();
-        this.isActive = false;
-        this.isInitialized = false;
     }
 }
 

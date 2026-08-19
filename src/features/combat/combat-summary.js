@@ -286,14 +286,21 @@ class CombatSummary {
      * Disable the combat summary feature
      */
     disable() {
-        if (this.battleUnitFetchedHandler) {
-            webSocketHook.off('battle_unit_fetched', this.battleUnitFetchedHandler);
-            this.battleUnitFetchedHandler = null;
-        }
+        try {
+            if (this.battleUnitFetchedHandler) {
+                webSocketHook.off('battle_unit_fetched', this.battleUnitFetchedHandler);
+                this.battleUnitFetchedHandler = null;
+            }
 
-        this.timerRegistry.clearAll();
-        this.isActive = false;
-        this.isInitialized = false;
+            this.timerRegistry.clearAll();
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Combat Summary] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
+        }
     }
 }
 

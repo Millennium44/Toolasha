@@ -1412,61 +1412,67 @@ class DungeonTracker {
      * Cleanup for character switching
      */
     async cleanup() {
-        if (this.handlers.newBattle) {
-            webSocketHook.off('new_battle', this.handlers.newBattle);
-            this.handlers.newBattle = null;
+        try {
+            if (this.handlers.newBattle) {
+                webSocketHook.off('new_battle', this.handlers.newBattle);
+                this.handlers.newBattle = null;
+            }
+            if (this.handlers.actionCompleted) {
+                webSocketHook.off('action_completed', this.handlers.actionCompleted);
+                this.handlers.actionCompleted = null;
+            }
+            if (this.handlers.actionsUpdated) {
+                webSocketHook.off('actions_updated', this.handlers.actionsUpdated);
+                this.handlers.actionsUpdated = null;
+            }
+            if (this.handlers.chatMessage) {
+                webSocketHook.off('chat_message_received', this.handlers.chatMessage);
+                this.handlers.chatMessage = null;
+            }
+
+            // Reset all tracking state
+            this.isTracking = false;
+            this.currentRun = null;
+            this.waveStartTime = null;
+            this.waveTimes = [];
+            this.pendingDungeonInfo = null;
+            this.currentBattleId = null;
+
+            // Clear party message tracking
+            this.firstKeyCountTimestamp = null;
+            this.lastKeyCountTimestamp = null;
+            this.keyCountMessages = [];
+            this.battleStartedTimestamp = null;
+            this.pendingNextRunFirstKeyCount = null;
+            this.restoredMidRun = false;
+            this.recentChatMessages = [];
+
+            // Reset hibernation detection
+            this.hibernationDetected = false;
+
+            if (this.visibilityHandler) {
+                document.removeEventListener('visibilitychange', this.visibilityHandler);
+                this.visibilityHandler = null;
+            }
+
+            // Clear character ID
+            this.characterId = null;
+
+            // Clear all callbacks
+            this.updateCallbacks = [];
+
+            this.timerRegistry.clearAll();
+
+            // Clear saved in-progress run
+            await this.clearInProgressRun();
+
+            // Reset initialization flag
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Dungeon Tracker] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        if (this.handlers.actionCompleted) {
-            webSocketHook.off('action_completed', this.handlers.actionCompleted);
-            this.handlers.actionCompleted = null;
-        }
-        if (this.handlers.actionsUpdated) {
-            webSocketHook.off('actions_updated', this.handlers.actionsUpdated);
-            this.handlers.actionsUpdated = null;
-        }
-        if (this.handlers.chatMessage) {
-            webSocketHook.off('chat_message_received', this.handlers.chatMessage);
-            this.handlers.chatMessage = null;
-        }
-
-        // Reset all tracking state
-        this.isTracking = false;
-        this.currentRun = null;
-        this.waveStartTime = null;
-        this.waveTimes = [];
-        this.pendingDungeonInfo = null;
-        this.currentBattleId = null;
-
-        // Clear party message tracking
-        this.firstKeyCountTimestamp = null;
-        this.lastKeyCountTimestamp = null;
-        this.keyCountMessages = [];
-        this.battleStartedTimestamp = null;
-        this.pendingNextRunFirstKeyCount = null;
-        this.restoredMidRun = false;
-        this.recentChatMessages = [];
-
-        // Reset hibernation detection
-        this.hibernationDetected = false;
-
-        if (this.visibilityHandler) {
-            document.removeEventListener('visibilitychange', this.visibilityHandler);
-            this.visibilityHandler = null;
-        }
-
-        // Clear character ID
-        this.characterId = null;
-
-        // Clear all callbacks
-        this.updateCallbacks = [];
-
-        this.timerRegistry.clearAll();
-
-        // Clear saved in-progress run
-        await this.clearInProgressRun();
-
-        // Reset initialization flag
-        this.isInitialized = false;
     }
 
     /**

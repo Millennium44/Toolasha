@@ -178,23 +178,29 @@ class ItemCountDisplay {
      * Disable the item count display
      */
     disable() {
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
+        try {
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
+
+            if (this.itemsUpdatedHandler) {
+                dataManager.off('items_updated', this.itemsUpdatedHandler);
+                this.itemsUpdatedHandler = null;
+            }
+
+            // Remove all injected count displays and reset opacity
+            document.querySelectorAll('.mwi-item-count').forEach((el) => el.remove());
+            document.querySelectorAll('[class*="Item_clickable"]').forEach((tile) => {
+                tile.style.opacity = '1.0';
+            });
+
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Item Count Display] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-
-        if (this.itemsUpdatedHandler) {
-            dataManager.off('items_updated', this.itemsUpdatedHandler);
-            this.itemsUpdatedHandler = null;
-        }
-
-        // Remove all injected count displays and reset opacity
-        document.querySelectorAll('.mwi-item-count').forEach((el) => el.remove());
-        document.querySelectorAll('[class*="Item_clickable"]').forEach((tile) => {
-            tile.style.opacity = '1.0';
-        });
-
-        this.isInitialized = false;
     }
 }
 

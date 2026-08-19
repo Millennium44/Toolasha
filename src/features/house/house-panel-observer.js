@@ -170,7 +170,13 @@ class HousePanelObserver {
      * Disable the observer
      */
     disable() {
-        this.cleanup();
+        try {
+            this.cleanup();
+        } catch (error) {
+            console.error('[House Panel Observer] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+        }
     }
 
     /**

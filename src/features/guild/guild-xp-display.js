@@ -1064,7 +1064,15 @@ const guildXPDisplay = new GuildXPDisplay();
 export default {
     name: 'Guild XP Display',
     initialize: () => guildXPDisplay.initialize(),
-    cleanup: () => guildXPDisplay.disable(),
+    cleanup: () => {
+        try {
+            return guildXPDisplay.disable();
+        } catch (error) {
+            console.error('[Guild XP Display] Disable failed part-way:', error);
+        } finally {
+            guildXPDisplay.initialized = false;
+        }
+    },
 };
 
 // Named alongside the default the same way `guild-trials.js` exports its

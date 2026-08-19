@@ -168,18 +168,24 @@ class AltClickNavigation {
      * Disable the feature
      */
     disable() {
-        if (this.clickHandler) {
-            document.removeEventListener('click', this.clickHandler, true);
-            this.clickHandler = null;
-        }
+        try {
+            if (this.clickHandler) {
+                document.removeEventListener('click', this.clickHandler, true);
+                this.clickHandler = null;
+            }
 
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
 
-        this.currentItemHrid = null;
-        this.isActive = false;
+            this.currentItemHrid = null;
+            this.isActive = false;
+        } catch (error) {
+            console.error('[Alt+Click Navigation] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+        }
     }
 }
 

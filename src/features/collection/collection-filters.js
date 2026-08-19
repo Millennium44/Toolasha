@@ -598,21 +598,27 @@ class CollectionFilters {
     }
 
     disable() {
-        if (this.characterInitHandler) {
-            dataManager.off('character_initialized', this.characterInitHandler);
-            this.characterInitHandler = null;
+        try {
+            if (this.characterInitHandler) {
+                dataManager.off('character_initialized', this.characterInitHandler);
+                this.characterInitHandler = null;
+            }
+            this.unregisterHandlers.forEach((fn) => fn());
+            this.unregisterHandlers = [];
+            this.isInitialized = false;
+            this.itemActionCache = null;
+            this._removeCSS();
+            if (this.catsObserver) {
+                this.catsObserver.disconnect();
+                this.catsObserver = null;
+            }
+            // Remove injected UI elements
+            document.querySelectorAll('.toolasha-cf').forEach((el) => el.remove());
+        } catch (error) {
+            console.error('[Collection Filters] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        this.unregisterHandlers.forEach((fn) => fn());
-        this.unregisterHandlers = [];
-        this.isInitialized = false;
-        this.itemActionCache = null;
-        this._removeCSS();
-        if (this.catsObserver) {
-            this.catsObserver.disconnect();
-            this.catsObserver = null;
-        }
-        // Remove injected UI elements
-        document.querySelectorAll('.toolasha-cf').forEach((el) => el.remove());
     }
 
     // -------------------------------------------------------------------------

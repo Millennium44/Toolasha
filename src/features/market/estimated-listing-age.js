@@ -1392,23 +1392,29 @@ class EstimatedListingAge {
      * Disable the estimated listing age feature
      */
     disable() {
-        if (this.unregisterWebSocket) {
-            this.unregisterWebSocket();
-            this.unregisterWebSocket = null;
-        }
+        try {
+            if (this.unregisterWebSocket) {
+                this.unregisterWebSocket();
+                this.unregisterWebSocket = null;
+            }
 
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
 
-        if (this.unregisterMyListingsObserver) {
-            this.unregisterMyListingsObserver();
-            this.unregisterMyListingsObserver = null;
-        }
+            if (this.unregisterMyListingsObserver) {
+                this.unregisterMyListingsObserver();
+                this.unregisterMyListingsObserver = null;
+            }
 
-        this.clearDisplays();
-        this.isInitialized = false;
+            this.clearDisplays();
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Estimated Listing Age] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 }
 

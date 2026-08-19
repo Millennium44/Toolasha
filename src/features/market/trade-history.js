@@ -225,13 +225,19 @@ class TradeHistory {
      * Disable the feature
      */
     disable() {
-        if (this.marketUpdateHandler) {
-            dataManager.off('market_listings_updated', this.marketUpdateHandler);
-            this.marketUpdateHandler = null;
-        }
+        try {
+            if (this.marketUpdateHandler) {
+                dataManager.off('market_listings_updated', this.marketUpdateHandler);
+                this.marketUpdateHandler = null;
+            }
 
-        // Don't clear history data, just stop tracking
-        this.isInitialized = false;
+            // Don't clear history data, just stop tracking
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Trade History] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 
     /**

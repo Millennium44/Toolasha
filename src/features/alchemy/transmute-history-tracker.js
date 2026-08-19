@@ -368,5 +368,13 @@ export { transmuteHistoryTracker };
 export default {
     name: 'Transmute History Tracker',
     initialize: () => transmuteHistoryTracker.initialize(),
-    cleanup: () => transmuteHistoryTracker.disable(),
+    cleanup: () => {
+        try {
+            return transmuteHistoryTracker.disable();
+        } catch (error) {
+            console.error('[Transmute History Tracker] Disable failed part-way:', error);
+        } finally {
+            transmuteHistoryTracker.isInitialized = false;
+        }
+    },
 };

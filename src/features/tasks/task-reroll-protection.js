@@ -842,7 +842,13 @@ export default {
         taskRerollProtection.disable();
     },
     disable: () => {
-        taskRerollProtection.disable();
+        try {
+            taskRerollProtection.disable();
+        } catch (error) {
+            console.error('[Task Reroll Protection] Disable failed part-way:', error);
+        } finally {
+            taskRerollProtection.isInitialized = false;
+        }
     },
     openConfigPopup: () => {
         taskRerollProtection.openConfigPopup();

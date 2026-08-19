@@ -1583,5 +1583,13 @@ const decomposeHistoryViewer = new DecomposeHistoryViewer();
 export default {
     name: 'Decompose History Viewer',
     initialize: () => decomposeHistoryViewer.initialize(),
-    cleanup: () => decomposeHistoryViewer.disable(),
+    cleanup: () => {
+        try {
+            return decomposeHistoryViewer.disable();
+        } catch (error) {
+            console.error('[Decompose History Viewer] Disable failed part-way:', error);
+        } finally {
+            decomposeHistoryViewer.isInitialized = false;
+        }
+    },
 };

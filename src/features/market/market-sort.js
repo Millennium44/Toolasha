@@ -455,26 +455,33 @@ class MarketSort {
      * Cleanup on disable
      */
     disable() {
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
+        try {
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
 
-        // Remove sort UI
-        const sortDiv = document.querySelector('#toolasha-market-sort');
-        if (sortDiv) {
-            sortDiv.remove();
+            // Remove sort UI
+            const sortDiv = document.querySelector('#toolasha-market-sort');
+            if (sortDiv) {
+                sortDiv.remove();
+            }
+
+            // Remove profit indicators
+            document.querySelectorAll('.toolasha-profit-indicator').forEach((el) => el.remove());
+
+            // Clear cache
+            this.profitCache.clear();
+            this.originalOrder = [];
+            this.hasSorted = false;
+
+            this.isActive = false;
+            this.isInitialized = false;
+            this.sortButton = null;
+        } catch (error) {
+            console.error('[Market Sort] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
         }
-
-        // Remove profit indicators
-        document.querySelectorAll('.toolasha-profit-indicator').forEach((el) => el.remove());
-
-        // Clear cache
-        this.profitCache.clear();
-        this.originalOrder = [];
-        this.hasSorted = false;
-
-        this.isActive = false;
-        this.isInitialized = false;
-        this.sortButton = null;
     }
 }
 

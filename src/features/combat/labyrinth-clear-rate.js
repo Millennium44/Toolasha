@@ -340,102 +340,108 @@ class LabyrinthClearRate {
     }
 
     disable() {
-        if (this.wsHandler) {
-            webSocketHook.off('labyrinth_updated', this.wsHandler);
-            this.wsHandler = null;
-        }
+        try {
+            if (this.wsHandler) {
+                webSocketHook.off('labyrinth_updated', this.wsHandler);
+                this.wsHandler = null;
+            }
 
-        if (this.settingHandler) {
-            webSocketHook.off('setting_updated', this.settingHandler);
-            this.settingHandler = null;
-        }
+            if (this.settingHandler) {
+                webSocketHook.off('setting_updated', this.settingHandler);
+                this.settingHandler = null;
+            }
 
-        if (this.loadoutsHandler) {
-            webSocketHook.off('loadouts_updated', this.loadoutsHandler);
-            this.loadoutsHandler = null;
-        }
+            if (this.loadoutsHandler) {
+                webSocketHook.off('loadouts_updated', this.loadoutsHandler);
+                this.loadoutsHandler = null;
+            }
 
-        if (this.liveProgressHandler) {
-            webSocketHook.off('labyrinth_room_progress', this.liveProgressHandler);
-            this.liveProgressHandler = null;
-        }
+            if (this.liveProgressHandler) {
+                webSocketHook.off('labyrinth_room_progress', this.liveProgressHandler);
+                this.liveProgressHandler = null;
+            }
 
-        if (this.snapshotUpdateHandler) {
-            loadoutSnapshot.offUpdate(this.snapshotUpdateHandler);
-            this.snapshotUpdateHandler = null;
-        }
+            if (this.snapshotUpdateHandler) {
+                loadoutSnapshot.offUpdate(this.snapshotUpdateHandler);
+                this.snapshotUpdateHandler = null;
+            }
 
-        if (this.battleHandler) {
-            webSocketHook.off('battle_updated', this.battleHandler);
-            this.battleHandler = null;
-        }
+            if (this.battleHandler) {
+                webSocketHook.off('battle_updated', this.battleHandler);
+                this.battleHandler = null;
+            }
 
-        if (this.newBattleHandler) {
-            webSocketHook.off('new_battle', this.newBattleHandler);
-            this.newBattleHandler = null;
-        }
+            if (this.newBattleHandler) {
+                webSocketHook.off('new_battle', this.newBattleHandler);
+                this.newBattleHandler = null;
+            }
 
-        this.clearLiveProgress();
-        this.clearLiveCombat();
-        this._fight = null;
-        this.hidePreview();
-        document.getElementById(PREVIEW_ID)?.remove();
-        if (this._previewWatchdog) {
-            clearInterval(this._previewWatchdog);
-            this._previewWatchdog = null;
-        }
-        if (this._previewScrollHandler) {
-            window.removeEventListener('scroll', this._previewScrollHandler, { capture: true });
-            this._previewScrollHandler = null;
-        }
-        document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
-        document.querySelectorAll(`.${ATTEMPT_BADGE_CLASS}`).forEach((el) => el.remove());
-        document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`).forEach((el) => el.remove());
-        if (this.autoTileTimer) {
-            clearTimeout(this.autoTileTimer);
-            this.autoTileTimer = null;
-        }
-        if (this.pruneTileTimer) {
-            clearTimeout(this.pruneTileTimer);
-            this.pruneTileTimer = null;
-        }
-        this.calculatedTileKeys?.clear();
+            this.clearLiveProgress();
+            this.clearLiveCombat();
+            this._fight = null;
+            this.hidePreview();
+            document.getElementById(PREVIEW_ID)?.remove();
+            if (this._previewWatchdog) {
+                clearInterval(this._previewWatchdog);
+                this._previewWatchdog = null;
+            }
+            if (this._previewScrollHandler) {
+                window.removeEventListener('scroll', this._previewScrollHandler, { capture: true });
+                this._previewScrollHandler = null;
+            }
+            document.querySelectorAll(`.${TILE_BADGE_CLASS}`).forEach((el) => this.removeTileBadge(el));
+            document.querySelectorAll(`.${ATTEMPT_BADGE_CLASS}`).forEach((el) => el.remove());
+            document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`).forEach((el) => el.remove());
+            if (this.autoTileTimer) {
+                clearTimeout(this.autoTileTimer);
+                this.autoTileTimer = null;
+            }
+            if (this.pruneTileTimer) {
+                clearTimeout(this.pruneTileTimer);
+                this.pruneTileTimer = null;
+            }
+            this.calculatedTileKeys?.clear();
 
-        this.unregisterHandlers.forEach((fn) => fn());
-        this.unregisterHandlers = [];
+            this.unregisterHandlers.forEach((fn) => fn());
+            this.unregisterHandlers = [];
 
-        document.querySelectorAll(`.${BADGE_CLASS}`).forEach((el) => el.remove());
-        document.querySelectorAll(`.${RECOMMEND_CLASS}`).forEach((el) => el.remove());
-        document.querySelectorAll(`.${RECOMMEND_CONTROLS_CLASS}`).forEach((el) => el.remove());
-        document.querySelectorAll(`.${LIVE_PROGRESS_CLASS}`).forEach((el) => el.remove());
-        this.clearPathOverlays();
-        this.clearBeaconOverlays();
-        this.pathCalcRunning = false;
-        pruneEmptyAnnotationContainers();
+            document.querySelectorAll(`.${BADGE_CLASS}`).forEach((el) => el.remove());
+            document.querySelectorAll(`.${RECOMMEND_CLASS}`).forEach((el) => el.remove());
+            document.querySelectorAll(`.${RECOMMEND_CONTROLS_CLASS}`).forEach((el) => el.remove());
+            document.querySelectorAll(`.${LIVE_PROGRESS_CLASS}`).forEach((el) => el.remove());
+            this.clearPathOverlays();
+            this.clearBeaconOverlays();
+            this.pathCalcRunning = false;
+            pruneEmptyAnnotationContainers();
 
-        if (this._editClickHandler) {
-            document.removeEventListener('click', this._editClickHandler, true);
-            this._editClickHandler = null;
+            if (this._editClickHandler) {
+                document.removeEventListener('click', this._editClickHandler, true);
+                this._editClickHandler = null;
+            }
+            if (this.styleEl) {
+                this.styleEl.remove();
+                this.styleEl = null;
+            }
+
+            this.roomData = null;
+            this.combatCache.clear();
+            this._combatCacheMeta.clear();
+            this._combatCacheLoaded = false;
+            // The fight record is one character's; dropping it here is what makes
+            // the next load read it back under whichever character is then current
+            this.forgetOutcomes();
+            this.simQueue = [];
+            this.simRunning = false;
+            this.recommendations.clear();
+            this.recommendRunning = false;
+            this._settingsFingerprint = null;
+            this._snapshotFingerprint = null;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Labyrinth Clear Rate] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        if (this.styleEl) {
-            this.styleEl.remove();
-            this.styleEl = null;
-        }
-
-        this.roomData = null;
-        this.combatCache.clear();
-        this._combatCacheMeta.clear();
-        this._combatCacheLoaded = false;
-        // The fight record is one character's; dropping it here is what makes
-        // the next load read it back under whichever character is then current
-        this.forgetOutcomes();
-        this.simQueue = [];
-        this.simRunning = false;
-        this.recommendations.clear();
-        this.recommendRunning = false;
-        this._settingsFingerprint = null;
-        this._snapshotFingerprint = null;
-        this.isInitialized = false;
     }
 
     // -------------------------------------------------------------------------

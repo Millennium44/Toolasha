@@ -108,16 +108,22 @@ class ListingRefreshNavigator {
     }
 
     cleanup() {
-        if (this.watcher) {
-            this.watcher();
-            this.watcher = null;
+        try {
+            if (this.watcher) {
+                this.watcher();
+                this.watcher = null;
+            }
+            if (this.refreshBtn) {
+                this.refreshBtn.remove();
+                this.refreshBtn = null;
+            }
+            this.lastListingId = null;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Listing Refresh Navigator] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        if (this.refreshBtn) {
-            this.refreshBtn.remove();
-            this.refreshBtn = null;
-        }
-        this.lastListingId = null;
-        this.isInitialized = false;
     }
 }
 

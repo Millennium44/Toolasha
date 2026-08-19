@@ -506,7 +506,15 @@ const portraitDps = new PortraitDps();
 export default {
     name: 'Portrait DPS',
     initialize: () => portraitDps.initialize(),
-    cleanup: () => portraitDps.disable(),
+    cleanup: () => {
+        try {
+            return portraitDps.disable();
+        } catch (error) {
+            console.error('[Portrait DPS] Disable failed part-way:', error);
+        } finally {
+            portraitDps.isInitialized = false;
+        }
+    },
     /** Draw now rather than on the next tick — for tests, and for a settings change */
     redraw: () => portraitDps._draw(),
 };

@@ -583,6 +583,12 @@ export default {
         taskAutoReroll.disable();
     },
     disable: () => {
-        taskAutoReroll.disable();
+        try {
+            taskAutoReroll.disable();
+        } catch (error) {
+            console.error('[Task Auto-Reroll Reminder] Disable failed part-way:', error);
+        } finally {
+            taskAutoReroll.isInitialized = false;
+        }
     },
 };

@@ -77,13 +77,19 @@ class MilkyWayMarketLink {
     }
 
     disable() {
-        if (this.unregisterHandler) {
-            this.unregisterHandler();
-            this.unregisterHandler = null;
+        try {
+            if (this.unregisterHandler) {
+                this.unregisterHandler();
+                this.unregisterHandler = null;
+            }
+            document.getElementById(LINK_ID)?.remove();
+            this.currentItemHrid = null;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[MilkyWay Market Link] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        document.getElementById(LINK_ID)?.remove();
-        this.currentItemHrid = null;
-        this.isInitialized = false;
     }
 }
 

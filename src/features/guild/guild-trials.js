@@ -4263,7 +4263,15 @@ const guildTrials = new GuildTrials();
 export default {
     name: 'Guild Trials',
     initialize: () => guildTrials.initialize(),
-    cleanup: () => guildTrials.cleanup(),
+    cleanup: () => {
+        try {
+            return guildTrials.cleanup();
+        } catch (error) {
+            console.error('[Guild Trials] Disable failed part-way:', error);
+        } finally {
+            guildTrials.initialized = false;
+        }
+    },
 };
 
 export { guildTrials };

@@ -300,26 +300,33 @@ class ZoneIndices {
      * Disable the feature
      */
     disable() {
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
+        try {
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
 
-        // Remove all added indices
-        const taskIndices = document.querySelectorAll('span.script_taskMapIndex');
-        for (const span of taskIndices) {
-            span.remove();
-        }
+            // Remove all added indices
+            const taskIndices = document.querySelectorAll('span.script_taskMapIndex');
+            for (const span of taskIndices) {
+                span.remove();
+            }
 
-        const mapIndices = document.querySelectorAll('span.script_mapIndex');
-        for (const span of mapIndices) {
-            span.remove();
-        }
+            const mapIndices = document.querySelectorAll('span.script_mapIndex');
+            for (const span of mapIndices) {
+                span.remove();
+            }
 
-        // Clear cache
-        this.monsterZoneCache = null;
-        this.isActive = false;
-        this.isInitialized = false;
+            // Clear cache
+            this.monsterZoneCache = null;
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Zone Indices] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
+        }
     }
 }
 

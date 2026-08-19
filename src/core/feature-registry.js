@@ -153,11 +153,52 @@ function checkFeatureHealth() {
  * Re-initializes all features when character switches
  */
 /**
+ * Feature keys whose most recent teardown threw. Read by `getDisableFailures()`.
+ * @type {Set<string>}
+ */
+const disableFailures = new Set();
+
+/**
+ * Record — loudly — that a feature's teardown threw.
+ *
+ * A teardown that throws part-way is the shape of bug that costs a player the
+ * feature for the rest of the session: the old log said only "Failed to disable
+ * X" among a screenful of other noise, while the actual damage was that the
+ * feature had removed its own UI and then thrown before clearing its
+ * initialised flag, so the re-initialise on `character_switched` returned early
+ * and the feature stayed dead until a page reload. Every feature's teardown now
+ * clears that flag in a `finally`, so this should not happen — which is exactly
+ * why it deserves a line that names the feature and says what it costs, visible
+ * in the first console screenshot anybody sends.
+ *
+ * @param {Object} feature - Registry entry that failed
+ * @param {Error} error - What its teardown threw
+ * @returns {void}
+ */
+function noteDisableFailure(feature, error) {
+    disableFailures.add(feature.key);
+    console.error(
+        `[FeatureRegistry] ${feature.name} (${feature.key}) threw while disabling — if it did not clear its own ` +
+            'initialised flag it will not re-initialise cleanly until the page is reloaded:',
+        error
+    );
+}
+
+/**
+ * Feature keys whose last teardown threw, newest state only.
+ * @returns {Array<string>} Keys, in insertion order
+ */
+function getDisableFailures() {
+    return [...disableFailures];
+}
+
+/**
  * Disable every active feature — the cleanup half of a character switch.
  * @returns {Promise<void>}
  */
 async function disableAllFeatures() {
     const cleanupPromises = [];
+    disableFailures.clear();
     for (const feature of featureRegistry) {
         try {
             const featureInstance = getFeatureInstance(feature.key);
@@ -166,17 +207,22 @@ async function disableAllFeatures() {
                 if (result && typeof result.then === 'function') {
                     cleanupPromises.push(
                         result.catch((error) => {
-                            console.error(`[FeatureRegistry] Failed to disable ${feature.name}:`, error);
+                            noteDisableFailure(feature, error);
                         })
                     );
                 }
             }
         } catch (error) {
-            console.error(`[FeatureRegistry] Failed to disable ${feature.name}:`, error);
+            noteDisableFailure(feature, error);
         }
     }
     if (cleanupPromises.length > 0) {
         await Promise.all(cleanupPromises);
+    }
+    if (disableFailures.size > 0) {
+        console.error(
+            `[FeatureRegistry] ${disableFailures.size} feature(s) threw while disabling: ${[...disableFailures].join(', ')}`
+        );
     }
 }
 
@@ -316,6 +362,8 @@ function replaceFeatures(newFeatures) {
 
 export default {
     initializeFeatures,
+    disableAllFeatures,
+    getDisableFailures,
     setupCharacterSwitchHandler,
     checkFeatureHealth,
     retryFailedFeatures,

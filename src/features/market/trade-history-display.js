@@ -296,24 +296,31 @@ class TradeHistoryDisplay {
      * Disable the display
      */
     disable() {
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
+        try {
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
+
+            if (this.unregisterWebSocket) {
+                this.unregisterWebSocket();
+                this.unregisterWebSocket = null;
+            }
+
+            // Remove all displays
+            document.querySelectorAll('.mwi-trade-history').forEach((el) => el.remove());
+
+            this.isActive = false;
+            this.currentItemHrid = null;
+            this.currentEnhancementLevel = 0;
+            this.currentOrderBookData = null;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Trade History Display] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
         }
-
-        if (this.unregisterWebSocket) {
-            this.unregisterWebSocket();
-            this.unregisterWebSocket = null;
-        }
-
-        // Remove all displays
-        document.querySelectorAll('.mwi-trade-history').forEach((el) => el.remove());
-
-        this.isActive = false;
-        this.currentItemHrid = null;
-        this.currentEnhancementLevel = 0;
-        this.currentOrderBookData = null;
-        this.isInitialized = false;
     }
 }
 

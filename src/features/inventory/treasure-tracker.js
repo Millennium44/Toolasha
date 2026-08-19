@@ -391,19 +391,25 @@ class TreasureTracker {
     }
 
     disable() {
-        if (this.lootOpenedHandler) {
-            webSocketHook.off('loot_opened', this.lootOpenedHandler);
-            this.lootOpenedHandler = null;
+        try {
+            if (this.lootOpenedHandler) {
+                webSocketHook.off('loot_opened', this.lootOpenedHandler);
+                this.lootOpenedHandler = null;
+            }
+            this._removePanel();
+            this._removePopup();
+            // The ledger is one character's. Dropped so the re-initialize that
+            // follows a character switch reads the arriving character's, rather
+            // than saving this one's under their key on the next chest.
+            this.tally = {};
+            this.ledger.reset();
+            this.settings = { ...DEFAULT_SETTINGS };
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Treasure Tracker] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        this._removePanel();
-        this._removePopup();
-        // The ledger is one character's. Dropped so the re-initialize that
-        // follows a character switch reads the arriving character's, rather
-        // than saving this one's under their key on the next chest.
-        this.tally = {};
-        this.ledger.reset();
-        this.settings = { ...DEFAULT_SETTINGS };
-        this.isInitialized = false;
     }
 
     /**

@@ -241,17 +241,23 @@ class AlchemyItemPins {
     }
 
     disable() {
-        this.unregister?.();
-        this.unregister = null;
-        this.menuObserver?.disconnect();
-        this.menuObserver = null;
-        this.watchedMenu = null;
-        this.styleEl?.remove();
-        this.styleEl = null;
-        document.querySelectorAll(`.${PIN_CLASS}`).forEach((el) => el.remove());
-        document.querySelectorAll(`.${PINNED_CLASS}`).forEach((el) => el.classList.remove(PINNED_CLASS));
-        document.querySelectorAll(`.${TILE_CLASS}`).forEach((el) => el.classList.remove(TILE_CLASS));
-        this.isInitialized = false;
+        try {
+            this.unregister?.();
+            this.unregister = null;
+            this.menuObserver?.disconnect();
+            this.menuObserver = null;
+            this.watchedMenu = null;
+            this.styleEl?.remove();
+            this.styleEl = null;
+            document.querySelectorAll(`.${PIN_CLASS}`).forEach((el) => el.remove());
+            document.querySelectorAll(`.${PINNED_CLASS}`).forEach((el) => el.classList.remove(PINNED_CLASS));
+            document.querySelectorAll(`.${TILE_CLASS}`).forEach((el) => el.classList.remove(TILE_CLASS));
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Alchemy Item Pins] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 
     /**

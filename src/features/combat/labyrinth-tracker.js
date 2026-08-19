@@ -78,19 +78,25 @@ class LabyrinthTracker {
      * Disable and clean up
      */
     disable() {
-        if (this.handlers.labyrinthUpdated) {
-            webSocketHook.off('labyrinth_updated', this.handlers.labyrinthUpdated);
-            this.handlers.labyrinthUpdated = null;
-        }
+        try {
+            if (this.handlers.labyrinthUpdated) {
+                webSocketHook.off('labyrinth_updated', this.handlers.labyrinthUpdated);
+                this.handlers.labyrinthUpdated = null;
+            }
 
-        this.prevRoomData = null;
-        this.updateListeners = [];
-        // The bests are one character's; forgotten here so the next initialize
-        // — which is how a character switch arrives — reads the arriving
-        // character's rather than writing these under their key
-        this.monsterBestLevels = {};
-        this.record.reset();
-        this.isInitialized = false;
+            this.prevRoomData = null;
+            this.updateListeners = [];
+            // The bests are one character's; forgotten here so the next initialize
+            // — which is how a character switch arrives — reads the arriving
+            // character's rather than writing these under their key
+            this.monsterBestLevels = {};
+            this.record.reset();
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Labyrinth Tracker] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 
     /**

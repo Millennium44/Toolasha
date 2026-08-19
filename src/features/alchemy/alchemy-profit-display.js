@@ -1427,53 +1427,60 @@ class AlchemyProfitDisplay {
      * Disable the display
      */
     disable() {
-        if (this.updateTimeout) {
-            clearTimeout(this.updateTimeout);
-            this.updateTimeout = null;
+        try {
+            if (this.updateTimeout) {
+                clearTimeout(this.updateTimeout);
+                this.updateTimeout = null;
+            }
+
+            if (this.equipmentChangeTimeout) {
+                clearTimeout(this.equipmentChangeTimeout);
+                this.equipmentChangeTimeout = null;
+            }
+
+            if (this.equipmentChangeHandler) {
+                dataManager.off('items_updated', this.equipmentChangeHandler);
+                this.equipmentChangeHandler = null;
+            }
+
+            if (this.consumablesChangeTimeout) {
+                clearTimeout(this.consumablesChangeTimeout);
+                this.consumablesChangeTimeout = null;
+            }
+
+            if (this.consumablesChangeHandler) {
+                dataManager.off('consumables_updated', this.consumablesChangeHandler);
+                this.consumablesChangeHandler = null;
+            }
+
+            if (this.contentObserver) {
+                this.contentObserver.disconnect();
+                this.contentObserver = null;
+            }
+
+            if (this.tabObserver) {
+                this.tabObserver.disconnect();
+                this.tabObserver = null;
+            }
+
+            this.timerRegistry.clearAll();
+
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
+
+            this.removeSpeedTimeInputListeners();
+            this.removeDisplay();
+            this.lastFingerprint = null; // Clear fingerprint on disable
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Alchemy Profit Display] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
         }
-
-        if (this.equipmentChangeTimeout) {
-            clearTimeout(this.equipmentChangeTimeout);
-            this.equipmentChangeTimeout = null;
-        }
-
-        if (this.equipmentChangeHandler) {
-            dataManager.off('items_updated', this.equipmentChangeHandler);
-            this.equipmentChangeHandler = null;
-        }
-
-        if (this.consumablesChangeTimeout) {
-            clearTimeout(this.consumablesChangeTimeout);
-            this.consumablesChangeTimeout = null;
-        }
-
-        if (this.consumablesChangeHandler) {
-            dataManager.off('consumables_updated', this.consumablesChangeHandler);
-            this.consumablesChangeHandler = null;
-        }
-
-        if (this.contentObserver) {
-            this.contentObserver.disconnect();
-            this.contentObserver = null;
-        }
-
-        if (this.tabObserver) {
-            this.tabObserver.disconnect();
-            this.tabObserver = null;
-        }
-
-        this.timerRegistry.clearAll();
-
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
-
-        this.removeSpeedTimeInputListeners();
-        this.removeDisplay();
-        this.lastFingerprint = null; // Clear fingerprint on disable
-        this.isActive = false;
-        this.isInitialized = false;
     }
 }
 

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Every feature now ends a character switch disabled, even when its teardown breaks
+
+The History-tab outage was one instance of a general shape: a teardown that throws part-way removes the feature's UI and then skips the line that clears its initialised flag, so the rebuild is turned away by its own guard and the feature is dead until a refresh. All 112 features that carry such a flag now clear it in a `finally`, and the registry names any feature whose teardown throws and says it may not come back cleanly, so the next one is visible in the first console screenshot.
+
 ### The marketplace History tab stops "breaking until a refresh"
 
 Switching character (an ironcow to the main, say) disables every feature and re-initialises it; the price-history panel's disable threw on a misnamed cleanup call after it had already removed its panel, so it never marked itself disabled, the re-initialise skipped it, and every History click after that failed on the missing panel until a refresh. The call is fixed (in the My Listings price refresh too), disable now always ends disabled, and a click with no panel up does nothing instead of throwing. The panel's poll and the History / Bulk Sell tabs also now prefer the visible marketplace when the game leaves a hidden one in the DOM.

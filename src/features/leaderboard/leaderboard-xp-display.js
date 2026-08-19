@@ -424,5 +424,13 @@ const leaderboardXPDisplay = new LeaderboardXPDisplay();
 export default {
     name: 'Leaderboard XP Display',
     initialize: () => leaderboardXPDisplay.initialize(),
-    cleanup: () => leaderboardXPDisplay.disable(),
+    cleanup: () => {
+        try {
+            return leaderboardXPDisplay.disable();
+        } catch (error) {
+            console.error('[Leaderboard XP Display] Disable failed part-way:', error);
+        } finally {
+            leaderboardXPDisplay.initialized = false;
+        }
+    },
 };

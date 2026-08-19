@@ -865,13 +865,19 @@ class TaskStatistics {
      * Disable and cleanup
      */
     disable() {
-        this.closePopup();
-        this.removeButton();
+        try {
+            this.closePopup();
+            this.removeButton();
 
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
 
-        this.isInitialized = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Task Statistics] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 }
 

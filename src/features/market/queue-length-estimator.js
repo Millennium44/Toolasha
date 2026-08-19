@@ -278,9 +278,15 @@ class QueueLengthEstimator {
      * Disable the queue length estimator
      */
     disable() {
-        this.clearDisplays();
-        this.cleanupRegistry.cleanupAll();
-        this.isInitialized = false;
+        try {
+            this.clearDisplays();
+            this.cleanupRegistry.cleanupAll();
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Queue Length Estimator] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 
     /**

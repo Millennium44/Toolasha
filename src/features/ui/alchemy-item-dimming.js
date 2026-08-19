@@ -119,20 +119,27 @@ class AlchemyItemDimming {
      * Disable the feature
      */
     disable() {
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
+        try {
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
 
-        // Remove all dimming effects
-        const dimmedItems = document.querySelectorAll('.mwi-alchemy-dimmed');
-        for (const item of dimmedItems) {
-            item.style.opacity = '1';
-            item.classList.remove('mwi-alchemy-dimmed');
-        }
+            // Remove all dimming effects
+            const dimmedItems = document.querySelectorAll('.mwi-alchemy-dimmed');
+            for (const item of dimmedItems) {
+                item.style.opacity = '1';
+                item.classList.remove('mwi-alchemy-dimmed');
+            }
 
-        this.isActive = false;
-        this.isInitialized = false;
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Alchemy Item Dimming] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
+        }
     }
 }
 

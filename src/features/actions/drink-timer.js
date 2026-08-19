@@ -229,5 +229,13 @@ const drinkTimer = new DrinkTimer();
 export default {
     name: 'Drink Timer',
     initialize: () => drinkTimer.initialize(),
-    cleanup: () => drinkTimer.cleanup(),
+    cleanup: () => {
+        try {
+            return drinkTimer.cleanup();
+        } catch (error) {
+            console.error('[Drink Timer] Disable failed part-way:', error);
+        } finally {
+            drinkTimer.initialized = false;
+        }
+    },
 };

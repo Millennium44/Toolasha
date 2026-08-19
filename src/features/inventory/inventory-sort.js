@@ -530,44 +530,50 @@ class InventorySort {
      * Disable and cleanup
      */
     disable() {
-        // Clear debounce timers
-        clearTimeout(this.itemsUpdatedDebounceTimer);
-        this.itemsUpdatedDebounceTimer = null;
-        clearTimeout(this.priceUpdateDebounceTimer);
-        this.priceUpdateDebounceTimer = null;
+        try {
+            // Clear debounce timers
+            clearTimeout(this.itemsUpdatedDebounceTimer);
+            this.itemsUpdatedDebounceTimer = null;
+            clearTimeout(this.priceUpdateDebounceTimer);
+            this.priceUpdateDebounceTimer = null;
 
-        if (this.itemsUpdatedHandler) {
-            dataManager.off('items_updated', this.itemsUpdatedHandler);
-            this.itemsUpdatedHandler = null;
+            if (this.itemsUpdatedHandler) {
+                dataManager.off('items_updated', this.itemsUpdatedHandler);
+                this.itemsUpdatedHandler = null;
+            }
+
+            if (this.priceUpdateHandler) {
+                marketAPI.off(this.priceUpdateHandler);
+                this.priceUpdateHandler = null;
+            }
+
+            this.timerRegistry.clearAll();
+
+            // Unregister from badge manager
+            inventoryBadgeManager.unregisterProvider('inventory-stack-price');
+
+            // Remove controls
+            if (this.controlsContainer) {
+                this.controlsContainer.remove();
+                this.controlsContainer = null;
+            }
+
+            // Remove all badges
+            const badges = document.querySelectorAll('.mwi-stack-price');
+            badges.forEach((badge) => badge.remove());
+
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
+
+            // Clear caches and state
+            this.warnedItems.clear();
+            this.currentInventoryElem = null;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Inventory Sort] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-
-        if (this.priceUpdateHandler) {
-            marketAPI.off(this.priceUpdateHandler);
-            this.priceUpdateHandler = null;
-        }
-
-        this.timerRegistry.clearAll();
-
-        // Unregister from badge manager
-        inventoryBadgeManager.unregisterProvider('inventory-stack-price');
-
-        // Remove controls
-        if (this.controlsContainer) {
-            this.controlsContainer.remove();
-            this.controlsContainer = null;
-        }
-
-        // Remove all badges
-        const badges = document.querySelectorAll('.mwi-stack-price');
-        badges.forEach((badge) => badge.remove());
-
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
-
-        // Clear caches and state
-        this.warnedItems.clear();
-        this.currentInventoryElem = null;
-        this.isInitialized = false;
     }
 }
 

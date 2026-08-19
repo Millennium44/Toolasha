@@ -255,27 +255,33 @@ class RemainingXP {
      * Disable the remaining XP display
      */
     disable() {
-        if (this.updateInterval) {
-            clearInterval(this.updateInterval);
-            this.updateInterval = null;
+        try {
+            if (this.updateInterval) {
+                clearInterval(this.updateInterval);
+                this.updateInterval = null;
+            }
+
+            this.timerRegistry.clearAll();
+
+            // Disconnect all progress bar observers
+            this.progressBarObservers.forEach((unwatch) => {
+                unwatch();
+            });
+            this.progressBarObservers.clear();
+
+            // Unregister observers
+            this.unregisterObservers.forEach((unregister) => unregister());
+            this.unregisterObservers = [];
+
+            // Remove all XP displays
+            document.querySelectorAll('.mwi-remaining-xp').forEach((el) => el.remove());
+
+            this.initialized = false;
+        } catch (error) {
+            console.error('[Remaining XP] Disable failed part-way:', error);
+        } finally {
+            this.initialized = false;
         }
-
-        this.timerRegistry.clearAll();
-
-        // Disconnect all progress bar observers
-        this.progressBarObservers.forEach((unwatch) => {
-            unwatch();
-        });
-        this.progressBarObservers.clear();
-
-        // Unregister observers
-        this.unregisterObservers.forEach((unregister) => unregister());
-        this.unregisterObservers = [];
-
-        // Remove all XP displays
-        document.querySelectorAll('.mwi-remaining-xp').forEach((el) => el.remove());
-
-        this.initialized = false;
     }
 }
 

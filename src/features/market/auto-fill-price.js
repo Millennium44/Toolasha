@@ -152,11 +152,18 @@ class AutoFillPrice {
      * Cleanup on disable
      */
     disable() {
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
-        this.timerRegistry.clearAll();
-        this.isActive = false;
-        this.isInitialized = false;
+        try {
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
+            this.timerRegistry.clearAll();
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Auto Fill Price] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
+        }
     }
 }
 

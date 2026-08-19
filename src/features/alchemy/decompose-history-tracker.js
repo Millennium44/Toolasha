@@ -415,5 +415,13 @@ export { decomposeHistoryTracker };
 export default {
     name: 'Decompose History Tracker',
     initialize: () => decomposeHistoryTracker.initialize(),
-    cleanup: () => decomposeHistoryTracker.disable(),
+    cleanup: () => {
+        try {
+            return decomposeHistoryTracker.disable();
+        } catch (error) {
+            console.error('[Decompose History Tracker] Disable failed part-way:', error);
+        } finally {
+            decomposeHistoryTracker.isInitialized = false;
+        }
+    },
 };

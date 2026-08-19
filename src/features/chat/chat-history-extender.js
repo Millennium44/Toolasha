@@ -295,17 +295,23 @@ class ChatHistoryExtender {
     }
 
     disable() {
-        for (const handler of this.activeHandlers) {
-            handler.destroy();
+        try {
+            for (const handler of this.activeHandlers) {
+                handler.destroy();
+            }
+            this.activeHandlers.clear();
+            this.tabHandlers = new WeakMap();
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
+            this.timerRegistry.clearAll();
+            this.interactionCache.clear();
+            removeStyles(STYLE_ID);
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Chat History Extender] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        this.activeHandlers.clear();
-        this.tabHandlers = new WeakMap();
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
-        this.timerRegistry.clearAll();
-        this.interactionCache.clear();
-        removeStyles(STYLE_ID);
-        this.isInitialized = false;
     }
 }
 

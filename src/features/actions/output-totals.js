@@ -378,21 +378,27 @@ class OutputTotals {
      * Disable the output totals display
      */
     disable() {
-        // Clean up all input observers
-        for (const cleanup of this.observedInputs.values()) {
-            cleanup();
+        try {
+            // Clean up all input observers
+            for (const cleanup of this.observedInputs.values()) {
+                cleanup();
+            }
+            this.observedInputs.clear();
+
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
+
+            // Remove all injected elements
+            document.querySelectorAll('.mwi-output-total').forEach((el) => el.remove());
+
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Output Totals] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        this.observedInputs.clear();
-
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
-
-        // Remove all injected elements
-        document.querySelectorAll('.mwi-output-total').forEach((el) => el.remove());
-
-        this.isInitialized = false;
     }
 }
 

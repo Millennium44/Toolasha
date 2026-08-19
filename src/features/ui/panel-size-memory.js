@@ -267,6 +267,14 @@ const panelSizeMemory = new PanelSizeMemory();
 export default {
     name: 'Panel Size Memory',
     initialize: () => panelSizeMemory.initialize(),
-    cleanup: () => panelSizeMemory.cleanup(),
+    cleanup: () => {
+        try {
+            return panelSizeMemory.cleanup();
+        } catch (error) {
+            console.error('[Panel Size Memory] Disable failed part-way:', error);
+        } finally {
+            panelSizeMemory.isInitialized = false;
+        }
+    },
     reset: () => panelSizeMemory.reset(),
 };

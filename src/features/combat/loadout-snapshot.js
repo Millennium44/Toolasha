@@ -386,18 +386,24 @@ class LoadoutSnapshot {
     }
 
     disable() {
-        if (this.loadoutsUpdatedHandler) {
-            getWebSocketHook().off('loadouts_updated', this.loadoutsUpdatedHandler);
-            this.loadoutsUpdatedHandler = null;
-        }
+        try {
+            if (this.loadoutsUpdatedHandler) {
+                getWebSocketHook().off('loadouts_updated', this.loadoutsUpdatedHandler);
+                this.loadoutsUpdatedHandler = null;
+            }
 
-        if (this.characterInitializedHandler) {
-            dataManager.off('character_initialized', this.characterInitializedHandler);
-            this.characterInitializedHandler = null;
-        }
+            if (this.characterInitializedHandler) {
+                dataManager.off('character_initialized', this.characterInitializedHandler);
+                this.characterInitializedHandler = null;
+            }
 
-        this.updateListeners = [];
-        this.isInitialized = false;
+            this.updateListeners = [];
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Loadout Snapshots] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 }
 

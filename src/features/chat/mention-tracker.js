@@ -264,26 +264,32 @@ class MentionTracker {
      * Cleanup the mention tracker
      */
     disable() {
-        if (this.handlers.chatMessage) {
-            webSocketHook.off('chat_message_received', this.handlers.chatMessage);
-            this.handlers.chatMessage = null;
+        try {
+            if (this.handlers.chatMessage) {
+                webSocketHook.off('chat_message_received', this.handlers.chatMessage);
+                this.handlers.chatMessage = null;
+            }
+
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
+
+            // Close popup if open
+            mentionPopup.close();
+
+            // Remove all badges
+            document.querySelectorAll('.mwi-mention-badge').forEach((el) => el.remove());
+
+            // Clear log
+            this.mentionLog.clear();
+
+            this.initialized = false;
+        } catch (error) {
+            console.error('[Mention Tracker] Disable failed part-way:', error);
+        } finally {
+            this.initialized = false;
         }
-
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
-
-        // Close popup if open
-        mentionPopup.close();
-
-        // Remove all badges
-        document.querySelectorAll('.mwi-mention-badge').forEach((el) => el.remove());
-
-        // Clear log
-        this.mentionLog.clear();
-
-        this.initialized = false;
     }
 }
 

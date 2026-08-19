@@ -1194,7 +1194,13 @@ class BulkSellAssistant {
     }
 
     disable() {
-        this.cleanup();
+        try {
+            this.cleanup();
+        } catch (error) {
+            console.error('[Bulk Sell Assistant] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 }
 

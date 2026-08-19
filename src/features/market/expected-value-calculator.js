@@ -431,7 +431,13 @@ class ExpectedValueCalculator {
     }
 
     disable() {
-        this.cleanup();
+        try {
+            this.cleanup();
+        } catch (error) {
+            console.error('[Expected Value Calculator] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 }
 

@@ -145,13 +145,19 @@ class MyListingsPriceRefresh {
     }
 
     cleanup() {
-        this.controls?.remove();
-        this.controls = null;
-        this.button = null;
-        this.status = null;
-        this.busy = false;
-        this.cleanupRegistry.cleanupAll();
-        this.isInitialized = false;
+        try {
+            this.controls?.remove();
+            this.controls = null;
+            this.button = null;
+            this.status = null;
+            this.busy = false;
+            this.cleanupRegistry.cleanupAll();
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[My Listings Mooket Price Refresh] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 
     /** Put the button back in the header bar, rebuilding if the bar was re-rendered. */

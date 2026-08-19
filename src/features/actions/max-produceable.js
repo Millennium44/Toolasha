@@ -960,52 +960,58 @@ class MaxProduceable {
      * Disable the max produceable display
      */
     disable() {
-        // Clear debounce timers
-        clearTimeout(this.itemsUpdatedDebounceTimer);
-        clearTimeout(this.actionCompletedDebounceTimer);
-        this.itemsUpdatedDebounceTimer = null;
-        this.actionCompletedDebounceTimer = null;
+        try {
+            // Clear debounce timers
+            clearTimeout(this.itemsUpdatedDebounceTimer);
+            clearTimeout(this.actionCompletedDebounceTimer);
+            this.itemsUpdatedDebounceTimer = null;
+            this.actionCompletedDebounceTimer = null;
 
-        if (this.itemsUpdatedHandler) {
-            dataManager.off('items_updated', this.itemsUpdatedHandler);
-            this.itemsUpdatedHandler = null;
+            if (this.itemsUpdatedHandler) {
+                dataManager.off('items_updated', this.itemsUpdatedHandler);
+                this.itemsUpdatedHandler = null;
+            }
+
+            if (this.consumablesUpdatedHandler) {
+                dataManager.off('consumables_updated', this.consumablesUpdatedHandler);
+                this.consumablesUpdatedHandler = null;
+            }
+
+            if (this.characterSwitchingHandler) {
+                dataManager.off('character_switching', this.characterSwitchingHandler);
+                this.characterSwitchingHandler = null;
+            }
+
+            if (this.pricingModeHandler) {
+                config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
+                this.pricingModeHandler = null;
+            }
+
+            // Clear all DOM references
+            this.clearAllReferences();
+
+            // Remove DOM observer
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
+
+            if (this.mutationObserver) {
+                this.mutationObserver.disconnect();
+                this.mutationObserver = null;
+            }
+
+            // Remove all injected elements
+            document.querySelectorAll('.mwi-max-produceable').forEach((el) => el.remove());
+            document.querySelectorAll('.mwi-action-pin').forEach((el) => el.remove());
+            this.actionElements.clear();
+
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Max Produceable] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-
-        if (this.consumablesUpdatedHandler) {
-            dataManager.off('consumables_updated', this.consumablesUpdatedHandler);
-            this.consumablesUpdatedHandler = null;
-        }
-
-        if (this.characterSwitchingHandler) {
-            dataManager.off('character_switching', this.characterSwitchingHandler);
-            this.characterSwitchingHandler = null;
-        }
-
-        if (this.pricingModeHandler) {
-            config.offSettingChange('profitCalc_pricingMode', this.pricingModeHandler);
-            this.pricingModeHandler = null;
-        }
-
-        // Clear all DOM references
-        this.clearAllReferences();
-
-        // Remove DOM observer
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
-
-        if (this.mutationObserver) {
-            this.mutationObserver.disconnect();
-            this.mutationObserver = null;
-        }
-
-        // Remove all injected elements
-        document.querySelectorAll('.mwi-max-produceable').forEach((el) => el.remove());
-        document.querySelectorAll('.mwi-action-pin').forEach((el) => el.remove());
-        this.actionElements.clear();
-
-        this.isInitialized = false;
     }
 }
 

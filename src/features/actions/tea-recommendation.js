@@ -1197,18 +1197,24 @@ class TeaRecommendation {
      * Disable the feature
      */
     disable() {
-        this.closePopup();
-        this.timerRegistry.clearAll();
+        try {
+            this.closePopup();
+            this.timerRegistry.clearAll();
 
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
 
-        // Remove injected elements
-        document.querySelectorAll('.mwi-tea-recommendation-buttons').forEach((el) => el.remove());
-        document.querySelectorAll('.mwi-tea-recommendation-popup').forEach((el) => el.remove());
+            // Remove injected elements
+            document.querySelectorAll('.mwi-tea-recommendation-buttons').forEach((el) => el.remove());
+            document.querySelectorAll('.mwi-tea-recommendation-popup').forEach((el) => el.remove());
 
-        this.buttonContainer = null;
-        this.initialized = false;
+            this.buttonContainer = null;
+            this.initialized = false;
+        } catch (error) {
+            console.error('[Tea Recommendation] Disable failed part-way:', error);
+        } finally {
+            this.initialized = false;
+        }
     }
 }
 

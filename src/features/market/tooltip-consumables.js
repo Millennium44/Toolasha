@@ -336,13 +336,20 @@ class TooltipConsumables {
      * Disable the feature
      */
     disable() {
-        if (this.unregisterObserver) {
-            this.unregisterObserver();
-            this.unregisterObserver = null;
-        }
+        try {
+            if (this.unregisterObserver) {
+                this.unregisterObserver();
+                this.unregisterObserver = null;
+            }
 
-        this.isActive = false;
-        this.isInitialized = false;
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Tooltip Consumables] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
+        }
     }
 }
 

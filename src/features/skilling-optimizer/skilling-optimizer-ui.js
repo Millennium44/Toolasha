@@ -1401,5 +1401,14 @@ const skillingSimulatorUI = new SkillingSimulatorUI();
 export default {
     name: 'Skilling Simulator',
     initialize: () => skillingSimulatorUI.initialize(),
-    cleanup: () => skillingSimulatorUI.cleanup(),
+    cleanup: () => {
+        try {
+            return skillingSimulatorUI.cleanup();
+        } catch (error) {
+            console.error('[Skilling Optimizer] Disable failed part-way:', error);
+        } finally {
+            skillingSimulatorUI.isActive = false;
+            skillingSimulatorUI.isInitialized = false;
+        }
+    },
 };

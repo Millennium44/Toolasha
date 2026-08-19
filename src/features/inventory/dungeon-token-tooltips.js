@@ -467,6 +467,12 @@ export default {
         dungeonTokenTooltips.cleanup();
     },
     disable: () => {
-        dungeonTokenTooltips.disable();
+        try {
+            dungeonTokenTooltips.disable();
+        } catch (error) {
+            console.error('[Dungeon Token Tooltips] Disable failed part-way:', error);
+        } finally {
+            dungeonTokenTooltips.isInitialized = false;
+        }
     },
 };

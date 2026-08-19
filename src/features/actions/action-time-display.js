@@ -2773,18 +2773,24 @@ class ActionTimeDisplay {
      * Disable the action time display (cleanup)
      */
     disable() {
-        this.cleanupRegistry.cleanupAll();
-        this.displayElement = null;
-        this.profitElement = null;
-        this.updateTimer = null;
-        this.unregisterQueueObserver = null;
-        this.actionNameObserver = null;
-        this.queueMenuObserver = null;
-        this.characterInitHandler = null;
-        this.waitForPanelTimeout = null;
-        this.activeProfitCalculationId = null;
-        this.activeBarProfitId = null;
-        this.isInitialized = false;
+        try {
+            this.cleanupRegistry.cleanupAll();
+            this.displayElement = null;
+            this.profitElement = null;
+            this.updateTimer = null;
+            this.unregisterQueueObserver = null;
+            this.actionNameObserver = null;
+            this.queueMenuObserver = null;
+            this.characterInitHandler = null;
+            this.waitForPanelTimeout = null;
+            this.activeProfitCalculationId = null;
+            this.activeBarProfitId = null;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Action Time Display] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 }
 

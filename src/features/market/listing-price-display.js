@@ -1450,17 +1450,23 @@ class ListingPriceDisplay {
      * Disable the listing price display
      */
     disable() {
-        // Disconnect all per-tbody MutationObservers
-        for (const observer of this.tbodyObservers.values()) {
-            observer.disconnect();
-        }
-        this.tbodyObservers.clear();
+        try {
+            // Disconnect all per-tbody MutationObservers
+            for (const observer of this.tbodyObservers.values()) {
+                observer.disconnect();
+            }
+            this.tbodyObservers.clear();
 
-        this.cleanupRegistry.cleanupAll();
-        this.clearDisplays();
-        this.allListings = {};
-        this.activeRefreshes = new WeakSet();
-        this.isInitialized = false;
+            this.cleanupRegistry.cleanupAll();
+            this.clearDisplays();
+            this.allListings = {};
+            this.activeRefreshes = new WeakSet();
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Listing Price Display] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 }
 

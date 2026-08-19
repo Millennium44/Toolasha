@@ -166,7 +166,13 @@ export default {
         chestKeyMarketButton.disable();
     },
     disable: () => {
-        chestKeyMarketButton.disable();
+        try {
+            chestKeyMarketButton.disable();
+        } catch (error) {
+            console.error('[Chest Key Market Button] Disable failed part-way:', error);
+        } finally {
+            chestKeyMarketButton.isInitialized = false;
+        }
     },
 };
 

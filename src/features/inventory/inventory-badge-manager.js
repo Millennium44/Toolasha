@@ -656,12 +656,18 @@ class InventoryBadgeManager {
      * Disable and cleanup
      */
     disable() {
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
-        this.providers.clear();
-        this.processedItems = new WeakSet();
-        this.currentInventoryElem = null;
-        this.isInitialized = false;
+        try {
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
+            this.providers.clear();
+            this.processedItems = new WeakSet();
+            this.currentInventoryElem = null;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Inventory Badge Manager] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 }
 

@@ -150,30 +150,36 @@ class CombatDropLuck {
     }
 
     disable() {
-        if (this.newBattleHandler) {
-            webSocketHook.off('new_battle', this.newBattleHandler);
-            this.newBattleHandler = null;
+        try {
+            if (this.newBattleHandler) {
+                webSocketHook.off('new_battle', this.newBattleHandler);
+                this.newBattleHandler = null;
+            }
+            if (this.battleUnitFetchedHandler) {
+                webSocketHook.off('battle_unit_fetched', this.battleUnitFetchedHandler);
+                this.battleUnitFetchedHandler = null;
+            }
+            if (this.itemsHandler) {
+                webSocketHook.off('items_updated', this.itemsHandler);
+                this.itemsHandler = null;
+            }
+            if (this.dungeonHandler) {
+                dungeonTracker.offUpdate(this.dungeonHandler);
+                this.dungeonHandler = null;
+            }
+            this.timerRegistry.clearAll();
+            document.getElementById(DISPLAY_ID)?.remove();
+            this.context = null;
+            this.lastResult = null;
+            this.liveAt = 0;
+            this.chests = null;
+            this.keys = newKeyLedger();
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Combat Drop Luck] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        if (this.battleUnitFetchedHandler) {
-            webSocketHook.off('battle_unit_fetched', this.battleUnitFetchedHandler);
-            this.battleUnitFetchedHandler = null;
-        }
-        if (this.itemsHandler) {
-            webSocketHook.off('items_updated', this.itemsHandler);
-            this.itemsHandler = null;
-        }
-        if (this.dungeonHandler) {
-            dungeonTracker.offUpdate(this.dungeonHandler);
-            this.dungeonHandler = null;
-        }
-        this.timerRegistry.clearAll();
-        document.getElementById(DISPLAY_ID)?.remove();
-        this.context = null;
-        this.lastResult = null;
-        this.liveAt = 0;
-        this.chests = null;
-        this.keys = newKeyLedger();
-        this.isInitialized = false;
     }
 
     /**

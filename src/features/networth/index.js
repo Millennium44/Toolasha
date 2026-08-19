@@ -196,51 +196,57 @@ class NetworthFeature {
      * Disable the feature
      */
     disable() {
-        // Clear debounce timers
-        clearTimeout(this.priceUpdateDebounceTimer);
-        clearTimeout(this.itemsUpdateDebounceTimer);
-        clearTimeout(this.itemsUpdateMaxWaitTimer);
-        this.itemsUpdateMaxWaitTimer = null;
+        try {
+            // Clear debounce timers
+            clearTimeout(this.priceUpdateDebounceTimer);
+            clearTimeout(this.itemsUpdateDebounceTimer);
+            clearTimeout(this.itemsUpdateMaxWaitTimer);
+            this.itemsUpdateMaxWaitTimer = null;
 
-        // Unregister event listeners
-        if (this.priceUpdateHandler) {
-            marketAPI.off(this.priceUpdateHandler);
-            this.priceUpdateHandler = null;
+            // Unregister event listeners
+            if (this.priceUpdateHandler) {
+                marketAPI.off(this.priceUpdateHandler);
+                this.priceUpdateHandler = null;
+            }
+
+            if (this.pricingModeHandler) {
+                config.offSettingChange('networth_pricingMode', this.pricingModeHandler);
+                this.pricingModeHandler = null;
+            }
+
+            if (this.itemsUpdateHandler) {
+                dataManager.off('items_updated', this.itemsUpdateHandler);
+                this.itemsUpdateHandler = null;
+            }
+
+            if (this.pauseRegistry) {
+                this.pauseRegistry.unregister('networth-event-listeners');
+                this.pauseRegistry.cleanup();
+                this.pauseRegistry = null;
+            }
+
+            this.timerRegistry.clearAll();
+
+            networthHeaderDisplay.disable();
+            networthInventoryDisplay.disable();
+            networthHistory.disable();
+            networthHistoryChart.closeModal();
+            networthExclusionPopup.close();
+
+            // Clear the enhancement cost cache (character-specific)
+            networthCache.clear();
+
+            // The pool recreates itself on the next batch; idle workers should not
+            // outlive the feature that spawned them
+            terminateItemValueWorkerPool();
+
+            this.currentData = null;
+            this.isActive = false;
+        } catch (error) {
+            console.error('[Net Worth] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
         }
-
-        if (this.pricingModeHandler) {
-            config.offSettingChange('networth_pricingMode', this.pricingModeHandler);
-            this.pricingModeHandler = null;
-        }
-
-        if (this.itemsUpdateHandler) {
-            dataManager.off('items_updated', this.itemsUpdateHandler);
-            this.itemsUpdateHandler = null;
-        }
-
-        if (this.pauseRegistry) {
-            this.pauseRegistry.unregister('networth-event-listeners');
-            this.pauseRegistry.cleanup();
-            this.pauseRegistry = null;
-        }
-
-        this.timerRegistry.clearAll();
-
-        networthHeaderDisplay.disable();
-        networthInventoryDisplay.disable();
-        networthHistory.disable();
-        networthHistoryChart.closeModal();
-        networthExclusionPopup.close();
-
-        // Clear the enhancement cost cache (character-specific)
-        networthCache.clear();
-
-        // The pool recreates itself on the next batch; idle workers should not
-        // outlive the feature that spawned them
-        terminateItemValueWorkerPool();
-
-        this.currentData = null;
-        this.isActive = false;
     }
 }
 

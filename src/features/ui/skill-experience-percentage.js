@@ -180,24 +180,31 @@ class SkillExperiencePercentage {
      * Disable the feature
      */
     disable() {
-        this.timerRegistry.clearAll();
-        this.updateInterval = null;
+        try {
+            this.timerRegistry.clearAll();
+            this.updateInterval = null;
 
-        // Disconnect all progress bar observers
-        this.progressBarObservers.forEach((unwatch) => {
-            unwatch();
-        });
-        this.progressBarObservers.clear();
+            // Disconnect all progress bar observers
+            this.progressBarObservers.forEach((unwatch) => {
+                unwatch();
+            });
+            this.progressBarObservers.clear();
 
-        // Remove all percentage spans
-        document.querySelectorAll('.mwi-exp-percentage').forEach((span) => span.remove());
+            // Remove all percentage spans
+            document.querySelectorAll('.mwi-exp-percentage').forEach((span) => span.remove());
 
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
 
-        this.processedBars.clear();
-        this.isActive = false;
-        this.isInitialized = false;
+            this.processedBars.clear();
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Skill Experience Percentage] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
+        }
     }
 }
 

@@ -371,17 +371,24 @@ class MarketFilter {
      * Cleanup on disable
      */
     disable() {
-        this.unregisterHandlers.forEach((unregister) => unregister());
-        this.unregisterHandlers = [];
+        try {
+            this.unregisterHandlers.forEach((unregister) => unregister());
+            this.unregisterHandlers = [];
 
-        // Remove filter UI
-        if (this.filterContainer) {
-            this.filterContainer.remove();
-            this.filterContainer = null;
+            // Remove filter UI
+            if (this.filterContainer) {
+                this.filterContainer.remove();
+                this.filterContainer = null;
+            }
+
+            this.isActive = false;
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Market Filter] Disable failed part-way:', error);
+        } finally {
+            this.isActive = false;
+            this.isInitialized = false;
         }
-
-        this.isActive = false;
-        this.isInitialized = false;
     }
 }
 

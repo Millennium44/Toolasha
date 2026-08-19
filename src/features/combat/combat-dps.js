@@ -77,12 +77,18 @@ class CombatDPS {
     }
 
     disable() {
-        if (this.battleHandler) {
-            webSocketHook.off('battle_updated', this.battleHandler);
-            this.battleHandler = null;
+        try {
+            if (this.battleHandler) {
+                webSocketHook.off('battle_updated', this.battleHandler);
+                this.battleHandler = null;
+            }
+            this.reset();
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Combat DPS] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-        this.reset();
-        this.isInitialized = false;
     }
 
     /** Damage per second dealt so far, or null when too little has been seen */

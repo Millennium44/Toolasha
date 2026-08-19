@@ -37,18 +37,24 @@ class EnhancementFeature {
      * Cleanup all enhancement components
      */
     disable() {
-        // Cleanup WebSocket handlers
-        cleanupEnhancementHandlers();
+        try {
+            // Cleanup WebSocket handlers
+            cleanupEnhancementHandlers();
 
-        // Cleanup UI
-        enhancementUI.cleanup();
+            // Cleanup UI
+            enhancementUI.cleanup();
 
-        // Cleanup tracker (has its own disable method)
-        if (enhancementTracker.disable) {
-            enhancementTracker.disable();
+            // Cleanup tracker (has its own disable method)
+            if (enhancementTracker.disable) {
+                enhancementTracker.disable();
+            }
+
+            this.isInitialized = false;
+        } catch (error) {
+            console.error('[Enhancement Tracker] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
         }
-
-        this.isInitialized = false;
     }
 }
 

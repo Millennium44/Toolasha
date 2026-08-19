@@ -166,7 +166,13 @@ class TaskRerollTracker {
     }
 
     disable() {
-        this.cleanup();
+        try {
+            this.cleanup();
+        } catch (error) {
+            console.error('[Task Reroll Tracker] Disable failed part-way:', error);
+        } finally {
+            this.isInitialized = false;
+        }
     }
 
     /**
