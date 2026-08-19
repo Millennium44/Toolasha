@@ -55,20 +55,23 @@ onmessage = function (event) {
                 labyrinthData.roomLevel,
                 labyrinthData.crates || [],
                 labyrinthData.liveState || null,
-                labyrinthData.fullAbilities === true
+                labyrinthData.fullAbilities === true,
+                { zoneFight: labyrinthData.zoneFight === true, difficultyTier: labyrinthData.difficultyTier }
             );
         }
 
         // Create Players
         const players = playerDTOs.map((dto) => {
             const cloned = structuredClone(dto);
-            if (labyrinth) {
+            // The labyrinth allows no food or drink; an isolated zone fight does
+            if (labyrinth && !labyrinth.zoneFight) {
                 cloned.food = cloned.food.map(() => null);
                 cloned.drinks = cloned.drinks.map(() => null);
             }
             const player = Player.createFromDTO(cloned);
-            // Labyrinth: crate buffs go to zoneBuffs; otherwise use zone buffs
-            player.zoneBuffs = labyrinth ? labyrinth.buffs : zone.buffs;
+            // Labyrinth: crate buffs go to zoneBuffs; a zone fight (isolated or
+            // not) uses the zone's own buffs
+            player.zoneBuffs = labyrinth && !labyrinth.zoneFight ? labyrinth.buffs : zone.buffs;
             // Guild and achievement buffs come from each player's own DTO — the
             // shared extraBuffs used to carry player 1's, handing their guild's
             // bonuses to every teammate in a party sim

@@ -12,7 +12,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import { buildGameDataPayload, getCommunityBuffs } from '../combat-sim/combat-sim-adapter.js';
+import { buildGameDataPayload, buildPlayerDTO, getCommunityBuffs } from '../combat-sim/combat-sim-adapter.js';
 import { runLabyrinthSimulation, runBlindBuffProbe, runPlayerStatProbe } from '../combat-sim/combat-sim-runner.js';
 import {
     extractMonsterAttacks,
@@ -203,20 +203,20 @@ export const simCacheMethods = {
      * @param {number} roomLevel
      * @returns {{produced: Array, ran: boolean, error?: string}}
      */
-    async blindBuffProbe(monsterHrid, roomLevel) {
-        const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
-        const dto = this.buildLabyrinthPlayerDTO(loadoutId);
-        if (!dto) return { produced: [], ran: false };
+    async blindBuffProbe(monsterHrid, roomLevel, context = null) {
+        const setup = this.probeSetup(monsterHrid, context);
+        if (!setup) return { produced: [], ran: false };
         try {
             const produced = await runBlindBuffProbe({
                 gameData: buildGameDataPayload(),
-                playerDTOs: [dto],
-                zoneHrid: '/actions/combat/fly',
+                playerDTOs: [setup.dto],
+                zoneHrid: setup.zoneHrid,
                 monsterHrid,
                 roomLevel,
-                crates: this.getCrateHrids(),
+                crates: setup.crates,
                 communityBuffs: getCommunityBuffs(),
-                labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
+                labyrinthCombatBuffs: setup.labyrinthCombatBuffs,
+                zone: setup.zone,
             });
             return { produced, ran: true };
         } catch (error) {
@@ -239,24 +239,25 @@ export const simCacheMethods = {
      * @returns {Promise<{comparison: Object, real: Object, sim: Object,
      *   outgoing: {comparison: Object, real: Object, sim: Object}}|null>}
      */
-    async uptimeHarness(monsterHrid, roomLevel, ticks) {
-        const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
-        const dto = this.buildLabyrinthPlayerDTO(loadoutId);
-        if (!dto) return null;
+    async uptimeHarness(monsterHrid, roomLevel, ticks, context = null) {
+        const setup = this.probeSetup(monsterHrid, context);
+        if (!setup) return null;
+        const dto = setup.dto;
         const playerHrid = dto.hrid || 'player1';
         const gameData = buildGameDataPayload();
         const simResult = await runLabyrinthSimulation({
             gameData,
             playerDTOs: [dto],
-            zoneHrid: '/actions/combat/fly',
+            zoneHrid: setup.zoneHrid,
             monsterHrid,
             roomLevel,
-            crates: this.getCrateHrids(),
+            crates: setup.crates,
             hours: this.getSimHours(),
             precision: this.getSimStopRule(),
             communityBuffs: getCommunityBuffs(),
-            labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
+            labyrinthCombatBuffs: setup.labyrinthCombatBuffs,
             fullAbilities: this.labyrinthFullAbilities(),
+            zone: setup.zone,
         });
         const real = extractMonsterAttacks(ticks, { nonDamaging: nonDamagingAbilities(gameData, monsterHrid) });
         const sim = summarizeSimAttacks(simResult?.attacks?.[monsterHrid]?.[playerHrid]);
@@ -273,6 +274,42 @@ export const simCacheMethods = {
     },
 
     /**
+     * What a diagnostic probe fights with: the labyrinth setup (the lab loadout
+     * chosen for this monster, lab token buffs, crates) when the monster is a
+     * labyrinth room's, or — on a regular zone's monster — the character as
+     * they stand right now (equipped gear, consumables, abilities), in that
+     * zone, at the unit's tier, with none of the lab extras.
+     *
+     * Built for the lab and opened on a zone unit, the probes used to run the
+     * lab build against the zone monster and then report the player "built
+     * differently" (stamina 165 vs 150 from the lab level buff, no food, the
+     * lab loadout's armor) — a comparison against the wrong player entirely.
+     *
+     * @param {string} monsterHrid
+     * @param {{zone?: {hrid: string, tier: number}}|null} context - A zone
+     *   fight, or null for the labyrinth
+     * @returns {{dto: Object, zoneHrid: string, crates: Array, labyrinthCombatBuffs: Array, zone: Object|null}|null}
+     */
+    probeSetup(monsterHrid, context = null) {
+        const zone = context?.zone?.hrid ? { hrid: context.zone.hrid, tier: Number(context.zone.tier) || 0 } : null;
+        if (zone) {
+            const dto = buildPlayerDTO();
+            if (!dto) return null;
+            return { dto, zoneHrid: zone.hrid, crates: [], labyrinthCombatBuffs: [], zone };
+        }
+        const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
+        const dto = this.buildLabyrinthPlayerDTO(loadoutId);
+        if (!dto) return null;
+        return {
+            dto,
+            zoneHrid: '/actions/combat/fly',
+            crates: this.getCrateHrids(),
+            labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
+            zone: null,
+        };
+    },
+
+    /**
      * Build the sim's player for the current loadout and return its resolved
      * combatDetails at fight start — for the "player build" stat check. Room
      * level does not affect the player, but a monster is needed to run the fight.
@@ -280,20 +317,20 @@ export const simCacheMethods = {
      * @param {number} roomLevel
      * @returns {Promise<Object|null>} The sim player's combatDetails
      */
-    async simPlayerDetails(monsterHrid, roomLevel) {
-        const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
-        const dto = this.buildLabyrinthPlayerDTO(loadoutId);
-        if (!dto) return null;
+    async simPlayerDetails(monsterHrid, roomLevel, context = null) {
+        const setup = this.probeSetup(monsterHrid, context);
+        if (!setup) return null;
         try {
             return await runPlayerStatProbe({
                 gameData: buildGameDataPayload(),
-                playerDTOs: [dto],
-                zoneHrid: '/actions/combat/fly',
+                playerDTOs: [setup.dto],
+                zoneHrid: setup.zoneHrid,
                 monsterHrid,
                 roomLevel,
-                crates: this.getCrateHrids(),
+                crates: setup.crates,
                 communityBuffs: getCommunityBuffs(),
-                labyrinthCombatBuffs: this.getLabyrinthCombatBuffs(),
+                labyrinthCombatBuffs: setup.labyrinthCombatBuffs,
+                zone: setup.zone,
             });
         } catch (error) {
             console.error('[LabyrinthSimCache] Player stat probe failed:', error);

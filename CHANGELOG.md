@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Monster stat check compares against your real build in a regular zone
+
+Opened on a zone monster, the blind sim, uptime harness and "you vs sim" build check ran the labyrinth setup — the lab loadout picked for that monster, the lab token level buffs, no food or drink — against the zone unit, then reported you "built differently" (stamina 165 vs 150, wrong armor). In a zone they now use the character as they stand, in that zone, at the unit's tier, with consumables and zone buffs and none of the lab extras; the labyrinth path is unchanged.
+
 ### The "Below par" flag has its own switch
 
 The task auto-reroll reminder flagged two things under one setting: your auto-reroll list ("Reroll!") and any task rating below the board median by more than its next reroll costs ("Below par"). The second now has its own toggle, off by default, so the red border is kept for the list alone unless asked for. The reroll walk's widget also no longer feeds its own renders back into its board watcher, which froze the Tasks page.

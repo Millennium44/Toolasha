@@ -358,3 +358,49 @@ describe('labyrinth attempt accounting', () => {
         expect(result.labyAttemptCount).toBeGreaterThanOrEqual(3);
     });
 });
+
+describe('Labyrinth as an isolated zone fight', () => {
+    afterEach(() => {
+        clearSimRng();
+    });
+
+    test('a zone fight builds the monster at its zone tier; a lab room at tier 0', () => {
+        // Only what Monster needs to resolve a tiered spawn
+        setGameData({
+            combatMonsterDetailMap: {
+                '/monsters/vampire': {
+                    hrid: '/monsters/vampire',
+                    name: 'Vampire',
+                    combatDetails: {
+                        currentHitpoints: 100,
+                        maxHitpoints: 100,
+                        staminaLevel: 10,
+                        intelligenceLevel: 10,
+                        attackLevel: 10,
+                        meleeLevel: 10,
+                        defenseLevel: 10,
+                        rangedLevel: 10,
+                        magicLevel: 10,
+                        combatStats: {},
+                    },
+                    abilities: [],
+                    dropTable: [],
+                    rareDropTable: [],
+                    elite: false,
+                },
+            },
+            abilityDetailMap: {},
+            itemDetailMap: {},
+            combatStyleDetailMap: {},
+        });
+        const lab = new Labyrinth('/monsters/vampire', 0);
+        const zoneFight = new Labyrinth('/monsters/vampire', 0, [], null, true, { zoneFight: true, difficultyTier: 5 });
+
+        expect(lab.zoneFight).toBe(false);
+        expect(lab.difficultyTier).toBe(0);
+        expect(zoneFight.zoneFight).toBe(true);
+        expect(zoneFight.difficultyTier).toBe(5);
+        expect(lab.getMonster()[0].difficultyTier).toBe(0);
+        expect(zoneFight.getMonster()[0].difficultyTier).toBe(5);
+    });
+});

@@ -520,6 +520,7 @@ export async function runLabyrinthSimulation(params, onProgress) {
         seed,
         isTaskFight,
         fullAbilities,
+        zone,
     } = params;
 
     // Guild buffs are not folded in here: the worker reads each player DTO's
@@ -538,14 +539,17 @@ export async function runLabyrinthSimulation(params, onProgress) {
         taskId,
         gameData,
         playerDTOs,
-        zoneHrid,
-        difficultyTier: 0,
+        zoneHrid: zone?.hrid || zoneHrid,
+        difficultyTier: zone ? Number(zone.tier) || 0 : 0,
         simulationTimeLimit: hours * ONE_HOUR_NS,
         extraBuffs,
         isTaskFight: Boolean(isTaskFight),
         labyrinth: {
             monsterHrid,
             roomLevel,
+            // An isolated fight against this one zone monster, at its zone
+            // tier, with the player's consumables and zone buffs (see Labyrinth)
+            ...(zone ? { zoneFight: true, difficultyTier: Number(zone.tier) || 0 } : {}),
             crates: crates || [],
             // Replays a fight in progress instead of starting each encounter
             // clean, for a conditional "will I clear from here" estimate
@@ -581,8 +585,17 @@ const BLIND_PROBE_FIGHTS = 5;
  * @returns {Promise<Array<{uniqueHrid,typeHrid,ratioBoost,flatBoost}>>}
  */
 export async function runBlindBuffProbe(params) {
-    const { gameData, playerDTOs, zoneHrid, monsterHrid, roomLevel, crates, communityBuffs, labyrinthCombatBuffs } =
-        params;
+    const {
+        gameData,
+        playerDTOs,
+        zoneHrid,
+        monsterHrid,
+        roomLevel,
+        crates,
+        communityBuffs,
+        labyrinthCombatBuffs,
+        zone,
+    } = params;
     const extraBuffs = [...buildExtraBuffs(communityBuffs), ...(labyrinthCombatBuffs || [])];
     const taskId = ++taskIdCounter;
     const message = {
@@ -590,8 +603,8 @@ export async function runBlindBuffProbe(params) {
         taskId,
         gameData,
         playerDTOs,
-        zoneHrid,
-        difficultyTier: 0,
+        zoneHrid: zone?.hrid || zoneHrid,
+        difficultyTier: zone ? Number(zone.tier) || 0 : 0,
         // Time is not the stopping rule here — a fixed handful of fights is
         simulationTimeLimit: 3600 * 1e9,
         extraBuffs,
@@ -600,6 +613,7 @@ export async function runBlindBuffProbe(params) {
         labyrinth: {
             monsterHrid,
             roomLevel,
+            ...(zone ? { zoneFight: true, difficultyTier: Number(zone.tier) || 0 } : {}),
             crates: crates || [],
             liveState: null,
             // The full kit — self-buffs and debuff abilities are the whole point
@@ -621,8 +635,17 @@ export async function runBlindBuffProbe(params) {
  * @returns {Promise<Object|null>} The player's `combatDetails`, or null
  */
 export async function runPlayerStatProbe(params) {
-    const { gameData, playerDTOs, zoneHrid, monsterHrid, roomLevel, crates, communityBuffs, labyrinthCombatBuffs } =
-        params;
+    const {
+        gameData,
+        playerDTOs,
+        zoneHrid,
+        monsterHrid,
+        roomLevel,
+        crates,
+        communityBuffs,
+        labyrinthCombatBuffs,
+        zone,
+    } = params;
     const extraBuffs = [...buildExtraBuffs(communityBuffs), ...(labyrinthCombatBuffs || [])];
     const taskId = ++taskIdCounter;
     const message = {
@@ -630,8 +653,8 @@ export async function runPlayerStatProbe(params) {
         taskId,
         gameData,
         playerDTOs,
-        zoneHrid,
-        difficultyTier: 0,
+        zoneHrid: zone?.hrid || zoneHrid,
+        difficultyTier: zone ? Number(zone.tier) || 0 : 0,
         simulationTimeLimit: 3600 * 1e9,
         extraBuffs,
         isTaskFight: false,
@@ -639,6 +662,7 @@ export async function runPlayerStatProbe(params) {
         labyrinth: {
             monsterHrid,
             roomLevel,
+            ...(zone ? { zoneFight: true, difficultyTier: Number(zone.tier) || 0 } : {}),
             crates: crates || [],
             liveState: null,
             fullAbilities: true,

@@ -167,6 +167,37 @@ function buildSimMonster(gameUnit, applyBuffs) {
     }
 }
 
+/**
+ * Whether the unit on screen belongs to a regular combat zone rather than a
+ * labyrinth room, and which zone at which tier.
+ *
+ * The header names the action ("Labyrinth - …" or the zone); a zone unit
+ * also carries its difficulty tier, which a labyrinth unit never does.
+ * @param {Object} gameUnit - The fetched unit
+ * @returns {{hrid: string, tier: number}|null} The zone, or null for the labyrinth
+ */
+function zoneContextFor(gameUnit) {
+    try {
+        const header = document.querySelector("div[class*='Header_actionName']")?.textContent || '';
+        if (/labyrinth/i.test(header)) return null;
+        const action = (dataManager.getCurrentActions?.() || [])[0];
+        const hrid = action?.actionHrid || null;
+        if (!hrid || !/\/actions\/combat\//.test(hrid) || /labyrinth/i.test(hrid)) return null;
+        return { hrid, tier: Number(gameUnit?.difficultyTier) || 0 };
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * The probe context a stored snapshot carries: a zone fight, or the labyrinth.
+ * @param {Object} snap - A panel snapshot
+ * @returns {{zone: {hrid: string, tier: number}}|null}
+ */
+function probeContext(snap) {
+    return snap?.zone?.hrid ? { zone: snap.zone } : null;
+}
+
 class MonsterStatCheckPanel {
     constructor() {
         this.container = null;
@@ -258,6 +289,10 @@ class MonsterStatCheckPanel {
             hrid: gameUnit?.hrid,
             name: gameUnit?.name,
             roomLevel: buffedBuilt?.roomLevel ?? baseBuilt?.roomLevel ?? 0,
+            // Where this unit was met: a regular zone (with its tier) or the
+            // labyrinth. The probes build a different player for each — the
+            // character as they stand for a zone, the lab setup for a room
+            zone: zoneContextFor(gameUnit),
             simBuilt: Boolean(buffedBuilt?.monster?.combatDetails),
             // Kept so the blind-sim button can diff produced buffs against the live set.
             combatBuffMap: gameUnit?.combatBuffMap || {},
@@ -414,7 +449,7 @@ class MonsterStatCheckPanel {
             const runs = [];
             let ran = false;
             for (let n = 0; n < BLIND_PROBE_RUNS; n++) {
-                const probe = await labyrinthClearRate.blindBuffProbe(snap.hrid, snap.roomLevel);
+                const probe = await labyrinthClearRate.blindBuffProbe(snap.hrid, snap.roomLevel, probeContext(snap));
                 if (probe?.ran) {
                     ran = true;
                     runs.push(probe.produced || []);
@@ -459,7 +494,12 @@ class MonsterStatCheckPanel {
             });
             const usable = capture?.ticks?.length && mismatches.length === 0;
             if (usable) {
-                const result = await labyrinthClearRate.uptimeHarness(snap.hrid, snap.roomLevel, capture.ticks);
+                const result = await labyrinthClearRate.uptimeHarness(
+                    snap.hrid,
+                    snap.roomLevel,
+                    capture.ticks,
+                    probeContext(snap)
+                );
                 snap.uptime = result
                     ? {
                           rows: result.comparison.rows,
@@ -507,7 +547,7 @@ class MonsterStatCheckPanel {
             return;
         }
         try {
-            const simDetails = await labyrinthClearRate.simPlayerDetails(snap.hrid, snap.roomLevel);
+            const simDetails = await labyrinthClearRate.simPlayerDetails(snap.hrid, snap.roomLevel, probeContext(snap));
             if (!simDetails) {
                 this.playerCheck = { error: 'Sim player build failed.' };
             } else {

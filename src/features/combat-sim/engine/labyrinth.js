@@ -9,10 +9,20 @@ const LABYRINTH_TIMEOUT = 120 * 1e9; // 120 seconds in nanoseconds
  * Timeout (120s) or player death = loss; enemy killed = win.
  */
 class Labyrinth {
-    constructor(monsterHrid, roomLevel, crateHrids = [], liveState = null, fullAbilities = true) {
+    constructor(monsterHrid, roomLevel, crateHrids = [], liveState = null, fullAbilities = true, options = {}) {
         this.monsterHrid = monsterHrid;
         this.hrid = monsterHrid;
         this.roomLevel = roomLevel;
+        /**
+         * An isolated fight against ONE zone monster, outside the labyrinth:
+         * the monster is built at its zone tier, the player keeps their food,
+         * drinks and zone buffs, and no crate or labyrinth buff applies. Used by
+         * the monster stat check when it is opened on a regular zone's unit —
+         * it used to run the lab's loadout, lab token buffs and no consumables
+         * against a zone monster and then report the player "built differently".
+         */
+        this.zoneFight = options.zoneFight === true;
+        this.difficultyTier = Number(options.difficultyTier) || 0;
         // Whether the monster is built with its full ability kit rather than only
         // the abilities available at difficultyTier 0 (see Monster). Defaults ON:
         // the tier-0 subset over-predicts clears, so only an explicit false —
@@ -55,7 +65,7 @@ class Labyrinth {
      */
     getMonster() {
         this.attemptCount++;
-        return [new Monster(this.monsterHrid, 0, this.roomLevel, this.fullAbilities)];
+        return [new Monster(this.monsterHrid, this.difficultyTier, this.roomLevel, this.fullAbilities)];
     }
 
     /**
