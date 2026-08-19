@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leaderboard rates: idle is a zero, and ranks are kept per view
+
+A reading that found the same value as the last one was never recorded, so a player not doing the skill sat on "1 reading" forever instead of the 0/h that was true — and that is why some rows had rates and others did not. An unchanged value is now recorded as a real zero once the board has had a refresh (20 min) to move; inside that window it is the same snapshot seen twice and is ignored. Idle runs keep their first and last reading, and a player idle across a whole day or week still reads a known 0. Rank is now tracked per board AND view (the Guilds tab's All / Standard / Ironcow / Casual, the player boards' Standard / Ironcow), so "▲10" no longer compares a guild's #11 on All with its #1 on Ironcow.
+
 ### Level boards read in levels per day and week; weekly boards in days and weeks
 
 Total Level now tracks the level itself (`Lv/day` · `Lv/week` · `Rank ↑ in`) instead of XP per hour over sums in the billions — the Guilds Level board stays on experience, `/h` · `/day`; the Guilds tab's Weekly boards (Points, Trials, Milking…) read `/day` · `/week` in their own unit. A measured week needs two readings more than a day apart; until then the week figure is the day projected and marked. Level-board series recorded as XP before this are dropped once.

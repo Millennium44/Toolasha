@@ -15,6 +15,11 @@ function mergePlayerXP(stored, memory) {
     )(stored, memory);
     const out = {};
     for (const [key, samples] of Object.entries(union)) {
+        if (key.startsWith(RANK_PREFIX)) {
+            // Rank readings are a plain list, capped — no XP thinning applies
+            out[key] = samples.slice(-RANK_READINGS_KEPT);
+            continue;
+        }
         const replayed = [];
         for (const sample of samples) pushXP(replayed, sample);
         out[key] = replayed;
@@ -40,6 +45,23 @@ const WINDOW_10M = 10 * 60 * 1000;
 const WINDOW_1H = 60 * 60 * 1000;
 const WINDOW_1D = 24 * 60 * 60 * 1000;
 const WINDOW_1W = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * The board refreshes every 20 minutes. A reading that finds the same value
+ * as the last one inside that window has learned nothing — the board has not
+ * moved yet — but the same value after a full refresh is a real zero: the
+ * player was not doing the skill. Only the second kind is recorded.
+ */
+const BOARD_REFRESH_MS = 20 * 60 * 1000;
+
+/**
+ * Rank readings live beside the value series under their own keys, per board
+ * AND per filter — the All / Standard / Ironcow / Casual views of one board
+ * rank the same guild differently, and "moved up ten" across two views of
+ * the same moment is not a move.
+ */
+const RANK_PREFIX = 'rank|';
+const RANK_READINGS_KEPT = 20;
 
 // ─── History compaction helpers ──────────────────────────────────────────────
 
@@ -71,14 +93,16 @@ function pushXP(arr, d) {
 
     let sameLength = 0;
     for (let i = arr.length - 1; i >= 0; i--) {
-        if (arr[i].xp === d.xp && d.t - arr[i].t <= WINDOW_1H) {
+        if (arr[i].xp === d.xp) {
             sameLength++;
         } else {
             break;
         }
     }
-    if (sameLength > 1) {
-        arr.splice(arr.length - sameLength, sameLength - 1);
+    if (sameLength > 2) {
+        // An idle run keeps its first and last reading — the span of the zero
+        // is the information; the readings in between are not
+        arr.splice(arr.length - sameLength + 1, sameLength - 2);
     }
 
     let oldLength = 0;
@@ -151,11 +175,20 @@ function calcStats(arr) {
     const last1h = inLastInterval(arr, WINDOW_1H);
     const lastHourXPH = last1h.length >= 2 ? calcXPH(last1h[0], last1h[last1h.length - 1]) : 0;
 
-    const last1d = inLastInterval(arr, WINDOW_1D);
+    // A window holding one reading still knows its rate when the reading
+    // before the window carries the same value — an idle run keeps only its
+    // first and last reading, so a player idle for three days has no second
+    // reading inside the day, and the answer is still a known zero
+    const idleInto = (window) =>
+        window.length === 1 && arr[samples - 2].xp === arr[samples - 1].xp
+            ? [arr[samples - 2], arr[samples - 1]]
+            : window;
+
+    const last1d = idleInto(inLastInterval(arr, WINDOW_1D));
     const lastDayXPH = last1d.length >= 2 ? calcXPH(last1d[0], last1d[last1d.length - 1]) : 0;
     const daySpanMs = last1d.length >= 2 ? last1d[last1d.length - 1].t - last1d[0].t : 0;
 
-    const last1w = inLastInterval(arr, WINDOW_1W);
+    const last1w = idleInto(inLastInterval(arr, WINDOW_1W));
     const lastWeekXPH = last1w.length >= 2 ? calcXPH(last1w[0], last1w[last1w.length - 1]) : 0;
     const weekSpanMs = last1w.length >= 2 ? last1w[last1w.length - 1].t - last1w[0].t : 0;
 
@@ -196,6 +229,20 @@ export function isWeeklyBoard(category) {
     return typeof category === 'string' && category.includes('weekly');
 }
 
+/**
+ * The view of a board a message describes: the player boards' Standard /
+ * Ironcow tabs (`gameModeFilter`), the guild boards' All / Standard / Ironcow
+ * / Casual (`guildTypeFilter`), the trial boards' trial (`trialFilter`).
+ * @param {Object} data - A `leaderboard_updated` message
+ * @returns {string} A stable key, 'all' when nothing narrows the view
+ */
+export function filterKeyOf(data) {
+    const parts = [data?.gameModeFilter, data?.guildTypeFilter, data?.trialFilter].filter(
+        (part) => typeof part === 'string' && part && part !== 'all'
+    );
+    return parts.length ? parts.join('/') : 'all';
+}
+
 // ─── Tracker class ──────────────────────────────────────────────────────────
 
 class LeaderboardXPTracker {
@@ -213,6 +260,7 @@ class LeaderboardXPTracker {
             label: 'LeaderboardXPTracker',
         });
         this.lastLeaderboardCategory = null;
+        this.lastFilterKey = 'all';
         this.unregisterHandlers = [];
     }
 
@@ -235,7 +283,7 @@ class LeaderboardXPTracker {
         const map = this.history.get();
         let purged = false;
         for (const [key, series] of Object.entries(map)) {
-            if (!Array.isArray(series) || !series.length) continue;
+            if (!Array.isArray(series) || !series.length || key.startsWith(RANK_PREFIX)) continue;
             const category = key.slice(0, key.lastIndexOf('_'));
             // Level-board series recorded before they tracked the level hold
             // XP sums — a level is never in the millions
@@ -275,6 +323,7 @@ class LeaderboardXPTracker {
 
         const t = Date.now();
         this.lastLeaderboardCategory = data.leaderboardCategory;
+        this.lastFilterKey = filterKeyOf(data);
         let changed = false;
 
         // The board's number is its LAST value column: Level/Experience boards
@@ -301,19 +350,30 @@ class LeaderboardXPTracker {
                 this.playerXPHistory[key] = [];
             }
             const history = this.playerXPHistory[key];
-            // Only record when XP changes — repeated same-XP navigations would otherwise
-            // extend the time window without changing the delta, causing rates to decay.
+            const last = history[history.length - 1];
+            // A changed value is always a reading. An unchanged one is a
+            // reading too — a real zero — once the board has had time to move
+            // (see BOARD_REFRESH_MS); inside that window it is the same
+            // snapshot seen twice and says nothing. Idle players used to
+            // never get a second reading at all, and sat on "1 reading"
+            // forever instead of the 0/h that was the truth.
+            if (!last || last.xp !== xp || t - last.t >= BOARD_REFRESH_MS) {
+                pushXP(history, { t, xp });
+                changed = true;
+            }
+
+            // The rank, per board and filter, whenever it moved or a refresh
+            // has passed — what "since the previous reading" compares against
             const rank = Number.isFinite(row.rank) ? row.rank : undefined;
-            if (history.length === 0 || history[history.length - 1].xp !== xp) {
-                pushXP(history, rank === undefined ? { t, xp } : { t, xp, r: rank });
-                changed = true;
-            } else if (rank !== undefined && history[history.length - 1].r !== rank) {
-                // Same value, different place: somebody else moved. The rank is
-                // the row's, not the value's, so it is refreshed on the reading
-                // that stands — without that a rank change with no XP change
-                // would never be seen
-                history[history.length - 1].r = rank;
-                changed = true;
+            if (rank !== undefined) {
+                const rankKey = `${RANK_PREFIX}${data.leaderboardCategory}|${this.lastFilterKey}_${name}`;
+                const ranks = this.playerXPHistory[rankKey] || (this.playerXPHistory[rankKey] = []);
+                const lastRank = ranks[ranks.length - 1];
+                if (!lastRank || lastRank.r !== rank || t - lastRank.t >= BOARD_REFRESH_MS) {
+                    ranks.push({ t, r: rank });
+                    if (ranks.length > RANK_READINGS_KEPT) ranks.splice(0, ranks.length - RANK_READINGS_KEPT);
+                    changed = true;
+                }
             }
         }
 
@@ -342,8 +402,8 @@ class LeaderboardXPTracker {
      * @param {string} category
      * @returns {{rank: number, at: number}|null} Null without two readings carrying ranks
      */
-    getPreviousRank(playerName, category) {
-        const series = this.playerXPHistory[`${category}_${playerName}`];
+    getPreviousRank(playerName, category, filterKey = this.lastFilterKey || 'all') {
+        const series = this.playerXPHistory[`${RANK_PREFIX}${category}|${filterKey}_${playerName}`];
         if (!Array.isArray(series) || series.length < 2) return null;
         const previous = series[series.length - 2];
         return Number.isFinite(previous?.r) ? { rank: previous.r, at: previous.t } : null;

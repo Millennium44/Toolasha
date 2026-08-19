@@ -57,14 +57,16 @@ describe('leaderboard XP tracker', () => {
         vi.useRealTimers();
     });
 
-    test('the guild Level board is recorded like any other, with the rank on each reading', () => {
+    test('the guild Level board is recorded like any other, and the rank goes to its own per-view series', () => {
         game.handlers.leaderboard_updated({
             leaderboardCategory: 'guild',
+            guildTypeFilter: 'all',
             leaderboard: { rows: [{ name: 'Someone', value2: 1000, rank: 4 }] },
         });
 
-        expect(leaderboardXPTracker.playerXPHistory['guild_Someone']).toEqual([
-            { t: expect.any(Number), xp: 1000, r: 4 },
+        expect(leaderboardXPTracker.playerXPHistory['guild_Someone']).toEqual([{ t: expect.any(Number), xp: 1000 }]);
+        expect(leaderboardXPTracker.playerXPHistory['rank|guild|all_Someone']).toEqual([
+            { t: expect.any(Number), r: 4 },
         ]);
     });
 
@@ -83,24 +85,94 @@ describe('leaderboard XP tracker', () => {
         expect(series[0].xp).toBe(30);
     });
 
-    test('a rank change with no value change updates the rank on the standing reading', () => {
-        leaderboardXPTracker.playerXPHistory['foraging_P'] = [{ t: 1000, xp: 500, r: 7 }];
-        game.handlers.leaderboard_updated({
-            leaderboardCategory: 'foraging',
-            leaderboard: { rows: [{ name: 'P', value2: 500, rank: 8 }] },
-        });
+    test('an unchanged value inside one board refresh is not a reading; after a refresh it is a real zero', () => {
+        const read = () =>
+            game.handlers.leaderboard_updated({
+                leaderboardCategory: 'foraging',
+                leaderboard: { rows: [{ name: 'Idle', value2: 500, rank: 7 }] },
+            });
 
-        expect(leaderboardXPTracker.playerXPHistory['foraging_P']).toEqual([{ t: 1000, xp: 500, r: 8 }]);
+        read();
+        vi.setSystemTime(new Date('2026-01-01T00:05:00Z'));
+        read();
+        // Five minutes on, same value: the board has not moved yet
+        expect(leaderboardXPTracker.playerXPHistory['foraging_Idle']).toHaveLength(1);
+
+        vi.setSystemTime(new Date('2026-01-01T00:25:00Z'));
+        read();
+        // A refresh later, still the same: a genuine zero, and a rate of 0
+        expect(leaderboardXPTracker.playerXPHistory['foraging_Idle']).toHaveLength(2);
+        const stats = leaderboardXPTracker.getPlayerStats('Idle', 'foraging');
+        expect(stats.samples).toBe(2);
+        expect(stats.lastXPH).toBe(0);
+        expect(stats.dayReadings).toBe(2);
     });
 
-    test('getPreviousRank reads the reading before the latest, and is null without two ranked readings', () => {
-        leaderboardXPTracker.playerXPHistory['foraging_Q'] = [
-            { t: 1000, xp: 1, r: 9 },
-            { t: 5000, xp: 2, r: 6 },
+    test('an idle run keeps its first and last reading, so the span of the zero is known', () => {
+        const read = () =>
+            game.handlers.leaderboard_updated({
+                leaderboardCategory: 'foraging',
+                leaderboard: { rows: [{ name: 'Idle', value2: 500, rank: 7 }] },
+            });
+        for (let i = 0; i < 5; i++) {
+            vi.setSystemTime(new Date(Date.parse('2026-01-01T00:00:00Z') + i * 21 * 60 * 1000));
+            read();
+        }
+        const series = leaderboardXPTracker.playerXPHistory['foraging_Idle'];
+        expect(series).toHaveLength(2);
+        expect(series[1].t - series[0].t).toBe(4 * 21 * 60 * 1000);
+    });
+
+    test('a player idle across the whole day window still reads a known zero for the day', () => {
+        const day = 24 * 60 * 60 * 1000;
+        const now = Date.now();
+        leaderboardXPTracker.playerXPHistory['foraging_Idle'] = [
+            { t: now - 3 * day, xp: 500 },
+            { t: now - 60 * 1000, xp: 500 },
         ];
-        expect(leaderboardXPTracker.getPreviousRank('Q', 'foraging')).toEqual({ rank: 9, at: 1000 });
-        leaderboardXPTracker.playerXPHistory['foraging_R'] = [{ t: 1000, xp: 1, r: 9 }];
-        expect(leaderboardXPTracker.getPreviousRank('R', 'foraging')).toBeNull();
+        const stats = leaderboardXPTracker.getPlayerStats('Idle', 'foraging');
+        expect(stats.dayReadings).toBe(2);
+        expect(stats.lastDayXPH).toBe(0);
+        expect(stats.weekReadings).toBe(2);
+    });
+
+    test('ranks are kept per view: the Ironcow view of a guild board does not overwrite the All view', () => {
+        game.handlers.leaderboard_updated({
+            leaderboardCategory: 'guild_points',
+            guildTypeFilter: 'all',
+            leaderboard: { rows: [{ name: 'JU', value1: 333771, rank: 11 }] },
+        });
+        game.handlers.leaderboard_updated({
+            leaderboardCategory: 'guild_points',
+            guildTypeFilter: 'ironcow',
+            leaderboard: { rows: [{ name: 'JU', value1: 333771, rank: 1 }] },
+        });
+
+        expect(leaderboardXPTracker.playerXPHistory['rank|guild_points|all_JU']).toEqual([
+            { t: expect.any(Number), r: 11 },
+        ]);
+        expect(leaderboardXPTracker.playerXPHistory['rank|guild_points|ironcow_JU']).toEqual([
+            { t: expect.any(Number), r: 1 },
+        ]);
+        // No "moved up ten" from comparing the two views
+        expect(leaderboardXPTracker.getPreviousRank('JU', 'guild_points')).toBeNull();
+        expect(leaderboardXPTracker.getPreviousRank('JU', 'guild_points', 'all')).toBeNull();
+        // The value series is one, whichever view read it
+        expect(leaderboardXPTracker.playerXPHistory['guild_points_JU']).toHaveLength(1);
+    });
+
+    test('getPreviousRank reads the view’s reading before the latest, and is null without two', () => {
+        leaderboardXPTracker.playerXPHistory['rank|foraging|all_Q'] = [
+            { t: 1000, r: 9 },
+            { t: 5000, r: 6 },
+        ];
+        leaderboardXPTracker.playerXPHistory['foraging_Q'] = [
+            { t: 1000, xp: 1 },
+            { t: 5000, xp: 2 },
+        ];
+        expect(leaderboardXPTracker.getPreviousRank('Q', 'foraging', 'all')).toEqual({ rank: 9, at: 1000 });
+        leaderboardXPTracker.playerXPHistory['rank|foraging|all_R'] = [{ t: 1000, r: 9 }];
+        expect(leaderboardXPTracker.getPreviousRank('R', 'foraging', 'all')).toBeNull();
         expect(leaderboardXPTracker.getLatestValue('Q', 'foraging')).toBe(2);
     });
 
