@@ -10,6 +10,28 @@ import { formatLargeNumber } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
 /**
+ * Whether a `battle_unit_fetched` payload is an end-of-session summary rather
+ * than a unit sheet.
+ *
+ * The game reuses one message for two very different things: the summary the
+ * battle panel draws when a combat session ends (loot and experience totals),
+ * and the stat sheet it sends when you click a unit mid-fight (that unit's
+ * resolved `combatDetails`, no totals at all). Only the first is this feature's
+ * business. Without the distinction every monster click walked the loot and
+ * experience branches, warned twice about maps that were never meant to be
+ * there, and then spent ten retries hunting a battle panel that was not being
+ * drawn — three console lines per click, none of them a real problem.
+ *
+ * @param {Object} message - A `battle_unit_fetched` payload
+ * @returns {boolean} True when the payload carries session totals
+ */
+export function isSessionSummary(message) {
+    const unit = message?.unit;
+    if (!unit) return false;
+    return Boolean(unit.totalLootMap || unit.totalSkillExperienceMap);
+}
+
+/**
  * CombatSummary class manages combat completion statistics display
  */
 class CombatSummary {
@@ -53,6 +75,13 @@ class CombatSummary {
         // Validate message structure
         if (!message || !message.unit) {
             console.warn('[Combat Summary] Invalid message structure:', message);
+            return;
+        }
+
+        // A unit sheet (clicking a monster or yourself mid-fight) rides the same
+        // message and is not a summary — drop it silently, before the market
+        // fetch, the missing-map warnings and the battle-panel hunt.
+        if (!isSessionSummary(message)) {
             return;
         }
 

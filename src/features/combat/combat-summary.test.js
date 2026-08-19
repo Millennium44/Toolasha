@@ -207,6 +207,43 @@ describe('combat summary', () => {
         expect(text('mwi-combat-revenue')).toBe('Total revenue: 0 / 0');
     });
 
+    test('a unit sheet is ignored silently — no warning, no injection', async () => {
+        // Clicking a monster mid-fight sends the same message with that unit's
+        // resolved stats and no session totals. It is not a summary.
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        buildBattlePanel('Combat Duration: 1h 0m 0s | Battles: 2 | Deaths: 0');
+
+        await game.wsHandlers.battle_unit_fetched({
+            unit: { hrid: '/monsters/vampire', combatDetails: { maxHitpoints: 1000 } },
+        });
+
+        expect(text('mwi-combat-revenue')).toBeNull();
+        expect(warn).not.toHaveBeenCalled();
+        expect(error).not.toHaveBeenCalled();
+        warn.mockRestore();
+        error.mockRestore();
+    });
+
+    test('a unit sheet with no battle panel on screen never starts the panel hunt', async () => {
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        document.body.innerHTML = '';
+        vi.useFakeTimers();
+
+        await game.wsHandlers.battle_unit_fetched({
+            unit: { hrid: '/monsters/vampire', combatDetails: { maxHitpoints: 1000 } },
+        });
+        // Ten retries at 200ms is the whole hunt; none of it should be pending.
+        await vi.advanceTimersByTimeAsync(3000);
+
+        expect(error).not.toHaveBeenCalled();
+        expect(warn).not.toHaveBeenCalled();
+        vi.useRealTimers();
+        error.mockRestore();
+        warn.mockRestore();
+    });
+
     test('disable stops the feature from reacting to further messages', async () => {
         combatSummary.disable();
         buildBattlePanel('Combat Duration: 1h 0m 0s | Battles: 2 | Deaths: 0');
