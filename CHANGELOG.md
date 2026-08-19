@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trade ledger and trade history survive failed reads and stale tabs
+
+The fill ledger and the per-item last buy/sell prices got the same treatment as the listing log: a load whose read cannot be trusted keeps the in-memory copy instead of blanking it, and every save re-reads storage and folds it under memory (fills by listing, time and quantity; prices per item and side) before writing, skipping the write outright when storage cannot be read first — so a dropped IndexedDB connection or a second tab no longer erases what the other recorded.
+
 ### Storage waits out a dropped IndexedDB connection instead of answering with defaults
 
 When Chromium drops the IndexedDB connection (another tab upgrading the schema, memory pressure, an extension churning the database), reads used to answer with their defaults and writes were refused for the second or so the reconnect took — the window in which a module could load an "empty" record and write it back over real history. Every storage operation now waits (bounded, 5s) for the reconnect before proceeding, so a transient drop is a slightly slower read rather than a silent empty one; a reconnect that has recently failed is not waited on again.

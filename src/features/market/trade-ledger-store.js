@@ -14,7 +14,8 @@
 
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import storage from '../../core/storage.js';
+import { readScoped, writeScoped, characterKey } from '../../utils/character-key.js';
 import { detectFills, trimLedger, LEDGER_RECORD_CAP } from '../../utils/trade-ledger.js';
 
 /** Same store the other market trackers live in. */
@@ -30,6 +31,57 @@ const RECORDS_BASE = 'tradeLedgerRecords';
  */
 const STATE_BASE = 'tradeLedgerState';
 
+/**
+ * The identity of a fill record, for folding two copies of the ledger together.
+ *
+ * Fills carry no id of their own: one is "listing N moved by Q units at time
+ * T", and that triple is what tells two records apart. The wire sends one
+ * object per changed listing per event, so the same listing cannot fill twice
+ * at the same millisecond; two records agreeing on all three are the same
+ * fill seen twice (by two tabs, or before and after a failed read).
+ * @param {Object} record - Fill record
+ * @returns {string} `listingId|t|quantity`
+ */
+export function fillKey(record) {
+    return `${record.listingId}|${record.t}|${record.quantity}`;
+}
+
+/**
+ * Two ledgers folded into one by {@link fillKey}, the second winning on a
+ * clash, then capped the way every other ledger write is.
+ * @param {Array<Object>} base - Records, typically as stored
+ * @param {Array<Object>} fresh - Records, typically in memory
+ * @returns {Array<Object>} Merged, oldest first, at most LEDGER_RECORD_CAP
+ */
+export function mergeRecords(base, fresh) {
+    const byKey = new Map();
+    for (const record of Array.isArray(base) ? base : []) {
+        if (record && record.itemHrid) byKey.set(fillKey(record), record);
+    }
+    for (const record of Array.isArray(fresh) ? fresh : []) {
+        if (record && record.itemHrid) byKey.set(fillKey(record), record);
+    }
+    return trimLedger(
+        [...byKey.values()].sort((a, b) => a.t - b.t),
+        LEDGER_RECORD_CAP
+    );
+}
+
+/**
+ * Two baseline maps folded into one by listing id, the second winning.
+ *
+ * Baselines only the stored side knows (another tab's, or written before a
+ * failed read) are kept: a baseline this tab never loaded is still the only
+ * thing that can turn that listing's next update into a fill.
+ * @param {Object<string, Object>} base - Baselines, typically as stored
+ * @param {Object<string, Object>} fresh - Baselines, typically in memory
+ * @returns {Object<string, Object>} Merged map
+ */
+export function mergeStates(base, fresh) {
+    const safe = (map) => (map && typeof map === 'object' && !Array.isArray(map) ? map : {});
+    return { ...safe(base), ...safe(fresh) };
+}
+
 class TradeLedgerStore {
     constructor() {
         this.records = [];
@@ -38,6 +90,8 @@ class TradeLedgerStore {
         this.isLoaded = false;
         this.initHandler = null;
         this.updateHandler = null;
+        this._recordsChain = null;
+        this._statesChain = null;
     }
 
     /**
@@ -94,16 +148,40 @@ class TradeLedgerStore {
     }
 
     /**
-     * Load records and listing-state baselines from storage
+     * Load records and listing-state baselines from storage.
+     *
+     * A read that could not be made is not an empty ledger: each key is probed
+     * with a read that says whether it worked, and on failure the in-memory
+     * copy stands. Taking a failed read for an empty one, and then writing it
+     * back on the next fill, is how a whole ledger would vanish. What is stored
+     * is folded under what is in memory, so a fill this tab recorded while a
+     * save was in flight is kept.
      */
     async load() {
         try {
-            this.records = (await readScoped(RECORDS_BASE, LEDGER_STORE, [])) || [];
-            this.states = (await readScoped(STATE_BASE, LEDGER_STORE, {})) || {};
+            const recordsProbe = await storage.tryGet(characterKey(RECORDS_BASE), LEDGER_STORE);
+            if (recordsProbe === null) {
+                console.warn('[TradeLedger] Records could not be read; keeping the in-memory copy');
+            } else {
+                const stored = recordsProbe.found
+                    ? recordsProbe.value
+                    : (await readScoped(RECORDS_BASE, LEDGER_STORE, [])) || [];
+                this.records = mergeRecords(stored, this.records);
+            }
+
+            const statesProbe = await storage.tryGet(characterKey(STATE_BASE), LEDGER_STORE);
+            if (statesProbe === null) {
+                console.warn('[TradeLedger] Listing baselines could not be read; keeping the in-memory copy');
+            } else {
+                const stored = statesProbe.found
+                    ? statesProbe.value
+                    : (await readScoped(STATE_BASE, LEDGER_STORE, {})) || {};
+                this.states = mergeStates(stored, this.states);
+            }
         } catch (error) {
             console.error('[TradeLedger] Failed to load ledger:', error);
-            this.records = [];
-            this.states = {};
+            // Keep whatever is in memory; an empty ledger here would be written
+            // back over the stored one by the next fill
         }
         this.isLoaded = true;
     }
@@ -161,25 +239,66 @@ class TradeLedgerStore {
     }
 
     /**
-     * Persist fill records (immediate — fills are the whole point of the ledger)
+     * Persist fill records (immediate — fills are the whole point of the ledger).
+     *
+     * Read-merge-write, serialized: the stored ledger is re-read and folded
+     * under the in-memory one before the write, so another tab's fills, or
+     * records this tab never loaded, are carried forward rather than
+     * overwritten. When the pre-write read cannot be made the write is skipped
+     * outright — the ledger in memory is kept and the next save retries —
+     * because a blind overwrite from a possibly-empty copy is exactly the
+     * accident this exists to prevent.
+     * @returns {Promise<boolean>} Whether a write landed
      */
     async saveRecords() {
-        try {
-            await writeScoped(RECORDS_BASE, this.records, LEDGER_STORE, true);
-        } catch (error) {
-            console.error('[TradeLedger] Failed to save records:', error);
-        }
+        const run = async () => {
+            try {
+                const probe = await storage.tryGet(characterKey(RECORDS_BASE), LEDGER_STORE);
+                if (probe === null) {
+                    console.warn('[TradeLedger] Records not saved: storage could not be read first');
+                    return false;
+                }
+                const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
+                this.records = mergeRecords(stored, this.records);
+                return await writeScoped(RECORDS_BASE, this.records, LEDGER_STORE, true);
+            } catch (error) {
+                console.error('[TradeLedger] Failed to save records:', error);
+                return false;
+            }
+        };
+        // One save at a time, in order: two interleaved read-merge-writes could
+        // each miss the other's entries
+        this._recordsChain = (this._recordsChain || Promise.resolve()).then(run, run);
+        return this._recordsChain;
     }
 
     /**
-     * Persist listing-state baselines (debounced — they change on every event)
+     * Persist listing-state baselines (debounced — they change on every event).
+     *
+     * Same read-merge-write as {@link saveRecords}, by listing id with memory
+     * winning: a baseline this tab has moved past is the fresher one, and one
+     * only storage knows is the only thing that can turn that listing's next
+     * update into a fill.
+     * @returns {Promise<boolean>} Whether a write was issued
      */
     async saveStates() {
-        try {
-            await writeScoped(STATE_BASE, this.states, LEDGER_STORE);
-        } catch (error) {
-            console.error('[TradeLedger] Failed to save listing states:', error);
-        }
+        const run = async () => {
+            try {
+                const probe = await storage.tryGet(characterKey(STATE_BASE), LEDGER_STORE);
+                if (probe === null) {
+                    console.warn('[TradeLedger] Listing baselines not saved: storage could not be read first');
+                    return false;
+                }
+                const stored = probe.found ? probe.value : {};
+                this.states = mergeStates(stored, this.states);
+                return await writeScoped(STATE_BASE, this.states, LEDGER_STORE);
+            } catch (error) {
+                console.error('[TradeLedger] Failed to save listing states:', error);
+                return false;
+            }
+        };
+        this._statesChain = (this._statesChain || Promise.resolve()).then(run, run);
+        return this._statesChain;
     }
 
     /**
