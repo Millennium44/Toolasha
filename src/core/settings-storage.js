@@ -11,6 +11,17 @@ import { settingsGroups } from './settings-schema.js';
  * @param {string} type - Setting type from the schema
  * @returns {boolean}
  */
+/**
+ * The one value a stored or built setting entry carries: `.value` when it
+ * has one, else `.isTrue`.
+ * @param {Object} entry - A settings-map entry
+ * @returns {*} Its value
+ */
+function valueOf(entry) {
+    if (!entry || typeof entry !== 'object') return undefined;
+    return Object.hasOwn(entry, 'value') ? entry.value : entry.isTrue;
+}
+
 function isBooleanType(type) {
     return type === 'checkbox' || type === 'checkboxWithButton';
 }
@@ -52,6 +63,15 @@ class SettingsStorage {
         this.currentCharacterId = null;
         this.currentCharacterName = null;
         this.knownCharactersKey = 'known_character_ids';
+        /**
+         * Whether the last `loadSettings()` could actually read the store.
+         * `storage.getJSON` answers a read that could not be made with the
+         * default, which a loader takes for "nothing saved yet" — and the
+         * next whole-map write would then put the schema defaults over the
+         * user's settings. `false` says the map that came back is defaults
+         * standing in for settings that could not be read, not settings.
+         */
+        this.lastLoadReadable = true;
     }
 
     /**
@@ -101,23 +121,35 @@ class SettingsStorage {
      */
     async loadSettings() {
         const characterKey = this.getCharacterStorageKey();
-        let saved = await storage.getJSON(characterKey, this.storageArea, null);
+        // Probe first: "absent" and "could not be read" must not look alike
+        // here, because the migration below treats absent as "first run for
+        // this character" and writes, and the caller treats the result as
+        // the settings to save back
+        const probed = await storage.tryGet(characterKey, this.storageArea);
+        this.lastLoadReadable = probed !== null;
+        let saved = null;
 
-        // Migration: If this is a character-specific key and it doesn't exist
-        // Copy from global template (old 'script_settingsMap' key)
-        if (this.currentCharacterId && !saved) {
-            const globalTemplate = await storage.getJSON(this.storageKey, this.storageArea, null);
-            if (globalTemplate) {
-                // Copy global template to this character
-                saved = globalTemplate;
-                await storage.setJSON(characterKey, saved, this.storageArea, true);
+        if (probed !== null) {
+            saved = await storage.getJSON(characterKey, this.storageArea, null);
+
+            // Migration: If this is a character-specific key and it doesn't exist
+            // Copy from global template (old 'script_settingsMap' key)
+            if (this.currentCharacterId && !saved) {
+                const globalTemplate = await storage.getJSON(this.storageKey, this.storageArea, null);
+                if (globalTemplate) {
+                    // Copy global template to this character
+                    saved = globalTemplate;
+                    await storage.setJSON(characterKey, saved, this.storageArea, true);
+                }
+
+                // Add character to known characters list
+                await this.addToKnownCharacters(this.currentCharacterId, this.currentCharacterName);
             }
 
-            // Add character to known characters list
-            await this.addToKnownCharacters(this.currentCharacterId, this.currentCharacterName);
+            saved = await this.applyDefaultRewrites(saved, characterKey);
+        } else {
+            console.warn(`[SettingsStorage] ${characterKey} could not be read; answering with schema defaults`);
         }
-
-        saved = await this.applyDefaultRewrites(saved, characterKey);
 
         const settings = {};
 
@@ -278,6 +310,51 @@ class SettingsStorage {
     }
 
     /**
+     * Save a settings map that was never read back, without writing over what
+     * the user had.
+     *
+     * For a map built from schema defaults because the store could not be
+     * read, a key still at its default says nothing about the user's choice,
+     * so the stored entry keeps it; a key moved off its default is a choice
+     * made this session and wins. Refuses outright when the store cannot be
+     * read now either — a blind write of defaults is the accident this exists
+     * to prevent. A store with nothing under the key is written whole.
+     *
+     * @param {Object} settings - Settings map, as `loadSettings()` shapes it
+     * @returns {Promise<boolean>} Whether a write landed
+     */
+    async saveSettingsKeepingStored(settings) {
+        const characterKey = this.getCharacterStorageKey();
+        const probed = await storage.tryGet(characterKey, this.storageArea);
+        if (probed === null) {
+            console.warn(`[SettingsStorage] Settings not saved: ${characterKey} could not be read first`);
+            return false;
+        }
+
+        let stored = probed.found ? probed.value : null;
+        if (typeof stored === 'string') {
+            try {
+                stored = JSON.parse(stored);
+            } catch {
+                stored = null;
+            }
+        }
+        if (!stored || typeof stored !== 'object') {
+            await storage.setJSON(characterKey, settings, this.storageArea, true);
+            return true;
+        }
+
+        const defaults = this.buildDefaults();
+        const merged = { ...stored };
+        for (const [settingId, entry] of Object.entries(settings || {})) {
+            const untouched = settingId in defaults && valueOf(entry) === valueOf(defaults[settingId]);
+            if (!(settingId in merged) || !untouched) merged[settingId] = entry;
+        }
+        await storage.setJSON(characterKey, merged, this.storageArea, true);
+        return true;
+    }
+
+    /**
      * Add character to known characters list, storing name alongside ID.
      * Migrates old flat-array format ([id, id]) to object format ([{id, name}]).
      * @param {string} characterId
@@ -419,6 +496,12 @@ class SettingsStorage {
      */
     async setSetting(settingId, value) {
         const settings = await this.loadSettings();
+        if (!this.lastLoadReadable) {
+            // The map in hand is defaults standing in for settings that could
+            // not be read; writing it back would put them over the user's
+            console.warn(`[SettingsStorage] Setting '${settingId}' not saved: settings could not be read first`);
+            return;
+        }
 
         if (!settings[settingId]) {
             console.warn(`Setting '${settingId}' not found`);

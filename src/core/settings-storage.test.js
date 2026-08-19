@@ -5,16 +5,29 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 const stored = new Map();
+/** When set, every read answers "could not be made" and every write is refused */
+const outage = { on: false };
 
 vi.mock('./storage.js', () => ({
     default: {
-        getJSON: vi.fn((key, _area, defaultValue) => Promise.resolve(stored.get(`json:${key}`) ?? defaultValue)),
+        getJSON: vi.fn((key, _area, defaultValue) =>
+            Promise.resolve(outage.on ? defaultValue : (stored.get(`json:${key}`) ?? defaultValue))
+        ),
         setJSON: vi.fn((key, value) => {
+            if (outage.on) return Promise.resolve(false);
             stored.set(`json:${key}`, value);
             return Promise.resolve();
         }),
-        get: vi.fn((key, _area, defaultValue) => Promise.resolve(stored.get(key) ?? defaultValue)),
+        get: vi.fn((key, _area, defaultValue) =>
+            Promise.resolve(outage.on ? defaultValue : (stored.get(key) ?? defaultValue))
+        ),
+        tryGet: vi.fn((key) => {
+            if (outage.on) return Promise.resolve(null);
+            const value = stored.get(`json:${key}`) ?? stored.get(key);
+            return Promise.resolve(value != null ? { found: true, value } : { found: false, value: null });
+        }),
         set: vi.fn((key, value) => {
+            if (outage.on) return Promise.resolve(false);
             stored.set(key, value);
             return Promise.resolve();
         }),
@@ -179,5 +192,92 @@ describe('SettingsStorage copy-from-character', () => {
         const candidates = await settingsStorage.charactersWithSettings();
 
         expect(candidates).toEqual([{ id: 'bob', name: 'Bob' }]);
+    });
+});
+
+describe('a settings store that cannot be read', () => {
+    const KEY = 'script_settingsMap_alice';
+    /** A saved map with one choice made off the defaults */
+    const saved = () => ({
+        whatsNew_showPopup: { id: 'whatsNew_showPopup', type: 'checkbox', isTrue: false },
+        ironCow_enabled: { id: 'ironCow_enabled', type: 'checkbox', isTrue: true },
+    });
+
+    beforeEach(() => {
+        stored.clear();
+        outage.on = false;
+        settingsStorage.currentCharacterId = 'alice';
+        settingsStorage.currentCharacterName = 'Alice';
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    test("a readable load is reported as one, and reads the user's values", async () => {
+        stored.set(`json:${KEY}`, saved());
+        const map = await settingsStorage.loadSettings();
+        expect(settingsStorage.lastLoadReadable).toBe(true);
+        expect(map.whatsNew_showPopup.isTrue).toBe(false);
+        expect(map.ironCow_enabled.isTrue).toBe(true);
+    });
+
+    test('a load that cannot be made says so, answers defaults, and runs no migration', async () => {
+        stored.set(`json:${KEY}`, saved());
+        stored.set('json:known_character_ids', [{ id: 'bob', name: 'Bob' }]);
+        outage.on = true;
+
+        const map = await settingsStorage.loadSettings();
+        expect(settingsStorage.lastLoadReadable).toBe(false);
+        expect(map.whatsNew_showPopup.isTrue).toBe(true);
+        expect(map.ironCow_enabled.isTrue).toBe(false);
+
+        outage.on = false;
+        // Neither the map nor the known-characters list was touched
+        expect(stored.get(`json:${KEY}`)).toEqual(saved());
+        expect(stored.get('json:known_character_ids')).toEqual([{ id: 'bob', name: 'Bob' }]);
+    });
+
+    test('setSetting does not write a map it could not read', async () => {
+        stored.set(`json:${KEY}`, saved());
+        outage.on = true;
+        await settingsStorage.setSetting('whatsNew_newDefaultsOff', true);
+        outage.on = false;
+        expect(stored.get(`json:${KEY}`)).toEqual(saved());
+
+        // And writes once it can
+        await settingsStorage.setSetting('whatsNew_newDefaultsOff', true);
+        expect(stored.get(`json:${KEY}`).whatsNew_newDefaultsOff.isTrue).toBe(true);
+        expect(stored.get(`json:${KEY}`).ironCow_enabled.isTrue).toBe(true);
+    });
+
+    describe('saveSettingsKeepingStored', () => {
+        test('refuses when the store cannot be read', async () => {
+            stored.set(`json:${KEY}`, saved());
+            outage.on = true;
+            const map = settingsStorage.buildDefaults();
+            expect(await settingsStorage.saveSettingsKeepingStored(map)).toBe(false);
+            outage.on = false;
+            expect(stored.get(`json:${KEY}`)).toEqual(saved());
+        });
+
+        test('keeps every stored entry the session left at its default, and writes the ones it changed', async () => {
+            stored.set(`json:${KEY}`, saved());
+            const map = settingsStorage.buildDefaults();
+            map.whatsNew_newDefaultsOff.isTrue = !map.whatsNew_newDefaultsOff.isTrue;
+
+            expect(await settingsStorage.saveSettingsKeepingStored(map)).toBe(true);
+            const after = stored.get(`json:${KEY}`);
+            // The user's choices, which the session never saw, stand
+            expect(after.whatsNew_showPopup.isTrue).toBe(false);
+            expect(after.ironCow_enabled.isTrue).toBe(true);
+            // The session's own change lands
+            expect(after.whatsNew_newDefaultsOff.isTrue).toBe(map.whatsNew_newDefaultsOff.isTrue);
+            // And the rest of the schema is filled in as a whole-map write would
+            expect(Object.keys(after).length).toBe(Object.keys(map).length);
+        });
+
+        test('a store with nothing under the key is written whole', async () => {
+            const map = settingsStorage.buildDefaults();
+            expect(await settingsStorage.saveSettingsKeepingStored(map)).toBe(true);
+            expect(stored.get(`json:${KEY}`)).toEqual(map);
+        });
     });
 });

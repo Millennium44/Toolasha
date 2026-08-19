@@ -21,6 +21,8 @@ vi.mock('../../core/storage.js', () => ({
     default: {
         ready: Promise.resolve(true),
         get: async (key, _name, fallback = null) => store.data[key] ?? fallback,
+        tryGet: async (key) =>
+            store.data[key] != null ? { found: true, value: store.data[key] } : { found: false, value: null },
         set: async (key, value) => {
             store.data[key] = value;
             return true;

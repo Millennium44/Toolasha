@@ -14,7 +14,9 @@
  * you see after a reload is recomputed against the character as they are now.
  */
 
+import dataManager from '../../core/data-manager.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { createCuratedRecord, mergeById } from '../../utils/persisted-record.js';
 import { normalizeGoal } from './goal-planner.js';
 
 /** Unscoped key for the goal list; the real key carries the character id */
@@ -28,7 +30,58 @@ export const COMBAT_GEAR_KEY = 'goalPlannerCombatGear';
 const MAX_GOALS = 40;
 
 /**
+ * The goal list as stored, per character.
+ *
+ * Goals are authored, so this is a curated record: a read that cannot be made
+ * leaves the list in hand rather than blanking it — the accident this guards
+ * against is `addGoal` reading nothing, appending one goal and writing a list
+ * of one over the list of twenty — and no write goes out over a store that
+ * could not be read first. Before the list has been read back a save folds the
+ * stored list under memory by goal id; once it has, what is in memory is the
+ * list and a removal sticks.
+ *
+ * 'discard' rather than 'adopt': there is no legacy global list to inherit,
+ * and if one ever appears it belongs to whoever wrote it.
+ */
+const goalsRecord = createCuratedRecord({
+    base: GOALS_KEY,
+    store: 'settings',
+    empty: () => [],
+    merge: mergeById((goal) => goal?.id),
+    migrate: 'discard',
+    label: 'GoalPlanner',
+});
+
+/** Whose goals the record holds, so a switch never shows one character the other's */
+let goalsOwner = null;
+
+/**
+ * Point the record at the character logged in now: a different one forgets
+ * the list in hand (without writing), so nothing of theirs is folded into
+ * this one's.
+ * @returns {void}
+ */
+function claimGoals() {
+    const who = dataManager.getCurrentCharacterId() || null;
+    if (who === goalsOwner) return;
+    goalsRecord.reset();
+    goalsOwner = who;
+}
+
+/**
+ * @param {*} list - Whatever is in the record
+ * @returns {Array<Object>} Normalised goals, oldest first
+ */
+function cleanGoals(list) {
+    return (Array.isArray(list) ? list : []).map((goal) => normalizeGoal(goal)).filter(Boolean);
+}
+
+/**
  * This character's goals.
+ *
+ * Read back fresh when storage can be read; when it cannot, the list last held
+ * for this character stands (empty when there is none) rather than an empty
+ * list that the next save would write over the stored one.
  *
  * Anything that no longer normalises — an item removed from the game, a goal
  * written by a newer version — is dropped on read rather than carried around as
@@ -38,11 +91,12 @@ const MAX_GOALS = 40;
  */
 export async function loadGoals() {
     try {
-        // 'discard' rather than 'adopt': there is no legacy global list to
-        // inherit, and if one ever appears it belongs to whoever wrote it
-        const stored = await readScoped(GOALS_KEY, 'settings', [], { migrate: 'discard' });
-        if (!Array.isArray(stored)) return [];
-        return stored.map((goal) => normalizeGoal(goal)).filter(Boolean);
+        claimGoals();
+        const previous = goalsRecord.get();
+        goalsRecord.set([]);
+        const readable = await goalsRecord.load();
+        if (!readable) goalsRecord.set(previous);
+        return cleanGoals(goalsRecord.get());
     } catch (error) {
         console.error('[GoalPlanner] Loading goals failed:', error);
         return [];
@@ -55,16 +109,20 @@ export async function loadGoals() {
  * @returns {Promise<Array<Object>>} What was actually written
  */
 export async function saveGoals(goals) {
-    const clean = (Array.isArray(goals) ? goals : [])
-        .map((goal) => normalizeGoal(goal))
-        .filter(Boolean)
-        .slice(0, MAX_GOALS);
+    const clean = cleanGoals(goals).slice(0, MAX_GOALS);
     try {
-        await writeScoped(GOALS_KEY, clean, 'settings');
+        claimGoals();
+        goalsRecord.set(clean);
+        await goalsRecord.save();
     } catch (error) {
         console.error('[GoalPlanner] Saving goals failed:', error);
     }
     return clean;
+}
+
+/** @returns {Promise<*>} The pending goal writes, for tests and shutdown */
+export function flushGoalWrites() {
+    return goalsRecord.flushed();
 }
 
 /**
@@ -99,6 +157,10 @@ export async function removeGoal(goalId) {
 
 /**
  * The last plans computed, for drawing before a refresh finishes.
+ *
+ * Written whole and on purpose: the snapshot is one derived blob, replaced
+ * the moment a refresh finishes and never read back as fact, so a plain
+ * overwrite is the right write for it.
  * @returns {Promise<{plans: Array<Object>, computedAt: number}|null>} The snapshot
  */
 export async function loadSnapshot() {

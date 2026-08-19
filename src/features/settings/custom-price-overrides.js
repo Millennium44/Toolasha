@@ -2,14 +2,34 @@
  * Custom Price Overrides
  * Manages user-defined buy/sell price overrides for profit calculations.
  * Overrides are stored in IndexedDB and cached in memory.
+ *
+ * The map is a curated record: a read that cannot be made leaves the cache as
+ * it is rather than blanking it, no write goes out over a store that could not
+ * be read first, and once the map has been read back what is in memory is the
+ * map — a cleared override stays cleared. Before that, a write folds the
+ * stored map under memory so nothing typed in is lost either way.
  */
 
-import storage from '../../core/storage.js';
+import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
 
 const STORAGE_KEY = 'Toolasha_customPriceOverrides';
 
+/** The one global map — overrides are not per character */
+const record = createCuratedRecord({
+    base: STORAGE_KEY,
+    store: 'settings',
+    scoped: false,
+    empty: () => ({}),
+    merge: mergeMaps(),
+    immediate: true,
+    label: 'CustomPriceOverrides',
+});
+
 /** @type {Object|null} In-memory cache of overrides */
 let overridesCache = null;
+
+/** @type {Promise<Object>|null} The load in flight, so callers share one read */
+let loading = null;
 
 /**
  * Load overrides from storage into cache
@@ -17,7 +37,22 @@ let overridesCache = null;
  */
 async function loadOverrides() {
     if (overridesCache === null) {
-        overridesCache = (await storage.getJSON(STORAGE_KEY, 'settings', {})) || {};
+        if (!loading) {
+            loading = (async () => {
+                let readable = false;
+                try {
+                    readable = await record.load();
+                } finally {
+                    loading = null;
+                }
+                // An unreadable load is not cached, so the next read tries
+                // again; what the record holds is still the best answer there
+                // is, and the next write merges rather than overwrites
+                if (readable) overridesCache = record.get();
+                return record.get();
+            })();
+        }
+        return loading;
     }
     return overridesCache;
 }
@@ -65,6 +100,21 @@ export function getCustomPrice(itemHrid, enhancementLevel = 0, side = 'sell') {
 }
 
 /**
+ * Write the cache back. The record's save folds what is stored under the
+ * cache until a readable load has happened, and refuses to write at all when
+ * the store cannot be read.
+ * @returns {Promise<boolean>} Whether the write landed
+ */
+async function persist() {
+    record.set(overridesCache);
+    const written = await record.save();
+    // A merge-save may have folded stored entries in; keep the cache as the
+    // record now holds it so reads and the next write agree
+    overridesCache = record.get();
+    return written;
+}
+
+/**
  * Set a custom price override for an item
  * @param {string} itemHrid - Item HRID
  * @param {number} enhancementLevel - Enhancement level
@@ -91,7 +141,7 @@ export async function setCustomPriceOverride(itemHrid, enhancementLevel, buy, se
     }
 
     overridesCache = overrides;
-    await storage.setJSON(STORAGE_KEY, overrides, 'settings', true);
+    await persist();
 }
 
 /**
@@ -104,7 +154,7 @@ export async function removeCustomPriceOverride(itemHrid, enhancementLevel) {
     const key = `${itemHrid}:${enhancementLevel}`;
     delete overrides[key];
     overridesCache = overrides;
-    await storage.setJSON(STORAGE_KEY, overrides, 'settings', true);
+    await persist();
 }
 
 /**
@@ -112,4 +162,18 @@ export async function removeCustomPriceOverride(itemHrid, enhancementLevel) {
  */
 export async function initCustomPriceOverrides() {
     await loadOverrides();
+}
+
+/**
+ * Forget the cache so the next read goes back to storage — for tests, and for
+ * a caller that knows the store has changed underneath it.
+ */
+export function resetCustomPriceOverridesCache() {
+    overridesCache = null;
+    record.reset();
+}
+
+/** @returns {Promise<*>} The pending writes, for tests and shutdown */
+export function flushCustomPriceOverrideWrites() {
+    return record.flushed();
 }

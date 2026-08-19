@@ -53,8 +53,9 @@
  * Toolasha's own.
  */
 
+import dataManager from '../core/data-manager.js';
 import storage from '../core/storage.js';
-import { readScoped, writeScoped } from './character-key.js';
+import { createCuratedRecord, mergeMaps } from './persisted-record.js';
 
 /** The one record the whole feature is stored in, per character */
 const STORAGE_KEY = 'equipmentSavings';
@@ -328,6 +329,52 @@ let record = {};
 let loaded = false;
 
 /**
+ * Fold a stored record under the one in memory — only consulted before this
+ * character's record has been read back (see `createCuratedRecord`): the gear
+ * side key by key, memory winning, and the two goal maps likewise entry by
+ * entry, so a goal set before the read landed is kept and no stored goal is
+ * dropped.
+ * @param {Object} stored - The record as read back
+ * @param {Object} memory - The record as held
+ * @returns {Object} The merged record
+ */
+function mergeRecords(stored, memory) {
+    const theirs = stored && typeof stored === 'object' ? stored : {};
+    const ours = memory && typeof memory === 'object' ? memory : {};
+    const maps = mergeMaps();
+    return {
+        ...maps(theirs, ours),
+        abilities: maps(theirs.abilities, ours.abilities),
+        houses: maps(theirs.houses, ours.houses),
+    };
+}
+
+/**
+ * The record as stored, per character — gear, abilities and rooms in one.
+ *
+ * A curated record: a read that cannot be made leaves what is in hand rather
+ * than blanking it, no write goes out over a store that could not be read
+ * first, and once this character's record has been read back what is held is
+ * the record and a removed goal stays removed.
+ */
+const savings = createCuratedRecord({
+    base: STORAGE_KEY,
+    store: 'settings',
+    empty: () => ({}),
+    merge: mergeRecords,
+    migrate: 'adopt',
+    label: 'EquipmentSavings',
+});
+
+/** Whose record `goals`, `rooms` and `record` hold, so a switch never mixes two */
+let owner = null;
+
+/** @returns {Object} The whole record as held, ready to store */
+function held() {
+    return { ...record, abilities: { ...goals }, houses: { ...rooms } };
+}
+
+/**
  * One stored goal, with everything it must have and nothing it must not.
  *
  * @param {string} hrid - The ability or the room the goal is about
@@ -362,7 +409,8 @@ function normalizeGoal(hrid, goal, cap = 0) {
  */
 async function write() {
     try {
-        return await writeScoped(STORAGE_KEY, { ...record, abilities: { ...goals }, houses: { ...rooms } }, 'settings');
+        savings.set(held());
+        return await savings.save();
     } catch (error) {
         console.error('[EquipmentSavings] Saving the savings record failed:', error);
         return false;
@@ -378,13 +426,23 @@ async function write() {
  * ability or house goals existed simply has no `abilities` or `houses` key and
  * comes back untouched.
  *
+ * When the read cannot be made, what is held for this character stands — the
+ * goals are not blanked, and the next write merges rather than overwrites —
+ * unless it is another character's, which must not stand in for this one's.
+ *
  * @returns {Promise<Object|null>} The record without the goals, or null when
  *   nothing has been stored for this character
  */
 export async function loadSavingsRecord() {
     try {
         await storage.ready;
-        const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
+        const who = dataManager.getCurrentCharacterId() || null;
+        const previous = who === owner ? held() : null;
+        owner = who;
+        savings.reset();
+        const readable = await savings.load();
+        if (!readable && previous) savings.set(previous);
+        const saved = readable || previous ? savings.get() : null;
 
         const rest = { ...(saved || {}) };
         goals = {};
@@ -402,11 +460,13 @@ export async function loadSavingsRecord() {
         delete rest.houses;
 
         record = rest;
-        loaded = true;
-        return saved ? rest : null;
+        // A read that could not be made is not a read; the next caller tries again
+        loaded = readable;
+        const nothing =
+            Object.keys(rest).length === 0 && Object.keys(goals).length === 0 && Object.keys(rooms).length === 0;
+        return nothing ? null : rest;
     } catch (error) {
         console.error('[EquipmentSavings] Reading the savings record failed:', error);
-        loaded = true;
         return null;
     }
 }
@@ -499,6 +559,7 @@ export function resetAbilityGoals({ loaded: hasLoaded = true } = {}) {
     goals = {};
     record = {};
     loaded = hasLoaded;
+    savings.reset();
 }
 
 /**
@@ -574,4 +635,10 @@ export function resetHouseGoals({ loaded: hasLoaded = true } = {}) {
     rooms = {};
     record = {};
     loaded = hasLoaded;
+    savings.reset();
+}
+
+/** @returns {Promise<*>} The pending writes, for tests and shutdown */
+export function flushSavingsWrites() {
+    return savings.flushed();
 }

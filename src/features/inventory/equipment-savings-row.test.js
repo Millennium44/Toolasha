@@ -83,6 +83,7 @@ vi.mock('../../core/storage.js', () => ({
         getJSON: async () => null,
         setJSON: async () => {},
         get: async (_k, _s, fallback = null) => fallback,
+        tryGet: async () => ({ found: false, value: null }),
         set: async (key, value) => {
             game.writes.push({ key, value });
             return true;
@@ -155,6 +156,7 @@ const {
     houseChoices,
     houseRoomLevels,
 } = await import('./equipment-savings-row.js');
+const { flushSavingsWrites } = await import('../../utils/equipment-savings.js');
 
 beforeEach(() => {
     game.inventory = [
@@ -1200,10 +1202,11 @@ describe('which run the card is saving towards', () => {
         expect(watchedTargets()[0].cost).toBe(44_000_000);
     });
 
-    test('the choice is written back with the watch entry, not held in the panel', () => {
+    test('the choice is written back with the watch entry, not held in the panel', async () => {
         watchTarget('/items/sinister_cape', 7);
         game.writes = [];
         toggleLaddering('/items/sinister_cape');
+        await flushSavingsWrites();
 
         const last = game.writes[game.writes.length - 1];
         expect(last.key).toContain('equipmentSavings');
@@ -1474,6 +1477,7 @@ describe('ability levels on the savings list', () => {
         watchTarget('/items/holy_sword');
         game.writes = [];
         await watchAbility('/abilities/fierce_aura', 46);
+        await flushSavingsWrites();
 
         const last = game.writes[game.writes.length - 1];
         expect(last.key).toContain('equipmentSavings');
@@ -1580,6 +1584,7 @@ describe('house levels on the savings list', () => {
         await watchAbility('/abilities/fierce_aura', 46);
         game.writes = [];
         await watchHouse('/house_rooms/mystical_study', 5);
+        await flushSavingsWrites();
 
         const last = game.writes[game.writes.length - 1];
         expect(last.key).toContain('equipmentSavings');

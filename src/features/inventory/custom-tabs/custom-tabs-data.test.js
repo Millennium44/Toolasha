@@ -2,12 +2,65 @@
  * Tests for custom tabs loadout binding sync
  */
 
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../../../core/storage.js', () => ({ default: {} }));
+const storageMock = vi.hoisted(() => {
+    const stores = new Map();
+    const storeFor = (name) => {
+        if (!stores.has(name)) stores.set(name, new Map());
+        return stores.get(name);
+    };
+    return {
+        stores,
+        storeFor,
+        unavailable: false,
+        reset() {
+            stores.clear();
+            storageMock.unavailable = false;
+        },
+        get: vi.fn(async (key, store = 'settings', fallback = null) => {
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
+        }),
+        tryGet: vi.fn(async (key, store = 'settings') => {
+            if (storageMock.unavailable) return null;
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null
+                ? { found: true, value: structuredClone(map.get(key)) }
+                : { found: false, value: null };
+        }),
+        set: vi.fn(async (key, value, store = 'settings') => {
+            if (storageMock.unavailable) return false;
+            storeFor(store).set(key, structuredClone(value));
+            return true;
+        }),
+        delete: vi.fn(async (key, store = 'settings') => {
+            storeFor(store).delete(key);
+            return true;
+        }),
+        getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
+    };
+});
 
-const { syncLoadoutBinding, cleanOrphanedBindings, getBaseHrid, collectItemsAboveTab, LINEBREAK_HRID } =
-    await import('./custom-tabs-data.js');
+vi.mock('../../../core/storage.js', () => ({ default: storageMock }));
+vi.mock('../../../core/data-manager.js', () => ({
+    default: { getCurrentCharacterId: () => 'char1', getCurrentCharacterGameMode: () => 'standard' },
+}));
+vi.mock('../../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'char1',
+    requestAdoptionConsent: () => Promise.resolve(null),
+}));
+
+const {
+    syncLoadoutBinding,
+    cleanOrphanedBindings,
+    getBaseHrid,
+    collectItemsAboveTab,
+    LINEBREAK_HRID,
+    loadConfig,
+    saveConfig,
+    flushConfigWrites,
+} = await import('./custom-tabs-data.js');
 
 function buildConfig(tab) {
     return {
@@ -190,5 +243,100 @@ describe('cleanOrphanedBindings', () => {
         expect(next.tabs[0].items).toEqual(['/items/hat']);
         expect(next.tabs[0].loadoutBindings.Deleted).toBeUndefined();
         expect(next.tabs[0].loadoutBindings.Kept).toEqual(['/items/hat']);
+    });
+});
+
+describe('the stored config', () => {
+    const KEY = 'char1_inventoryTabs_config';
+    const stored = () => storageMock.storeFor('settings').get(KEY);
+    const tab = (id, items = []) => ({ id, name: id, items, children: [] });
+
+    beforeEach(() => {
+        storageMock.reset();
+    });
+
+    test('lives under the key it has always had, and reads back what was saved', async () => {
+        await saveConfig('char1', { version: 1, tabs: [tab('a')], selectedTabId: 'a' });
+        await flushConfigWrites();
+        expect(stored().tabs.map((t) => t.id)).toEqual(['a']);
+
+        const config = await loadConfig('char1');
+        expect(config).toEqual({ version: 1, tabs: [tab('a')], selectedTabId: 'a' });
+    });
+
+    test('a character with nothing stored starts from the default', async () => {
+        expect(await loadConfig('char1')).toEqual({ version: 1, tabs: [], selectedTabId: null });
+        expect(await loadConfig('')).toEqual({ version: 1, tabs: [], selectedTabId: null });
+    });
+
+    test('a load that cannot be made keeps the config in hand rather than blanking it', async () => {
+        storageMock.storeFor('settings').set(KEY, { version: 1, tabs: [tab('a')], selectedTabId: null });
+        const first = await loadConfig('char1');
+        expect(first.tabs).toHaveLength(1);
+
+        storageMock.unavailable = true;
+        const again = await loadConfig('char1');
+        expect(again.tabs.map((t) => t.id)).toEqual(['a']);
+    });
+
+    test('a save over a store that cannot be read is skipped, and what is stored stays', async () => {
+        storageMock.storeFor('settings').set(KEY, { version: 1, tabs: [tab('a')], selectedTabId: null });
+        storageMock.unavailable = true;
+        await loadConfig('char1');
+        expect(await saveConfig('char1', { version: 1, tabs: [], selectedTabId: null })).toBe(false);
+
+        storageMock.unavailable = false;
+        expect(stored().tabs.map((t) => t.id)).toEqual(['a']);
+    });
+
+    test('a save before the config was read back loses no stored tab', async () => {
+        storageMock.storeFor('settings').set(KEY, { version: 1, tabs: [tab('a')], selectedTabId: null });
+        storageMock.unavailable = true;
+        await loadConfig('char1');
+        storageMock.unavailable = false;
+
+        // Built against an empty-looking config, because the read never landed
+        await saveConfig('char1', { version: 1, tabs: [tab('b')], selectedTabId: 'b' });
+        await flushConfigWrites();
+
+        expect(
+            stored()
+                .tabs.map((t) => t.id)
+                .sort()
+        ).toEqual(['a', 'b']);
+        expect(stored().selectedTabId).toBe('b');
+    });
+
+    test('after a readable load a removed tab stays removed', async () => {
+        storageMock.storeFor('settings').set(KEY, {
+            version: 1,
+            tabs: [tab('a'), tab('b')],
+            selectedTabId: null,
+        });
+        const config = await loadConfig('char1');
+        await saveConfig('char1', { ...config, tabs: config.tabs.filter((t) => t.id !== 'a') });
+        await flushConfigWrites();
+
+        expect(stored().tabs.map((t) => t.id)).toEqual(['b']);
+    });
+
+    test('once storage is back, the next save lands', async () => {
+        storageMock.unavailable = true;
+        await loadConfig('char1');
+        expect(await saveConfig('char1', { version: 1, tabs: [tab('a')], selectedTabId: null })).toBe(false);
+
+        storageMock.unavailable = false;
+        expect(await saveConfig('char1', { version: 1, tabs: [tab('a')], selectedTabId: null })).toBe(true);
+        expect(stored().tabs.map((t) => t.id)).toEqual(['a']);
+    });
+
+    test('each character has its own config', async () => {
+        await saveConfig('char1', { version: 1, tabs: [tab('a')], selectedTabId: null });
+        await saveConfig('char2', { version: 1, tabs: [tab('z')], selectedTabId: null });
+        await flushConfigWrites();
+
+        expect((await loadConfig('char1')).tabs.map((t) => t.id)).toEqual(['a']);
+        expect((await loadConfig('char2')).tabs.map((t) => t.id)).toEqual(['z']);
+        expect(storageMock.storeFor('settings').has('char2_inventoryTabs_config')).toBe(true);
     });
 });

@@ -9,20 +9,31 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const store = vi.hoisted(() => ({ data: new Map(), fail: false }));
+const store = vi.hoisted(() => ({ data: new Map(), fail: false, unavailable: false }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
-        getJSON: async (key) => {
+        tryGet: async (key) => {
             if (store.fail) throw new Error('storage is down');
-            return store.data.has(key) ? JSON.parse(JSON.stringify(store.data.get(key))) : null;
+            if (store.unavailable) return null;
+            return store.data.has(key)
+                ? { found: true, value: JSON.parse(JSON.stringify(store.data.get(key))) }
+                : { found: false, value: null };
         },
-        setJSON: async (key, value) => {
+        set: async (key, value) => {
             if (store.fail) throw new Error('storage is down');
+            if (store.unavailable) return false;
             store.data.set(key, JSON.parse(JSON.stringify(value)));
             return true;
         },
     },
+}));
+vi.mock('../../core/data-manager.js', () => ({
+    default: { getCurrentCharacterId: () => 'char1', getCurrentCharacterGameMode: () => 'standard' },
+}));
+vi.mock('../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'char1',
+    requestAdoptionConsent: () => Promise.resolve(null),
 }));
 
 const {
@@ -34,6 +45,7 @@ const {
     saveLayout,
     deleteLayout,
     getLayout,
+    flushLayoutWrites,
     LAYOUTS_KEY,
     MAX_NAME_LENGTH,
     ACTIVITY,
@@ -59,10 +71,14 @@ function file(order) {
     return { config: { order }, toolasha: { version: 1, settings: { order } } };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
     store.data.clear();
     store.fail = false;
+    store.unavailable = false;
     vi.restoreAllMocks();
+    // The record keeps the map it last read; start each test from an empty,
+    // read-back one
+    await loadLayouts();
 });
 
 describe('names', () => {
@@ -162,6 +178,60 @@ describe('the round trip', () => {
         await expect(loadLayouts()).resolves.toEqual({});
         await expect(saveLayout('Dungeon', file([]))).resolves.toEqual({});
         await expect(getLayout('Dungeon')).resolves.toBeNull();
+    });
+
+    test('a read that cannot be made keeps the map in hand rather than reading as empty', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        await saveLayout('Dungeon', file(['dps']));
+        await saveLayout('Market', file(['coins']));
+        store.unavailable = true;
+        expect(layoutNames(await loadLayouts())).toEqual(['Dungeon', 'Market']);
+    });
+
+    test('a save over a store that cannot be read is skipped, and what is stored stays', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        store.data.set(LAYOUTS_KEY, { Dungeon: { savedAt: 1, file: file(['dps']) } });
+        store.unavailable = true;
+
+        // The map reads empty (nothing was ever read), so the save is made
+        // against nothing — and goes nowhere
+        const map = await saveLayout('Market', file(['coins']));
+        expect(layoutNames(map)).toEqual([]);
+        store.unavailable = false;
+        expect(layoutNames(await loadLayouts())).toEqual(['Dungeon']);
+    });
+
+    test('a save before the map was read back loses no stored layout', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        store.data.set(LAYOUTS_KEY, { Dungeon: { savedAt: 1, file: file(['dps']) } });
+        store.unavailable = true;
+        await loadLayouts();
+        store.unavailable = false;
+
+        const map = await saveLayout('Market', file(['coins']));
+        await flushLayoutWrites();
+        expect(layoutNames(map)).toEqual(['Dungeon', 'Market']);
+        expect(layoutNames(store.data.get(LAYOUTS_KEY))).toEqual(['Dungeon', 'Market']);
+    });
+
+    test('after a readable load a delete sticks', async () => {
+        store.data.set(LAYOUTS_KEY, {
+            Dungeon: { savedAt: 1, file: file(['dps']) },
+            Market: { savedAt: 2, file: file(['coins']) },
+        });
+        await deleteLayout('Dungeon');
+        expect(layoutNames(store.data.get(LAYOUTS_KEY))).toEqual(['Market']);
+    });
+
+    test('once storage is back, the next save lands', async () => {
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        store.unavailable = true;
+        await saveLayout('Dungeon', file(['dps']));
+        expect(store.data.has(LAYOUTS_KEY)).toBe(false);
+
+        store.unavailable = false;
+        await saveLayout('Dungeon', file(['dps']));
+        expect(layoutNames(store.data.get(LAYOUTS_KEY))).toEqual(['Dungeon']);
     });
 });
 

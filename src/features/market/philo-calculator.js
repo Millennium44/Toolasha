@@ -20,7 +20,7 @@ import {
     calculateTeaCostsPerHour,
     resolveItemPrice,
 } from '../../utils/profit-helpers.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
 import { settingsUI as sharedSettingsUI } from '../../utils/bundle-bridge.js';
 
 const PHILO_HRID = '/items/philosophers_stone';
@@ -52,6 +52,46 @@ const PRICING_MODES = {
 // starts conservative even when the global profit setting is more generous.
 const DEFAULT_PRICING_MODE = 'conservative';
 const GLOBAL_PRICING_MODE = 'global';
+
+/** The key the calculator's settings live under, per character */
+const SETTINGS_KEY = 'philoCalculatorSettings';
+
+/**
+ * Fold stored settings under the ones in memory — only consulted before this
+ * character's settings have been read back (see `createCuratedRecord`): the
+ * toggles key by key with memory winning, and the per-item cost overrides
+ * likewise entry by entry, so a cost typed in before the read landed is kept
+ * and none stored is dropped.
+ * @param {Object} stored - The settings as read back
+ * @param {Object} memory - The settings as held
+ * @returns {Object} The merged settings
+ */
+function mergeSettings(stored, memory) {
+    const theirs = stored && typeof stored === 'object' ? stored : {};
+    const ours = memory && typeof memory === 'object' ? memory : {};
+    const maps = mergeMaps();
+    return { ...maps(theirs, ours), itemCostOverrides: maps(theirs.itemCostOverrides, ours.itemCostOverrides) };
+}
+
+/**
+ * The settings as stored, per character. A curated record because the
+ * per-item cost overrides are typed in by hand: a read that cannot be made
+ * leaves the values in hand rather than blanking them, no write goes out over
+ * a store that could not be read first, and once this character's settings
+ * have been read back a cleared override stays cleared.
+ */
+const settingsRecord = createCuratedRecord({
+    base: SETTINGS_KEY,
+    store: 'settings',
+    empty: () => ({}),
+    merge: mergeSettings,
+    migrate: 'adopt',
+    immediate: true,
+    label: 'PhiloCalculator',
+});
+
+/** Whose settings the record holds, so a switch never shows one character the other's */
+let settingsOwner = null;
 
 class PhiloCalculator {
     constructor() {
@@ -276,14 +316,42 @@ class PhiloCalculator {
     }
 
     /**
-     * Load settings from storage
+     * What would be written: every setting the calculator keeps.
+     * @returns {Object} The settings as held
+     */
+    settingsSnapshot() {
+        return {
+            useCatalyst: this.useCatalyst,
+            useCatalyticTea: this.useCatalyticTea,
+            drinkConcentrationLevel: this.drinkConcentrationLevel,
+            hideNegativeProfitItems: this.hideNegativeProfitItems,
+            filterText: this.filterText,
+            pricingMode: this.pricingMode,
+            itemCostOverrides: this.itemCostOverrides,
+        };
+    }
+
+    /**
+     * Load settings from storage.
+     *
+     * Read every time the calculator is opened, so the key is the one
+     * belonging to whoever is logged in now. A read that cannot be made leaves
+     * the values in hand — unless they are another character's, which must
+     * not stand in for this one's nor be folded into their record.
      */
     async loadSettings() {
         try {
-            // Read every time the calculator is opened, so the key is the one
-            // belonging to whoever is logged in now
-            const saved = await readScoped('philoCalculatorSettings', 'settings', null, { migrate: 'adopt' });
-            if (saved) {
+            const who = dataManager.getCurrentCharacterId?.() || null;
+            if (who !== settingsOwner) {
+                settingsRecord.reset();
+                settingsOwner = who;
+            }
+            const previous = settingsRecord.get();
+            settingsRecord.set({});
+            const readable = await settingsRecord.load();
+            if (!readable) settingsRecord.set(previous);
+            const saved = readable ? settingsRecord.get() : null;
+            if (saved && Object.keys(saved).length > 0) {
                 this.useCatalyst = saved.useCatalyst !== false;
                 this.useCatalyticTea = saved.useCatalyticTea || false;
                 // ?? not || — an explicitly saved +0 must not fall back to auto-detect
@@ -308,20 +376,8 @@ class PhiloCalculator {
      */
     async saveSettings() {
         try {
-            await writeScoped(
-                'philoCalculatorSettings',
-                {
-                    useCatalyst: this.useCatalyst,
-                    useCatalyticTea: this.useCatalyticTea,
-                    drinkConcentrationLevel: this.drinkConcentrationLevel,
-                    hideNegativeProfitItems: this.hideNegativeProfitItems,
-                    filterText: this.filterText,
-                    pricingMode: this.pricingMode,
-                    itemCostOverrides: this.itemCostOverrides,
-                },
-                'settings',
-                true
-            );
+            settingsRecord.set(this.settingsSnapshot());
+            await settingsRecord.save();
         } catch (error) {
             console.error('[PhiloCalculator] Failed to save settings:', error);
         }

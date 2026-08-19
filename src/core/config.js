@@ -65,6 +65,8 @@ class Config {
 
         // Settings loaded from settings-schema via settings-storage.js
         this.settingsMap = {};
+        /** Whose settings `settingsMap` holds — see loadSettings() */
+        this.settingsOwner = null;
 
         // Map of setting keys to callback functions
         this.settingChangeCallbacks = {};
@@ -457,8 +459,28 @@ class Config {
         const previousMap = this.settingsMap;
 
         // Load settings from settings-storage (which uses settings-schema as source of truth)
-        this.settingsMap = await settingsStorage.loadSettings();
-        this.characterSettingsLoaded = true;
+        const loadedMap = await settingsStorage.loadSettings();
+        if (settingsStorage.lastLoadReadable === false) {
+            // The store could not be read, so what came back is schema defaults
+            // standing in for the user's settings. Keep the map in hand when it
+            // is this character's — it was read properly once — and take the
+            // defaults only when there is nothing better; either way the map
+            // does not count as loaded, so saveSettings() will not write it
+            // whole over what is stored.
+            const keep = this.characterSettingsLoaded && this.settingsOwner === characterId;
+            console.warn(
+                `[Config] Settings for this character could not be read; ${keep ? 'keeping the settings in hand' : 'using defaults until they can be'}`
+            );
+            if (!keep) {
+                this.settingsMap = loadedMap;
+                this.settingsOwner = characterId;
+                this.characterSettingsLoaded = false;
+            }
+        } else {
+            this.settingsMap = loadedMap;
+            this.settingsOwner = characterId;
+            this.characterSettingsLoaded = true;
+        }
 
         // Fire change callbacks for settings that differ from what was previously loaded
         for (const key of Object.keys(this.settingChangeCallbacks)) {
@@ -494,11 +516,20 @@ class Config {
     }
 
     /**
-     * Save settings to storage (immediately)
-     * @returns {Promise<void>} Resolves when the write completes
+     * Save settings to storage (immediately).
+     *
+     * A map that was read back for this character is written whole, as it
+     * always was. One that was not — the store could not be read, or no
+     * character is known yet — is not: that map is schema defaults plus
+     * whatever was changed this session, and writing it whole would put the
+     * defaults over the user's settings. It goes through the merge-save
+     * instead, which keeps each stored entry the session left at its default
+     * and refuses when the store still cannot be read.
+     * @returns {Promise<void|boolean>} Resolves when the write completes
      */
     saveSettings() {
-        return settingsStorage.saveSettings(this.settingsMap);
+        if (this.characterSettingsLoaded) return settingsStorage.saveSettings(this.settingsMap);
+        return settingsStorage.saveSettingsKeepingStored(this.settingsMap);
     }
 
     /**

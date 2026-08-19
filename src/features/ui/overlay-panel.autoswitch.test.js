@@ -41,7 +41,14 @@ vi.mock('../../core/storage.js', () => ({
             store.data.set(key, JSON.parse(JSON.stringify(value)));
             return true;
         },
-        set: async () => true,
+        tryGet: async (key) =>
+            store.data.has(key)
+                ? { found: true, value: JSON.parse(JSON.stringify(store.data.get(key))) }
+                : { found: false, value: null },
+        set: async (key, value) => {
+            store.data.set(key, JSON.parse(JSON.stringify(value)));
+            return true;
+        },
         get: async () => null,
     },
 }));

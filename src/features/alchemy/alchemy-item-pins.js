@@ -18,9 +18,10 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { findAlchemizeMenu, activeAlchemyAction, menuTiles, tileItemHrid } from './alchemy-item-selector.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { createCuratedRecord } from '../../utils/persisted-record.js';
 
 const STORAGE_KEY = 'alchemyItemPins';
 const STYLE_ID = 'mwi-alchemy-pins-style';
@@ -98,6 +99,42 @@ export function sameOrder(a, b) {
     return a.length === b.length && a.every((tile, index) => tile === b[index]);
 }
 
+/**
+ * Fold stored pins under the ones in memory — only consulted before this
+ * character's pins have been read back (see `createCuratedRecord`): per
+ * action, the stored order with anything pinned since appended, so a pin made
+ * before the read landed is kept and nothing stored is dropped.
+ * @param {Object} stored - `{ [action]: itemHrid[] }` as read back
+ * @param {Object} memory - `{ [action]: itemHrid[] }` as held
+ * @returns {Object} The merged pins
+ */
+export function mergePins(stored, memory) {
+    const theirs = stored && typeof stored === 'object' ? stored : {};
+    const ours = memory && typeof memory === 'object' ? memory : {};
+    const out = {};
+    for (const action of new Set([...Object.keys(theirs), ...Object.keys(ours)])) {
+        const base = Array.isArray(theirs[action]) ? theirs[action] : [];
+        const extra = (Array.isArray(ours[action]) ? ours[action] : []).filter((hrid) => !base.includes(hrid));
+        out[action] = [...base, ...extra];
+    }
+    return out;
+}
+
+/**
+ * The pins as stored, per character. A curated record: a read that cannot be
+ * made leaves the pins in hand rather than blanking them, no write goes out
+ * over a store that could not be read first, and once this character's pins
+ * have been read back an unpin sticks.
+ */
+const record = createCuratedRecord({
+    base: STORAGE_KEY,
+    store: 'settings',
+    empty: () => ({}),
+    merge: mergePins,
+    migrate: 'adopt',
+    label: 'AlchemyItemPins',
+});
+
 const CSS = `
     .${PIN_CLASS} {
         position: absolute;
@@ -139,6 +176,8 @@ class AlchemyItemPins {
     constructor() {
         this.isInitialized = false;
         this.pins = {};
+        /** Whose pins `this.pins` holds, so a switch never shows one character the other's */
+        this.pinsOwner = null;
         this.unregister = null;
         this.applying = false;
         this.styleEl = null;
@@ -153,7 +192,7 @@ class AlchemyItemPins {
 
         // Read here rather than at import, so a character switch — which
         // re-initialises the feature — picks up that character's own pins
-        this.pins = (await readScoped(STORAGE_KEY, 'settings', {}, { migrate: 'adopt' })) || {};
+        await this.loadPins();
 
         this.styleEl = document.createElement('style');
         this.styleEl.id = STYLE_ID;
@@ -162,6 +201,43 @@ class AlchemyItemPins {
 
         this.unregister = domObserver.onClass('AlchemyItemPins', 'ItemSelector_menu', () => this.apply());
         this.apply();
+    }
+
+    /**
+     * Read this character's pins back.
+     *
+     * The record is reset first so a switch never shows one character the
+     * other's pins, nor folds them into the other's record; when the read
+     * cannot be made the pins in hand stand, unless they were another
+     * character's.
+     * @returns {Promise<boolean>} Whether storage could be read
+     */
+    async loadPins() {
+        const who = dataManager.getCurrentCharacterId() || null;
+        const previous = who === this.pinsOwner ? this.pins : {};
+        this.pinsOwner = who;
+        record.reset();
+        const readable = await record.load();
+        if (!readable && Object.keys(previous).length > 0) record.set({ ...previous });
+        this.pins = record.get() || {};
+        return readable;
+    }
+
+    /**
+     * Write the pins back, without making anybody wait for it.
+     * @returns {Promise<boolean>} Whether the write landed
+     */
+    savePins() {
+        record.set({ ...this.pins });
+        return record.save().catch((error) => {
+            console.error('[AlchemyItemPins] Saving pins failed:', error);
+            return false;
+        });
+    }
+
+    /** @returns {Promise<*>} The pending writes, for tests and shutdown */
+    flushPinWrites() {
+        return record.flushed();
     }
 
     disable() {
@@ -295,9 +371,7 @@ class AlchemyItemPins {
 
         this.pins = togglePin(this.pins, action, itemHrid);
         this.apply();
-        writeScoped(STORAGE_KEY, this.pins, 'settings').catch((error) => {
-            console.error('[AlchemyItemPins] Saving pins failed:', error);
-        });
+        this.savePins();
     }
 }
 

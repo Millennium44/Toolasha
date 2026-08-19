@@ -4,7 +4,7 @@
  * All mutating helpers return new objects (never mutate in place).
  */
 
-import storage from '../../../core/storage.js';
+import { createCuratedRecord, mergeById } from '../../../utils/persisted-record.js';
 
 const STORAGE_KEY = 'inventoryTabs_config';
 const STORE = 'settings';
@@ -49,25 +49,94 @@ function defaultConfig() {
 // ---------------------------------------------------------------------------
 
 /**
- * Load the tab config for a character
+ * Fold a stored config under the one in memory — only consulted before this
+ * character's config has been read back (see `createCuratedRecord`): tabs by
+ * id, memory's copy of a tab winning, memory's selection when it has one.
+ * @param {Object} stored - The config as read back
+ * @param {Object} memory - The config as held
+ * @returns {Object} The merged config
+ */
+function mergeConfigs(stored, memory) {
+    const theirs = stored && typeof stored === 'object' ? stored : {};
+    const ours = memory && typeof memory === 'object' ? memory : {};
+    return {
+        ...defaultConfig(),
+        ...theirs,
+        ...ours,
+        tabs: mergeById((tab) => tab?.id)(theirs.tabs, ours.tabs),
+        selectedTabId: ours.selectedTabId ?? theirs.selectedTabId ?? null,
+    };
+}
+
+/**
+ * One curated record per character, under the exact key the config has always
+ * lived at (`<charId>_inventoryTabs_config`, built here rather than through
+ * character-key.js, so `scoped: false`). A read that cannot be made leaves the
+ * config in hand rather than blanking it, and no write goes out over a store
+ * that could not be read first; once the config has been read back, what the
+ * panel holds is the config and a removed tab stays removed.
+ * @type {Map<string, Object>}
+ */
+const records = new Map();
+
+/**
+ * @param {string} characterId
+ * @returns {Object} The character's record
+ */
+function recordFor(characterId) {
+    let record = records.get(characterId);
+    if (!record) {
+        record = createCuratedRecord({
+            base: getStorageKey(characterId),
+            store: STORE,
+            scoped: false,
+            empty: defaultConfig,
+            merge: mergeConfigs,
+            label: 'CustomTabs',
+        });
+        records.set(characterId, record);
+    }
+    return record;
+}
+
+/**
+ * Load the tab config for a character.
+ *
+ * A readable load returns what is stored; one that cannot be made returns the
+ * config last held for this character (the default when there is none) and
+ * leaves the next save merging rather than overwriting.
  * @param {string} characterId
  * @returns {Promise<Object>} { version, tabs, selectedTabId }
  */
 export async function loadConfig(characterId) {
     if (!characterId) return defaultConfig();
-    const saved = await storage.getJSON(getStorageKey(characterId), STORE, null);
-    if (!saved || !Array.isArray(saved.tabs)) return defaultConfig();
-    return { ...defaultConfig(), ...saved };
+    const record = recordFor(characterId);
+    const previous = record.get();
+    record.set(defaultConfig());
+    const readable = await record.load();
+    if (!readable) record.set(previous);
+    const saved = record.get();
+    const config = !saved || !Array.isArray(saved.tabs) ? defaultConfig() : { ...defaultConfig(), ...saved };
+    record.set(config);
+    return config;
 }
 
 /**
  * Persist the tab config for a character
  * @param {string} characterId
  * @param {Object} config
+ * @returns {Promise<boolean|undefined>} Whether the write landed
  */
 export async function saveConfig(characterId, config) {
     if (!characterId) return;
-    await storage.setJSON(getStorageKey(characterId), config, STORE);
+    const record = recordFor(characterId);
+    record.set(config);
+    return record.save();
+}
+
+/** @returns {Promise<*>} The pending writes, for tests and shutdown */
+export function flushConfigWrites() {
+    return Promise.all([...records.values()].map((record) => record.flushed()));
 }
 
 // ---------------------------------------------------------------------------

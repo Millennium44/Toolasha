@@ -1,17 +1,70 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-// The record the goals live in, as the storage layer would hand it back
-const stored = vi.hoisted(() => ({ record: null, writes: [] }));
+const storageMock = vi.hoisted(() => {
+    const stores = new Map();
+    const storeFor = (name) => {
+        if (!stores.has(name)) stores.set(name, new Map());
+        return stores.get(name);
+    };
+    return {
+        stores,
+        storeFor,
+        unavailable: false,
+        ready: Promise.resolve(true),
+        reset() {
+            stores.clear();
+            storageMock.unavailable = false;
+        },
+        get: vi.fn(async (key, store = 'settings', fallback = null) => {
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
+        }),
+        tryGet: vi.fn(async (key, store = 'settings') => {
+            if (storageMock.unavailable) return null;
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null
+                ? { found: true, value: structuredClone(map.get(key)) }
+                : { found: false, value: null };
+        }),
+        set: vi.fn(async (key, value, store = 'settings') => {
+            if (storageMock.unavailable) return false;
+            storeFor(store).set(key, structuredClone(value));
+            return true;
+        }),
+        delete: vi.fn(async (key, store = 'settings') => {
+            storeFor(store).delete(key);
+            return true;
+        }),
+        getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
+    };
+});
 
-vi.mock('../core/storage.js', () => ({ default: { ready: Promise.resolve(true) } }));
-vi.mock('./character-key.js', () => ({
-    readScoped: async () => stored.record,
-    writeScoped: async (_key, value) => {
-        stored.record = value;
-        stored.writes.push(value);
-        return true;
-    },
+const dataManagerMock = vi.hoisted(() => ({
+    characterId: 'char1',
+    getCurrentCharacterId: () => dataManagerMock.characterId,
+    getCurrentCharacterGameMode: () => 'standard',
 }));
+
+vi.mock('../core/storage.js', () => ({ default: storageMock }));
+vi.mock('../core/data-manager.js', () => ({ default: dataManagerMock }));
+vi.mock('./adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'char1',
+    requestAdoptionConsent: () => Promise.resolve(null),
+}));
+
+/** The record the goals live in, as the storage layer holds it for char1 */
+const stored = {
+    get record() {
+        return storageMock.storeFor('settings').get('equipmentSavings_char1') ?? null;
+    },
+    set record(value) {
+        if (value === null) storageMock.storeFor('settings').delete('equipmentSavings_char1');
+        else storageMock.storeFor('settings').set('equipmentSavings_char1', value);
+    },
+    get writes() {
+        return storageMock.set.mock.calls.map(([, value]) => value);
+    },
+};
 
 const {
     upgradeCost,
@@ -40,11 +93,13 @@ const {
     MAX_HOUSE_ROOM_LEVEL,
     loadSavingsRecord,
     saveSavingsRecord,
+    flushSavingsWrites,
 } = await import('./equipment-savings.js');
 
 beforeEach(() => {
-    stored.record = null;
-    stored.writes = [];
+    storageMock.reset();
+    storageMock.set.mockClear();
+    dataManagerMock.characterId = 'char1';
     resetAbilityGoals();
     resetHouseGoals();
 });
@@ -488,5 +543,74 @@ describe('the stored record', () => {
         await loadSavingsRecord();
 
         expect(abilityGoals().map((goal) => goal.abilityHrid)).toEqual(['/abilities/toxic_pollen']);
+    });
+});
+
+describe('the stored record and a store that cannot be read', () => {
+    test('a load that cannot be made keeps the goals in hand rather than blanking them', async () => {
+        stored.record = { targets: { '/items/holy_sword': { enhancementLevel: 0 } } };
+        await loadSavingsRecord();
+        await addAbilityGoal({ abilityHrid: '/abilities/fierce_aura', targetLevel: 46, cost: 1 });
+        expect(hasAbilityGoal('/abilities/fierce_aura')).toBe(true);
+
+        storageMock.unavailable = true;
+        const gear = await loadSavingsRecord();
+        expect(hasAbilityGoal('/abilities/fierce_aura')).toBe(true);
+        expect(gear).toEqual({ targets: { '/items/holy_sword': { enhancementLevel: 0 } } });
+    });
+
+    test("but not another character's goals", async () => {
+        await addAbilityGoal({ abilityHrid: '/abilities/fierce_aura', targetLevel: 46, cost: 1 });
+        dataManagerMock.characterId = 'char2';
+        storageMock.unavailable = true;
+        expect(await loadSavingsRecord()).toBeNull();
+        expect(abilityGoals()).toEqual([]);
+    });
+
+    test('a write over a store that cannot be read is skipped, and what is stored stays', async () => {
+        stored.record = { abilities: { '/abilities/fierce_aura': { targetLevel: 46, cost: 1 } } };
+        storageMock.unavailable = true;
+        await addHouseGoal({ houseRoomHrid: '/house_rooms/dojo', targetLevel: 6, cost: 2 });
+        storageMock.unavailable = false;
+
+        expect(stored.record.houses).toBeUndefined();
+        expect(stored.record.abilities['/abilities/fierce_aura'].targetLevel).toBe(46);
+        // The goal is still held, and lands with the next write
+        expect(hasHouseGoal('/house_rooms/dojo')).toBe(true);
+        await addHouseGoal({ houseRoomHrid: '/house_rooms/gym', targetLevel: 3, cost: 2 });
+        expect(stored.record.houses['/house_rooms/dojo'].targetLevel).toBe(6);
+        expect(stored.record.houses['/house_rooms/gym'].targetLevel).toBe(3);
+        expect(stored.record.abilities['/abilities/fierce_aura'].targetLevel).toBe(46);
+    });
+
+    test('a write before the record was read back loses no stored goal', async () => {
+        stored.record = {
+            targets: { '/items/holy_sword': { enhancementLevel: 0 } },
+            abilities: { '/abilities/fierce_aura': { targetLevel: 46, cost: 1 } },
+        };
+        storageMock.unavailable = true;
+        await loadSavingsRecord();
+        storageMock.unavailable = false;
+
+        await addAbilityGoal({ abilityHrid: '/abilities/toxic_pollen', targetLevel: 30, cost: 2 });
+        await flushSavingsWrites();
+
+        expect(Object.keys(stored.record.abilities).sort()).toEqual([
+            '/abilities/fierce_aura',
+            '/abilities/toxic_pollen',
+        ]);
+        expect(stored.record.targets).toEqual({ '/items/holy_sword': { enhancementLevel: 0 } });
+    });
+
+    test('after a readable load a removed goal stays removed', async () => {
+        stored.record = {
+            abilities: {
+                '/abilities/fierce_aura': { targetLevel: 46, cost: 1 },
+                '/abilities/toxic_pollen': { targetLevel: 30, cost: 2 },
+            },
+        };
+        await loadSavingsRecord();
+        await removeAbilityGoal('/abilities/fierce_aura');
+        expect(Object.keys(stored.record.abilities)).toEqual(['/abilities/toxic_pollen']);
     });
 });

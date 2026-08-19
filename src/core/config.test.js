@@ -17,21 +17,24 @@ vi.mock('./websocket.js', () => ({
     },
 }));
 
-vi.mock('./settings-storage.js', () => ({
-    default: {
-        saveSettings: vi.fn(() => Promise.resolve()),
-        loadSettings: vi.fn(() => Promise.resolve({})),
-        buildDefaults: vi.fn(() => ({})),
-        setCharacterId: vi.fn(),
-    },
+const settingsStorageMock = vi.hoisted(() => ({
+    lastLoadReadable: true,
+    saveSettings: vi.fn(() => Promise.resolve()),
+    saveSettingsKeepingStored: vi.fn(() => Promise.resolve(true)),
+    loadSettings: vi.fn(() => Promise.resolve({})),
+    buildDefaults: vi.fn(() => ({})),
+    setCharacterId: vi.fn(),
 }));
 
-vi.mock('./data-manager.js', () => ({
-    default: {
-        getCurrentCharacterName: () => 'TestChar',
-        getCurrentCharacterId: () => 'char-1',
-    },
+const dataManagerMock = vi.hoisted(() => ({
+    characterId: 'char-1',
+    getCurrentCharacterName: () => 'TestChar',
+    getCurrentCharacterId: () => dataManagerMock.characterId,
 }));
+
+vi.mock('./settings-storage.js', () => ({ default: settingsStorageMock }));
+
+vi.mock('./data-manager.js', () => ({ default: dataManagerMock }));
 
 const { default: config } = await import('./config.js');
 
@@ -203,5 +206,85 @@ describe('Config — color constants', () => {
         }
 
         expect(violations).toEqual([]);
+    });
+});
+
+describe('Config and a settings store that cannot be read', () => {
+    const userMap = () => ({ checkbox: { id: 'checkbox', type: 'checkbox', isTrue: true } });
+    const defaultMap = () => ({ checkbox: { id: 'checkbox', type: 'checkbox', isTrue: false } });
+
+    beforeEach(() => {
+        config.settingsMap = {};
+        config.settingsOwner = null;
+        config.characterSettingsLoaded = false;
+        config.settingChangeCallbacks = {};
+        config.settingsLoadedCallbacks = [];
+        dataManagerMock.characterId = 'char-1';
+        settingsStorageMock.lastLoadReadable = true;
+        settingsStorageMock.loadSettings
+            .mockReset()
+            .mockImplementation(async () => (settingsStorageMock.lastLoadReadable ? userMap() : defaultMap()));
+        settingsStorageMock.saveSettings.mockClear();
+        settingsStorageMock.saveSettingsKeepingStored.mockClear();
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    test('a readable load is the settings, and saves write the map whole', async () => {
+        await config.loadSettings();
+        expect(config.characterSettingsLoaded).toBe(true);
+        expect(config.getSetting('checkbox')).toBe(true);
+
+        config.setSetting('checkbox', false);
+        expect(settingsStorageMock.saveSettings).toHaveBeenCalledTimes(1);
+        expect(settingsStorageMock.saveSettingsKeepingStored).not.toHaveBeenCalled();
+    });
+
+    test('a load that cannot be made keeps the settings in hand for the same character', async () => {
+        await config.loadSettings();
+        settingsStorageMock.lastLoadReadable = false;
+        await config.loadSettings();
+
+        expect(config.getSetting('checkbox')).toBe(true);
+        expect(config.characterSettingsLoaded).toBe(true);
+    });
+
+    test("but not another character's, which gives way to defaults that do not count as loaded", async () => {
+        await config.loadSettings();
+        dataManagerMock.characterId = 'char-2';
+        settingsStorageMock.lastLoadReadable = false;
+        await config.loadSettings();
+
+        expect(config.getSetting('checkbox')).toBe(false);
+        expect(config.characterSettingsLoaded).toBe(false);
+    });
+
+    test('a save from defaults that stood in for unread settings goes through the merge-save, never whole', async () => {
+        settingsStorageMock.lastLoadReadable = false;
+        await config.loadSettings();
+        config.setSetting('checkbox', true);
+
+        expect(settingsStorageMock.saveSettings).not.toHaveBeenCalled();
+        expect(settingsStorageMock.saveSettingsKeepingStored).toHaveBeenCalledTimes(1);
+        expect(settingsStorageMock.saveSettingsKeepingStored.mock.calls[0][0].checkbox.isTrue).toBe(true);
+    });
+
+    test('once the settings are read back, saves write the map whole again', async () => {
+        settingsStorageMock.lastLoadReadable = false;
+        await config.loadSettings();
+        settingsStorageMock.lastLoadReadable = true;
+        await config.loadSettings();
+
+        expect(config.getSetting('checkbox')).toBe(true);
+        config.setSetting('checkbox', false);
+        expect(settingsStorageMock.saveSettings).toHaveBeenCalledTimes(1);
+    });
+
+    test('before a character is known, the defaults are never written whole either', async () => {
+        dataManagerMock.characterId = null;
+        await config.loadSettings();
+        config.settingsMap = defaultMap();
+        config.setSetting('checkbox', true);
+        expect(settingsStorageMock.saveSettings).not.toHaveBeenCalled();
+        expect(settingsStorageMock.saveSettingsKeepingStored).toHaveBeenCalledTimes(1);
     });
 });

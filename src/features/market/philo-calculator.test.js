@@ -14,7 +14,46 @@ const mocks = vi.hoisted(() => ({
     actionStats: { actionTime: 8, totalEfficiency: 50 },
     bonusDrops: [],
     globalPricingMode: 'hybrid',
+    characterId: 'char1',
 }));
+
+const storageMock = vi.hoisted(() => {
+    const stores = new Map();
+    const storeFor = (name) => {
+        if (!stores.has(name)) stores.set(name, new Map());
+        return stores.get(name);
+    };
+    return {
+        stores,
+        storeFor,
+        unavailable: false,
+        reset() {
+            stores.clear();
+            storageMock.unavailable = false;
+        },
+        get: vi.fn(async (key, store = 'settings', fallback = null) => {
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
+        }),
+        tryGet: vi.fn(async (key, store = 'settings') => {
+            if (storageMock.unavailable) return null;
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null
+                ? { found: true, value: structuredClone(map.get(key)) }
+                : { found: false, value: null };
+        }),
+        set: vi.fn(async (key, value, store = 'settings') => {
+            if (storageMock.unavailable) return false;
+            storeFor(store).set(key, structuredClone(value));
+            return true;
+        }),
+        delete: vi.fn(async (key, store = 'settings') => {
+            storeFor(store).delete(key);
+            return true;
+        }),
+        getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
+    };
+});
 
 vi.mock('../../api/marketplace.js', () => ({
     default: {
@@ -28,6 +67,8 @@ vi.mock('../../api/marketplace.js', () => ({
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
+        getCurrentCharacterId: () => mocks.characterId,
+        getCurrentCharacterGameMode: () => 'standard',
         getInitClientData: () => ({
             itemDetailMap: {
                 [TEA_HRID]: { name: 'Catalytic Tea', consumableDetail: { buffs: [] } },
@@ -53,8 +94,10 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 
-vi.mock('../../core/storage.js', () => ({
-    default: { getJSON: async () => null, setJSON: async () => {} },
+vi.mock('../../core/storage.js', () => ({ default: storageMock }));
+vi.mock('../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'char1',
+    requestAdoptionConsent: () => Promise.resolve(null),
 }));
 
 vi.mock('./alchemy-profit-calculator.js', () => ({
@@ -317,5 +360,96 @@ describe('pricing mode', () => {
         const row = calc.calculateRow(WIDGET_HRID, widget());
         expect(row.evInstant).toBeCloseTo(row.evPatient - 0.5 * 0.25 * 2 * (200 - 100) * (1 - MARKET_TAX), 6);
         expect(row.pricingMode).toBe('conservative');
+    });
+});
+
+describe('the stored settings', () => {
+    const KEY = 'philoCalculatorSettings_char1';
+    const stored = () => storageMock.storeFor('settings').get(KEY);
+    const seed = (value) => storageMock.storeFor('settings').set(KEY, value);
+
+    beforeEach(() => {
+        storageMock.reset();
+        mocks.characterId = 'char1';
+    });
+
+    test('reads back what was written, cost overrides included', async () => {
+        calc.itemCostOverrides = { [WIDGET_HRID]: 900 };
+        calc.filterText = 'widget';
+        await calc.saveSettings();
+        expect(stored().itemCostOverrides).toEqual({ [WIDGET_HRID]: 900 });
+
+        const fresh = new PhiloCalculator();
+        await fresh.loadSettings();
+        expect(fresh.itemCostOverrides).toEqual({ [WIDGET_HRID]: 900 });
+        expect(fresh.filterText).toBe('widget');
+    });
+
+    test('a load that cannot be made keeps the values in hand rather than blanking them', async () => {
+        seed({ itemCostOverrides: { [WIDGET_HRID]: 900 }, filterText: 'widget' });
+        await calc.loadSettings();
+        storageMock.unavailable = true;
+        await calc.loadSettings();
+        expect(calc.itemCostOverrides).toEqual({ [WIDGET_HRID]: 900 });
+        expect(calc.filterText).toBe('widget');
+    });
+
+    test('a save over a store that cannot be read is skipped, and what is stored stays', async () => {
+        seed({ itemCostOverrides: { [WIDGET_HRID]: 900 } });
+        storageMock.unavailable = true;
+        const fresh = new PhiloCalculator();
+        await fresh.loadSettings();
+        fresh.itemCostOverrides = { [OTHER_HRID]: 50 };
+        await fresh.saveSettings();
+        storageMock.unavailable = false;
+        expect(stored()).toEqual({ itemCostOverrides: { [WIDGET_HRID]: 900 } });
+    });
+
+    test('a save before the settings were read back loses no stored override', async () => {
+        seed({ itemCostOverrides: { [WIDGET_HRID]: 900 } });
+        storageMock.unavailable = true;
+        const fresh = new PhiloCalculator();
+        await fresh.loadSettings();
+        storageMock.unavailable = false;
+
+        fresh.itemCostOverrides = { [OTHER_HRID]: 50 };
+        await fresh.saveSettings();
+        expect(stored().itemCostOverrides).toEqual({ [WIDGET_HRID]: 900, [OTHER_HRID]: 50 });
+    });
+
+    test('after a readable load a cleared override stays cleared', async () => {
+        seed({ itemCostOverrides: { [WIDGET_HRID]: 900, [OTHER_HRID]: 50 } });
+        const fresh = new PhiloCalculator();
+        await fresh.loadSettings();
+        delete fresh.itemCostOverrides[WIDGET_HRID];
+        await fresh.saveSettings();
+        expect(stored().itemCostOverrides).toEqual({ [OTHER_HRID]: 50 });
+    });
+
+    test('once storage is back, the next save lands', async () => {
+        storageMock.unavailable = true;
+        const fresh = new PhiloCalculator();
+        await fresh.loadSettings();
+        fresh.itemCostOverrides = { [OTHER_HRID]: 50 };
+        await fresh.saveSettings();
+        expect(stored()).toBeUndefined();
+
+        storageMock.unavailable = false;
+        await fresh.saveSettings();
+        expect(stored().itemCostOverrides).toEqual({ [OTHER_HRID]: 50 });
+    });
+
+    test("another character's settings are not shown to, or folded into, this one", async () => {
+        seed({ itemCostOverrides: { [WIDGET_HRID]: 900 } });
+        const fresh = new PhiloCalculator();
+        await fresh.loadSettings();
+        mocks.characterId = 'char2';
+        await fresh.loadSettings();
+        fresh.itemCostOverrides = { [OTHER_HRID]: 50 };
+        await fresh.saveSettings();
+        expect(storageMock.storeFor('settings').get('philoCalculatorSettings_char2').itemCostOverrides).toEqual({
+            [OTHER_HRID]: 50,
+        });
+        expect(stored().itemCostOverrides).toEqual({ [WIDGET_HRID]: 900 });
     });
 });

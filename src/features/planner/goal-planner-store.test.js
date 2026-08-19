@@ -27,15 +27,25 @@ const mockStorage = vi.hoisted(() => {
     return {
         stores,
         storeFor,
+        unavailable: false,
         reset() {
             stores.clear();
+            mockStorage.unavailable = false;
         },
         get: vi.fn(async (key, storeName = 'settings', defaultValue = null) => {
             const store = storeFor(storeName);
             return store.has(key) && store.get(key) != null ? store.get(key) : defaultValue;
         }),
+        tryGet: vi.fn(async (key, storeName = 'settings') => {
+            if (mockStorage.unavailable) return null;
+            const store = storeFor(storeName);
+            return store.has(key) && store.get(key) != null
+                ? { found: true, value: structuredClone(store.get(key)) }
+                : { found: false, value: null };
+        }),
         set: vi.fn(async (key, value, storeName = 'settings') => {
-            storeFor(storeName).set(key, value);
+            if (mockStorage.unavailable) return false;
+            storeFor(storeName).set(key, structuredClone(value));
             return true;
         }),
         delete: vi.fn(async (key, storeName = 'settings') => {
@@ -58,6 +68,7 @@ const {
     saveSnapshot,
     loadCombatGear,
     saveCombatGear,
+    flushGoalWrites,
     GOALS_KEY,
     SNAPSHOT_KEY,
     COMBAT_GEAR_KEY,
@@ -179,5 +190,71 @@ describe('the combat gear record', () => {
     test('a baseline with no timestamp is not a baseline', async () => {
         settings().set(`${COMBAT_GEAR_KEY}_market123`, { baseline: { signature: 'sword+5' } });
         expect((await loadCombatGear()).baseline).toBeNull();
+    });
+});
+
+describe('the goal list and a store that cannot be read', () => {
+    const goalsKey = () => `${GOALS_KEY}_market123`;
+    const ids = (goals) => goals.map((goal) => goal.id);
+
+    test('a load that cannot be made keeps the list in hand rather than blanking it', async () => {
+        await saveGoals([{ id: 'a', type: 'gold', amount: 500 }]);
+        expect(ids(await loadGoals())).toEqual(['a']);
+
+        mockStorage.unavailable = true;
+        expect(ids(await loadGoals())).toEqual(['a']);
+    });
+
+    test("but not another character's list", async () => {
+        await saveGoals([{ id: 'a', type: 'gold', amount: 500 }]);
+        await loadGoals();
+        mockDataManager.currentCharacterId = 'ironcow456';
+        mockStorage.unavailable = true;
+        expect(await loadGoals()).toEqual([]);
+    });
+
+    test('adding a goal while the store cannot be read writes nothing over it', async () => {
+        settings().set(goalsKey(), [{ id: 'a', type: 'gold', amount: 500 }]);
+        mockStorage.unavailable = true;
+
+        const after = await addGoal({ id: 'b', type: 'gold', amount: 900 });
+        // What the caller sees is the goal it added on top of what could be
+        // had; what is stored is untouched
+        expect(ids(after)).toEqual(['b']);
+        mockStorage.unavailable = false;
+        expect(ids(settings().get(goalsKey()))).toEqual(['a']);
+    });
+
+    test('a save before the list was read back loses no stored goal', async () => {
+        settings().set(goalsKey(), [{ id: 'a', type: 'gold', amount: 500 }]);
+        mockStorage.unavailable = true;
+        await loadGoals();
+        mockStorage.unavailable = false;
+
+        await saveGoals([{ id: 'b', type: 'gold', amount: 900 }]);
+        await flushGoalWrites();
+        expect(ids(settings().get(goalsKey())).sort()).toEqual(['a', 'b']);
+    });
+
+    test('after a readable load a removal sticks', async () => {
+        settings().set(goalsKey(), [
+            { id: 'a', type: 'gold', amount: 500 },
+            { id: 'b', type: 'gold', amount: 900 },
+        ]);
+        await removeGoal('a');
+        expect(ids(settings().get(goalsKey()))).toEqual(['b']);
+    });
+
+    test('once storage is back, the next save lands', async () => {
+        settings().set(goalsKey(), [{ id: 'a', type: 'gold', amount: 500 }]);
+        mockStorage.unavailable = true;
+        await addGoal({ id: 'b', type: 'gold', amount: 900 });
+        expect(ids(settings().get(goalsKey()))).toEqual(['a']);
+
+        mockStorage.unavailable = false;
+        // The list is read back fresh, so the add is made against the real
+        // list this time and lands beside it
+        await addGoal({ id: 'b', type: 'gold', amount: 900 });
+        expect(ids(settings().get(goalsKey())).sort()).toEqual(['a', 'b']);
     });
 });

@@ -43,7 +43,7 @@
  * them is a rule you can only test by lying about the clock.
  */
 
-import storage from '../../core/storage.js';
+import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
 import { toOPanelConfig } from '../../utils/opanel-config.js';
 
 /** The one key the whole map lives under */
@@ -117,17 +117,43 @@ export function removeLayout(map, name) {
 }
 
 /**
+ * The map as stored — one global record, layouts are not per character.
+ *
+ * An arrangement is an hour of fiddling, so this is a curated record: a read
+ * that cannot be made leaves the map in hand rather than reading as empty (the
+ * accident this guards against is a save reading nothing, adding one layout
+ * and writing a map of one over the map of six), and no write goes out over a
+ * store that could not be read first. Before the map has been read back a
+ * save folds the stored map under memory by name; once it has, what is in
+ * memory is the map and a delete sticks.
+ */
+const record = createCuratedRecord({
+    base: LAYOUTS_KEY,
+    store: STORE,
+    scoped: false,
+    empty: () => ({}),
+    merge: mergeMaps(),
+    immediate: true,
+    label: 'OverlayLayouts',
+});
+
+/**
  * Every saved layout.
  *
- * An unreadable or absent map reads as no layouts rather than as an error: the
- * overlay still has to draw its settings popover, and a control that throws
- * takes the popover with it.
+ * An absent map reads as no layouts rather than as an error: the overlay still
+ * has to draw its settings popover, and a control that throws takes the
+ * popover with it. An unreadable one reads as the map last held, which before
+ * any read is also empty.
  *
  * @returns {Promise<Object>} `{ [name]: {savedAt, file} }`
  */
 export async function loadLayouts() {
     try {
-        const map = await storage.getJSON(LAYOUTS_KEY, STORE, null);
+        const previous = record.get();
+        record.set({});
+        const readable = await record.load();
+        if (!readable) record.set(previous);
+        const map = record.get();
         return map && typeof map === 'object' ? map : {};
     } catch (error) {
         console.error('[OverlayLayouts] Reading the saved layouts failed:', error);
@@ -138,17 +164,31 @@ export async function loadLayouts() {
 /**
  * Write the whole map back.
  *
+ * A write that does not land — the store could not be read first, or the
+ * write itself failed — also puts the map in hand back as it was, so the
+ * dropdown keeps showing what exists rather than a name that only ever lived
+ * in memory.
+ *
  * @param {Object} map - The map to store
  * @returns {Promise<boolean>} Whether it was written
  */
 async function writeLayouts(map) {
+    const before = record.get();
     try {
-        await storage.setJSON(LAYOUTS_KEY, map, STORE, true);
-        return true;
+        record.set(map);
+        const written = await record.save();
+        if (!written) record.set(before);
+        return written;
     } catch (error) {
         console.error('[OverlayLayouts] Saving the layouts failed:', error);
+        record.set(before);
         return false;
     }
+}
+
+/** @returns {Promise<*>} The pending writes, for tests and shutdown */
+export function flushLayoutWrites() {
+    return record.flushed();
 }
 
 /**
@@ -163,7 +203,7 @@ export async function saveLayout(name, file) {
     const next = putLayout(current, name, file);
     // The map that is actually stored, so a failed write leaves the dropdown
     // showing what exists rather than a name that only ever lived in memory
-    return (await writeLayouts(next)) ? next : current;
+    return (await writeLayouts(next)) ? record.get() : current;
 }
 
 /**
@@ -175,7 +215,7 @@ export async function saveLayout(name, file) {
 export async function deleteLayout(name) {
     const current = await loadLayouts();
     const next = removeLayout(current, name);
-    return (await writeLayouts(next)) ? next : current;
+    return (await writeLayouts(next)) ? record.get() : current;
 }
 
 /**

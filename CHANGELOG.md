@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### User-authored records (custom tabs, price overrides, pins, goals, settings) survive failed reads
+
+Custom inventory tabs, custom price overrides, alchemy item pins, goal planner goals, equipment savings goals, the philo calculator's cost overrides, named overlay layouts, and the settings map itself now follow the curated-record discipline: a read that cannot be made keeps what is in hand instead of blanking it, a save before the record has been read back folds the stored record under memory (and is refused when storage cannot be read first), and after a readable load a removal sticks. A settings map built from schema defaults because the store could not be read is never written whole — it goes through a merge-save that keeps every stored entry the session left at its default.
+
 ### Skill XP, enhancement, treasure, watchlist, reroll and collection records survive failed reads
 
 The skill XP history, leaderboard XP history, enhancement sessions, chest tally, inventory watchlist, task reroll map and history, guild member skill captures, collection flags/favourites/counts, and the pooled market price cache and its watchlist now go through the shared persisted record: a read that cannot be made keeps the in-memory copy instead of blanking it, a save folds what is stored under memory (XP samples by time and re-thinned, tally counts by the larger, prices by the newer reading, the rest by id with memory winning) and is skipped when storage cannot be read first, and a character or guild switch forgets the departing record before the next load. User-curated lists (watchlist, favourites, sessions, the reroll map) merge only until read back, so a removal sticks once it has been. The helper also coalesces saves queued behind a running one and stands a save down across a reset, so a record written on every game event neither backs up behind debounced writes nor lands under the next character's key.
