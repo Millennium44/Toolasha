@@ -40,12 +40,13 @@ let capturedPlayerDetails = null;
 /**
  * Start (fresh) or stop capturing the sim player build.
  * @param {boolean} on - Whether to capture
- * @param {Object|null} [foldBuffs] - Combat buffs to apply to the player before
- *   the second snapshot is taken, in the engine's buff shape keyed by unique
- *   hrid. The panel's "fold my active buffs" hands over the delta between your
- *   live buffs and the ones the fight opened with, so the sim column carries
- *   the same Toughness/Precision/evasion effects your live sheet does and every
- *   stat group compares like for like.
+ * @param {Object|null} [foldBuffs] - Per-type TARGET totals, in the engine's
+ *   buff shape keyed by a synthetic unique hrid: what the live sheet carries of
+ *   each buff type. The snapshot applies only the difference over what the
+ *   player already holds (see {@link snapshotPlayerBuild}), so the sim column
+ *   carries the same Toughness/Precision/evasion effects your live sheet does
+ *   and every stat group compares like for like — without counting a persistent
+ *   buff twice.
  */
 export function setPlayerDetailsCapture(on, foldBuffs = null) {
     CAPTURE_PLAYER_DETAILS = Boolean(on);
@@ -80,12 +81,40 @@ function snapshotPlayerBuild(player) {
     const base = structuredClone(player.combatDetails);
     if (!CAPTURE_PLAYER_FOLD_BUFFS) return { base, buffed: null };
     const saved = player.combatBuffs;
-    player.combatBuffs = { ...saved, ...CAPTURE_PLAYER_FOLD_BUFFS };
+
+    // The fold entries are TARGETS: the total ratio/flat boost of each buff type
+    // the live sheet carries. The player at this point already holds its
+    // permanent buffs (guild, community, house, achievements — `clearBuffs`
+    // seeds them), so adding the live totals on top counted every persistent
+    // buff twice (max HP +1%, max hit +3% on a live check). Applied as the
+    // difference between the target and what the player already has per type,
+    // nothing is double-counted and no fight-start map is needed: a persistent
+    // buff comes out at zero delta, a transient one at its full strength.
+    const held = new Map();
+    for (const buff of Object.values(saved || {})) {
+        if (!buff?.typeHrid) continue;
+        const entry = held.get(buff.typeHrid) || { ratioBoost: 0, flatBoost: 0 };
+        entry.ratioBoost += Number(buff.ratioBoost) || 0;
+        entry.flatBoost += Number(buff.flatBoost) || 0;
+        held.set(buff.typeHrid, entry);
+    }
+    const applied = {};
+    const deltas = {};
+    for (const [uniqueHrid, target] of Object.entries(CAPTURE_PLAYER_FOLD_BUFFS)) {
+        const have = held.get(target.typeHrid) || { ratioBoost: 0, flatBoost: 0 };
+        const ratioBoost = (Number(target.ratioBoost) || 0) - have.ratioBoost;
+        const flatBoost = (Number(target.flatBoost) || 0) - have.flatBoost;
+        deltas[target.typeHrid] = { ratioBoost, flatBoost, held: have };
+        if (Math.abs(ratioBoost) < 1e-9 && Math.abs(flatBoost) < 1e-9) continue;
+        applied[uniqueHrid] = { ...target, ratioBoost, flatBoost, ratioBoostLevelBonus: 0, flatBoostLevelBonus: 0 };
+    }
+
+    player.combatBuffs = { ...saved, ...applied };
     player.updateCombatDetails();
     const buffed = structuredClone(player.combatDetails);
     player.combatBuffs = saved;
     player.updateCombatDetails();
-    return { base, buffed };
+    return { base, buffed, deltas };
 }
 
 const ONE_SECOND = 1e9;

@@ -197,6 +197,13 @@ export function planBuffFold(combatBuffMap, startBuffMap = null) {
     const notModelled = [];
     const start = startBuffMap || {};
 
+    // The totals handed over are TARGETS per buff type — everything the live
+    // sheet carries of each type. The engine applies only the difference over
+    // what the sim player already holds, so a persistent buff already in the
+    // sim's build (guild, community, house) comes out at zero delta and a
+    // transient one (Toughness, Precision) at full strength. The fight-start
+    // map is no longer needed for correctness; it only refines the naming of
+    // which buffs were already in the build.
     for (const [uniqueHrid, buff] of Object.entries(combatBuffMap || {})) {
         const typeHrid = buff?.typeHrid;
         if (!ENGINE_BUFF_TYPES.has(typeHrid)) {
@@ -210,11 +217,6 @@ export function planBuffFold(combatBuffMap, startBuffMap = null) {
             (Number(before.ratioBoost) || 0) === (Number(buff?.ratioBoost) || 0) &&
             (Number(before.flatBoost) || 0) === (Number(buff?.flatBoost) || 0);
         (unchanged ? inBuild : folded).push(shortName(uniqueHrid));
-    }
-    // A buff that was up at fight start and has since fallen off is inside the
-    // sim's build and no longer on you — its negative delta takes it back out.
-    for (const buff of Object.values(start)) {
-        if (ENGINE_BUFF_TYPES.has(buff?.typeHrid)) bump(buff.typeHrid, buff, -1);
     }
 
     const buffs = {};
@@ -233,7 +235,7 @@ export function planBuffFold(combatBuffMap, startBuffMap = null) {
         };
     }
 
-    return { buffs, folded, inBuild, notModelled, hasStartMap: Boolean(startBuffMap) };
+    return { buffs, folded, inBuild, notModelled, hasStartMap: Boolean(startBuffMap), asTargets: true };
 }
 
 /**

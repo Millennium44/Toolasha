@@ -728,15 +728,12 @@ class MonsterStatCheckPanel {
                     simBuffed: false,
                     leniencyKeys: buffedStatKeys(buffMap, styleKey),
                 });
-                // Folded: buffed against buffed, so it is graded sharply — with
-                // one exception. Without a fight-start map the fold cannot tell
-                // a persistent buff from a transient one and may apply a
-                // persistent ratio twice, so those rows keep their leniency.
+                // Folded: buffed against buffed, graded sharply. The fold is
+                // applied as per-type targets in the engine (only the difference
+                // over what the sim already holds), so a persistent buff can no
+                // longer be counted twice and no leniency is needed.
                 const folded = probe?.buffed
-                    ? buildComparison(this.lastPlayerUnit, probe.buffed, {
-                          simBuffed: true,
-                          leniencyKeys: fold.hasStartMap ? null : buffedStatKeys(buffMap, styleKey),
-                      })
+                    ? buildComparison(this.lastPlayerUnit, probe.buffed, { simBuffed: true, leniencyKeys: null })
                     : null;
                 this.playerCheck = {
                     raw: { groups: raw.groups, hasMismatch: raw.hasMismatch, buffs: raw.buffs },
@@ -1434,7 +1431,7 @@ class MonsterStatCheckPanel {
                 if (folding && !fold.hasStartMap) {
                     wrap.appendChild(
                         this._caption(
-                            'No fight-start buff map seen yet, so every live buff was folded — a persistent one (guild damage, a lab upgrade) may be counted twice.',
+                            'No fight-start buff map seen yet, so the buffs listed as folded include persistent ones the sim already had — applied as per-type targets, so nothing is counted twice.',
                             'rgba(255,255,255,0.4)'
                         )
                     );

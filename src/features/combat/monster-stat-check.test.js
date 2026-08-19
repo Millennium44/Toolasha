@@ -320,10 +320,18 @@ describe('planBuffFold — what the sim player is handed so both sides match', (
         expect(plan.inBuild).toEqual(['guild damage', 'labyrinth combat damage']);
     });
 
-    test('persistent ratios present at fight start fold to nothing', () => {
+    test('persistent ratios present at fight start are handed over as targets, named as already in the build', () => {
+        // The plan no longer subtracts the start map: the totals are TARGETS
+        // and the engine applies only the difference over what the sim player
+        // already holds, so a persistent buff cannot be counted twice whether
+        // or not a fight-start map was ever seen. The start map only refines
+        // the naming.
         const plan = planBuffFold({ ...PERSISTENT }, { ...PERSISTENT });
-        expect(Object.keys(plan.buffs)).toEqual([]);
+        expect(plan.asTargets).toBe(true);
         expect(plan.folded).toEqual([]);
+        expect(plan.inBuild.length).toBe(Object.keys(PERSISTENT).length);
+        // Boosts of one type sum into one target, the way the engine sums them
+        expect(plan.buffs['/buff_uniques/toolasha_fold/damage'].ratioBoost).toBeCloseTo(0.15, 6);
     });
 
     test('every stat group folds, not just offense', () => {
@@ -350,17 +358,19 @@ describe('planBuffFold — what the sim player is handed so both sides match', (
         expect(plan.buffs['/buff_uniques/toolasha_fold/accuracy'].flatBoost).toBeCloseTo(7, 6);
     });
 
-    test('a buff that expired since fight start folds out negatively', () => {
+    test('a buff that expired since fight start is simply absent from the targets', () => {
+        // Nothing to hand over: the engine holds only permanent buffs, so an
+        // expired transient is neither on you nor in the sim
         const start = { '/buff_uniques/opening_surge': { typeHrid: '/buff_types/accuracy', ratioBoost: 0.5 } };
         const plan = planBuffFold({}, start);
-        expect(plan.buffs['/buff_uniques/toolasha_fold/accuracy'].ratioBoost).toBeCloseTo(-0.5, 6);
+        expect(plan.buffs['/buff_uniques/toolasha_fold/accuracy']).toBeUndefined();
     });
 
-    test('a stack that grew folds only the growth', () => {
+    test('a stack that grew is handed over at its current size, and named as folded', () => {
         const start = { '/buff_uniques/stacking': { typeHrid: '/buff_types/damage', ratioBoost: 0.1 } };
         const live = { '/buff_uniques/stacking': { typeHrid: '/buff_types/damage', ratioBoost: 0.3 } };
         const plan = planBuffFold(live, start);
-        expect(plan.buffs['/buff_uniques/toolasha_fold/damage'].ratioBoost).toBeCloseTo(0.2, 6);
+        expect(plan.buffs['/buff_uniques/toolasha_fold/damage'].ratioBoost).toBeCloseTo(0.3, 6);
         expect(plan.folded).toEqual(['stacking']);
     });
 

@@ -16,7 +16,7 @@
 
 import { describe, test, expect, afterEach } from 'vitest';
 
-import CombatSimulator from './combat-simulator.js';
+import CombatSimulator, { getCapturedPlayerDetails, setPlayerDetailsCapture } from './combat-simulator.js';
 import { setGameData } from './game-data.js';
 import Labyrinth from './labyrinth.js';
 import Player from './player.js';
@@ -402,5 +402,70 @@ describe('Labyrinth as an isolated zone fight', () => {
         expect(zoneFight.difficultyTier).toBe(5);
         expect(lab.getMonster()[0].difficultyTier).toBe(0);
         expect(zoneFight.getMonster()[0].difficultyTier).toBe(5);
+    });
+});
+
+describe('player build snapshot folds buffs as per-type targets', () => {
+    afterEach(() => {
+        setPlayerDetailsCapture(false);
+        clearSimRng();
+        setGameData(null);
+    });
+
+    /** One seeded run with the capture on, returning the snapshot */
+    function snapshotWith(foldBuffs, permanentHpRatio) {
+        installGameData();
+        seedSimRng(1);
+        const zone = new Zone(ZONE_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        // A persistent buff the sim's build already carries — the guild
+        // max-HP buff, say — seeded the way `clearBuffs` seeds them
+        player.extraBuffs = permanentHpRatio
+            ? [
+                  {
+                      uniqueHrid: '/buff_uniques/guild_hp',
+                      typeHrid: '/buff_types/max_hitpoints',
+                      ratioBoost: permanentHpRatio,
+                      ratioBoostLevelBonus: 0,
+                      flatBoost: 0,
+                      flatBoostLevelBonus: 0,
+                      startTime: 0,
+                      duration: Number.MAX_SAFE_INTEGER,
+                  },
+              ]
+            : [];
+        setPlayerDetailsCapture(true, foldBuffs);
+        new CombatSimulator([player], zone).simulate(30 * ONE_SECOND);
+        return getCapturedPlayerDetails();
+    }
+
+    const target = (ratio) => ({
+        '/buff_uniques/toolasha_fold/max_hitpoints': {
+            uniqueHrid: '/buff_uniques/toolasha_fold/max_hitpoints',
+            typeHrid: '/buff_types/max_hitpoints',
+            ratioBoost: ratio,
+            flatBoost: 0,
+            ratioBoostLevelBonus: 0,
+            flatBoostLevelBonus: 0,
+            startTime: 0,
+            duration: Number.MAX_SAFE_INTEGER,
+        },
+    });
+
+    test('a target equal to what the build already holds changes nothing (no double count)', () => {
+        const snap = snapshotWith(target(0.1), 0.1);
+        expect(snap.buffed.maxHitpoints).toBe(snap.base.maxHitpoints);
+        expect(snap.deltas['/buff_types/max_hitpoints'].ratioBoost).toBeCloseTo(0, 9);
+    });
+
+    test('a target above what the build holds applies only the difference', () => {
+        const held = snapshotWith(target(0.3), 0.1);
+        // Ratios of one type add to the base: the build already at +10% ends at
+        // +30% total — the delta applied was +20%, not +30% on top of +10%
+        // The fixture's unbuffed HP is 10 × (10 + stamina 70) = 800
+        expect(held.base.maxHitpoints).toBe(Math.floor(800 * 1.1));
+        expect(held.buffed.maxHitpoints).toBe(Math.floor(800 * 1.3));
+        expect(held.deltas['/buff_types/max_hitpoints'].ratioBoost).toBeCloseTo(0.2, 9);
     });
 });

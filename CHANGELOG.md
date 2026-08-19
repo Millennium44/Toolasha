@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The build check's buff fold can no longer count a persistent buff twice
+
+The fold handed the sim the full live total of each buff type on top of the permanent buffs the sim player already held (guild HP, guild damage…), which showed as Max HP −1% / max hit −3% whenever no fight-start map had been seen. The live totals are now applied as per-type targets — the engine adds only the difference over what it holds — so a persistent buff comes out at zero delta and a transient one at full strength, with no fight-start map needed.
+
 ### Monster stat check folds your active buffs into the sim and names which player it simmed
 
 The "you vs sim" build check now hands your live combat buffs to the sim player before its stats resolve, so armour, resistances, evasion, accuracy, max hit and HP all compare buffed against buffed instead of showing every self-buff as a gap — with a "Fold my active buffs" toggle for the raw view, a list of exactly which buffs were folded, and a callout for any the sim has no term for. Each section now states which player the sim was built from (your current build in a zone, the labyrinth loadout in the lab, your build at the trial tier in a guild trial), and the export carries it. Guild trial bosses are recognised as their own context: the verified health ladder is compared, everything else is marked "trial scaling not modelled" rather than shown as a bogus mismatch.
