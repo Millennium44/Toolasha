@@ -384,4 +384,40 @@ describe('leaderboard XP tracker', () => {
 
         expect(leaderboardXPTracker.playerXPHistory['foraging_P'][0].xp).toBe(1415884350);
     });
+
+    test('level boards (Total Level, guild Level) record the level, not the experience', () => {
+        game.handlers.leaderboard_updated({
+            leaderboardCategory: 'total_level',
+            leaderboard: {
+                columnNames: ['leaderboardPanel.level', 'leaderboardPanel.experience'],
+                rows: [{ name: 'P', value1: 2762, value2: 369997765766, rank: 1 }],
+            },
+        });
+        game.handlers.leaderboard_updated({
+            leaderboardCategory: 'guild',
+            leaderboard: {
+                columnNames: ['leaderboardPanel.level', 'leaderboardPanel.experience'],
+                rows: [{ name: 'G', value1: 195, value2: 66911513074, rank: 1 }],
+            },
+        });
+
+        expect(leaderboardXPTracker.playerXPHistory['total_level_P'][0].xp).toBe(2762);
+        expect(leaderboardXPTracker.playerXPHistory['guild_G'][0].xp).toBe(195);
+    });
+
+    test('stats carry the week window too', () => {
+        const now = Date.now();
+        const day = 24 * 60 * 60 * 1000;
+        leaderboardXPTracker.playerXPHistory['total_level_W'] = [
+            { t: now - 3 * day, xp: 2700 },
+            { t: now - 2 * day, xp: 2701 },
+            { t: now - 60 * 60 * 1000, xp: 2703 },
+        ];
+        const stats = leaderboardXPTracker.getPlayerStats('W', 'total_level');
+
+        expect(stats.weekReadings).toBe(3);
+        expect(stats.weekSpanMs).toBe(3 * day - 60 * 60 * 1000);
+        // 3 levels over (72 − 1) hours
+        expect(stats.lastWeekXPH).toBeCloseTo(3 / 71, 6);
+    });
 });

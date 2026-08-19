@@ -6,7 +6,7 @@
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import config from '../../core/config.js';
-import { leaderboardXPTracker } from './leaderboard-xp-tracker.js';
+import { leaderboardXPTracker, isLevelBoard, isWeeklyBoard } from './leaderboard-xp-tracker.js';
 import { fNum, rankBadge, addColumn, makeColumnSortable } from '../../utils/table-columns.js';
 
 const CSS_PREFIX = 'mwi-leaderboard-xp';
@@ -108,6 +108,35 @@ export function xpPerDay(stats) {
     if (stats?.lastDayXPH > 0 && stats.dayReadings >= 2) return { value: stats.lastDayXPH * 24, projected: false };
     if (stats?.lastXPH > 0) return { value: stats.lastXPH * 24, projected: true };
     return { value: 0, projected: false };
+}
+
+/**
+ * The week figure: the 7-day-window rate scaled to a week when two readings
+ * sit more than a day apart within it; else the day figure projected over a
+ * week and marked.
+ * @param {Object} stats - From the tracker
+ * @returns {{value: number, projected: boolean}}
+ */
+export function xpPerWeek(stats) {
+    const day = 24 * 60 * 60 * 1000;
+    if (stats?.lastWeekXPH > 0 && stats.weekReadings >= 2 && stats.weekSpanMs > day) {
+        return { value: stats.lastWeekXPH * 24 * 7, projected: false };
+    }
+    const perDay = xpPerDay(stats);
+    return perDay.value > 0 ? { value: perDay.value * 7, projected: true } : { value: 0, projected: false };
+}
+
+/**
+ * Why the week column has no figure.
+ * @param {Object} stats - From the tracker
+ * @returns {string} Markup
+ */
+function unratedWeekCell(stats) {
+    if (!stats?.samples) return '';
+    if (stats.samples === 1) {
+        return `<span style="opacity:0.35;" title="${esc(`Needs a second reading. ${HOW_READINGS_WORK}`)}">—</span>`;
+    }
+    return `<span style="opacity:0.35;" title="${esc('Unchanged across the readings of the last week.')}">0</span>`;
 }
 
 /**
@@ -228,7 +257,10 @@ class LeaderboardXPDisplay {
         // What the board counts, from its own last native column — "Experience"
         // is XP, "Guild Points" and "Task Points" are points, and the rate
         // columns should say so rather than calling everything XP
-        const unit = boardUnit(theadTr);
+        const unit = isLevelBoard(resolvedCategory) ? 'Lv' : boardUnit(theadTr);
+        // Level and weekly boards read in days and weeks; everything else in
+        // hours and days — a level a week is a rate, a level an hour is noise
+        const slow = isLevelBoard(resolvedCategory) || isWeeklyBoard(resolvedCategory);
 
         const allStats = [];
         for (const row of rows) {
@@ -244,17 +276,23 @@ class LeaderboardXPDisplay {
                 rank: rankText ? parseInt(rankText, 10) : null,
                 value: leaderboardXPTracker.getLatestValue(name, resolvedCategory),
                 perDay: xpPerDay(stats),
+                perWeek: xpPerWeek(stats),
                 previousRank: name ? leaderboardXPTracker.getPreviousRank(name, resolvedCategory) : null,
             });
         }
+        // On a slow board the per-hour rate used for catch-up is the day rate,
+        // which is the most recent figure a level board can honestly give
+        if (slow) for (const s of allStats) s.lastXPH = s.perDay.value / 24;
 
         // Rank movement since the previous reading, in the game's own Rank cell
         for (let i = 0; i < rows.length; i++) markRankDelta(rows[i].children[0], allStats[i]);
 
         const byLastXPH = allStats.slice().sort((a, b) => b.lastXPH - a.lastXPH);
         const byPerDay = allStats.slice().sort((a, b) => b.perDay.value - a.perDay.value);
+        const byPerWeek = allStats.slice().sort((a, b) => b.perWeek.value - a.perWeek.value);
         for (let i = 0; i < byLastXPH.length; i++) byLastXPH[i].lastXPH_rank = i + 1;
         for (let i = 0; i < byPerDay.length; i++) byPerDay[i].perDay_rank = i + 1;
+        for (let i = 0; i < byPerWeek.length; i++) byPerWeek[i].perWeek_rank = i + 1;
 
         // Who each row is chasing: the row one rank above it, wherever it sits
         // on the page (the personal row is drawn first, out of order)
@@ -267,42 +305,72 @@ class LeaderboardXPDisplay {
 
         const insertAfter = theadTr.children.length - 1;
 
-        addColumn(tableEl, CSS_PREFIX, {
-            name: `${unit}/h`,
-            insertAfter,
-            data: allStats.map((s) => s.lastXPH),
-            format: (v, i) =>
-                !v || v <= 0
-                    ? unratedCell(allStats[i])
-                    : `${fNum(v)} ${rankBadge(allStats[i].lastXPH_rank)}` +
-                      spanNote(allStats[i].lastSpanMs, 'between the last two readings'),
-            makeSortable: true,
-            sortId: 'lastXPH',
-            skipFirst: true,
-            sortData: allStats.map((s) => s.lastXPH),
-        });
+        // Rates to one decimal where a whole number would hide them (levels)
+        const fRate = (v) => (slow && v < 100 ? (Math.round(v * 10) / 10).toLocaleString() : fNum(v));
 
-        addColumn(tableEl, CSS_PREFIX, {
-            name: `${unit}/day`,
-            insertAfter: insertAfter + 1,
-            data: allStats.map((s) => s.perDay.value),
-            format: (v, i) => {
-                const s = allStats[i];
-                if (!v || v <= 0) return unratedDayCell(s);
-                const figure = `${s.perDay.projected ? '~' : ''}${fNum(v)} ${rankBadge(s.perDay_rank)}`;
-                return s.perDay.projected
-                    ? figure +
-                          ` <span style="opacity:0.55; font-size:0.85em;" title="${esc(
-                              `Projected from the ${unit}/h rate — fewer than two readings within the last 24h. ` +
-                                  'Open this board again tomorrow and it becomes a measured day.'
-                          )}">proj.</span>`
-                    : figure + spanNote(s.daySpanMs, 'across the readings of the last 24h, scaled to a day');
-            },
-            makeSortable: true,
-            sortId: 'perDay',
-            skipFirst: true,
-            sortData: allStats.map((s) => s.perDay.value),
-        });
+        const dayColumn = (position) =>
+            addColumn(tableEl, CSS_PREFIX, {
+                name: `${unit}/day`,
+                insertAfter: position,
+                data: allStats.map((s) => s.perDay.value),
+                format: (v, i) => {
+                    const s = allStats[i];
+                    // The first rate column carries the explanation of an empty row
+                    if (!v || v <= 0) return slow ? unratedCell(s) : unratedDayCell(s);
+                    const figure = `${s.perDay.projected ? '~' : ''}${fRate(v)} ${rankBadge(s.perDay_rank)}`;
+                    return s.perDay.projected
+                        ? figure +
+                              ` <span style="opacity:0.55; font-size:0.85em;" title="${esc(
+                                  'Projected from the rate between the last two readings — fewer than two readings ' +
+                                      'within the last 24h. Open this board again tomorrow and it becomes a measured day.'
+                              )}">proj.</span>`
+                        : figure + spanNote(s.daySpanMs, 'across the readings of the last 24h, scaled to a day');
+                },
+                makeSortable: true,
+                sortId: 'perDay',
+                skipFirst: true,
+                sortData: allStats.map((s) => s.perDay.value),
+            });
+
+        if (slow) {
+            dayColumn(insertAfter);
+            addColumn(tableEl, CSS_PREFIX, {
+                name: `${unit}/week`,
+                insertAfter: insertAfter + 1,
+                data: allStats.map((s) => s.perWeek.value),
+                format: (v, i) => {
+                    const s = allStats[i];
+                    if (!v || v <= 0) return unratedWeekCell(s);
+                    const figure = `${s.perWeek.projected ? '~' : ''}${fRate(v)} ${rankBadge(s.perWeek_rank)}`;
+                    return s.perWeek.projected
+                        ? figure +
+                              ` <span style="opacity:0.55; font-size:0.85em;" title="${esc(
+                                  'Projected from the readings of the last 24h — no two readings span more than a day yet.'
+                              )}">proj.</span>`
+                        : figure + spanNote(s.weekSpanMs, 'across the readings of the last 7 days, scaled to a week');
+                },
+                makeSortable: true,
+                sortId: 'perWeek',
+                skipFirst: true,
+                sortData: allStats.map((s) => s.perWeek.value),
+            });
+        } else {
+            addColumn(tableEl, CSS_PREFIX, {
+                name: `${unit}/h`,
+                insertAfter,
+                data: allStats.map((s) => s.lastXPH),
+                format: (v, i) =>
+                    !v || v <= 0
+                        ? unratedCell(allStats[i])
+                        : `${fNum(v)} ${rankBadge(allStats[i].lastXPH_rank)}` +
+                          spanNote(allStats[i].lastSpanMs, 'between the last two readings'),
+                makeSortable: true,
+                sortId: 'lastXPH',
+                skipFirst: true,
+                sortData: allStats.map((s) => s.lastXPH),
+            });
+            dayColumn(insertAfter + 1);
+        }
 
         addColumn(tableEl, CSS_PREFIX, {
             name: 'Rank ↑ in',

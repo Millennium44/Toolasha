@@ -139,6 +139,9 @@ function calcStats(arr) {
         lastSpanMs: 0,
         daySpanMs: 0,
         dayReadings: 0,
+        lastWeekXPH: 0,
+        weekSpanMs: 0,
+        weekReadings: 0,
     };
     if (samples < 2) return empty;
 
@@ -152,16 +155,43 @@ function calcStats(arr) {
     const lastDayXPH = last1d.length >= 2 ? calcXPH(last1d[0], last1d[last1d.length - 1]) : 0;
     const daySpanMs = last1d.length >= 2 ? last1d[last1d.length - 1].t - last1d[0].t : 0;
 
+    const last1w = inLastInterval(arr, WINDOW_1W);
+    const lastWeekXPH = last1w.length >= 2 ? calcXPH(last1w[0], last1w[last1w.length - 1]) : 0;
+    const weekSpanMs = last1w.length >= 2 ? last1w[last1w.length - 1].t - last1w[0].t : 0;
+
     return {
         lastXPH,
         lastHourXPH,
         lastDayXPH,
+        lastWeekXPH,
         samples,
         lastSeenAt,
         lastSpanMs,
         daySpanMs,
         dayReadings: last1d.length,
+        weekSpanMs,
+        weekReadings: last1w.length,
     };
+}
+
+/**
+ * Boards whose number is a level rather than XP or points: Total Level and
+ * the Guilds tab's Level board. Their series hold the level.
+ * @param {string} category - `leaderboardCategory`
+ * @returns {boolean}
+ */
+export function isLevelBoard(category) {
+    return category === 'total_level' || category === 'guild';
+}
+
+/**
+ * Boards that reset every week (the Guilds tab's "Weekly …" boards): a week
+ * is their whole life, so they read in days and weeks rather than hours.
+ * @param {string} category - `leaderboardCategory`
+ * @returns {boolean}
+ */
+export function isWeeklyBoard(category) {
+    return typeof category === 'string' && category.includes('weekly');
 }
 
 // ─── Tracker class ──────────────────────────────────────────────────────────
@@ -203,7 +233,12 @@ class LeaderboardXPTracker {
         const map = this.history.get();
         let purged = false;
         for (const [key, series] of Object.entries(map)) {
-            if (Array.isArray(series) && series.length && series.every((sample) => !(sample?.xp > 0))) {
+            if (!Array.isArray(series) || !series.length) continue;
+            const category = key.slice(0, key.lastIndexOf('_'));
+            // Level-board series recorded before they tracked the level hold
+            // XP sums — a level is never in the millions
+            const xpOnALevelBoard = isLevelBoard(category) && series.some((sample) => sample?.xp > 100000);
+            if (series.every((sample) => !(sample?.xp > 0)) || xpOnALevelBoard) {
                 delete map[key];
                 purged = true;
             }
@@ -242,7 +277,14 @@ class LeaderboardXPTracker {
         // Task Points and the like carry one, in value1 — reading value2 there
         // recorded zero for every row, and those boards never had a rate
         const columns = Array.isArray(data.leaderboard?.columnNames) ? data.leaderboard.columnNames.length : 0;
-        const valueField = columns > 0 ? `value${columns}` : 'value2';
+        // …except the level boards, where the level is the thing: Total Level
+        // and the guild Level board track value1, so their rates are levels
+        // per day and week rather than XP per hour over sums in the billions
+        const valueField = isLevelBoard(data.leaderboardCategory)
+            ? 'value1'
+            : columns > 0
+              ? `value${columns}`
+              : 'value2';
 
         for (const row of rows) {
             const name = row.name;

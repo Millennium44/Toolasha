@@ -17,7 +17,7 @@ vi.mock('./leaderboard-xp-tracker.js', () => ({
     },
 }));
 
-const { xpPerDay, timeToOvertake, boardUnit } = await import('./leaderboard-xp-display.js');
+const { xpPerDay, xpPerWeek, timeToOvertake, boardUnit } = await import('./leaderboard-xp-display.js');
 
 describe('xpPerDay', () => {
     test('a measured day is the 24h-window rate scaled to a day', () => {
@@ -33,6 +33,30 @@ describe('xpPerDay', () => {
 
     test('no rate at all is zero', () => {
         expect(xpPerDay({ lastDayXPH: 0, dayReadings: 0, lastXPH: 0 })).toEqual({ value: 0, projected: false });
+    });
+});
+
+describe('xpPerWeek', () => {
+    const day = 24 * 60 * 60 * 1000;
+
+    test('a measured week needs two readings more than a day apart within the week', () => {
+        expect(xpPerWeek({ lastWeekXPH: 1, weekReadings: 3, weekSpanMs: 3 * day, lastDayXPH: 0, lastXPH: 0 })).toEqual({
+            value: 168,
+            projected: false,
+        });
+    });
+
+    test('otherwise it projects the day figure over a week, and says so', () => {
+        expect(
+            xpPerWeek({
+                lastWeekXPH: 5,
+                weekReadings: 2,
+                weekSpanMs: 3600000,
+                lastDayXPH: 5,
+                dayReadings: 2,
+                lastXPH: 5,
+            })
+        ).toEqual({ value: 5 * 24 * 7, projected: true });
     });
 });
 
