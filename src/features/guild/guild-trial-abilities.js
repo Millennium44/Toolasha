@@ -394,7 +394,10 @@ class GuildTrialAbilities {
         }
         const changed = next !== this.guildName;
         this.guildName = next;
-        if (this.session) this.session.guildName = next;
+        // Only a real name is stamped: forgetting the name must not also
+        // forget which guild the session in hand was collected in, which is
+        // what the check above reads on the next name to arrive
+        if (this.session && next) this.session.guildName = next;
         if (!changed || !next || !this.initialized) return undefined;
         return this._restore();
     }
