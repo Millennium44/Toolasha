@@ -6,13 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The reroll walk stops where the shield popup says, and picks the cheaper currency
+
+The walk now rerolls a task until the protection popup's "Block rerolls at" thresholds would block the next reroll, instead of counting to a reroll limit of its own — one rule for one decision. It prices both options for each card (the chooser's own Pay buttons, or the game's doubling ladder when the chooser is shut), values a cowbell through the Bag of 10 Cowbells and takes the cheaper one, saying which and why: "▶ Reroll #3 — 2🔔 (≈16K, cheaper than 20K🪙)". It is driven from a small floating panel on the Tasks page with a ⚙ for the currency preference and the discard-at-limit switch; the header 🎲 shows and hides it.
+
 ### Trial Abilities compares the captured kits against your ability plan
 
 Write the kit each player is meant to bring — `Alice: Fierce Aura 200, Vampirism` — into the panel's new Plan box, and every captured player gets a verdict under their row: on plan, missing an ability, or under the level you asked for. The plan is saved per guild and survives reloads and trials, ability names are matched forgivingly (an unrecognised one is reported, never dropped), and the comparison rides along in the trial JSON export.
 
 ### Guided task reroll walk (off by default)
 
-Turn on "Reroll walk" in Tasks for a 🎲 control on the task panel that steps down the board using your protection list and a per-task reroll limit. It always tells you what the next press will do — "Reroll #3 (2/3) — 1🔔", "Trash #5 (limit reached)" — and one press is exactly one game click: nothing chains, nothing runs on a timer, and it stops rather than clicking if the card is not what it planned for.
+Turn on "Reroll walk" in Tasks for a control that steps down the board using your protection list. It always tells you what the next press will do — "Reroll #3 — 1🔔", "Trash #5 (both reroll options blocked)" — and one press is exactly one game click: nothing chains, nothing runs on a timer, and it stops rather than clicking if the card is not what it planned for.
 
 ### The task list sorts only when you ask it to
 

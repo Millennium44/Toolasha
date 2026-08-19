@@ -2561,27 +2561,30 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: false,
                 help:
-                    'Adds a 🎲 Reroll walk control to the task panel. It works down the board using your ' +
-                    'protection list and the reroll limit below, and tells you what the next click will do — ' +
-                    'nothing happens until you press it. One click is always exactly one game action: the walk ' +
-                    'never chains clicks, never runs on a timer, and stops the moment a card is not what it ' +
-                    'planned for.',
+                    'Adds a floating Reroll walk panel to the Tasks page (and a 🎲 in the task panel header to ' +
+                    'show or hide it). It works down the board using your protection list and that popup’s ' +
+                    '"Block rerolls at" thresholds, and tells you what the next click will do — nothing happens ' +
+                    'until you press it. One click is always exactly one game action: the walk never chains ' +
+                    'clicks, never runs on a timer, and stops the moment a card is not what it planned for.',
             },
-            tasks_rerollWalkMaxRerolls: {
-                id: 'tasks_rerollWalkMaxRerolls',
-                label: 'Reroll walk: rerolls to spend on one task',
-                type: 'number',
-                default: 3,
-                min: 0,
-                max: 10,
-                help: 'How many rerolls the walk will spend on a single task before it gives up on it. Rerolls already spent on a task count towards this.',
+            tasks_rerollWalkCurrency: {
+                id: 'tasks_rerollWalkCurrency',
+                label: 'Reroll walk: which currency to pay with',
+                type: 'select',
+                default: 'auto',
+                options: [
+                    { value: 'auto', label: 'Cheapest (compare in coins)' },
+                    { value: 'cowbell', label: 'Prefer cowbells' },
+                    { value: 'coin', label: 'Prefer coins' },
+                ],
+                help: 'Cheapest values a cowbell through the Bag of 10 Cowbells and picks whichever of the two rerolls costs less in coins. Either preference falls back to the other currency when its own is blocked. A free reroll is always taken first.',
             },
             tasks_rerollWalkTrashAtLimit: {
                 id: 'tasks_rerollWalkTrashAtLimit',
-                label: 'Reroll walk: discard a task that hits the limit',
+                label: 'Reroll walk: discard a task once both reroll options are blocked',
                 type: 'checkbox',
                 default: true,
-                help: 'When a task has used up its rerolls, offer to discard it (the red trash can) rather than leaving it on the board. Turn off to skip past it instead.',
+                help: 'When both the coin and the cowbell reroll would cost at or over the shield popup’s "Block rerolls at" thresholds, offer to discard the task (the red trash can) rather than leaving it on the board. Turn off to skip past it instead.',
             },
         },
     },

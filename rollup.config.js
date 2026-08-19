@@ -93,6 +93,9 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/spawn-expectation.js')), 'Toolasha.Utils.spawnExpectation'],
     [normalize(join(__dirname, 'src/utils/chest-tally.js')), 'Toolasha.Utils.chestTally'],
     [normalize(join(__dirname, 'src/utils/floating-panel.js')), 'Toolasha.Utils.floatingPanel'],
+    // The guided walks' shared control strip: bulk sell (market) and the reroll
+    // walk plus the Consumables Buy-all (ui) all draw it
+    [normalize(join(__dirname, 'src/utils/floating-widget.js')), 'Toolasha.Utils.floatingWidget'],
     [normalize(join(__dirname, 'src/utils/worker-pool.js')), 'Toolasha.Utils.workerPool'],
     [normalize(join(__dirname, 'src/utils/ev-worker-manager.js')), 'Toolasha.Utils.evWorkerManager'],
     [normalize(join(__dirname, 'src/utils/enhancement-worker-manager.js')), 'Toolasha.Utils.enhancementWorkerManager'],

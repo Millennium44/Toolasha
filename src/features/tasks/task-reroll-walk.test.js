@@ -9,17 +9,26 @@
  * many of the game's buttons get clicked per press of ours, which is one, and
  * about what happens when the board is not what the label promised, which is
  * that nothing gets clicked at all.
+ *
+ * The second thing worth pinning down is the money. The walk stops where the
+ * shield popup says to stop, and between the two prices it picks the cheaper
+ * one in coins — a rule that is only useful if it says out loud which it picked
+ * and why.
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const settings = vi.hoisted(() => ({ values: {} }));
 const stored = vi.hoisted(() => ({ values: {} }));
+const market = vi.hoisted(() => ({ cowbellValue: 8000 }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: (key) => settings.values[key] ?? false,
         getSettingValue: (key, fallback) => settings.values[key] ?? fallback,
+        setSetting: (key, value) => {
+            settings.values[key] = value;
+        },
         isFeatureEnabled: (key) => settings.values[key] ?? false,
         COLOR_ACCENT: '#0f0',
         Z_FLOATING_PANEL: 500,
@@ -38,8 +47,18 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+// The board watcher would re-render the widget on every DOM change a test makes;
+// the tests drive the walk directly instead
+vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
+vi.mock('./task-profit-calculator.js', () => ({ getCowbellValue: () => market.cowbellValue }));
 
-const { default: taskRerollWalkFeature, verdictForCard, preferredRerollOption } = await import('./task-reroll-walk.js');
+const {
+    default: taskRerollWalkFeature,
+    verdictForCard,
+    preferredRerollOption,
+    nextRerollCosts,
+    chooseReroll,
+} = await import('./task-reroll-walk.js');
 const walk = taskRerollWalkFeature.walk;
 
 const MILKING = '/actions/milking/cow';
@@ -131,9 +150,13 @@ const AT_REST = ['Go', 'Reroll', ''];
 const CHOOSER = ['Back', 'MooPass Free Reroll (2)'];
 
 /** A quest for a card, with however many rerolls have been spent on it */
-const quest = (actionHrid, spent = 0) => ({ actionHrid, coinRerollCount: spent, cowbellRerollCount: 0 });
+const quest = (actionHrid, coinSpent = 0, cowbellSpent = 0) => ({
+    actionHrid,
+    coinRerollCount: coinSpent,
+    cowbellRerollCount: cowbellSpent,
+});
 
-/** What the chip currently offers */
+/** What the widget currently offers */
 const chipText = () => document.querySelector('.mwi-task-reroll-walk-advance')?.textContent || '';
 
 /**
@@ -176,14 +199,20 @@ beforeEach(() => {
     vi.useFakeTimers();
     settings.values = {
         tasks_rerollWalk: true,
-        tasks_rerollWalkMaxRerolls: 3,
+        tasks_rerollWalkCurrency: 'auto',
         tasks_rerollWalkTrashAtLimit: true,
     };
     stored.values = {};
+    market.cowbellValue = 8000;
     walk.protectedHrids = new Set();
     walk.state = 'idle';
     walk.step = null;
     walk.index = 0;
+    walk.hidden = false;
+    walk.widget = null;
+    // The shield popup's defaults: nothing is blocked until the price ladder caps
+    walk.coinThreshold = 320000;
+    walk.cowbellThreshold = 32;
     document.body.replaceChildren();
 });
 
@@ -192,8 +221,74 @@ afterEach(() => {
     vi.useRealTimers();
 });
 
+describe('what the next reroll costs', () => {
+    test('the ladder doubles per currency and caps where the game caps it', () => {
+        expect(nextRerollCosts(quest(MILKING, 0, 0))).toEqual({ coin: 10000, cowbell: 1 });
+        expect(nextRerollCosts(quest(MILKING, 2, 3))).toEqual({ coin: 40000, cowbell: 8 });
+        expect(nextRerollCosts(quest(MILKING, 9, 9))).toEqual({ coin: 320000, cowbell: 32 });
+    });
+
+    test('a card with no readable quest has no price', () => {
+        expect(nextRerollCosts(null)).toBe(null);
+    });
+});
+
+describe('which reroll gets bought', () => {
+    const base = { coinThreshold: 320000, cowbellThreshold: 32, cowbellValue: 8000, preference: 'auto' };
+
+    test('a free reroll beats both prices', () => {
+        expect(chooseReroll({ ...base, coin: 10000, cowbell: 1, free: true }).currency).toBe('free');
+    });
+
+    test('cowbells win when they are worth less in coins, and the label says so', () => {
+        const choice = chooseReroll({ ...base, coin: 20000, cowbell: 2 });
+        expect(choice.currency).toBe('cowbell');
+        expect(choice.costLabel).toBe('2🔔');
+        expect(choice.why).toBe('≈16.0K, cheaper than 20.0K🪙');
+    });
+
+    test('coins win when the cowbells are dearer', () => {
+        const choice = chooseReroll({ ...base, coin: 10000, cowbell: 2 });
+        expect(choice.currency).toBe('coin');
+        expect(choice.why).toContain('cheaper than 2🔔');
+    });
+
+    test('one currency over its threshold leaves the other', () => {
+        expect(chooseReroll({ ...base, coin: 20000, cowbell: 2, cowbellThreshold: 2 })).toMatchObject({
+            currency: 'coin',
+            why: 'cowbells blocked',
+        });
+        expect(chooseReroll({ ...base, coin: 20000, cowbell: 2, coinThreshold: 20000 })).toMatchObject({
+            currency: 'cowbell',
+            why: 'coins blocked',
+        });
+    });
+
+    test('both over their thresholds is blocked, whatever they cost', () => {
+        const choice = chooseReroll({ ...base, coin: 320000, cowbell: 32 });
+        expect(choice.currency).toBe(null);
+        expect(choice.why).toBe('both reroll options blocked');
+    });
+
+    test('a preference overrides the arithmetic, but not a block', () => {
+        expect(chooseReroll({ ...base, coin: 10000, cowbell: 2, preference: 'cowbell' })).toMatchObject({
+            currency: 'cowbell',
+            why: 'preferred',
+        });
+        expect(chooseReroll({ ...base, coin: 20000, cowbell: 2, preference: 'coin' })).toMatchObject({
+            currency: 'coin',
+            why: 'preferred',
+        });
+        // Asking for cowbells when cowbells are blocked still pays coins
+        expect(
+            chooseReroll({ ...base, coin: 20000, cowbell: 32, cowbellThreshold: 32, preference: 'cowbell' }).currency
+        ).toBe('coin');
+    });
+});
+
 describe('what the walk decides about one card', () => {
-    const base = { completed: false, isProtected: false, rerollsSpent: 0, maxRerolls: 3, trashAtLimit: true };
+    const choice = { currency: 'cowbell', costLabel: '2🔔', why: 'preferred' };
+    const base = { completed: false, isProtected: false, choice, trashAtLimit: true };
 
     test('a task the player asked to keep is left alone', () => {
         expect(verdictForCard({ ...base, isProtected: true }).action).toBe('skip');
@@ -203,28 +298,20 @@ describe('what the walk decides about one card', () => {
         expect(verdictForCard({ ...base, completed: true }).action).toBe('skip');
     });
 
-    test('an unprotected task under its budget is rerolled', () => {
-        const verdict = verdictForCard({ ...base, rerollsSpent: 2 });
+    test('a task with an affordable reroll is rerolled, and the reason is the price', () => {
+        const verdict = verdictForCard(base);
         expect(verdict.action).toBe('reroll');
-        expect(verdict.reason).toBe('2/3');
+        expect(verdict.reason).toBe('2🔔 (preferred)');
     });
 
-    test('a task that has used its budget is discarded, or skipped when that is off', () => {
-        expect(verdictForCard({ ...base, rerollsSpent: 3 }).action).toBe('trash');
-        expect(verdictForCard({ ...base, rerollsSpent: 3, trashAtLimit: false }).action).toBe('skip');
+    test('a blocked task is discarded, or skipped when that is off', () => {
+        const blocked = { currency: null, costLabel: '', why: 'both reroll options blocked' };
+        expect(verdictForCard({ ...base, choice: blocked }).action).toBe('trash');
+        expect(verdictForCard({ ...base, choice: blocked, trashAtLimit: false }).action).toBe('skip');
     });
 
-    test('rerolls already spent count against the budget', () => {
-        // A task that arrived half-rerolled does not get a fresh three
-        expect(verdictForCard({ ...base, rerollsSpent: 5 }).action).toBe('trash');
-    });
-
-    test('a card whose quest cannot be read is left alone rather than guessed at', () => {
-        expect(verdictForCard({ ...base, rerollsSpent: null }).action).toBe('skip');
-    });
-
-    test('a budget of nothing sends every unprotected card to the trash', () => {
-        expect(verdictForCard({ ...base, maxRerolls: 0 }).action).toBe('trash');
+    test('a card whose price cannot be read is left alone rather than guessed at', () => {
+        expect(verdictForCard({ ...base, choice: null }).action).toBe('skip');
     });
 });
 
@@ -235,12 +322,17 @@ describe('which reroll option gets pressed', () => {
         expect(preferredRerollOption([option('coin'), option('free')]).kind).toBe('free');
     });
 
-    test('cowbells before coins', () => {
+    test('the currency the plan priced is the button pressed', () => {
+        expect(preferredRerollOption([option('coin'), option('cowbell')], 'coin').kind).toBe('coin');
+        expect(preferredRerollOption([option('coin'), option('cowbell')], 'cowbell').kind).toBe('cowbell');
+    });
+
+    test('with no currency named it falls back to cowbells before coins', () => {
         expect(preferredRerollOption([option('coin'), option('cowbell')]).kind).toBe('cowbell');
     });
 
     test('a spent free reroll is not pressed', () => {
-        expect(preferredRerollOption([option('free', false), option('coin')]).kind).toBe('coin');
+        expect(preferredRerollOption([option('free', false), option('coin')], 'coin').kind).toBe('coin');
     });
 
     test('nothing on offer is nothing pressed', () => {
@@ -249,7 +341,7 @@ describe('which reroll option gets pressed', () => {
 });
 
 describe('planning a walk down the board', () => {
-    test('it opens on the first card that needs something', () => {
+    test('it opens on the first card that needs something, priced', () => {
         walk.protectedHrids = new Set([KEEPER]);
         board([
             { name: 'Brewing - Coffee', buttons: AT_REST, quest: quest(KEEPER) },
@@ -258,8 +350,19 @@ describe('planning a walk down the board', () => {
 
         walk.start();
 
-        expect(chipText()).toContain('Reroll #2 (0/3)');
+        // First reroll: 10K coins against one cowbell worth ~8K
+        expect(chipText()).toContain('Reroll #2 — 1🔔');
         expect(clicks).toEqual([]);
+    });
+
+    test('coins are chosen, and named, when the cowbell is the dearer of the two', () => {
+        market.cowbellValue = 30000;
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+
+        walk.start();
+
+        expect(chipText()).toContain('Reroll #1 — 10.0K🪙');
+        expect(chipText()).toContain('cheaper than 1🔔');
     });
 
     test('a board of nothing but protected tasks finishes without a click', () => {
@@ -275,21 +378,34 @@ describe('planning a walk down the board', () => {
         expect(clicks).toEqual([]);
     });
 
-    test('a task at its limit is offered for discard, naming why', () => {
-        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING, 3) }]);
+    test('a task both of whose rerolls are blocked is offered for discard', () => {
+        walk.coinThreshold = 40000;
+        walk.cowbellThreshold = 4;
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING, 2, 2) }]);
 
         walk.start();
 
-        expect(chipText()).toBe('▶ Trash #1 (limit reached)');
+        expect(chipText()).toBe('▶ Trash #1 (both reroll options blocked)');
     });
 
-    test('with discard-at-limit off it is passed over instead', () => {
+    test('with discard-at-limit off a blocked task is passed over instead', () => {
         settings.values.tasks_rerollWalkTrashAtLimit = false;
-        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING, 3) }]);
+        walk.coinThreshold = 40000;
+        walk.cowbellThreshold = 4;
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING, 2, 2) }]);
 
         walk.start();
 
         expect(chipText()).toContain('1 kept');
+    });
+
+    test('a task blocked in one currency still rerolls with the other', () => {
+        walk.cowbellThreshold = 1;
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+
+        walk.start();
+
+        expect(chipText()).toContain('Reroll #1 — 10.0K🪙 (cowbells blocked)');
     });
 
     test('an empty board says so rather than offering a press', () => {
@@ -305,7 +421,7 @@ describe('one press, one game click', () => {
     test('opening the chooser is its own press, and paying is the next', () => {
         const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         walk.start();
-        expect(chipText()).toBe('▶ Reroll #1 (0/3) — open the menu');
+        expect(chipText()).toContain('open the menu');
 
         walk.advance();
         expect(clicks).toEqual(['Milking - Cow:Reroll']);
@@ -313,7 +429,7 @@ describe('one press, one game click', () => {
         // The game opens the chooser; the walk re-reads and offers the payment
         setButtons(list, 1, CHOOSER);
         vi.advanceTimersByTime(200);
-        expect(chipText()).toBe('▶ Reroll #1 (0/3) — free');
+        expect(chipText()).toBe('▶ Reroll #1 — free');
 
         // Nothing pressed itself while that was worked out, however long is left
         vi.advanceTimersByTime(10000);
@@ -327,7 +443,9 @@ describe('one press, one game click', () => {
     });
 
     test('trashing takes two presses too, and the second is the confirm', () => {
-        const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING, 3) }]);
+        walk.coinThreshold = 10000;
+        walk.cowbellThreshold = 1;
+        const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         walk.start();
 
         walk.advance();
@@ -415,7 +533,7 @@ describe('the walk stops rather than clicking the wrong thing', () => {
         expect(clicks).toEqual([]);
     });
 
-    test('the stop button leaves the board exactly as it is', () => {
+    test('the close button leaves the board exactly as it is', () => {
         board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         walk.start();
 
@@ -423,6 +541,62 @@ describe('the walk stops rather than clicking the wrong thing', () => {
 
         expect(document.getElementById('mwi-task-reroll-walk-chip')).toBe(null);
         expect(clicks).toEqual([]);
+    });
+});
+
+describe('the floating walk widget', () => {
+    test('it offers to start before anything has been walked', () => {
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+
+        walk._render();
+
+        expect(chipText()).toBe('▶ Reroll walk');
+        expect(clicks).toEqual([]);
+    });
+
+    test('the main button becomes the next action once a walk is running', () => {
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        walk._render();
+
+        document.querySelector('.mwi-task-reroll-walk-advance').click();
+
+        expect(chipText()).toContain('Reroll #1 —');
+        // Starting a walk is not a game action; the first press only plans
+        expect(clicks).toEqual([]);
+    });
+
+    test('the header 🎲 shows the widget again after it was closed', () => {
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        walk._render();
+
+        document.querySelector('.mwi-task-reroll-walk-stop').click();
+        expect(document.getElementById('mwi-task-reroll-walk-chip')).toBe(null);
+
+        walk.toggleWidget();
+        expect(document.getElementById('mwi-task-reroll-walk-chip')).not.toBe(null);
+    });
+
+    test('the gear shows the thresholds it obeys and binds its own settings', () => {
+        walk.coinThreshold = 80000;
+        walk.cowbellThreshold = 8;
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        walk._render();
+
+        document.querySelector('.mwi-task-reroll-walk-chip-gear').click();
+        const drawer = document.querySelector('.mwi-task-reroll-walk-chip-settings');
+        expect(drawer.textContent).toContain('80.0K🪙 / 8🔔');
+        expect(drawer.textContent).toContain('task-protection popup');
+
+        const box = drawer.querySelector('.mwi-widget-setting-tasks_rerollWalkTrashAtLimit');
+        expect(box.checked).toBe(true);
+        box.checked = false;
+        box.dispatchEvent(new Event('change'));
+        expect(settings.values.tasks_rerollWalkTrashAtLimit).toBe(false);
+
+        const pick = drawer.querySelector('.mwi-widget-setting-tasks_rerollWalkCurrency');
+        pick.value = 'coin';
+        pick.dispatchEvent(new Event('change'));
+        expect(settings.values.tasks_rerollWalkCurrency).toBe('coin');
     });
 });
 
@@ -451,6 +625,18 @@ describe('the control only exists when it is turned on', () => {
         walk._injectButton(header);
 
         expect(parent.querySelectorAll('.mwi-task-reroll-walk-btn')).toHaveLength(1);
+        taskRerollWalkFeature.cleanup();
+    });
+
+    test('the thresholds come from the keys the shield popup writes', async () => {
+        stored.values.taskCapCoinThreshold_7 = 40000;
+        stored.values.taskCapCowbellThreshold_7 = 4;
+        walk.isInitialized = false;
+
+        await taskRerollWalkFeature.initialize();
+
+        expect(walk.coinThreshold).toBe(40000);
+        expect(walk.cowbellThreshold).toBe(4);
         taskRerollWalkFeature.cleanup();
     });
 });

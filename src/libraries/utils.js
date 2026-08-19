@@ -64,6 +64,7 @@ import * as combatDropModel from '../utils/combat-drop-model.js';
 import * as spawnExpectation from '../utils/spawn-expectation.js';
 import * as chestTally from '../utils/chest-tally.js';
 import * as floatingPanel from '../utils/floating-panel.js';
+import * as floatingWidget from '../utils/floating-widget.js';
 import * as workerPool from '../utils/worker-pool.js';
 import * as evWorkerManager from '../utils/ev-worker-manager.js';
 import * as enhancementWorkerManager from '../utils/enhancement-worker-manager.js';
@@ -185,6 +186,7 @@ toolashaRoot.Utils = {
     spawnExpectation,
     chestTally,
     floatingPanel,
+    floatingWidget,
     workerPool,
     evWorkerManager,
     enhancementWorkerManager,

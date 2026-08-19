@@ -33,6 +33,7 @@ import {
 import marketplaceShortcuts from './marketplace-shortcuts.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
+import { createFloatingWidget } from '../../utils/floating-widget.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { holdKey, collectHeldKeys } from './bulk-sell-holds.js';
 import { watchlistEntries } from '../inventory/watchlist.js';
@@ -394,81 +395,25 @@ class BulkSellAssistant {
     }
 
     /**
-     * Let the panel be dragged anywhere, and remember where it was left.
-     *
-     * It is fixed over the game and defaults to the top-right, which is where
-     * the game puts its own gold counter and Bulk Sell controls — on a narrow
-     * window it lands on top of them. Rather than guess a position that suits
-     * every layout, it moves.
-     *
-     * Dragging starts only on the panel's own background, so the select and the
-     * buttons keep working: a drag beginning on a control would swallow the
-     * click that was meant for it.
-     *
-     * @param {HTMLElement} chip - The panel
-     */
-    _makeDraggable(chip) {
-        const applyPosition = (left, top) => {
-            // Kept on screen. A panel dragged off the edge cannot be dragged
-            // back, and the only way out would be reinstalling the script.
-            const maxLeft = Math.max(0, window.innerWidth - chip.offsetWidth);
-            const maxTop = Math.max(0, window.innerHeight - chip.offsetHeight);
-            chip.style.left = `${Math.min(Math.max(0, left), maxLeft)}px`;
-            chip.style.top = `${Math.min(Math.max(0, top), maxTop)}px`;
-            chip.style.right = 'auto';
-        };
-
-        if (this.panelPosition) {
-            // Applied after layout so offsetWidth is real, or the clamp above
-            // would measure a panel that has not been sized yet
-            setTimeout(() => applyPosition(this.panelPosition.left, this.panelPosition.top), 0);
-        }
-
-        chip.style.cursor = 'move';
-        // Pointer events so a finger works too; mousedown never fires on a
-        // touchscreen, and touch-action:none stops the browser claiming the
-        // gesture for scrolling
-        chip.style.touchAction = 'none';
-        chip.addEventListener('pointerdown', (e) => {
-            if (e.button !== 0) return;
-            if (e.target.closest('button, select, input')) return;
-            e.preventDefault();
-
-            const rect = chip.getBoundingClientRect();
-            const grabX = e.clientX - rect.left;
-            const grabY = e.clientY - rect.top;
-
-            const onMove = (move) => applyPosition(move.clientX - grabX, move.clientY - grabY);
-            const onUp = () => {
-                document.removeEventListener('pointermove', onMove);
-                document.removeEventListener('pointerup', onUp);
-                document.removeEventListener('pointercancel', onUp);
-                const final = chip.getBoundingClientRect();
-                this.panelPosition = { left: final.left, top: final.top };
-                storage.set(PANEL_POSITION_KEY, this.panelPosition, 'settings');
-            };
-
-            document.addEventListener('pointermove', onMove);
-            document.addEventListener('pointerup', onUp);
-            document.addEventListener('pointercancel', onUp);
-        });
-    }
-
-    /**
      * Floating control panel, fixed near the top-right so the click targets
      * never move between marketplace subviews or items.
+     *
+     * The strip itself — drag, position memory, status line, main button, gear
+     * and ✕ — is the shared widget shell every guided walk in the script draws;
+     * what is built here is only what is particular to selling: the source
+     * picker and the Stop button.
      */
     _buildPanel() {
-        const chip = document.createElement('div');
-        chip.id = CHIP_ID;
-        chip.style.cssText =
-            'position:fixed; top:70px; right:24px; z-index:9000; display:flex; align-items:center; gap:6px; ' +
-            'padding:5px 9px; border-radius:7px; background:rgba(12,16,30,0.94); border:1px solid rgba(74,158,255,0.45); ' +
-            'color:#e0e0e0; font-size:12px; font-family:inherit; box-shadow:0 3px 10px rgba(0,0,0,0.45); user-select:none;';
-
-        const status = document.createElement('span');
-        status.className = `${CHIP_ID}-status`;
-        status.style.cssText = 'max-width:340px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+        const widget = createFloatingWidget({
+            id: CHIP_ID,
+            top: '70px',
+            right: '24px',
+            zIndex: 9000,
+            positionKey: PANEL_POSITION_KEY,
+            position: this.panelPosition,
+        });
+        const chip = widget.element;
+        this.panelWidget = widget;
 
         const tabSel = document.createElement('select');
         tabSel.className = `${CHIP_ID}-tab`;
@@ -486,12 +431,7 @@ class BulkSellAssistant {
         });
         tabSel.addEventListener('focus', () => this._populateTabSelect());
 
-        const mainBtn = document.createElement('button');
-        mainBtn.className = `${CHIP_ID}-main`;
-        mainBtn.style.cssText =
-            'border:0; border-radius:5px; background:rgba(74,158,255,0.25); color:#9ec4ff; font-weight:700; ' +
-            'font-size:12px; padding:3px 10px; cursor:pointer; font-family:inherit; white-space:nowrap;';
-        mainBtn.addEventListener('click', () => this._onMainClick());
+        widget.main.addEventListener('click', () => this._onMainClick());
 
         const stopBtn = document.createElement('button');
         stopBtn.className = `${CHIP_ID}-stop`;
@@ -511,50 +451,25 @@ class BulkSellAssistant {
         // can no longer see coming. Hiding it from the tab still leaves it
         // running, because that is a different gesture with the panel's
         // progress one click away.
-        const closeBtn = document.createElement('button');
-        closeBtn.className = `${CHIP_ID}-close`;
-        closeBtn.textContent = '\u2715';
-        closeBtn.title = 'Close the panel. This also stops a run in progress.';
-        closeBtn.style.cssText =
-            'border:0; border-radius:5px; background:transparent; color:#7d879c; font-size:12px; ' +
-            'line-height:1; padding:3px 5px; cursor:pointer; font-family:inherit;';
-        closeBtn.addEventListener('click', () => {
+        widget.close.title = 'Close the panel. This also stops a run in progress.';
+        widget.close.addEventListener('click', () => {
             if (this.state !== 'idle' && this.state !== 'done') this._stop('Stopped');
             this._togglePanel();
         });
-        closeBtn.addEventListener('mouseenter', () => (closeBtn.style.color = '#e0e0e0'));
-        closeBtn.addEventListener('mouseleave', () => (closeBtn.style.color = '#7d879c'));
 
         // The rules it decides by, one click away rather than on the settings
         // page. The moment you want to change one of these is the moment you
         // are watching it make the wrong call.
-        const gear = document.createElement('button');
-        gear.className = `${CHIP_ID}-gear`;
-        gear.textContent = '\u2699';
-        gear.title = 'Show the rules this decides by';
-        gear.style.cssText =
-            'border:0; border-radius:5px; background:rgba(255,255,255,0.08); color:#cfd8ea; font-size:12px; ' +
-            'line-height:1; padding:3px 6px; cursor:pointer; font-family:inherit;';
-        gear.addEventListener('click', () => {
-            this.rulesOpen = !this.rulesOpen;
+        widget.gear.title = 'Show the rules this decides by';
+        widget.gear.addEventListener('click', () => {
+            this.rulesOpen = widget.settingsOpen;
             this._renderRules();
         });
 
-        const row = document.createElement('div');
-        row.style.cssText = 'display:flex; align-items:center; gap:6px;';
-        row.append(status, tabSel, mainBtn, stopBtn, gear, closeBtn);
+        widget.extras.appendChild(tabSel);
+        widget.row.insertBefore(stopBtn, widget.gear);
+        widget.settings.classList.add(`${CHIP_ID}-rules`);
 
-        const rules = document.createElement('div');
-        rules.className = `${CHIP_ID}-rules`;
-        rules.style.cssText = 'display:none; flex-direction:column; gap:4px; padding-top:6px; margin-top:2px;';
-
-        // The chip is a row; with the rules under it, it is a column of two
-        chip.style.flexDirection = 'column';
-        chip.style.alignItems = 'stretch';
-        chip.appendChild(row);
-        chip.appendChild(rules);
-
-        this._makeDraggable(chip);
         document.body.appendChild(chip);
         this.chip = chip;
         this._render();

@@ -18,11 +18,31 @@
  *
  *  - the reroll-protection list (the shield popup) — a protected task is left
  *    exactly where it is, and the walk moves past it;
- *  - `tasks_rerollWalkMaxRerolls` — how many rerolls a single task is worth,
- *    counted against the rerolls the server says have already been spent on it,
- *    so a task that arrived half-rerolled is not given a fresh budget;
- *  - `tasks_rerollWalkTrashAtLimit` — what to do with a task that has used up
- *    its budget: offer the trash can, or move past it.
+ *  - that same popup's "Block rerolls at &lt;coins&gt; &lt;cowbells&gt;"
+ *    thresholds — the walk stops rerolling a task the moment its *next* reroll
+ *    would cost that much or more. There is no second reroll budget to keep in
+ *    step with it: a walk that gave up after three rerolls while the shield
+ *    popup was still happy to pay, or the reverse, was two rules for one
+ *    decision and the player had to hold both;
+ *  - `tasks_rerollWalkCurrency` — which of the two currencies to spend, when
+ *    both are still under their threshold;
+ *  - `tasks_rerollWalkTrashAtLimit` — what to do with a task whose reroll
+ *    options are both blocked: offer the trash can, or move past it.
+ *
+ * ## What the next reroll costs
+ *
+ * The game doubles a task's reroll price each time it is used, per currency and
+ * per task: 10K → 20K → 40K → 80K → 160K → 320K coins, and 1 → 2 → 4 → 8 → 16 →
+ * 32 cowbells, each capped at the last step. That formula is what prices a card
+ * whose chooser is shut. When the chooser is open its own Pay buttons are the
+ * source of truth instead — they are what the click will actually spend, and a
+ * build that changes the progression changes them first.
+ *
+ * The two prices are then compared in the one unit that makes them comparable:
+ * coins. A cowbell is valued the way the task profit display values it (through
+ * the Bag of 10 Cowbells on the market), so "2🔔" and "20K🪙" can be put side by
+ * side and the cheaper one picked — and the label says which and why, because a
+ * walk quietly spending cowbells is a walk you find out about later.
  *
  * Before every click the board is re-read and compared against what was
  * planned. If the card in that slot is not the card the label is about — the
@@ -39,19 +59,40 @@ import webSocketHook from '../../core/websocket.js';
 import { GAME } from '../../utils/selectors.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { clickThroughReact } from '../../utils/react-click.js';
+import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import {
+    createFloatingWidget,
+    widgetCheckboxRow,
+    widgetDivider,
+    widgetNote,
+    widgetReadOnlyRow,
+    widgetSelectRow,
+} from '../../utils/floating-widget.js';
 import { cardTaskKey } from './task-card-state.js';
 import { questForTaskCard } from './task-card-quest.js';
+import { getCowbellValue } from './task-profit-calculator.js';
 import { findRerollOptions } from './task-reroll-options.js';
 
 const CHIP_ID = 'mwi-task-reroll-walk-chip';
 const BUTTON_CLASS = 'mwi-task-reroll-walk-btn';
 const PROTECTED_KEY_PREFIX = 'taskProtectedHrids';
+const PANEL_POSITION_KEY = 'taskRerollWalkPanelPosition';
 
 /** How long the walk waits for the game to redraw a card after a UI-only click */
 const UI_SETTLE_MS = 120;
 /** How long it waits for a reroll or discard to come back from the server */
 const SERVER_SETTLE_MS = 2500;
+
+/** The game's reroll price ladder: the first coin reroll, doubling, and its ceiling */
+const COIN_REROLL_BASE = 10000;
+const COIN_REROLL_CAP = 320000;
+/** The same ladder in cowbells, which starts at one */
+const COWBELL_REROLL_CAP = 32;
+
+/** The shield popup's defaults, so a character who never opened it is not blocked early */
+const DEFAULT_COIN_THRESHOLD = 320000;
+const DEFAULT_COWBELL_THRESHOLD = 32;
 
 /** @returns {string} The protected-task list's key for the current character */
 function protectedStorageKey() {
@@ -60,19 +101,123 @@ function protectedStorageKey() {
 }
 
 /**
+ * @param {number} coins - An amount of coins
+ * @returns {string} The amount with its icon
+ */
+function coinLabel(coins) {
+    return `${formatKMB(coins)}\u{1FA99}`;
+}
+
+/**
+ * @param {number} cowbells - An amount of cowbells
+ * @returns {string} The amount with its icon
+ */
+function cowbellLabel(cowbells) {
+    return `${cowbells}\u{1F514}`;
+}
+
+/**
+ * What the task's next reroll costs in each currency, by the game's own ladder.
+ *
+ * Each currency doubles independently and caps: paying coins five times does
+ * not make the first cowbell reroll any dearer.
+ *
+ * @param {Object|null} quest - The card's characterQuest
+ * @returns {{coin: number, cowbell: number}|null} Costs, or null when unreadable
+ */
+export function nextRerollCosts(quest) {
+    if (!quest) return null;
+    const coinCount = Number(quest.coinRerollCount) || 0;
+    const cowbellCount = Number(quest.cowbellRerollCount) || 0;
+    return {
+        coin: Math.min(COIN_REROLL_BASE * Math.pow(2, coinCount), COIN_REROLL_CAP),
+        cowbell: Math.min(Math.pow(2, cowbellCount), COWBELL_REROLL_CAP),
+    };
+}
+
+/**
+ * What the open chooser says the next reroll costs, which beats the formula.
+ *
+ * @param {Array<Object>} options - From `findRerollOptions`
+ * @returns {{coin: number|null, cowbell: number|null, free: boolean}}
+ */
+export function costsFromChooser(options) {
+    const costs = { coin: null, cowbell: null, free: false };
+    for (const option of options || []) {
+        if (!option.available) continue;
+        if (option.kind === 'free') {
+            costs.free = true;
+        } else if (option.cost !== null && option.cost !== undefined) {
+            costs[option.kind] = option.cost;
+        }
+    }
+    return costs;
+}
+
+/**
+ * Which reroll to buy, and why — or that both are blocked.
+ *
+ * "Blocked" is exactly what the shield popup means by it: a cost at or above
+ * the threshold that popup was set to. The comparison between the two live
+ * options is done in coins, because that is the only unit both are quotable in;
+ * a free reroll skips all of it, being cheaper than everything.
+ *
+ * @param {Object} params - Prices, limits and taste
+ * @param {number|null} params.coin - Next coin reroll's cost
+ * @param {number|null} params.cowbell - Next cowbell reroll's cost
+ * @param {boolean} [params.free] - Is a free reroll on offer right now?
+ * @param {number} params.coinThreshold - Block coins at this cost
+ * @param {number} params.cowbellThreshold - Block cowbells at this cost
+ * @param {number} params.cowbellValue - What one cowbell is worth in coins
+ * @param {string} [params.preference] - 'auto', 'cowbell' or 'coin'
+ * @returns {{currency: string|null, cost: number|null, costLabel: string, why: string}}
+ */
+export function chooseReroll({ coin, cowbell, free, coinThreshold, cowbellThreshold, cowbellValue, preference }) {
+    if (free) return { currency: 'free', cost: 0, costLabel: 'free', why: '' };
+
+    const coinOk = coin !== null && coin !== undefined && coin < coinThreshold;
+    const cowbellOk = cowbell !== null && cowbell !== undefined && cowbell < cowbellThreshold;
+
+    if (!coinOk && !cowbellOk) {
+        return { currency: null, cost: null, costLabel: '', why: 'both reroll options blocked' };
+    }
+
+    const takeCoin = (why) => ({ currency: 'coin', cost: coin, costLabel: coinLabel(coin), why });
+    const takeCowbell = (why) => ({ currency: 'cowbell', cost: cowbell, costLabel: cowbellLabel(cowbell), why });
+
+    if (!coinOk) return takeCowbell('coins blocked');
+    if (!cowbellOk) return takeCoin('cowbells blocked');
+    if (preference === 'cowbell') return takeCowbell('preferred');
+    if (preference === 'coin') return takeCoin('preferred');
+
+    // Both are live and neither is blocked, so it comes down to what they cost
+    const cowbellCoins = cowbell * (Number(cowbellValue) || 0);
+    if (cowbellCoins <= coin) {
+        return takeCowbell(`≈${formatKMB(cowbellCoins)}, cheaper than ${coinLabel(coin)}`);
+    }
+    return takeCoin(`cheaper than ${cowbellLabel(cowbell)} ≈${formatKMB(cowbellCoins)}`);
+}
+
+/**
  * The reroll option a walk should press, out of what the chooser is offering.
  *
- * Free first, because it costs nothing; then cowbells, which is what a player
- * setting out to reroll a whole board is normally spending; coins last. The
- * label always names the choice before it is pressed, so a walk that is about
- * to spend coins says so.
+ * Free first, because it costs nothing. After that the currency the plan priced
+ * is pressed, so the button clicked is the button the label named; with no
+ * currency named it falls back to cowbells before coins, which is what a player
+ * setting out to reroll a whole board is normally spending.
  *
  * @param {Array<{kind: string, available: boolean}>} options - What the chooser offers
+ * @param {string|null} [currency] - The currency the plan chose
  * @returns {Object|null} The option to press, or null when none is available
  */
-export function preferredRerollOption(options) {
+export function preferredRerollOption(options, currency = null) {
     const usable = (options || []).filter((option) => option.available);
-    for (const kind of ['free', 'cowbell', 'coin']) {
+    const free = usable.find((option) => option.kind === 'free');
+    if (free) return free;
+    if (currency && currency !== 'free') {
+        return usable.find((option) => option.kind === currency) || null;
+    }
+    for (const kind of ['cowbell', 'coin']) {
         const match = usable.find((option) => option.kind === kind);
         if (match) return match;
     }
@@ -85,19 +230,22 @@ export function preferredRerollOption(options) {
  * @param {Object} params - The card's situation
  * @param {boolean} params.completed - Is it waiting to be claimed?
  * @param {boolean} params.isProtected - Is it on the protected list?
- * @param {number|null} params.rerollsSpent - Rerolls the server says have been spent, or null when unreadable
- * @param {number} params.maxRerolls - The configured budget per task
- * @param {boolean} params.trashAtLimit - Discard a task that has used its budget?
+ * @param {Object|null} params.choice - From `chooseReroll`, or null when unreadable
+ * @param {boolean} params.trashAtLimit - Discard a task whose options are both blocked?
  * @returns {{action: string, reason: string}} 'reroll', 'trash' or 'skip', and why
  */
-export function verdictForCard({ completed, isProtected, rerollsSpent, maxRerolls, trashAtLimit }) {
+export function verdictForCard({ completed, isProtected, choice, trashAtLimit }) {
     if (completed) return { action: 'skip', reason: 'ready to claim' };
     if (isProtected) return { action: 'skip', reason: 'protected' };
-    // A card whose quest cannot be read cannot be judged either, and guessing is
+    // A card whose price cannot be read cannot be judged either, and guessing is
     // how a walk rerolls something the player was keeping
-    if (rerollsSpent === null || rerollsSpent === undefined) return { action: 'skip', reason: 'unreadable' };
-    if (rerollsSpent < maxRerolls) return { action: 'reroll', reason: `${rerollsSpent}/${maxRerolls}` };
-    return trashAtLimit ? { action: 'trash', reason: 'limit reached' } : { action: 'skip', reason: 'limit reached' };
+    if (!choice) return { action: 'skip', reason: 'unreadable' };
+    if (!choice.currency) {
+        return trashAtLimit
+            ? { action: 'trash', reason: choice.why || 'blocked' }
+            : { action: 'skip', reason: choice.why || 'blocked' };
+    }
+    return { action: 'reroll', reason: choice.costLabel + (choice.why ? ` (${choice.why})` : '') };
 }
 
 class TaskRerollWalk {
@@ -112,20 +260,43 @@ class TaskRerollWalk {
         this.message = '';
         this.index = 0;
         this.tally = { kept: 0, rerolled: 0, trashed: 0 };
+        this.coinThreshold = DEFAULT_COIN_THRESHOLD;
+        this.cowbellThreshold = DEFAULT_COWBELL_THRESHOLD;
+        this.widget = null;
+        this.panelPosition = null;
+        /** The ✕ puts the widget away until the header 🎲 asks for it back */
+        this.hidden = false;
+        this.boardWatcher = null;
     }
 
-    /** Set the walk up; it draws nothing until the player presses its control. */
+    /** Set the walk up; its widget appears with the task board. */
     async initialize() {
         if (this.isInitialized) return;
         if (!config.getSetting('tasks_rerollWalk')) return;
         this.isInitialized = true;
 
         await this._loadProtectedHrids();
+        await this._loadThresholds();
+        try {
+            this.panelPosition = await storage.get(PANEL_POSITION_KEY, 'settings', null);
+        } catch (error) {
+            console.error('[TaskRerollWalk] Loading the widget position failed:', error);
+        }
 
         const unregisterPanel = domObserver.onClass('TaskRerollWalk-Panel', 'TasksPanel_taskSlotCount', (panel) => {
             this._injectButton(panel);
         });
         this.unregisterHandlers.push(unregisterPanel);
+
+        // The widget belongs to the Tasks page: it appears with the board and
+        // goes when the board does, rather than following the player around the
+        // game offering to reroll something that is not on screen.
+        this.boardWatcher = createMutationWatcher(document.body, () => this._syncWidget(), {
+            childList: true,
+            subtree: true,
+        });
+        this.unregisterHandlers.push(() => this.boardWatcher?.());
+        this._syncWidget();
 
         // The only listener the walk has, and it does not click anything: it
         // reads the board again once the game has answered for the click the
@@ -149,7 +320,36 @@ class TaskRerollWalk {
     }
 
     /**
+     * Read the shield popup's block thresholds — the same keys it writes, per
+     * character with the legacy global as a fallback, so the two features
+     * cannot drift apart.
+     * @private
+     */
+    async _loadThresholds() {
+        try {
+            const charId = dataManager.getCurrentCharacterId() || 'default';
+            this.coinThreshold =
+                Number(
+                    (await storage.get(`taskCapCoinThreshold_${charId}`, 'settings', null)) ??
+                        (await storage.get('taskCapCoinThreshold', 'settings', DEFAULT_COIN_THRESHOLD))
+                ) || DEFAULT_COIN_THRESHOLD;
+            this.cowbellThreshold =
+                Number(
+                    (await storage.get(`taskCapCowbellThreshold_${charId}`, 'settings', null)) ??
+                        (await storage.get('taskCapCowbellThreshold', 'settings', DEFAULT_COWBELL_THRESHOLD))
+                ) || DEFAULT_COWBELL_THRESHOLD;
+        } catch (error) {
+            console.error('[TaskRerollWalk] Failed to read the block-reroll thresholds:', error);
+        }
+    }
+
+    /**
      * Add the walk's control to the task panel header.
+     *
+     * It shows and hides the widget rather than starting anything: the widget's
+     * own button is what starts a walk, and a header icon that begins spending
+     * cowbells is not a header icon anyone wants to brush past.
+     *
      * @param {HTMLElement} panel - The TasksPanel_taskSlotCount element
      * @private
      */
@@ -161,8 +361,9 @@ class TaskRerollWalk {
         button.className = BUTTON_CLASS;
         button.textContent = '\u{1F3B2}';
         button.title =
-            'Reroll walk: step down the board one click at a time. Protected tasks are left alone; each ' +
-            'press does exactly one thing and then tells you what the next press would do.';
+            'Reroll walk: show or hide the walk panel. The walk steps down the board one click at a time, ' +
+            'leaves protected tasks alone, and stops rerolling a task once the shield popup would block the ' +
+            'next reroll.';
         button.style.cssText = 'cursor:pointer; font-size:16px; margin-left:6px; opacity:0.7; transition:opacity 0.1s;';
         button.addEventListener('mouseover', () => {
             button.style.opacity = '1';
@@ -170,7 +371,7 @@ class TaskRerollWalk {
         button.addEventListener('mouseout', () => {
             button.style.opacity = '0.7';
         });
-        button.addEventListener('click', () => this.start());
+        button.addEventListener('click', () => this.toggleWidget());
 
         parent.appendChild(button);
     }
@@ -245,6 +446,41 @@ class TaskRerollWalk {
     // --------------------------------------------------------------- planning
 
     /**
+     * What the next reroll on this card costs: the chooser's own Pay buttons
+     * when it is open, the game's price ladder when it is not.
+     *
+     * @param {Object|null} quest - The card's quest
+     * @param {Array<Object>} chooser - From `findRerollOptions`
+     * @returns {{coin: number|null, cowbell: number|null, free: boolean}|null}
+     * @private
+     */
+    _costsFor(quest, chooser) {
+        const live = costsFromChooser(chooser);
+        const ladder = nextRerollCosts(quest);
+        if (!ladder && !chooser.length) return null;
+        return {
+            coin: live.coin ?? ladder?.coin ?? null,
+            cowbell: live.cowbell ?? ladder?.cowbell ?? null,
+            free: live.free,
+        };
+    }
+
+    /**
+     * What one cowbell is worth in coins, priced the way the task profit display
+     * prices it. Wrapped so a market with nothing in it cannot throw the plan.
+     * @returns {number}
+     * @private
+     */
+    _cowbellValue() {
+        try {
+            return Number(getCowbellValue()) || 0;
+        } catch (error) {
+            console.error('[TaskRerollWalk] Pricing a cowbell failed:', error);
+            return 0;
+        }
+    }
+
+    /**
      * The next thing a press would do, skipping past every card that needs
      * nothing.
      *
@@ -255,8 +491,9 @@ class TaskRerollWalk {
      * @private
      */
     _plan() {
-        const maxRerolls = Number(config.getSettingValue('tasks_rerollWalkMaxRerolls', 3)) || 0;
         const trashAtLimit = Boolean(config.getSetting('tasks_rerollWalkTrashAtLimit'));
+        const preference = String(config.getSettingValue('tasks_rerollWalkCurrency', 'auto') || 'auto');
+        const cowbellValue = this._cowbellValue();
         const cards = this._cards();
 
         while (this.index < cards.length) {
@@ -264,17 +501,26 @@ class TaskRerollWalk {
             const slot = this.index + 1;
             const quest = questForTaskCard(card);
             const hrid = quest?.actionHrid || quest?.monsterHrid || '';
-            const rerollsSpent = quest ? (quest.coinRerollCount || 0) + (quest.cowbellRerollCount || 0) : null;
+
+            const chooser = findRerollOptions(card);
+            const costs = this._costsFor(quest, chooser);
+            const choice = costs
+                ? chooseReroll({
+                      ...costs,
+                      coinThreshold: this.coinThreshold,
+                      cowbellThreshold: this.cowbellThreshold,
+                      cowbellValue,
+                      preference,
+                  })
+                : null;
 
             const verdict = verdictForCard({
                 completed: this._isCompleted(card),
                 isProtected: Boolean(hrid && this.protectedHrids.has(hrid)),
-                rerollsSpent,
-                maxRerolls,
+                choice,
                 trashAtLimit,
             });
 
-            const chooser = findRerollOptions(card);
             const discardOpen = this._discardButton(card);
 
             if (verdict.action === 'skip') {
@@ -302,35 +548,25 @@ class TaskRerollWalk {
 
             // A reroll: open the chooser, then pay. Two presses, on purpose.
             if (chooser.length) {
-                const option = preferredRerollOption(chooser);
+                const option = preferredRerollOption(chooser, choice.currency);
                 if (!option) {
                     this.message = `No reroll on offer for #${slot} — walk stopped.`;
                     return null;
                 }
-                const label = `Reroll #${slot} (${verdict.reason}) — ${this._costLabel(option)}`;
-                return this._step('pay', card, slot, label, { kind: option.kind, cost: option.cost ?? null });
+                return this._step('pay', card, slot, `Reroll #${slot} — ${verdict.reason}`, option.button, {
+                    currency: choice.currency,
+                });
             }
             if (!this._rerollButton(card)) {
                 this.message = `Slot ${slot} has no reroll button — walk stopped.`;
                 return null;
             }
-            return this._step('open', card, slot, `Reroll #${slot} (${verdict.reason}) — open the menu`);
+            return this._step('open', card, slot, `Reroll #${slot} — ${verdict.reason}, open the menu`, null, {
+                currency: choice.currency,
+            });
         }
 
         return null;
-    }
-
-    /**
-     * What one reroll option costs, in words.
-     * @param {{kind: string, cost: number|null}} option - A reroll option
-     * @returns {string}
-     * @private
-     */
-    _costLabel(option) {
-        if (option.kind === 'free') return 'free';
-        const cost = option.cost === null || option.cost === undefined ? null : option.cost;
-        if (option.kind === 'cowbell') return `${cost === null ? '?' : cost}\u{1F514}`;
-        return `${cost === null ? '?' : formatKMB(cost)}\u{1F4B0}`;
     }
 
     /**
@@ -339,14 +575,14 @@ class TaskRerollWalk {
      * @param {string} kind - What the press does
      * @param {HTMLElement} card - The card it acts on
      * @param {number} slot - The card's 1-based position
-     * @param {string} label - What the chip says
-     * @param {{kind: string, cost: number|null}|null} [button] - For a 'pay' step, the offer the label priced
+     * @param {string} label - What the widget says
      * @param {HTMLElement} [button] - The exact button, when the plan picked one
+     * @param {Object} [extra] - Anything else the press needs, such as the currency
      * @returns {Object} The step
      * @private
      */
-    _step(kind, card, slot, label, button = null) {
-        return { kind, card, slot, label, button, signature: cardTaskKey(card) };
+    _step(kind, card, slot, label, button = null, extra = {}) {
+        return { kind, card, slot, label, button, signature: cardTaskKey(card), ...extra };
     }
 
     // --------------------------------------------------------------- the walk
@@ -356,7 +592,12 @@ class TaskRerollWalk {
         this.index = 0;
         this.tally = { kept: 0, rerolled: 0, trashed: 0 };
         this.message = '';
+        this.hidden = false;
         this.timerRegistry.clearAll();
+        // Fire and forget: the thresholds were read at start-up, and this only
+        // catches an edit made in the shield popup since. It writes two numbers
+        // and clicks nothing.
+        this._loadThresholds();
 
         if (!this._cards().length) {
             this.state = 'stopped';
@@ -368,12 +609,20 @@ class TaskRerollWalk {
         this._replan();
     }
 
-    /** Stop, leaving the board exactly as it is. */
+    /** Stop, leaving the board exactly as it is, and put the widget away. */
     stop() {
         this.state = 'idle';
         this.step = null;
+        this.hidden = true;
         this.timerRegistry.clearAll();
-        this._removeChip();
+        this._removeWidget();
+    }
+
+    /** The header 🎲: show the widget again, or put it away. */
+    toggleWidget() {
+        this.hidden = !this.hidden;
+        if (this.hidden) this._removeWidget();
+        else this._render();
     }
 
     /**
@@ -402,7 +651,7 @@ class TaskRerollWalk {
     }
 
     /**
-     * Perform the one game click the chip is currently offering.
+     * Perform the one game click the widget is currently offering.
      *
      * Exactly one click leaves this method, on exactly the button the label
      * named, and only after the board has been checked against the plan. There
@@ -457,15 +706,9 @@ class TaskRerollWalk {
         if (planned.kind === 'trash') return this._trashButton(card);
         if (planned.kind === 'confirmDiscard') return this._discardButton(card);
         if (planned.kind === 'pay') {
-            const option = preferredRerollOption(findRerollOptions(card));
-            // The chooser must still be offering exactly what the label priced —
-            // the same option at the same cost. Compared by offer, not by button
-            // element: the game re-renders its chooser buttons between presses,
-            // and the element the plan held went stale while the identical
-            // offer stood on screen, stopping every walk at its first payment
-            if (!option) return null;
-            const wanted = planned.button;
-            if (wanted && (option.kind !== wanted.kind || (option.cost ?? null) !== (wanted.cost ?? null))) return null;
+            const option = preferredRerollOption(findRerollOptions(card), planned.currency);
+            // The chooser must still be offering exactly what the label priced
+            if (!option || (planned.button && option.button !== planned.button)) return null;
             return option.button;
         }
         return null;
@@ -485,76 +728,150 @@ class TaskRerollWalk {
         return false;
     }
 
-    // ------------------------------------------------------------------- chip
+    // ----------------------------------------------------------------- widget
 
     /**
-     * What the chip says right now.
+     * What the widget's main button says right now.
      * @returns {string}
      */
     chipLabel() {
         if (this.state === 'ready' && this.step) return `▶ ${this.step.label}`;
         if (this.state === 'waiting') return '⏳ Waiting for the game…';
         if (this.state === 'stopped') return `⚠ ${this.message}`;
+        if (this.state === 'idle') return '▶ Reroll walk';
         const { kept, rerolled, trashed } = this.tally;
         return `✓ Done — ${kept} kept, ${rerolled} rerolled, ${trashed} trashed`;
     }
 
-    /** @private */
-    _render() {
-        if (this.state === 'idle') {
-            this._removeChip();
+    /**
+     * Show the widget while the board is on screen, and take it away when the
+     * player leaves the Tasks page.
+     * @private
+     */
+    _syncWidget() {
+        if (!document.querySelector(GAME.TASK_LIST)) {
+            this.widget?.remove();
+            this.widget = null;
             return;
         }
+        this._render();
+    }
 
-        let chip = document.getElementById(CHIP_ID);
-        if (!chip) {
-            chip = document.createElement('div');
-            chip.id = CHIP_ID;
-            chip.style.cssText = [
-                'position:fixed',
-                'bottom:18px',
-                'right:18px',
-                `z-index:${config.Z_FLOATING_PANEL || 9999}`,
-                'display:flex',
-                'align-items:center',
-                'gap:8px',
-                'background:rgba(20,20,24,0.95)',
-                'border:1px solid rgba(255,255,255,0.18)',
-                'border-radius:4px',
-                'padding:6px 10px',
-                'font-size:12px',
-            ].join(';');
-
-            const advance = document.createElement('button');
-            advance.className = 'mwi-task-reroll-walk-advance';
-            advance.style.cssText = 'background:none;border:none;color:inherit;cursor:pointer;font-size:12px;padding:0';
-            advance.addEventListener('click', () => this.advance());
-
-            const dismiss = document.createElement('button');
-            dismiss.className = 'mwi-task-reroll-walk-stop';
-            dismiss.textContent = '✕';
-            dismiss.title = 'Stop here — the board is left exactly as it is.';
-            dismiss.style.cssText = 'background:none;border:none;color:#999;cursor:pointer;font-size:12px;padding:0';
-            dismiss.addEventListener('click', () => this.stop());
-
-            chip.append(advance, dismiss);
-            document.body.appendChild(chip);
+    /**
+     * Build the widget if it is wanted and not already up.
+     * @returns {Object|null} The widget, or null when it is hidden
+     * @private
+     */
+    _ensureWidget() {
+        if (this.hidden) {
+            this._removeWidget();
+            return null;
         }
+        if (this.widget && document.body.contains(this.widget.element)) return this.widget;
 
-        const advance = chip.querySelector('.mwi-task-reroll-walk-advance');
-        advance.textContent = this.chipLabel();
-        advance.disabled = this.state !== 'ready';
-        advance.style.color = this.state === 'ready' ? config.COLOR_ACCENT || '#8ecfff' : '#999';
-        advance.title =
-            this.state === 'ready' ? 'One press, one game action. Nothing else happens until you press again.' : '';
+        const widget = createFloatingWidget({
+            id: CHIP_ID,
+            top: '110px',
+            right: '24px',
+            accent: config.COLOR_ACCENT || '#8ecfff',
+            positionKey: PANEL_POSITION_KEY,
+            position: this.panelPosition,
+            mainClass: 'mwi-task-reroll-walk-advance',
+            closeClass: 'mwi-task-reroll-walk-stop',
+        });
+        widget.main.addEventListener('click', () => this._onMainClick());
+        widget.close.title = 'Hide the walk. A run in progress stops here, and the board is left exactly as it is.';
+        widget.close.addEventListener('click', () => this.stop());
+        // After the shell's own toggle, so the drawer is rebuilt with whatever
+        // the shield popup's thresholds say the moment it is opened
+        widget.gear.addEventListener('click', () => this._renderSettings());
+
+        document.body.appendChild(widget.element);
+        this.widget = widget;
+        this._renderSettings();
+        return widget;
     }
 
     /** @private */
-    _removeChip() {
+    _onMainClick() {
+        if (this.state === 'ready') {
+            this.advance();
+            return;
+        }
+        if (this.state === 'waiting') return;
+        this.start();
+    }
+
+    /**
+     * The walk's own settings, plus the two numbers it obeys but does not own.
+     * @private
+     */
+    _renderSettings() {
+        const widget = this.widget;
+        if (!widget || !widget.settingsOpen) return;
+
+        widget.settings.replaceChildren();
+        widget.settings.append(
+            widgetDivider(),
+            widgetNote('The walk rerolls a task until the shield popup would block the next reroll.'),
+            widgetReadOnlyRow({
+                label: 'Block rerolls at',
+                value: `${coinLabel(this.coinThreshold)} / ${cowbellLabel(this.cowbellThreshold)}`,
+                hint: 'Edited in the 🛡 task-protection popup, not here.',
+                title: 'A reroll costing this much or more is blocked, exactly as the shield popup blocks it.',
+            }),
+            widgetSelectRow({
+                key: 'tasks_rerollWalkCurrency',
+                fallback: 'auto',
+                label: 'Pay with',
+                options: [
+                    { value: 'auto', label: 'cheapest' },
+                    { value: 'cowbell', label: 'cowbells' },
+                    { value: 'coin', label: 'coins' },
+                ],
+                title:
+                    'Cheapest compares the two prices in coins, valuing a cowbell through the Bag of 10 Cowbells. ' +
+                    'A free reroll is always taken first.',
+                onChange: () => {
+                    if (this.state === 'ready') this._replan();
+                },
+            }),
+            widgetCheckboxRow({
+                key: 'tasks_rerollWalkTrashAtLimit',
+                label: 'Discard a task once both reroll options are blocked',
+                title: 'Offer the red trash can rather than leaving the task on the board. Off: the walk moves past it.',
+                onChange: () => {
+                    if (this.state === 'ready') this._replan();
+                },
+            })
+        );
+    }
+
+    /** @private */
+    _render() {
+        const widget = this._ensureWidget();
+        if (!widget) return;
+
+        widget.main.textContent = this.chipLabel();
+        widget.main.disabled = this.state === 'waiting';
+        widget.main.style.color =
+            this.state === 'waiting' ? '#999' : this.state === 'stopped' ? '#ffb74d' : config.COLOR_ACCENT || '#8ecfff';
+        widget.main.title =
+            this.state === 'ready'
+                ? 'One press, one game action. Nothing else happens until you press again.'
+                : this.state === 'idle'
+                  ? 'Start at the top of the board. Every press does one thing, then says what the next would do.'
+                  : 'Press to walk the board again from the top.';
+    }
+
+    /** @private */
+    _removeWidget() {
+        this.widget?.remove();
+        this.widget = null;
         document.getElementById(CHIP_ID)?.remove();
     }
 
-    /** Take the walk's control and chip off the page and stop listening. */
+    /** Take the walk's control and widget off the page and stop listening. */
     cleanup() {
         this.stop();
         this.timerRegistry.clearAll();
@@ -566,10 +883,12 @@ class TaskRerollWalk {
             }
         }
         this.unregisterHandlers = [];
+        this.boardWatcher = null;
         document.querySelectorAll(`.${BUTTON_CLASS}`).forEach((el) => el.remove());
         this.state = 'idle';
         this.step = null;
         this.index = 0;
+        this.hidden = false;
         this.isInitialized = false;
     }
 
