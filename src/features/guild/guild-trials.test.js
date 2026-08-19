@@ -203,7 +203,6 @@ const {
     fightSidecarColumn,
     guildTrials,
     lastTrialPlayerRows,
-    looseTrialForecast,
     mergeWaveTiles,
     ownParticipation,
     participantCounts,
@@ -221,6 +220,8 @@ const guildTrialAbilities = (await import('./guild-trial-abilities.js')).default
 
 const { NOTICE_BOARD_NAME } = await import('./guild-notice-board.fixture.js');
 const { forecastTrial } = await import('./guild-trial-forecast.js');
+const { tierTimingAsForecast, tierTimingForecast } = await import('./guild-trial-tier-timing.js');
+const { badgeText } = await import('./guild-trial-tier-badge.js');
 const { trialWeekStart } = await import('./guild-trials-math.js');
 const { saveTrialRecord } = await import('./guild-trials-store.js');
 
@@ -371,52 +372,110 @@ describe('analyseTrial', () => {
     });
 });
 
-describe('looseTrialForecast — a rate for a trial you did not join', () => {
-    test('two rising point readings give a points-per-second', () => {
-        const forecast = looseTrialForecast({
-            pointSamples: [
-                { t: 0, points: 0 },
-                { t: 10_000, points: 100 },
-            ],
+describe('a trial you did not join, read off its tier-clear timings', () => {
+    const now = 1_700_000_000_000;
+
+    /** A Trials-tab card: a level, a badge, a running total and no bar at all */
+    const carded = (overrides = {}) => ({
+        name: 'Milking',
+        kind: 'skilling',
+        level: 250,
+        tier: 16,
+        points: 2278,
+        samples: [],
+        tiers: [],
+        pointsByTier: { 16: 2278 },
+        ...overrides,
+    });
+
+    test('with one tier badge timed the block says it is measuring, not a rate', () => {
+        const record = carded({ tierSeenAt: { 17: now } });
+        const timing = tierTimingForecast(record, { timeLeftMs: 20 * 60_000, now: now + 60_000 });
+        const html = renderTrialBlock(analyseTrial(record, { timeLeftMs: 20 * 60_000 }), 40, undefined, {
+            participating: false,
+            phase: 'live',
+            looseForecast: timing,
         });
-        expect(forecast.pointsPerSecond).toBeCloseTo(10, 5);
-        expect(forecast.samples).toBe(2);
-        // Without two tier badges to size a tier from, the ETA stays null
-        expect(forecast.pointsPerTier).toBeNull();
-        expect(forecast.etaMsToNextTier).toBeNull();
+
+        expect(html).toContain('needs two tier clears');
+        // …and nothing pretending to be a measurement
+        expect(html).not.toContain('pts/s');
+        expect(html).not.toContain('work/s');
     });
 
-    test('per-tier point steps place the next tier and the tiers left', () => {
-        const forecast = looseTrialForecast(
-            {
-                // Two badges seen: a tier is worth ~1000 points
-                pointsByTier: { 1: 1000, 2: 2000 },
-                pointSamples: [
-                    { t: 0, points: 2000 },
-                    { t: 10_000, points: 2500 },
-                ],
-            },
-            { timeLeftMs: 60_000 }
-        );
-        expect(forecast.pointsPerSecond).toBeCloseTo(50, 5); // 500 over 10s
-        expect(forecast.pointsPerTier).toBe(1000);
-        // 500 into the current tier, 500 to go at 0.05 pts/ms → 10s
-        expect(forecast.etaMsToNextTier).toBeCloseTo(10_000, 5);
-        // 10s to the next, then one tier per 20s across the remaining 50s → 3
-        expect(forecast.tiersBeforeEnd).toBe(3);
+    test('two timed tier badges give a work rate, an ETA and an expected tier', () => {
+        // T16 banked, then T17 at five minutes and T18 five and a bit later.
+        const record = carded({ tierSeenAt: { 17: now, 18: now + 320_000 } });
+        const timing = tierTimingForecast(record, {
+            timeLeftMs: 30 * 60_000,
+            now: now + 320_000,
+            participants: 40,
+            workBase: 40_000,
+        });
+        const analysis = analyseTrial(record, { timeLeftMs: 30 * 60_000, participants: 40 });
+        const html = renderTrialBlock(analysis, 40, undefined, {
+            participating: false,
+            phase: 'live',
+            looseForecast: timing,
+            forecast: tierTimingAsForecast(timing),
+        });
+
+        // The rate is work, not points: the stated points are a step function
+        expect(html).toContain('Est. fill');
+        expect(html).toContain('work/s');
+        expect(html).not.toContain('pts/s');
+        expect(html).toContain('Next tier in');
+        expect(html).toContain('Before it ends');
+
+        // …and the expected tier is back, which is what an unjoined card lost
+        expect(html).toContain('Expected');
+        expect(html).not.toContain('not projectable');
+        expect(html).toContain(`~T${timing.expectedTier}`);
+        expect(timing.expectedTier).toBeGreaterThan(18);
     });
 
-    test('one reading, or a total that did not move, is not a rate', () => {
-        expect(looseTrialForecast({ pointSamples: [{ t: 0, points: 100 }] })).toBeNull();
-        expect(
-            looseTrialForecast({
-                pointSamples: [
-                    { t: 0, points: 100 },
-                    { t: 10_000, points: 100 },
-                ],
-            })
-        ).toBeNull();
-        expect(looseTrialForecast({})).toBeNull();
+    test('the Expected row does not need a pace to draw', () => {
+        // An unjoined card has no bar, so `analysis.pace` is null — and the
+        // tooltip's flat-rate comparison used to read it unguarded, which threw
+        // the whole block away the moment an expected tier came back.
+        const record = carded({ tierSeenAt: { 17: now, 18: now + 300_000, 19: now + 640_000 } });
+        const timing = tierTimingForecast(record, { timeLeftMs: 30 * 60_000, now: now + 640_000 });
+        const analysis = analyseTrial(record, { timeLeftMs: 30 * 60_000 });
+        expect(analysis.pace).toBeNull();
+
+        const html = renderTrialBlock(analysis, 40, undefined, {
+            participating: false,
+            phase: 'live',
+            looseForecast: timing,
+            forecast: tierTimingAsForecast(timing),
+        });
+        expect(html).toContain('Expected');
+        expect(html).toContain('falling');
+    });
+});
+
+describe('the tier badge a card wears beside its level', () => {
+    test('a level identifies the tier, on the pairs read off live cards', () => {
+        expect(badgeText({ level: 250 })).toBe('T16');
+        expect(badgeText({ level: 260 })).toBe('T17');
+        expect(badgeText({ level: 290 })).toBe('T20');
+    });
+
+    test('at the level cap the banked count takes over, and the badge says it is a floor', () => {
+        // Every tier from the top of the ladder up reads Lv.300, so the level
+        // has stopped identifying the tier
+        expect(badgeText({ level: 300 })).toBe('T21+');
+        expect(badgeText({ level: 300, bankedTiers: 24 })).toBe('T24+');
+    });
+
+    test('a badge never reads below what is banked', () => {
+        expect(badgeText({ level: 250, bankedTiers: 18 })).toBe('T18');
+    });
+
+    test('a level below the first trial level is not a trial tier', () => {
+        // A guild *building*'s "Lv. 10 / 20" shares the tile-summary class
+        expect(badgeText({ level: 20 })).toBeNull();
+        expect(badgeText({ level: null })).toBeNull();
     });
 });
 

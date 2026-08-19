@@ -113,6 +113,7 @@ import {
     EXTRA_TIER_POINTS,
     TRIAL_ACTIVE_MS,
     TRIAL_MAX_TIER,
+    TRIAL_SKILLS,
     baseWorkFromObservations,
     combatDamageRate,
     estimateGrowthPerTier,
@@ -144,6 +145,8 @@ import guildTrialTrace from './guild-trial-trace.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import guildTrialAbilitiesFeature, { openTrialAbilitiesPanel } from './guild-trial-abilities-ui.js';
 import { forecastTrial } from './guild-trial-forecast.js';
+import { tierTimingAsForecast, tierTimingForecast } from './guild-trial-tier-timing.js';
+import { renderTierBadge } from './guild-trial-tier-badge.js';
 import guildTrialAlerts from '../notifications/guild-trial-alerts.js';
 import { describeGuildTokenGold } from './guild-token-value.js';
 import {
@@ -205,6 +208,9 @@ const SPECTATED_POOL_FRESH_MS = 10_000;
  */
 const WORK_BASE_LEARN_FRESH_MS = 15_000;
 
+/** What a card's level line looks like, for finding the node the tier badge belongs on */
+const LEVEL_LINE_RE = /Lv\.\s*\d+/;
+
 const ACCENT = '#8fd3ff';
 const DIM = '#9ca3af';
 const GOOD = '#4ade80';
@@ -232,109 +238,26 @@ const WARN = '#f0a830';
  * - **Trial Badger 330,000** — a `new_guild_battle` sheet: 429,000 with 30 in
  *   the trial, 330,000 × 1.3 exactly.
  *
- * Every observed skilling base has been 40,000 so far, but only the observed
- * skills are seeded: a wrong seed states wrong tiers with confidence, and an
- * unseeded skill merely learns on its first stated-tier moment as before.
+ * Every observed skilling base has been 40,000, on every skill it has ever
+ * been checked against, so all ten skilling trials are now seeded with it
+ * rather than only the three that had been watched from the inside.
+ *
+ * That gap was not harmless. A base is *learned* only from a live progress bar
+ * ({@link GuildTrials#_learnWorkBase}), and a bar only ever streams for a trial
+ * this character joined — so an unjoined Milking or Tailoring card could never
+ * learn one, and "learns on its first stated-tier moment" described a moment
+ * that structurally never arrived. The work ladder was therefore unavailable
+ * for exactly the cards with nothing else to go on. The learned store still
+ * answers first and overrides these, so a skill that turns out to differ
+ * corrects itself the moment somebody joins it.
  */
+const SKILLING_WORK_BASE = 40_000;
+
 const DEFAULT_WORK_BASES = {
-    crafting: 40_000,
-    foraging: 40_000,
-    alchemy: 40_000,
+    ...Object.fromEntries(TRIAL_SKILLS.map((skill) => [skill, SKILLING_WORK_BASE])),
     'trial chameleon': 550_000,
     'trial badger': 330_000,
 };
-
-/** Below this many rising point readings there is no loose rate to give. */
-const MIN_POINT_SAMPLES = 2;
-
-/** The median positive step between the totals stated at consecutive tier badges. */
-function medianTierStep(pointsByTier) {
-    if (!pointsByTier || typeof pointsByTier !== 'object') return null;
-    const tiers = Object.keys(pointsByTier)
-        .map((tier) => ({ tier: Number(tier), total: Number(pointsByTier[tier]) }))
-        .filter((entry) => Number.isFinite(entry.tier) && Number.isFinite(entry.total))
-        .sort((a, b) => a.tier - b.tier);
-    const steps = [];
-    for (let i = 1; i < tiers.length; i += 1) {
-        const step = tiers[i].total - tiers[i - 1].total;
-        if (step > 0) steps.push(step);
-    }
-    if (!steps.length) return null;
-    steps.sort((a, b) => a - b);
-    const mid = Math.floor(steps.length / 2);
-    return steps.length % 2 ? steps[mid] : (steps[mid - 1] + steps[mid]) / 2;
-}
-
-/** The total points the card stated at its highest banked-tier badge, or null. */
-function highestStatedTierTotal(pointsByTier) {
-    if (!pointsByTier || typeof pointsByTier !== 'object') return null;
-    let bestTier = -Infinity;
-    let bestTotal = null;
-    for (const [tier, total] of Object.entries(pointsByTier)) {
-        const t = Number(tier);
-        const v = Number(total);
-        if (Number.isFinite(t) && Number.isFinite(v) && t > bestTier) {
-            bestTier = t;
-            bestTotal = v;
-        }
-    }
-    return bestTotal;
-}
-
-/**
- * A loose next-tier forecast for a trial this character has NOT joined.
- *
- * The live progress bar only streams for trials you join, so no fill rate can be
- * fitted for the others — but the Trials tab still states each card's running
- * total points, which `recordTileSample` keeps as a timestamped series. Two
- * rising readings give a points-per-second, and the per-tier point steps the card
- * has already shown (`pointsByTier`) give roughly what one tier is worth; together
- * they place the next tier's clear loosely in time. Rough by construction — a
- * whole-guild average read off stated totals, not your own measured contribution
- * — and null until it has two rising readings to work from. The tier ETA is
- * further null until the card has shown two tier badges to size a tier from.
- *
- * Pure: reads the record, returns numbers, touches nothing.
- *
- * @param {Object} record - A tile record from the store
- * @param {Object} [options]
- * @param {number|null} [options.timeLeftMs] - Active time left in the trial
- * @returns {{pointsPerSecond: number, pointsPerTier: number|null,
- *   etaMsToNextTier: number|null, tiersBeforeEnd: number|null, samples: number}|null}
- */
-export function looseTrialForecast(record, { timeLeftMs = null } = {}) {
-    const pointSamples = Array.isArray(record?.pointSamples) ? record.pointSamples : [];
-    const series = pointSamples
-        .filter((sample) => Number.isFinite(sample?.t) && Number.isFinite(sample?.points))
-        .map((sample) => ({ t: sample.t, value: sample.points }));
-    if (series.length < MIN_POINT_SAMPLES) return null;
-
-    const rate = ratePerMs(series, 1);
-    if (!Number.isFinite(rate) || rate <= 0) return null;
-
-    const pointsPerTier = medianTierStep(record?.pointsByTier);
-    let etaMsToNextTier = null;
-    let tiersBeforeEnd = null;
-    if (Number.isFinite(pointsPerTier) && pointsPerTier > 0) {
-        const latestTotal = series[series.length - 1].value;
-        const bankedTotal = highestStatedTierTotal(record?.pointsByTier);
-        const intoTier = Number.isFinite(bankedTotal) ? Math.max(0, latestTotal - bankedTotal) : 0;
-        etaMsToNextTier = etaMs(Math.max(0, pointsPerTier - intoTier), rate);
-        if (Number.isFinite(timeLeftMs) && timeLeftMs > 0 && Number.isFinite(etaMsToNextTier)) {
-            const msPerTier = pointsPerTier / rate;
-            const afterFirst = timeLeftMs - etaMsToNextTier;
-            tiersBeforeEnd = afterFirst < 0 ? 0 : 1 + Math.floor(afterFirst / msPerTier);
-        }
-    }
-
-    return {
-        pointsPerSecond: rate * 1000,
-        pointsPerTier: Number.isFinite(pointsPerTier) ? pointsPerTier : null,
-        etaMsToNextTier,
-        tiersBeforeEnd,
-        samples: series.length,
-    };
-}
 
 /**
  * Everything derivable about one trial, from its stored samples.
@@ -1132,29 +1055,44 @@ export function renderTrialBlock(
     const notMine = participating === false && !Number.isFinite(analysis.rate);
 
     if (notMine) {
+        // A trial you did not join has exactly one measurable signal: the times
+        // its tier badges were watched changing. The stated points cannot be
+        // one — they are a step function, flat between tiers and jumping at
+        // each, so the points-per-second this used to print was a regression
+        // over a staircase. See `guild-trial-tier-timing.js`.
         const loose = looseForecast;
-        if (loose && Number.isFinite(loose.pointsPerSecond)) {
-            // A loose estimate off the stated total points — the only rate we can
-            // get for a trial this character did not join.
-            rows.push(
-                line(
-                    'Est. fill',
-                    `~${rateNum(loose.pointsPerSecond)}\u00a0pts/s`,
-                    ACCENT,
-                    'A rough rate for a trial you did not join, read off the running total the Trials tab ' +
-                        'states — the whole guild’s pace, not your own contribution. The live per-second ' +
-                        'bar only ever streams for the trials you joined; this watches the stated total tick up ' +
-                        'instead, so keep this tab open for it to settle.'
-                )
-            );
+        if (loose && Number.isFinite(loose.sharePerMs)) {
+            const falling = Number.isFinite(loose.declinePerTier)
+                ? ` (falling ~${Math.abs(loose.declinePerTier * 100).toFixed(0)}%/tier)`
+                : '';
+            if (Number.isFinite(loose.workPerSecond)) {
+                rows.push(
+                    line(
+                        'Est. fill',
+                        `~${rateNum(loose.workPerSecond)}\u00a0${unit}/s${falling}`,
+                        ACCENT,
+                        'The whole guild’s work rate on this trial, measured from how long they took to fill ' +
+                            `the last tier${loose.intervals > 1 ? 's' : ''} — the pool a tier needs is derived ` +
+                            'exactly, and the gap between two tier badges is watched. Not your own ' +
+                            'contribution, and not a bar reading: the live per-second bar only ever streams ' +
+                            'for the trials you joined.' +
+                            (falling
+                                ? '\nThe rate falls as the tiers climb because every participant’s success ' +
+                                  'rate does, fitted across the tiers timed so far.'
+                                : '')
+                    )
+                );
+            }
             if (Number.isFinite(loose.etaMsToNextTier)) {
                 rows.push(
                     line(
                         'Next tier in',
                         `~${formatEta(loose.etaMsToNextTier)}`,
                         GOOD,
-                        'At that points rate, roughly how long until the next tier’s worth of points is in ' +
-                            '— sized from the per-tier point steps this card has already shown. A loose figure.'
+                        `What is left of T${loose.currentTier}’s pool at the rate projected for T` +
+                            `${loose.currentTier}. The pool is derived — each tier adds a tenth of the first ` +
+                            'tier’s work — and how much of it is already done is the time since the badge ' +
+                            'moved, spent at that rate.'
                     )
                 );
             }
@@ -1164,8 +1102,8 @@ export function renderTrialBlock(
                         'Before it ends',
                         `~${loose.tiersBeforeEnd} more tier${loose.tiersBeforeEnd === 1 ? '' : 's'}`,
                         DIM,
-                        'How many more tiers that rate would clear in the time the trial has left — a projection ' +
-                            'off a whole-guild average, not a promise.'
+                        'Walked one tier at a time for the rest of the hour, each priced at its own projected ' +
+                            'rate — not a time divided by a flat one. A tier only counts when it fits whole.'
                     )
                 );
             }
@@ -1173,12 +1111,14 @@ export function renderTrialBlock(
             rows.push(
                 line(
                     'Rate',
-                    'only trials you join',
+                    loose?.reason || 'only trials you join',
                     DIM,
                     'The live per-second bar only ever streams for the trials this character joined, so no ' +
-                        'measured rate arrives for the others. A loose estimate off the Trials tab’s stated ' +
-                        'total points appears here once two readings a few seconds apart have been seen — keep ' +
-                        'this tab open.\nIts tier, points and sign-ups are read and shown below regardless.'
+                        'measured rate arrives for the others. What can be measured instead is how long the ' +
+                        'guild takes to clear a tier — so this waits until two tier badges have been watched ' +
+                        'appearing while the tab was open. A card’s first sighting does not count: it says ' +
+                        'nothing about when that tier actually banked.\nIts tier, points and sign-ups are ' +
+                        'read and shown below regardless.'
                 )
             );
         }
@@ -1325,34 +1265,58 @@ export function renderTrialBlock(
         // projection cannot model is the deaths it may cost.
         const margin = Number.isFinite(forecast.enragedFrom) ? ' · fully enraged' : '';
         const cleared = forecast.tiersCleared;
+        // A trial you did not join is projected from its tier-clear timings
+        // rather than from a bar nobody here can see, and it always states an
+        // expected tier: a walk that has measured the guild's own decline is
+        // not the flat-rate pace this row otherwise contrasts against.
+        const timing = forecast.source === 'tier-timing';
+        // The flat comparison only exists where a pace was walked, and a pace
+        // needs a live bar. An unjoined card has none, and reaching for it
+        // unguarded is what turned a restored Expected row into a thrown render.
+        const flat = analysis.pace ? analysis.pace.tiersCleared : null;
         rows.push(
             line(
-                slowdown ? 'Expected' : 'On pace for',
-                slowdown
+                slowdown || timing ? 'Expected' : 'On pace for',
+                slowdown || timing
                     ? `~T${cleared}${margin}`
                     : `${cleared} tier${cleared === 1 ? '' : 's'}${cleared ? ` → T${cleared}` : ''}${margin}`,
-                forecast.source === 'measured' ? GOOD : WARN,
-                forecast.source === 'measured'
-                    ? 'Walked from the work or health each tier actually needs — derived from the game\u2019s own ' +
-                          'data and rules, not fitted — at the rate this party is measured to be producing.' +
-                          (slowdown
-                              ? `\nAssumes your success rate keeps falling about ${Math.abs(
-                                    slowdown.perTier * 100
-                                ).toFixed(1)} points a tier to its 5% floor, as measured across ` +
-                                `${slowdown.observations} tiers. Past that point a tier is slow rather than ` +
-                                `impossible.\nThe same rate held flat, ignoring the slowdown, would reach ` +
-                                `T${analysis.pace.tiersCleared} — which is why that flatter number is not shown as the estimate.`
-                              : '') +
-                          (Number.isFinite(forecast.enragedFrom)
-                              ? `\nA fight this long reaches full enrage from T${forecast.enragedFrom}: the boss ` +
-                                'gains a stack a minute to ten, ending at +100% damage and +100% accuracy. Still ' +
-                                'killable — but expect deaths to slow this beyond the projection.'
-                              : '')
-                    : 'Estimated from the loadouts captured so far' +
-                          (forecast.coverage
-                              ? ` (${forecast.coverage.known} of ${forecast.coverage.of} members)`
-                              : '') +
-                          ' — a rough shape rather than a measurement, until the party\u2019s own damage has been seen.'
+                forecast.source === 'estimated' ? WARN : GOOD,
+                timing
+                    ? 'Walked from the work each tier actually needs — each adds a tenth of the first tier’s ' +
+                          '— at the rate this guild is measured to be filling them, taken from the ' +
+                          `${forecast.measured} tier badges watched appearing on this card.` +
+                          (forecast.decline
+                              ? `\nThe rate falls about ${Math.abs(forecast.decline.perTier * 100).toFixed(0)}% ` +
+                                'a tier as every participant’s success rate does, fitted across the ' +
+                                `${forecast.decline.observations} tiers timed so far. It stops falling at ` +
+                                `T${TRIAL_MAX_TIER}, where the trial level caps and nobody’s success rate drops ` +
+                                'any further.'
+                              : '\nOne tier has been timed, so the rate is held flat — a second timed tier ' +
+                                'is what turns a reading into a trend.') +
+                          '\nThe whole guild’s pace, not your own contribution.'
+                    : forecast.source === 'measured'
+                      ? 'Walked from the work or health each tier actually needs — derived from the game’s own ' +
+                        'data and rules, not fitted — at the rate this party is measured to be producing.' +
+                        (slowdown
+                            ? `\nAssumes your success rate keeps falling about ${Math.abs(
+                                  slowdown.perTier * 100
+                              ).toFixed(1)} points a tier to its 5% floor, as measured across ` +
+                              `${slowdown.observations} tiers. Past that point a tier is slow rather than ` +
+                              'impossible.' +
+                              (Number.isFinite(flat)
+                                  ? '\nThe same rate held flat, ignoring the slowdown, would reach ' +
+                                    `T${flat} — which is why that flatter number is not shown as the estimate.`
+                                  : '')
+                            : '') +
+                        (Number.isFinite(forecast.enragedFrom)
+                            ? `\nA fight this long reaches full enrage from T${forecast.enragedFrom}: the ` +
+                              'boss gains a stack a minute to ten, ending at +100% damage and +100% ' +
+                              'accuracy. Still killable — but expect deaths to slow this beyond the ' +
+                              'projection.'
+                            : '')
+                      : 'Estimated from the loadouts captured so far' +
+                        (forecast.coverage ? ` (${forecast.coverage.known} of ${forecast.coverage.of} members)` : '') +
+                        ' — a rough shape rather than a measurement, until the party’s own damage has been seen.'
             )
         );
     } else if (forecast?.reason) {
@@ -2848,6 +2812,28 @@ class GuildTrials {
                 const analysis = analysisFor(tileKey(tile), record, participants, tilePhase);
                 this._learnWorkBase(tile, record, analysis, participants, now);
 
+                // The guild's own fill rate on a trial nobody here joined,
+                // measured from when its tier badges were watched changing —
+                // the only honest signal such a card gives. See
+                // `guild-trial-tier-timing.js` for why the stated points are
+                // not one.
+                const timing = tierTimingForecast(record, {
+                    kind: analysis.kind,
+                    participants,
+                    workBase: this._workBase(tile),
+                    timeLeftMs,
+                    now,
+                    bankedTiers: analysis.tiersClearedSoFar,
+                });
+
+                // What the card itself is labelled with, published on the tile
+                // so the tab-wide badge injector can read it: past the level
+                // cap the level no longer identifies the tier and the banked
+                // count is the better number.
+                if (tile.element?.dataset)
+                    tile.element.dataset.mwiTrialBanked = String(analysis.tiersClearedSoFar ?? 0);
+                this._badgeTile(tile, analysis);
+
                 const key = `tile:${tileKey(tile)}`;
                 drawn.add(key);
                 // In the live fight the block is a grid item beside the bosses,
@@ -2868,8 +2854,8 @@ class GuildTrials {
                         participating: ownParticipation(tile.name),
                         phase: tilePhase,
                         startsInMs: status?.startsInMs ?? null,
-                        forecast: this._forecast(tile, analysis, participants, tilePhase),
-                        looseForecast: looseTrialForecast(record, { timeLeftMs }),
+                        forecast: this._forecast(tile, analysis, participants, tilePhase, timing),
+                        looseForecast: timing,
                     }),
                     // Wide enough that a label and a figure fit on one line, and
                     // capped so it cannot stretch a whole panel — the reported
@@ -3006,7 +2992,41 @@ class GuildTrials {
      * @param {number} participants - Members signed up
      * @returns {Object|null} The forecast
      */
-    _forecast(tile, analysis, participants, phase = null) {
+    /**
+     * Put the "T17" marker beside the card's own "Lv.260".
+     *
+     * The tab-wide observer in `guild-credit-value.js` badges every tile
+     * summary it sees; this runs on the cards the trials feature is already
+     * drawing beside, so the marker arrives with the block rather than waiting
+     * for the next mutation — and it carries the banked count, which is what
+     * the level cannot say once the level has capped at Lv.300.
+     *
+     * Idempotent by construction: `renderTierBadge` rewrites the badge already
+     * on the line rather than appending a second one, so a card the game
+     * re-renders keeps exactly one.
+     *
+     * @param {Object} tile - The card
+     * @param {Object} analysis - From `analyseTrial`
+     */
+    _badgeTile(tile, analysis) {
+        try {
+            const element = tile?.element;
+            if (!element?.querySelector) return;
+
+            const holdsLevel = (node) => LEVEL_LINE_RE.test(node?.textContent || '');
+            const summary =
+                element.querySelector('[class*="GuildPanel_tileSummary"]') ||
+                [...(element.querySelectorAll('*') || [])].find(
+                    (node) => holdsLevel(node) && ![...node.children].some(holdsLevel)
+                );
+            if (!summary) return;
+            renderTierBadge(summary, { bankedTiers: analysis?.tiersClearedSoFar ?? null });
+        } catch (error) {
+            console.error('[GuildTrials] Badging a tile with its tier failed:', error);
+        }
+    }
+
+    _forecast(tile, analysis, participants, phase = null, timing = null) {
         try {
             // Scoped exactly as the block is: a Hedgehog forecast must not run
             // on the Chameleon fight's measured DPS
@@ -3028,6 +3048,16 @@ class GuildTrials {
                 // A scheduled trial forecasts from tier 1 with the whole hour
                 scheduled: phase === 'scheduled',
             });
+            // A trial nobody here joined never streams a bar, so the skilling
+            // branch of `forecastTrial` can only ever answer "not projectable"
+            // for it — which is why the maintainer's Milking and Woodcutting
+            // cards had no expected tier while the joined Alchemy card did.
+            // Tier-clear timing is what those cards *can* be projected from,
+            // and it stands in wherever it has something to say.
+            if ((!forecast || forecast.tier === null) && timing) {
+                const fromTiming = tierTimingAsForecast(timing);
+                if (fromTiming) return fromTiming;
+            }
             // Pushed to the per-player panel, which draws the same conclusion
             // beside the split rather than working it out a second time
             const rank = analysis.kind === 'combat' ? this._contextRank(tile, analysis) : 0;

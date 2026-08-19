@@ -23,7 +23,7 @@ import {
     visibleTabsContainer,
 } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
-import { tierFromLevel } from './guild-trials-math.js';
+import { renderTierBadge, TIER_BADGE_CLASS } from './guild-trial-tier-badge.js';
 import { GUILD_BUILDING_MAX_LEVEL } from './guild-trials-store.js';
 import { describeGuildTokenGold } from './guild-token-value.js';
 import { captureTokenExchangeFromModal, hydrateCapturedTokenExchanges } from './guild-token-exchange-capture.js';
@@ -1063,32 +1063,25 @@ class GuildCreditValue {
     }
 
     _renderTrialTier(el) {
-        if (el.dataset.mwiTierInjected) return;
-        el.dataset.mwiTierInjected = 'true';
-
-        const match = el.textContent.match(/Lv\.(\d+)/);
-        if (!match) return;
-
-        const level = parseInt(match[1], 10);
-
-        // The ladder itself is `guild-trials-math.js`'s to define — tiers start
-        // at level 100, step 10, and stop at 300, which is 21 tiers and not the
-        // 20 this used to cap at.
+        // The badge itself, its ladder and its level cap all live in
+        // `guild-trial-tier-badge.js`, because the trials feature draws the
+        // same marker from its own tile pass and two copies of the rule would
+        // drift. This tab observer is what puts one on every card, including
+        // the ones the trials feature is not rendering a block beside.
+        //
+        // Guarded by the badge's own presence rather than a `data-` flag: React
+        // reuses the level line and replaces its children on every redraw, so
+        // the flag survived the span and the marker never came back. That is
+        // why the maintainer's card read "Lv.260" with no tier on it.
         //
         // `GuildPanel_tileSummary` is not exclusive to trial tiles — the same
-        // class also carries a guild building's "Lv. x / 20" (GUILD_BUILDING_MAX_LEVEL,
-        // from guild-trials-store.js). tierFromLevel() already keeps the two apart:
-        // it returns null below TRIAL_START_LEVEL (100), which sits well above
-        // GUILD_BUILDING_MAX_LEVEL, so a building tile's level never resolves to a
-        // trial tier and never gets a "T<n>" badge.
-        const tier = tierFromLevel(level);
-        if (tier === null) return;
-
-        const tierSpan = document.createElement('span');
-        tierSpan.className = 'mwi-trial-tier';
-        tierSpan.style.cssText = 'color:#9ca3af; margin-left:3px; font-size:0.85em; white-space:nowrap;';
-        tierSpan.textContent = `T${tier}`;
-        el.appendChild(tierSpan);
+        // class also carries a guild building's "Lv. x / 20"
+        // (GUILD_BUILDING_MAX_LEVEL, from guild-trials-store.js). The badge
+        // helper keeps the two apart: a level below the first trial level
+        // (100) resolves to no tier and gets no badge.
+        const owner = el.closest?.('[data-mwi-trial-banked]');
+        const banked = Number(owner?.dataset?.mwiTrialBanked);
+        renderTierBadge(el, { bankedTiers: Number.isFinite(banked) ? banked : null });
     }
 
     cleanup() {
@@ -1102,7 +1095,7 @@ class GuildCreditValue {
         document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
         document.querySelectorAll('.mwi-shrine-cost').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-trial-copy-btn').forEach((el) => el.remove());
-        document.querySelectorAll('.mwi-trial-tier').forEach((el) => el.remove());
+        document.querySelectorAll(`.${TIER_BADGE_CLASS}`).forEach((el) => el.remove());
         document.querySelectorAll('.mwi-exchange-advisor').forEach((el) => el.remove());
         document.querySelectorAll('.mwi-shrine-planner').forEach((el) => el.remove());
         this.initialized = false;

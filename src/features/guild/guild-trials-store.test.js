@@ -172,6 +172,27 @@ describe('recording samples', () => {
         ]);
     });
 
+    test('a tier badge seen to move is timestamped, and the first sighting is not', () => {
+        // The only rate signal a trial nobody here joined ever gives. A card
+        // first opened already badged T16 says nothing about when T16 banked —
+        // it may have been half an hour earlier — so only a badge watched
+        // *changing* starts the clock.
+        const carded = (tier, points) => ({ name: 'Milking', kind: 'skilling', tier, points });
+        let record = recordTileSample(emptyRecord(thisWeek), carded(16, 2278), now);
+        expect(record.tiles['skilling::milking'].tierSeenAt).toEqual({});
+
+        record = recordTileSample(record, carded(17, 2412), now + 300_000);
+        record = recordTileSample(record, carded(18, 2550), now + 620_000);
+        expect(record.tiles['skilling::milking'].tierSeenAt).toEqual({
+            17: now + 300_000,
+            18: now + 620_000,
+        });
+
+        // A redraw restating the badge does not move the timestamp it already has
+        record = recordTileSample(record, carded(18, 2550), now + 700_000);
+        expect(record.tiles['skilling::milking'].tierSeenAt[18]).toBe(now + 620_000);
+    });
+
     test('a repeat at the same instant replaces rather than duplicates', () => {
         // The panel observer fires several times for one React render, and a
         // zero-span pair reads as an infinite rate
@@ -878,6 +899,28 @@ describe('merging two records for one guild', () => {
         const held = record(thisWeek, [10]);
         expect(mergeTrialRecords(null, held).tiles).toEqual(held.tiles);
         expect(mergeTrialRecords(held, null).tiles).toEqual(held.tiles);
+    });
+});
+
+describe('merging keeps both sides’ tier-clear timings', () => {
+    test('a union, earliest sighting per tier', () => {
+        // Two records of one week are two views of the same badges — the
+        // session that started before the guild's name arrived writes under
+        // `default`. Dropping either side's timings drops measured intervals,
+        // and there are only ever a handful.
+        const base = {
+            weekStart: thisWeek,
+            tiles: { 'skilling::milking': { name: 'Milking', kind: 'skilling', tierSeenAt: { 17: 1000, 18: 5000 } } },
+        };
+        const incoming = {
+            weekStart: thisWeek,
+            tiles: {
+                'skilling::milking': { name: 'Milking', kind: 'skilling', tierSeenAt: { 18: 4000, 19: 9000 } },
+            },
+        };
+
+        const merged = mergeTrialRecords(base, incoming);
+        expect(merged.tiles['skilling::milking'].tierSeenAt).toEqual({ 17: 1000, 18: 4000, 19: 9000 });
     });
 });
 

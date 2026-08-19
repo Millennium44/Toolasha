@@ -219,12 +219,15 @@ describe('guild credit value — trial tier badge', () => {
         }
     });
 
-    test('the top of the ladder is tier 21, at level 300', () => {
+    test('the top of the ladder is tier 21, and past the level cap the badge says so', () => {
         // Tiers start at 100 and step 10 to a maximum level of 300, which is 21
         // tiers — the same ladder `guild-trials-math.js` encodes, and not the 20
-        // this badge used to cap at
-        expect(buildAndReadTier('Lv.300')).toBe('T21');
-        expect(buildAndReadTier('Lv.500')).toBe('T21');
+        // this badge used to cap at.
+        //
+        // At the cap the level stops identifying the tier: T21, T22 and T23 all
+        // read Lv.300, so the badge is a floor and wears a `+` to say so.
+        expect(buildAndReadTier('Lv.300')).toBe('T21+');
+        expect(buildAndReadTier('Lv.500')).toBe('T21+');
 
         function buildAndReadTier(text) {
             const el = buildTileSummary(text);
@@ -240,7 +243,10 @@ describe('guild credit value — trial tier badge', () => {
 
             const el = buildTileSummary(`Lv.${level}`);
             game.observers['GuildPanel_tileSummary'](el);
-            expect(el.querySelector('.mwi-trial-tier').textContent).toBe(`T${tier}`);
+            // The top tier is at the level cap, where the badge is a floor
+            expect(el.querySelector('.mwi-trial-tier').textContent).toBe(
+                `T${tier}${tier === TRIAL_MAX_TIER ? '+' : ''}`
+            );
         }
 
         // One past the top is still the top, not a 22nd tier
@@ -254,6 +260,35 @@ describe('guild credit value — trial tier badge', () => {
         game.observers['GuildPanel_tileSummary'](el);
 
         expect(el.querySelectorAll('.mwi-trial-tier')).toHaveLength(1);
+    });
+
+    test('a redraw that wipes the badge gets it back, and never twice', () => {
+        // React reuses the level line and replaces its children. The old guard
+        // was a `data-` flag on that element, which survived the wipe — so the
+        // badge vanished on the first card update and never returned, which is
+        // exactly what the maintainer's "Lv.260" with no tier on it was.
+        const el = buildTileSummary('Lv.260');
+        game.observers['GuildPanel_tileSummary'](el);
+        expect(el.querySelector('.mwi-trial-tier').textContent).toBe('T17');
+
+        el.textContent = 'Lv.260';
+        game.observers['GuildPanel_tileSummary'](el);
+        expect(el.querySelectorAll('.mwi-trial-tier')).toHaveLength(1);
+        expect(el.querySelector('.mwi-trial-tier').textContent).toBe('T17');
+    });
+
+    test('the badge never reads below what the record says is banked', () => {
+        // Past the level cap the level is no longer the better number, and the
+        // trials feature publishes the banked count on the card for this
+        const owner = document.createElement('div');
+        owner.dataset.mwiTrialBanked = '24';
+        const el = document.createElement('div');
+        el.textContent = 'Lv.300';
+        owner.appendChild(el);
+        document.body.appendChild(owner);
+
+        game.observers['GuildPanel_tileSummary'](el);
+        expect(el.querySelector('.mwi-trial-tier').textContent).toBe('T24+');
     });
 
     test('text with no level marker is left alone', () => {

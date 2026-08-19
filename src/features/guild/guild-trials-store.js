@@ -268,6 +268,28 @@ export function recordTileSample(record, tile, at) {
         pointsByTier[tile.tier] = tile.points;
     }
 
+    // When each tier badge was *watched appearing*, which is the only rate
+    // signal a trial nobody here joined ever gives. The card's stated points
+    // are a step function — flat between tiers, a jump at each one — so fitting
+    // a rate across them measured nothing; the badge moving is a timestamped
+    // event, and the pool behind it has a known size.
+    //
+    // Only a badge seen to *move* is written. A card first opened already
+    // reading T16 says nothing about when T16 banked — possibly an hour before
+    // this tab opened — and pairing that timestamp with the next badge measures
+    // a slice of the real interval and reports a rate several times too high.
+    // So the first sighting only establishes where the card is, and the clock
+    // starts at the next transition.
+    const tierSeenAt = { ...(existing.tierSeenAt || {}) };
+    if (
+        Number.isFinite(tile?.tier) &&
+        Number.isFinite(existing.tier) &&
+        tile.tier > existing.tier &&
+        !Number.isFinite(tierSeenAt[tile.tier])
+    ) {
+        tierSeenAt[tile.tier] = at;
+    }
+
     tiles[key] = {
         name: tile?.name || existing.name,
         kind: tile?.kind || existing.kind,
@@ -314,6 +336,7 @@ export function recordTileSample(record, tile, at) {
         },
         signups: tile?.signups || existing.signups || null,
         pointsByTier,
+        tierSeenAt,
         samples: samples.slice(-MAX_SAMPLES),
         pointSamples: pointSamples.slice(-MAX_SAMPLES),
         tiers,
@@ -323,6 +346,25 @@ export function recordTileSample(record, tile, at) {
     // the provenance stamp or the archived cycles off it, which is a thing this
     // returned-a-fresh-object shape did quietly for both
     return { ...(record || {}), weekStart, tiles };
+}
+
+/**
+ * Union two tier-clear timestamp maps, keeping the earlier sighting of each.
+ * @param {Object} [a] - One side's `tierSeenAt`
+ * @param {Object} [b] - The other side's
+ * @returns {Object} One map
+ */
+function mergeTierSeenAt(a, b) {
+    const merged = {};
+    for (const source of [a, b]) {
+        for (const [tier, at] of Object.entries(source || {})) {
+            const when = Number(at);
+            if (!Number.isFinite(when)) continue;
+            const held = Number(merged[tier]);
+            merged[tier] = Number.isFinite(held) ? Math.min(held, when) : when;
+        }
+    }
+    return merged;
 }
 
 /**
@@ -434,6 +476,15 @@ export function mergeTrialRecords(base, incoming) {
             points: Number.isFinite(fresher.points) ? fresher.points : staler.points,
             signups: fresher.signups || staler.signups || null,
             pointsByTier: { ...(staler.pointsByTier || {}), ...(fresher.pointsByTier || {}) },
+            // Both sides' tier-clear timestamps, earliest wins. Two records of
+            // one week are two views of the same badges, and the merge that
+            // runs when the guild's name arrives must not drop the half that
+            // was written under `default` — that is a measured interval gone,
+            // and with only a handful ever taken losing one is losing the model.
+            // Earliest rather than freshest because a later sighting of the same
+            // badge is the same clear seen again, and the first one is closest
+            // to when it actually happened.
+            tierSeenAt: mergeTierSeenAt(existing.tierSeenAt, tile.tierSeenAt),
             samples,
             pointSamples,
             tiers,

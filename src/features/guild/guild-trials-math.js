@@ -728,6 +728,28 @@ function ladderShape(kind) {
 }
 
 /**
+ * A tier's share of the first tier's total, on its kind's ladder.
+ *
+ * The exported face of {@link ladderShape}, and the whole reason a projection
+ * can be walked for a trial whose work base is unknown: every pool on the
+ * ladder is `base × party × shape(tier)`, so a ratio of two pools is a ratio of
+ * two shapes and the base and the party size cancel out of it.
+ *
+ * Not clamped at {@link TRIAL_MAX_TIER}: the pools keep their arithmetic past
+ * the top of the ladder even though the tier *level* stops rising there, and a
+ * caller that wants the ladder's ceiling enforces it itself.
+ *
+ * @param {'skilling'|'combat'} kind - Which ladder
+ * @param {number} tier - The tier wanted
+ * @returns {number|null} The share, 1 at the first tier, or null on unusable input
+ */
+export function tierWorkShape(kind, tier) {
+    const shape = ladderShape(kind);
+    if (!shape || !Number.isFinite(tier) || tier < 1) return null;
+    return shape(tier);
+}
+
+/**
  * The first tier's total, backed out of any tier that has been observed.
  *
  * A trial joined at tier three still knows what tier one needed, because the

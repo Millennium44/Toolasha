@@ -6,9 +6,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Unjoined-trial estimates: small rates stay legible, tiers priced at the latest step
+### Trials you did not join are forecast from tier-clear timing, and wear their tier again
 
-"Est. fill" rounded a whole-guild rate of a fraction of a point per second to "~0 pts/s" while the tier ETA beside it plainly said otherwise; small rates now print with decimals. The next tier is priced at the latest consecutive tier step rather than the median of every step seen, which undersized late tiers.
+The old "Est. fill ~x pts/s" fitted a rate to the card's stated points, which only move when a tier banks — a regression over a staircase. It now measures the gap between tier badges, whose pool size is known exactly, and reports the guild's work rate, the next tier's ETA and the tiers left by walking the ladder one tier at a time with the rate falling as the tiers climb (flattening at the Lv.300 cap, where success rates stop falling). Unjoined cards get their expected tier back — they could never produce the measured fill rate the old forecast demanded — and the small "T17" marker beside a card's "Lv.260" returns, no longer wiped for good by the game's first redraw and reading the banked count once the level caps.
 
 ### A lifecycle smoke test over every registered feature
 
