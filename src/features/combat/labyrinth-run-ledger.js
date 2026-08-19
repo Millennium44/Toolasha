@@ -32,6 +32,7 @@ import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { labyrinthRunState } from '../notifications/notification-predicates.js';
 
 const STORAGE_KEY = 'labyrinthRunLedger';
@@ -48,13 +49,23 @@ const newestFirst = (a, b) => (Number(b?.endedAt) || 0) - (Number(a?.endedAt) ||
  * endings another tab recorded. Merged by the run's own start stamp (`key`),
  * newest first, capped at MAX_RUNS.
  */
+const mergeLedgers = (base, fresh) => mergeById((run) => run?.key, newestFirst)(base, fresh).slice(0, MAX_RUNS);
+
 const ledgerRecord = createPersistedRecord({
     base: STORAGE_KEY,
     store: STORE,
     empty: () => [],
-    merge: (stored, memory) => mergeById((run) => run?.key, newestFirst)(stored, memory).slice(0, MAX_RUNS),
+    merge: mergeLedgers,
     label: 'LabyrinthRunLedger',
 });
+
+/*
+ * Registered so a cross-device sync PULL combines this record instead of
+ * overwriting it. Registration runs at import time, which is long before the
+ * earliest pull (the staggered startup pull, 20s+ after load), so the registry
+ * is complete by the time sync consults it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({ store: STORE, base: STORAGE_KEY, merge: mergeLedgers, label: 'Labyrinth run ledger' });
 
 /**
  * The grid width of a floor — 4×4 on floor 1, one wider per floor, 8×8 from

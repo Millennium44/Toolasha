@@ -39,6 +39,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import config from '../../core/config.js';
 import {
     BUILDING_BONUS_PER_LEVEL,
@@ -505,6 +506,22 @@ export function mergeTrialRecords(base, incoming) {
 
     return { weekStart: baseWeek, tiles, ...provenance };
 }
+
+/*
+ * Registered so a cross-device sync PULL combines this record instead of
+ * overwriting it. Registration runs at import time, which is long before the
+ * earliest pull (the staggered startup pull, 20s+ after load), so the registry
+ * is complete by the time sync consults it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({
+    store: STORE_NAME,
+    // `guildTrials_<guild>` and its per-character fallbacks, but NOT the
+    // sibling keys built without the underscore (`guildTrialsRoster` and
+    // friends), which are caches rather than history
+    prefix: `${KEY_PREFIX}_`,
+    merge: mergeTrialRecords,
+    label: 'Guild trial records',
+});
 
 /**
  * Read a guild's record, discarding one from a previous week.

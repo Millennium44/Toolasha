@@ -31,6 +31,7 @@
 
 import config from '../../core/config.js';
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import dataManager from '../../core/data-manager.js';
 import { SessionState, getCurrentLegCounters } from '../enhancement/enhancement-session.js';
 import { attemptTailProbability } from '../enhancement/attempt-percentile.js';
@@ -54,6 +55,19 @@ const oldestFirst = (a, b) => (Number(a?.t) || 0) - (Number(b?.t) || 0);
 export function mergeEnhancementRecords(stored, memory) {
     return mergeById((record) => record?.id, oldestFirst)(stored, memory).slice(-MAX_RECORDS);
 }
+
+/*
+ * Registered so a cross-device sync PULL combines this record instead of
+ * overwriting it. Registration runs at import time, which is long before the
+ * earliest pull (the staggered startup pull, 20s+ after load), so the registry
+ * is complete by the time sync consults it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({
+    store: STORE_NAME,
+    base: 'calibrationEnhancing',
+    merge: mergeEnhancementRecords,
+    label: 'Enhancement calibration',
+});
 
 class EnhancementCalibration {
     constructor() {

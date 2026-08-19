@@ -29,6 +29,7 @@
  */
 
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { scriptVersion } from '../../utils/script-version.js';
 
 /** The labyrinth store, shared with the sim cache — this is labyrinth history */
@@ -78,13 +79,23 @@ function newRecordId() {
  * not be made keeps the fights in memory, a save folds in what another tab
  * stored, and the ring cap is applied to the union (oldest fall off first).
  */
+const mergeAttempts = (base, fresh) => mergeById(attemptIdentity)(base, fresh).slice(-MAX_ATTEMPTS);
+
 const record = createPersistedRecord({
     base: KEY,
     store: STORE,
     empty: () => [],
-    merge: (stored, memory) => mergeById(attemptIdentity)(stored, memory).slice(-MAX_ATTEMPTS),
+    merge: mergeAttempts,
     label: 'LabyrinthFightRecorder',
 });
+
+/*
+ * Registered so a cross-device sync PULL combines this record instead of
+ * overwriting it. Registration runs at import time, which is long before the
+ * earliest pull (the staggered startup pull, 20s+ after load), so the registry
+ * is complete by the time sync consults it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({ store: STORE, base: KEY, merge: mergeAttempts, label: 'Labyrinth fights' });
 
 let attempts = record.get();
 let loading = null;

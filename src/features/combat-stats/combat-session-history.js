@@ -29,6 +29,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
 /**
  * Where the list lives.
@@ -73,14 +74,24 @@ function startedAt(session) {
  * over all of them, and a save folds in runs another tab archived. Merged by
  * session key, newest first, capped at MAX_SESSIONS.
  */
+const mergeSessions = (base, fresh) =>
+    mergeById(sessionIdentity, (a, b) => startedAt(b) - startedAt(a))(base, fresh).slice(0, MAX_SESSIONS);
+
 const sessionRecord = createPersistedRecord({
     base: STORE_KEY,
     store: STORE_NAME,
     empty: () => [],
-    merge: (stored, memory) =>
-        mergeById(sessionIdentity, (a, b) => startedAt(b) - startedAt(a))(stored, memory).slice(0, MAX_SESSIONS),
+    merge: mergeSessions,
     label: 'CombatSessionHistory',
 });
+
+/*
+ * Registered so a cross-device sync PULL combines this record instead of
+ * overwriting it. Registration runs at import time, which is long before the
+ * earliest pull (the staggered startup pull, 20s+ after load), so the registry
+ * is complete by the time sync consults it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({ store: STORE_NAME, base: STORE_KEY, merge: mergeSessions, label: 'Combat sessions' });
 
 /** Whose sessions the record in memory holds — a change means forget them first */
 let recordOwner = null;

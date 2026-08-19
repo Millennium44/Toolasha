@@ -32,6 +32,7 @@
 
 import config from '../../core/config.js';
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
@@ -60,6 +61,19 @@ const oldestFirst = (a, b) => (Number(a?.t) || 0) - (Number(b?.t) || 0);
 export function mergeCalibrationRecords(stored, memory) {
     return mergeById((record) => record?.id, oldestFirst)(stored, memory).slice(-MAX_RECORDS);
 }
+
+/*
+ * Registered so a cross-device sync PULL combines this record instead of
+ * overwriting it. Registration runs at import time, which is long before the
+ * earliest pull (the staggered startup pull, 20s+ after load), so the registry
+ * is complete by the time sync consults it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({
+    store: STORE_NAME,
+    base: 'calibration',
+    merge: mergeCalibrationRecords,
+    label: 'Prediction calibration',
+});
 
 /** Under a minute a run's actual rate is mostly rounding on the clock */
 export const MIN_DURATION_SEC = 60;

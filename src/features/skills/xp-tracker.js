@@ -10,6 +10,7 @@ import config from '../../core/config.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createPersistedRecord, mergeSeriesMaps } from '../../utils/persisted-record.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
 const STORE_NAME = 'xpHistory';
 const WINDOW_10M = 10 * 60 * 1000;
@@ -129,6 +130,14 @@ function mergeXPHistory(stored, memory) {
     }
     return out;
 }
+
+/*
+ * Registered so a cross-device sync PULL combines this record instead of
+ * overwriting it. Registration runs at import time, which is long before the
+ * earliest pull (the staggered startup pull, 20s+ after load), so the registry
+ * is complete by the time sync consults it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({ store: STORE_NAME, base: 'xpHistory', merge: mergeXPHistory, label: 'Skill XP history' });
 
 /**
  * Filter history to only entries within the given interval from now.

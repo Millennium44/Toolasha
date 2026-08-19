@@ -36,6 +36,7 @@ import { exportMeta, buildAccuracyExport, sanitizeExport, downloadJson } from '.
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { ROOM_TRAVEL_SECONDS } from './labyrinth-formulas.js';
 import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 
 /** Re-exported from labyrinth-formulas.js, where it now lives */
 export { ROOM_TRAVEL_SECONDS };
@@ -220,12 +221,7 @@ class LabyrinthRoomLogs {
             base: STORAGE_KEY,
             store: 'settings',
             empty: () => ({ sessions: [] }),
-            merge: (stored, memory) => ({
-                sessions: mergeById(sessionIdentity, newestFirst)(stored?.sessions, memory?.sessions).slice(
-                    0,
-                    this.logSize()
-                ),
-            }),
+            merge: (stored, memory) => mergeRoomLogs(stored, memory, this.logSize()),
             label: 'LabyrinthRoomLogs',
         });
         this.activeSession = null;
@@ -3129,7 +3125,32 @@ class LabyrinthRoomLogs {
     }
 }
 
+/**
+ * Two room-log records folded into one by session identity, newest first, cut
+ * to `size`.
+ * @param {Object} base - Record, typically as stored
+ * @param {Object} fresh - Record, typically in memory
+ * @param {number} size - How many sessions to keep
+ * @returns {{sessions: Array<Object>}} Merged record
+ */
+function mergeRoomLogs(base, fresh, size) {
+    return { sessions: mergeById(sessionIdentity, newestFirst)(base?.sessions, fresh?.sessions).slice(0, size) };
+}
+
 const labyrinthRoomLogs = new LabyrinthRoomLogs();
+
+/*
+ * Registered so a cross-device sync PULL combines this record instead of
+ * overwriting it. Registration runs at import time, which is long before the
+ * earliest pull (the staggered startup pull, 20s+ after load), so the registry
+ * is complete by the time sync consults it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({
+    store: 'settings',
+    base: STORAGE_KEY,
+    merge: (local, incoming) => mergeRoomLogs(local, incoming, labyrinthRoomLogs.logSize()),
+    label: 'Labyrinth room logs',
+});
 
 /** The singleton itself, for tests — the default export is the feature shell */
 export { labyrinthRoomLogs };

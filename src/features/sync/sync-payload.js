@@ -21,6 +21,7 @@
 
 import storage from '../../core/storage.js';
 import { importEverything } from '../../utils/full-backup.js';
+import { mergeForKey } from '../../utils/sync-merge-registry.js';
 
 /** Matches the full-backup format, because that is what this produces */
 const FORMAT_VERSION = 1;
@@ -128,6 +129,51 @@ export async function buildPayloadJSON(scope = 'settings') {
 }
 
 /**
+ * Fold this device's histories into an incoming payload, key by key.
+ *
+ * Everything `importEverything` writes, it writes whole — which for a history
+ * that both devices added to means the loser's additions are gone. Every such
+ * record already owns a fold (it needs one for two tabs on one machine); the
+ * owning feature declares it through `utils/sync-merge-registry.js`, and this
+ * is where a pull consults it.
+ *
+ * The payload value is *replaced* with the fold rather than written separately,
+ * so the import that follows is still one transaction per store and there is
+ * still exactly one writer.
+ *
+ * A key with no registration, or one this device has never stored, is left as
+ * it came down — nothing to combine, so the whole-key write is correct. A key
+ * whose local value cannot be read is left alone too: guessing at a merge base
+ * we could not read is the blind overwrite this is meant to avoid.
+ *
+ * @param {Object} payload - Parsed payload; its store values are mutated in place
+ * @returns {Promise<Array<{store: string, key: string, label: string}>>} What was combined
+ */
+async function mergeLocalHistories(payload) {
+    const merged = [];
+
+    for (const [storeName, entries] of Object.entries(payload?.stores || {})) {
+        if (!entries || typeof entries !== 'object') continue;
+
+        for (const key of Object.keys(entries)) {
+            const registration = mergeForKey(storeName, key);
+            if (!registration) continue;
+
+            try {
+                const probed = await storage.tryGet(key, storeName);
+                if (!probed || !probed.found || probed.value == null) continue;
+                entries[key] = registration.merge(probed.value, entries[key]);
+                merged.push({ store: storeName, key, label: registration.label });
+            } catch (error) {
+                console.error(`[Sync] Merging ${storeName}/${key} failed; taking the remote copy:`, error);
+            }
+        }
+    }
+
+    return merged;
+}
+
+/**
  * Write a downloaded payload into local storage.
  *
  * The local token is never overwritten — it was redacted before upload, so a
@@ -136,8 +182,16 @@ export async function buildPayloadJSON(scope = 'settings') {
  * with the local token put back, rather than replacing it wholesale and leaving
  * this device unable to sync again.
  *
+ * Additive histories are combined rather than replaced, always — see
+ * {@link mergeLocalHistories}. A record that can only gain entries has no
+ * reading of "apply the remote copy" under which discarding this device's
+ * entries is what the user meant, so there is no option to; the pull's only
+ * real choice is what happens to the records that *can't* be combined, and
+ * those still take the remote wholesale.
+ *
  * @param {string} json - Payload text as produced by `buildPayloadJSON()`
- * @returns {Promise<{restored: Record<string, number>, exportedAt: string|null}>} What landed
+ * @returns {Promise<{restored: Record<string, number>, merged: Array<Object>, exportedAt: string|null}>}
+ *   What landed
  */
 export async function applyPayload(json) {
     const payload = JSON.parse(json);
@@ -156,8 +210,10 @@ export async function applyPayload(json) {
         }
     }
 
+    const merged = await mergeLocalHistories(payload);
+
     const { restored } = await importEverything(payload);
-    return { restored, exportedAt: payload?.exportedAt ?? null };
+    return { restored, merged, exportedAt: payload?.exportedAt ?? null };
 }
 
 /**

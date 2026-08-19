@@ -15,6 +15,7 @@
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { readScoped, writeScoped, characterKey } from '../../utils/character-key.js';
 import { detectFills, trimLedger, LEDGER_RECORD_CAP } from '../../utils/trade-ledger.js';
 
@@ -81,6 +82,15 @@ export function mergeStates(base, fresh) {
     const safe = (map) => (map && typeof map === 'object' && !Array.isArray(map) ? map : {});
     return { ...safe(base), ...safe(fresh) };
 }
+
+/*
+ * Registered so a cross-device sync PULL combines this record instead of
+ * overwriting it. Registration runs at import time, which is long before the
+ * earliest pull (the staggered startup pull, 20s+ after load), so the registry
+ * is complete by the time sync consults it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({ store: LEDGER_STORE, base: RECORDS_BASE, merge: mergeRecords, label: 'Trade ledger fills' });
+registerSyncMerge({ store: LEDGER_STORE, base: STATE_BASE, merge: mergeStates, label: 'Trade ledger baselines' });
 
 class TradeLedgerStore {
     constructor() {

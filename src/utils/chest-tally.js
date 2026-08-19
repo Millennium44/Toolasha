@@ -22,6 +22,8 @@
  * (MIT) — see `third-party/mwi-combat-suite/` and `docs/THIRD-PARTY-LICENSES.md`.
  */
 
+import { registerSyncMerge } from './sync-merge-registry.js';
+
 /**
  * Fold one `loot_opened` message into the tally.
  *
@@ -111,6 +113,16 @@ export function mergeStoredTally(stored, memory) {
     }
     return merged;
 }
+
+/*
+ * Registered so a cross-device sync PULL combines this record instead of
+ * overwriting it — a lifetime count can only be too low, never too high, so
+ * the max-per-counter fold is the right answer for two devices as much as for
+ * two tabs. Registration runs at import time, which is long before the
+ * earliest pull (the staggered startup pull, 20s+ after load), so the registry
+ * is complete by the time sync consults it. See sync-merge-registry.js.
+ */
+registerSyncMerge({ store: 'settings', base: 'treasureTally', merge: mergeStoredTally, label: 'Treasure tally' });
 
 /**
  * What one chest owes on average, per item.

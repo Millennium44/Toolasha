@@ -14,6 +14,15 @@
  * without a dialog, because a sync that interrogates you on startup is a sync
  * you turn off.
  *
+ * Applying a payload is not an overwrite. Records that can only grow — chest
+ * tallies, market listings, XP series, trial records, labyrinth runs — are
+ * combined with this device's copy key by key (see `sync-payload.js` and
+ * `utils/sync-merge-registry.js`), because there is no reading of "take the
+ * remote copy" under which throwing away entries the remote has never seen is
+ * what anyone meant. What the conflict dialog actually decides is the fate of
+ * the records that *cannot* be combined — settings, watchlists, plans — and
+ * whether the union goes straight back up to the gist.
+ *
  * "Has this device changed" is answered by fingerprinting the payload rather
  * than by watching writes. Watching writes would mean a hook on every store; the
  * fingerprint costs one build of a payload we were about to build anyway.
@@ -332,6 +341,9 @@ class SyncManager {
         const lastHash = await storage.get(KEY_LAST_HASH, STORE, null);
         const localChanged = Boolean(lastHash) && localHash !== lastHash;
 
+        /** Whether the union this pull produces is sent straight back up */
+        let pushBack = false;
+
         if (localChanged) {
             // The silent path is the unattended one (the startup pull). A
             // modal it raises sits unanswered behind the game while `busy`
@@ -346,19 +358,25 @@ class SyncManager {
             const answer = await askChoice({
                 title: 'Sync conflict',
                 message:
-                    `The copy on GitHub is newer (${formatWhen(remoteAt)}), but this device has changed ` +
-                    'since it last synced. Applying the remote copy overwrites those local changes.',
+                    `The copy on GitHub is newer (${formatWhen(remoteAt)}), and this device has changed ` +
+                    'since it last synced.\n\n' +
+                    'Histories that only ever grow — treasure tallies, market listings, XP series, trial ' +
+                    'records, labyrinth runs — are combined either way, so nothing recorded on either side ' +
+                    'is lost. Settings and edited lists (watchlists, plans, custom tabs) can only take one ' +
+                    "side, and that is what this asks: applying the GitHub copy replaces this device's.",
                 choices: [
-                    { value: 'pull', label: 'Use the GitHub copy', tone: 'danger' },
+                    { value: 'merge', label: 'Merge and push the result back', tone: 'primary' },
+                    { value: 'pull', label: 'Apply the GitHub copy here only' },
                     { value: 'push', label: 'Keep this device and push' },
                     { value: null, label: 'Do nothing' },
                 ],
             });
             if (answer === 'push') return this._doPush(false);
-            if (answer !== 'pull') return { ok: true, skipped: true, reason: 'cancelled' };
+            if (answer !== 'pull' && answer !== 'merge') return { ok: true, skipped: true, reason: 'cancelled' };
+            pushBack = answer === 'merge';
         }
 
-        await applyPayload(payload);
+        const { merged } = await applyPayload(payload);
         await this._remember({
             gistId,
             exportedAt: remoteAt,
@@ -370,8 +388,22 @@ class SyncManager {
             chunkCount: Number(manifest?.chunks) || 0,
         });
 
-        showToast('Synced from GitHub. Reload the page to pick everything up.', { duration: 0 });
-        return { ok: true };
+        const combined = merged?.length
+            ? ` ${merged.length} ${merged.length === 1 ? 'record was' : 'records were'} combined rather than replaced.`
+            : '';
+        showToast(`Synced from GitHub.${combined} Reload the page to pick everything up.`, { duration: 0 });
+
+        // The union only exists on this device until it is sent up. Pushing it
+        // now is what stops the other device pulling the pre-merge copy back
+        // and re-opening the same conflict. `_remember` above already recorded
+        // the remote's stamp, so this push is no longer a "never synced" one
+        // and will not stop to ask.
+        if (pushBack) {
+            const pushed = await this._doPush(false);
+            return { ok: true, merged: merged?.length || 0, pushedBack: pushed?.ok === true };
+        }
+
+        return { ok: true, merged: merged?.length || 0 };
     }
 
     /**

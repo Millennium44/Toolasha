@@ -35,10 +35,11 @@ vi.mock('../../utils/toast.js', () => ({
     },
 }));
 
-const dialog = vi.hoisted(() => ({ answer: null, calls: 0 }));
+const dialog = vi.hoisted(() => ({ answer: null, calls: 0, last: null }));
 vi.mock('../../utils/choice-dialog.js', () => ({
-    askChoice: async () => {
+    askChoice: async (question) => {
         dialog.calls += 1;
+        dialog.last = question;
         return dialog.answer;
     },
 }));
@@ -48,7 +49,7 @@ vi.mock('./sync-payload.js', () => ({
     buildPayloadJSON: async () => payload.text,
     applyPayload: async (json) => {
         payload.applied = json;
-        return { restored: {}, exportedAt: null };
+        return { restored: {}, merged: payload.merged ?? [], exportedAt: null };
     },
     // Content hash, as the real one: the exportedAt stamp does not participate
     contentHash: (text) => `h:${String(text).replace(/"exportedAt":"[^"]*",/, '')}`,
@@ -91,9 +92,11 @@ beforeEach(() => {
     stored.map = {};
     toasts.length = 0;
     dialog.answer = null;
+    dialog.last = null;
     dialog.calls = 0;
     payload.text = '{"local":1}';
     payload.applied = undefined;
+    payload.merged = [];
     gist.found = null;
     gist.read = null;
     gist.readError = null;
@@ -285,6 +288,67 @@ describe('pull', () => {
         await syncManager.pull();
 
         expect(payload.applied).toBe('{"remote":1}');
+    });
+
+    test('the conflict dialog offers the merge first, and says what can and cannot be combined', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:what-we-pushed';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        dialog.answer = null;
+
+        await syncManager.pull();
+
+        expect(dialog.last.choices[0].value).toBe('merge');
+        expect(dialog.last.choices.map((choice) => choice.value)).toEqual(['merge', 'pull', 'push', null]);
+        expect(dialog.last.message).toContain('combined');
+    });
+
+    test('choosing the merge applies the union and pushes it straight back up', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:what-we-pushed';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        payload.merged = [{ store: 'settings', key: 'treasureTally_char', label: 'Treasure tally' }];
+        dialog.answer = 'merge';
+
+        const result = await syncManager.pull();
+
+        expect(payload.applied).toBe('{"remote":1}');
+        // The union only exists here until it is sent up, so the gist gets it
+        expect(gist.writes).toHaveLength(1);
+        expect(result).toMatchObject({ ok: true, merged: 1, pushedBack: true });
+        expect(dialog.calls).toBe(1);
+    });
+
+    test('applying the GitHub copy here only does not push anything back', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:what-we-pushed';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        payload.merged = [{ store: 'settings', key: 'treasureTally_char', label: 'Treasure tally' }];
+        dialog.answer = 'pull';
+
+        const result = await syncManager.pull();
+
+        expect(payload.applied).toBe('{"remote":1}');
+        expect(gist.writes).toHaveLength(0);
+        expect(result).toMatchObject({ ok: true, merged: 1 });
+        expect(result.pushedBack).toBeUndefined();
+    });
+
+    test('an unattended pull that merges says how much was combined rather than replaced', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        gist.read = remote('2026-02-01T00:00:00.000Z');
+        payload.merged = [
+            { store: 'settings', key: 'treasureTally_char', label: 'Treasure tally' },
+            { store: 'xpHistory', key: 'xpHistory_char', label: 'Skill XP history' },
+        ];
+
+        await syncManager.pull();
+
+        expect(dialog.calls).toBe(0);
+        expect(toasts.at(-1).message).toContain('2 records were combined');
     });
 
     test('a first sync on a fresh device applies without asking', async () => {

@@ -15,6 +15,7 @@ import webSocketHook from '../../core/websocket.js';
 import storage from '../../core/storage.js';
 import config from '../../core/config.js';
 import performanceMonitor from '../../utils/performance-monitor.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { runInBackground } from '../../utils/background-work.js';
 
 const STORE_NAME = 'guildHistory';
@@ -345,6 +346,15 @@ export function mergeXPHistories(stored, memory) {
     }
     return out;
 }
+
+/*
+ * Registered so a cross-device sync PULL combines this record instead of
+ * overwriting it. Registration runs at import time, which is long before the
+ * earliest pull (the staggered startup pull, 20s+ after load), so the registry
+ * is complete by the time sync consults it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({ store: STORE_NAME, prefix: 'guildXP_', merge: mergeXPHistories, label: 'Guild XP history' });
+registerSyncMerge({ store: STORE_NAME, prefix: 'memberXP_', merge: mergeXPHistories, label: 'Guild member XP' });
 
 class GuildXPTracker {
     constructor() {

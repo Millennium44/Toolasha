@@ -11,6 +11,7 @@ import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import marketAPI from '../../api/marketplace.js';
 import { formatRelativeTime, formatDateTime } from '../../utils/formatters.js';
 import { readScoped, writeScoped, characterKey } from '../../utils/character-key.js';
@@ -59,6 +60,30 @@ const SEED_ANCHORS = [
     { id: 107640371, timestamp: 1763890560819 },
     { id: 107678558, timestamp: 1763904036320 },
 ];
+
+/**
+ * Two listing logs folded into one, by id, the second winning on a clash.
+ *
+ * The second argument is the fresher view — the in-memory log, which has
+ * seen every status update this tab has — so its copy of a listing stands;
+ * listings only the first side knows about (another tab's, an import's,
+ * one written before a failed read) are kept rather than overwritten. The
+ * same fold serves a sync pull, where the first argument is this device's
+ * stored log and the second is the one coming down.
+ * @param {Array<Object>} base - Listings, typically as stored
+ * @param {Array<Object>} fresh - Listings, typically in memory
+ * @returns {Array<Object>} Merged, sorted by id
+ */
+function mergeListingLogs(base, fresh) {
+    const byId = new Map();
+    for (const listing of base || []) {
+        if (listing && typeof listing.id === 'number') byId.set(listing.id, listing);
+    }
+    for (const listing of fresh || []) {
+        if (listing && typeof listing.id === 'number') byId.set(listing.id, listing);
+    }
+    return [...byId.values()].sort((a, b) => a.id - b.id);
+}
 
 class EstimatedListingAge {
     constructor() {
@@ -235,14 +260,7 @@ class EstimatedListingAge {
      * @returns {Array<Object>} Merged, sorted by id
      */
     _mergeListings(base, fresh) {
-        const byId = new Map();
-        for (const listing of base || []) {
-            if (listing && typeof listing.id === 'number') byId.set(listing.id, listing);
-        }
-        for (const listing of fresh || []) {
-            if (listing && typeof listing.id === 'number') byId.set(listing.id, listing);
-        }
-        return [...byId.values()].sort((a, b) => a.id - b.id);
+        return mergeListingLogs(base, fresh);
     }
 
     /**
@@ -1420,5 +1438,18 @@ class EstimatedListingAge {
 
 const estimatedListingAge = new EstimatedListingAge();
 
+/*
+ * Registered so a cross-device sync PULL combines this log instead of
+ * overwriting it. Registration runs at import time, which is long before the
+ * earliest pull (the staggered startup pull, 20s+ after load), so the registry
+ * is complete by the time sync consults it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({
+    store: LISTINGS_STORE,
+    base: LISTINGS_BASE,
+    merge: mergeListingLogs,
+    label: 'Market listing log',
+});
+
 export default estimatedListingAge;
-export { ANCHOR_POOL_MAX };
+export { ANCHOR_POOL_MAX, mergeListingLogs };

@@ -5,6 +5,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import config from '../../core/config.js';
 
 /**
@@ -28,6 +29,14 @@ export function mergeHistory(base, fresh) {
     }
     return merged;
 }
+
+/*
+ * Registered so a cross-device sync PULL combines this record instead of
+ * overwriting it. Registration runs at import time, which is long before the
+ * earliest pull (the staggered startup pull, 20s+ after load), so the registry
+ * is complete by the time sync consults it. See utils/sync-merge-registry.js.
+ */
+registerSyncMerge({ store: 'settings', base: 'tradeHistory', merge: mergeHistory, label: 'Personal trade prices' });
 
 /**
  * TradeHistory class manages personal buy/sell price tracking
