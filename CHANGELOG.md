@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Storage waits out a dropped IndexedDB connection instead of answering with defaults
+
+When Chromium drops the IndexedDB connection (another tab upgrading the schema, memory pressure, an extension churning the database), reads used to answer with their defaults and writes were refused for the second or so the reconnect took — the window in which a module could load an "empty" record and write it back over real history. Every storage operation now waits (bounded, 5s) for the reconnect before proceeding, so a transient drop is a slightly slower read rather than a silent empty one; a reconnect that has recently failed is not waited on again.
+
 ### Market history can no longer be wiped, and buy-form autofill stops fighting itself
 
 The personal listing log was rewritten wholesale from memory on every listing event, and a read that failed (IndexedDB connection dropped, another tab upgrading the database) came back as an empty log — the next event wrote that emptiness over the whole history, which is how days of Market History vanished and imports disappeared. Saves are now read-merge-write, serialized, and simply skipped when storage cannot be read first; a failed load keeps the in-memory copy; imports and Clear History go through the log's owner. Separately, every feature with a marketplace autofill watched every buy modal and wrote its own quantity, so a stale lazily-kept amount from one feature overrode the one you had just clicked ("needs 20 of one and 400 of the other, both tabs say 20"); now only the most recently set quantity fills, and a one-shot quantity is consumed by an actual buy form rather than by whatever modal opened first.

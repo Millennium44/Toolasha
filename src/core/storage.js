@@ -54,6 +54,7 @@ class Storage {
         this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
         this._reconnecting = false; // Guard against concurrent reconnection attempts
         this._dbNulledReason = null; // Track why db was last set to null
+        this._lastReconnectFailureAt = 0; // When a reconnect last gave up, so waits do not pile up
 
         /**
          * Whether a write has failed for want of space.
@@ -247,7 +248,7 @@ class Storage {
      * @returns {Promise<*>} The stored value or default
      */
     async get(key, storeName = 'settings', defaultValue = null) {
-        if (!this.db) {
+        if (!this.db && !(await this._awaitConnection())) {
             console.warn(`[Storage] Database not available, returning default for key: ${key}`);
             return defaultValue;
         }
@@ -288,7 +289,7 @@ class Storage {
      * @returns {Promise<{found: boolean, value: *}|null>} The read, or null when it could not be made
      */
     async tryGet(key, storeName = 'settings') {
-        if (!this.db) {
+        if (!this.db && !(await this._awaitConnection())) {
             console.warn(`[Storage] Database not available, cannot read key: ${key}`);
             return null;
         }
@@ -324,7 +325,7 @@ class Storage {
      * @returns {Promise<boolean>} Success status
      */
     async set(key, value, storeName = 'settings', immediate = false) {
-        if (!this.db) {
+        if (!this.db && !(await this._awaitConnection())) {
             console.warn(`[Storage] Database not available, cannot save key: ${key}`);
             return false;
         }
@@ -341,6 +342,14 @@ class Storage {
      * @private
      */
     async _saveToIndexedDB(key, value, storeName) {
+        // The debounced flush reaches here without `set`'s guard; a write that
+        // lands in a reconnect gap waits it out the same way (a refused
+        // debounced write is requeued by the caller, so this only shortens the
+        // retry) — and `this.db` is then read inside the promise, not before
+        if (!this.db && !(await this._awaitConnection())) {
+            console.warn(`[Storage] Database not available, cannot save key: ${key}`);
+            return false;
+        }
         return new Promise((resolve, _reject) => {
             let settled = false;
             /**
@@ -656,7 +665,7 @@ class Storage {
      * @returns {Promise<boolean>} Success status
      */
     async delete(key, storeName = 'settings') {
-        if (!this.db) {
+        if (!this.db && !(await this._awaitConnection())) {
             console.warn(`[Storage] Database not available, cannot delete key: ${key}`);
             return false;
         }
@@ -692,7 +701,7 @@ class Storage {
      * @returns {Promise<boolean>} True if key exists
      */
     async has(key, storeName = 'settings') {
-        if (!this.db) {
+        if (!this.db && !(await this._awaitConnection())) {
             return false;
         }
 
@@ -706,7 +715,7 @@ class Storage {
      * @returns {Promise<Array<string>>} Array of keys
      */
     async getAllKeys(storeName = 'settings') {
-        if (!this.db) {
+        if (!this.db && !(await this._awaitConnection())) {
             console.warn(`[Storage] Database not available, cannot get keys from store: ${storeName}`);
             return [];
         }
@@ -738,7 +747,7 @@ class Storage {
      * @returns {Promise<Object>} Map of key → value
      */
     async getAll(storeName = 'settings') {
-        if (!this.db) {
+        if (!this.db && !(await this._awaitConnection())) {
             console.warn(`[Storage] Database not available, cannot get all from store: ${storeName}`);
             return {};
         }
@@ -943,9 +952,46 @@ class Storage {
         } catch (error) {
             console.error('[Storage] Reconnection failed:', error);
             this.available = false;
+            this._lastReconnectFailureAt = Date.now();
         } finally {
             this._reconnecting = false;
         }
+    }
+
+    /**
+     * Wait, briefly, for a lost connection to come back before an operation
+     * proceeds without it.
+     *
+     * Chromium drops IndexedDB connections — another tab upgrading the schema,
+     * memory pressure, an extension churning the database — and `_reconnect`
+     * reopens it within a second or so. During that gap every read used to
+     * answer with its default and every write was refused, which is how a
+     * module that loads a record, finds it "empty", and writes it back erased
+     * real history. A read that waits out the gap is just a slow read.
+     *
+     * Only a *lost* connection is waited on. Before the first open (nothing to
+     * wait for) and after a reconnect has recently failed (waiting again would
+     * stall every operation for the whole outage) this returns at once.
+     * @param {number} [timeoutMs=5000] - Longest to wait
+     * @returns {Promise<boolean>} Whether a connection is available now
+     */
+    async _awaitConnection(timeoutMs = 5000) {
+        if (this.db) return true;
+        const lost = Boolean(this._dbNulledReason) || this._reconnecting;
+        if (!lost) return false;
+        if (this._lastReconnectFailureAt && Date.now() - this._lastReconnectFailureAt < 30_000) return false;
+
+        const deadline = Date.now() + timeoutMs;
+        while (!this.db && Date.now() < deadline) {
+            if (!this._reconnecting) {
+                // Nobody is bringing it back; start, but do not await — the loop
+                // below watches for the result and the timeout bounds the wait
+                this._reconnect();
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            if (this._lastReconnectFailureAt && this._lastReconnectFailureAt > deadline - timeoutMs) break;
+        }
+        return Boolean(this.db);
     }
 
     /**

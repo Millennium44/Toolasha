@@ -470,3 +470,105 @@ describe('Storage debounced write durability', () => {
         expect(storage._writeGeneration.size).toBe(0);
     });
 });
+
+describe('Storage waits out a lost connection instead of answering with defaults', () => {
+    afterEach(() => {
+        storage.db = null;
+        storage._dbNulledReason = null;
+        storage._reconnecting = false;
+        storage._lastReconnectFailureAt = 0;
+        storage._reconnect.mockRestore?.();
+        vi.useRealTimers();
+    });
+
+    /** A get-capable fake: `get(key)` answers from the seeded data */
+    function readableDb(seed) {
+        return {
+            transaction() {
+                return {
+                    objectStore: () => ({
+                        get(key) {
+                            const request = { onsuccess: null, onerror: null, result: seed[key] };
+                            queueMicrotask(() => request.onsuccess?.());
+                            return request;
+                        },
+                    }),
+                };
+            },
+        };
+    }
+
+    test('a read during a reconnect gap waits for the connection and then answers for real', async () => {
+        vi.useFakeTimers();
+        storage.db = null;
+        storage._dbNulledReason = 'onclose';
+        // The reconnect in progress lands 800ms later, as Chromium's do
+        storage._reconnecting = true;
+        setTimeout(() => {
+            storage.db = readableDb({ history: [1, 2, 3] });
+            storage._reconnecting = false;
+        }, 800);
+
+        const read = storage.get('history', 'settings', []);
+        await vi.advanceTimersByTimeAsync(1000);
+
+        // Before: [] — the stored history had silently become "empty"
+        expect(await read).toEqual([1, 2, 3]);
+    });
+
+    test('tryGet says the read could not be made, rather than pretending the key is absent', async () => {
+        vi.useFakeTimers();
+        storage.db = null;
+        storage._dbNulledReason = 'onclose';
+        vi.spyOn(storage, '_reconnect').mockImplementation(async () => {
+            storage._lastReconnectFailureAt = Date.now();
+        });
+
+        const read = storage.tryGet('history', 'settings');
+        await vi.advanceTimersByTimeAsync(6000);
+
+        expect(await read).toBeNull();
+    });
+
+    test('before the database was ever opened nothing is waited for', async () => {
+        storage.db = null;
+        storage._dbNulledReason = null;
+        storage._reconnecting = false;
+        const started = Date.now();
+
+        expect(await storage.get('anything', 'settings', 'fallback')).toBe('fallback');
+        expect(Date.now() - started).toBeLessThan(500);
+    });
+
+    test('a write during the gap is held and then lands, instead of being refused', async () => {
+        vi.useFakeTimers();
+        storage.db = null;
+        storage._dbNulledReason = 'onclose';
+        storage._reconnecting = true;
+        const written = [];
+        setTimeout(() => {
+            storage.db = {
+                transaction() {
+                    return {
+                        objectStore: () => ({
+                            put(value, key) {
+                                const request = { onsuccess: null, onerror: null };
+                                written.push([key, value]);
+                                queueMicrotask(() => request.onsuccess?.());
+                                return request;
+                            },
+                        }),
+                        onabort: null,
+                    };
+                },
+            };
+            storage._reconnecting = false;
+        }, 500);
+
+        const write = storage.set('history', [1], 'settings', true);
+        await vi.advanceTimersByTimeAsync(1000);
+
+        expect(await write).toBe(true);
+        expect(written).toEqual([['history', [1]]]);
+    });
+});
