@@ -152,6 +152,7 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/character-key.js')), 'Toolasha.Utils.characterKey'],
     [normalize(join(__dirname, 'src/utils/chest-import.js')), 'Toolasha.Utils.chestImport'],
     [normalize(join(__dirname, 'src/utils/chunked-history.js')), 'Toolasha.Utils.chunkedHistory'],
+    [normalize(join(__dirname, 'src/utils/persisted-record.js')), 'Toolasha.Utils.persistedRecord'],
     [normalize(join(__dirname, 'src/utils/consumable-forecast.js')), 'Toolasha.Utils.consumableForecast'],
     [normalize(join(__dirname, 'src/utils/csv-export.js')), 'Toolasha.Utils.csvExport'],
     [normalize(join(__dirname, 'src/utils/deferred-load.js')), 'Toolasha.Utils.deferredLoad'],

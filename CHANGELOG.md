@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A shared persisted-record helper for histories that must not be wiped
+
+`utils/persisted-record.js` packages the load/save discipline the market-history fix established — probe with a read that tells "absent" from "could not read", keep memory on an unreadable probe, probe-merge-write on save and refuse to write blind, serialized saves, an explicit clear — with merges for id-keyed arrays, maps, and sample-series maps, so every accumulating record can adopt it instead of hand-rolling the pattern.
+
 ### Trade ledger and trade history survive failed reads and stale tabs
 
 The fill ledger and the per-item last buy/sell prices got the same treatment as the listing log: a load whose read cannot be trusted keeps the in-memory copy instead of blanking it, and every save re-reads storage and folds it under memory (fills by listing, time and quantity; prices per item and side) before writing, skipping the write outright when storage cannot be read first — so a dropped IndexedDB connection or a second tab no longer erases what the other recorded.
