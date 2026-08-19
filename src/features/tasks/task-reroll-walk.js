@@ -308,7 +308,7 @@ class TaskRerollWalk {
                     return null;
                 }
                 const label = `Reroll #${slot} (${verdict.reason}) — ${this._costLabel(option)}`;
-                return this._step('pay', card, slot, label, option.button);
+                return this._step('pay', card, slot, label, { kind: option.kind, cost: option.cost ?? null });
             }
             if (!this._rerollButton(card)) {
                 this.message = `Slot ${slot} has no reroll button — walk stopped.`;
@@ -340,6 +340,7 @@ class TaskRerollWalk {
      * @param {HTMLElement} card - The card it acts on
      * @param {number} slot - The card's 1-based position
      * @param {string} label - What the chip says
+     * @param {{kind: string, cost: number|null}|null} [button] - For a 'pay' step, the offer the label priced
      * @param {HTMLElement} [button] - The exact button, when the plan picked one
      * @returns {Object} The step
      * @private
@@ -457,8 +458,14 @@ class TaskRerollWalk {
         if (planned.kind === 'confirmDiscard') return this._discardButton(card);
         if (planned.kind === 'pay') {
             const option = preferredRerollOption(findRerollOptions(card));
-            // The chooser must still be offering exactly what the label priced
-            if (!option || (planned.button && option.button !== planned.button)) return null;
+            // The chooser must still be offering exactly what the label priced —
+            // the same option at the same cost. Compared by offer, not by button
+            // element: the game re-renders its chooser buttons between presses,
+            // and the element the plan held went stale while the identical
+            // offer stood on screen, stopping every walk at its first payment
+            if (!option) return null;
+            const wanted = planned.button;
+            if (wanted && (option.kind !== wanted.kind || (option.cost ?? null) !== (wanted.cost ?? null))) return null;
             return option.button;
         }
         return null;
