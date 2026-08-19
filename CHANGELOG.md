@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The marketplace History tab stops "breaking until a refresh"
+
+The price-history panel's half-second poll hid the panel unless the FIRST marketplace element in the DOM was on screen, and the History / Bulk Sell tabs were put into the FIRST tab bar found — so when the game leaves a second, hidden marketplace behind after some navigations, the History tab opened a panel that was hidden again at once (or sat in a bar nobody could see) until a refresh. Both now prefer the visible marketplace.
+
 ### The build check's buff fold can no longer count a persistent buff twice
 
 The fold handed the sim the full live total of each buff type on top of the permanent buffs the sim player already held (guild HP, guild damage…), which showed as Max HP −1% / max hit −3% whenever no fight-start map had been seen. The live totals are now applied as per-type targets — the engine adds only the difference over what it holds — so a persistent buff comes out at zero delta and a transient one at full strength, with no fight-start map needed.

@@ -340,10 +340,16 @@ class MarketHistoryPanel {
 
     /** @returns {HTMLElement|null} The marketplace's own tab bar */
     findMarketTabBar() {
+        // The visible one, when there is more than one marketplace in the DOM
+        // (see followMarketplace) — a tab put into a hidden bar is a tab nobody
+        // can click
+        let hidden = null;
         for (const tabBar of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
-            if ([...tabBar.children].some((tab) => tab.textContent.includes('Market Listings'))) return tabBar;
+            if (![...tabBar.children].some((tab) => tab.textContent.includes('Market Listings'))) continue;
+            if (tabBar.getClientRects().length) return tabBar;
+            hidden = hidden || tabBar;
         }
-        return null;
+        return hidden;
     }
 
     /**
@@ -747,8 +753,15 @@ class MarketHistoryPanel {
     followMarketplace() {
         if (document.hidden || !this.panel) return;
 
-        const marketplace = document.querySelector('[class*="MarketplacePanel_marketplacePanel"]');
-        const visible = !!(marketplace && marketplace.getClientRects().length);
+        // Any marketplace that is actually on screen. The game can leave a
+        // second, hidden marketplace panel in the DOM after some navigations;
+        // reading only the first match then saw "not visible" and this poll
+        // hid the panel half a second after every click on the History tab —
+        // the tab "stopped working" until a refresh cleared the stray panel.
+        const marketplace = [...document.querySelectorAll('[class*="MarketplacePanel_marketplacePanel"]')].find(
+            (el) => el.getClientRects().length
+        );
+        const visible = !!marketplace;
 
         // Off the marketplace there is no item to chart and nowhere to put the
         // pin, so the panel goes with it — but coming back does not reopen a
@@ -759,7 +772,7 @@ class MarketHistoryPanel {
             return;
         }
 
-        const currentItem = document.querySelector('[class*="MarketplacePanel_currentItem"]');
+        const currentItem = marketplace.querySelector('[class*="MarketplacePanel_currentItem"]');
         const use = currentItem?.querySelector('svg use');
         const iconName = use?.href?.baseVal?.split('#')[1];
         if (!currentItem || !iconName) {

@@ -280,13 +280,18 @@ class BulkSellAssistant {
      * stays put across every subview — so the button never moves during a run.
      */
     _findMarketTabBar() {
+        // The visible bar when the game has left a second, hidden marketplace
+        // in the DOM — a button put into a hidden bar is one nobody can click
+        let hidden = null;
         for (const tabBar of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
             const hasMarketTabs = Array.from(tabBar.children).some((btn) =>
                 btn.textContent.includes('Market Listings')
             );
-            if (hasMarketTabs) return tabBar;
+            if (!hasMarketTabs) continue;
+            if (tabBar.getClientRects().length) return tabBar;
+            hidden = hidden || tabBar;
         }
-        return null;
+        return hidden;
     }
 
     /**
