@@ -585,19 +585,17 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.14.0](https://github.com/Millennium44/Toolasha/compare/v3.13.0...v3.14.0) (2026-08-19)
 
-
 ### Features
 
-* consumables lab shortfall gains a Buy all walk; sim rates re-read on panel open ([7090580](https://github.com/Millennium44/Toolasha/commit/7090580993a90233361b4bdfc6d98b4f72f26f75))
-* idle consumables plan pins a loadout and simmed zone; Buy all walk on every section ([5340fe7](https://github.com/Millennium44/Toolasha/commit/5340fe78431b04602c65853976fd68b91256f880))
-* labyrinth tick capture auto-stop extended from 15 to 60 minutes ([3cbf035](https://github.com/Millennium44/Toolasha/commit/3cbf035def29be661a7bfb1d6dff6fb4c82d7a72))
-* trial trace survives reloads and holds a full-hour 50-player fight ([65086a7](https://github.com/Millennium44/Toolasha/commit/65086a7de8231d7e18595e9766fa0a1f5f9c4d6b))
-* uptime harness gains an outgoing (player-side) direction ([664a6d1](https://github.com/Millennium44/Toolasha/commit/664a6d14731ba183c78c432d9e46bad0ea29869d))
-
+- consumables lab shortfall gains a Buy all walk; sim rates re-read on panel open ([7090580](https://github.com/Millennium44/Toolasha/commit/7090580993a90233361b4bdfc6d98b4f72f26f75))
+- idle consumables plan pins a loadout and simmed zone; Buy all walk on every section ([5340fe7](https://github.com/Millennium44/Toolasha/commit/5340fe78431b04602c65853976fd68b91256f880))
+- labyrinth tick capture auto-stop extended from 15 to 60 minutes ([3cbf035](https://github.com/Millennium44/Toolasha/commit/3cbf035def29be661a7bfb1d6dff6fb4c82d7a72))
+- trial trace survives reloads and holds a full-hour 50-player fight ([65086a7](https://github.com/Millennium44/Toolasha/commit/65086a7de8231d7e18595e9766fa0a1f5f9c4d6b))
+- uptime harness gains an outgoing (player-side) direction ([664a6d1](https://github.com/Millennium44/Toolasha/commit/664a6d14731ba183c78c432d9e46bad0ea29869d))
 
 ### Bug Fixes
 
-* market history survives failed reads and stale tabs; buy autofill honours the latest quantity only ([ccbd503](https://github.com/Millennium44/Toolasha/commit/ccbd50350fc30fddb3e1222488a66700b5b3e0ca))
+- market history survives failed reads and stale tabs; buy autofill honours the latest quantity only ([ccbd503](https://github.com/Millennium44/Toolasha/commit/ccbd50350fc30fddb3e1222488a66700b5b3e0ca))
 
 ## [3.13.0](https://github.com/Millennium44/Toolasha/compare/v3.12.1...v3.13.0) (2026-08-18)
 
