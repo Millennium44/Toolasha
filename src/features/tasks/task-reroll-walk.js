@@ -291,10 +291,18 @@ class TaskRerollWalk {
         // The widget belongs to the Tasks page: it appears with the board and
         // goes when the board does, rather than following the player around the
         // game offering to reroll something that is not on screen.
-        this.boardWatcher = createMutationWatcher(document.body, () => this._syncWidget(), {
-            childList: true,
-            subtree: true,
-        });
+        this.boardWatcher = createMutationWatcher(
+            document.body,
+            (mutations) => {
+                // Our own widget's writes must not feed back into this watcher:
+                // a render that set a label fired the observer, which rendered,
+                // which set the label… and the Tasks page froze solid
+                const own = this.widget?.element;
+                if (own && mutations.every((m) => own.contains(m.target))) return;
+                this._syncWidget();
+            },
+            { childList: true, subtree: true }
+        );
         this.unregisterHandlers.push(() => this.boardWatcher?.());
         this._syncWidget();
 
@@ -852,16 +860,22 @@ class TaskRerollWalk {
         const widget = this._ensureWidget();
         if (!widget) return;
 
-        widget.main.textContent = this.chipLabel();
-        widget.main.disabled = this.state === 'waiting';
-        widget.main.style.color =
+        // Idempotent on purpose: a DOM write here is a mutation, and this is
+        // called from a mutation watcher
+        const label = this.chipLabel();
+        if (widget.main.textContent !== label) widget.main.textContent = label;
+        const disabled = this.state === 'waiting';
+        if (widget.main.disabled !== disabled) widget.main.disabled = disabled;
+        const color =
             this.state === 'waiting' ? '#999' : this.state === 'stopped' ? '#ffb74d' : config.COLOR_ACCENT || '#8ecfff';
-        widget.main.title =
+        if (widget.main.style.color !== color) widget.main.style.color = color;
+        const title =
             this.state === 'ready'
                 ? 'One press, one game action. Nothing else happens until you press again.'
                 : this.state === 'idle'
                   ? 'Start at the top of the board. Every press does one thing, then says what the next would do.'
                   : 'Press to walk the board again from the top.';
+        if (widget.main.title !== title) widget.main.title = title;
     }
 
     /** @private */
