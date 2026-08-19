@@ -695,6 +695,51 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.15.0](https://github.com/Millennium44/Toolasha/compare/v3.14.0...v3.15.0) (2026-08-19)
+
+
+### Features
+
+* consumables Buy-all becomes a floating widget with its settings ([fd56027](https://github.com/Millennium44/Toolasha/commit/fd56027e9534482970f16fef0bcecffa5045e465))
+* guided task reroll walk, one game action per click ([305288a](https://github.com/Millennium44/Toolasha/commit/305288a3f65d827ac299707729d8bea14c3d0d88))
+* leaderboard rate columns gain per-day, catch-up time, rank movement and board-correct units ([be079fd](https://github.com/Millennium44/Toolasha/commit/be079fd4089270d337926a6c0a54865ea4d5e9a4))
+* level boards show levels per day and week; weekly guild boards read in days and weeks ([d65986c](https://github.com/Millennium44/Toolasha/commit/d65986cee5f808f6c42e56511c8d90474063f846))
+* monster stat check folds your active buffs into the sim and names which player it simmed ([92c8eb0](https://github.com/Millennium44/Toolasha/commit/92c8eb0ec55d3d1ea6872469f4ecc80d460a0d20))
+* reroll walk stops at the block-rerolls thresholds and picks the cheaper currency ([e70c7d8](https://github.com/Millennium44/Toolasha/commit/e70c7d88a7ffe05d266fa347573a9d635c2d5d6e))
+* shared persisted-record helper for wipe-proof stored histories ([daa78ad](https://github.com/Millennium44/Toolasha/commit/daa78ad693b7eea037024181f1448863805368b6))
+* the task reminder's Below par flag gets its own setting ([2a840ab](https://github.com/Millennium44/Toolasha/commit/2a840ab2a47106a9dc06239f2ea7cd0e9a63e200))
+* trial abilities panel compares captured kits against a saved ability plan ([2ab3378](https://github.com/Millennium44/Toolasha/commit/2ab337896f2660aa0dadfc87adc4702fa8557743))
+
+
+### Bug Fixes
+
+* a guild change reads the new guild's trial record, session and XP rather than carrying the old one across ([9192cb3](https://github.com/Millennium44/Toolasha/commit/9192cb3efaab090ef3a83f6b83cb1d81317e9f33))
+* Below par flag defaults off ([a81fa4a](https://github.com/Millennium44/Toolasha/commit/a81fa4a29ec8df4c70ca758780e064469a883abc))
+* build check folds live buffs as per-type targets so persistent buffs are never double-counted ([3891142](https://github.com/Millennium44/Toolasha/commit/3891142a22933b4ca07b6ffe89c40460259af829))
+* combat and labyrinth histories survive failed reads and stale tabs ([98b2f4a](https://github.com/Millennium44/Toolasha/commit/98b2f4ac61331fc1a3bd98b0921446ee2423ed31))
+* combat summary ignores unit sheets instead of warning ([2496318](https://github.com/Millennium44/Toolasha/commit/2496318ebe2c9333743bb05fcecfe505f0257333))
+* guild Level leaderboard stays on experience per hour and day ([51c2fb4](https://github.com/Millennium44/Toolasha/commit/51c2fb43469b7b78789b63788e5176d403f21214))
+* guild loadouts stay scoped to the guild they were seen in; monster sheets are never stored as loadouts ([b6be359](https://github.com/Millennium44/Toolasha/commit/b6be359d16dbf40a69461c89c7328bfa7303f767))
+* guild XP, trial records and trial trace manifest survive failed reads and stale tabs ([31df61c](https://github.com/Millennium44/Toolasha/commit/31df61cf6ae02d563f1403ff66414b5a27a810e4))
+* leaderboard rank series split on every board filter, including the live Steam cohort tabs ([d3df4ba](https://github.com/Millennium44/Toolasha/commit/d3df4ba1bb3d8090f4cea757e6ae098cf7d406dd))
+* leaderboard rates record idle as zero and keep rank per board view ([10ffbb7](https://github.com/Millennium44/Toolasha/commit/10ffbb7c13b78a28f51dabf4044330248462160b))
+* leaderboard XP/h columns show their measurement span, explain empty cells, and record the personal row ([4ea6a23](https://github.com/Millennium44/Toolasha/commit/4ea6a236e6bf16b456192b699278e61b6b55b43a))
+* marketplace History and Bulk Sell tabs follow the visible marketplace, not the first one in the DOM ([3e8a853](https://github.com/Millennium44/Toolasha/commit/3e8a8532a2e41191839a09b4a851e383f61bb2f1))
+* monster stat check probes use the live build and zone tier outside the labyrinth ([7689245](https://github.com/Millennium44/Toolasha/commit/768924523ef2ffb65b3e54573e598d06a138176a))
+* Past weeks block no longer drawn on the trials In Progress view ([acd465d](https://github.com/Millennium44/Toolasha/commit/acd465db87e236641ce1733710d477952453245e))
+* price-history panel survives a character switch (misnamed cleanup threw mid-disable and stranded the History tab) ([a1f20fd](https://github.com/Millennium44/Toolasha/commit/a1f20fded82b34fe4472eb3cc04d6a86340050a3))
+* reroll walk recognises the same pay offer after the game re-renders its buttons ([34f14ab](https://github.com/Millennium44/Toolasha/commit/34f14ab55f322cdf7a35d6ec8a70300c61e3a1c9))
+* reroll walk waits out the chooser's momentary disabled state after a payment instead of stopping ([ec8f4fc](https://github.com/Millennium44/Toolasha/commit/ec8f4fc7ffccb1b9ea1754715b1663e978f79fbe))
+* reroll walk widget no longer feeds its own renders back into its board watcher (Tasks page freeze) ([eb31589](https://github.com/Millennium44/Toolasha/commit/eb315898f0c28b630f54c93a027ac97beaeb56d5))
+* skill XP, enhancement, treasure, watchlist, reroll and collection records survive failed reads ([acac168](https://github.com/Millennium44/Toolasha/commit/acac1680e11f7ed0400b6023a386f253aa2f080e))
+* storage waits out a dropped IndexedDB connection instead of answering with defaults ([3e47fb4](https://github.com/Millennium44/Toolasha/commit/3e47fb4fc528a6b8cc12e546387c4066064b45ed))
+* task card overlay follows a rerolled task ([81604de](https://github.com/Millennium44/Toolasha/commit/81604de30da72552d237297ccddd4bbb832c8dd9))
+* task list auto-sorts only on open and after claim ([cba8e50](https://github.com/Millennium44/Toolasha/commit/cba8e505078e1cb080f9f1bd4dbee54da17fbc5d))
+* trade ledger and trade history survive failed reads and stale tabs ([7eb0ce5](https://github.com/Millennium44/Toolasha/commit/7eb0ce526ebf928b8b974610ff0c9d43663c37c9))
+* trial abilities adopt roster sheets; battle-info cycler asks least-recently first with own card last ([dceb0ac](https://github.com/Millennium44/Toolasha/commit/dceb0ac9d19b4b0a1cf086620688a60b7ad0b6c1))
+* trial abilities session survives reloads and never drops a Battle Info capture ([4109de6](https://github.com/Millennium44/Toolasha/commit/4109de6cda116d6932a7262e71a690ba0de91b2e))
+* user-authored records (custom tabs, price overrides, pins, goals, patches, settings) survive failed reads ([70fefdb](https://github.com/Millennium44/Toolasha/commit/70fefdb91c42a51d93b716855c212652c27adcc6))
+
 ## [3.14.0](https://github.com/Millennium44/Toolasha/compare/v3.13.0...v3.14.0) (2026-08-19)
 
 ### Features
