@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leaderboard XP/h columns explain themselves, and record your own row
+
+A reading is only taken when you open a board and the board moves every 20 minutes, so most cells had no rate — and showed nothing, which read as broken. Each rate now carries the span it was measured over ("3h", "22d"), and an empty cell says why on hover ("1 reading", "—" for no two readings within 24h). The game sends your own row separately from the page, and it was never recorded; it is now.
+
 ### "Past weeks" stays on the Trials tab
 
 The archived-cycles block was also drawn on the In Progress tab, where the live view's layout stretched it into an empty box above the fight or skilling row. It now renders only on the Trials tab.

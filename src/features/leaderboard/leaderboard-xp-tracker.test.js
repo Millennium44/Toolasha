@@ -63,10 +63,11 @@ describe('leaderboard XP tracker', () => {
             leaderboard: { rows: [{ name: 'Someone', value2: 1000 }] },
         });
 
-        expect(leaderboardXPTracker.getPlayerStats('Someone', 'guild')).toEqual({
+        expect(leaderboardXPTracker.getPlayerStats('Someone', 'guild')).toMatchObject({
             lastXPH: 0,
             lastHourXPH: 0,
             lastDayXPH: 0,
+            samples: 0,
         });
     });
 
@@ -148,10 +149,11 @@ describe('leaderboard XP tracker', () => {
             leaderboard: { rows: [{ name: null, value2: 1000 }, { name: 'A' }] },
         });
 
-        expect(leaderboardXPTracker.getPlayerStats('A', 'foraging')).toEqual({
+        expect(leaderboardXPTracker.getPlayerStats('A', 'foraging')).toMatchObject({
             lastXPH: 0,
             lastHourXPH: 0,
             lastDayXPH: 0,
+            samples: 0,
         });
     });
 
@@ -285,5 +287,44 @@ describe('leaderboard XP tracker', () => {
 
         expect(leaderboardXPTracker.getLastLeaderboardCategory()).toBeNull();
         expect(leaderboardXPTracker.getPlayerStats('A', 'foraging').lastXPH).toBe(0);
+    });
+
+    test('stats carry the span of the readings they were taken over, and the reading count', () => {
+        const now = Date.now();
+        leaderboardXPTracker.playerXPHistory['foraging_B'] = [
+            { t: now - 3 * 60 * 60 * 1000, xp: 1000 },
+            { t: now - 60 * 60 * 1000, xp: 3000 },
+        ];
+        const stats = leaderboardXPTracker.getPlayerStats('B', 'foraging');
+
+        expect(stats.samples).toBe(2);
+        expect(stats.lastSpanMs).toBe(2 * 60 * 60 * 1000);
+        expect(stats.lastSeenAt).toBe(now - 60 * 60 * 1000);
+        expect(stats.dayReadings).toBe(2);
+        expect(stats.daySpanMs).toBe(2 * 60 * 60 * 1000);
+        // 2000 XP over two hours
+        expect(stats.lastXPH).toBe(1000);
+    });
+
+    test('a single reading reports itself as one, with when it was taken', () => {
+        const now = Date.now();
+        leaderboardXPTracker.playerXPHistory['foraging_C'] = [{ t: now - 5 * 60 * 1000, xp: 10 }];
+        const stats = leaderboardXPTracker.getPlayerStats('C', 'foraging');
+
+        expect(stats.samples).toBe(1);
+        expect(stats.lastSeenAt).toBe(now - 5 * 60 * 1000);
+        expect(stats.lastXPH).toBe(0);
+    });
+
+    test('the personal row is recorded too, though it is not among the page rows', () => {
+        leaderboardXPTracker._onLeaderboardUpdated({
+            leaderboardCategory: 'milking',
+            leaderboard: { rows: [{ name: 'Top', value2: 100 }] },
+            personalRow: { name: 'Me', value2: 42, rank: 577 },
+        });
+
+        expect(leaderboardXPTracker.playerXPHistory['milking_Me']).toHaveLength(1);
+        expect(leaderboardXPTracker.playerXPHistory['milking_Me'][0].xp).toBe(42);
+        expect(leaderboardXPTracker.playerXPHistory['milking_Top']).toHaveLength(1);
     });
 });

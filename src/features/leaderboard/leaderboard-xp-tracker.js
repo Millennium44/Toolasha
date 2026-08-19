@@ -108,19 +108,55 @@ function calcXPH(prev, cur) {
     return ((cur.xp - prev.xp) / tDeltaMs) * 3600000;
 }
 
+/**
+ * Rates for one series, with the provenance a reader needs to trust them.
+ *
+ * A reading is taken only when the player opens that board, and the board
+ * itself moves every 20 minutes — so two readings can be 20 minutes apart or
+ * three weeks apart, and "Last XP/h" over three weeks is not the same fact as
+ * over 20 minutes. The spans and the count come back alongside the rates so
+ * the display can say which it is, and say *why* a cell is empty instead of
+ * leaving it blank.
+ *
+ * @param {Array<{t: number, xp: number}>} arr - One series
+ * @returns {{lastXPH: number, lastHourXPH: number, lastDayXPH: number, samples: number,
+ *   lastSeenAt: number|null, lastSpanMs: number, daySpanMs: number, dayReadings: number}}
+ */
 function calcStats(arr) {
-    const empty = { lastXPH: 0, lastHourXPH: 0, lastDayXPH: 0 };
-    if (!arr || arr.length < 2) return empty;
+    const samples = Array.isArray(arr) ? arr.length : 0;
+    const lastSeenAt = samples ? arr[samples - 1].t : null;
+    const empty = {
+        lastXPH: 0,
+        lastHourXPH: 0,
+        lastDayXPH: 0,
+        samples,
+        lastSeenAt,
+        lastSpanMs: 0,
+        daySpanMs: 0,
+        dayReadings: 0,
+    };
+    if (samples < 2) return empty;
 
-    const lastXPH = calcXPH(arr[arr.length - 2], arr[arr.length - 1]);
+    const lastXPH = calcXPH(arr[samples - 2], arr[samples - 1]);
+    const lastSpanMs = arr[samples - 1].t - arr[samples - 2].t;
 
     const last1h = inLastInterval(arr, WINDOW_1H);
     const lastHourXPH = last1h.length >= 2 ? calcXPH(last1h[0], last1h[last1h.length - 1]) : 0;
 
     const last1d = inLastInterval(arr, WINDOW_1D);
     const lastDayXPH = last1d.length >= 2 ? calcXPH(last1d[0], last1d[last1d.length - 1]) : 0;
+    const daySpanMs = last1d.length >= 2 ? last1d[last1d.length - 1].t - last1d[0].t : 0;
 
-    return { lastXPH, lastHourXPH, lastDayXPH };
+    return {
+        lastXPH,
+        lastHourXPH,
+        lastDayXPH,
+        samples,
+        lastSeenAt,
+        lastSpanMs,
+        daySpanMs,
+        dayReadings: last1d.length,
+    };
 }
 
 // ─── Tracker class ──────────────────────────────────────────────────────────
@@ -171,8 +207,11 @@ class LeaderboardXPTracker {
     _onLeaderboardUpdated(data) {
         if (data.leaderboardCategory === 'guild') return;
 
-        const rows = data.leaderboard?.rows;
-        if (!rows || rows.length === 0) return;
+        // The player's own row rides beside the page as `personalRow` — it is
+        // not in `rows` unless they happen to rank on that page — and was never
+        // recorded, so the one player whose rate you most want had none
+        const rows = [...(data.leaderboard?.rows || []), ...(data.personalRow ? [data.personalRow] : [])];
+        if (rows.length === 0) return;
 
         const t = Date.now();
         this.lastLeaderboardCategory = data.leaderboardCategory;
