@@ -24,8 +24,19 @@ const game = vi.hoisted(() => ({
     statsByName: {},
 }));
 
+const settings = vi.hoisted(() => ({ values: {} }));
+
 vi.mock('../../core/config.js', () => ({
-    default: { Z_FLOATING_PANEL: 1100, getSetting: () => true, getSettingValue: () => 'compact' },
+    default: {
+        Z_FLOATING_PANEL: 1100,
+        getSetting: (key) => settings.values[key] ?? true,
+        // Unknown keys keep answering 'compact' for the overlay's density
+        getSettingValue: (key, fallback) =>
+            settings.values[key] ?? (String(key).startsWith('market_') ? fallback : 'compact'),
+        setSetting: (key, value) => {
+            settings.values[key] = value;
+        },
+    },
 }));
 vi.mock('../../core/storage.js', () => ({
     default: {
@@ -80,6 +91,7 @@ const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 beforeEach(async () => {
     store.data = {};
+    settings.values = {};
     game.items = {};
     game.actionDetail = null;
     game.inventory = [];
@@ -193,5 +205,91 @@ describe('the dungeon entry-key row', () => {
         // declines to invent a countdown
         expect(text()).not.toContain('96.0/day');
         expect(text()).toContain('∞');
+    });
+});
+
+describe('the Buy-all widget', () => {
+    /** A shortfall the walk can be pointed at */
+    const shortfall = [
+        { itemHrid: '/items/peach_gummy', count: 5 },
+        { itemHrid: '/items/star_fruit_gummy', count: 3 },
+    ];
+
+    const widget = () => document.getElementById('toolasha-lab-buy-next');
+    const mainLabel = () => document.querySelector('.toolasha-lab-buy-next-main')?.textContent || '';
+
+    beforeEach(() => {
+        game.items = {
+            '/items/peach_gummy': { name: 'Peach Gummy' },
+            '/items/star_fruit_gummy': { name: 'Star Fruit Gummy' },
+        };
+        consumablesPanel._buyQueue = [];
+        consumablesPanel._buyWidgetHidden = false;
+    });
+
+    test('a section short of two or more items offers the walk', async () => {
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._registerBuyQueue('Combat', shortfall);
+        consumablesPanel._syncBuyWidget();
+
+        expect(widget()).not.toBe(null);
+        expect(mainLabel()).toBe('▶ Buy all');
+    });
+
+    test('one row short is left to its own Buy link', async () => {
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._registerBuyQueue('Combat', [shortfall[0]]);
+        consumablesPanel._syncBuyWidget();
+
+        expect(widget()).toBe(null);
+    });
+
+    test('the label becomes the next item once the walk is running', async () => {
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._registerBuyQueue('Combat', shortfall);
+        consumablesPanel._syncBuyWidget();
+
+        document.querySelector('.toolasha-lab-buy-next-main').click();
+
+        // The first item's form is already open, so the button offers the second
+        expect(mainLabel()).toBe('▶ Next: Star Fruit Gummy (1 left)');
+        // The panel got out of the way; the control did not
+        expect(widget()).not.toBe(null);
+    });
+
+    test('the ✕ ends the walk and puts the widget away', async () => {
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._registerBuyQueue('Combat', shortfall);
+        consumablesPanel._syncBuyWidget();
+        document.querySelector('.toolasha-lab-buy-next-main').click();
+
+        document.querySelector('.toolasha-lab-buy-next-close').click();
+
+        expect(widget()).toBe(null);
+        expect(consumablesPanel._buyQueue).toEqual([]);
+    });
+
+    test('the gear edits the buy rules the walk decides by', async () => {
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._registerBuyQueue('Combat', shortfall);
+        consumablesPanel._syncBuyWidget();
+
+        document.querySelector('.toolasha-lab-buy-next-gear').click();
+        const drawer = document.querySelector('.toolasha-lab-buy-next-settings');
+
+        const spread = drawer.querySelector('.mwi-widget-setting-market_consumableBuyMaxSpreadPct');
+        spread.value = '7';
+        spread.dispatchEvent(new Event('change'));
+        expect(settings.values.market_consumableBuyMaxSpreadPct).toBe(7);
+
+        const opens = drawer.querySelector('.mwi-widget-setting-market_consumableBuyOpenRecommended');
+        opens.checked = false;
+        opens.dispatchEvent(new Event('change'));
+        expect(settings.values.market_consumableBuyOpenRecommended).toBe(false);
     });
 });

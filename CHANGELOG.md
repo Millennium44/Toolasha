@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The Consumables Buy-all walk gets its own floating panel
+
+The "Buy all ▶" button in a section heading vanished the moment the walk hid the panel to go shopping, taking its rules with it. It is now a floating panel that stays put for the whole walk: pick which shortfall to work through, press once per buy form ("▶ Next: Peach Gummy (5 left)"), and open the ⚙ to change the instant-buy-versus-order rules while you are watching them being applied. Each row keeps its own Buy link.
+
 ### The reroll walk stops where the shield popup says, and picks the cheaper currency
 
 The walk now rerolls a task until the protection popup's "Block rerolls at" thresholds would block the next reroll, instead of counting to a reroll limit of its own — one rule for one decision. It prices both options for each card (the chooser's own Pay buttons, or the game's doubling ladder when the chooser is shut), values a cowbell through the Bag of 10 Cowbells and takes the cheaper one, saying which and why: "▶ Reroll #3 — 2🔔 (≈16K, cheaper than 20K🪙)". It is driven from a small floating panel on the Tasks page with a ⚙ for the currency preference and the discard-at-limit switch; the header 🎲 shows and hides it.

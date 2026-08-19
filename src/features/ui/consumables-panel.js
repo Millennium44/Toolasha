@@ -40,6 +40,13 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
+import {
+    createFloatingWidget,
+    widgetDivider,
+    widgetNote,
+    widgetNumberRow,
+    widgetCheckboxRow,
+} from '../../utils/floating-widget.js';
 import { shortDuration, itemIcon, linkToMarketplace, ROW_COLORS } from '../../utils/overlay-format.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { currentTarget, cycleTarget, loadTarget } from '../../utils/consumable-target.js';
@@ -69,8 +76,44 @@ import { readScoped } from '../../utils/character-key.js';
 
 const PANEL_ID = 'toolasha-consumables-panel';
 
-/** The Buy-all walk's floating "next item" chip — outside the panel, which hides itself to go shopping */
+/**
+ * The Buy-all walk's floating control — outside the panel, which hides itself to
+ * go shopping, so the walk's next step and its rules stay reachable while the
+ * marketplace is up.
+ */
 const BUY_CHIP_ID = 'toolasha-lab-buy-next';
+const BUY_WIDGET_POSITION_KEY = 'consumablesBuyWidgetPosition';
+
+/**
+ * The rules the Buy-all walk decides by, editable from its own widget.
+ *
+ * The same settings the row-by-row recommendation reads, rather than a copy:
+ * the moment you want to change one of these is the moment you are watching the
+ * walk open the wrong form.
+ */
+const BUY_TUNABLES = [
+    {
+        key: 'market_consumableBuyMaxSpreadPct',
+        fallback: 2,
+        label: 'Buy instantly when the spread is under',
+        suffix: '%',
+        title: 'When the best ask and the best bid are within this percentage of each other, a buy order saves a sliver and costs a wait. 0 turns the rule off.',
+    },
+    {
+        key: 'market_consumableBuyMinSaving',
+        fallback: 0,
+        label: 'Buy instantly when an order saves under',
+        suffix: 'coins',
+        title: 'The same idea in coins: what waiting at the bid would save over paying the ask, across the whole restock. 0 turns the rule off.',
+    },
+    {
+        key: 'market_consumableBuyMinOrderValue',
+        fallback: 0,
+        label: 'Buy instantly when the order is worth under',
+        suffix: 'coins',
+        title: 'Restocks worth less than this (bid × count) are bought outright rather than using up a buy-order slot. 0 turns the rule off.',
+    },
+];
 const GEOMETRY_KEY = 'consumablesPanel';
 const DEFAULT_PANEL = { width: 520, height: 420 };
 const REFRESH_MS = 5000;
@@ -89,6 +132,13 @@ class ConsumablesPanel {
         this.panel = null;
         this.bodyEl = null;
         this.refreshId = null;
+        /** The Buy-all walk's floating control, and what it is offering */
+        this.buyWidget = null;
+        this._buyWidgetPosition = null;
+        this._buyWidgetHidden = false;
+        /** One entry per section with a walkable shortfall, rebuilt every render */
+        this._buyQueues = [];
+        this._buySource = null;
         // The same mechanism the missing-materials features use: park a quantity,
         // and the buy modal fills itself in when it appears
         this.autofill = createAutofillManager('Consumables');
@@ -102,6 +152,9 @@ class ConsumablesPanel {
      */
     show({ remember = true } = {}) {
         if (remember) saveOpenState(GEOMETRY_KEY, true);
+        // Opening the panel is asking for its controls back, the Buy-all widget
+        // included — a ✕ hides it for this visit, not for good
+        this._buyWidgetHidden = false;
         this._refreshStoredReadings();
         if (this.panel && document.body.contains(this.panel)) {
             bringPanelToFront(this.panel);
@@ -139,6 +192,8 @@ class ConsumablesPanel {
     hide({ remember = true } = {}) {
         if (remember) saveOpenState(GEOMETRY_KEY, false);
         this._remove();
+        // A running walk keeps its control; nothing else does
+        this._syncBuyWidget();
     }
 
     toggle() {
@@ -155,6 +210,7 @@ class ConsumablesPanel {
     async loadSettings() {
         await loadTarget(() => this._render());
         this._labRuns = Number(await storage.get('consumablesLabRuns', 'settings', 5)) || 5;
+        this._buyWidgetPosition = await storage.get(BUY_WIDGET_POSITION_KEY, 'settings', null);
         // The idle plan's pins: which loadout to plan for, which simmed zone rates its food
         this._idleLoadoutName = await storage.get('consumablesIdleLoadout', 'settings', null);
         this._idleZoneKey = await storage.get('consumablesIdleZone', 'settings', 'last');
@@ -400,34 +456,24 @@ class ConsumablesPanel {
      * @param {Array<{itemHrid: string, count: number}>} queue - Items still short
      */
     /**
-     * A heading's "Buy all ▶" button for a walkable shortfall, or null when
-     * fewer than two rows are short — a single row's own link already does
-     * the job.
+     * Offer a section's shortfall to the floating Buy-all widget.
+     *
+     * The heading used to carry its own "Buy all ▶" button, which meant the
+     * control vanished the moment the walk hid the panel to go shopping — and
+     * with it any way of seeing or changing what the walk was deciding by. The
+     * sections now only say what they are short of; the widget is the one place
+     * the walk is driven from, and its dropdown is how you choose between them.
+     *
+     * Registered only when two or more rows are short: a single row's own link
+     * already does the job.
+     *
+     * @param {string} label - Which section this is, for the widget's dropdown
      * @param {Array<{itemHrid: string, count: number, secondsLeft?: number}>} queue - Items short, in row order
-     * @returns {HTMLElement|null}
      */
-    _buyAllButton(queue) {
-        if (!queue || queue.length < 2) return null;
-        const buyAll = document.createElement('button');
-        Object.assign(buyAll.style, {
-            background: 'rgba(255, 255, 255, 0.07)',
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '3px',
-            color: ROW_COLORS.gold,
-            cursor: 'pointer',
-            fontSize: '11px',
-            padding: '1px 8px',
-        });
-        buyAll.textContent = 'Buy all ▶';
-        buyAll.title =
-            `${queue.length} items short. Opens each item's recommended buy form in turn — a floating ` +
-            'Next chip steps to the following item whenever you are ready. Nothing is bought until ' +
-            "the game's own confirm button is pressed.";
-        buyAll.addEventListener('click', (event) => {
-            event.stopPropagation();
-            this._startBuyAll(queue);
-        });
-        return buyAll;
+    _registerBuyQueue(label, queue) {
+        if (!queue || queue.length < 2) return;
+        this._buyQueues = this._buyQueues || [];
+        this._buyQueues.push({ label, queue: queue.slice() });
     }
 
     _startBuyAll(queue) {
@@ -435,11 +481,13 @@ class ConsumablesPanel {
         this._advanceBuyQueue();
     }
 
-    /** Open the queue's next buy form and re-offer the chip for the one after */
+    /** Open the queue's next buy form and re-offer the widget for the one after */
     _advanceBuyQueue() {
-        this._removeBuyChip();
         const next = this._buyQueue?.shift();
-        if (!next) return;
+        if (!next) {
+            this._syncBuyWidget();
+            return;
+        }
         // Priced at open time, not at queue time — the earlier buys in the
         // walk may themselves have moved the book
         const prices = getItemPrices(next.itemHrid);
@@ -457,66 +505,157 @@ class ConsumablesPanel {
             minOrderValue: this._buyNumber('market_consumableBuyMinOrderValue', 0),
         });
         this._buy({ itemHrid: next.itemHrid }, next.count, strategy);
-        this._showBuyChip();
+        this._syncBuyWidget();
     }
 
-    /** The floating "next item" chip; absent when the walk is done */
-    _showBuyChip() {
-        if (!this._buyQueue?.length) return;
-        const next = this._buyQueue[0];
-        const itemName = dataManager.getItemDetails?.(next.itemHrid)?.name || next.itemHrid.split('/').pop();
-
-        const chip = document.createElement('div');
-        chip.id = BUY_CHIP_ID;
-        Object.assign(chip.style, {
-            position: 'fixed',
-            bottom: '18px',
-            right: '18px',
-            zIndex: String(config.Z_FLOATING_PANEL),
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            background: COLORS.background,
-            border: `1px solid ${COLORS.border}`,
-            borderRadius: '4px',
-            padding: '6px 10px',
-            fontSize: '12px',
-        });
-
-        const advance = document.createElement('button');
-        Object.assign(advance.style, {
-            background: 'none',
-            border: 'none',
-            color: COLORS.accent,
-            cursor: 'pointer',
-            fontSize: '12px',
-            padding: '0',
-        });
-        advance.textContent = `▶ Next: ${itemName} (${this._buyQueue.length} left)`;
-        advance.title = 'Open this item’s recommended buy form.';
-        advance.addEventListener('click', () => this._advanceBuyQueue());
-
-        const dismiss = document.createElement('button');
-        Object.assign(dismiss.style, {
-            background: 'none',
-            border: 'none',
-            color: COLORS.textDim,
-            cursor: 'pointer',
-            fontSize: '12px',
-            padding: '0',
-        });
-        dismiss.textContent = '✕';
-        dismiss.title = 'Stop here — the rest of the shortfall stays on the panel.';
-        dismiss.addEventListener('click', () => {
-            this._buyQueue = [];
-            this._removeBuyChip();
-        });
-
-        chip.append(advance, dismiss);
-        document.body.appendChild(chip);
+    /**
+     * Show the Buy-all widget while there is something to buy or a walk to
+     * finish, and take it away otherwise.
+     *
+     * A walk outlives the panel by design — `_buy` hides the panel to leave the
+     * marketplace unobstructed — so the widget survives a hidden panel whenever
+     * a queue is still running.
+     * @private
+     */
+    _syncBuyWidget() {
+        const walking = Boolean(this._buyQueue?.length);
+        const offered = Boolean(this.panel && this._buyQueues?.length);
+        if (this._buyWidgetHidden || (!walking && !offered)) {
+            this._removeBuyWidget();
+            return;
+        }
+        this._renderBuyWidget();
     }
 
-    _removeBuyChip() {
+    /**
+     * The Buy-all walk's floating control: which shortfall to walk, what the
+     * next press opens, and the rules the recommendation is made by.
+     * @private
+     */
+    _renderBuyWidget() {
+        if (!this.buyWidget || !document.body.contains(this.buyWidget.element)) {
+            const widget = createFloatingWidget({
+                id: BUY_CHIP_ID,
+                top: '160px',
+                right: '24px',
+                accent: COLORS.accent,
+                background: COLORS.background,
+                border: COLORS.border,
+                text: COLORS.text,
+                dim: COLORS.textDim,
+                zIndex: config.Z_FLOATING_PANEL,
+                positionKey: BUY_WIDGET_POSITION_KEY,
+                position: this._buyWidgetPosition,
+            });
+            widget.main.addEventListener('click', () => this._onBuyWidgetClick());
+            widget.close.title = 'Stop here — the rest of the shortfall stays on the panel.';
+            widget.close.addEventListener('click', () => {
+                this._buyQueue = [];
+                this._buyWidgetHidden = true;
+                this._removeBuyWidget();
+            });
+            widget.gear.addEventListener('click', () => this._renderBuyWidgetSettings());
+
+            const picker = document.createElement('select');
+            picker.className = `${BUY_CHIP_ID}-source`;
+            picker.style.cssText =
+                `border:1px solid ${COLORS.border}; border-radius:5px; background:rgba(20,26,44,0.95); ` +
+                `color:${COLORS.text}; font-size:12px; padding:2px 4px; max-width:150px; cursor:pointer; ` +
+                'font-family:inherit;';
+            picker.addEventListener('change', () => {
+                this._buySource = picker.value;
+            });
+            widget.extras.appendChild(picker);
+
+            document.body.appendChild(widget.element);
+            this.buyWidget = widget;
+            this._renderBuyWidgetSettings();
+        }
+
+        const widget = this.buyWidget;
+        const picker = widget.extras.querySelector(`.${BUY_CHIP_ID}-source`);
+        const walking = Boolean(this._buyQueue?.length);
+        const sources = this._buyQueues || [];
+
+        // Mid-walk the queue is fixed, so offering a different one would be
+        // offering to abandon this one without saying so
+        picker.style.display = !walking && sources.length > 1 ? '' : 'none';
+        if (!walking) {
+            const signature = sources.map((source) => `${source.label}:${source.queue.length}`).join('|');
+            if (picker.dataset.signature !== signature) {
+                picker.dataset.signature = signature;
+                picker.textContent = '';
+                for (const source of sources) {
+                    const option = document.createElement('option');
+                    option.value = source.label;
+                    option.textContent = `${source.label} (${source.queue.length})`;
+                    picker.appendChild(option);
+                }
+            }
+            if (!sources.some((source) => source.label === this._buySource)) {
+                this._buySource = sources[0]?.label || null;
+            }
+            picker.value = this._buySource || '';
+        }
+
+        if (walking) {
+            const next = this._buyQueue[0];
+            const itemName = dataManager.getItemDetails?.(next.itemHrid)?.name || next.itemHrid.split('/').pop();
+            widget.main.textContent = `▶ Next: ${itemName} (${this._buyQueue.length} left)`;
+            widget.main.title = 'Open this item’s recommended buy form. One press, one form.';
+            return;
+        }
+
+        const chosen = sources.find((source) => source.label === this._buySource) || sources[0];
+        widget.main.textContent = '▶ Buy all';
+        widget.main.title = chosen
+            ? `${chosen.queue.length} items short in ${chosen.label}. Opens each item's recommended buy form ` +
+              'in turn, one press per form. Nothing is bought until the game’s own confirm button is pressed.'
+            : 'Nothing is short right now.';
+        widget.main.disabled = !chosen;
+    }
+
+    /** @private */
+    _onBuyWidgetClick() {
+        if (this._buyQueue?.length) {
+            this._advanceBuyQueue();
+            return;
+        }
+        const sources = this._buyQueues || [];
+        const chosen = sources.find((source) => source.label === this._buySource) || sources[0];
+        if (chosen) this._startBuyAll(chosen.queue);
+    }
+
+    /**
+     * The buy-decision rules, written straight into the settings the
+     * recommendation already reads.
+     * @private
+     */
+    _renderBuyWidgetSettings() {
+        const widget = this.buyWidget;
+        if (!widget || !widget.settingsOpen) return;
+
+        widget.settings.replaceChildren();
+        widget.settings.append(
+            widgetDivider(),
+            widgetNote('Any one of these makes the walk open Buy Now instead of a buy order. 0 turns a rule off.')
+        );
+        for (const tunable of BUY_TUNABLES) {
+            widget.settings.appendChild(widgetNumberRow(tunable));
+        }
+        widget.settings.appendChild(
+            widgetCheckboxRow({
+                key: 'market_consumableBuyOpenRecommended',
+                label: 'Open the recommended order form',
+                title: 'Off: a buy only opens the item in the marketplace with the quantity parked, and you pick the form.',
+            })
+        );
+    }
+
+    /** @private */
+    _removeBuyWidget() {
+        this.buyWidget?.remove();
+        this.buyWidget = null;
         document.getElementById(BUY_CHIP_ID)?.remove();
     }
 
@@ -649,6 +788,9 @@ class ConsumablesPanel {
         this.targetBtn.textContent = `Last ${this.target.label}`;
 
         this.bodyEl.replaceChildren();
+        // Rebuilt from what this render finds short, so a section that has been
+        // topped up stops being offered
+        this._buyQueues = [];
         const players = this._players();
 
         if (!players.length) {
@@ -675,6 +817,8 @@ class ConsumablesPanel {
         } catch (error) {
             console.error('[ConsumablesPanel] Building the labyrinth section failed:', error);
         }
+
+        this._syncBuyWidget();
     }
 
     /**
@@ -788,9 +932,9 @@ class ConsumablesPanel {
                 secondsLeft: entry.secondsLeft,
             }))
             .filter((item) => item.count > 0);
-        const buyAll = this._buyAllButton(shortfall);
+        this._registerBuyQueue('Idle plan', shortfall);
 
-        heading.append(name, loadoutPick, zonePick, ...(buyAll ? [buyAll] : []), source);
+        heading.append(name, loadoutPick, zonePick, source);
         section.appendChild(heading);
         section.appendChild(this._columnHeadings());
 
@@ -1017,9 +1161,8 @@ class ConsumablesPanel {
                 count: Math.max(0, Math.ceil(perRun * runs) - heldInInventory(inventory, itemHrid)),
             }))
             .filter((q) => q.count > 0);
-        const buyAll = this._buyAllButton(queue);
-        if (buyAll) heading.append(name, runsBtn, buyAll);
-        else heading.append(name, runsBtn);
+        this._registerBuyQueue('Labyrinth', queue);
+        heading.append(name, runsBtn);
         section.appendChild(heading);
 
         for (const { itemHrid, perRun } of needs) {
@@ -1192,9 +1335,8 @@ class ConsumablesPanel {
 
         // Only your own shortfall is walkable — a party member's supplies are
         // theirs to buy, so their sections stay read-only
-        const buyAll = player.isCurrent ? this._buyAllButton(shortfall) : null;
-        if (buyAll) heading.append(name, buyAll, stops);
-        else heading.append(name, stops);
+        if (player.isCurrent) this._registerBuyQueue(player.name || 'You', shortfall);
+        heading.append(name, stops);
         section.appendChild(heading);
 
         section.appendChild(this._columnHeadings());
