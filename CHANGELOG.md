@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Unjoined-trial estimates: small rates stay legible, tiers priced at the latest step
+
+"Est. fill" rounded a whole-guild rate of a fraction of a point per second to "~0 pts/s" while the tier ETA beside it plainly said otherwise; small rates now print with decimals. The next tier is priced at the latest consecutive tier step rather than the median of every step seen, which undersized late tiers.
+
 ### A lifecycle smoke test over every registered feature
 
 Every feature in the four bundles is now put through teardown-before-init and a second teardown, against core singletons mocked from the real modules so a misnamed method call throws in the test instead of in a browser. Four test mocks that offered methods the real modules do not have — the drift that let the History-tab typo pass its own unit test — were corrected.

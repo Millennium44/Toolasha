@@ -805,6 +805,19 @@ function num(value) {
 }
 
 /**
+ * A rate, kept legible when it is small: whole-guild points tick at fractions
+ * of a point per second, and rounding those to an integer printed "~0 pts/s"
+ * over an ETA that plainly said otherwise.
+ * @param {number|null} value - Units per second
+ * @returns {string}
+ */
+function rateNum(value) {
+    if (!Number.isFinite(value)) return '—';
+    if (value >= 10) return formatKMB(Math.round(value));
+    return String(Number(value.toFixed(value >= 1 ? 1 : 2)));
+}
+
+/**
  * A fraction as a percentage, without trailing noise.
  * @param {number|null} value - A fraction, e.g. 0.02
  * @returns {string} e.g. `2%`
@@ -1126,7 +1139,7 @@ export function renderTrialBlock(
             rows.push(
                 line(
                     'Est. fill',
-                    `~${num(loose.pointsPerSecond)}\u00a0pts/s`,
+                    `~${rateNum(loose.pointsPerSecond)}\u00a0pts/s`,
                     ACCENT,
                     'A rough rate for a trial you did not join, read off the running total the Trials tab ' +
                         'states — the whole guild’s pace, not your own contribution. The live per-second ' +
