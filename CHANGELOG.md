@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The "Below par" flag has its own switch
+
+The task auto-reroll reminder flagged two things under one setting: your auto-reroll list ("Reroll!") and any task rating below the board median by more than its next reroll costs ("Below par"). The second now has its own toggle (on by default), so the red border can be kept for the list alone. The reroll walk's widget also no longer feeds its own renders back into its board watcher, which froze the Tasks page.
+
 ### The Consumables Buy-all walk gets its own floating panel
 
 The "Buy all ▶" button in a section heading vanished the moment the walk hid the panel to go shopping, taking its rules with it. It is now a floating panel that stays put for the whole walk: pick which shortfall to work through, press once per buy form ("▶ Next: Peach Gummy (5 left)"), and open the ⚙ to change the instant-buy-versus-order rules while you are watching them being applied. Each row keeps its own Buy link.

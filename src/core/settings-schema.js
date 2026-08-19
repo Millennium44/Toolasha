@@ -2555,6 +2555,16 @@ export const settingsGroups = {
                 default: true,
                 help: 'Highlights tasks you want to reroll with a red border and reminder badge. Configure per-character via the target icon in the task panel.',
             },
+            taskAutoReroll_belowPar: {
+                id: 'taskAutoReroll_belowPar',
+                label: 'Also flag tasks rating below the board ("Below par")',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'With the reminder on, also give the red border and a "Below par" badge to any task whose ' +
+                    'rate sits below the board median by more than its next reroll would cost. Off leaves only ' +
+                    'your auto-reroll list flagged.',
+            },
             tasks_rerollWalk: {
                 id: 'tasks_rerollWalk',
                 label: 'Reroll walk: step through the board one click at a time',

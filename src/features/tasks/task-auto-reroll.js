@@ -217,7 +217,10 @@ class TaskAutoReroll {
         // Two independent triggers: the blacklist the player curates by hand,
         // and the task simply not being worth its slot next to the others
         const isBlacklisted = Boolean(hrid && this.autoRerollHrids.has(hrid));
-        const isBelowBoard = board ? this._ratesBelowBoard(taskCard, quest, board) : false;
+        const isBelowBoard =
+            board && config.getSetting('taskAutoReroll_belowPar') !== false
+                ? this._ratesBelowBoard(taskCard, quest, board)
+                : false;
         const shouldReroll = isBlacklisted || isBelowBoard;
 
         const isProtected = this._isProtected(taskCard, hrid);
