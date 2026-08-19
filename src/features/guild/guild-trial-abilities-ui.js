@@ -16,6 +16,7 @@ import { clickThroughReact } from '../../utils/react-click.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildMemberSkills, { findBattleUnits, orderUnitsToAsk, REQUEST_TIMEOUT_MS } from './guild-member-skills.js';
 import guildTrialAbilities, { SESSION_MAX_AGE_MS } from './guild-trial-abilities.js';
+import guildTrialPlan, { planStatusLine } from './guild-trial-plan.js';
 import { formatEta } from '../../utils/progress-eta.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
@@ -318,6 +319,121 @@ function drawAuraCoverage(body, state, abilityDetailMap) {
 }
 
 /**
+ * The Plan section's own state, which survives a redraw but not a reload.
+ *
+ * `open` is the disclosure — a lead writing a plan wants it open across the
+ * refreshes a live trial produces. `draft` is text typed and not yet saved:
+ * the timed refresh already leaves a focused textarea alone, but a landed
+ * Battle Info sheet redraws the panel outright, and that must not eat what is
+ * half-written.
+ */
+const planUi = { open: false, draft: null };
+
+/** Forget the section's draft and disclosure — for tests and a fresh panel */
+export function resetPlanUi() {
+    planUi.open = false;
+    planUi.draft = null;
+}
+
+/**
+ * One player's verdict against the plan, in a word and a list.
+ * @param {Object} verdict - From `comparePlan`
+ * @returns {{text: string, color: string, title: string}|null} What to draw, or null for silence
+ */
+export function verdictLine(verdict) {
+    if (!verdict || verdict.status === 'uncaptured') return null;
+    if (verdict.status === 'missing') {
+        return {
+            text: `missing: ${verdict.missing.join(', ')}`,
+            color: ROW_COLORS.bad,
+            title: 'Planned for this player and not equipped.',
+        };
+    }
+    if (verdict.status === 'underLevel') {
+        const under = verdict.underLevel
+            .map((entry) => `${entry.name} ${entry.level ?? '?'} < ${entry.required}`)
+            .join(', ');
+        return { text: `under level: ${under}`, color: ROW_COLORS.gold, title: 'Equipped below the planned level.' };
+    }
+    if (verdict.extra.length) {
+        return {
+            text: `on plan · extra: ${verdict.extra.join(', ')}`,
+            color: ROW_COLORS.good,
+            title: 'Everything planned is equipped; the extras are informational.',
+        };
+    }
+    return { text: 'on plan', color: ROW_COLORS.good, title: 'Everything planned is equipped.' };
+}
+
+/**
+ * The Plan card: the text the lead wrote, and what it says about the roster.
+ *
+ * Collapsed by default — the panel's job is the capture, and the plan is
+ * consulted rather than read — but its status line is always visible, because
+ * that is the answer the section exists to give.
+ *
+ * @param {HTMLElement} body - Panel body
+ * @param {Object} state - From `guildTrialAbilities.state()`
+ */
+function drawPlan(body, state) {
+    const card = panelCard(body, 'Plan', ACCENT);
+    card.appendChild(panelNote(planStatusLine(state.planCompare)));
+
+    const details = document.createElement('details');
+    details.open = planUi.open;
+    details.addEventListener('toggle', () => {
+        planUi.open = details.open;
+    });
+
+    const summary = document.createElement('summary');
+    summary.textContent = 'Edit plan';
+    Object.assign(summary.style, { cursor: 'pointer', color: 'rgba(232, 236, 245, 0.7)', margin: '2px 0' });
+    details.appendChild(summary);
+
+    const box = document.createElement('textarea');
+    box.rows = 6;
+    box.spellcheck = false;
+    box.value = planUi.draft ?? guildTrialPlan.text();
+    box.placeholder = 'Alice: Fierce Aura 200, Vampirism\n# lines starting with # are ignored';
+    box.style.cssText =
+        'width: 100%; box-sizing: border-box; background: rgba(0,0,0,0.35); color: #e8ecf5; ' +
+        'border: 1px solid rgba(255,255,255,0.18); border-radius: 5px; padding: 5px; font-size: 12px; ' +
+        'font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: vertical;';
+    box.addEventListener('input', () => {
+        planUi.draft = box.value;
+    });
+    details.appendChild(box);
+
+    const row = document.createElement('div');
+    Object.assign(row.style, { display: 'flex', gap: '6px', marginTop: '4px' });
+    row.appendChild(
+        controlButton('Save plan', 'Store this plan for the guild and compare the captures against it.', async () => {
+            planUi.draft = null;
+            await guildTrialPlan.setText(box.value);
+            guildTrialAbilitiesPanel.render();
+        })
+    );
+    details.appendChild(row);
+    card.appendChild(details);
+
+    if (state.planCompare?.notInTrial?.length) {
+        card.appendChild(
+            panelLine(
+                'Not in trial',
+                state.planCompare.notInTrial.join(', '),
+                ROW_COLORS.dim,
+                'Planned, but not among this trial’s participants.'
+            )
+        );
+    }
+    for (const entry of state.plan?.ambiguousTokens || []) {
+        card.appendChild(
+            panelLine(entry.token, `ambiguous: ${entry.matches.join(', ')}`, ROW_COLORS.gold, 'Name it more fully.')
+        );
+    }
+}
+
+/**
  * One player's abilities as inline spans, auras highlighted.
  * @param {Object} capture - The player's session entry
  * @param {Object} abilityDetailMap - Game data
@@ -384,6 +500,17 @@ function drawPlayers(body, state, abilityDetailMap) {
         const tier = tierText(row.capture.capturedTier);
         card.appendChild(panelLine(row.name, `captured${tier ? ` (${tier})` : ''}`, ROW_COLORS.good));
         card.appendChild(abilityRow(row.capture, abilityDetailMap));
+
+        // Only a player the plan names says anything here: an unplanned player
+        // gets no line at all, so the list stays about the capture
+        const verdict = verdictLine(state.planCompare?.byName?.[String(row.name || '').toLowerCase()]);
+        if (verdict) {
+            const line = document.createElement('div');
+            line.textContent = verdict.text;
+            line.title = verdict.title;
+            Object.assign(line.style, { paddingLeft: '10px', color: verdict.color });
+            card.appendChild(line);
+        }
     }
 
     for (const player of state.notCurrent) {
@@ -468,6 +595,7 @@ export const guildTrialAbilitiesPanel = createPanel({
         adoptStoredCaptures();
         const state = guildTrialAbilities.state(abilityDetailMap);
         drawHeader(body, state);
+        drawPlan(body, state);
         drawAuraCoverage(body, state, abilityDetailMap);
         drawPlayers(body, state, abilityDetailMap);
         drawControls(body, state);

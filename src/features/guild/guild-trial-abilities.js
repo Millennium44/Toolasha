@@ -43,6 +43,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
+import guildTrialPlan, { comparePlan } from './guild-trial-plan.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
 
 /** Object store the session lives in — shared with the rest of the guild history */
@@ -320,11 +321,17 @@ class GuildTrialAbilities {
     async initialize(guildName = null) {
         if (guildName) this.guildName = guildName;
         this.initialized = true;
-        await this._restore();
+        // The session's read is issued first and in this same tick: a capture
+        // landing while it is in flight is merged into it, while one landing
+        // before it is issued would be written over by the answer
+        const restored = this._restore();
+        await guildTrialPlan.initialize(this.guildName);
+        await restored;
     }
 
     cleanup() {
         this.initialized = false;
+        guildTrialPlan.cleanup();
     }
 
     /**
@@ -399,7 +406,11 @@ class GuildTrialAbilities {
         // what the check above reads on the next name to arrive
         if (this.session && next) this.session.guildName = next;
         if (!changed || !next || !this.initialized) return undefined;
-        return this._restore();
+        const restored = this._restore();
+        // The plan is the guild's too, and is keyed the same way — read after
+        // the session's read is issued, for the reason `initialize` gives
+        guildTrialPlan.setGuildName?.(next);
+        return restored;
     }
 
     /**
@@ -547,7 +558,7 @@ class GuildTrialAbilities {
      *
      * @param {Object} [abilityDetailMap] - Game data; defaults to the live map
      * @returns {Object} `{startedAt, guildName, captureTier, capturedTiers, rosterCount, capturedCount,
-     *   outstanding, participants, notCurrent, complete, completedAt, auras, coverage}`
+     *   outstanding, participants, notCurrent, complete, completedAt, auras, coverage, plan, planCompare}`
      */
     state(abilityDetailMap = this._abilityMap()) {
         const session = this.session;
@@ -563,6 +574,11 @@ class GuildTrialAbilities {
         const coverage = auraCoverage(auras, abilityDetailMap, complete);
 
         const currentKeys = new Set(rows.filter((row) => row.capture).map((row) => playerKey(row.capture)));
+        // The plan is the lead's own writing, compared here so every reader of
+        // `state()` — panel and export alike — sees the same verdicts
+        const plan = guildTrialPlan.parsed(abilityDetailMap);
+        const planCompare = comparePlan(plan, rows, abilityDetailMap);
+
         const notCurrent = Object.entries(session?.players || {})
             .filter(([key]) => !currentKeys.has(key))
             .map(([, player]) => player);
@@ -581,6 +597,8 @@ class GuildTrialAbilities {
             completedAt: complete ? (session?.completedAt ?? null) : null,
             auras,
             coverage,
+            plan,
+            planCompare,
         };
     }
 
@@ -605,6 +623,8 @@ class GuildTrialAbilities {
                           .trim()
                           .toLowerCase();
             players[key] = { ...entry, abilities: entry.abilities ? [...entry.abilities] : null };
+            const verdict = view.planCompare?.byName?.[String(entry.name || '').toLowerCase()];
+            if (verdict) players[key].planVerdict = { ...verdict };
         }
 
         const byState = (wanted) => Object.keys(view.coverage).filter((hrid) => view.coverage[hrid] === wanted);
@@ -619,6 +639,18 @@ class GuildTrialAbilities {
             auras: view.auras,
             unknownAuras: byState('unknown'),
         };
+        // Only when there is one — an export from a guild that never wrote a
+        // plan should not carry an empty one that reads as "nobody complied"
+        if (view.plan?.lines?.length) {
+            snapshot.plan = {
+                text: view.plan.text,
+                parsedAt: view.plan.parsedAt,
+                lines: view.plan.lines.map((line) => ({ ...line, abilities: [...line.abilities] })),
+                notInTrial: [...(view.planCompare?.notInTrial || [])],
+                noPlan: [...(view.planCompare?.noPlan || [])],
+                summary: { ...view.planCompare?.summary },
+            };
+        }
         if (view.complete) snapshot.missingAuras = byState('missing');
         return snapshot;
     }

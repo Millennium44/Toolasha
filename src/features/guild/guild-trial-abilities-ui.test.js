@@ -23,7 +23,13 @@ vi.mock('../../core/data-manager.js', () => ({
 
 // Sessions and geometry live in IndexedDB, which is not what this file is about
 vi.mock('../../core/storage.js', () => ({
-    default: { get: async () => null, set: async () => {}, getJSON: async () => null, setJSON: async () => {} },
+    default: {
+        get: async () => null,
+        set: async () => {},
+        getJSON: async () => null,
+        setJSON: async () => {},
+        tryGet: async () => ({ found: false, value: null }),
+    },
 }));
 
 vi.mock('../../utils/panel-geometry.js', () => ({
@@ -71,6 +77,8 @@ const {
     completionLine,
     staleSessionNote,
 } = await import('./guild-trial-abilities-ui.js');
+const { resetPlanUi } = await import('./guild-trial-abilities-ui.js');
+const guildTrialPlan = (await import('./guild-trial-plan.js')).default;
 const { REQUEST_TIMEOUT_MS } = await import('./guild-member-skills.js');
 const memberSkills = (await import('./guild-member-skills.js')).default;
 
@@ -141,6 +149,7 @@ describe('trial abilities panel', () => {
         capture.listeners = [];
         capture.players = {};
         resetTrialUnitRequests();
+        resetPlanUi();
     });
 
     afterEach(() => {
@@ -151,6 +160,8 @@ describe('trial abilities panel', () => {
         guildTrialAbilities.roster = [];
         guildTrialAbilities.guildName = null;
         guildTrialAbilities.currentTier = null;
+        guildTrialPlan.record?.set({});
+        guildTrialPlan.cache = null;
         vi.useRealTimers();
     });
 
@@ -495,6 +506,62 @@ describe('trial abilities panel', () => {
         await pending;
 
         expect(guildTrialAbilities.session?.players['id:1']?.abilitiesAuthoritative).toBe(true);
+    });
+
+    test('a saved plan draws verdict lines and a header status, and stays quiet about the unplanned', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Alice', 'Bob', 'Cara', 'Dana']);
+        guildTrialAbilities.recordCapture(
+            snapshot('Alice', 1, [
+                { hrid: '/abilities/fierce_aura', level: 200 },
+                { hrid: '/abilities/sweep', level: 40 },
+            ])
+        );
+        guildTrialAbilities.recordCapture(snapshot('Bob', 2, [{ hrid: '/abilities/sweep', level: 50 }]));
+        guildTrialAbilities.recordCapture(snapshot('Cara', 3, [{ hrid: '/abilities/aqua_aura', level: 90 }]));
+        guildTrialAbilities.recordCapture(snapshot('Dana', 4, [{ hrid: '/abilities/sweep', level: 10 }]));
+
+        openTrialAbilitiesPanel();
+        const box = guildTrialAbilitiesPanel.panel.querySelector('textarea');
+        box.value = [
+            '# the plan',
+            'Alice: Fierce Aura 200',
+            'Bob: Aqua Aura',
+            'Cara: Aqua Aura 150',
+            'Zed: Flurry',
+        ].join('\n');
+        box.dispatchEvent(new Event('input'));
+        button('Save plan').click();
+        await vi.waitFor(() => expect(text()).toContain('on plan'));
+
+        const status = card('Plan').textContent;
+        expect(status).toContain('1/3 on plan');
+        expect(status).toContain('1 with no plan');
+        expect(status).toContain('1 not in trial');
+        expect(status).toContain('1 unrecognised ability: Flurry');
+
+        const players = card('Players (').textContent;
+        expect(players).toContain('missing: Aqua Aura');
+        expect(players).toContain('under level: Aqua Aura 90 < 150');
+        expect(players).toContain('on plan · extra: Sweep');
+        // Dana is on nobody's plan, so her row says nothing about one
+        expect(players.slice(players.indexOf('Dana'))).not.toContain('on plan');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('the export carries the plan and each captured player’s verdict', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Alice']);
+        guildTrialAbilities.recordCapture(snapshot('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 70 }]));
+        await guildTrialPlan.setText('Alice: Fierce Aura 200');
+
+        const exported = guildTrialAbilities.exportSnapshot(game.abilityDetailMap);
+        expect(exported.plan.text).toBe('Alice: Fierce Aura 200');
+        expect(exported.plan.summary).toMatchObject({ plannedPlayers: 1, onPlan: 0 });
+        expect(exported.players['1'].planVerdict).toMatchObject({
+            status: 'underLevel',
+            underLevel: [{ name: 'Fierce Aura', level: 70, required: 200 }],
+        });
     });
 
     test('cleanup unsubscribes from the capture events', async () => {

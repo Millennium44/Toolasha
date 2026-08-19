@@ -22,6 +22,8 @@ vi.mock('../../core/storage.js', () => ({
             disk.saved = value;
             disk.keys[key] = value;
         },
+        // The ability plan rides in the same store; nothing here is about it
+        tryGet: async (key) => ({ found: key in disk.keys, value: disk.keys[key] ?? null }),
     },
 }));
 

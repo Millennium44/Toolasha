@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial Abilities compares the captured kits against your ability plan
+
+Write the kit each player is meant to bring — `Alice: Fierce Aura 200, Vampirism` — into the panel's new Plan box, and every captured player gets a verdict under their row: on plan, missing an ability, or under the level you asked for. The plan is saved per guild and survives reloads and trials, ability names are matched forgivingly (an unrecognised one is reported, never dropped), and the comparison rides along in the trial JSON export.
+
 ### Guided task reroll walk (off by default)
 
 Turn on "Reroll walk" in Tasks for a 🎲 control on the task panel that steps down the board using your protection list and a per-task reroll limit. It always tells you what the next press will do — "Reroll #3 (2/3) — 1🔔", "Trash #5 (limit reached)" — and one press is exactly one game click: nothing chains, nothing runs on a timer, and it stops rather than clicking if the card is not what it planned for.
