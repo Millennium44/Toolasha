@@ -248,6 +248,9 @@ export function verdictForCard({ completed, isProtected, choice, trashAtLimit })
     return { action: 'reroll', reason: choice.costLabel + (choice.why ? ` (${choice.why})` : '') };
 }
 
+/** How many short waits a chooser may stay unpressable before the walk gives up on it */
+const PENDING_RETRY_LIMIT = 12;
+
 class TaskRerollWalk {
     constructor() {
         this.isInitialized = false;
@@ -256,6 +259,9 @@ class TaskRerollWalk {
         this.protectedHrids = new Set();
         /** idle | ready | waiting | done | stopped */
         this.state = 'idle';
+        /** Set by a plan that found the chooser drawn but unpressable; cleared each plan */
+        this.pending = false;
+        this.pendingRetries = 0;
         this.step = null;
         this.message = '';
         this.index = 0;
@@ -558,9 +564,19 @@ class TaskRerollWalk {
             if (chooser.length) {
                 const option = preferredRerollOption(chooser, choice.currency);
                 if (!option) {
+                    // Options drawn but none pressable is what the chooser looks
+                    // like while the game is still answering the last payment —
+                    // the buttons come back a moment later. A wait, then; a stop
+                    // only once it has stayed that way too long to be that
+                    if (this.pendingRetries < PENDING_RETRY_LIMIT) {
+                        this.pendingRetries += 1;
+                        this.pending = true;
+                        return null;
+                    }
                     this.message = `No reroll on offer for #${slot} — walk stopped.`;
                     return null;
                 }
+                this.pendingRetries = 0;
                 return this._step('pay', card, slot, `Reroll #${slot} — ${verdict.reason}`, option.button, {
                     currency: choice.currency,
                 });
@@ -598,6 +614,8 @@ class TaskRerollWalk {
     /** Start a walk at the top of the board. */
     start() {
         this.index = 0;
+        this.pendingRetries = 0;
+        this.pending = false;
         this.tally = { kept: 0, rerolled: 0, trashed: 0 };
         this.message = '';
         this.hidden = false;
@@ -638,9 +656,14 @@ class TaskRerollWalk {
      * @private
      */
     _replan() {
+        this.pending = false;
         this.step = this._plan();
         if (this.step) {
             this.state = 'ready';
+        } else if (this.pending) {
+            // The board is mid-answer; look again shortly rather than ending
+            this.state = 'waiting';
+            this._replanSoon(UI_SETTLE_MS);
         } else {
             this.state = this.message ? 'stopped' : 'done';
         }
