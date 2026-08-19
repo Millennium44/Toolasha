@@ -32,6 +32,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import { clickThroughReact } from '../../utils/react-click.js';
 import webSocketHook from '../../core/websocket.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
@@ -153,6 +154,37 @@ export function findBattleUnits(members, root = typeof document === 'undefined' 
         units.push({ name, el: box });
     }
     return units;
+}
+
+/**
+ * The order to ask units in: never-asked first, then least recently asked,
+ * DOM order as the tiebreak — and the watching player's own card last.
+ *
+ * Taking the first lapsed unit in DOM order re-asked the same one every
+ * press: the player's own card is first in the DOM and its window lapses
+ * first, so a press every twenty-plus seconds clicked it every time and the
+ * six teammates beside it were never reached. Own card last, because clicking
+ * it opens no Battle Info in the trial view — it is a dead click that only
+ * matters once everyone else has been asked.
+ *
+ * @param {Array<{name: string, el: Element}>} units - From {@link findBattleUnits}
+ * @param {Object} requests - lowercased name → last request time
+ * @param {string|null} localName - The watching player's own name
+ * @returns {Array<{name: string, el: Element}>} Units, in asking order
+ */
+export function orderUnitsToAsk(units, requests, localName = null) {
+    const local = String(localName || '')
+        .trim()
+        .toLowerCase();
+    return units
+        .map((unit, index) => ({ unit, index, at: Number(requests?.[unit.name.toLowerCase()]) || 0 }))
+        .sort(
+            (a, b) =>
+                Number(a.unit.name.toLowerCase() === local) - Number(b.unit.name.toLowerCase() === local) ||
+                a.at - b.at ||
+                a.index - b.index
+        )
+        .map((entry) => entry.unit);
 }
 
 /**
@@ -481,7 +513,8 @@ class GuildMemberSkills {
             seen.set(String(entry?.name || '').toLowerCase(), Number(entry?.at) || 0);
         }
 
-        for (const unit of units) {
+        const localName = dataManager.getCurrentCharacterName?.() || dataManager.characterData?.characterInfo?.name;
+        for (const unit of orderUnitsToAsk(units, this.unitRequests, localName)) {
             const key = unit.name.toLowerCase();
             const at = seen.get(key) || 0;
             if (at > this.dueBefore && now - at < UNIT_FRESH_MS) continue;
@@ -521,7 +554,7 @@ class GuildMemberSkills {
         const unit = this.nextBattleUnit(now);
         if (!unit?.el) return { opened: null, how: 'no-unit', logged: state.logged, total: state.total };
         this.unitRequests[unit.name.toLowerCase()] = now;
-        unit.el.click();
+        clickThroughReact(unit.el, { reactFirst: true });
         return { opened: unit.name, how: 'unit', logged: state.logged, total: state.total };
     }
 

@@ -69,6 +69,7 @@ const {
     guildMemberSkills,
     memberSkillsStorageKey,
     nextMemberToLog,
+    orderUnitsToAsk,
     REQUEST_TIMEOUT_MS,
     STALE_AFTER_MS,
     UNIT_FRESH_MS,
@@ -605,5 +606,25 @@ describe('people in the battle come first', () => {
 
         await guildMemberSkills.initialize('Milky Way');
         expect(game.capturedListeners).toHaveLength(1);
+    });
+});
+
+describe('orderUnitsToAsk', () => {
+    const u = (name) => ({ name, el: {} });
+
+    test('never-asked first, then least recently asked, DOM order as the tiebreak', () => {
+        const units = [u('A'), u('B'), u('C'), u('D')];
+        const requests = { a: 100, c: 50 };
+        expect(orderUnitsToAsk(units, requests).map((x) => x.name)).toEqual(['B', 'D', 'C', 'A']);
+    });
+
+    test('the watching player’s own card goes last, however long ago it was asked', () => {
+        const units = [u('Me'), u('A'), u('B')];
+        const requests = { a: 100, b: 200 };
+        expect(orderUnitsToAsk(units, requests, 'Me').map((x) => x.name)).toEqual(['A', 'B', 'Me']);
+        // A press every half-minute used to re-click the first card in the
+        // DOM — the player's own — and never reach the teammates beside it
+        const after = { me: 300, a: 100, b: 200 };
+        expect(orderUnitsToAsk(units, after, 'Me')[0].name).toBe('A');
     });
 });

@@ -99,6 +99,7 @@ import * as characterKey from '../utils/character-key.js';
 import * as chestImport from '../utils/chest-import.js';
 import * as chunkedHistory from '../utils/chunked-history.js';
 import * as persistedRecord from '../utils/persisted-record.js';
+import * as reactClick from '../utils/react-click.js';
 import * as consumableForecast from '../utils/consumable-forecast.js';
 import * as csvExport from '../utils/csv-export.js';
 import * as deferredLoad from '../utils/deferred-load.js';
@@ -208,6 +209,7 @@ toolashaRoot.Utils = {
     chestImport,
     chunkedHistory,
     persistedRecord,
+    reactClick,
     consumableForecast,
     csvExport,
     deferredLoad,

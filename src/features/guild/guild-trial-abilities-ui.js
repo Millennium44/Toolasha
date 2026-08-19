@@ -12,8 +12,9 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import { clickThroughReact } from '../../utils/react-click.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
-import guildMemberSkills, { findBattleUnits, REQUEST_TIMEOUT_MS } from './guild-member-skills.js';
+import guildMemberSkills, { findBattleUnits, orderUnitsToAsk, REQUEST_TIMEOUT_MS } from './guild-member-skills.js';
 import guildTrialAbilities, { SESSION_MAX_AGE_MS } from './guild-trial-abilities.js';
 import { formatEta } from '../../utils/progress-eta.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
@@ -155,11 +156,12 @@ export function resetTrialUnitRequests() {
 export function openNextTrialUnit(now = Date.now()) {
     const state = guildTrialAbilities.state();
     const units = findBattleUnits(state.outstanding);
-    for (const unit of units) {
+    const localName = dataManager.getCurrentCharacterName?.() || dataManager.characterData?.characterInfo?.name;
+    for (const unit of orderUnitsToAsk(units, trialUnitRequests, localName)) {
         const key = unit.name.toLowerCase();
         if (now - (Number(trialUnitRequests[key]) || 0) < REQUEST_TIMEOUT_MS) continue;
         trialUnitRequests[key] = now;
-        unit.el.click();
+        clickThroughReact(unit.el, { reactFirst: true });
         return { opened: unit.name, how: 'unit' };
     }
     if (units.length) {
@@ -196,7 +198,7 @@ export function retryTrialUnit(name = null, now = Date.now()) {
     const unit = (wanted && units.find((entry) => entry.name.toLowerCase() === wanted)) || units[0] || null;
     if (!unit) return { opened: null, how: 'no-unit' };
     trialUnitRequests[unit.name.toLowerCase()] = now;
-    unit.el.click();
+    clickThroughReact(unit.el, { reactFirst: true });
     return { opened: unit.name, how: 'unit' };
 }
 
@@ -463,6 +465,7 @@ export const guildTrialAbilitiesPanel = createPanel({
     accent: ACCENT,
     draw: (body) => {
         const abilityDetailMap = dataManager.getInitClientData?.()?.abilityDetailMap || {};
+        adoptStoredCaptures();
         const state = guildTrialAbilities.state(abilityDetailMap);
         drawHeader(body, state);
         drawAuraCoverage(body, state, abilityDetailMap);
@@ -476,6 +479,47 @@ export const guildTrialAbilitiesPanel = createPanel({
  */
 export function openTrialAbilitiesPanel() {
     guildTrialAbilitiesPanel.show();
+}
+
+/**
+ * Fold in any Battle Info sheet the roster store already holds for an
+ * outstanding player, taken since this session began.
+ *
+ * The store and this session are fed by the same `battle_unit_fetched`
+ * events, but the store is the one that cannot miss them — it is the
+ * persistence — while the session hears about them through a listener. A
+ * reload, an event that lands before the session is up, anything that drops
+ * one: the roster panel shows "seen 1m" and this panel still says "needs
+ * Battle Info" for the same player. So on every draw the session adopts what
+ * the store has. Only authoritative sheets (the popup and `battle_unit_fetched`,
+ * never a `new_battle` kit — see {@link onCapturedEvent}), only sightings no
+ * older than the session — last trial's sheets are last trial's kit.
+ *
+ * @returns {number} How many were adopted
+ */
+export function adoptStoredCaptures() {
+    try {
+        const state = guildTrialAbilities.state();
+        if (!state?.outstanding?.length) return 0;
+        // With no session yet (one begins on the first capture) the horizon is
+        // the session's own maximum age: anything older would have started a
+        // fresh session anyway, and last trial's sheets are older than that
+        const horizon = state.startedAt || Date.now() - SESSION_MAX_AGE_MS;
+        let adopted = 0;
+        for (const row of state.outstanding) {
+            const snapshot = row?.name ? guildLoadoutCapture.forPlayer?.(row.name) : null;
+            if (!snapshot || snapshot.source === 'new_battle' || snapshot.abilitiesAuthoritative !== true) continue;
+            const at = Number(snapshot.abilitiesAt ?? snapshot.at) || 0;
+            if (at < horizon) continue;
+            guildTrialAbilities.recordCapture(snapshot, { at });
+            delete trialUnitRequests[String(row.name).toLowerCase()];
+            adopted++;
+        }
+        return adopted;
+    } catch (error) {
+        console.error('[GuildTrialAbilitiesUI] Adopting stored captures failed:', error);
+        return 0;
+    }
 }
 
 /** Unsubscribe from the loadout capture's events; set in `initialize` */

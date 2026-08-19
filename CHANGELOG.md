@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial Abilities fills from the roster store, and the cycler reaches everyone
+
+The panel now adopts any Battle Info sheet the Guild Roster already holds for an outstanding player (taken since the session began), so it can never lag the roster's "seen 1m" again. "Open next Battle Info" asks players least-recently-asked first with your own card last — it used to re-click the first card in the DOM (yours) on every press and never reach the teammates beside it. Unit clicks also go through the game's own React handler, which the party cards require when a click is not a trusted user gesture.
+
 ### Leaderboard rates: idle is a zero, and ranks are kept per view
 
 A reading that found the same value as the last one was never recorded, so a player not doing the skill sat on "1 reading" forever instead of the 0/h that was true — and that is why some rows had rates and others did not. An unchanged value is now recorded as a real zero once the board has had a refresh (20 min) to move; inside that window it is the same snapshot seen twice and is ignored. Idle runs keep their first and last reading, and a player idle across a whole day or week still reads a known 0. Rank is now tracked per board AND view (the Guilds tab's All / Standard / Ironcow / Casual, the player boards' Standard / Ironcow), so "▲10" no longer compares a guild's #11 on All with its #1 on Ironcow.
