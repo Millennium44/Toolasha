@@ -18,8 +18,8 @@ import {
     classify,
     buildComparison,
     buffedStatKeys,
-    offenseRatioBoosts,
-    foldOffenseBuffs,
+    planBuffFold,
+    simPlayerLabel,
     combatEffectNames,
     flaggedRows,
     buildExportPayload,
@@ -298,114 +298,119 @@ describe('buildComparison against an engine-built monster', () => {
     });
 });
 
-describe('foldOffenseBuffs — the sim column carries your live offense buffs', () => {
-    test('precision folds accuracy by its ratio, matching your live rating', () => {
-        const sim = { smashAccuracyRating: 507, smashMaxDamage: 380 };
-        const buffs = { '/buff_uniques/precision': { typeHrid: '/buff_types/accuracy', ratioBoost: 0.684 } };
-        const out = foldOffenseBuffs(sim, buffs, 'smash');
-        expect(out.smashAccuracyRating).toBeCloseTo(507 * 1.684, 5); // ≈ 853, your live value
-        expect(out.smashMaxDamage).toBe(380); // untouched
-    });
-
-    test('a monster damage shred folds max hit down', () => {
-        const sim = { smashAccuracyRating: 507, smashMaxDamage: 380 };
-        const buffs = { '/buff_uniques/crippling': { typeHrid: '/buff_types/damage', ratioBoost: -0.234 } };
-        const out = foldOffenseBuffs(sim, buffs, 'smash');
-        expect(out.smashMaxDamage).toBeCloseTo(380 * 0.766, 5); // ≈ 291
-    });
-
-    test('accuracy and fury-accuracy multiply, matching the engine formula', () => {
-        const sim = { magicAccuracyRating: 100, magicMaxDamage: 50 };
-        const buffs = {
-            '/buff_uniques/precision': { typeHrid: '/buff_types/accuracy', ratioBoost: 0.5 },
-            '/buff_uniques/fury': { typeHrid: '/buff_types/fury_accuracy', ratioBoost: 0.2 },
-        };
-        const out = foldOffenseBuffs(sim, buffs, 'magic');
-        expect(out.magicAccuracyRating).toBeCloseTo(100 * 1.5 * 1.2, 5);
-    });
-
-    test('no offense buffs returns the sim details unchanged (same object)', () => {
-        const sim = { smashAccuracyRating: 507, smashMaxDamage: 380 };
-        expect(foldOffenseBuffs(sim, { '/b': { typeHrid: '/buff_types/armor', ratioBoost: 0.1 } }, 'smash')).toBe(sim);
-        expect(foldOffenseBuffs(sim, {}, 'smash')).toBe(sim);
-    });
-});
-
-describe('foldOffenseBuffs — delta against the fight-start map', () => {
-    // The observed 895 → 1029 case: guild damage (+3%) and the labyrinth
-    // combat-damage upgrade (+12%) are persistent /buff_types/damage ratios,
-    // present at fight start and already inside the sim's build. Folding the
-    // whole live map re-applied them: 895.13 × 1.15 ≈ 1029.40.
+describe('planBuffFold — what the sim player is handed so both sides match', () => {
+    // Guild damage (+3%) and the labyrinth combat-damage upgrade (+12%) are
+    // persistent /buff_types/damage ratios: on you as the fight opens, and
+    // already inside the sim's build. They must fold to nothing.
     const PERSISTENT = {
         '/buff_uniques/guild_damage': { typeHrid: '/buff_types/damage', ratioBoost: 0.03 },
         '/buff_uniques/labyrinth_combat_damage': { typeHrid: '/buff_types/damage', ratioBoost: 0.12 },
     };
 
-    test('the observed double count: persistent ratios present at start fold to nothing', () => {
-        const sim = { rangedAccuracyRating: 900, rangedMaxDamage: 895.13 };
-        // Live map == start map: nothing changed during the fight
-        const out = foldOffenseBuffs(sim, { ...PERSISTENT }, 'ranged', { ...PERSISTENT });
-        expect(out).toBe(sim); // 895 compares to 895, not 1029
-    });
-
-    test('without a start map the whole live map still folds (the fallback)', () => {
-        const sim = { rangedAccuracyRating: 900, rangedMaxDamage: 895.13 };
-        const out = foldOffenseBuffs(sim, { ...PERSISTENT }, 'ranged');
-        expect(out.rangedMaxDamage).toBeCloseTo(895.13 * 1.15, 2); // the old behavior, documented
-    });
-
-    test('a buff cast during the fight folds by its full ratio on top of the persistents', () => {
-        const sim = { smashAccuracyRating: 507, smashMaxDamage: 380 };
+    test('a buff cast during the fight folds by its full ratio', () => {
         const live = {
             ...PERSISTENT,
             '/buff_uniques/precision': { typeHrid: '/buff_types/accuracy', ratioBoost: 0.684 },
         };
-        const out = foldOffenseBuffs(sim, live, 'smash', { ...PERSISTENT });
-        expect(out.smashAccuracyRating).toBeCloseTo(507 * 1.684, 5); // precision alone
-        expect(out.smashMaxDamage).toBe(380); // persistent damage ratios untouched
+        const plan = planBuffFold(live, { ...PERSISTENT });
+        const accuracy = plan.buffs['/buff_uniques/toolasha_fold/accuracy'];
+        expect(accuracy.ratioBoost).toBeCloseTo(0.684, 6);
+        expect(accuracy.typeHrid).toBe('/buff_types/accuracy');
+        expect(plan.folded).toEqual(['precision']);
+        expect(plan.inBuild).toEqual(['guild damage', 'labyrinth combat damage']);
     });
 
-    test('a shred that landed mid-fight folds the sim column down, never up', () => {
-        const sim = { smashAccuracyRating: 507, smashMaxDamage: 380 };
+    test('persistent ratios present at fight start fold to nothing', () => {
+        const plan = planBuffFold({ ...PERSISTENT }, { ...PERSISTENT });
+        expect(Object.keys(plan.buffs)).toEqual([]);
+        expect(plan.folded).toEqual([]);
+    });
+
+    test('every stat group folds, not just offense', () => {
         const live = {
-            ...PERSISTENT,
-            '/buff_uniques/crippling': { typeHrid: '/buff_types/damage', ratioBoost: -0.234 },
+            '/buff_uniques/toughness': { typeHrid: '/buff_types/armor', ratioBoost: 0.5 },
+            '/buff_uniques/elusiveness': { typeHrid: '/buff_types/evasion', ratioBoost: 0.27 },
+            '/buff_uniques/vitality': { typeHrid: '/buff_types/max_hitpoints', ratioBoost: 0.1 },
+            '/buff_uniques/aqua_shield': { typeHrid: '/buff_types/water_resistance', ratioBoost: 0.56 },
         };
-        const out = foldOffenseBuffs(sim, live, 'smash', { ...PERSISTENT });
-        // The sim rating carries ×1.15 inside (the persistents); the live state
-        // is ×(1 + 0.15 − 0.234). The fold is the ratio of the two.
-        expect(out.smashMaxDamage).toBeCloseTo((380 * (1 + 0.15 - 0.234)) / 1.15, 5);
+        const plan = planBuffFold(live, {});
+        expect(plan.buffs['/buff_uniques/toolasha_fold/armor'].ratioBoost).toBeCloseTo(0.5, 6);
+        expect(plan.buffs['/buff_uniques/toolasha_fold/evasion'].ratioBoost).toBeCloseTo(0.27, 6);
+        expect(plan.buffs['/buff_uniques/toolasha_fold/max_hitpoints'].ratioBoost).toBeCloseTo(0.1, 6);
+        expect(plan.buffs['/buff_uniques/toolasha_fold/water_resistance'].ratioBoost).toBeCloseTo(0.56, 6);
     });
 
-    test('a buff that expired since the start divides its factor out — the sim still has it', () => {
-        const sim = { magicAccuracyRating: 150, magicMaxDamage: 50 };
+    test('boosts of one type sum, the way the engine sums them', () => {
+        const live = {
+            a: { typeHrid: '/buff_types/accuracy', ratioBoost: 0.3, flatBoost: 5 },
+            b: { typeHrid: '/buff_types/accuracy', ratioBoost: 0.1, flatBoost: 2 },
+        };
+        const plan = planBuffFold(live, {});
+        expect(plan.buffs['/buff_uniques/toolasha_fold/accuracy'].ratioBoost).toBeCloseTo(0.4, 6);
+        expect(plan.buffs['/buff_uniques/toolasha_fold/accuracy'].flatBoost).toBeCloseTo(7, 6);
+    });
+
+    test('a buff that expired since fight start folds out negatively', () => {
         const start = { '/buff_uniques/opening_surge': { typeHrid: '/buff_types/accuracy', ratioBoost: 0.5 } };
-        const out = foldOffenseBuffs(sim, {}, 'magic', start);
-        // The sim rating includes ×1.5; removing the spent buff divides, not
-        // subtracts — the engine composes multiplicatively
-        expect(out.magicAccuracyRating).toBeCloseTo(150 / 1.5, 5);
+        const plan = planBuffFold({}, start);
+        expect(plan.buffs['/buff_uniques/toolasha_fold/accuracy'].ratioBoost).toBeCloseTo(-0.5, 6);
     });
 
-    test('a stack that grew folds only the growth, as a ratio', () => {
-        const sim = { magicAccuracyRating: 100, magicMaxDamage: 55 };
+    test('a stack that grew folds only the growth', () => {
         const start = { '/buff_uniques/stacking': { typeHrid: '/buff_types/damage', ratioBoost: 0.1 } };
         const live = { '/buff_uniques/stacking': { typeHrid: '/buff_types/damage', ratioBoost: 0.3 } };
-        const out = foldOffenseBuffs(sim, live, 'magic', start);
-        expect(out.magicMaxDamage).toBeCloseTo((55 * 1.3) / 1.1, 5);
+        const plan = planBuffFold(live, start);
+        expect(plan.buffs['/buff_uniques/toolasha_fold/damage'].ratioBoost).toBeCloseTo(0.2, 6);
+        expect(plan.folded).toEqual(['stacking']);
+    });
+
+    test('a buff type the engine has no term for is named, never silently dropped', () => {
+        const live = {
+            '/buff_uniques/mystery_ward': { typeHrid: '/buff_types/mystery', ratioBoost: 0.9 },
+            '/buff_uniques/precision': { typeHrid: '/buff_types/accuracy', ratioBoost: 0.5 },
+        };
+        const plan = planBuffFold(live, {});
+        expect(plan.notModelled).toEqual(['mystery ward']);
+        expect(plan.folded).toEqual(['precision']);
+        expect(plan.buffs['/buff_uniques/toolasha_fold/mystery']).toBeUndefined();
+    });
+
+    test('without a fight-start map the whole live map folds, and it says so', () => {
+        const plan = planBuffFold({ ...PERSISTENT });
+        expect(plan.hasStartMap).toBe(false);
+        expect(plan.buffs['/buff_uniques/toolasha_fold/damage'].ratioBoost).toBeCloseTo(0.15, 6);
+
+        expect(planBuffFold({}, {}).hasStartMap).toBe(true);
+    });
+
+    test('no buffs at all plans nothing', () => {
+        const plan = planBuffFold({}, {});
+        expect(plan.buffs).toEqual({});
+        expect(plan.folded).toEqual([]);
+        expect(plan.notModelled).toEqual([]);
     });
 });
 
-describe('offenseRatioBoosts', () => {
-    test('sums each offense boost into its own bucket', () => {
-        const b = offenseRatioBoosts({
-            a: { typeHrid: '/buff_types/accuracy', ratioBoost: 0.3 },
-            b: { typeHrid: '/buff_types/accuracy', ratioBoost: 0.1 },
-            c: { typeHrid: '/buff_types/damage', ratioBoost: -0.2 },
-            d: { typeHrid: '/buff_types/max_hitpoints', ratioBoost: 0.02 },
-        });
-        expect(b.accuracy).toBeCloseTo(0.4, 5);
-        expect(b.damage).toBeCloseTo(-0.2, 5);
-        expect(b.furyAccuracy).toBe(0);
+describe('simPlayerLabel — which player the sim was built from', () => {
+    test('a zone names the zone, its tier and the consumables', () => {
+        expect(simPlayerLabel({ source: 'zone', zoneName: 'Twilight Zone', tier: 5 })).toBe(
+            'Sim player: your current build · Twilight Zone (T5) · food & drinks on · zone buffs'
+        );
+    });
+
+    test('the labyrinth names the loadout and what the lab adds and forbids', () => {
+        expect(simPlayerLabel({ source: 'labyrinth', loadoutName: 'Lab magic' })).toBe(
+            'Sim player: labyrinth setup · loadout Lab magic · lab token buffs · crates · no food/drink'
+        );
+    });
+
+    test('a guild trial names the tier', () => {
+        expect(simPlayerLabel({ source: 'trial', tier: 8 })).toBe('Sim player: your current build · Guild trial T8');
+    });
+
+    test('an unknown source produces nothing rather than a wrong claim', () => {
+        expect(simPlayerLabel(null)).toBe('');
+        expect(simPlayerLabel({})).toBe('');
     });
 });
 

@@ -34,6 +34,7 @@ onmessage = function (event) {
             isTaskFight,
             captureBuffs,
             capturePlayerDetails,
+            playerCombatBuffs,
         } = event.data;
 
         // Set game data for the engine singleton
@@ -100,7 +101,10 @@ onmessage = function (event) {
         // buffs the engine applied to the monster on its own (for the
         // monster-stat-check "does the sim even produce these effects" diagnostic).
         if (captureBuffs) setBuffCapture(true);
-        if (capturePlayerDetails) setPlayerDetailsCapture(true);
+        // With a fold map the player-build capture also snapshots the player
+        // carrying your live combat buffs, so the panel can compare buffed
+        // against buffed instead of showing every self-buff as a gap.
+        if (capturePlayerDetails) setPlayerDetailsCapture(true, playerCombatBuffs || null);
 
         // Run simulation
         const simResult = combatSimulator.simulate(simulationTimeLimit, precision);

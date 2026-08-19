@@ -30,6 +30,14 @@ import { DISCARD_LEGACY } from './labyrinth-outcomes.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 
 /**
+ * The zone a probe fight nominally happens in when the real one is not a zone.
+ * The engine needs a Zone to construct a SimResult; the labyrinth has always
+ * borrowed this one, and a guild trial borrows it for the same reason — the
+ * monster comes from the labyrinth block, not from the zone's spawn table.
+ */
+const TRIAL_PROBE_ZONE = '/actions/combat/fly';
+
+/**
  * The monster's ability hrids that deal no damage — its self-buffs and debuffs.
  * The uptime harness counts their casts but must not credit them incoming
  * damage: they take a turn but land no hit, and queueing one lets the next real
@@ -286,11 +294,33 @@ export const simCacheMethods = {
      * lab loadout's armor) — a comparison against the wrong player entirely.
      *
      * @param {string} monsterHrid
-     * @param {{zone?: {hrid: string, tier: number}}|null} context - A zone
-     *   fight, or null for the labyrinth
+     * @param {{zone?: {hrid: string, tier: number}, trial?: {tier: number}}|null} context -
+     *   A zone fight, a guild trial, or null for the labyrinth
      * @returns {{dto: Object, zoneHrid: string, crates: Array, labyrinthCombatBuffs: Array, zone: Object|null}|null}
      */
     probeSetup(monsterHrid, context = null) {
+        const trialTier = Number(context?.trial?.tier) || 0;
+        if (trialTier > 0) {
+            const dto = buildPlayerDTO();
+            if (!dto) return null;
+            // A guild trial replaces food and drinks with a flat regeneration
+            // (the in-game guide, transcribed in guild-trials-math.js), so a
+            // probe that fed the character their pantry would build a player
+            // the trial never sees. The rest is the character as they stand:
+            // no lab loadout, no crates, no lab token buffs.
+            const dry = {
+                ...dto,
+                food: (dto.food || []).map(() => null),
+                drinks: (dto.drinks || []).map(() => null),
+            };
+            return {
+                dto: dry,
+                zoneHrid: TRIAL_PROBE_ZONE,
+                crates: [],
+                labyrinthCombatBuffs: [],
+                zone: { hrid: TRIAL_PROBE_ZONE, tier: 0 },
+            };
+        }
         const zone = context?.zone?.hrid ? { hrid: context.zone.hrid, tier: Number(context.zone.tier) || 0 } : null;
         if (zone) {
             const dto = buildPlayerDTO();
@@ -310,18 +340,54 @@ export const simCacheMethods = {
     },
 
     /**
+     * Which player a probe for this monster would be built from, in words a
+     * panel can print and an export can carry. Mirrors `probeSetup` exactly —
+     * same context, same branch — so the label can never claim one build while
+     * the probe ran another.
+     * @param {string} monsterHrid
+     * @param {{zone?: {hrid: string, tier: number}, trial?: {tier: number}}|null} context
+     * @returns {{source: 'zone'|'labyrinth'|'trial', zoneHrid: string|null, zoneName: string|null,
+     *   tier: number, loadoutName: string|null}}
+     */
+    probeSource(monsterHrid, context = null) {
+        const trialTier = Number(context?.trial?.tier) || 0;
+        if (trialTier > 0) {
+            return { source: 'trial', zoneHrid: null, zoneName: null, tier: trialTier, loadoutName: null };
+        }
+        const zone = context?.zone?.hrid ? { hrid: context.zone.hrid, tier: Number(context.zone.tier) || 0 } : null;
+        if (zone) {
+            const name = dataManager.getInitClientData()?.actionDetailMap?.[zone.hrid]?.name || null;
+            return { source: 'zone', zoneHrid: zone.hrid, zoneName: name, tier: zone.tier, loadoutName: null };
+        }
+        const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
+        const snapshot = loadoutSnapshot.snapshots?.[loadoutId];
+        return {
+            source: 'labyrinth',
+            zoneHrid: null,
+            zoneName: null,
+            tier: 0,
+            loadoutName: snapshot?.name || (loadoutId != null ? `Loadout #${loadoutId}` : null),
+        };
+    },
+
+    /**
      * Build the sim's player for the current loadout and return its resolved
      * combatDetails at fight start — for the "player build" stat check. Room
      * level does not affect the player, but a monster is needed to run the fight.
      * @param {string} monsterHrid
      * @param {number} roomLevel
-     * @returns {Promise<Object|null>} The sim player's combatDetails
+     * @param {Object|null} context - The probe context (zone, or null for the lab)
+     * @param {Object|null} [playerCombatBuffs] - Combat buffs to fold onto the
+     *   sim player before its stats resolve, so the panel can compare your
+     *   live buffed sheet against a sim carrying the same effects
+     * @returns {Promise<{base: Object, buffed: Object|null}|null>}
      */
-    async simPlayerDetails(monsterHrid, roomLevel, context = null) {
+    async simPlayerDetails(monsterHrid, roomLevel, context = null, playerCombatBuffs = null) {
         const setup = this.probeSetup(monsterHrid, context);
         if (!setup) return null;
         try {
             return await runPlayerStatProbe({
+                playerCombatBuffs,
                 gameData: buildGameDataPayload(),
                 playerDTOs: [setup.dto],
                 zoneHrid: setup.zoneHrid,

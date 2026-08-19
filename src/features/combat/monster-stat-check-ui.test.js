@@ -17,11 +17,22 @@ const clearRate = vi.hoisted(() => ({
     fingerprint: 'fp-now',
     probeResults: [],
     probeCalls: 0,
+    playerProbeCalls: [],
+    playerProbeResult: null,
     harnessCalls: [],
     harnessResult: null,
 }));
 /** Mutable state behind the tick-capture mock, reset per test. */
 const tickCapture = vi.hoisted(() => ({ file: { ticks: [] }, started: [] }));
+/** What the game says it is doing, for the zone/labyrinth/trial decision. */
+const world = vi.hoisted(() => ({
+    actionHrid: null,
+    header: '',
+    trialActive: false,
+    trialTier: 0,
+    participants: null,
+    baseHp: 0,
+}));
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true, onSettingChange: () => {} },
@@ -30,6 +41,26 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => 'me-id',
         getCurrentCharacterName: () => 'Benny',
+        getCurrentActions: () => (world.actionHrid ? [{ actionHrid: world.actionHrid }] : []),
+        getInitClientData: () => ({
+            actionDetailMap: { '/actions/combat/twilight_zone': { name: 'Twilight Zone' } },
+            combatMonsterDetailMap: {
+                '/monsters/trial_badger': { combatDetails: { maxHitpoints: world.baseHp } },
+            },
+        }),
+    },
+}));
+vi.mock('../guild/guild-trial-damage.js', () => ({
+    default: {
+        get active() {
+            return world.trialActive;
+        },
+        get tier() {
+            return world.trialTier;
+        },
+        get participants() {
+            return world.participants;
+        },
     },
 }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
@@ -50,10 +81,31 @@ vi.mock('../../utils/panel-minimize.js', () => ({ attachMinimize: () => {} }));
 vi.mock('../../utils/csv-export.js', () => ({ downloadFile: () => {} }));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({ buildGameDataPayload: () => ({}) }));
 vi.mock('../combat-sim/engine/game-data.js', () => ({ setGameData: () => {} }));
-vi.mock('../combat-sim/engine/monster.js', () => ({ default: class {} }));
+vi.mock('../combat-sim/engine/monster.js', () => ({
+    default: class {
+        combatDetails = {};
+        updateCombatDetails() {}
+    },
+}));
 vi.mock('./labyrinth-clear-rate.js', () => ({
     default: {
-        simPlayerDetails: async () => null,
+        inLabyrinthFight: () => /labyrinth/i.test(world.header),
+        probeSource: (_hrid, context) => {
+            if (context?.trial?.tier) return { source: 'trial', tier: context.trial.tier };
+            if (context?.zone?.hrid) {
+                return {
+                    source: 'zone',
+                    zoneHrid: context.zone.hrid,
+                    zoneName: 'Twilight Zone',
+                    tier: context.zone.tier,
+                };
+            }
+            return { source: 'labyrinth', loadoutName: 'Lab magic' };
+        },
+        simPlayerDetails: async (...args) => {
+            clearRate.playerProbeCalls.push(args);
+            return clearRate.playerProbeResult;
+        },
         _snapshotContentFingerprint: () => clearRate.fingerprint,
         blindBuffProbe: async () => {
             const result = clearRate.probeResults[clearRate.probeCalls] ?? { produced: [], ran: true };
@@ -91,6 +143,17 @@ beforeEach(() => {
     clearRate.fingerprint = 'fp-now';
     clearRate.probeResults = [];
     clearRate.probeCalls = 0;
+    clearRate.playerProbeCalls = [];
+    clearRate.playerProbeResult = null;
+    world.actionHrid = null;
+    world.header = '';
+    world.trialActive = false;
+    world.trialTier = 0;
+    world.participants = null;
+    world.baseHp = 0;
+    panel.playerCheck = null;
+    panel.lastPlayerUnit = null;
+    panel.foldMode = 'folded';
     clearRate.harnessCalls = [];
     clearRate.harnessResult = null;
     tickCapture.file = { ticks: [] };
@@ -234,5 +297,197 @@ describe('the fight-start buff snapshot', () => {
         panel.fightStartBuffMap = { '/b/old': {} };
         panel.noteBattleStart({ players: [{ character: { id: 'me-id' }, name: 'Benny' }] });
         expect(panel.fightStartBuffMap).toBeNull();
+    });
+});
+
+describe('where the clicked unit was met', () => {
+    beforeEach(() => panel._ensureBuilt());
+
+    /** A fetched unit, minimal but shaped like the real payload. */
+    function unit(extra = {}) {
+        return {
+            hrid: '/monsters/vampire',
+            name: 'Vampire',
+            difficultyTier: 0,
+            combatDetails: { combatStats: { combatStyleHrid: '/combat_styles/smash' } },
+            combatBuffMap: {},
+            ...extra,
+        };
+    }
+
+    test('a zone monster in a zone resolves to that zone at its tier', () => {
+        world.actionHrid = '/actions/combat/twilight_zone';
+        panel.showFor(unit({ difficultyTier: 5 }));
+
+        expect(panel.last.zone).toEqual({ hrid: '/actions/combat/twilight_zone', tier: 5 });
+        expect(panel.last.trial).toBeNull();
+    });
+
+    test('a labyrinth monster resolves to the labyrinth', () => {
+        world.header = 'Labyrinth - Room 206';
+        world.actionHrid = '/actions/combat/labyrinth';
+        panel.showFor(unit());
+
+        expect(panel.last.zone).toBeNull();
+        expect(panel.last.trial).toBeNull();
+    });
+
+    test('a tiered unit is never a labyrinth monster, even while the header says Labyrinth', () => {
+        // A paused lab run leaves the header naming the labyrinth while a zone
+        // fight is what is actually on screen.
+        world.header = 'Labyrinth - Room 206';
+        world.actionHrid = '/actions/combat/twilight_zone';
+        panel.showFor(unit({ difficultyTier: 5 }));
+
+        expect(panel.last.zone).toEqual({ hrid: '/actions/combat/twilight_zone', tier: 5 });
+    });
+
+    test('a trial boss resolves to the trial, never to the zone or the lab', () => {
+        world.trialActive = true;
+        world.trialTier = 8;
+        world.header = 'Labyrinth - Room 206';
+        world.actionHrid = '/actions/combat/twilight_zone';
+        panel.showFor(unit({ hrid: '/monsters/trial_badger', name: 'Trial Badger', difficultyTier: 0 }));
+
+        expect(panel.last.trial).toEqual({ tier: 8 });
+        expect(panel.last.zone).toBeNull();
+    });
+
+    test('a trial boss with no live tier reads it back out of its combat level', () => {
+        // T1 is Lv.100 and each tier is ten levels, so Lv.170 is T8.
+        panel.showFor(
+            unit({
+                hrid: '/monsters/trial_badger',
+                name: 'Trial Badger',
+                combatDetails: { combatLevel: 170, combatStats: { combatStyleHrid: '/combat_styles/slash' } },
+            })
+        );
+
+        expect(panel.last.trial).toEqual({ tier: 8 });
+    });
+
+    test('the trial health ladder is derived; the rest is left unmodelled', () => {
+        world.trialActive = true;
+        world.trialTier = 1;
+        world.participants = 30;
+        world.baseHp = 330000;
+        panel.showFor(
+            unit({
+                hrid: '/monsters/trial_badger',
+                name: 'Trial Badger',
+                combatDetails: { maxHitpoints: 429000, combatStats: { combatStyleHrid: '/combat_styles/slash' } },
+            })
+        );
+
+        const rows = panel.last.buffed.groups.flatMap((g) => g.rows);
+        // 330,000 × 110/110 × 1.30 = 429,000 — the observed T1 sheet
+        expect(rows.find((r) => r.key === 'maxHitpoints').sim).toBeCloseTo(429000, 0);
+        expect(rows.find((r) => r.key === 'maxHitpoints').verdict).toBe('match');
+        // Nothing else has a tier law, so nothing else is claimed
+        expect(rows.find((r) => r.key === 'totalArmor').sim).toBeNull();
+        expect(panel.last.hasMismatch).toBe(false);
+    });
+
+    test('the blind probe and the uptime harness refuse a trial boss instead of inventing one', async () => {
+        world.trialActive = true;
+        world.trialTier = 3;
+        panel.showFor(unit({ hrid: '/monsters/trial_badger', name: 'Trial Badger' }));
+
+        await panel._runBlindSim();
+        await panel._runUptimeHarness();
+
+        expect(clearRate.probeCalls).toBe(0);
+        expect(clearRate.harnessCalls).toHaveLength(0);
+        expect(panel.displayed.blind.notModelled).toBe(true);
+        expect(panel.displayed.uptime.notModelled).toBe(true);
+    });
+});
+
+describe('the player build check', () => {
+    beforeEach(() => panel._ensureBuilt());
+
+    /** Your live sheet mid-fight, with a self-buff up. */
+    const YOU = {
+        isPlayer: true,
+        combatDetails: {
+            maxHitpoints: 1000,
+            totalArmor: 150,
+            smashAccuracyRating: 853,
+            combatStats: { combatStyleHrid: '/combat_styles/smash' },
+        },
+        combatBuffMap: {
+            '/buff_uniques/toughness': { typeHrid: '/buff_types/armor', ratioBoost: 0.5 },
+            '/buff_uniques/mystery_ward': { typeHrid: '/buff_types/mystery', ratioBoost: 0.9 },
+        },
+    };
+
+    test('the live buff map is handed to the probe as a per-type fold, and the section names the source', async () => {
+        world.actionHrid = '/actions/combat/twilight_zone';
+        panel.showFor({
+            hrid: '/monsters/vampire',
+            name: 'Vampire',
+            difficultyTier: 5,
+            combatDetails: { combatStats: { combatStyleHrid: '/combat_styles/smash' } },
+            combatBuffMap: {},
+        });
+        panel.noteChar(YOU);
+        panel.fightStartBuffMap = {};
+        clearRate.playerProbeResult = {
+            base: { totalArmor: 100, combatStats: {} },
+            buffed: { totalArmor: 150, combatStats: {} },
+        };
+
+        await panel._runPlayerCheck();
+
+        const [, , context, foldBuffs] = clearRate.playerProbeCalls[0];
+        expect(context).toEqual({ zone: { hrid: '/actions/combat/twilight_zone', tier: 5 } });
+        expect(foldBuffs['/buff_uniques/toolasha_fold/armor'].ratioBoost).toBeCloseTo(0.5, 6);
+        // The buff the engine has no term for is named, not dropped
+        expect(panel.playerCheck.fold.notModelled).toEqual(['mystery ward']);
+        expect(panel.playerCheck.fold.folded).toEqual(['toughness']);
+        expect(panel.playerCheck.source.source).toBe('zone');
+    });
+
+    test('folded compares buffed against buffed; raw keeps the gap visible', async () => {
+        world.actionHrid = '/actions/combat/twilight_zone';
+        panel.showFor({
+            hrid: '/monsters/vampire',
+            name: 'Vampire',
+            difficultyTier: 5,
+            combatDetails: { combatStats: { combatStyleHrid: '/combat_styles/smash' } },
+            combatBuffMap: {},
+        });
+        panel.noteChar(YOU);
+        panel.fightStartBuffMap = {};
+        clearRate.playerProbeResult = {
+            base: { totalArmor: 100, combatStats: {} },
+            buffed: { totalArmor: 150, combatStats: {} },
+        };
+
+        await panel._runPlayerCheck();
+
+        const armorOf = (view) => view.groups.flatMap((g) => g.rows).find((r) => r.key === 'totalArmor');
+        expect(armorOf(panel.playerCheck.folded).sim).toBe(150);
+        expect(armorOf(panel.playerCheck.folded).verdict).toBe('match');
+        expect(armorOf(panel.playerCheck.raw).sim).toBe(100);
+        expect(armorOf(panel.playerCheck.raw).deltaPct).toBeCloseTo(50, 5);
+
+        // The toggle picks which one the panel shows and the text carries
+        expect(panel._playerView()).toBe(panel.playerCheck.folded);
+        panel._toggleFoldMode();
+        expect(panel._playerView()).toBe(panel.playerCheck.raw);
+        expect(panel._playerBuildText()).toContain('raw sim build');
+    });
+
+    test('the labyrinth source names the loadout', async () => {
+        world.header = 'Labyrinth - Room 206';
+        panel.displayed = snap({});
+        panel.noteChar(YOU);
+        clearRate.playerProbeResult = { base: { combatStats: {} }, buffed: { combatStats: {} } };
+
+        await panel._runPlayerCheck();
+
+        expect(clearRate.playerProbeCalls[0][2]).toBeNull();
+        expect(panel.playerCheck.source).toEqual({ source: 'labyrinth', loadoutName: 'Lab magic' });
     });
 });

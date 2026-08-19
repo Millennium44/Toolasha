@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Monster stat check folds your active buffs into the sim and names which player it simmed
+
+The "you vs sim" build check now hands your live combat buffs to the sim player before its stats resolve, so armour, resistances, evasion, accuracy, max hit and HP all compare buffed against buffed instead of showing every self-buff as a gap — with a "Fold my active buffs" toggle for the raw view, a list of exactly which buffs were folded, and a callout for any the sim has no term for. Each section now states which player the sim was built from (your current build in a zone, the labyrinth loadout in the lab, your build at the trial tier in a guild trial), and the export carries it. Guild trial bosses are recognised as their own context: the verified health ladder is compared, everything else is marked "trial scaling not modelled" rather than shown as a bogus mismatch.
+
 ### Combat summary ignores unit sheets instead of warning
 
 Clicking a monster or yourself mid-fight sends the same websocket message as an end-of-combat summary, so every click logged two warnings about missing loot and experience maps and then an error after ten tries hunting a battle panel that was not being drawn. The summary now recognises a unit sheet and drops it silently; real end-of-session summaries are unchanged.

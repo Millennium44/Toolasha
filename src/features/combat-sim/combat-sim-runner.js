@@ -631,8 +631,14 @@ export async function runBlindBuffProbe(params) {
  * (persistent buffs folded, no transient combat buff) — for the monster-stat-
  * check "player build" diagnostic. Same worker path as a normal sim.
  *
- * @param {Object} params - Same shape as `runLabyrinthSimulation` params
- * @returns {Promise<Object|null>} The player's `combatDetails`, or null
+ * With `playerCombatBuffs` the probe also returns a second build with those
+ * buffs applied by the engine, so the panel can compare your live mid-fight
+ * sheet against a sim player carrying the same effects.
+ *
+ * @param {Object} params - Same shape as `runLabyrinthSimulation` params, plus
+ *   an optional `playerCombatBuffs` map in the engine's buff shape
+ * @returns {Promise<{base: Object, buffed: Object|null}|null>} The player's
+ *   `combatDetails` unbuffed and (when asked) buffed, or null
  */
 export async function runPlayerStatProbe(params) {
     const {
@@ -645,6 +651,7 @@ export async function runPlayerStatProbe(params) {
         communityBuffs,
         labyrinthCombatBuffs,
         zone,
+        playerCombatBuffs,
     } = params;
     const extraBuffs = [...buildExtraBuffs(communityBuffs), ...(labyrinthCombatBuffs || [])];
     const taskId = ++taskIdCounter;
@@ -659,6 +666,7 @@ export async function runPlayerStatProbe(params) {
         extraBuffs,
         isTaskFight: false,
         capturePlayerDetails: true,
+        playerCombatBuffs: playerCombatBuffs || null,
         labyrinth: {
             monsterHrid,
             roomLevel,

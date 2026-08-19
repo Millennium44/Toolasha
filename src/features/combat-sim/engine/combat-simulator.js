@@ -35,15 +35,57 @@ import Ability from './ability.js';
 // persistent buffs (teas/community/guild/house) and before any transient combat
 // buff accumulates.
 let CAPTURE_PLAYER_DETAILS = false;
+let CAPTURE_PLAYER_FOLD_BUFFS = null;
 let capturedPlayerDetails = null;
-/** @param {boolean} on - Start (fresh) or stop capturing the sim player build. */
-export function setPlayerDetailsCapture(on) {
+/**
+ * Start (fresh) or stop capturing the sim player build.
+ * @param {boolean} on - Whether to capture
+ * @param {Object|null} [foldBuffs] - Combat buffs to apply to the player before
+ *   the second snapshot is taken, in the engine's buff shape keyed by unique
+ *   hrid. The panel's "fold my active buffs" hands over the delta between your
+ *   live buffs and the ones the fight opened with, so the sim column carries
+ *   the same Toughness/Precision/evasion effects your live sheet does and every
+ *   stat group compares like for like.
+ */
+export function setPlayerDetailsCapture(on, foldBuffs = null) {
     CAPTURE_PLAYER_DETAILS = Boolean(on);
+    CAPTURE_PLAYER_FOLD_BUFFS = on && foldBuffs && Object.keys(foldBuffs).length ? foldBuffs : null;
     capturedPlayerDetails = null;
 }
-/** @returns {Object|null} The sim player's resolved combatDetails at fight start. */
+/**
+ * @returns {{base: Object, buffed: Object|null}|null} The sim player's resolved
+ *   combatDetails at fight start, unbuffed and (when fold buffs were supplied)
+ *   with them applied.
+ */
 export function getCapturedPlayerDetails() {
     return capturedPlayerDetails;
+}
+
+/**
+ * Snapshot a player's resolved build, and — with fold buffs supplied — a second
+ * copy with those buffs applied the way the engine applies any buff: written
+ * into `combatBuffs`, then `updateCombatDetails()`. That is the whole point of
+ * doing it here rather than post-hoc on the main thread; every stat the engine
+ * derives (armour, resistances, evasion, accuracy, max hit, max HP) picks the
+ * buffs up by the engine's own formula rather than a reimplementation of it.
+ *
+ * The player is put back as it was afterwards, so the probe fight this runs
+ * inside is unchanged. The compared stats are all plain assignments in
+ * `updateCombatDetails`, so the extra passes cannot accumulate into them.
+ *
+ * @param {Object} player - The sim player
+ * @returns {{base: Object, buffed: Object|null}}
+ */
+function snapshotPlayerBuild(player) {
+    const base = structuredClone(player.combatDetails);
+    if (!CAPTURE_PLAYER_FOLD_BUFFS) return { base, buffed: null };
+    const saved = player.combatBuffs;
+    player.combatBuffs = { ...saved, ...CAPTURE_PLAYER_FOLD_BUFFS };
+    player.updateCombatDetails();
+    const buffed = structuredClone(player.combatDetails);
+    player.combatBuffs = saved;
+    player.updateCombatDetails();
+    return { base, buffed };
 }
 
 const ONE_SECOND = 1e9;
@@ -404,7 +446,7 @@ class CombatSimulator {
         // The one faithful moment to read the sim player's build: persistent buffs
         // folded, no transient combat buff yet. Snapshot once.
         if (CAPTURE_PLAYER_DETAILS && !capturedPlayerDetails && this.players[0]) {
-            capturedPlayerDetails = structuredClone(this.players[0].combatDetails);
+            capturedPlayerDetails = snapshotPlayerBuild(this.players[0]);
         }
 
         const regenTickEvent = new RegenTickEvent(this.simulationTime + REGEN_TICK_INTERVAL);

@@ -29,11 +29,15 @@ import {
     compareBuffProduction,
     buffSignature,
     buffedStatKeys,
-    foldOffenseBuffs,
+    planBuffFold,
+    simPlayerLabel,
     combatEffectNames,
     styleKeyOf,
     unionProducedBuffs,
 } from './monster-stat-check.js';
+import guildTrialDamage from '../guild/guild-trial-damage.js';
+import { tierFromLevel } from '../guild/guild-trials-math.js';
+import { tierMonsterHp } from '../guild/guild-trial-forecast.js';
 import { describeFights, MIN_REAL_CASTS } from './labyrinth-uptime-harness.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import labyrinthClearRate from './labyrinth-clear-rate.js';
@@ -83,6 +87,17 @@ const UPTIME_TITLE = {
     buff: 'non-damaging buff — not in the damage tally; verify via blind probe',
     inconclusive: `fewer than ${MIN_REAL_CASTS} real casts — too few to grade`,
 };
+
+/**
+ * Why a guild trial boss gets no sim column beyond its health.
+ *
+ * The trial's health ladder is derived and verified here; its armour,
+ * resistances, evasion, accuracy and max hit have no known per-tier law, and
+ * the sim's own `difficultyTier` scaling is a different law that would invent
+ * numbers if it were pointed at a trial tier.
+ */
+const TRIAL_NOT_MODELLED =
+    'Trial scaling not modelled — only the health ladder is derived; the boss’s other ratings have no known tier law.';
 
 const SETTING_KEY = 'labyrinthMonsterStatCheck';
 const PANEL_ID = 'toolasha-monster-stat-check';
@@ -168,34 +183,121 @@ function buildSimMonster(gameUnit, applyBuffs) {
 }
 
 /**
- * Whether the unit on screen belongs to a regular combat zone rather than a
- * labyrinth room, and which zone at which tier.
+ * Whether the fetched unit is a guild trial boss.
  *
- * The header names the action ("Labyrinth - …" or the zone); a zone unit
- * also carries its difficulty tier, which a labyrinth unit never does.
+ * A trial boss arrives on the same message as any other unit and reports
+ * `difficultyTier: 0`, exactly like a labyrinth monster — so the tier field
+ * cannot separate them. What can: the trial monsters live under
+ * `/monsters/trial_*` and are named "Trial …", and while a trial is being
+ * watched the damage module knows a trial battle is open (which is what catches
+ * the Trial Swarm, whose four component monsters are named individually).
+ *
  * @param {Object} gameUnit - The fetched unit
- * @returns {{hrid: string, tier: number}|null} The zone, or null for the labyrinth
+ * @returns {boolean}
  */
-function zoneContextFor(gameUnit) {
+function isTrialUnit(gameUnit) {
+    const hrid = String(gameUnit?.hrid || '');
+    const name = String(gameUnit?.name || '');
+    if (/^\/monsters\/trial_/.test(hrid) || /\btrial\b/i.test(name)) return true;
+    // Read straight off the module rather than through `breakdown()`, which
+    // rebuilds the whole damage split to answer three fields.
+    return Boolean(guildTrialDamage?.active);
+}
+
+/**
+ * The trial tier a boss is being fought at.
+ *
+ * The wire states it on `new_guild_battle`/`guild_battle_updated`, which the
+ * damage module keeps; a bare `battle_unit_fetched` carries no tier at all, so
+ * the fallback reads it back out of the boss's own combat level (T1 is Lv.100
+ * and each tier is ten levels).
+ *
+ * @param {Object} gameUnit - The fetched unit
+ * @returns {number} The tier, or 0 when it cannot be told
+ */
+function trialTierFor(gameUnit) {
+    const stated = Number(guildTrialDamage?.tier) || 0;
+    if (stated > 0) return stated;
+    const level = Number(gameUnit?.combatDetails?.combatLevel) || 0;
+    return level > 0 ? Number(tierFromLevel(level)) || 0 : 0;
+}
+
+/**
+ * Where this unit was met: a guild trial, a regular combat zone, or a labyrinth
+ * room. The three build genuinely different players and monsters, so the
+ * decision has to be right before anything else runs.
+ *
+ * The order matters. A trial boss is checked first because it looks like a
+ * labyrinth monster on every field the other two branches read. Then the tier:
+ * **a tiered unit is never a labyrinth monster** — the labyrinth runs
+ * everything at tier 0 — so a zone fight opened while a labyrinth run sits
+ * paused (the header still says "Labyrinth") resolves as the zone it is.
+ * Only an untiered unit falls back to the header, which is the same reading
+ * `labyrinthClearRate.inLabyrinthFight()` takes.
+ *
+ * @param {Object} gameUnit - The fetched unit
+ * @returns {{trial: {tier: number}}|{zone: {hrid: string, tier: number}}|null}
+ *   The context, or null for the labyrinth
+ */
+function contextFor(gameUnit) {
     try {
-        const header = document.querySelector("div[class*='Header_actionName']")?.textContent || '';
-        if (/labyrinth/i.test(header)) return null;
+        if (isTrialUnit(gameUnit)) return { trial: { tier: trialTierFor(gameUnit) } };
+        const tier = Number(gameUnit?.difficultyTier) || 0;
         const action = (dataManager.getCurrentActions?.() || [])[0];
         const hrid = action?.actionHrid || null;
-        if (!hrid || !/\/actions\/combat\//.test(hrid) || /labyrinth/i.test(hrid)) return null;
-        return { hrid, tier: Number(gameUnit?.difficultyTier) || 0 };
+        const zoneHrid = hrid && /\/actions\/combat\//.test(hrid) && !/labyrinth/i.test(hrid) ? hrid : null;
+        if (tier > 0) return zoneHrid ? { zone: { hrid: zoneHrid, tier } } : null;
+        if (labyrinthClearRate.inLabyrinthFight()) return null;
+        return zoneHrid ? { zone: { hrid: zoneHrid, tier } } : null;
     } catch {
         return null;
     }
 }
 
 /**
- * The probe context a stored snapshot carries: a zone fight, or the labyrinth.
+ * The probe context a stored snapshot carries: a guild trial, a zone fight, or
+ * the labyrinth.
  * @param {Object} snap - A panel snapshot
- * @returns {{zone: {hrid: string, tier: number}}|null}
+ * @returns {Object|null}
  */
 function probeContext(snap) {
+    if (snap?.trial?.tier) return { trial: snap.trial };
     return snap?.zone?.hrid ? { zone: snap.zone } : null;
+}
+
+/**
+ * What the sim can honestly say about a guild trial boss.
+ *
+ * Only one rung of the trial's scaling is derived and verified in this
+ * codebase: the health ladder, `baseHp × (10 + level) / 110 × (1 + 0.01 ×
+ * participants)` with `level = 100 + 10 × (tier − 1)` (see
+ * guild-trial-forecast.js, checked against observed T2/T3 sheets). Nothing
+ * anywhere derives a trial boss's armour, resistances, evasion, accuracy or max
+ * hit per tier — the sim's `difficultyTier` law is a different law entirely and
+ * feeding the trial tier to it would invent numbers. So this returns the one
+ * row it can stand behind and leaves the rest empty, and the panel says so
+ * rather than showing the blanks as a modelling gap.
+ *
+ * @param {Object} gameUnit - The fetched trial boss
+ * @param {number} tier - The trial tier
+ * @returns {{details: Object|null, participants: number|null}}
+ */
+function buildTrialSimDetails(gameUnit, tier) {
+    try {
+        const hrid = gameUnit?.hrid;
+        const participants = Number(guildTrialDamage?.participants);
+        const baseHp = Number(
+            dataManager.getInitClientData()?.combatMonsterDetailMap?.[hrid]?.combatDetails?.maxHitpoints
+        );
+        if (!(tier > 0) || !(baseHp > 0) || !Number.isFinite(participants)) {
+            return { details: null, participants: Number.isFinite(participants) ? participants : null };
+        }
+        const maxHitpoints = tierMonsterHp({ baseHp, tier, participants });
+        return { details: maxHitpoints ? { maxHitpoints } : null, participants };
+    } catch (error) {
+        console.error('[MonsterStatCheck] Failed to derive the trial boss health:', error);
+        return { details: null, participants: null };
+    }
 }
 
 class MonsterStatCheckPanel {
@@ -221,6 +323,13 @@ class MonsterStatCheckPanel {
         this.viewMode = 'all';
         /** 'buffed' compares with the unit's effects on the sim; 'baseline' without. */
         this.simMode = 'buffed';
+        /**
+         * Whether the player check folds your live combat buffs onto the sim
+         * player ('folded') or shows the raw fight-start build ('raw'). Folded
+         * by default — that is the like-for-like comparison — with the raw gap
+         * one click away, because the gap itself is sometimes the finding.
+         */
+        this.foldMode = 'folded';
         /** Whether the pointer is over the panel, so arrows only steer it then. */
         this.hovered = false;
         this.keyHandler = null;
@@ -274,14 +383,27 @@ class MonsterStatCheckPanel {
      * @param {Object} gameUnit
      */
     showFor(gameUnit) {
+        // Where this unit was met: a guild trial, a regular zone (with its
+        // tier), or the labyrinth. The probes build a different player for
+        // each — the character as they stand for a zone or a trial, the lab
+        // setup for a room — and a trial boss cannot be built by the sim at all
+        const context = contextFor(gameUnit);
+        const trial = context?.trial?.tier ? context.trial : null;
+
         // Build both views up front: the buffed sim (effects folded in — the
         // trustworthy like-for-like check) and the unbuffed baseline (raw sim
         // stats, so the effect the game applied is visible). The toggle then
         // switches between them, and both travel with the history entry.
-        const baseBuilt = buildSimMonster(gameUnit, false);
-        const buffedBuilt = buildSimMonster(gameUnit, true);
-        const baselineCmp = buildComparison(gameUnit, baseBuilt?.monster?.combatDetails || null, { simBuffed: false });
-        const buffedCmp = buildComparison(gameUnit, buffedBuilt?.monster?.combatDetails || null, {
+        // A trial boss skips this entirely: its tier is not the sim's tier, so
+        // building one would scale by the wrong law and report the difference
+        // as a modelling gap.
+        const trialSim = trial ? buildTrialSimDetails(gameUnit, trial.tier) : null;
+        const baseBuilt = trial ? null : buildSimMonster(gameUnit, false);
+        const buffedBuilt = trial ? null : buildSimMonster(gameUnit, true);
+        const baseDetails = trial ? trialSim.details : baseBuilt?.monster?.combatDetails || null;
+        const buffedDetails = trial ? trialSim.details : buffedBuilt?.monster?.combatDetails || null;
+        const baselineCmp = buildComparison(gameUnit, baseDetails, { simBuffed: false });
+        const buffedCmp = buildComparison(gameUnit, buffedDetails, {
             simBuffed: Boolean(buffedBuilt?.buffApplied),
         });
         this.last = {
@@ -289,11 +411,13 @@ class MonsterStatCheckPanel {
             hrid: gameUnit?.hrid,
             name: gameUnit?.name,
             roomLevel: buffedBuilt?.roomLevel ?? baseBuilt?.roomLevel ?? 0,
-            // Where this unit was met: a regular zone (with its tier) or the
-            // labyrinth. The probes build a different player for each — the
-            // character as they stand for a zone, the lab setup for a room
-            zone: zoneContextFor(gameUnit),
-            simBuilt: Boolean(buffedBuilt?.monster?.combatDetails),
+            zone: context?.zone || null,
+            trial,
+            trialParticipants: trialSim?.participants ?? null,
+            // A trial boss is "built" as far as the panel is concerned — the one
+            // row it can stand behind is there — but the rest is unmodelled, not
+            // broken, and the footer has to say which
+            simBuilt: trial ? Boolean(trialSim.details) : Boolean(buffedBuilt?.monster?.combatDetails),
             // Kept so the blind-sim button can diff produced buffs against the live set.
             combatBuffMap: gameUnit?.combatBuffMap || {},
             buffs: buffedCmp.buffs,
@@ -372,7 +496,12 @@ class MonsterStatCheckPanel {
     /** Save the log and the view choices so a refresh keeps them. */
     _persist() {
         try {
-            const payload = { mode: this.viewMode, simMode: this.simMode, entries: [...this.history.values()] };
+            const payload = {
+                mode: this.viewMode,
+                simMode: this.simMode,
+                foldMode: this.foldMode,
+                entries: [...this.history.values()],
+            };
             Promise.resolve(storage.set(STORE_KEY, payload, STORE_NAME)).catch(() => {});
         } catch {
             /* storage unavailable — the log simply stays in-memory */
@@ -386,6 +515,7 @@ class MonsterStatCheckPanel {
             if (!saved) return;
             if (saved.mode === 'all' || saved.mode === 'discrepancies') this.viewMode = saved.mode;
             if (saved.simMode === 'buffed' || saved.simMode === 'baseline') this.simMode = saved.simMode;
+            if (saved.foldMode === 'folded' || saved.foldMode === 'raw') this.foldMode = saved.foldMode;
             for (const entry of saved.entries || []) {
                 if (!entry?.hrid) continue;
                 // The same key the entry was recorded under — monster, room AND
@@ -436,6 +566,20 @@ class MonsterStatCheckPanel {
         this._render();
     }
 
+    /** Flip the player check between the buff-folded sim and the raw one. */
+    _toggleFoldMode() {
+        this.foldMode = this.foldMode === 'folded' ? 'raw' : 'folded';
+        this._persist();
+        this._render();
+    }
+
+    /** The player-check view the fold toggle is asking for, with a fallback. */
+    _playerView() {
+        const pc = this.playerCheck;
+        if (!pc) return null;
+        return (this.foldMode === 'folded' ? pc.folded : pc.raw) || pc.folded || pc.raw || null;
+    }
+
     /**
      * Run blind sim fights for the shown monster and diff the buffs the sim
      * produces on its own against the game's live effects. Several probe runs,
@@ -445,6 +589,12 @@ class MonsterStatCheckPanel {
     async _runBlindSim() {
         const snap = this.displayed;
         if (!snap?.hrid) return;
+        if (snap.trial) {
+            snap.blind = { rows: [], ran: false, notModelled: true, at: Date.now() };
+            this._render();
+            return;
+        }
+        const simPlayer = this._simPlayerSource(snap);
         try {
             const runs = [];
             let ran = false;
@@ -458,11 +608,12 @@ class MonsterStatCheckPanel {
             snap.blind = {
                 rows: compareBuffProduction(snap.combatBuffMap || {}, unionProducedBuffs(runs)),
                 ran,
+                simPlayer,
                 at: Date.now(),
             };
         } catch (error) {
             console.error('[MonsterStatCheck] Blind sim failed:', error);
-            snap.blind = { rows: [], ran: false, at: Date.now() };
+            snap.blind = { rows: [], ran: false, simPlayer, at: Date.now() };
         }
         // Only re-render if this snapshot is still the one on screen.
         if (this.displayed === snap) this._render();
@@ -476,6 +627,12 @@ class MonsterStatCheckPanel {
     async _runUptimeHarness() {
         const snap = this.displayed;
         if (!snap?.hrid) return;
+        if (snap.trial) {
+            snap.uptime = { notModelled: true };
+            this._render();
+            return;
+        }
+        const simPlayer = this._simPlayerSource(snap);
         try {
             const capture = captureFile();
             // The build the sim would run with right now — the same fingerprint
@@ -502,6 +659,7 @@ class MonsterStatCheckPanel {
                 );
                 snap.uptime = result
                     ? {
+                          simPlayer,
                           rows: result.comparison.rows,
                           // The other direction, from the same capture and the
                           // same sim run: the sim's model of YOUR abilities.
@@ -547,74 +705,97 @@ class MonsterStatCheckPanel {
             return;
         }
         try {
-            const simDetails = await labyrinthClearRate.simPlayerDetails(snap.hrid, snap.roomLevel, probeContext(snap));
-            if (!simDetails) {
+            const context = probeContext(snap);
+            const source = labyrinthClearRate.probeSource(snap.hrid, context);
+            const buffMap = this.lastPlayerUnit?.combatBuffMap;
+            // What to hand the sim player so both sides carry the same effects:
+            // the per-type delta between your live buffs and the ones the fight
+            // opened with (the latter are already inside the sim's build).
+            const fold = planBuffFold(buffMap, this.fightStartBuffMap);
+            const probe = await labyrinthClearRate.simPlayerDetails(snap.hrid, snap.roomLevel, context, fold.buffs);
+            // Tolerate the pre-fold flat shape, so a stubbed or older runner
+            // still produces the raw column rather than an error
+            const base = probe?.base || (probe && !probe.buffed && probe.combatStats ? probe : null);
+            if (!base) {
                 this.playerCheck = { error: 'Sim player build failed.' };
             } else {
-                // The sim build is read at fight start, before your transient
-                // combat buffs are cast, so fold the offense buffs that changed
-                // since the fight opened (precision, fury, a monster's damage
-                // shred on you) into the sim column by the engine's own formula —
-                // now the accuracy and max-hit rows compare like against like
-                // instead of showing the buff as a fat gap. The fold deltas
-                // against the fight-start buff map, so persistent ratios (guild
-                // damage, the labyrinth combat-damage upgrade) already inside the
-                // sim's build are not applied a second time. The rarer
-                // mitigation/evasion transient effects keep the softer leniency
-                // so they read as a buff rather than a bug.
                 const styleKey = styleKeyOf(this.lastPlayerUnit?.combatDetails?.combatStats);
-                const buffMap = this.lastPlayerUnit?.combatBuffMap;
-                const leniencyKeys = buffedStatKeys(buffMap, styleKey);
-                const simFolded = foldOffenseBuffs(simDetails, buffMap, styleKey, this.fightStartBuffMap);
-                const cmp = buildComparison(this.lastPlayerUnit, simFolded, { simBuffed: true, leniencyKeys });
+                // Raw: the sim's fight-start build against your buffed live
+                // sheet — every self-buff shows as a gap, which is the view the
+                // fold exists to replace but still the one that shows its size.
+                // Buff-aware leniency keeps those rows reading as buffs.
+                const raw = buildComparison(this.lastPlayerUnit, base, {
+                    simBuffed: false,
+                    leniencyKeys: buffedStatKeys(buffMap, styleKey),
+                });
+                // Folded: buffed against buffed, so it is graded sharply — with
+                // one exception. Without a fight-start map the fold cannot tell
+                // a persistent buff from a transient one and may apply a
+                // persistent ratio twice, so those rows keep their leniency.
+                const folded = probe?.buffed
+                    ? buildComparison(this.lastPlayerUnit, probe.buffed, {
+                          simBuffed: true,
+                          leniencyKeys: fold.hasStartMap ? null : buffedStatKeys(buffMap, styleKey),
+                      })
+                    : null;
                 this.playerCheck = {
-                    groups: cmp.groups,
-                    hasMismatch: cmp.hasMismatch,
-                    buffs: cmp.buffs,
+                    raw: { groups: raw.groups, hasMismatch: raw.hasMismatch, buffs: raw.buffs },
+                    folded: folded
+                        ? { groups: folded.groups, hasMismatch: folded.hasMismatch, buffs: folded.buffs }
+                        : null,
+                    fold: {
+                        folded: fold.folded,
+                        inBuild: fold.inBuild,
+                        notModelled: fold.notModelled,
+                        hasStartMap: fold.hasStartMap,
+                    },
+                    source,
                     effects: combatEffectNames(buffMap),
                     at: Date.now(),
                 };
-                // When Max HP disagrees, the term-by-term breakdown says which
-                // input differs — stamina level, the flat HP from gear, or a % HP
-                // buff — which is the actual lead, not the total. Logged, not shown.
-                const hpTerms = (cd) => ({
-                    staminaLevel: cd?.staminaLevel,
-                    flatMaxHp: cd?.combatStats?.maxHitpoints,
-                    maxHpRatio: cd?.combatStats?.maxHitpointsRatio,
-                    maxHitpoints: cd?.maxHitpoints,
-                });
-                const you = hpTerms(this.lastPlayerUnit?.combatDetails);
-                const sim = hpTerms(simDetails);
-                if (
-                    you.maxHitpoints &&
-                    sim.maxHitpoints &&
-                    Math.abs(you.maxHitpoints - sim.maxHitpoints) / you.maxHitpoints > 0.01
-                ) {
-                    console.log('[MonsterStatCheck] Max HP gap — you vs sim, by input term:');
-                    console.table({ you, sim });
-                    // The buff carrying the missing HP ratio — its typeHrid is what
-                    // the engine has to map. List the ones with a nonzero boost.
-                    const buffs = Object.entries(this.lastPlayerUnit?.combatBuffMap || {})
-                        .map(([uniqueHrid, b]) => ({
-                            uniqueHrid,
-                            typeHrid: b?.typeHrid,
-                            ratioBoost: b?.ratioBoost,
-                            flatBoost: b?.flatBoost,
-                        }))
-                        .filter((b) => b.ratioBoost || b.flatBoost);
-                    if (buffs.length) {
-                        console.log(
-                            '[MonsterStatCheck] Your active buffs (find the max-HP one — its typeHrid is the fix):'
-                        );
-                        console.table(buffs);
-                    }
-                }
+                this._logHpGap(base);
             }
         } catch (error) {
             console.error('[MonsterStatCheck] Player check failed:', error);
             this.playerCheck = { error: 'Player check failed (see console).' };
         }
         this._render();
+    }
+
+    /**
+     * When Max HP disagrees, the term-by-term breakdown says which input differs
+     * — stamina level, the flat HP from gear, or a % HP buff — which is the
+     * actual lead, not the total. Logged against the *unfolded* sim build, so
+     * the buff carrying the gap is still visible as a gap. Console only.
+     * @param {Object} simDetails - The sim player's fight-start combatDetails
+     */
+    _logHpGap(simDetails) {
+        const hpTerms = (cd) => ({
+            staminaLevel: cd?.staminaLevel,
+            flatMaxHp: cd?.combatStats?.maxHitpoints,
+            maxHpRatio: cd?.combatStats?.maxHitpointsRatio,
+            maxHitpoints: cd?.maxHitpoints,
+        });
+        const you = hpTerms(this.lastPlayerUnit?.combatDetails);
+        const sim = hpTerms(simDetails);
+        if (!you.maxHitpoints || !sim.maxHitpoints) return;
+        if (Math.abs(you.maxHitpoints - sim.maxHitpoints) / you.maxHitpoints <= 0.01) return;
+        console.log('[MonsterStatCheck] Max HP gap — you vs sim, by input term:');
+        console.table({ you, sim });
+        // The buff carrying the missing HP ratio — its typeHrid is what the
+        // engine has to map. List the ones with a nonzero boost.
+        const buffs = Object.entries(this.lastPlayerUnit?.combatBuffMap || {})
+            .map(([uniqueHrid, b]) => ({
+                uniqueHrid,
+                typeHrid: b?.typeHrid,
+                ratioBoost: b?.ratioBoost,
+                flatBoost: b?.flatBoost,
+            }))
+            .filter((b) => b.ratioBoost || b.flatBoost);
+        if (buffs.length) {
+            console.log('[MonsterStatCheck] Your active buffs (find the max-HP one — its typeHrid is the fix):');
+            console.table(buffs);
+        }
     }
 
     /**
@@ -629,19 +810,45 @@ class MonsterStatCheckPanel {
         return {
             ...this.playerCheck,
             playerBuffMap: this.lastPlayerUnit?.combatBuffMap || null,
-            // What the offense fold subtracted, so a reader can re-derive the
-            // delta — null means the fold ran against the whole live map
+            // What the fold deltas against, so a reader can re-derive it —
+            // null means the fold ran against the whole live map
             fightStartBuffMap: this.fightStartBuffMap || null,
         };
     }
 
+    /**
+     * Which player the sim was built from for the view on screen, in the shape
+     * the export carries. Read from the same accessor the probes use, so the
+     * label and the run can never disagree.
+     * @param {Object} [snap] - The snapshot to name a source for
+     * @returns {{source: string, zoneHrid: string|null, tier: number, loadoutName: string|null}|null}
+     */
+    _simPlayerSource(snap = this.displayed) {
+        if (!snap?.hrid) return null;
+        try {
+            return labyrinthClearRate.probeSource(snap.hrid, probeContext(snap));
+        } catch (error) {
+            console.error('[MonsterStatCheck] Failed to name the sim player source:', error);
+            return null;
+        }
+    }
+
     /** Download the session's discrepancy log plus the current snapshot as JSON. */
     _export() {
+        const source = this.playerCheck?.source || this._simPlayerSource();
         const payload = buildExportPayload(
             Array.from(this.history.values()),
             this.last,
             Date.now(),
-            this._playerBuildForExport()
+            this._playerBuildForExport(),
+            source
+                ? {
+                      source: source.source,
+                      zoneHrid: source.zoneHrid ?? null,
+                      tier: Number(source.tier) || 0,
+                      loadoutName: source.loadoutName ?? null,
+                  }
+                : null
         );
         const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
         downloadFile(`toolasha-monster-stat-check-${stamp}.json`, JSON.stringify(payload), 'application/json');
@@ -727,15 +934,21 @@ class MonsterStatCheckPanel {
         const pc = this.playerCheck;
         if (!pc) return '';
         if (pc.error) return `Player build — you vs sim: ${pc.error}`;
-        const lines = ['Player build — you vs sim:'];
-        for (const g of pc.groups || []) {
+        const view = this._playerView();
+        const mode = this.foldMode === 'folded' && pc.folded ? 'buffs folded into sim' : 'raw sim build';
+        const lines = [`Player build — you vs sim (${mode}):`];
+        const label = simPlayerLabel(pc.source);
+        if (label) lines.push(label);
+        for (const g of view?.groups || []) {
             lines.push(`[${g.group}]`);
             for (const r of g.rows) {
                 const d = r.deltaPct == null ? '' : ` (${r.deltaPct >= 0 ? '+' : ''}${r.deltaPct.toFixed(1)}%)`;
                 lines.push(`  ${r.label}: you ${fmt(r.game)} / sim ${fmt(r.sim)}${d} — ${r.verdict}`);
             }
         }
-        if (pc.buffs?.length) lines.push(`Your active buffs: ${pc.buffs.join(', ')}`);
+        if (pc.fold?.folded?.length) lines.push(`Folded into the sim: ${pc.fold.folded.join(', ')}`);
+        if (pc.fold?.notModelled?.length) lines.push(`Not modelled by the sim: ${pc.fold.notModelled.join(', ')}`);
+        if (view?.buffs?.length) lines.push(`Your active buffs: ${view.buffs.join(', ')}`);
         return lines.join('\n');
     }
 
@@ -1002,7 +1215,11 @@ class MonsterStatCheckPanel {
         const hasMismatch = view.hasMismatch;
 
         // Title carries the monster, its room level, and a ⚠ when this view is off
-        const levelLabel = roomLevel > 0 ? ` — Room ${roomLevel}` : '';
+        const levelLabel = snapshot.trial?.tier
+            ? ` — Guild trial T${snapshot.trial.tier}`
+            : roomLevel > 0
+              ? ` — Room ${roomLevel}`
+              : '';
         const flag = snapshot.hasMismatch ? '⚠ ' : '';
         this.titleEl.textContent = `${flag}${name || 'Monster'}${levelLabel}`;
         this.titleEl.style.color = snapshot.hasMismatch ? '#e56b6b' : config.COLOR_ACCENT;
@@ -1014,7 +1231,31 @@ class MonsterStatCheckPanel {
             this._rowEl({ label: 'Stat', game: 'Game', sim: 'Sim', delta: '', verdict: null }, { headerRow: true })
         );
 
-        if (!simBuilt) {
+        if (snapshot.trial) {
+            // A trial boss is not "unbuilt" — it is deliberately only partly
+            // modelled, and saying so is the whole point of the branch.
+            const note = document.createElement('div');
+            note.style.cssText = 'font-size: 0.72rem; color: #e0b64a; padding: 6px 0; font-style: italic;';
+            note.textContent = `Trial boss at T${snapshot.trial.tier} (trial scaling). ${TRIAL_NOT_MODELLED}`;
+            body.appendChild(note);
+            if (!simBuilt) {
+                body.appendChild(
+                    this._caption(
+                        snapshot.trialParticipants == null
+                            ? 'Health not derived either: the participant count is unknown until a trial battle is seen.'
+                            : 'Health could not be derived for this boss.',
+                        'rgba(255,255,255,0.45)'
+                    )
+                );
+            } else {
+                body.appendChild(
+                    this._caption(
+                        `Health from the trial ladder: base × (10 + level)/110 × (1 + 0.01 × ${snapshot.trialParticipants} participants).`,
+                        'rgba(255,255,255,0.45)'
+                    )
+                );
+            }
+        } else if (!simBuilt) {
             const warn = document.createElement('div');
             warn.style.cssText = 'font-size: 0.72rem; color: #e56b6b; padding: 8px 0; font-style: italic;';
             warn.textContent = 'Sim could not build this monster — showing game values only.';
@@ -1074,6 +1315,14 @@ class MonsterStatCheckPanel {
         body.appendChild(footer);
     }
 
+    /** A small caption line under a section heading. */
+    _caption(text, color = 'rgba(255,255,255,0.45)') {
+        const el = document.createElement('div');
+        el.style.cssText = `font-size:0.66rem; color:${color}; margin-bottom:2px;`;
+        el.textContent = text;
+        return el;
+    }
+
     /** The player-build section: a Check button, and your-vs-sim stat diff. */
     _renderPlayerCheck(footer) {
         const wrap = document.createElement('div');
@@ -1087,58 +1336,114 @@ class MonsterStatCheckPanel {
             head.textContent = 'Player build — you vs sim';
             wrap.appendChild(head);
 
+            // Which player the sim actually built, said plainly. Without it a
+            // reader cannot tell a modelling gap from a comparison against the
+            // labyrinth loadout when they were standing in a zone.
+            const sourceLabel = simPlayerLabel(pc.source);
+            if (sourceLabel) wrap.appendChild(this._caption(sourceLabel, 'rgba(255,255,255,0.55)'));
+
             if (pc.error) {
                 const err = document.createElement('div');
                 err.style.cssText = 'font-size:0.72rem; color:#e0b64a; font-style:italic;';
                 err.textContent = pc.error;
                 wrap.appendChild(err);
-            } else if (pc.groups) {
-                wrap.appendChild(
-                    this._rowEl(
-                        { label: 'Stat', game: 'You', sim: 'Sim', delta: '', verdict: null },
-                        { headerRow: true }
-                    )
+            } else {
+                const view = this._playerView();
+                const foldable = Boolean(pc.folded);
+                const folding = foldable && this.foldMode === 'folded';
+
+                const toggle = this._pillButton(
+                    folding ? 'Fold my active buffs: on' : 'Fold my active buffs: off',
+                    foldable
+                        ? 'Apply your live combat buffs to the sim player so both columns carry the same effects, or compare against the raw fight-start build'
+                        : 'The sim did not return a buffed build — showing the raw one',
+                    () => this._toggleFoldMode()
                 );
-                for (const group of pc.groups) {
-                    const heading = document.createElement('div');
-                    heading.style.cssText =
-                        'font-size:0.66rem; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.35); margin:6px 0 1px;';
-                    heading.textContent = group.group;
-                    wrap.appendChild(heading);
-                    for (const row of group.rows) {
-                        wrap.appendChild(
-                            this._rowEl({
-                                label: row.label,
-                                game: fmt(row.game),
-                                sim: fmt(row.sim),
-                                delta: fmtDelta(row.deltaPct),
-                                verdict: row.verdict,
-                            })
-                        );
+                toggle.style.marginBottom = '4px';
+                if (!foldable) toggle.disabled = true;
+                wrap.appendChild(toggle);
+
+                if (view) {
+                    wrap.appendChild(
+                        this._rowEl(
+                            { label: 'Stat', game: 'You', sim: 'Sim', delta: '', verdict: null },
+                            { headerRow: true }
+                        )
+                    );
+                    for (const group of view.groups) {
+                        const heading = document.createElement('div');
+                        heading.style.cssText =
+                            'font-size:0.66rem; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.35); margin:6px 0 1px;';
+                        heading.textContent = group.group;
+                        wrap.appendChild(heading);
+                        for (const row of group.rows) {
+                            wrap.appendChild(
+                                this._rowEl({
+                                    label: row.label,
+                                    game: fmt(row.game),
+                                    sim: fmt(row.sim),
+                                    delta: fmtDelta(row.deltaPct),
+                                    verdict: row.verdict,
+                                })
+                            );
+                        }
                     }
                 }
-                if (pc.effects?.length) {
+
+                // What the fold did with each of your live effects, named. A
+                // buff the sim has no term for is called out rather than
+                // dropped — that silence is how a modelling hole hides.
+                const fold = pc.fold || {};
+                if (folding && fold.folded?.length) {
                     const fx = document.createElement('div');
                     fx.style.cssText = 'margin-top:4px; font-size:0.66rem; color:rgba(255,255,255,0.55);';
-                    fx.innerHTML = `<span style="color:#e0b64a;">Effects on you (folded into sim offense):</span> ${pc.effects.join(', ')}`;
+                    fx.innerHTML = `<span style="color:#e0b64a;">Folded into the sim:</span> ${fold.folded.join(', ')}`;
                     wrap.appendChild(fx);
                 }
+                if (folding && fold.inBuild?.length) {
+                    wrap.appendChild(
+                        this._caption(`Already in the sim’s build: ${fold.inBuild.join(', ')}`, 'rgba(255,255,255,0.4)')
+                    );
+                }
+                if (fold.notModelled?.length) {
+                    const nm = document.createElement('div');
+                    nm.style.cssText = 'margin-top:2px; font-size:0.66rem; color:#e0b64a;';
+                    nm.textContent = `Not modelled by the sim: ${fold.notModelled.join(', ')}`;
+                    nm.title = 'The sim engine has no term for these buff types, so neither column carries them';
+                    wrap.appendChild(nm);
+                }
+                if (!folding && pc.effects?.length) {
+                    const fx = document.createElement('div');
+                    fx.style.cssText = 'margin-top:4px; font-size:0.66rem; color:rgba(255,255,255,0.55);';
+                    fx.innerHTML = `<span style="color:#e0b64a;">Effects on you (not applied to sim):</span> ${pc.effects.join(', ')}`;
+                    wrap.appendChild(fx);
+                }
+
                 const note = document.createElement('div');
                 note.style.cssText = 'margin-top:3px; font-size:0.66rem; color:rgba(255,255,255,0.45);';
-                note.innerHTML = pc.hasMismatch
-                    ? '<span style="color:#e56b6b;">⚠ off</span> = the sim builds you differently here — a gear, ability-level or buff-init gap.'
-                    : 'Every row matches — the sim builds your character correctly.';
+                if (folding) {
+                    note.innerHTML = view?.hasMismatch
+                        ? '<span style="color:#e56b6b;">⚠ off</span> = a gap with your own buffs applied to both sides — a gear, ability-level or buff-init gap in the sim.'
+                        : 'Every row matches with your active buffs applied to both sides — the sim builds your character correctly.';
+                } else {
+                    note.innerHTML =
+                        'Raw view: the sim’s fight-start build, before your live buffs. A gap here is the size of the buffs you are carrying.';
+                }
                 wrap.appendChild(note);
-                const caveat = document.createElement('div');
-                caveat.style.cssText = 'margin-top:2px; font-size:0.64rem; color:rgba(255,255,255,0.35);';
-                caveat.textContent =
-                    'Your live offense buffs (precision, fury, a monster shred on you) are folded into the sim column; a mitigation/evasion buff can still show as a gap.';
-                wrap.appendChild(caveat);
+
+                if (folding && !fold.hasStartMap) {
+                    wrap.appendChild(
+                        this._caption(
+                            'No fight-start buff map seen yet, so every live buff was folded — a persistent one (guild damage, a lab upgrade) may be counted twice.',
+                            'rgba(255,255,255,0.4)'
+                        )
+                    );
+                }
             }
         }
 
         const btn = document.createElement('button');
-        btn.textContent = pc?.groups ? 'Re-check my build' : 'Check my build';
+        btn.textContent = this._playerView() ? 'Re-check my build' : 'Check my build';
         btn.title = 'Compare the sim’s build of your character against your live in-game stats (click yourself first)';
         btn.style.cssText =
             'margin-top:6px; background:none; border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#cbd5e8; font-size:0.7rem; cursor:pointer; padding:3px 8px;';
@@ -1167,6 +1472,8 @@ class MonsterStatCheckPanel {
                 'font-size:0.68rem; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.4); margin-bottom:2px;';
             head.textContent = 'Uptime harness — incoming damage / ability';
             wrap.appendChild(head);
+            const label = simPlayerLabel(up.simPlayer);
+            if (label) wrap.appendChild(this._caption(label, 'rgba(255,255,255,0.5)'));
 
             // How much real evidence the rows rest on: complete fights counted,
             // partials excluded, and whether the capture opened mid-fight.
@@ -1177,7 +1484,12 @@ class MonsterStatCheckPanel {
                 wrap.appendChild(fights);
             }
 
-            if (up.armed) {
+            if (up.notModelled) {
+                const none = document.createElement('div');
+                none.style.cssText = 'font-size:0.72rem; color:#e0b64a; font-style:italic;';
+                none.textContent = TRIAL_NOT_MODELLED;
+                wrap.appendChild(none);
+            } else if (up.armed) {
                 const armed = document.createElement('div');
                 armed.style.cssText = 'font-size:0.72rem; color:#6fce7f; font-style:italic;';
                 armed.textContent = up.message;
@@ -1220,8 +1532,10 @@ class MonsterStatCheckPanel {
 
         const btn = document.createElement('button');
         btn.textContent = up?.rows?.length ? 'Re-run uptime harness' : 'Run uptime harness';
-        btn.title =
-            'Decompose the monster’s incoming damage per ability vs the sim. With no capture yet, arms one for the next fight.';
+        btn.disabled = Boolean(snapshot.trial);
+        btn.title = snapshot.trial
+            ? TRIAL_NOT_MODELLED
+            : 'Decompose the monster’s incoming damage per ability vs the sim. With no capture yet, arms one for the next fight.';
         btn.style.cssText =
             'margin-top:6px; background:none; border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#cbd5e8; font-size:0.7rem; cursor:pointer; padding:3px 8px;';
         btn.addEventListener('mouseenter', () => (btn.style.background = 'rgba(255,255,255,0.06)'));
@@ -1314,8 +1628,15 @@ class MonsterStatCheckPanel {
                 'font-size:0.68rem; text-transform:uppercase; letter-spacing:0.5px; color:rgba(255,255,255,0.4); margin-bottom:2px;';
             head.textContent = 'Blind sim — buffs it produces';
             wrap.appendChild(head);
+            const label = simPlayerLabel(blind.simPlayer);
+            if (label) wrap.appendChild(this._caption(label, 'rgba(255,255,255,0.5)'));
 
-            if (!blind.ran) {
+            if (blind.notModelled) {
+                const none = document.createElement('div');
+                none.style.cssText = 'font-size:0.72rem; color:#e0b64a; font-style:italic;';
+                none.textContent = TRIAL_NOT_MODELLED;
+                wrap.appendChild(none);
+            } else if (!blind.ran) {
                 const err = document.createElement('div');
                 err.style.cssText = 'font-size:0.72rem; color:#e56b6b; font-style:italic;';
                 err.textContent = 'Blind fight could not run (no loadout or sim data).';
@@ -1364,7 +1685,10 @@ class MonsterStatCheckPanel {
 
         const btn = document.createElement('button');
         btn.textContent = blind ? 'Re-run blind sim' : 'Run blind sim';
-        btn.title = 'Simulate a fight fed only the monster + level (no live buffs) and list the buffs the sim produces';
+        btn.disabled = Boolean(snapshot.trial);
+        btn.title = snapshot.trial
+            ? TRIAL_NOT_MODELLED
+            : 'Simulate a fight fed only the monster + level (no live buffs) and list the buffs the sim produces';
         btn.style.cssText =
             'margin-top:6px; background:none; border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#cbd5e8; font-size:0.7rem; cursor:pointer; padding:3px 8px;';
         btn.addEventListener('mouseenter', () => (btn.style.background = 'rgba(255,255,255,0.06)'));

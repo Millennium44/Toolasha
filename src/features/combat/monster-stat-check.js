@@ -96,74 +96,171 @@ const BUFF_TYPE_TO_KEYS = {
     '/buff_types/fire_resistance': () => ['totalFireResistance'],
 };
 
-/** The offense buff types folded into the sim column, and where each lands. */
-const OFFENSE_BUFF_TYPES = {
-    '/buff_types/accuracy': 'accuracy',
-    '/buff_types/fury_accuracy': 'furyAccuracy',
-    '/buff_types/damage': 'damage',
-    '/buff_types/fury_damage': 'furyDamage',
-};
-
 /**
- * Sum the ratio boosts a buff map applies to the derived offense ratings.
- * @param {Object} combatBuffMap - The unit's `combatBuffMap`
- * @returns {{accuracy: number, furyAccuracy: number, damage: number, furyDamage: number}}
+ * Every buff type the sim engine's stat rebuild reads (see
+ * combat-sim/engine/combat-unit.js `updateCombatDetails`). A live buff whose
+ * type is not in here is one the engine has no term for — the fold cannot
+ * apply it and the panel says so rather than dropping it silently.
  */
-export function offenseRatioBoosts(combatBuffMap) {
-    const sum = { accuracy: 0, furyAccuracy: 0, damage: 0, furyDamage: 0 };
-    for (const buff of Object.values(combatBuffMap || {})) {
-        const bucket = OFFENSE_BUFF_TYPES[buff?.typeHrid];
-        if (bucket) sum[bucket] += Number(buff?.ratioBoost) || 0;
-    }
-    return sum;
+export const ENGINE_BUFF_TYPES = new Set([
+    ...['stamina', 'intelligence', 'attack', 'melee', 'defense', 'ranged', 'magic'].map(
+        (stat) => `/buff_types/${stat}_level`
+    ),
+    '/buff_types/accuracy',
+    '/buff_types/armor',
+    '/buff_types/attack_speed',
+    '/buff_types/cast_speed',
+    '/buff_types/combat_drop_quantity',
+    '/buff_types/combat_drop_rate',
+    '/buff_types/critical_damage',
+    '/buff_types/critical_rate',
+    '/buff_types/damage',
+    '/buff_types/damage_taken',
+    '/buff_types/efficiency',
+    '/buff_types/elemental_thorns',
+    '/buff_types/evasion',
+    '/buff_types/experience',
+    '/buff_types/fire_amplify',
+    '/buff_types/fire_resistance',
+    '/buff_types/fury_accuracy',
+    '/buff_types/fury_damage',
+    '/buff_types/gourmet',
+    '/buff_types/healing_amplify',
+    '/buff_types/hp_regen',
+    '/buff_types/life_steal',
+    '/buff_types/max_hitpoints',
+    '/buff_types/max_manapoints',
+    '/buff_types/mp_regen',
+    '/buff_types/nature_amplify',
+    '/buff_types/nature_resistance',
+    '/buff_types/physical_amplify',
+    '/buff_types/physical_thorns',
+    '/buff_types/rare_find',
+    '/buff_types/retaliation',
+    '/buff_types/tenacity',
+    '/buff_types/threat',
+    '/buff_types/water_amplify',
+    '/buff_types/water_resistance',
+    '/buff_types/wisdom',
+]);
+
+/** Boosts near enough to zero that folding them would be noise. */
+const FOLD_EPSILON = 1e-9;
+
+/** Human-readable name from a buff unique hrid: `/buff_uniques/x_y` → `x y`. */
+function shortName(uniqueHrid) {
+    return String(uniqueHrid).split('/').pop().replace(/_/g, ' ');
 }
 
 /**
- * A copy of the sim's fight-start build with the offense buffs that changed
- * *during* the fight folded into the derived accuracy and max-hit ratings, by
- * the engine's own formula: `base × (1 + ratio) × (1 + furyRatio)` (see
- * combat-unit.js updateCombatDetails). The sim snapshot is read at fight start,
- * before precision/fury are cast, so without the fold your buffed accuracy and
- * damage read as fat gaps against it.
+ * Plan the fold of your live combat buffs onto the sim's fight-start build.
  *
- * The fold is a *ratio* against the fight-start buff map when one is supplied:
- * per bucket, `(1 + Σnow) / (1 + Σstart)`. The start-map effects are the ones
- * already inside the sim's rating (persistent sources — the guild damage buff,
- * the labyrinth combat-damage upgrade — are on you when the fight opens and in
- * the sim's build), so dividing them out applies each effect exactly once. An
- * earlier version folded the whole live map on the assumption that offense
- * ratios had no persistent source — false, and re-applying them inflated the
- * sim column by their whole product (an observed 895 → 1029). A ratio, not a
- * subtracted delta, because that is how the engine composes: removing a spent
- * buff must divide its factor out, not subtract its ratio.
+ * The sim player is snapshot at the first combat start — persistent buffs
+ * folded in, no transient combat buff cast yet — while your live sheet is read
+ * mid-fight with Toughness, Precision, fury, an evasion buff and whatever the
+ * monster has shredded off you all up. Comparing the two raw shows every one of
+ * those as a gap (observed on a Twilight Zone vampire: armour +50%, resists
+ * +56–60%, evasion +27%, accuracy +80%, all of it self-buff).
  *
- * Without a start map the whole live map folds, as before — the best available,
- * and it can still overstate the sim column by any persistent ratios.
+ * What this returns is a set of synthetic engine buffs to hand the sim player
+ * before its stats are resolved, so both sides carry the same effects. The
+ * arithmetic is a **per-type delta against your buff map at fight start**:
+ * `Σnow(type) − Σstart(type)`. The fight-start map is what the sim's build
+ * already holds (persistent sources — a guild damage buff, the labyrinth
+ * combat-damage upgrade — are on you as the fight opens and are in the sim's
+ * permanent buffs), so subtracting it applies each effect exactly once. A
+ * subtracted delta rather than a divided ratio because that is how the engine
+ * composes: every one of armour, resistances, evasion, accuracy, damage and max
+ * HP sums the ratio boosts of a type and applies the sum once, so one buff
+ * carrying the summed delta is arithmetically the live total.
  *
- * @param {Object} simDetails - The sim player's fight-start `combatDetails`
+ * Without a start map (no `new_battle` seen this session) the whole live map
+ * folds — the best available, and it can overstate the sim column by any
+ * persistent ratios, which is why the caller says so on screen.
+ *
  * @param {Object} combatBuffMap - Your live `combatBuffMap`
- * @param {string} styleKey - Your combat style short key
- * @param {Object|null} [startBuffMap] - Your `combatBuffMap` at fight start, from `new_battle`
- * @returns {Object} A folded copy, or `simDetails` unchanged when nothing applies
+ * @param {Object|null} [startBuffMap] - Your `combatBuffMap` at fight start
+ * @returns {{buffs: Object, folded: string[], inBuild: string[], notModelled: string[], hasStartMap: boolean}}
+ *   `buffs` is keyed by a synthetic unique hrid, in the engine's buff shape
  */
-export function foldOffenseBuffs(simDetails, combatBuffMap, styleKey, startBuffMap = null) {
-    if (!simDetails) return simDetails;
-    const now = offenseRatioBoosts(combatBuffMap);
-    const start = startBuffMap
-        ? offenseRatioBoosts(startBuffMap)
-        : { accuracy: 0, furyAccuracy: 0, damage: 0, furyDamage: 0 };
-    // A start factor at or below zero is a degenerate map (a −100% ratio);
-    // dividing by it would explode, so such a bucket falls back to no baseline
-    const factor = (nowSum, startSum) => (1 + nowSum) / (1 + startSum > 0 ? 1 + startSum : 1);
-    const accMul = factor(now.accuracy, start.accuracy) * factor(now.furyAccuracy, start.furyAccuracy);
-    const dmgMul = factor(now.damage, start.damage) * factor(now.furyDamage, start.furyDamage);
-    if (accMul === 1 && dmgMul === 1) return simDetails;
-    const out = { ...simDetails };
-    const accKey = `${styleKey}AccuracyRating`;
-    const dmgKey = `${styleKey}MaxDamage`;
-    if (Number.isFinite(Number(out[accKey]))) out[accKey] = Number(out[accKey]) * accMul;
-    if (Number.isFinite(Number(out[dmgKey]))) out[dmgKey] = Number(out[dmgKey]) * dmgMul;
-    return out;
+export function planBuffFold(combatBuffMap, startBuffMap = null) {
+    const sums = new Map();
+    const bump = (typeHrid, buff, sign) => {
+        const entry = sums.get(typeHrid) || { ratioBoost: 0, flatBoost: 0 };
+        entry.ratioBoost += sign * (Number(buff?.ratioBoost) || 0);
+        entry.flatBoost += sign * (Number(buff?.flatBoost) || 0);
+        sums.set(typeHrid, entry);
+    };
+
+    const folded = [];
+    const inBuild = [];
+    const notModelled = [];
+    const start = startBuffMap || {};
+
+    for (const [uniqueHrid, buff] of Object.entries(combatBuffMap || {})) {
+        const typeHrid = buff?.typeHrid;
+        if (!ENGINE_BUFF_TYPES.has(typeHrid)) {
+            notModelled.push(shortName(uniqueHrid));
+            continue;
+        }
+        bump(typeHrid, buff, +1);
+        const before = start[uniqueHrid];
+        const unchanged =
+            before &&
+            (Number(before.ratioBoost) || 0) === (Number(buff?.ratioBoost) || 0) &&
+            (Number(before.flatBoost) || 0) === (Number(buff?.flatBoost) || 0);
+        (unchanged ? inBuild : folded).push(shortName(uniqueHrid));
+    }
+    // A buff that was up at fight start and has since fallen off is inside the
+    // sim's build and no longer on you — its negative delta takes it back out.
+    for (const buff of Object.values(start)) {
+        if (ENGINE_BUFF_TYPES.has(buff?.typeHrid)) bump(buff.typeHrid, buff, -1);
+    }
+
+    const buffs = {};
+    for (const [typeHrid, entry] of sums) {
+        if (Math.abs(entry.ratioBoost) < FOLD_EPSILON && Math.abs(entry.flatBoost) < FOLD_EPSILON) continue;
+        const uniqueHrid = `/buff_uniques/toolasha_fold${typeHrid.replace('/buff_types', '')}`;
+        buffs[uniqueHrid] = {
+            uniqueHrid,
+            typeHrid,
+            ratioBoost: entry.ratioBoost,
+            ratioBoostLevelBonus: 0,
+            flatBoost: entry.flatBoost,
+            flatBoostLevelBonus: 0,
+            startTime: 0,
+            duration: Number.MAX_SAFE_INTEGER,
+        };
+    }
+
+    return { buffs, folded, inBuild, notModelled, hasStartMap: Boolean(startBuffMap) };
+}
+
+/**
+ * One line naming which player the sim was built from.
+ *
+ * The three probe contexts build genuinely different characters — the labyrinth
+ * setup is a chosen loadout with lab token buffs and crates and no food, a zone
+ * fight is the character exactly as they stand, a guild trial is the character
+ * against a tier-scaled boss — and a reader who cannot tell which one produced a
+ * column cannot tell a modelling gap from a comparison against the wrong build.
+ *
+ * @param {{source: string, zoneName?: string, tier?: number, loadoutName?: string}|null} source
+ * @returns {string} The label, or '' when the source is unknown
+ */
+export function simPlayerLabel(source) {
+    if (!source?.source) return '';
+    const tier = Number(source.tier) || 0;
+    if (source.source === 'labyrinth') {
+        const loadout = source.loadoutName ? ` · loadout ${source.loadoutName}` : '';
+        return `Sim player: labyrinth setup${loadout} · lab token buffs · crates · no food/drink`;
+    }
+    if (source.source === 'trial') {
+        return `Sim player: your current build · Guild trial T${tier}`;
+    }
+    const zone = source.zoneName ? ` · ${source.zoneName}` : '';
+    const tierLabel = tier > 0 ? ` (T${tier})` : '';
+    return `Sim player: your current build${zone}${tierLabel} · food & drinks on · zone buffs`;
 }
 
 /** Buff types whose gaps the player check explains, for the effects readout. */
@@ -564,9 +661,13 @@ export function captureContextMismatches(captureContext, current) {
  * @param {Object|null} current - The comparison currently on screen
  * @param {number} exportedAt - A timestamp (the caller owns the clock)
  * @param {Object|null} [playerBuild] - The player-build (you vs sim) result, if run
+ * @param {{source: string, zoneHrid?: string|null, tier?: number, loadoutName?: string|null}|null} [simPlayer]
+ *   Which player the sim was built from — a zone build, the labyrinth setup or a
+ *   guild trial. Without it an export cannot be read: the same monster compared
+ *   against the lab loadout and against your live gear are different findings.
  * @returns {Object}
  */
-export function buildExportPayload(entries, current, exportedAt, playerBuild = null) {
+export function buildExportPayload(entries, current, exportedAt, playerBuild = null, simPlayer = null) {
     return {
         format: 'toolasha-monster-stat-check',
         version: 1,
@@ -574,5 +675,6 @@ export function buildExportPayload(entries, current, exportedAt, playerBuild = n
         current: current || null,
         entries: entries || [],
         playerBuild: playerBuild || null,
+        simPlayer: simPlayer || null,
     };
 }
