@@ -49,7 +49,6 @@ vi.mock('../../core/data-manager.js', () => ({ default: mockDataManager }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
 vi.mock('../../api/marketplace.js', () => ({
     default: {
-        getItemPrice: () => null,
         getPrice: (hrid) => mockMarket.prices[hrid] ?? null,
     },
 }));

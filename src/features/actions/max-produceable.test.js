@@ -49,7 +49,7 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 
 vi.mock('../../core/dom-observer.js', () => ({
-    default: { onClass: () => () => {}, onSelector: () => () => {} },
+    default: { onClass: () => () => {} },
 }));
 
 vi.mock('../../core/config.js', () => ({

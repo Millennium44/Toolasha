@@ -45,7 +45,7 @@ vi.mock('../../core/config.js', () => ({
 }));
 
 vi.mock('../../core/dom-observer.js', () => ({
-    default: { onClass: () => () => {}, onSelector: () => () => {} },
+    default: { onClass: () => () => {} },
 }));
 
 vi.mock('../../core/tooltip-observer.js', () => ({

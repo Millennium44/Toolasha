@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A lifecycle smoke test over every registered feature
+
+Every feature in the four bundles is now put through teardown-before-init and a second teardown, against core singletons mocked from the real modules so a misnamed method call throws in the test instead of in a browser. Four test mocks that offered methods the real modules do not have — the drift that let the History-tab typo pass its own unit test — were corrected.
+
 ### Every feature now ends a character switch disabled, even when its teardown breaks
 
 The History-tab outage was one instance of a general shape: a teardown that throws part-way removes the feature's UI and then skips the line that clears its initialised flag, so the rebuild is turned away by its own guard and the feature is dead until a refresh. All 112 features that carry such a flag now clear it in a `finally`, and the registry names any feature whose teardown throws and says it may not come back cleanly, so the next one is visible in the first console screenshot.
