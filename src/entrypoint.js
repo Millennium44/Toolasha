@@ -1377,6 +1377,13 @@ function registerFeatures() {
             async: true,
         },
         {
+            key: 'tasks_rerollWalk',
+            name: 'Task Reroll Walk',
+            category: 'Tasks',
+            module: UI.taskRerollWalk,
+            async: true,
+        },
+        {
             key: 'skillRemainingXP',
             name: 'Remaining XP',
             category: 'Skills',

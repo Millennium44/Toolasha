@@ -2555,6 +2555,34 @@ export const settingsGroups = {
                 default: true,
                 help: 'Highlights tasks you want to reroll with a red border and reminder badge. Configure per-character via the target icon in the task panel.',
             },
+            tasks_rerollWalk: {
+                id: 'tasks_rerollWalk',
+                label: 'Reroll walk: step through the board one click at a time',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'Adds a 🎲 Reroll walk control to the task panel. It works down the board using your ' +
+                    'protection list and the reroll limit below, and tells you what the next click will do — ' +
+                    'nothing happens until you press it. One click is always exactly one game action: the walk ' +
+                    'never chains clicks, never runs on a timer, and stops the moment a card is not what it ' +
+                    'planned for.',
+            },
+            tasks_rerollWalkMaxRerolls: {
+                id: 'tasks_rerollWalkMaxRerolls',
+                label: 'Reroll walk: rerolls to spend on one task',
+                type: 'number',
+                default: 3,
+                min: 0,
+                max: 10,
+                help: 'How many rerolls the walk will spend on a single task before it gives up on it. Rerolls already spent on a task count towards this.',
+            },
+            tasks_rerollWalkTrashAtLimit: {
+                id: 'tasks_rerollWalkTrashAtLimit',
+                label: 'Reroll walk: discard a task that hits the limit',
+                type: 'checkbox',
+                default: true,
+                help: 'When a task has used up its rerolls, offer to discard it (the red trash can) rather than leaving it on the board. Turn off to skip past it instead.',
+            },
         },
     },
 

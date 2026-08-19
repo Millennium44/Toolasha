@@ -15,6 +15,7 @@ import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
 import { findRerollOptions } from './task-reroll-options.js';
+import { questForTaskCard } from './task-card-quest.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const STORAGE_KEY_PREFIX = 'taskProtectedHrids';
@@ -230,51 +231,12 @@ class TaskRerollProtection {
 
     /**
      * Extract quest data from a task card via React fiber traversal.
-     * Tries multiple anchor elements to find the quest in the fiber tree.
      * @param {HTMLElement} taskCard
      * @returns {Object|null} Quest object with actionHrid/monsterHrid
      * @private
      */
     _getQuestFromCard(taskCard) {
-        const rootEl = document.getElementById('root');
-        const rootFiber = rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
-        if (!rootFiber) return null;
-
-        function walk(fiber, target) {
-            if (!fiber) return null;
-            if (fiber.stateNode === target) return fiber;
-            return walk(fiber.child, target) || walk(fiber.sibling, target);
-        }
-
-        function findQuestInFiber(startFiber) {
-            let f = startFiber?.return;
-            while (f) {
-                if (f.memoizedProps?.characterQuest) {
-                    return f.memoizedProps.characterQuest;
-                }
-                f = f.return;
-            }
-            return null;
-        }
-
-        // Try multiple anchor elements: Go button, any button, the card itself
-        const anchors = [
-            taskCard.querySelector('button.Button_success__6d6kU'),
-            taskCard.querySelector('button'),
-            taskCard.querySelector('[class*="RandomTask_name"]'),
-            taskCard,
-        ];
-
-        for (const anchor of anchors) {
-            if (!anchor) continue;
-            const fiber = walk(rootFiber, anchor);
-            if (fiber) {
-                const quest = findQuestInFiber(fiber);
-                if (quest) return quest;
-            }
-        }
-
-        return null;
+        return questForTaskCard(taskCard);
     }
 
     /**

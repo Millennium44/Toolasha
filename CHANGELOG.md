@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guided task reroll walk (off by default)
+
+Turn on "Reroll walk" in Tasks for a 🎲 control on the task panel that steps down the board using your protection list and a per-task reroll limit. It always tells you what the next press will do — "Reroll #3 (2/3) — 1🔔", "Trash #5 (limit reached)" — and one press is exactly one game click: nothing chains, nothing runs on a timer, and it stops rather than clicking if the card is not what it planned for.
+
 ### The task list sorts only when you ask it to
 
 Auto-sort now runs at exactly two moments — opening the Tasks panel, and pressing Read with sort-after-claim on — and the Sort Tasks button whenever you press it. A closing reroll chooser no longer re-orders the board a second after you pressed Back.
