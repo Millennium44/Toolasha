@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Level boards read in levels per day and week; weekly boards in days and weeks
 
-Total Level and the Guilds Level board now track the level itself (`Lv/day` · `Lv/week` · `Rank ↑ in`) instead of XP per hour over sums in the billions; the Guilds tab's Weekly boards (Points, Trials, Milking…) read `/day` · `/week` in their own unit. A measured week needs two readings more than a day apart; until then the week figure is the day projected and marked. Level-board series recorded as XP before this are dropped once.
+Total Level now tracks the level itself (`Lv/day` · `Lv/week` · `Rank ↑ in`) instead of XP per hour over sums in the billions — the Guilds Level board stays on experience, `/h` · `/day`; the Guilds tab's Weekly boards (Points, Trials, Milking…) read `/day` · `/week` in their own unit. A measured week needs two readings more than a day apart; until then the week figure is the day projected and marked. Level-board series recorded as XP before this are dropped once.
 
 ### Leaderboard rate columns: per-day, catch-up time, rank movement, every board
 

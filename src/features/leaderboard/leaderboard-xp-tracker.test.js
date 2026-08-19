@@ -385,7 +385,7 @@ describe('leaderboard XP tracker', () => {
         expect(leaderboardXPTracker.playerXPHistory['foraging_P'][0].xp).toBe(1415884350);
     });
 
-    test('level boards (Total Level, guild Level) record the level, not the experience', () => {
+    test('Total Level records the level; the guild Level board stays on experience', () => {
         game.handlers.leaderboard_updated({
             leaderboardCategory: 'total_level',
             leaderboard: {
@@ -402,7 +402,7 @@ describe('leaderboard XP tracker', () => {
         });
 
         expect(leaderboardXPTracker.playerXPHistory['total_level_P'][0].xp).toBe(2762);
-        expect(leaderboardXPTracker.playerXPHistory['guild_G'][0].xp).toBe(195);
+        expect(leaderboardXPTracker.playerXPHistory['guild_G'][0].xp).toBe(66911513074);
     });
 
     test('stats carry the week window too', () => {

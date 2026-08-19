@@ -175,13 +175,15 @@ function calcStats(arr) {
 }
 
 /**
- * Boards whose number is a level rather than XP or points: Total Level and
- * the Guilds tab's Level board. Their series hold the level.
+ * Boards whose number is a level rather than XP or points — Total Level only.
+ * (The Guilds tab's Level board stays on experience: a guild's XP per hour is
+ * a figure people compare; a guild level a week is not.) Its series hold the
+ * level.
  * @param {string} category - `leaderboardCategory`
  * @returns {boolean}
  */
 export function isLevelBoard(category) {
-    return category === 'total_level' || category === 'guild';
+    return category === 'total_level';
 }
 
 /**
@@ -238,7 +240,10 @@ class LeaderboardXPTracker {
             // Level-board series recorded before they tracked the level hold
             // XP sums — a level is never in the millions
             const xpOnALevelBoard = isLevelBoard(category) && series.some((sample) => sample?.xp > 100000);
-            if (series.every((sample) => !(sample?.xp > 0)) || xpOnALevelBoard) {
+            // …and guild Level series briefly recorded as levels hold three-digit
+            // numbers where a guild's XP runs to billions
+            const levelOnTheGuildBoard = category === 'guild' && series.every((sample) => sample?.xp < 10000);
+            if (series.every((sample) => !(sample?.xp > 0)) || xpOnALevelBoard || levelOnTheGuildBoard) {
                 delete map[key];
                 purged = true;
             }
@@ -277,9 +282,9 @@ class LeaderboardXPTracker {
         // Task Points and the like carry one, in value1 — reading value2 there
         // recorded zero for every row, and those boards never had a rate
         const columns = Array.isArray(data.leaderboard?.columnNames) ? data.leaderboard.columnNames.length : 0;
-        // …except the level boards, where the level is the thing: Total Level
-        // and the guild Level board track value1, so their rates are levels
-        // per day and week rather than XP per hour over sums in the billions
+        // …except Total Level, where the level is the thing: it tracks value1,
+        // so its rates are levels per day and week rather than XP per hour
+        // over sums in the billions
         const valueField = isLevelBoard(data.leaderboardCategory)
             ? 'value1'
             : columns > 0
