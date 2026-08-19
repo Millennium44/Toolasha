@@ -5,14 +5,22 @@
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-/** What storage answers with, and the last thing written to it */
-const disk = vi.hoisted(() => ({ value: null, saved: null }));
+/**
+ * What storage answers with, and the last thing written to it.
+ *
+ * `keys` is the disk as the module actually sees it — one entry per storage
+ * key — because which key a session is written to and read back from is
+ * itself load-bearing: the guild's name arrives after the module initialises,
+ * and a read under the wrong key is a session lost.
+ */
+const disk = vi.hoisted(() => ({ value: null, saved: null, keys: {} }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
-        get: async () => disk.value,
+        get: async (key) => (key in disk.keys ? disk.keys[key] : disk.value),
         set: async (key, value) => {
             disk.saved = value;
+            disk.keys[key] = value;
         },
     },
 }));
@@ -77,6 +85,12 @@ function session(roster = ['Alice', 'Bob']) {
     s.setRoster(roster);
     return s;
 }
+
+beforeEach(() => {
+    disk.value = null;
+    disk.saved = null;
+    disk.keys = {};
+});
 
 describe('playerKey and roster plumbing', () => {
     test('characterId is the key; name only when there is no id', () => {
@@ -156,6 +170,27 @@ describe('session reset rules', () => {
 
         s.setGuildName('Dogs');
         expect(s.session).toBeNull();
+    });
+
+    test('a session started before the guild was known still goes on a guild change', () => {
+        const s = session();
+        s.setGuildName('Cats');
+        s.recordCapture(snap('Alice', 1, []), { at: NOW });
+        // `_start` stamps the guild it knew, which was none
+        s.session.guildName = null;
+
+        s.setGuildName('Dogs');
+        expect(s.session).toBeNull();
+    });
+
+    test('the first name to arrive keeps a session recorded before it', () => {
+        const s = session();
+        s.setGuildName(null);
+        s.recordCapture(snap('Alice', 1, []), { at: NOW });
+        s.session.guildName = null;
+
+        s.setGuildName('Cats');
+        expect(s.session).not.toBeNull();
     });
 });
 
@@ -319,6 +354,127 @@ describe('the finished trial survives a reload', () => {
         s.recordCapture(snap('Alice', 1, []), { at: NOW });
 
         expect(disk.saved?.roster?.map((member) => member.name)).toEqual(['Alice', 'Bob']);
+    });
+});
+
+describe('the guild name arrives after the module does', () => {
+    const CATS = 'guildTrialAbilities_Cats';
+
+    /** A session on disk, as a page load would have written it */
+    const onDisk = (startedAt, players, guildName = 'Cats') => ({
+        startedAt,
+        guildName,
+        captureTier: 4,
+        capturedTiers: [4],
+        completedAt: null,
+        players,
+        roster: [
+            { characterId: 1, name: 'Alice' },
+            { characterId: 2, name: 'Bob' },
+        ],
+    });
+
+    /** One captured player, as the session stores them */
+    const stored = (characterId, name, at) => ({
+        characterId,
+        name,
+        capturedAt: at,
+        capturedTier: 4,
+        source: 'battle_unit_fetched',
+        abilitiesAuthoritative: true,
+        abilities: [{ hrid: '/abilities/fierce_aura', level: 70 }],
+    });
+
+    test('a capture taken before the name arrived is found again on the next load', async () => {
+        // The reported symptom: two players captured, a reload, and the panel
+        // back at 0 — the writes went to the guild's key and the read did not
+        const first = new GuildTrialAbilities();
+        await first.initialize(null);
+        first.setRoster(['Alice', 'Bob']);
+        await first.setGuildName('Cats');
+        first.recordCapture(snap('Alice', 1, []), { at: NOW });
+        expect(disk.keys[CATS]).toBeTruthy();
+
+        const next = new GuildTrialAbilities();
+        await next.initialize(null);
+        await next.setGuildName('Cats');
+
+        expect(Object.keys(next.session?.players || {})).toEqual(['id:1']);
+        expect(next.state(GAME).capturedCount).toBe(1);
+    });
+
+    test('a name arriving over a session in hand merges rather than strands it', async () => {
+        disk.keys[CATS] = onDisk(NOW - 5 * 60_000, { 'id:2': stored(2, 'Bob', NOW - 4 * 60_000) });
+
+        const s = new GuildTrialAbilities();
+        await s.initialize(null);
+        s.setRoster(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, []), { at: NOW });
+        await s.setGuildName('Cats');
+
+        expect(Object.keys(s.session.players).sort()).toEqual(['id:1', 'id:2']);
+        expect(s.session.startedAt).toBe(NOW - 5 * 60_000);
+        expect(s.state(GAME).complete).toBe(true);
+    });
+
+    test('a capture landing while the restore is in flight is not swallowed by it', async () => {
+        disk.keys[CATS] = onDisk(NOW - 10 * 60_000, { 'id:1': stored(1, 'Alice', NOW - 9 * 60_000) });
+
+        const s = new GuildTrialAbilities();
+        const pending = s.initialize('Cats');
+        s.setRoster(['Alice', 'Bob']);
+        s.recordCapture(snap('Bob', 2, []), { at: NOW });
+        await pending;
+
+        expect(Object.keys(s.session.players).sort()).toEqual(['id:1', 'id:2']);
+    });
+
+    test('a stored session from another guild is never merged in', async () => {
+        disk.keys[CATS] = onDisk(NOW - 5 * 60_000, { 'id:2': stored(2, 'Bob', NOW - 4 * 60_000) }, 'Dogs');
+
+        const s = new GuildTrialAbilities();
+        await s.initialize(null);
+        s.setRoster(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, []), { at: NOW });
+        await s.setGuildName('Cats');
+
+        expect(Object.keys(s.session.players)).toEqual(['id:1']);
+    });
+
+    test('a previous trial’s stored session does not drag the start backwards', async () => {
+        disk.keys[CATS] = onDisk(NOW - 3 * 60 * 60_000, { 'id:2': stored(2, 'Bob', NOW - 3 * 60 * 60_000) });
+
+        const s = new GuildTrialAbilities();
+        await s.initialize(null);
+        s.setRoster(['Alice', 'Bob']);
+        s.recordCapture(snap('Alice', 1, []), { at: NOW });
+        await s.setGuildName('Cats');
+
+        expect(s.session.startedAt).toBe(NOW);
+        expect(Object.keys(s.session.players)).toEqual(['id:1']);
+    });
+});
+
+describe('when a capture may end a session', () => {
+    test('an old sheet folded in mid-trial does not restart the session', () => {
+        // The adopt path hands over kits read minutes or an hour apart, all of
+        // them arriving now. Only the arrival clock may end a session; the
+        // stamp on the kit says when it was read, and nothing more
+        const s = session();
+        s.recordCapture(snap('Alice', 1, []), { at: NOW, now: NOW });
+        s.recordCapture(snap('Bob', 2, []), { at: NOW + SESSION_MAX_AGE_MS + 1, now: NOW + 1000 });
+
+        expect(s.session.startedAt).toBe(NOW);
+        expect(Object.keys(s.session.players).sort()).toEqual(['id:1', 'id:2']);
+    });
+
+    test('a genuinely late arrival still starts the next trial’s session', () => {
+        const s = session();
+        s.recordCapture(snap('Alice', 1, []), { at: NOW, now: NOW });
+        s.recordCapture(snap('Bob', 2, []), { at: NOW, now: NOW + SESSION_MAX_AGE_MS + 1 });
+
+        expect(s.session.startedAt).toBe(NOW + SESSION_MAX_AGE_MS + 1);
+        expect(Object.keys(s.session.players)).toEqual(['id:2']);
     });
 });
 

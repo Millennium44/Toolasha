@@ -219,6 +219,71 @@ export function auraCoverage(auras, abilityDetailMap = {}, allCurrentCaptured = 
     return coverage;
 }
 
+/**
+ * A stored session as it may be trusted back in.
+ *
+ * Entries that slipped in from a personal fight's `new_battle` (the local
+ * player's own zone kit) are not trial captures — demoted to "needs Battle
+ * Info" so the row re-captures from the same source as everyone else.
+ *
+ * @param {Object} stored - As persisted
+ * @returns {Object} A copy, safe to hold
+ */
+export function sanitizeStoredSession(stored) {
+    const session = { ...stored, capturedTiers: [...(stored?.capturedTiers || [])], players: { ...stored?.players } };
+    for (const [key, entry] of Object.entries(session.players)) {
+        if (entry?.source === 'new_battle') {
+            session.players[key] = {
+                ...entry,
+                abilities: null,
+                abilitiesAuthoritative: false,
+                capturedAt: null,
+                capturedTier: null,
+            };
+        }
+    }
+    return session;
+}
+
+/**
+ * The stored session and the one held in memory, as one session.
+ *
+ * Called when a storage read lands after the session has already started
+ * collecting — a reload mid-trial, or the guild's name arriving and moving the
+ * session onto its own key. Both copies are the same trial's whenever they
+ * start within the trial hour of each other, and then neither may lose a
+ * capture: the live entry wins per player, except that it may not demote an
+ * authoritative stored kit to a stat-only sighting. Sessions further apart than
+ * that are different trials and the later one stands alone.
+ *
+ * @param {Object|null} stored - From storage
+ * @param {Object|null} live - Held in memory
+ * @returns {Object|null} The session to hold
+ */
+export function mergeSessions(stored, live) {
+    if (!live) return stored;
+    if (!stored) return live;
+    if (Math.abs(live.startedAt - stored.startedAt) > SESSION_MAX_AGE_MS) {
+        return live.startedAt >= stored.startedAt ? live : stored;
+    }
+
+    const players = { ...stored.players };
+    for (const [key, entry] of Object.entries(live.players || {})) {
+        const held = players[key];
+        const demotes = held?.abilitiesAuthoritative === true && entry?.abilitiesAuthoritative !== true;
+        players[key] = demotes ? held : entry;
+    }
+    return {
+        ...stored,
+        ...live,
+        startedAt: Math.min(stored.startedAt, live.startedAt),
+        captureTier: stored.captureTier ?? live.captureTier ?? null,
+        capturedTiers: [...new Set([...(stored.capturedTiers || []), ...(live.capturedTiers || [])])],
+        completedAt: stored.completedAt ?? live.completedAt ?? null,
+        players,
+    };
+}
+
 class GuildTrialAbilities {
     constructor() {
         this.initialized = false;
@@ -242,43 +307,20 @@ class GuildTrialAbilities {
      * capture past {@link SESSION_MAX_AGE_MS} starts a fresh session
      * ({@link recordCapture}), as do {@link noteTrialStart} and the button.
      *
+     * The name the orchestrator has at startup is routinely not the real one —
+     * it arrives on socket traffic later — so it is adopted only while nothing
+     * better is known, and {@link setGuildName} re-reads under the real key
+     * when it lands. A read that finishes *after* a capture or a name change
+     * merges rather than replaces, because the alternative is what was
+     * reported: two Battle Info popups on screen, none of them in the session.
+     *
      * @param {string|null} [guildName] - The key the session is stored under
      * @returns {Promise<void>}
      */
     async initialize(guildName = null) {
-        this.guildName = guildName || null;
+        if (guildName) this.guildName = guildName;
         this.initialized = true;
-        try {
-            const stored = await storage.get(sessionStorageKey(this.guildName), SESSION_STORE, null);
-            const usable = Number.isFinite(stored?.startedAt);
-            const sameGuild = !stored?.guildName || !this.guildName || stored.guildName === this.guildName;
-            if (usable && sameGuild) {
-                this.session = { ...stored, capturedTiers: [...(stored.capturedTiers || [])] };
-                // The roster is fed in live and dies with the page; the copy
-                // persisted beside the session is what lets a reload keep
-                // showing the completed 8/8 view instead of "no roster yet"
-                if (!this.roster.length && Array.isArray(stored.roster)) {
-                    this.roster = normalizeRoster(stored.roster);
-                }
-                // Entries that slipped in from a personal fight's new_battle
-                // (the local player's own zone kit) are not trial captures —
-                // demote them to "needs Battle Info" so the row re-captures
-                // from the same source as everyone else
-                for (const [key, entry] of Object.entries(this.session.players || {})) {
-                    if (entry?.source === 'new_battle') {
-                        this.session.players[key] = {
-                            ...entry,
-                            abilities: null,
-                            abilitiesAuthoritative: false,
-                            capturedAt: null,
-                            capturedTier: null,
-                        };
-                    }
-                }
-            }
-        } catch (error) {
-            console.error('[GuildTrialAbilities] Reading the stored session failed:', error);
-        }
+        await this._restore();
     }
 
     cleanup() {
@@ -286,18 +328,75 @@ class GuildTrialAbilities {
     }
 
     /**
-     * The guild changed, or became known. A session recorded under a
-     * *different* guild is dropped outright — wrong-guild captures must not
-     * pose as this trial's.
+     * Read the session stored under the current key and adopt it.
+     *
+     * Nothing collected while the read was in flight may be lost to it: a
+     * capture that landed in the meantime is this trial's and outranks the
+     * disk copy, and a guild name that changed in the meantime makes the
+     * answer the *previous* key's, which is discarded outright.
+     *
+     * @returns {Promise<void>}
+     */
+    async _restore() {
+        const key = sessionStorageKey(this.guildName);
+        try {
+            const stored = await storage.get(key, SESSION_STORE, null);
+            // The key moved while the read was in flight — this answer is the
+            // old key's and says nothing about the new one
+            if (key !== sessionStorageKey(this.guildName)) return;
+
+            const usable = Number.isFinite(stored?.startedAt);
+            const sameGuild = !stored?.guildName || !this.guildName || stored.guildName === this.guildName;
+            if (usable && sameGuild) {
+                this.session = mergeSessions(sanitizeStoredSession(stored), this.session);
+                // The roster is fed in live and dies with the page; the copy
+                // persisted beside the session is what lets a reload keep
+                // showing the completed 8/8 view instead of "no roster yet"
+                if (!this.roster.length && Array.isArray(stored.roster)) {
+                    this.roster = normalizeRoster(stored.roster);
+                }
+            }
+        } catch (error) {
+            console.error('[GuildTrialAbilities] Reading the stored session failed:', error);
+        }
+        // Whatever is held now belongs under the current key. A session
+        // collected before the guild's name arrived was written to `default`,
+        // and only this write puts it where the next page load looks
+        if (this.session) {
+            this.session.guildName = this.session.guildName || this.guildName;
+            this._recheckComplete(this.session.completedAt ?? Date.now());
+            this._persist();
+        }
+    }
+
+    /**
+     * The guild changed, or became known.
+     *
+     * A session recorded under a *different* guild is dropped outright —
+     * wrong-guild captures must not pose as this trial's. A name arriving over
+     * nothing is the common case and the one that was losing sessions across a
+     * reload: the module initialises before the name is knowable, so the read
+     * went to `guildTrialAbilities_default` while every later write went to the
+     * guild's own key. The new key is therefore re-read here, and what is
+     * already in hand is merged into it rather than replaced or stranded.
      *
      * @param {string|null} name - The guild's name, or null to forget
+     * @returns {Promise<void>|undefined} Resolves once the re-read has settled
      */
     setGuildName(name) {
         const next = name || null;
-        if (this.session && this.session.guildName && next && this.session.guildName !== next) {
+        // A session started before the guild's name arrived carries
+        // `guildName: null` and used to survive a guild change into the new
+        // guild's key; the guild the module was *keyed* by settles that too
+        const from = this.session?.guildName || this.guildName;
+        if (this.session && from && next && from !== next) {
             this.session = null;
         }
+        const changed = next !== this.guildName;
         this.guildName = next;
+        if (this.session) this.session.guildName = next;
+        if (!changed || !next || !this.initialized) return undefined;
+        return this._restore();
     }
 
     /**
@@ -359,20 +458,29 @@ class GuildTrialAbilities {
      * makes a player captured; a stat-only sighting is kept for its name but
      * never erases an authoritative kit and never counts as one.
      *
+     * `at` stamps *when the kit was read* and `now` is *when it reached this
+     * module*, and only `now` may end a session. They are the same thing for a
+     * sheet that has just landed and very different for one folded in from the
+     * store, whose kit may have been read half an hour ago: measuring the
+     * session's age against that older stamp restarted the session in the
+     * middle of a trial and threw away everything captured before it.
+     *
      * @param {Object} snapshot - `{characterId, name, abilities, abilitiesAuthoritative, source, at}`
      * @param {Object} [options] - Context
      * @param {number|string|null} [options.tier] - Tier at capture; defaults to the fed tier
-     * @param {number} [options.at] - Clock
+     * @param {number} [options.at] - When the kit was read; stamped onto the entry
+     * @param {number} [options.now] - When it arrived here; defaults to `at`
      * @returns {Object|null} The player's entry, or null for an unusable snapshot
      */
-    recordCapture(snapshot, { tier = this.currentTier, at } = {}) {
+    recordCapture(snapshot, { tier = this.currentTier, at, now } = {}) {
         if (!snapshot || (!snapshot.name && (snapshot.characterId === null || snapshot.characterId === undefined))) {
             return null;
         }
 
         const when = Number.isFinite(at) ? at : Number.isFinite(snapshot.at) ? snapshot.at : Date.now();
-        if (this.session && when - this.session.startedAt > SESSION_MAX_AGE_MS) this._start(when);
-        if (!this.session) this._start(when);
+        const arrivedAt = Number.isFinite(now) ? now : when;
+        if (this.session && arrivedAt - this.session.startedAt > SESSION_MAX_AGE_MS) this._start(arrivedAt);
+        if (!this.session) this._start(arrivedAt);
 
         const key = playerKey(snapshot);
         let existing = this.session.players[key] || null;
@@ -409,7 +517,7 @@ class GuildTrialAbilities {
             if (!this.session.capturedTiers.includes(tier)) this.session.capturedTiers.push(tier);
         }
 
-        this._recheckComplete(when);
+        this._recheckComplete(arrivedAt);
         this._persist();
         return entry;
     }

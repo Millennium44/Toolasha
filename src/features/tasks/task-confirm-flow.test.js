@@ -413,6 +413,38 @@ describe('a card mid-flow is left alone', () => {
         expect(card.querySelector('.mwi-reroll-cost-display')).not.toBe(null);
     });
 
+    test('but a card whose task changed under the chooser is redrawn at once', async () => {
+        // Paying for a reroll does not close the chooser: the game puts the new
+        // task above it and waits. Under the plain skip every row Toolasha draws
+        // went on describing the task that had just been thrown away, for as
+        // long as the player kept rerolling — the reported "the estimate is
+        // still the old task's until I press Back".
+        const card = cardOnBoard(['Go', 'Reroll', '']);
+        await taskRerollTracker.initialize();
+
+        taskRerollTracker.updateAllTaskDisplays();
+        expect(card.querySelector('.mwi-reroll-cost-display')).not.toBe(null);
+
+        // The chooser opens over the same task: still left alone
+        const action = card.querySelector('[class*="RandomTask_action"]');
+        action.replaceChildren(
+            ...['Back', 'Pay 10K', 'MooPass Free Reroll (2)'].map((label) => {
+                const button = document.createElement('button');
+                button.textContent = label;
+                return button;
+            })
+        );
+        card.querySelector('.mwi-reroll-cost-display').remove();
+        taskRerollTracker.updateAllTaskDisplays();
+        expect(card.querySelector('.mwi-reroll-cost-display')).toBe(null);
+
+        // The reroll lands — same chooser, different task
+        card.querySelector('[class*="RandomTask_name"]').textContent = 'Cooking - Stew';
+        taskRerollTracker.updateAllTaskDisplays();
+
+        expect(card.querySelector('.mwi-reroll-cost-display')).not.toBe(null);
+    });
+
     test('the cap edge shows while the chooser is still open', async () => {
         // A card mid-flow (its reroll chooser open) whose task has spent its
         // rerolls to the cap gets the orange edge now, not only once Back is

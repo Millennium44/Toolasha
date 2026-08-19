@@ -95,18 +95,23 @@ function snapshot(name, characterId, abilities, over = {}) {
     };
 }
 
+/** Tell the listeners a sheet landed, whatever the store now holds for them */
+function announce(event) {
+    for (const listener of [...capture.listeners]) {
+        listener({ abilitiesAuthoritative: true, characterId: null, ...event });
+    }
+}
+
 /** Put a snapshot in the store and announce it, as a landed sheet would */
 function land(snap) {
     capture.players[snap.name.toLowerCase()] = snap;
-    for (const listener of [...capture.listeners]) {
-        listener({
-            characterId: snap.characterId ?? null,
-            name: snap.name,
-            source: snap.source,
-            abilitiesAuthoritative: snap.abilitiesAuthoritative === true,
-            at: snap.at,
-        });
-    }
+    announce({
+        characterId: snap.characterId ?? null,
+        name: snap.name,
+        source: snap.source,
+        abilitiesAuthoritative: snap.abilitiesAuthoritative === true,
+        at: snap.at,
+    });
 }
 
 const text = () => guildTrialAbilitiesPanel.panel.textContent;
@@ -447,6 +452,49 @@ describe('trial abilities panel', () => {
         expect(text()).toContain('1/1 captured');
         expect(card('Equipped aura coverage').textContent).toContain('Lv70 — Alice');
         expect(text()).not.toContain(FAILED);
+    });
+
+    test('a Battle Info sheet a later new_battle folded over is still captured', async () => {
+        // The reported symptom, exactly: three popups opened, three sheets on
+        // disk, the panel still saying "needs Battle Info". The event names the
+        // popup; the store is read back a moment later and by then a wave of
+        // `new_battle` has taken over the entry's `source`, and the read-back's
+        // source was what the panel judged the capture by
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Alice']);
+        capture.players.alice = snapshot('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 70 }], {
+            source: 'new_battle',
+            at: NOW + 500,
+            abilitiesAt: NOW,
+        });
+        announce({ name: 'Alice', characterId: 1, source: 'battle_unit_fetched', at: NOW });
+
+        openTrialAbilitiesPanel();
+        expect(text()).toContain('1/1 captured');
+        expect(card('Equipped aura coverage').textContent).toContain('Lv70 — Alice');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('a new_battle event is still refused, whatever the store holds', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Alice']);
+        land(snapshot('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 70 }], { source: 'new_battle' }));
+
+        openTrialAbilitiesPanel();
+        expect(text()).toContain('0/1 captured');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('a sheet landing while the session is still being restored is heard', async () => {
+        // The subscription used to be made after the restore's storage read had
+        // been awaited, so a popup answered during the read reached the store
+        // and nothing else
+        const pending = feature.initialize('Cats');
+        expect(capture.listeners).toHaveLength(1);
+        land(snapshot('Alice', 1, [{ hrid: '/abilities/fierce_aura', level: 70 }]));
+        await pending;
+
+        expect(guildTrialAbilities.session?.players['id:1']?.abilitiesAuthoritative).toBe(true);
     });
 
     test('cleanup unsubscribes from the capture events', async () => {

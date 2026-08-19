@@ -20,6 +20,9 @@ import {
     onConfirmFlowSettled,
     armConfirmSettleWatch,
     stopConfirmSettleWatch,
+    cardTaskKey,
+    shouldSkipConfirmingCard,
+    noteCardTaskDrawn,
 } from './task-card-state.js';
 
 /**
@@ -243,5 +246,107 @@ describe('the settle watch', () => {
         armConfirmSettleWatch();
 
         expect(vi.getTimerCount()).toBe(0);
+    });
+});
+
+/**
+ * The other half of the mid-flow rule.
+ *
+ * Leaving a card alone while it waits on a click is right until the card stops
+ * being the same card. Paying for a reroll does not close the chooser — the
+ * game puts the new task above it and waits — so the plain skip left every row
+ * Toolasha draws describing a task that had already been thrown away, for as
+ * long as the player kept rerolling.
+ */
+describe('a card whose task changes mid-flow', () => {
+    /** Give a card a Progress line, so its key carries a goal count */
+    function withProgress(element, text) {
+        const progress = document.createElement('div');
+        progress.textContent = text;
+        element.querySelector('[class*="RandomTask_content"]').appendChild(progress);
+        return element;
+    }
+
+    test('the key is the task, not the progress made against it', () => {
+        const element = withProgress(card(['Go', 'Reroll']), 'Progress: 0 / 100');
+        const before = cardTaskKey(element);
+
+        element.querySelector('div[class*="RandomTask_content"] div:last-child').textContent = 'Progress: 40 / 100';
+        expect(cardTaskKey(element)).toBe(before);
+
+        element.querySelector('[class*="RandomTask_name"]').textContent = 'Cooking - Stew';
+        expect(cardTaskKey(element)).not.toBe(before);
+    });
+
+    test("Toolasha's own zone index is not a change", () => {
+        const element = card(['Go', 'Reroll']);
+        const before = cardTaskKey(element);
+
+        const zone = document.createElement('span');
+        zone.className = 'script_taskMapIndex';
+        zone.textContent = 'Z9';
+        element.querySelector('[class*="RandomTask_name"]').appendChild(zone);
+
+        expect(cardTaskKey(element)).toBe(before);
+    });
+
+    test('a card at rest is never skipped', () => {
+        const element = card(['Go', 'Reroll']);
+        expect(shouldSkipConfirmingCard(element, 'profit')).toBe(false);
+    });
+
+    test('a mid-flow card is skipped while it still shows the task that was drawn', () => {
+        const element = card(['Go', 'Reroll']);
+        noteCardTaskDrawn(element, 'profit');
+
+        element
+            .querySelector('[class*="RandomTask_action"]')
+            .replaceChildren(...card(['Back', 'Pay 10K']).querySelector('[class*="RandomTask_action"]').childNodes);
+
+        expect(shouldSkipConfirmingCard(element, 'profit')).toBe(true);
+    });
+
+    test('the skip gives way once the reroll has landed', () => {
+        const element = card(['Go', 'Reroll']);
+        noteCardTaskDrawn(element, 'profit');
+
+        element
+            .querySelector('[class*="RandomTask_action"]')
+            .replaceChildren(...card(['Back', 'Pay 10K']).querySelector('[class*="RandomTask_action"]').childNodes);
+        element.querySelector('[class*="RandomTask_name"]').textContent = 'Cooking - Stew';
+
+        expect(shouldSkipConfirmingCard(element, 'profit')).toBe(false);
+
+        // And once redrawn, the card goes back to being left alone
+        noteCardTaskDrawn(element, 'profit');
+        expect(shouldSkipConfirmingCard(element, 'profit')).toBe(true);
+    });
+
+    test('each consumer answers for its own rows', () => {
+        const element = card(['Go', 'Reroll']);
+        noteCardTaskDrawn(element, 'profit');
+
+        element
+            .querySelector('[class*="RandomTask_action"]')
+            .replaceChildren(...card(['Back', 'Pay 10K']).querySelector('[class*="RandomTask_action"]').childNodes);
+        element.querySelector('[class*="RandomTask_name"]').textContent = 'Cooking - Stew';
+
+        expect(shouldSkipConfirmingCard(element, 'profit')).toBe(false);
+        // The spend line never drew this card, so it has nothing stale to fix
+        expect(shouldSkipConfirmingCard(element, 'rerollSpend')).toBe(true);
+    });
+
+    test('a node inside the card answers for the card', () => {
+        const element = card(['Go', 'Reroll']);
+        const name = element.querySelector('[class*="RandomTask_name"]');
+        noteCardTaskDrawn(name, 'profit');
+
+        element
+            .querySelector('[class*="RandomTask_action"]')
+            .replaceChildren(...card(['Back', 'Pay 10K']).querySelector('[class*="RandomTask_action"]').childNodes);
+        expect(shouldSkipConfirmingCard(name, 'profit')).toBe(true);
+
+        name.textContent = 'Cooking - Stew';
+        expect(shouldSkipConfirmingCard(name, 'profit')).toBe(false);
     });
 });

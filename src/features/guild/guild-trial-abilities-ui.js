@@ -511,7 +511,11 @@ export function adoptStoredCaptures() {
             if (!snapshot || snapshot.source === 'new_battle' || snapshot.abilitiesAuthoritative !== true) continue;
             const at = Number(snapshot.abilitiesAt ?? snapshot.at) || 0;
             if (at < horizon) continue;
-            guildTrialAbilities.recordCapture(snapshot, { at });
+            // `now` is what the session's age is measured against: several
+            // sheets read more than the session's maximum age apart are still
+            // being adopted in one pass, and adopting them must not restart
+            // the session and discard the ones already folded in
+            guildTrialAbilities.recordCapture(snapshot, { at, now: Date.now() });
             delete trialUnitRequests[String(row.name).toLowerCase()];
             adopted++;
         }
@@ -536,16 +540,38 @@ let offCaptured = null;
 function onCapturedEvent(event) {
     try {
         if (!event?.name) return;
-        const snapshot = guildLoadoutCapture.forPlayer?.(event.name);
-        if (!snapshot) return;
         // Your own zone fight's `new_battle` carries your combatAbilities —
         // your *current* kit, not the one this trial was entered with — and
         // folding it in marked the local player "captured" with the wrong
         // abilities while everyone else honestly said "needs Battle Info".
         // The trial session takes only what the trial itself can show: the
         // Battle Info popups, the same source for every participant.
-        if (snapshot.source === 'new_battle') return;
-        guildTrialAbilities.recordCapture(snapshot);
+        //
+        // Judged on the *event's* source rather than the stored snapshot's.
+        // The event says a sheet landed; the store is only read back for the
+        // abilities the event does not carry, and what comes back is the
+        // *folded* record — a `new_battle` sighting one wave later has already
+        // taken over its `source` and `at` (and a fold whose sighting is older
+        // than one already held is dropped entirely, event and all). Reading
+        // the source off that read-back is what silently discarded Battle Info
+        // popups that had genuinely arrived: three opened in a live trial, the
+        // sheets on disk, the panel still saying "needs Battle Info".
+        if (event.source === 'new_battle') return;
+        const stored = guildLoadoutCapture.forPlayer?.(event.name);
+        if (!stored) return;
+        const snapshot = {
+            ...stored,
+            name: stored.name || event.name,
+            characterId: stored.characterId ?? event.characterId ?? null,
+            source: event.source ?? stored.source ?? null,
+        };
+        // The kit is stamped with when it was *read* — `abilitiesAt` survives a
+        // later stat-only sighting folding over it, `at` does not
+        const at = Number(snapshot.abilitiesAt ?? snapshot.at ?? event.at);
+        guildTrialAbilities.recordCapture(snapshot, {
+            at: Number.isFinite(at) ? at : undefined,
+            now: Date.now(),
+        });
         // An answered request is over: the next click moves on to the next
         // player at once instead of waiting out the request window. Only an
         // authoritative sheet clears it — a stat-only popup sighting leaves
@@ -566,8 +592,14 @@ export default {
      * @returns {Promise<void>}
      */
     initialize: async (guildName = null) => {
-        await guildTrialAbilities.initialize(guildName);
+        // Subscribed *before* the session is restored, not after. The restore
+        // is an IndexedDB read and a Battle Info popup that landed while it was
+        // in flight had nobody listening — the sheet reached the store and
+        // never reached the session. The restore merges what arrived in the
+        // meantime rather than replacing it, so the order is safe both ways.
+        offCaptured?.();
         offCaptured = guildLoadoutCapture.onCaptured?.((event) => onCapturedEvent(event)) ?? null;
+        await guildTrialAbilities.initialize(guildName);
     },
     cleanup: () => {
         offCaptured?.();

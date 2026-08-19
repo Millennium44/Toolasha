@@ -17,6 +17,8 @@ import {
     isConfirmPendingFor,
     armConfirmSettleWatch,
     onConfirmFlowSettled,
+    shouldSkipConfirmingCard,
+    noteCardTaskDrawn,
 } from './task-card-state.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { timeReadable, formatPercentage, formatKMB } from '../../utils/formatters.js';
@@ -814,13 +816,15 @@ class TaskProfitDisplay {
 
         const taskNodes = taskListNode.querySelectorAll(GAME.TASK_INFO);
         for (const taskNode of taskNodes) {
-            // The card is mid-flow — the chooser has replaced the row this
-            // reads, so the task key it computes is not the task's, and acting
-            // on it tears the profit rows down and rebuilds them underneath the
-            // player's pending click. The chooser stays open after a reroll, so
-            // the pass is booked to run again when it closes; without that the
-            // rows keep describing the task that was rerolled away.
-            if (isConfirmPendingFor(taskNode)) {
+            // The card is mid-flow: it is waiting on the player's second click,
+            // and rebuilding the rows underneath that click is what used to make
+            // the button look like it had not registered. So the pass leaves it
+            // alone — unless the task itself has changed since these rows were
+            // drawn, which is exactly what paying for a reroll does. The chooser
+            // stays open afterwards, so a card skipped on that ground would keep
+            // describing the task that was rerolled away until the player
+            // pressed Back.
+            if (shouldSkipConfirmingCard(taskNode, 'profit')) {
                 armConfirmSettleWatch();
                 continue;
             }
@@ -854,6 +858,7 @@ class TaskProfitDisplay {
             }
 
             this.addProfitToTask(taskNode);
+            noteCardTaskDrawn(taskNode, 'profit');
         }
     }
 

@@ -185,3 +185,110 @@ export function stopConfirmSettleWatch() {
         settleTimer = null;
     }
 }
+
+/**
+ * The task a card is currently showing, as a string.
+ *
+ * Name plus goal count, because the chooser leaves both in place: pressing a
+ * reroll option swaps the card's task while its action row is still the
+ * chooser, so this is the only thing on a mid-flow card that says the task has
+ * changed. The progress *made* is left out on purpose — a card whose count
+ * ticks up is still the same task and must not be redrawn for it.
+ *
+ * Toolasha's own injected zone index (`Z9`) is stripped, since it is added
+ * after the first draw and would otherwise read as a change on the second pass.
+ *
+ * @param {Element|null|undefined} node - A task card, or any node inside one
+ * @returns {string} The key, or '' when the node is not a card with a task on it
+ */
+export function cardTaskKey(node) {
+    const card = taskCardOf(node) || node;
+    if (!card || typeof card.querySelector !== 'function') return '';
+
+    const nameNode = card.querySelector(GAME.TASK_NAME);
+    if (!nameNode) return '';
+    const injected = nameNode.querySelector?.('span.script_taskMapIndex');
+    const rawName = nameNode.textContent || '';
+    const name = (injected ? rawName.replace(injected.textContent, '') : rawName).trim();
+
+    let goal = '';
+    for (const div of card.querySelectorAll('div')) {
+        const text = (div.textContent || '').trim();
+        if (!text.startsWith('Progress:')) continue;
+        const match = text.match(/(\d+)\s*\/\s*(\d+)/);
+        if (match) goal = match[2];
+        break;
+    }
+
+    return `${name}|${goal}`;
+}
+
+/**
+ * What each consumer last drew on each card, so a mid-flow card whose task has
+ * changed can be told from one that is merely waiting on a click.
+ */
+const drawnTaskKeys = new WeakMap();
+
+/**
+ * @param {Element} card - A task card
+ * @returns {Map<string, string>} That card's per-consumer keys
+ */
+function drawnKeysFor(card) {
+    let keys = drawnTaskKeys.get(card);
+    if (!keys) {
+        keys = new Map();
+        drawnTaskKeys.set(card, keys);
+    }
+    return keys;
+}
+
+/**
+ * Should this pass leave the card alone because it is mid-flow?
+ *
+ * The plain rule — never touch a card that is asking the player a question —
+ * has one hole in it, and it is the commonest thing a player does on this
+ * board. Paying for a reroll does not close the chooser: the card keeps the
+ * chooser open and puts the *new* task above it, so every pass that follows
+ * skips a card whose rows now describe a task that no longer exists. The
+ * player sees the old estimate, the old profit and the old spend sitting under
+ * a task they have just replaced, and nothing fixes it until they press Back.
+ *
+ * So the skip holds while the card is showing the same task this consumer
+ * already drew, and gives way the moment the task underneath changes. Redrawing
+ * then disturbs nothing the player is mid-click on: what changed is the card's
+ * content, not its action row, and the rows being replaced are Toolasha's own.
+ *
+ * @param {Element|null|undefined} node - A task card, or any node inside one
+ * @param {string} consumer - Which feature is asking (its own rows are its own business)
+ * @returns {boolean} True to skip the card this pass
+ */
+export function shouldSkipConfirmingCard(node, consumer) {
+    const card = taskCardOf(node) || node;
+    if (!isCardInConfirmState(card)) return false;
+
+    const seen = drawnKeysFor(card).get(consumer);
+    if (seen === undefined) return true;
+
+    const key = cardTaskKey(card);
+    // No readable task (the card is not drawn yet, or the build renamed the
+    // name node) is not evidence of a change
+    if (!key || key === seen) return true;
+
+    return false;
+}
+
+/**
+ * Record the task a consumer has just drawn for a card.
+ *
+ * Called on every pass that draws, not only the mid-flow ones: the key that
+ * matters is the one from the last completed draw, whenever that was.
+ *
+ * @param {Element|null|undefined} node - A task card, or any node inside one
+ * @param {string} consumer - Which feature drew
+ */
+export function noteCardTaskDrawn(node, consumer) {
+    const card = taskCardOf(node) || node;
+    if (!card || typeof card.querySelector !== 'function') return;
+    const key = cardTaskKey(card);
+    if (key) drawnKeysFor(card).set(consumer, key);
+}

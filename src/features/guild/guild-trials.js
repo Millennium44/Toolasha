@@ -3116,7 +3116,19 @@ class GuildTrials {
      */
     _noteLifecycle(status, tiles, now) {
         const phase = status?.phase || null;
+        const previous = this.phase;
         if (phase && phase !== this.phase) this.phase = phase;
+
+        // A trial going live is the one deterministic start the capture session
+        // has: without it the session began at whichever capture happened to be
+        // first and expired sixty-five minutes after *that*, which is a clock
+        // that can run out in the middle of the next trial. Only a transition
+        // counts — a page opened onto a trial already running has `previous`
+        // null and must keep the session it just restored, which is this
+        // trial's. `noteTrialStart` debounces the rest.
+        if (phase === 'live' && previous && previous !== 'live') {
+            guildTrialAbilities.noteTrialStart?.(now);
+        }
 
         guildTrialAlerts.noteTrialStatus?.({
             phase,

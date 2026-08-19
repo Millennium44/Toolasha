@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Task card overlays follow a rerolled task
+
+Paying for a reroll leaves the game's chooser open over the new task, and every row Toolasha draws on a card — the estimate block, the profit and rating lines, the reroll-spend line — was held back while a card was mid-flow, so those rows went on describing the task that had just been thrown away until Back was pressed. A mid-flow card is still left alone, except when the task on it has actually changed.
+
+### Trial Abilities keeps every Battle Info sheet, and its session survives a reload
+
+The capture session was written under the guild's key but read back under `default` (the guild's name arrives after the panel loads), so a reload showed 0 captured; and a sheet was judged by what the loadout store held a moment later rather than by the popup that had actually arrived, so Battle Info popups opened during a trial silently never registered. The session is now re-read when the guild's name lands, merges rather than replaces whatever arrived while it was loading, and a trial going live — not the first capture — is what starts a fresh session.
+
 ### Guild trial records, sessions and XP switch guilds cleanly
 
 Changing guild without changing character used to carry the guild you left into the guild you joined: the trial record was merged onto the new guild's key (and stamped as the new guild's, which defeats the foreign-record check), an open recorder session was written under the new guild's key, and the guild XP map was copied across wholesale. Each now starts from the arriving guild's own record, and the guild you left keeps its own for if you go back.

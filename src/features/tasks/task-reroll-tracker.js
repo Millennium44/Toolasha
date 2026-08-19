@@ -8,7 +8,12 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
-import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
+import {
+    armConfirmSettleWatch,
+    onConfirmFlowSettled,
+    shouldSkipConfirmingCard,
+    noteCardTaskDrawn,
+} from './task-card-state.js';
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
 import { createCuratedRecord, createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -502,13 +507,16 @@ class TaskRerollTracker {
     updateTaskDisplay(taskElement, claimedIds) {
         // A card showing the reroll chooser or the discard confirmation is
         // waiting on the player's second click; inserting the spend line into
-        // it now rebuilds the card under that click. The chooser outlives the
-        // reroll, so this pass has to be booked to run again — otherwise the
-        // spend line keeps the count from before the reroll indefinitely.
-        if (isCardInConfirmState(taskElement)) {
+        // it now rebuilds the card under that click. The one exception is a card
+        // whose task has changed since the line was drawn — paying for a reroll
+        // leaves the chooser open over a brand new task — because the spend line
+        // would otherwise report the previous task's rerolls until Back is
+        // pressed.
+        if (shouldSkipConfirmingCard(taskElement, 'rerollSpend')) {
             armConfirmSettleWatch();
             return;
         }
+        noteCardTaskDrawn(taskElement, 'rerollSpend');
 
         // Always ensure placeholder element exists to reserve layout space,
         // regardless of whether this task has been rerolled yet
