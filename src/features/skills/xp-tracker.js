@@ -4,12 +4,12 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import storage from '../../core/storage.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import config from '../../core/config.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { createPersistedRecord, mergeSeriesMaps } from '../../utils/persisted-record.js';
 
 const STORE_NAME = 'xpHistory';
 const WINDOW_10M = 10 * 60 * 1000;
@@ -106,6 +106,31 @@ function pushXP(arr, d) {
 }
 
 /**
+ * Fold a stored skill map under the in-memory one, series by series.
+ *
+ * The union of samples per skill, by timestamp, then replayed through
+ * {@link pushXP} so the thinning rules (and the "XP never falls" guard) hold
+ * over the merged series exactly as they would over one recorded in a single
+ * tab.
+ * @param {Object} stored - skillId → samples, as read back
+ * @param {Object} memory - skillId → samples, as held
+ * @returns {Object} The merged map
+ */
+function mergeXPHistory(stored, memory) {
+    const union = mergeSeriesMaps(
+        (sample) => sample?.t,
+        (a, b) => a.t - b.t
+    )(stored, memory);
+    const out = {};
+    for (const [skillId, samples] of Object.entries(union)) {
+        const replayed = [];
+        for (const sample of samples) pushXP(replayed, sample);
+        out[skillId] = replayed;
+    }
+    return out;
+}
+
+/**
  * Filter history to only entries within the given interval from now.
  * @param {Array} arr
  * @param {number} interval - ms
@@ -185,11 +210,24 @@ class XPTracker {
     constructor() {
         this.initialized = false;
         this.characterId = null;
-        this.xpHistory = {}; // skillId → [{t, xp}]
+        // skillId → [{t, xp}], kept in IndexedDB through a record that a
+        // failed read cannot blank and a second tab cannot overwrite
+        this.history = createPersistedRecord({
+            base: 'xpHistory',
+            store: STORE_NAME,
+            empty: () => ({}),
+            merge: mergeXPHistory,
+            label: 'XPTracker',
+        });
         this.combatSession = {}; // skillId → { startExp, startTime, lastExp }
         this.timerRegistry = createTimerRegistry();
         this.unregisterObservers = [];
         this.tooltipObserver = null;
+    }
+
+    /** @returns {Object} skillId → [{t, xp}] — the live in-memory record */
+    get xpHistory() {
+        return this.history.get();
     }
 
     async initialize() {
@@ -247,12 +285,14 @@ class XPTracker {
         const charId = data?.character?.id;
         if (!charId) return;
 
+        // Another character's history must not be folded under this one's
+        if (this.characterId !== charId) this.history.reset();
         this.characterId = charId;
         this.combatSession = {};
 
-        // Load persisted history for this character
-        const stored = await storage.get(`xpHistory_${charId}`, STORE_NAME, {});
-        this.xpHistory = stored;
+        // Load persisted history for this character. An unreadable store
+        // leaves whatever is in memory standing rather than blanking it.
+        await this.history.load();
 
         const t = data.currentTimestamp ? +new Date(data.currentTimestamp) : Date.now();
 
@@ -269,7 +309,7 @@ class XPTracker {
         });
 
         // Don't await — write is fire-and-forget, no need to block initialization
-        storage.set(`xpHistory_${charId}`, this.xpHistory, STORE_NAME);
+        this.history.save();
 
         this._updateNavBars();
     }
@@ -308,7 +348,7 @@ class XPTracker {
             }
         });
 
-        storage.set(`xpHistory_${this.characterId}`, this.xpHistory, STORE_NAME);
+        this.history.save();
 
         this._updateNavBars();
     }
@@ -496,6 +536,8 @@ class XPTracker {
 }
 
 const xpTracker = new XPTracker();
+
+export { xpTracker };
 
 export default {
     name: 'XP/hr Tracker',

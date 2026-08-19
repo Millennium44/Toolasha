@@ -14,6 +14,7 @@ import marketAPI from '../../api/marketplace.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
 import { formatRelativeTime } from '../../utils/formatters.js';
 import { characterKey } from '../../utils/character-key.js';
+import { createCuratedRecord } from '../../utils/persisted-record.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -163,6 +164,18 @@ const ACTION_TO_ITEM = {
 
 /** Everything this feature stores per character, in the `collections` store */
 const STORED_KEYS = ['flags', 'favorites', 'collections', 'showUncollected', 'collectionsUpdatedAt'];
+
+/**
+ * A curated record in the collections store: flag states, favourites and the
+ * scanned counts are each user-marked or rebuilt on sight, so once read back
+ * memory is the truth and an un-starring sticks; before that, saves fold in
+ * what is stored so nothing is lost. A read that cannot be made keeps what is
+ * in hand rather than blanking it, and no write goes over an unreadable store.
+ * @param {string} base - The unscoped key
+ * @returns {Object} The record
+ */
+const collectionRecord = (base) =>
+    createCuratedRecord({ base, store: 'collections', empty: () => ({}), label: 'CollectionFilters' });
 
 // ---------------------------------------------------------------------------
 // Helper functions
@@ -484,6 +497,13 @@ class CollectionFilters {
         this.collectionsLastUpdated = null;
         this.favorites = {};
         this.showUncollected = false;
+        this.records = {
+            flags: collectionRecord('flags'),
+            favorites: collectionRecord('favorites'),
+            collections: collectionRecord('collections'),
+        };
+        /** Character whose state is in hand, so a switch never shows another's */
+        this._loadedFor = null;
         this.sortMode = 'default'; // 'default' | 'items-needed' | 'gold-cost' | 'time-to-next-tier'
         this.catsObserver = null;
         this.itemActionCache = null;
@@ -647,19 +667,37 @@ class CollectionFilters {
         }
     }
 
+    /**
+     * Read this character's state back.
+     *
+     * Each record is read afresh; one that cannot be read leaves what is in
+     * hand as it is — unless that is another character's, which is dropped
+     * first so it can neither show for this one nor be folded into their key.
+     */
     async _load() {
+        const who = dataManager.getCurrentCharacterId() || null;
+        if (who !== this._loadedFor) {
+            this.favorites = {};
+            this.collections = {};
+            this.flags = buildFlags(this._filtersEnabled, this._favoritesEnabled);
+            this._loadedFor = who;
+        }
+        // What the flags are now, kept if the stored ones cannot be read
+        const heldFlags = this._flagStates();
         // Reset flags to defaults before loading saved state
         this.flags = buildFlags(this._filtersEnabled, this._favoritesEnabled);
 
         await this._renameLegacyKeys();
 
-        const [savedFlags, savedFavorites, savedCollections, savedShowUncollected, savedTimestamp] = await Promise.all([
-            storage.getJSON(this._charKey('flags'), 'collections', {}),
-            storage.getJSON(this._charKey('favorites'), 'collections', {}),
-            storage.getJSON(this._charKey('collections'), 'collections', {}),
+        for (const record of Object.values(this.records)) record.reset();
+        const [flagsRead, favoritesRead, collectionsRead, savedShowUncollected, savedTimestamp] = await Promise.all([
+            this.records.flags.load(),
+            this.records.favorites.load(),
+            this.records.collections.load(),
             storage.getJSON(this._charKey('showUncollected'), 'collections', false),
             storage.get(this._charKey('collectionsUpdatedAt'), 'collections', null),
         ]);
+        const savedFlags = flagsRead ? this.records.flags.get() : heldFlags;
 
         // Apply saved flag states
         this.flags.forEach((f) => {
@@ -672,27 +710,35 @@ class CollectionFilters {
             this.sortMode = savedFlags.__sortMode;
         }
 
-        this.favorites = this._favoritesEnabled ? savedFavorites : {};
-        this.collections = savedCollections;
+        if (favoritesRead) this.favorites = this._favoritesEnabled ? this.records.favorites.get() : {};
+        if (collectionsRead) this.collections = this.records.collections.get();
         this.collectionsLastUpdated = savedTimestamp;
         this.showUncollected = savedShowUncollected;
     }
 
-    async _saveFlags() {
+    /** @returns {Object} className → checked, plus the sort mode, as stored */
+    _flagStates() {
         const fs = {};
         this.flags.forEach((f) => {
             fs[f.className] = f.checked;
         });
         fs.__sortMode = this.sortMode;
-        await storage.setJSON(this._charKey('flags'), fs, 'collections');
+        return fs;
+    }
+
+    async _saveFlags() {
+        this.records.flags.set(this._flagStates());
+        await this.records.flags.save();
     }
 
     async _saveFavorites() {
-        await storage.setJSON(this._charKey('favorites'), this.favorites, 'collections');
+        this.records.favorites.set(this.favorites);
+        await this.records.favorites.save();
     }
 
     async _saveCollections() {
-        await storage.setJSON(this._charKey('collections'), this.collections, 'collections');
+        this.records.collections.set(this.collections);
+        await this.records.collections.save();
     }
 
     async _saveShowUncollected(value) {

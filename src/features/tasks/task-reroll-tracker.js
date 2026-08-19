@@ -10,7 +10,7 @@ import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { createCuratedRecord, createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { addStyles } from '../../utils/dom.js';
 
@@ -24,18 +24,55 @@ import { addStyles } from '../../utils/dom.js';
  * character's rows from another's — a merged record cannot be partitioned after
  * the fact, and giving the whole of it to the main character is the closest to
  * true that is still available.
+ *
+ * Both are kept through persisted records (`utils/persisted-record.js`), so a
+ * read that cannot be made does not come back as an empty map or list and get
+ * written over the stored one. The history folds stored entries under new
+ * ones by task — a task retires once — so a second tab's entries survive; the
+ * live map is curated: tasks are dropped from it on purpose when they retire,
+ * so once it has been read back memory is the map and a drop sticks.
  */
 const DATA_KEY = 'taskRerollData';
 const HISTORY_KEY = 'taskRerollHistory';
 const HISTORY_CAP = 500;
-const ADOPT_LEGACY = { migrate: 'adopt' };
+const STORE_NAME = 'rerollSpending';
+
+/**
+ * Fold a stored history under the in-memory one: the union by task, oldest
+ * first, capped at {@link HISTORY_CAP}.
+ * @param {Array} stored - Entries as read back
+ * @param {Array} memory - Entries as held
+ * @returns {Array} The merged, capped history
+ */
+function mergeHistory(stored, memory) {
+    const merged = mergeById(
+        (entry) => entry?.taskId,
+        (a, b) => (a.retiredAt || 0) - (b.retiredAt || 0)
+    )(stored, memory);
+    return merged.length > HISTORY_CAP ? merged.slice(merged.length - HISTORY_CAP) : merged;
+}
 
 class TaskRerollTracker {
     constructor() {
         this.taskRerollData = new Map(); // key: taskId, value: { coinRerollCount, cowbellRerollCount }
         this.unregisterHandlers = [];
         this.isInitialized = false;
-        this.storeName = 'rerollSpending';
+        this.storeName = STORE_NAME;
+        this.dataRecord = createCuratedRecord({
+            base: DATA_KEY,
+            store: STORE_NAME,
+            empty: () => ({}),
+            immediate: true,
+            label: 'TaskRerollTracker',
+        });
+        this.historyRecord = createPersistedRecord({
+            base: HISTORY_KEY,
+            store: STORE_NAME,
+            empty: () => [],
+            merge: mergeHistory,
+            immediate: true,
+            label: 'TaskRerollTracker',
+        });
         this.timerRegistry = createTimerRegistry();
     }
 
@@ -61,15 +98,31 @@ class TaskRerollTracker {
         this.isInitialized = true;
     }
 
+    /** @returns {Object} The live map as a plain object, for storage */
+    _dataToSave() {
+        const dataToSave = {};
+        for (const [taskId, data] of this.taskRerollData.entries()) {
+            dataToSave[taskId] = data;
+        }
+        return dataToSave;
+    }
+
     /**
-     * Load task reroll data from IndexedDB
+     * Load task reroll data from IndexedDB.
+     *
+     * Starts the record over — whatever it held was a previous load's — and
+     * reads this character's map. When the read cannot be made the map in
+     * hand stays as it is.
      */
     async loadFromStorage() {
         try {
-            const savedData = (await readScoped(DATA_KEY, this.storeName, {}, ADOPT_LEGACY)) || {};
+            this.dataRecord.reset();
+            this.dataRecord.set(this._dataToSave());
+            const readable = await this.dataRecord.load();
+            if (!readable) return;
 
             // Convert saved object back to Map
-            for (const [taskId, data] of Object.entries(savedData)) {
+            for (const [taskId, data] of Object.entries(this.dataRecord.get())) {
                 this.taskRerollData.set(parseInt(taskId), data);
             }
         } catch (error) {
@@ -78,17 +131,13 @@ class TaskRerollTracker {
     }
 
     /**
-     * Save task reroll data to IndexedDB
+     * Save task reroll data to IndexedDB. Skipped when storage cannot be read
+     * first; the map in hand is kept and the next save retries.
      */
     async saveToStorage() {
         try {
-            // Convert Map to plain object for storage
-            const dataToSave = {};
-            for (const [taskId, data] of this.taskRerollData.entries()) {
-                dataToSave[taskId] = data;
-            }
-
-            await writeScoped(DATA_KEY, dataToSave, this.storeName, true);
+            this.dataRecord.set(this._dataToSave());
+            await this.dataRecord.save();
         } catch (error) {
             console.error('[Task Reroll Tracker] Failed to save to storage:', error);
         }
@@ -105,6 +154,8 @@ class TaskRerollTracker {
         // follows a character switch loads the arriving character's rows rather
         // than writing the departing character's out under their key.
         this.taskRerollData.clear();
+        this.dataRecord.reset();
+        this.historyRecord.reset();
         document.getElementById('mwi-task-action-min-height')?.remove();
         this.isInitialized = false;
     }
@@ -119,8 +170,11 @@ class TaskRerollTracker {
      */
     async loadHistory() {
         try {
-            const saved = await readScoped(HISTORY_KEY, this.storeName, [], ADOPT_LEGACY);
-            return Array.isArray(saved) ? saved : [];
+            // Folds the stored history under any entries held since a read
+            // that could not be made; an unreadable read keeps those
+            await this.historyRecord.load();
+            const held = this.historyRecord.get();
+            return Array.isArray(held) ? held : [];
         } catch (error) {
             console.error('[Task Reroll Tracker] Failed to load reroll history:', error);
             return [];
@@ -141,10 +195,13 @@ class TaskRerollTracker {
         if (!entries.length) return;
 
         try {
-            const history = await this.loadHistory();
-            history.push(...entries);
-            const capped = history.length > HISTORY_CAP ? history.slice(history.length - HISTORY_CAP) : history;
-            await writeScoped(HISTORY_KEY, capped, this.storeName, true);
+            // The save re-reads and folds the stored history under these, capped,
+            // so nothing another tab retired is lost; it is skipped — the entries
+            // kept in hand for the next one — when storage cannot be read first
+            await this.historyRecord.update((history) => {
+                history.push(...entries);
+                return mergeHistory([], history);
+            });
         } catch (error) {
             console.error('[Task Reroll Tracker] Failed to append reroll history:', error);
         }

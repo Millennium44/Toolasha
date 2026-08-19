@@ -33,11 +33,23 @@ const storageMock = vi.hoisted(() => {
     };
     return {
         storeFor,
-        reset: () => stores.clear(),
+        reset: () => {
+            stores.clear();
+            storageMock.unavailable = false;
+        },
         ready: Promise.resolve(true),
+        unavailable: false,
         get: async (key, store = 'settings', fallback = null) => read(key, store, fallback),
         getJSON: async (key, store = 'settings', fallback = null) => read(key, store, fallback),
+        tryGet: async (key, store = 'settings') => {
+            if (storageMock.unavailable) return null;
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null
+                ? { found: true, value: structuredClone(map.get(key)) }
+                : { found: false, value: null };
+        },
         set: async (key, value, store = 'settings') => {
+            if (storageMock.unavailable) return false;
             storeFor(store).set(key, structuredClone(value));
             return true;
         },
@@ -142,6 +154,8 @@ const {
     isWatched,
     watchlistEntries,
     clearWatchlist,
+    unwatchItem,
+    flushWatchlistWrites,
     default: watchlist,
 } = await import('./watchlist.js');
 const { _resetAdoptionCache } = await import('../../utils/character-key.js');
@@ -620,9 +634,86 @@ describe('one list per character', () => {
     test('adding an item writes to the current character key only', async () => {
         await switchCharacter('iron456', 'ironcow');
         watchItem('/items/cheese', 'Cheese');
-        await Promise.resolve();
+        await flushWatchlistWrites();
 
         expect(storageMock.storeFor('settings').get('watchlist_iron456').entries).toHaveLength(1);
         expect(storageMock.storeFor('settings').has('watchlist_market123')).toBe(false);
+    });
+});
+
+describe('the stored list survives a read that cannot be made', () => {
+    const KEY = 'watchlist_market123';
+    const settingsStore = () => storageMock.storeFor('settings');
+    const storedHrids = () => (settingsStore().get(KEY)?.entries || []).map((entry) => entry.hrid);
+    const switchCharacter = async (id = 'market123') => {
+        game.characterId = id;
+        await game.dmHandlers.character_switched();
+    };
+
+    test('a load while storage is unreadable keeps the list in hand instead of blanking it', async () => {
+        settingsStore().set(KEY, { entries: [{ hrid: '/items/cheese', name: 'Cheese' }] });
+        await switchCharacter();
+        watchItem('/items/rare_hat', 'Rare Hat');
+        await flushWatchlistWrites();
+
+        storageMock.unavailable = true;
+        await switchCharacter();
+
+        expect(watchlistEntries().map((entry) => entry.hrid)).toEqual(['/items/cheese', '/items/rare_hat']);
+        expect(storedHrids()).toEqual(['/items/cheese', '/items/rare_hat']);
+    });
+
+    test('but another character’s list never stands in for this one’s, readable or not', async () => {
+        settingsStore().set(KEY, { entries: [{ hrid: '/items/cheese', name: 'Cheese' }] });
+        await switchCharacter();
+
+        storageMock.unavailable = true;
+        await switchCharacter('iron456');
+        expect(watchlistEntries()).toEqual([]);
+
+        storageMock.unavailable = false;
+        watchItem('/items/rare_hat', 'Rare Hat');
+        await flushWatchlistWrites();
+        expect((settingsStore().get('watchlist_iron456')?.entries || []).map((e) => e.hrid)).toEqual([
+            '/items/rare_hat',
+        ]);
+    });
+
+    test('a save while storage is unreadable is skipped, and lands once it is back', async () => {
+        settingsStore().set(KEY, { entries: [{ hrid: '/items/cheese', name: 'Cheese' }] });
+        await switchCharacter();
+
+        storageMock.unavailable = true;
+        watchItem('/items/rare_hat', 'Rare Hat');
+        await flushWatchlistWrites();
+        expect(storedHrids()).toEqual(['/items/cheese']);
+
+        storageMock.unavailable = false;
+        watchItem('/items/trainee_charm', 'Trainee Charm');
+        await flushWatchlistWrites();
+        expect(storedHrids()).toEqual(['/items/cheese', '/items/rare_hat', '/items/trainee_charm']);
+    });
+
+    test('before the list is read back a save loses nothing stored; after, a removal sticks', async () => {
+        settingsStore().set(KEY, {
+            entries: [
+                { hrid: '/items/cheese', name: 'Cheese' },
+                { hrid: '/items/rare_hat', name: 'Rare Hat' },
+            ],
+        });
+        // The list was never read (an unreadable load), and the user adds an item
+        storageMock.unavailable = true;
+        await switchCharacter();
+        storageMock.unavailable = false;
+        watchItem('/items/trainee_charm', 'Trainee Charm');
+        await flushWatchlistWrites();
+        expect(storedHrids()).toEqual(['/items/cheese', '/items/rare_hat', '/items/trainee_charm']);
+
+        // Read back, then a removal: it is not resurrected from storage
+        await switchCharacter();
+        unwatchItem('/items/cheese');
+        await flushWatchlistWrites();
+        expect(storedHrids()).toEqual(['/items/rare_hat', '/items/trainee_charm']);
+        expect(isWatched('/items/cheese')).toBe(false);
     });
 });

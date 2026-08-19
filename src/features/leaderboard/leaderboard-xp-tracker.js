@@ -1,4 +1,28 @@
 /**
+ * Fold a stored player map under the in-memory one, series by series.
+ *
+ * The union of samples per `category_player`, by timestamp, replayed through
+ * {@link pushXP} so the thinning rules hold over the merged series exactly as
+ * they would over one recorded in a single tab.
+ * @param {Object} stored - key → samples, as read back
+ * @param {Object} memory - key → samples, as held
+ * @returns {Object} The merged map
+ */
+function mergePlayerXP(stored, memory) {
+    const union = mergeSeriesMaps(
+        (sample) => sample?.t,
+        (a, b) => a.t - b.t
+    )(stored, memory);
+    const out = {};
+    for (const [key, samples] of Object.entries(union)) {
+        const replayed = [];
+        for (const sample of samples) pushXP(replayed, sample);
+        out[key] = replayed;
+    }
+    return out;
+}
+
+/**
  * Leaderboard XP Tracker
  * Records player XP over time from leaderboard WebSocket messages.
  * Stores history in IndexedDB for XP/hr rate calculations on the Leaderboard panel.
@@ -8,8 +32,8 @@
  */
 
 import webSocketHook from '../../core/websocket.js';
-import storage from '../../core/storage.js';
 import config from '../../core/config.js';
+import { createPersistedRecord, mergeSeriesMaps } from '../../utils/persisted-record.js';
 
 const STORE_NAME = 'leaderboardHistory';
 const WINDOW_10M = 10 * 60 * 1000;
@@ -104,9 +128,24 @@ function calcStats(arr) {
 class LeaderboardXPTracker {
     constructor() {
         this.initialized = false;
-        this.playerXPHistory = {}; // `${category}_${playerName}` → [{t, xp}]
+        // `${category}_${playerName}` → [{t, xp}], one record for the whole
+        // account, kept so a failed read cannot blank it and a second tab
+        // cannot overwrite it
+        this.history = createPersistedRecord({
+            base: 'playerXP',
+            store: STORE_NAME,
+            scoped: false,
+            empty: () => ({}),
+            merge: mergePlayerXP,
+            label: 'LeaderboardXPTracker',
+        });
         this.lastLeaderboardCategory = null;
         this.unregisterHandlers = [];
+    }
+
+    /** @returns {Object} `${category}_${playerName}` → [{t, xp}] — the live in-memory record */
+    get playerXPHistory() {
+        return this.history.get();
     }
 
     async initialize() {
@@ -115,7 +154,8 @@ class LeaderboardXPTracker {
 
         // Load history BEFORE registering WS listener to avoid race condition where
         // leaderboard_updated arrives before storage resolves, causing history to be overwritten.
-        this.playerXPHistory = await storage.get('playerXP', STORE_NAME, {});
+        // An unreadable store keeps whatever is in memory rather than blanking it.
+        await this.history.load();
 
         this._boundOnLeaderboardUpdated = (data) => this._onLeaderboardUpdated(data);
         webSocketHook.on('leaderboard_updated', this._boundOnLeaderboardUpdated);
@@ -157,7 +197,7 @@ class LeaderboardXPTracker {
         }
 
         if (changed) {
-            storage.set('playerXP', this.playerXPHistory, STORE_NAME);
+            this.history.save();
         }
     }
 
@@ -187,7 +227,7 @@ class LeaderboardXPTracker {
             unregister();
         }
         this.unregisterHandlers = [];
-        this.playerXPHistory = {};
+        this.history.reset();
         this.lastLeaderboardCategory = null;
         this.initialized = false;
     }

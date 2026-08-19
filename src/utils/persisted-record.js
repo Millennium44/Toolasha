@@ -20,7 +20,10 @@
  * - **Save** re-probes, folds stored under memory, writes the fold — and is
  *   skipped outright when the probe is unreadable. No blind overwrites.
  * - **Saves are serialized**, so two interleaved probe-merge-writes cannot
- *   each miss the other's entries.
+ *   each miss the other's entries — and coalesced: while one save is running
+ *   and another already waits, further saves join the waiting one, which
+ *   reads memory when it runs. A record written on every game event cannot
+ *   build a backlog behind debounced writes.
  * - **Clear** is the one write allowed to lose entries, and says so.
  *
  * The merge is the record's own business: arrays of entries with ids, maps of
@@ -122,6 +125,17 @@ export function createPersistedRecord({
     let memory = empty();
     let loaded = false;
     let saveChain = Promise.resolve();
+    let saving = false;
+    /** The merge-save waiting behind the running one, which later saves join */
+    let waitingSave = null;
+    /**
+     * Bumped by `reset()`. A load or save that started before a reset finds
+     * the number changed when its probe returns and stands down: otherwise a
+     * save in flight across a character switch would fold the departing
+     * character's stored record into the arriving one's memory and write it
+     * under the arriving one's key.
+     */
+    let generation = 0;
 
     const key = () => (scoped ? characterKey(base) : base);
 
@@ -158,12 +172,14 @@ export function createPersistedRecord({
          * @returns {Promise<boolean>} Whether storage could be read
          */
         async load() {
+            const started = generation;
             try {
                 const probed = await probe();
                 if (probed === null) {
                     console.warn(`[${label}] ${base} could not be read; keeping the in-memory record`);
                     return false;
                 }
+                if (started !== generation) return false;
                 let stored;
                 if (probed.found) {
                     stored = probed.value;
@@ -172,6 +188,7 @@ export function createPersistedRecord({
                     // legacy adoption, which is the only other place the value
                     // could be
                     stored = await readScoped(base, store, null, { migrate });
+                    if (started !== generation) return false;
                 } else {
                     stored = null;
                 }
@@ -188,14 +205,21 @@ export function createPersistedRecord({
          * Save to storage: probe, fold stored under memory, write the fold.
          * Skipped — memory kept, `false` returned — when the probe is
          * unreadable, because a blind overwrite is the accident this exists to
-         * prevent. Serialized with every other save of this record.
+         * prevent. Serialized with every other save of this record, and
+         * coalesced: a save asked for while one runs and another waits
+         * returns the waiting one, since that will fold in the memory of the
+         * moment it runs.
          * @param {Object} [options]
          * @param {boolean} [options.overwrite=false] - Write memory as-is; for
          *   intentional removals only
          * @returns {Promise<boolean>} Whether a write landed
          */
         save({ overwrite = false } = {}) {
+            if (!overwrite && saving && waitingSave) return waitingSave;
             const run = async () => {
+                saving = true;
+                if (waitingSave === promise) waitingSave = null;
+                const started = generation;
                 try {
                     if (!overwrite) {
                         const probed = await probe();
@@ -203,6 +227,7 @@ export function createPersistedRecord({
                             console.warn(`[${label}] ${base} not saved: storage could not be read first`);
                             return false;
                         }
+                        if (started !== generation) return false;
                         if (probed.found) memory = merge(probed.value, memory);
                     }
                     return scoped
@@ -211,10 +236,14 @@ export function createPersistedRecord({
                 } catch (error) {
                     console.error(`[${label}] Saving ${base} failed:`, error);
                     return false;
+                } finally {
+                    saving = false;
                 }
             };
-            saveChain = saveChain.then(run, run);
-            return saveChain;
+            const promise = saveChain.then(run, run);
+            if (!overwrite) waitingSave = promise;
+            saveChain = promise;
+            return promise;
         },
 
         /**
@@ -249,6 +278,7 @@ export function createPersistedRecord({
         reset() {
             memory = empty();
             loaded = false;
+            generation += 1;
         },
 
         /** @returns {Promise<*>} The pending save chain, for tests and shutdown */
@@ -260,4 +290,42 @@ export function createPersistedRecord({
     return record;
 }
 
-export default { createPersistedRecord, mergeById, mergeMaps, mergeSeriesMaps };
+/**
+ * A persisted record for a user-curated list: a watchlist, a favourites map,
+ * a checkbox state.
+ *
+ * The plain record folds stored under memory on every save, which is right
+ * for a history — nothing recorded is meant to disappear — and wrong for a
+ * list the user edits: an item they took off would come back from storage on
+ * the next save. So here the merge is used only until a readable load has
+ * completed (so an edit made before the load finished is not lost, and a
+ * save before any load cannot erase what is stored); from then on memory is
+ * the list, and saves write it as-is. The probe-and-refuse on an unreadable
+ * store still applies, which is the protection that matters. `reset()` (a
+ * character switch) goes back to merging until the next readable load.
+ *
+ * @param {Object} options - As {@link createPersistedRecord}; `merge` defaults
+ *   to {@link mergeMaps} and is only consulted before the first readable load
+ * @returns {Object} The record handle
+ */
+export function createCuratedRecord({ merge = mergeMaps(), ...options }) {
+    let trustMemory = false;
+    const record = createPersistedRecord({
+        ...options,
+        merge: (stored, memory) => (trustMemory ? memory : merge(stored, memory)),
+    });
+    const { load, reset } = record;
+    record.load = async () => {
+        trustMemory = false;
+        const readable = await load();
+        trustMemory = readable;
+        return readable;
+    };
+    record.reset = () => {
+        trustMemory = false;
+        reset();
+    };
+    return record;
+}
+
+export default { createPersistedRecord, createCuratedRecord, mergeById, mergeMaps, mergeSeriesMaps };

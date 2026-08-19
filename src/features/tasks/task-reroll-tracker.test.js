@@ -24,20 +24,32 @@ const storageMock = vi.hoisted(() => {
         if (!stores.has(name)) stores.set(name, new Map());
         return stores.get(name);
     };
-    return {
+    const mock = {
         stores,
         storeFor,
-        reset: () => stores.clear(),
+        unavailable: false,
+        reset: () => {
+            stores.clear();
+            mock.unavailable = false;
+        },
         get: vi.fn(async (key, store = 'settings', fallback = null) => {
             const held = storeFor(store).get(key);
             return held === undefined || held === null ? fallback : held;
+        }),
+        tryGet: vi.fn(async (key, store = 'settings') => {
+            if (mock.unavailable) return null;
+            const held = storeFor(store).get(key);
+            return held === undefined || held === null
+                ? { found: false, value: null }
+                : { found: true, value: structuredClone(held) };
         }),
         getJSON: vi.fn(async (key, store = 'settings', fallback = null) => {
             const held = storeFor(store).get(key);
             return held === undefined || held === null ? fallback : held;
         }),
         set: vi.fn(async (key, value, store = 'settings') => {
-            storeFor(store).set(key, value);
+            if (mock.unavailable) return false;
+            storeFor(store).set(key, structuredClone(value));
             return true;
         }),
         setJSON: vi.fn(async (key, value, store = 'settings') => {
@@ -47,6 +59,7 @@ const storageMock = vi.hoisted(() => {
         delete: vi.fn(async (key, store = 'settings') => storeFor(store).delete(key)),
         getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
     };
+    return mock;
 });
 
 // Adoption is consent-gated now; these suites test the data plumbing,
@@ -83,6 +96,8 @@ beforeEach(() => {
     game.gameMode = 'standard';
     _resetAdoptionCache();
     tracker.taskRerollData.clear();
+    tracker.dataRecord.reset();
+    tracker.historyRecord.reset();
 });
 
 describe('scoping', () => {
@@ -155,5 +170,91 @@ describe('cleanup', () => {
         tracker.cleanup();
 
         expect(tracker.taskRerollData.size).toBe(0);
+    });
+});
+
+describe('the stored records survive a read that cannot be made', () => {
+    test('a load while storage is unreadable keeps the map in hand, not an empty one', async () => {
+        spend().set('taskRerollData_market123', { 1: { coinRerollCount: 2, cowbellRerollCount: 0 } });
+        tracker.taskRerollData.set(5, { coinRerollCount: 1, cowbellRerollCount: 0 });
+        storageMock.unavailable = true;
+
+        await tracker.loadFromStorage();
+
+        expect([...tracker.taskRerollData.keys()]).toEqual([5]);
+        expect(Object.keys(spend().get('taskRerollData_market123'))).toEqual(['1']);
+    });
+
+    test('a save while storage is unreadable is skipped, and lands once it is back', async () => {
+        spend().set('taskRerollData_market123', { 1: { coinRerollCount: 2, cowbellRerollCount: 0 } });
+        storageMock.unavailable = true;
+        tracker.taskRerollData.set(5, { coinRerollCount: 1, cowbellRerollCount: 0 });
+
+        await tracker.saveToStorage();
+        expect(Object.keys(spend().get('taskRerollData_market123'))).toEqual(['1']);
+
+        storageMock.unavailable = false;
+        await tracker.saveToStorage();
+        // Never read back, so the stored row is kept alongside the new one
+        expect(Object.keys(spend().get('taskRerollData_market123'))).toEqual(['1', '5']);
+    });
+
+    test('once read back, a task dropped from the map stays dropped', async () => {
+        spend().set('taskRerollData_market123', {
+            1: { coinRerollCount: 2, cowbellRerollCount: 0 },
+            2: { coinRerollCount: 1, cowbellRerollCount: 0 },
+        });
+        await tracker.loadFromStorage();
+        tracker.taskRerollData.delete(1);
+
+        await tracker.saveToStorage();
+        expect(Object.keys(spend().get('taskRerollData_market123'))).toEqual(['2']);
+    });
+
+    test('an append to the history folds in what another tab retired, by task', async () => {
+        await tracker.appendToHistory([{ taskId: 1, retiredAt: 10, goldSpent: 100 }]);
+        spend().set('taskRerollHistory_market123', [
+            { taskId: 1, retiredAt: 10, goldSpent: 100 },
+            { taskId: 2, retiredAt: 20, goldSpent: 200 },
+        ]);
+
+        await tracker.appendToHistory([{ taskId: 3, retiredAt: 30, goldSpent: 300 }]);
+
+        expect(
+            spend()
+                .get('taskRerollHistory_market123')
+                .map((entry) => entry.taskId)
+        ).toEqual([1, 2, 3]);
+        expect(await tracker.loadHistory()).toHaveLength(3);
+    });
+
+    test('an append while storage is unreadable is kept in hand and lands with the next one', async () => {
+        spend().set('taskRerollHistory_market123', [{ taskId: 1, retiredAt: 10, goldSpent: 100 }]);
+        storageMock.unavailable = true;
+
+        await tracker.appendToHistory([{ taskId: 2, retiredAt: 20, goldSpent: 200 }]);
+        expect(spend().get('taskRerollHistory_market123')).toHaveLength(1);
+        // And a read that cannot be made does not hand back an empty history
+        expect((await tracker.loadHistory()).map((entry) => entry.taskId)).toEqual([2]);
+
+        storageMock.unavailable = false;
+        await tracker.appendToHistory([{ taskId: 3, retiredAt: 30, goldSpent: 300 }]);
+        expect(
+            spend()
+                .get('taskRerollHistory_market123')
+                .map((entry) => entry.taskId)
+        ).toEqual([1, 2, 3]);
+    });
+
+    test('the history stays capped after a fold', async () => {
+        const many = Array.from({ length: 500 }, (_, i) => ({ taskId: i + 1, retiredAt: i + 1 }));
+        spend().set('taskRerollHistory_market123', many);
+
+        await tracker.appendToHistory([{ taskId: 9001, retiredAt: 9001 }]);
+
+        const saved = spend().get('taskRerollHistory_market123');
+        expect(saved).toHaveLength(500);
+        expect(saved.at(-1).taskId).toBe(9001);
+        expect(saved[0].taskId).toBe(2);
     });
 });

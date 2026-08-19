@@ -8,7 +8,53 @@ const pointer = vi.hoisted(() => ({ touch: false }));
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => false, getSettingValue: (id, fallback) => fallback, Z_FLOATING_PANEL: 1100 },
 }));
-vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => ({}), setJSON: async () => {} } }));
+/** A small in-memory store, with a switch for "the database cannot be read" */
+const storageMock = vi.hoisted(() => {
+    const stores = new Map();
+    const storeFor = (name) => {
+        if (!stores.has(name)) stores.set(name, new Map());
+        return stores.get(name);
+    };
+    return {
+        storeFor,
+        unavailable: false,
+        reset() {
+            stores.clear();
+            storageMock.unavailable = false;
+        },
+        get: async (key, store = 'settings', fallback = null) => {
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
+        },
+        getJSON: async (key, store = 'settings', fallback = null) => {
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
+        },
+        tryGet: async (key, store = 'settings') => {
+            if (storageMock.unavailable) return null;
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null
+                ? { found: true, value: structuredClone(map.get(key)) }
+                : { found: false, value: null };
+        },
+        set: async (key, value, store = 'settings') => {
+            if (storageMock.unavailable) return false;
+            storeFor(store).set(key, structuredClone(value));
+            return true;
+        },
+        setJSON: async () => {},
+        delete: async (key, store = 'settings') => {
+            storeFor(store).delete(key);
+            return true;
+        },
+        getAllKeys: async (store = 'settings') => Array.from(storeFor(store).keys()),
+    };
+});
+vi.mock('../../core/storage.js', () => ({ default: storageMock }));
+vi.mock('../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'char-1',
+    requestAdoptionConsent: () => Promise.resolve(null),
+}));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 const dm = vi.hoisted(() => ({ dropTables: {} }));
 
@@ -513,5 +559,82 @@ describe('measuredReturn, the treasure rate a profit estimate may use', async ()
     test('a chest without a drop table cannot be compared to one', () => {
         treasureTracker.tally = { [CHEST]: { opened: 400, loot: { '/items/coin': 500 } } };
         expect(treasureTracker.measuredReturn(CHEST)).toBeNull();
+    });
+});
+
+describe('the ledger survives a read that cannot be made', async () => {
+    const { default: treasureTracker } = await import('./treasure-tracker.js');
+    const CHEST = '/items/chimerical_chest';
+    const KEY = 'treasureTally_char-1';
+    const stored = () => storageMock.storeFor('settings').get(KEY);
+    const open = (count = 1) =>
+        treasureTracker._onLootOpened({
+            openedItem: { itemHrid: CHEST, count },
+            gainedItems: [{ itemHrid: '/items/coin', count: 10 * count }],
+        });
+
+    afterEach(() => {
+        treasureTracker.tally = {};
+        treasureTracker.ledger.reset();
+        storageMock.reset();
+    });
+
+    test('a load while storage is unreadable keeps the ledger in hand instead of blanking it', async () => {
+        storageMock.storeFor('settings').set(KEY, { [CHEST]: { opened: 4, loot: { '/items/coin': 40 } } });
+        treasureTracker.tally = { [CHEST]: { opened: 1, loot: { '/items/coin': 10 } } };
+        storageMock.unavailable = true;
+
+        treasureTracker.ledger.set(treasureTracker.tally);
+        await treasureTracker.ledger.load();
+        treasureTracker.tally = treasureTracker.ledger.get();
+
+        expect(treasureTracker.tally[CHEST].opened).toBe(1);
+        expect(stored()[CHEST].opened).toBe(4);
+    });
+
+    test('a save while storage is unreadable is skipped, and lands once it is back', async () => {
+        storageMock.storeFor('settings').set(KEY, { [CHEST]: { opened: 4, loot: { '/items/coin': 40 } } });
+        storageMock.unavailable = true;
+
+        open();
+        await treasureTracker.ledger.flushed();
+        expect(stored()[CHEST].opened).toBe(4);
+
+        storageMock.unavailable = false;
+        open();
+        await treasureTracker.ledger.flushed();
+        // The larger lifetime count wins: storage's 4 over this tab's 2
+        expect(stored()[CHEST].opened).toBe(4);
+        expect(stored()[CHEST].loot['/items/coin']).toBe(40);
+    });
+
+    test('a save folds in what another tab counted meanwhile, the larger count winning', async () => {
+        treasureTracker.ledger.set(treasureTracker.tally);
+        await treasureTracker.ledger.load();
+        treasureTracker.tally = treasureTracker.ledger.get();
+        open(5);
+        await treasureTracker.ledger.flushed();
+        expect(stored()[CHEST].opened).toBe(5);
+
+        storageMock.storeFor('settings').set(KEY, {
+            [CHEST]: { opened: 7, loot: { '/items/coin': 70 } },
+            '/items/other_chest': { opened: 1, loot: {} },
+        });
+        open(1);
+        await treasureTracker.ledger.flushed();
+
+        expect(stored()[CHEST].opened).toBe(7);
+        expect(stored()['/items/other_chest'].opened).toBe(1);
+        expect(stored()[CHEST].last.opened).toBe(1);
+    });
+
+    test('a reset is the write that means to lose counts, and does', async () => {
+        storageMock.storeFor('settings').set(KEY, { [CHEST]: { opened: 4, loot: { '/items/coin': 40 } } });
+        treasureTracker.tally = {};
+
+        treasureTracker._save({ replace: true });
+        await treasureTracker.ledger.flushed();
+
+        expect(stored()).toEqual({});
     });
 });

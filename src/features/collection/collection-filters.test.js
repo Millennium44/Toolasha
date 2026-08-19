@@ -18,7 +18,7 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const store = vi.hoisted(() => ({ collections: {}, settings: {} }));
+const store = vi.hoisted(() => ({ collections: {}, settings: {}, unavailable: false }));
 
 const mockDataManager = vi.hoisted(() => ({
     characterId: 'market123',
@@ -54,12 +54,24 @@ vi.mock('../../api/marketplace.js', () => ({
     },
 }));
 vi.mock('../../utils/efficiency.js', () => ({ getActionEfficiencyContext: () => mockEfficiency.context }));
+vi.mock('../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'market123',
+    requestAdoptionConsent: () => Promise.resolve(null),
+}));
 vi.mock('../../core/storage.js', () => ({
     default: {
         ready: Promise.resolve(true),
         get: async (key, name = 'settings', fallback = null) => store[name]?.[key] ?? fallback,
+        tryGet: async (key, name = 'settings') => {
+            if (store.unavailable) return null;
+            const held = store[name]?.[key];
+            return held === undefined || held === null
+                ? { found: false, value: null }
+                : { found: true, value: structuredClone(held) };
+        },
         set: async (key, value, name = 'settings') => {
-            store[name][key] = value;
+            if (store.unavailable) return false;
+            store[name][key] = structuredClone(value);
             return true;
         },
         delete: async (key, name = 'settings') => {
@@ -80,6 +92,7 @@ const { default: collectionFilters } = await import('./collection-filters.js');
 beforeEach(async () => {
     store.collections = {};
     store.settings = {};
+    store.unavailable = false;
     mockDataManager.characterId = 'market123';
     mockDataManager.clientData = null;
     mockConfig.settings = {};
@@ -95,6 +108,7 @@ beforeEach(async () => {
     // The feature is a singleton and remembers its checkbox states between
     // openings, which is right for a panel and wrong for a test.
     collectionFilters._renamedFor = null;
+    collectionFilters._loadedFor = null;
     await collectionFilters._load();
     collectionFilters._renamedFor = null;
     collectionFilters.collections = {};
@@ -962,5 +976,83 @@ describe('the injected stylesheet', () => {
         collectionFilters._buildCSS();
 
         expect(document.querySelectorAll('#toolasha-cf-styles')).toHaveLength(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// The stored state surviving a read that cannot be made
+// ---------------------------------------------------------------------------
+
+describe('the favourites survive a read that cannot be made', () => {
+    test('a load while storage is unreadable keeps what is in hand instead of blanking it', async () => {
+        store.collections.favorites_market123 = { '/items/milk': true };
+        await collectionFilters._load();
+        collectionFilters.favorites['/items/log'] = true;
+
+        store.unavailable = true;
+        await collectionFilters._load();
+
+        expect(collectionFilters.favorites).toEqual({ '/items/milk': true, '/items/log': true });
+        expect(store.collections.favorites_market123).toEqual({ '/items/milk': true });
+    });
+
+    test('a save while storage is unreadable is skipped, and lands once it is back', async () => {
+        store.collections.favorites_market123 = { '/items/milk': true };
+        store.unavailable = true;
+        await collectionFilters._load();
+        collectionFilters.favorites['/items/log'] = true;
+
+        await collectionFilters._saveFavorites();
+        expect(store.collections.favorites_market123).toEqual({ '/items/milk': true });
+
+        store.unavailable = false;
+        await collectionFilters._saveFavorites();
+        // Never read back, so the stored star is kept alongside the new one
+        expect(store.collections.favorites_market123).toEqual({ '/items/milk': true, '/items/log': true });
+    });
+
+    test('once read back, an un-starring sticks', async () => {
+        store.collections.favorites_market123 = { '/items/milk': true, '/items/log': true };
+        await collectionFilters._load();
+        delete collectionFilters.favorites['/items/milk'];
+
+        await collectionFilters._saveFavorites();
+        expect(store.collections.favorites_market123).toEqual({ '/items/log': true });
+    });
+
+    test('another character’s favourites never stand in for this one’s, readable or not', async () => {
+        store.collections.favorites_market123 = { '/items/milk': true };
+        await collectionFilters._load();
+
+        mockDataManager.characterId = 'iron456';
+        store.unavailable = true;
+        await collectionFilters._load();
+        expect(collectionFilters.favorites).toEqual({});
+
+        store.unavailable = false;
+        collectionFilters.favorites['/items/log'] = true;
+        await collectionFilters._saveFavorites();
+        expect(store.collections.favorites_iron456).toEqual({ '/items/log': true });
+        expect(store.collections.favorites_market123).toEqual({ '/items/milk': true });
+    });
+
+    test('the flag states and scanned counts are kept the same way', async () => {
+        store.collections.flags_market123 = { 'cf-c1-9': true, __sortMode: 'gold-cost' };
+        store.collections.collections_market123 = { '/items/milk': 12 };
+        await collectionFilters._load();
+        expect(collectionFilters.sortMode).toBe('gold-cost');
+        expect(collectionFilters.collections).toEqual({ '/items/milk': 12 });
+
+        store.unavailable = true;
+        await collectionFilters._load();
+        expect(collectionFilters.flags.find((f) => f.className === 'cf-c1-9').checked).toBe(true);
+        expect(collectionFilters.collections).toEqual({ '/items/milk': 12 });
+
+        collectionFilters.collections['/items/log'] = 3;
+        await collectionFilters._saveCollections();
+        expect(store.collections.collections_market123).toEqual({ '/items/milk': 12 });
+        store.unavailable = false;
+        await collectionFilters._saveCollections();
+        expect(store.collections.collections_market123).toEqual({ '/items/milk': 12, '/items/log': 3 });
     });
 });

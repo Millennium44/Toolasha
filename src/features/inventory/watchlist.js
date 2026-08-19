@@ -37,7 +37,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { createCuratedRecord, mergeById } from '../../utils/persisted-record.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { formatWithSeparator, formatKMB } from '../../utils/formatters.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
@@ -94,19 +94,70 @@ const state = { entries: [], zones: {}, chests: {}, sortBy: 'value', direction: 
 const emptyState = () => ({ entries: [], zones: {}, chests: {}, sortBy: 'value', direction: 'desc' });
 
 /**
+ * Fold a stored list under the one in memory — only used before the list has
+ * been read back (see `createCuratedRecord`): entries by item, the sets by key,
+ * memory's sort order.
+ * @param {Object} stored - The list as read back
+ * @param {Object} memory - The list as held
+ * @returns {Object} The merged state
+ */
+function mergeStates(stored, memory) {
+    const theirs = stored && typeof stored === 'object' ? stored : {};
+    const ours = memory && typeof memory === 'object' ? memory : {};
+    return {
+        ...emptyState(),
+        ...theirs,
+        ...ours,
+        entries: mergeById((entry) => entry?.hrid)(theirs.entries, ours.entries),
+        zones: { ...(theirs.zones || {}), ...(ours.zones || {}) },
+        chests: { ...(theirs.chests || {}), ...(ours.chests || {}) },
+    };
+}
+
+/**
+ * The list as stored, per character.
+ *
+ * A curated record: once this character's list has been read back, what the
+ * user has in memory is the list and a removal sticks; before that, a save
+ * folds the stored list under memory so nothing is lost. A read that cannot be
+ * made leaves the list in hand rather than blanking it, and no write goes out
+ * over a store that could not be read first.
+ */
+const record = createCuratedRecord({
+    base: STORAGE_KEY,
+    store: 'settings',
+    empty: emptyState,
+    merge: mergeStates,
+    label: 'Watchlist',
+});
+
+/** Whose list `state` holds, so a switch never shows one character the other's */
+let stateOwner = null;
+
+/**
  * Read this character's list back.
  *
  * Waits for the database — it is opened after the libraries are evaluated, so a
  * read at module scope always returns the default and the list looks like it
  * forgot everything — and for a character, because the key it reads is that
  * character's and there is no answer before login.
+ *
+ * When the read cannot be made the state is left as it was rather than
+ * blanked — unless it is another character's list, which must not stand in
+ * for this one's (nor be folded into it by the next save), readable or not.
  * @returns {Promise<void>}
  */
 async function reload() {
     try {
         await storage.ready;
-        const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
-        Object.assign(state, emptyState(), saved || {});
+        const who = dataManager.getCurrentCharacterId() || null;
+        record.reset();
+        if (who !== stateOwner) {
+            Object.assign(state, emptyState());
+            stateOwner = who;
+        }
+        const readable = await record.load();
+        if (readable) Object.assign(state, emptyState(), record.get());
         // The dot has by now drawn the previous character's list on every item
         inventoryBadgeManager.invalidateCache?.();
     } catch (error) {
@@ -123,9 +174,13 @@ dataManager.on('character_switched', reload);
 
 /** Write the list back, without making anybody wait for it */
 function persist() {
-    writeScoped(STORAGE_KEY, { ...state }, 'settings').catch((error) =>
-        console.error('[Watchlist] Saving the list failed:', error)
-    );
+    record.set({ ...state });
+    record.save().catch((error) => console.error('[Watchlist] Saving the list failed:', error));
+}
+
+/** @returns {Promise<*>} The pending writes, for tests and shutdown */
+export function flushWatchlistWrites() {
+    return record.flushed();
 }
 
 /**

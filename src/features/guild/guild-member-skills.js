@@ -32,12 +32,12 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import storage from '../../core/storage.js';
 import webSocketHook from '../../core/websocket.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import { guildXPTracker } from './guild-xp-tracker.js';
 import { fillProfileCommand, findChatInput, openPlayerProfile } from '../../utils/profile-command.js';
 import { GAME } from '../../utils/selectors.js';
+import { createPersistedRecord, mergeMaps } from '../../utils/persisted-record.js';
 
 /** Object store the captures live in — shared with the rest of the guild history */
 const STORE_NAME = 'guildHistory';
@@ -255,7 +255,16 @@ class GuildMemberSkills {
     constructor() {
         this.initialized = false;
         this.guildName = null;
-        this.captures = {};
+        /**
+         * The captures, name → capture, kept per guild through a persisted
+         * record (`utils/persisted-record.js`): a read that cannot be made
+         * leaves the captures in hand rather than blanking them, and a save
+         * folds the stored map under memory — memory's capture winning per
+         * member — rather than writing over it. Made for the guild on first
+         * use and remade when the guild changes, since the key is the guild's.
+         */
+        this.record = null;
+        this.recordKey = null;
         this.onProfile = null;
         /** Unsubscribe from the loadout capture's events; see {@link initialize} */
         this.offCaptured = null;
@@ -265,6 +274,35 @@ class GuildMemberSkills {
         this.unitRequests = {};
         /** Captures taken at or before this are due again; see {@link redoAll} */
         this.dueBefore = 0;
+    }
+
+    /** @returns {Object} name → capture, the live in-memory map */
+    get captures() {
+        return this.record ? this.record.get() : {};
+    }
+
+    set captures(value) {
+        this._recordForGuild().set(value);
+    }
+
+    /**
+     * The record for the guild now set, made or remade as needed.
+     * @returns {Object} The persisted record
+     */
+    _recordForGuild() {
+        const key = memberSkillsStorageKey(this.guildName);
+        if (!this.record || this.recordKey !== key) {
+            this.record = createPersistedRecord({
+                base: key,
+                store: STORE_NAME,
+                scoped: false,
+                empty: () => ({}),
+                merge: mergeMaps(),
+                label: 'GuildMemberSkills',
+            });
+            this.recordKey = key;
+        }
+        return this.record;
     }
 
     /**
@@ -296,7 +334,7 @@ class GuildMemberSkills {
 
     /** Forget this guild's captures; used when the tab changes character */
     forget() {
-        this.captures = {};
+        this.record?.reset();
         this.requests = {};
         this.unitRequests = {};
         this.dueBefore = 0;
@@ -322,14 +360,16 @@ class GuildMemberSkills {
         await this.load();
     }
 
-    /** @returns {Promise<Object>} The captures, read back from storage */
+    /**
+     * Read this guild's captures back. A read that cannot be made keeps the
+     * captures in hand rather than blanking them.
+     * @returns {Promise<Object>} The captures
+     */
     async load() {
         try {
-            const stored = await storage.get(memberSkillsStorageKey(this.guildName), STORE_NAME, null);
-            this.captures = stored && typeof stored === 'object' ? stored : {};
+            await this._recordForGuild().load();
         } catch (error) {
             console.error('[GuildMemberSkills] Failed to read captured profiles:', error);
-            this.captures = {};
         }
         return this.captures;
     }
@@ -344,9 +384,7 @@ class GuildMemberSkills {
             if (!capture) return;
 
             this.captures = { ...this.captures, [capture.name.toLowerCase()]: capture };
-            storage
-                .set(memberSkillsStorageKey(this.guildName), this.captures, STORE_NAME)
-                .catch((error) => console.error('[GuildMemberSkills] Failed to store a profile:', error));
+            this.record.save().catch((error) => console.error('[GuildMemberSkills] Failed to store a profile:', error));
         } catch (error) {
             console.error('[GuildMemberSkills] Reading an opened profile failed:', error);
         }

@@ -24,11 +24,23 @@ const storageMock = vi.hoisted(() => {
     };
     return {
         storeFor,
-        reset: () => stores.clear(),
+        unavailable: false,
+        reset: () => {
+            stores.clear();
+            storageMock.unavailable = false;
+        },
         ready: Promise.resolve(true),
         get: async (key, store = 'settings', fallback = null) => read(key, store, fallback),
         getJSON: async (key, store = 'settings', fallback = null) => read(key, store, fallback),
+        tryGet: async (key, store = 'settings') => {
+            if (storageMock.unavailable) return null;
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null
+                ? { found: true, value: structuredClone(map.get(key)) }
+                : { found: false, value: null };
+        },
         set: async (key, value, store = 'settings') => {
+            if (storageMock.unavailable) return false;
             storeFor(store).set(key, structuredClone(value));
             return true;
         },
@@ -102,6 +114,59 @@ beforeEach(() => {
     character.mode = 'standard';
     panel.prefs = { x: 20, y: 120, w: 520, h: 300, days: 7, open: false, locked: false, mode: 'iconPrice' };
     panel.watchlist = [];
+    panel.watchlistOwner = null;
+});
+
+describe('the stored watchlist survives a read that cannot be made', () => {
+    const KEY = 'mooketWatchlist_market123';
+    const storedKeys = () => (settings().get(KEY) || []).map((entry) => entry.key);
+
+    test('a load while storage is unreadable keeps the list in hand instead of blanking it', async () => {
+        settings().set(KEY, watched);
+        await panel.loadPrefs();
+        expect(panel.watchlist).toHaveLength(2);
+
+        storageMock.unavailable = true;
+        await panel.loadPrefs();
+
+        expect(panel.watchlist).toHaveLength(2);
+        expect(storedKeys()).toHaveLength(2);
+    });
+
+    test('but another character’s list never stands in for this one’s', async () => {
+        settings().set(KEY, watched);
+        await panel.loadPrefs();
+
+        character.id = 'iron456';
+        storageMock.unavailable = true;
+        await panel.loadPrefs();
+
+        expect(panel.watchlist).toEqual([]);
+    });
+
+    test('a save while storage is unreadable is skipped, and lands once it is back', async () => {
+        settings().set(KEY, watched);
+        storageMock.unavailable = true;
+        await panel.loadPrefs();
+        panel.watchlist = [{ key: '/items/log:0' }];
+
+        await panel.savePrefs();
+        expect(storedKeys()).toEqual(['/items/cheese:0', '/items/milk:0']);
+
+        storageMock.unavailable = false;
+        await panel.savePrefs();
+        // Never read back, so the stored items are kept alongside the new one
+        expect(storedKeys()).toEqual(['/items/cheese:0', '/items/milk:0', '/items/log:0']);
+    });
+
+    test('once read back, a removal sticks', async () => {
+        settings().set(KEY, watched);
+        await panel.loadPrefs();
+        panel.watchlist = panel.watchlist.filter((entry) => entry.key !== '/items/cheese:0');
+
+        await panel.savePrefs();
+        expect(storedKeys()).toEqual(['/items/milk:0']);
+    });
 });
 
 describe('splitting the watchlist out of the panel prefs', () => {

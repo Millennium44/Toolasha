@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Skill XP, enhancement, treasure, watchlist, reroll and collection records survive failed reads
+
+The skill XP history, leaderboard XP history, enhancement sessions, chest tally, inventory watchlist, task reroll map and history, guild member skill captures, collection flags/favourites/counts, and the pooled market price cache and its watchlist now go through the shared persisted record: a read that cannot be made keeps the in-memory copy instead of blanking it, a save folds what is stored under memory (XP samples by time and re-thinned, tally counts by the larger, prices by the newer reading, the rest by id with memory winning) and is skipped when storage cannot be read first, and a character or guild switch forgets the departing record before the next load. User-curated lists (watchlist, favourites, sessions, the reroll map) merge only until read back, so a removal sticks once it has been. The helper also coalesces saves queued behind a running one and stands a save down across a reset, so a record written on every game event neither backs up behind debounced writes nor lands under the next character's key.
+
 ### Combat and labyrinth histories survive failed reads and stale tabs
 
 The labyrinth room log, fight pool, fight-outcome totals, run ledger and best-level map, the combat replay check's observations and check history, the combat session history and consumable trackers, and the prediction/enhancement calibration ledgers now go through the shared persisted-record discipline: a read that cannot be made keeps the in-memory copy instead of blanking it, every save folds what is stored under memory (rooms, fights, runs, sessions and pairs unioned by identity; outcome buckets by whichever counted more; best levels by the higher) and is skipped when storage cannot be read first, and a character switch forgets the departing character's records before the next load. Intentional resets and "forget" buttons remain the one overwrite.

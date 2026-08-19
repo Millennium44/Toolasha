@@ -28,6 +28,7 @@ import { getItemPrice, getPricingMode } from '../../utils/market-data.js';
 import {
     recordOpening,
     resetTally,
+    mergeStoredTally,
     chestPerformance,
     chestBreakdown,
     summariseTally,
@@ -60,6 +61,7 @@ import {
 } from '../../utils/chest-import.js';
 import { calculateDungeonTokenValue, labyrinthRewardValue } from '../../utils/token-valuation.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { createPersistedRecord } from '../../utils/persisted-record.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 
 /**
@@ -69,6 +71,12 @@ import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
  * other's, and the value settings are a per-character judgement — and resolved
  * at each read and write, since the user switches characters without reloading.
  * The pre-scoping global values are adopted by the main character once.
+ *
+ * The ledger is kept through a persisted record (`utils/persisted-record.js`):
+ * a read that cannot be made leaves the ledger in hand rather than blanking it,
+ * and a save folds the stored ledger under it — count by count, the larger
+ * winning, see `mergeStoredTally` — rather than writing over it. Resets and
+ * imports are the writes that mean to replace, and say so.
  */
 const STORAGE_KEY = 'treasureTally';
 const SETTINGS_KEY = 'treasureSettings';
@@ -340,6 +348,13 @@ class TreasureTracker {
     constructor() {
         this.isInitialized = false;
         this.tally = {};
+        this.ledger = createPersistedRecord({
+            base: STORAGE_KEY,
+            store: 'settings',
+            empty: () => ({}),
+            merge: mergeStoredTally,
+            label: 'TreasureTracker',
+        });
         this.lootOpenedHandler = null;
         this.panel = null;
         this.contentEl = null;
@@ -357,7 +372,11 @@ class TreasureTracker {
         if (!config.getSetting('treasureTracker')) return;
         this.isInitialized = true;
 
-        this.tally = (await readScoped(STORAGE_KEY, 'settings', {}, ADOPT_LEGACY)) || {};
+        // An unreadable store keeps whatever ledger is in hand rather than
+        // starting a blank one that the next chest would write over the stored one
+        this.ledger.set(this.tally);
+        await this.ledger.load();
+        this.tally = this.ledger.get();
         const saved = await readScoped(SETTINGS_KEY, 'settings', null, ADOPT_LEGACY);
         if (saved) this.settings = { ...DEFAULT_SETTINGS, ...saved };
 
@@ -382,6 +401,7 @@ class TreasureTracker {
         // follows a character switch reads the arriving character's, rather
         // than saving this one's under their key on the next chest.
         this.tally = {};
+        this.ledger.reset();
         this.settings = { ...DEFAULT_SETTINGS };
         this.isInitialized = false;
     }
@@ -496,8 +516,16 @@ class TreasureTracker {
         Object.assign(this.popup.style, { left: `${left}px`, top: `${top}px`, right: 'auto' });
     }
 
-    _save() {
-        writeScoped(STORAGE_KEY, this.tally, 'settings').catch((error) => {
+    /**
+     * Write the ledger back, folding the stored one under it — or, for a
+     * reset or an import, replacing it outright.
+     * @param {Object} [options]
+     * @param {boolean} [options.replace=false] - Write the ledger as-is; for
+     *   the writes whose point is that counts go away
+     */
+    _save({ replace = false } = {}) {
+        this.ledger.set(this.tally);
+        this.ledger.save({ overwrite: replace }).catch((error) => {
             console.error('[TreasureTracker] Saving the chest tally failed:', error);
         });
     }
@@ -1313,7 +1341,7 @@ class TreasureTracker {
             if (!confirmed) return;
 
             this.tally = resetTally(this.tally);
-            this._save();
+            this._save({ replace: true });
             this._render();
         });
         wipe.style.color = COLORS.bad;
@@ -1418,7 +1446,7 @@ class TreasureTracker {
                     this._saveSettings();
                     this._refreshToggles();
                 }
-                this._save();
+                this._save({ replace: true });
                 this._render();
             } catch (error) {
                 console.error('[TreasureTracker] Import failed:', error);
@@ -1500,7 +1528,7 @@ class TreasureTracker {
             if (!mode) return;
 
             this.tally = mergeTally(this.tally, tally, mode);
-            this._save();
+            this._save({ replace: true });
             this._render();
         } catch (error) {
             console.error('[TreasureTracker] Edible Tools import failed:', error);
@@ -1710,7 +1738,7 @@ class TreasureTracker {
             event.stopPropagation();
             if (!window.confirm(`Forget all ${row.opened} ${itemName(row.chestHrid)} openings?`)) return;
             this.tally = resetTally(this.tally, row.chestHrid);
-            this._save();
+            this._save({ replace: true });
             this._render();
         });
 

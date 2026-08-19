@@ -19,7 +19,13 @@ import {
     SessionState,
 } from './enhancement-session.js';
 import enhancementCalibration from '../insights/enhancement-calibration.js';
-import { saveSessions, loadSessions, saveCurrentSessionId, loadCurrentSessionId } from './enhancement-storage.js';
+import {
+    saveSessions,
+    loadSessions,
+    saveCurrentSessionId,
+    loadCurrentSessionId,
+    sessionsLoaded,
+} from './enhancement-storage.js';
 import { calculateEnhancementPredictions } from './enhancement-xp.js';
 import { getEnhancementMaterialPrice } from './tooltip-enhancement.js';
 
@@ -52,8 +58,10 @@ class EnhancementTracker {
             this.sessions = await loadSessions();
             this.currentSessionId = await loadCurrentSessionId();
 
-            // Validate current session still exists
-            if (this.currentSessionId && !this.sessions[this.currentSessionId]) {
+            // Validate current session still exists — only against a list
+            // actually read back; after a read that could not be made the
+            // session may well be stored and merely not in hand
+            if (this.currentSessionId && sessionsLoaded() && !this.sessions[this.currentSessionId]) {
                 this.currentSessionId = null;
                 await saveCurrentSessionId(null);
             }

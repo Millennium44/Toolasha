@@ -7,10 +7,24 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const storageMock = vi.hoisted(() => ({
-    getJSON: vi.fn(async () => ({})),
-    setJSON: vi.fn(async () => {}),
-}));
+const storageMock = vi.hoisted(() => {
+    const mock = {
+        saved: {},
+        unavailable: false,
+        tryGet: vi.fn(async (key) => {
+            if (mock.unavailable) return null;
+            return key in mock.saved
+                ? { found: true, value: structuredClone(mock.saved[key]) }
+                : { found: false, value: null };
+        }),
+        set: vi.fn(async (key, value) => {
+            if (mock.unavailable) return false;
+            mock.saved[key] = structuredClone(value);
+            return true;
+        }),
+    };
+    return mock;
+});
 
 const dataManagerMock = vi.hoisted(() => ({
     handlers: {},
@@ -18,22 +32,28 @@ const dataManagerMock = vi.hoisted(() => ({
         dataManagerMock.handlers[event] = handler;
     }),
     off: vi.fn(),
+    getCurrentCharacterId: () => 'char1',
 }));
 
 vi.mock('../../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../../core/data-manager.js', () => ({ default: dataManagerMock }));
+vi.mock('../../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => null,
+    requestAdoptionConsent: () => Promise.resolve(null),
+}));
 
 const { default: marketPriceStore } = await import('./market-price-store.js');
 
 beforeEach(async () => {
     vi.useFakeTimers();
-    storageMock.getJSON.mockClear();
-    storageMock.setJSON.mockClear();
-    storageMock.getJSON.mockImplementation(async () => ({}));
+    storageMock.saved = {};
+    storageMock.unavailable = false;
+    storageMock.tryGet.mockClear();
+    storageMock.set.mockClear();
     dataManagerMock.on.mockClear();
     dataManagerMock.off.mockClear();
     marketPriceStore.cleanup();
-    marketPriceStore.entries = {};
+    marketPriceStore.record.reset();
     marketPriceStore.dirty = false;
     marketPriceStore.loaded = false;
     marketPriceStore.listeners = new Set();
@@ -126,12 +146,68 @@ describe('get', () => {
 describe('flush', () => {
     test('writes to storage only when dirty', async () => {
         await marketPriceStore.flush();
-        expect(storageMock.setJSON).not.toHaveBeenCalled();
+        expect(storageMock.set).not.toHaveBeenCalled();
 
         marketPriceStore.dirty = true;
         await marketPriceStore.flush();
-        expect(storageMock.setJSON).toHaveBeenCalledWith('mooketPrices', marketPriceStore.entries, 'marketListings');
+        expect(storageMock.set).toHaveBeenCalledWith('mooketPrices', marketPriceStore.entries, 'marketListings', false);
         expect(marketPriceStore.dirty).toBe(false);
+    });
+});
+
+describe('the stored cache survives a read that cannot be made', () => {
+    const book = (itemHrid, ask) =>
+        dataManagerMock.handlers['market_item_order_books_updated']({
+            marketItemOrderBooks: { itemHrid, orderBooks: [{ asks: [{ price: ask, quantity: 1 }], bids: [] }] },
+        });
+    const savedAsk = (itemHrid) => storageMock.saved.mooketPrices?.[`${itemHrid}:0`]?.ask;
+
+    test('a load while storage is unreadable keeps the cache in hand instead of blanking it', async () => {
+        book('/items/cheese', 100);
+        await marketPriceStore.flush();
+        expect(savedAsk('/items/cheese')).toBe(100);
+
+        marketPriceStore.cleanup();
+        marketPriceStore.loaded = false;
+        storageMock.unavailable = true;
+        await marketPriceStore.initialize();
+
+        expect(marketPriceStore.get('/items/cheese').ask).toBe(100);
+        expect(savedAsk('/items/cheese')).toBe(100);
+    });
+
+    test('a flush while storage is unreadable is skipped and stays dirty, then lands', async () => {
+        storageMock.saved.mooketPrices = { '/items/milk:0': { ask: 5, bid: 4, at: Date.now() } };
+        storageMock.unavailable = true;
+        book('/items/cheese', 100);
+
+        await marketPriceStore.flush();
+        expect(marketPriceStore.dirty).toBe(true);
+        expect(savedAsk('/items/cheese')).toBeUndefined();
+        expect(savedAsk('/items/milk')).toBe(5);
+
+        storageMock.unavailable = false;
+        await marketPriceStore.flush();
+        expect(marketPriceStore.dirty).toBe(false);
+        expect(savedAsk('/items/cheese')).toBe(100);
+        expect(savedAsk('/items/milk')).toBe(5);
+    });
+
+    test('a flush folds in what another tab saw, the newer reading of an item winning', async () => {
+        book('/items/cheese', 100);
+        await marketPriceStore.flush();
+
+        const later = Date.now() + 60_000;
+        storageMock.saved.mooketPrices = {
+            '/items/cheese:0': { ask: 120, bid: 0, at: later },
+            '/items/milk:0': { ask: 5, bid: 4, at: Date.now() },
+        };
+        book('/items/log', 7);
+        await marketPriceStore.flush();
+
+        expect(savedAsk('/items/cheese')).toBe(120);
+        expect(savedAsk('/items/milk')).toBe(5);
+        expect(savedAsk('/items/log')).toBe(7);
     });
 });
 

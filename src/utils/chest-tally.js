@@ -70,6 +70,49 @@ export function resetTally(tally, chestHrid) {
 }
 
 /**
+ * Fold a stored tally under the one in memory, for writing back.
+ *
+ * Every count in a tally is a lifetime total that only ever grows, so where
+ * both sides have a chest the larger of each count is the truer one: memory's
+ * when this tab has been opening chests, storage's when a read that could not
+ * be made left memory behind, or another tab got there first. `last` is memory's
+ * wherever memory has the chest, since it is the opening this tab just saw.
+ * Anything that is not a number is memory's. Resets are the exception — they
+ * mean to lose counts — and do not go through this.
+ *
+ * @param {Object} stored - The tally as read back
+ * @param {Object} memory - The tally as held
+ * @returns {Object} A new tally
+ */
+export function mergeStoredTally(stored, memory) {
+    const merged = { ...(stored && typeof stored === 'object' ? stored : {}) };
+    for (const [chestHrid, entry] of Object.entries(memory && typeof memory === 'object' ? memory : {})) {
+        const theirs = merged[chestHrid];
+        if (!theirs || !entry || typeof entry !== 'object') {
+            merged[chestHrid] = entry;
+            continue;
+        }
+        const loot = { ...(theirs.loot || {}) };
+        for (const [itemHrid, count] of Object.entries(entry.loot || {})) {
+            loot[itemHrid] =
+                typeof count === 'number' && typeof loot[itemHrid] === 'number'
+                    ? Math.max(loot[itemHrid], count)
+                    : count;
+        }
+        merged[chestHrid] = {
+            ...theirs,
+            ...entry,
+            opened:
+                typeof entry.opened === 'number' && typeof theirs.opened === 'number'
+                    ? Math.max(theirs.opened, entry.opened)
+                    : entry.opened,
+            loot,
+        };
+    }
+    return merged;
+}
+
+/**
  * What one chest owes on average, per item.
  *
  * The midpoint of the count range times the rate — the same arithmetic the

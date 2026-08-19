@@ -11,13 +11,27 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ store: {}, members: [], wsHandlers: {}, loadouts: [], capturedListeners: [] }));
+const game = vi.hoisted(() => ({
+    store: {},
+    unavailable: false,
+    members: [],
+    wsHandlers: {},
+    loadouts: [],
+    capturedListeners: [],
+}));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, _store, fallback) => (key in game.store ? game.store[key] : fallback),
+        tryGet: async (key) => {
+            if (game.unavailable) return null;
+            return key in game.store
+                ? { found: true, value: structuredClone(game.store[key]) }
+                : { found: false, value: null };
+        },
         set: async (key, value) => {
-            game.store[key] = value;
+            if (game.unavailable) return false;
+            game.store[key] = structuredClone(value);
             return true;
         },
     },
@@ -85,6 +99,7 @@ beforeEach(async () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
     game.store = {};
+    game.unavailable = false;
     game.members = [{ name: 'Ada' }, { name: 'Bo' }, { name: 'Cy' }];
     game.wsHandlers = {};
     game.loadouts = [];
@@ -323,6 +338,61 @@ describe('per guild, and forgotten with the character', () => {
 
         guildMemberSkills.forget();
         expect(guildMemberSkills.all()).toEqual({});
+    });
+});
+
+describe('the stored captures survive a read that cannot be made', () => {
+    const KEY = memberSkillsStorageKey('Milky Way');
+
+    test('a load while storage is unreadable keeps the captures in hand instead of blanking them', async () => {
+        game.wsHandlers.profile_shared(profile('Ada'));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(Object.keys(game.store[KEY])).toEqual(['ada']);
+
+        game.unavailable = true;
+        await guildMemberSkills.load();
+
+        expect(guildMemberSkills.levelFor('Ada', '/skills/alchemy')).toBe(90);
+        expect(Object.keys(game.store[KEY])).toEqual(['ada']);
+    });
+
+    test('a save while storage is unreadable is skipped, and lands once it is back', async () => {
+        game.store[KEY] = { bo: { name: 'Bo', skills: {}, at: now } };
+        game.unavailable = true;
+
+        game.wsHandlers.profile_shared(profile('Ada'));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(Object.keys(game.store[KEY])).toEqual(['bo']);
+
+        game.unavailable = false;
+        game.wsHandlers.profile_shared(profile('Cy'));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(Object.keys(game.store[KEY]).sort()).toEqual(['ada', 'bo', 'cy']);
+    });
+
+    test('a save folds in what another tab captured meanwhile', async () => {
+        game.wsHandlers.profile_shared(profile('Ada'));
+        await vi.advanceTimersByTimeAsync(0);
+
+        game.store[KEY] = { ...game.store[KEY], bo: { name: 'Bo', skills: {}, at: now } };
+        game.wsHandlers.profile_shared(profile('Cy'));
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(Object.keys(game.store[KEY]).sort()).toEqual(['ada', 'bo', 'cy']);
+    });
+
+    test('a guild change reads the other guild’s captures, not a fold of both', async () => {
+        game.wsHandlers.profile_shared(profile('Ada'));
+        await vi.advanceTimersByTimeAsync(0);
+        game.store[memberSkillsStorageKey('Other Guild')] = { bo: { name: 'Bo', skills: {}, at: now } };
+
+        await guildMemberSkills.setGuildName('Other Guild');
+        expect(Object.keys(guildMemberSkills.all())).toEqual(['bo']);
+
+        game.wsHandlers.profile_shared(profile('Cy'));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(Object.keys(game.store[memberSkillsStorageKey('Other Guild')]).sort()).toEqual(['bo', 'cy']);
+        expect(Object.keys(game.store[KEY])).toEqual(['ada']);
     });
 });
 

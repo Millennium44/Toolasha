@@ -15,10 +15,25 @@ vi.mock('../../core/websocket.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, storeName, defaultValue) => game.saved[key] ?? defaultValue,
+        tryGet: async (key) => {
+            if (game.unavailable) return null;
+            return key in game.saved
+                ? { found: true, value: structuredClone(game.saved[key]) }
+                : { found: false, value: null };
+        },
         set: async (key, value) => {
-            game.saved[key] = value;
+            if (game.unavailable) return false;
+            game.saved[key] = structuredClone(value);
+            return true;
         },
     },
+}));
+// Reached only through the persisted-record helper's per-character key
+// support, which this unscoped record never uses
+vi.mock('../../core/data-manager.js', () => ({ default: { getCurrentCharacterId: () => 'char1' } }));
+vi.mock('../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => null,
+    requestAdoptionConsent: () => Promise.resolve(null),
 }));
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => game.setting },
@@ -30,6 +45,7 @@ describe('leaderboard XP tracker', () => {
     beforeEach(async () => {
         game.setting = true;
         game.saved = {};
+        game.unavailable = false;
         game.handlers = {};
         leaderboardXPTracker.disable();
         vi.useFakeTimers();
@@ -183,6 +199,7 @@ describe('leaderboard XP tracker', () => {
             leaderboardCategory: 'foraging',
             leaderboard: { rows: [{ name: 'A', value2: 1000 }] },
         });
+        await leaderboardXPTracker.history.flushed();
         expect(game.saved.playerXP).toBeDefined();
 
         game.saved.playerXP = undefined;
@@ -190,7 +207,63 @@ describe('leaderboard XP tracker', () => {
             leaderboardCategory: 'foraging',
             leaderboard: { rows: [{ name: 'A', value2: 1000 }] },
         });
+        await leaderboardXPTracker.history.flushed();
         expect(game.saved.playerXP).toBeUndefined();
+    });
+
+    describe('the stored history survives', () => {
+        const reading = (name, xp) =>
+            game.handlers.leaderboard_updated({
+                leaderboardCategory: 'foraging',
+                leaderboard: { rows: [{ name, value2: xp }] },
+            });
+        const storedXP = (name) => (game.saved.playerXP?.[`foraging_${name}`] || []).map((s) => s.xp);
+
+        test('a load that cannot read storage keeps memory instead of blanking it', async () => {
+            reading('A', 1000);
+            await leaderboardXPTracker.history.flushed();
+            expect(storedXP('A')).toEqual([1000]);
+
+            // A re-initialise with the database gone: the handler is re-registered
+            // but the samples already held stay
+            leaderboardXPTracker.initialized = false;
+            game.unavailable = true;
+            await leaderboardXPTracker.initialize();
+            expect(leaderboardXPTracker.playerXPHistory.foraging_A.map((s) => s.xp)).toEqual([1000]);
+        });
+
+        test('a save while storage is unreadable is skipped, and lands once it is back', async () => {
+            reading('A', 1000);
+            await leaderboardXPTracker.history.flushed();
+
+            game.unavailable = true;
+            vi.setSystemTime(new Date('2026-01-01T01:00:00Z'));
+            reading('A', 2000);
+            await leaderboardXPTracker.history.flushed();
+            expect(storedXP('A')).toEqual([1000]);
+
+            game.unavailable = false;
+            vi.setSystemTime(new Date('2026-01-01T02:00:00Z'));
+            reading('A', 3000);
+            await leaderboardXPTracker.history.flushed();
+            expect(storedXP('A')).toEqual([1000, 2000, 3000]);
+        });
+
+        test('a save folds in what another tab stored meanwhile', async () => {
+            reading('A', 1000);
+            await leaderboardXPTracker.history.flushed();
+
+            game.saved.playerXP = {
+                foraging_A: [{ t: Date.now(), xp: 1000 }],
+                foraging_B: [{ t: Date.now(), xp: 50 }],
+            };
+            vi.setSystemTime(new Date('2026-01-01T01:00:00Z'));
+            reading('A', 2000);
+            await leaderboardXPTracker.history.flushed();
+
+            expect(storedXP('A')).toEqual([1000, 2000]);
+            expect(storedXP('B')).toEqual([50]);
+        });
     });
 
     test('disabled by setting, initialize does not subscribe', async () => {

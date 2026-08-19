@@ -44,7 +44,7 @@ import {
     watchedChange,
     normaliseWatchlist,
 } from './market-watchlist.js';
-import { readScoped, writeScoped } from '../../../utils/character-key.js';
+import { createCuratedRecord, mergeById } from '../../../utils/persisted-record.js';
 import { attachMinimize } from '../../../utils/panel-minimize.js';
 
 const PANEL_ID = 'mwi-market-history-panel';
@@ -60,6 +60,21 @@ const PREFS_KEY = 'mooketPanelPrefs';
  */
 const WATCHLIST_BASE = 'mooketWatchlist';
 const POLL_MS = 500;
+
+/**
+ * The watched items, per character, through a curated persisted record
+ * (`utils/persisted-record.js`): once read back, the list in hand is the list
+ * and a removal sticks; before that a save folds the stored list under it by
+ * item so nothing is lost. A read that cannot be made keeps the list in hand
+ * rather than blanking it, and no write goes out over an unreadable store.
+ */
+const watchlistRecord = createCuratedRecord({
+    base: WATCHLIST_BASE,
+    store: 'settings',
+    empty: () => [],
+    merge: mergeById((entry) => entry?.key),
+    label: 'MarketHistory',
+});
 
 /**
  * Lift a pre-split watchlist out of the shared prefs object into its own key.
@@ -109,6 +124,8 @@ class MarketHistoryPanel {
         this.tabButton = null;
         this.tabWatcher = null;
         this.watchlist = [];
+        /** Whose list `watchlist` holds, so a switch never shows another's */
+        this.watchlistOwner = null;
         this.current = null; // { itemHrid, enhancementLevel }
         this.shown = null; // what the chart is currently drawing
     }
@@ -185,10 +202,17 @@ class MarketHistoryPanel {
                 delete this.prefs.watchlist;
             }
             await splitLegacyWatchlist(saved);
-            // Assigned whether or not anything was found: initialize runs again
-            // after a character switch, and the previous character's list must
-            // not survive it
-            this.watchlist = normaliseWatchlist(await readScoped(WATCHLIST_BASE, 'settings', null));
+            // Another character's list must not survive a switch, whether or
+            // not this one's can be read; this one's, when it cannot be read,
+            // is left as it is rather than blanked
+            const who = dataManager.getCurrentCharacterId?.() || null;
+            watchlistRecord.reset();
+            if (who !== this.watchlistOwner) {
+                this.watchlist = [];
+                this.watchlistOwner = who;
+            }
+            const readable = await watchlistRecord.load();
+            if (readable) this.watchlist = normaliseWatchlist(watchlistRecord.get());
         } catch (error) {
             console.error('[MarketHistory] Loading panel preferences failed:', error);
         }
@@ -199,7 +223,8 @@ class MarketHistoryPanel {
             const prefs = { ...this.prefs };
             delete prefs.watchlist;
             await storage.setJSON(PREFS_KEY, prefs, 'settings');
-            await writeScoped(WATCHLIST_BASE, this.watchlist, 'settings');
+            watchlistRecord.set(this.watchlist);
+            await watchlistRecord.save();
         } catch (error) {
             console.error('[MarketHistory] Saving panel preferences failed:', error);
         }

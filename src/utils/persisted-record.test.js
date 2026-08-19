@@ -56,7 +56,8 @@ vi.mock('./adoption-consent.js', () => ({
     requestAdoptionConsent: () => Promise.resolve(null),
 }));
 
-const { createPersistedRecord, mergeById, mergeMaps, mergeSeriesMaps } = await import('./persisted-record.js');
+const { createPersistedRecord, createCuratedRecord, mergeById, mergeMaps, mergeSeriesMaps } =
+    await import('./persisted-record.js');
 
 const LOG = 'log_char1';
 const stored = () => storageMock.storeFor('settings').get(LOG);
@@ -74,7 +75,7 @@ const byId = () =>
 beforeEach(() => {
     storageMock.reset();
     dataManagerMock.characterId = 'char1';
-    for (const fn of [storageMock.get, storageMock.tryGet, storageMock.set, storageMock.delete]) fn.mockClear();
+    for (const fn of [storageMock.get, storageMock.tryGet, storageMock.set, storageMock.delete]) fn.mockReset();
 });
 
 describe('merges', () => {
@@ -240,6 +241,34 @@ describe('save', () => {
         expect(stored().map((e) => e.id)).toEqual([1, 2]);
     });
 
+    test('saves asked for while one runs and one waits join the waiting one', async () => {
+        const record = byId();
+        let release;
+        storageMock.tryGet.mockImplementation(async () => {
+            await new Promise((r) => {
+                release = r;
+            });
+            return { found: false, value: null };
+        });
+
+        record.set([{ id: 1 }]);
+        const first = record.save();
+        await Promise.resolve(); // the first save is now running, held at its probe
+        record.get().push({ id: 2 });
+        const second = record.save();
+        record.get().push({ id: 3 });
+        const third = record.save();
+        expect(third).toBe(second);
+
+        release();
+        await first;
+        release();
+        await Promise.all([second, third]);
+
+        expect(storageMock.set).toHaveBeenCalledTimes(2);
+        expect(stored().map((e) => e.id)).toEqual([1, 2, 3]);
+    });
+
     test('clear is the one write allowed to lose entries, and stays cleared', async () => {
         storageMock.storeFor('settings').set(LOG, [{ id: 1 }, { id: 2 }]);
         const record = byId();
@@ -273,6 +302,31 @@ describe('save', () => {
         expect(stored().map((e) => e.id)).toEqual([1]);
     });
 
+    test('a save in flight across a reset stands down rather than writing under the new key', async () => {
+        storageMock.storeFor('settings').set(LOG, [{ id: 1 }]);
+        const record = byId();
+        let release;
+        storageMock.tryGet.mockImplementationOnce(async (key, store) => {
+            await new Promise((r) => {
+                release = r;
+            });
+            const map = storageMock.storeFor(store);
+            return { found: true, value: structuredClone(map.get(key)) };
+        });
+        record.set([{ id: 2 }]);
+        const saving = record.save();
+        await Promise.resolve();
+
+        // The character switches while the probe is out
+        record.reset();
+        dataManagerMock.characterId = 'char2';
+        release();
+
+        expect(await saving).toBe(false);
+        expect(storageMock.storeFor('settings').has('log_char2')).toBe(false);
+        expect(record.get()).toEqual([]);
+    });
+
     test('a map record merges stored keys under memory', async () => {
         storageMock.storeFor('settings').set('tally_char1', { gold: 1, silver: 1 });
         const record = createPersistedRecord({ base: 'tally', empty: () => ({}), merge: mergeMaps() });
@@ -280,5 +334,72 @@ describe('save', () => {
 
         await record.save();
         expect(storageMock.storeFor('settings').get('tally_char1')).toEqual({ gold: 1, silver: 5, bronze: 2 });
+    });
+});
+
+describe('curated record', () => {
+    const FAV = 'fav_char1';
+    const curated = () => createCuratedRecord({ base: 'fav', empty: () => ({}), label: 'Test' });
+
+    test('before a load, a save merges so nothing stored is lost', async () => {
+        storageMock.storeFor('settings').set(FAV, { milk: true });
+        const record = curated();
+        record.get().cheese = true;
+
+        await record.save();
+        expect(storageMock.storeFor('settings').get(FAV)).toEqual({ milk: true, cheese: true });
+    });
+
+    test('after a load, a removal sticks — memory is the list', async () => {
+        storageMock.storeFor('settings').set(FAV, { milk: true, cheese: true });
+        const record = curated();
+        await record.load();
+        delete record.get().milk;
+
+        await record.save();
+        expect(storageMock.storeFor('settings').get(FAV)).toEqual({ cheese: true });
+    });
+
+    test('an unreadable store still refuses the save, and memory is kept', async () => {
+        storageMock.storeFor('settings').set(FAV, { milk: true });
+        const record = curated();
+        await record.load();
+        delete record.get().milk;
+        storageMock.unavailable = true;
+
+        expect(await record.save()).toBe(false);
+        expect(storageMock.storeFor('settings').get(FAV)).toEqual({ milk: true });
+        expect(record.get()).toEqual({});
+
+        storageMock.unavailable = false;
+        expect(await record.save()).toBe(true);
+        expect(storageMock.storeFor('settings').get(FAV)).toEqual({});
+    });
+
+    test('an unreadable load keeps memory and keeps merging until a readable one', async () => {
+        storageMock.storeFor('settings').set(FAV, { milk: true });
+        const record = curated();
+        record.get().cheese = true;
+        storageMock.unavailable = true;
+        expect(await record.load()).toBe(false);
+        expect(record.get()).toEqual({ cheese: true });
+
+        storageMock.unavailable = false;
+        await record.save();
+        expect(storageMock.storeFor('settings').get(FAV)).toEqual({ milk: true, cheese: true });
+    });
+
+    test('reset goes back to merging, for a character switch', async () => {
+        storageMock.storeFor('settings').set(FAV, { milk: true });
+        const record = curated();
+        await record.load();
+        record.reset();
+        dataManagerMock.characterId = 'char2';
+        storageMock.storeFor('settings').set('fav_char2', { log: true });
+        record.get().cheese = true;
+
+        await record.save();
+        expect(storageMock.storeFor('settings').get('fav_char2')).toEqual({ log: true, cheese: true });
+        expect(storageMock.storeFor('settings').get(FAV)).toEqual({ milk: true });
     });
 });

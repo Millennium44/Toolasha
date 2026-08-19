@@ -2,6 +2,7 @@ import { describe, test, expect } from 'vitest';
 import {
     recordOpening,
     resetTally,
+    mergeStoredTally,
     expectedLootPerChest,
     chestPerformance,
     chestBreakdown,
@@ -329,5 +330,34 @@ describe('chestBreakdown', () => {
         const tally = recordOpening({}, CHEST, 1, []);
         const result = chestBreakdown(tally[CHEST], dropTable, priceOf);
         expect(result.items.every((i) => i.lastCount === 0)).toBe(true);
+    });
+});
+
+describe('mergeStoredTally', () => {
+    const CHEST = '/items/chest';
+
+    test('takes the larger of each lifetime count, and memory’s last opening', () => {
+        const stored = { [CHEST]: { opened: 5, loot: { '/items/coin': 50, '/items/gem': 1 }, last: { opened: 1 } } };
+        const memory = { [CHEST]: { opened: 3, loot: { '/items/coin': 60 }, last: { opened: 2 } } };
+
+        expect(mergeStoredTally(stored, memory)).toEqual({
+            [CHEST]: { opened: 5, loot: { '/items/coin': 60, '/items/gem': 1 }, last: { opened: 2 } },
+        });
+    });
+
+    test('keeps chests only one side has, and tolerates nothing stored', () => {
+        const stored = { '/items/a': { opened: 1, loot: {} } };
+        const memory = { '/items/b': { opened: 2, loot: {} } };
+
+        expect(Object.keys(mergeStoredTally(stored, memory)).sort()).toEqual(['/items/a', '/items/b']);
+        expect(mergeStoredTally(null, memory)).toEqual(memory);
+        expect(mergeStoredTally(stored, undefined)).toEqual(stored);
+    });
+
+    test('memory wins wherever a count is not a number', () => {
+        const stored = { [CHEST]: { opened: 'five', loot: { '/items/coin': 50 } } };
+        const memory = { [CHEST]: { opened: 3, loot: { '/items/coin': 'lots' } } };
+
+        expect(mergeStoredTally(stored, memory)[CHEST]).toEqual({ opened: 3, loot: { '/items/coin': 'lots' } });
     });
 });

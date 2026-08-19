@@ -8,26 +8,41 @@
  * every read and write — the user switches characters without reloading the
  * page, so a key resolved once at module load would be the wrong one afterwards.
  * The legacy global value is adopted by the main character exactly once.
+ *
+ * The sessions map lives in a persisted record (see `utils/persisted-record.js`)
+ * so a read that cannot be made does not come back as "no sessions" and get
+ * written over the stored ones on the next attempt, and so a second tab's
+ * sessions are folded in rather than overwritten. It is a curated record: the
+ * tracker deletes and archives sessions on purpose, so once a readable load has
+ * completed memory is the list and a removal sticks; before that, saves merge.
  */
 
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
+import { createCuratedRecord } from '../../utils/persisted-record.js';
 
 const STORAGE_KEY = 'enhancementTracker_sessions';
 const CURRENT_SESSION_KEY = 'enhancementTracker_currentSession';
 const STORAGE_STORE = 'settings'; // Use existing 'settings' store
 
 /**
- * What has been handed to the debounced writer but may not have landed yet.
+ * The sessions, as held in memory and folded into storage.
  *
  * Every session update used to write all sessions as one immediate blob into
  * the settings store — an enhancement run is a write per attempt, of a document
  * containing every session ever kept. Debouncing coalesces a run into one write,
- * at the cost of storage lagging memory; these hold the truth in the meantime so
- * a load during the lag cannot read back a stale blob.
+ * at the cost of storage lagging memory; the record's memory holds the truth in
+ * the meantime so a load during the lag cannot read back a stale blob.
  */
-let pendingSessions = null;
+const sessionsRecord = createCuratedRecord({
+    base: STORAGE_KEY,
+    store: STORAGE_STORE,
+    empty: () => ({}),
+    label: 'EnhancementStorage',
+});
+/** Whether the record's memory has been handed sessions since the last reset */
+let sessionsHeld = false;
 let pendingCurrentSessionId;
 let hasPendingCurrentSessionId = false;
 
@@ -36,27 +51,43 @@ let hasPendingCurrentSessionId = false;
  *
  * Queued rather than awaited: the debounced write's promise resolves when its
  * timer fires, so awaiting it would stall every caller for the debounce delay.
- * `storage.flushAll()` on `beforeunload` is what makes the last one land.
+ * `storage.flushAll()` on `beforeunload` is what makes the last one land. The
+ * write is skipped, and memory kept, when storage cannot be read first.
  * @param {Object} sessions - Sessions object (keyed by session ID)
  * @returns {Promise<void>}
  */
 export async function saveSessions(sessions) {
-    pendingSessions = sessions;
-    writeScoped(STORAGE_KEY, sessions, STORAGE_STORE);
+    sessionsHeld = true;
+    sessionsRecord.set(sessions);
+    sessionsRecord.save();
 }
 
 /**
- * Load all sessions from storage
+ * Load all sessions from storage.
+ *
+ * Hands back what was last saved when a save is in flight; otherwise reads
+ * storage, keeping whatever is already in memory when the read cannot be made.
  * @returns {Promise<Object>} Sessions object (keyed by session ID)
  */
 export async function loadSessions() {
-    if (pendingSessions !== null) return pendingSessions;
-    try {
-        return await readScoped(STORAGE_KEY, STORAGE_STORE, {}, { migrate: 'adopt' });
-    } catch (error) {
-        console.error('[EnhancementStorage] Failed to load sessions:', error);
-        return {};
-    }
+    if (sessionsHeld) return sessionsRecord.get();
+    await sessionsRecord.load();
+    return sessionsRecord.get();
+}
+
+/**
+ * Whether the sessions have been read back from storage since the last reset.
+ * False after a load that could not be made — the list in hand is then not
+ * the whole story, and nothing should be pruned against it.
+ * @returns {boolean}
+ */
+export function sessionsLoaded() {
+    return sessionsRecord.isLoaded();
+}
+
+/** @returns {Promise<*>} The pending session writes, for tests and shutdown */
+export function flushSessionWrites() {
+    return sessionsRecord.flushed();
 }
 
 /**
@@ -156,11 +187,14 @@ export function importSession(jsonStr) {
  */
 export async function clearAllSessions() {
     try {
-        pendingSessions = {};
+        sessionsHeld = true;
+        sessionsRecord.set({});
         pendingCurrentSessionId = null;
         hasPendingCurrentSessionId = true;
         // Immediate: a clear is a one-off the user asked for and waited on, and
-        // awaiting the debounced path would mean waiting out its timer
+        // awaiting the debounced path would mean waiting out its timer. The
+        // one write meant to lose sessions, so it does not go through the
+        // record's merge.
         await storage.set(characterKey(STORAGE_KEY), {}, STORAGE_STORE, true);
         await storage.set(characterKey(CURRENT_SESSION_KEY), null, STORAGE_STORE, true);
     } catch (error) {
@@ -173,7 +207,8 @@ export async function clearAllSessions() {
  * that needs the next load to come from storage.
  */
 export function resetPendingSessionCache() {
-    pendingSessions = null;
+    sessionsRecord.reset();
+    sessionsHeld = false;
     pendingCurrentSessionId = undefined;
     hasPendingCurrentSessionId = false;
 }

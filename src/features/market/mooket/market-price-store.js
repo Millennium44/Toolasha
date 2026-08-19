@@ -12,18 +12,47 @@
  * silently drops half the traffic. And it stores through Toolasha's IndexedDB
  * layer rather than localStorage, which is a few megabytes shared with the game
  * itself and the thing the original had to keep defensively pruning.
+ *
+ * The cache is kept through a persisted record (`utils/persisted-record.js`):
+ * a read that cannot be made leaves the cache in hand rather than starting an
+ * empty one that the next flush would write over the stored one, and a flush
+ * folds the stored cache under memory — the newer reading of each item
+ * winning — so a second tab's browsing is kept rather than overwritten.
  */
 
-import storage from '../../../core/storage.js';
 import dataManager from '../../../core/data-manager.js';
+import { createPersistedRecord } from '../../../utils/persisted-record.js';
 import { entryFromBook, foldPrice, priceKey, specialPrice, pruneStale, PRICE_MAX_AGE_MS } from './market-prices.js';
 
 const STORAGE_KEY = 'mooketPrices';
 const SAVE_INTERVAL_MS = 60 * 1000;
 
+/**
+ * Fold a stored cache under the one in memory: per item, the reading taken
+ * later wins, and anything past its age goes.
+ * @param {Object} stored - key → entry, as read back
+ * @param {Object} memory - key → entry, as held
+ * @returns {Object} The merged cache
+ */
+function mergePrices(stored, memory) {
+    const merged = { ...(stored && typeof stored === 'object' ? stored : {}) };
+    for (const [key, entry] of Object.entries(memory && typeof memory === 'object' ? memory : {})) {
+        const theirs = merged[key];
+        if (!theirs || !(theirs.at > (entry?.at ?? -Infinity))) merged[key] = entry;
+    }
+    return pruneStale(merged, Date.now() - PRICE_MAX_AGE_MS);
+}
+
 class MarketPriceStore {
     constructor() {
-        this.entries = {};
+        this.record = createPersistedRecord({
+            base: STORAGE_KEY,
+            store: 'marketListings',
+            scoped: false,
+            empty: () => ({}),
+            merge: mergePrices,
+            label: 'MooketPrices',
+        });
         this.listeners = new Set();
         this.bookHandler = null;
         this.saveTimer = null;
@@ -31,16 +60,21 @@ class MarketPriceStore {
         this.loaded = false;
     }
 
+    /** @returns {Object} key → entry, the live in-memory cache */
+    get entries() {
+        return this.record.get();
+    }
+
+    set entries(value) {
+        this.record.set(value);
+    }
+
     async initialize() {
         if (this.bookHandler) return;
 
-        try {
-            const stored = (await storage.getJSON(STORAGE_KEY, 'marketListings', {})) || {};
-            this.entries = pruneStale(stored, Date.now() - PRICE_MAX_AGE_MS);
-        } catch (error) {
-            console.error('[MooketPrices] Loading prices failed:', error);
-            this.entries = {};
-        }
+        // An unreadable store keeps the cache in hand rather than starting empty
+        await this.record.load();
+        this.entries = pruneStale(this.entries, Date.now() - PRICE_MAX_AGE_MS);
         this.loaded = true;
 
         this.bookHandler = (data) => this.onOrderBooks(data);
@@ -159,14 +193,20 @@ class MarketPriceStore {
         }
     }
 
+    /**
+     * Write the cache back, folding the stored one under it. Skipped — and
+     * left dirty for the next flush — when storage cannot be read first.
+     */
     async flush() {
         if (!this.dirty || !this.loaded) return;
         this.dirty = false;
         try {
             this.entries = pruneStale(this.entries, Date.now() - PRICE_MAX_AGE_MS);
-            await storage.setJSON(STORAGE_KEY, this.entries, 'marketListings');
+            const landed = await this.record.save();
+            if (!landed) this.dirty = true;
         } catch (error) {
             console.error('[MooketPrices] Saving prices failed:', error);
+            this.dirty = true;
         }
     }
 }
