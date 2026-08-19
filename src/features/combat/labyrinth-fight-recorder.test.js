@@ -7,15 +7,59 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-let store = {};
-vi.mock('../../utils/character-key.js', () => ({
-    readScoped: async (key) => (key in store ? store[key] : null),
-    writeScoped: async (key, value) => {
-        store[key] = value;
-    },
+const storageMock = vi.hoisted(() => {
+    const stores = new Map();
+    const storeFor = (name) => {
+        if (!stores.has(name)) stores.set(name, new Map());
+        return stores.get(name);
+    };
+    return {
+        stores,
+        storeFor,
+        unavailable: false,
+        reset() {
+            stores.clear();
+            storageMock.unavailable = false;
+        },
+        get: async (key, store = 'settings', fallback = null) => {
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
+        },
+        tryGet: async (key, store = 'settings') => {
+            if (storageMock.unavailable) return null;
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null
+                ? { found: true, value: structuredClone(map.get(key)) }
+                : { found: false, value: null };
+        },
+        set: async (key, value, store = 'settings') => {
+            if (storageMock.unavailable) return false;
+            storeFor(store).set(key, structuredClone(value));
+            return true;
+        },
+        delete: async (key, store = 'settings') => {
+            storeFor(store).delete(key);
+            return true;
+        },
+        getAllKeys: async (store = 'settings') => Array.from(storeFor(store).keys()),
+    };
+});
+
+vi.mock('../../core/storage.js', () => ({ default: storageMock }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: { getCurrentCharacterId: () => 'char1', getCurrentCharacterGameMode: () => 'standard' },
+}));
+vi.mock('../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'char1',
+    requestAdoptionConsent: () => Promise.resolve(null),
 }));
 
-import recorder from './labyrinth-fight-recorder.js';
+import recorder, { attemptIdentity } from './labyrinth-fight-recorder.js';
+
+/** The pool as stored under this character's key */
+const stored = () => storageMock.storeFor('labyrinth').get('labyrinthFightRecorder_char1');
+/** Let fire-and-forget writes settle */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function attempt(over = {}) {
     return {
@@ -37,9 +81,12 @@ function attempt(over = {}) {
     };
 }
 
-beforeEach(() => {
-    store = {};
+beforeEach(async () => {
+    storageMock.reset();
+    recorder.forget();
     recorder.clearRecording();
+    await settle();
+    storageMock.reset();
 });
 
 describe('labyrinth fight recorder', () => {
@@ -200,8 +247,73 @@ describe('labyrinth fight recorder', () => {
     test('the pool is written to storage and read back on load', async () => {
         recorder.noteAttempt(attempt());
         // The persist is fire-and-forget; let it settle
-        await Promise.resolve();
-        expect(Array.isArray(store.labyrinthFightRecorder)).toBe(true);
-        expect(store.labyrinthFightRecorder).toHaveLength(1);
+        await settle();
+        expect(Array.isArray(stored())).toBe(true);
+        expect(stored()).toHaveLength(1);
+
+        recorder.forget();
+        expect(recorder.recordingStatus().total).toBe(0);
+        await recorder.load();
+        expect(recorder.recordingStatus().total).toBe(1);
+    });
+});
+
+describe('the pool survives a failed read and a second tab', () => {
+    test('a load that cannot read storage keeps the fights in memory', async () => {
+        recorder.noteAttempt(attempt());
+        await settle();
+        storageMock.unavailable = true;
+
+        await recorder.load();
+
+        expect(recorder.recordingStatus().total).toBe(1);
+    });
+
+    test('a save while storage is unreadable is skipped and what is stored stays', async () => {
+        recorder.noteAttempt(attempt());
+        await settle();
+        expect(stored()).toHaveLength(1);
+        storageMock.unavailable = true;
+
+        recorder.noteAttempt(attempt({ outcome: 'clear', cleared: true }));
+        await settle();
+
+        storageMock.unavailable = false;
+        expect(stored()).toHaveLength(1);
+        expect(recorder.recordingStatus().total).toBe(2);
+    });
+
+    test('a save folds in fights another tab stored meanwhile', async () => {
+        recorder.noteAttempt(attempt());
+        await settle();
+        const theirs = { ...stored()[0], recordId: 'other-tab', outcome: 'clear' };
+        storageMock.storeFor('labyrinth').set('labyrinthFightRecorder_char1', [...stored(), theirs]);
+
+        recorder.noteAttempt(attempt({ seconds: 50 }));
+        await settle();
+
+        expect(stored()).toHaveLength(3);
+        expect(recorder.recordingStatus().total).toBe(3);
+    });
+
+    test('once storage reads again the next save lands everything', async () => {
+        storageMock.unavailable = true;
+        recorder.noteAttempt(attempt());
+        recorder.noteAttempt(attempt({ seconds: 50 }));
+        await settle();
+        expect(stored()).toBeUndefined();
+
+        storageMock.unavailable = false;
+        recorder.noteAttempt(attempt({ seconds: 60 }));
+        await settle();
+
+        expect(stored()).toHaveLength(3);
+    });
+
+    test('attempts recorded before ids were minted are told apart by their measurements', () => {
+        const legacy = { monsterHrid: '/monsters/a', roomLevel: 1, seconds: 10, outcome: 'death' };
+        expect(attemptIdentity(legacy)).toBe(attemptIdentity({ ...legacy }));
+        expect(attemptIdentity(legacy)).not.toBe(attemptIdentity({ ...legacy, seconds: 11 }));
+        expect(attemptIdentity({ ...legacy, recordId: 'x' })).toBe('x');
     });
 });

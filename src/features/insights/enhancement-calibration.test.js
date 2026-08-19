@@ -13,16 +13,36 @@ const game = vi.hoisted(() => ({
     characterId: 'char-1',
     calibrationOn: true,
     stored: {},
+    unavailable: false,
 }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => game.calibrationOn } }));
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, store, fallback) => game.stored[`${store}:${key}`] ?? fallback,
-        set: async (key, value, store) => {
-            game.stored[`${store}:${key}`] = value;
+        tryGet: async (key, store) => {
+            if (game.unavailable) return null;
+            const value = game.stored[`${store}:${key}`];
+            return value == null ? { found: false, value: null } : { found: true, value: structuredClone(value) };
         },
+        set: async (key, value, store) => {
+            if (game.unavailable) return false;
+            game.stored[`${store}:${key}`] = structuredClone(value);
+            return true;
+        },
+        delete: async (key, store) => {
+            delete game.stored[`${store}:${key}`];
+            return true;
+        },
+        getAllKeys: async (store) =>
+            Object.keys(game.stored)
+                .filter((k) => k.startsWith(`${store}:`))
+                .map((k) => k.slice(store.length + 1)),
     },
+}));
+vi.mock('../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'char-1',
+    requestAdoptionConsent: () => Promise.resolve(null),
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: { getCurrentCharacterId: () => game.characterId },
@@ -141,5 +161,68 @@ describe('recording a completed session', () => {
         expect(records).toHaveLength(200);
         expect(records[0].id).toBe('old-1');
         expect(records[records.length - 1].id).toBe('session_1:5');
+    });
+});
+
+describe('the observations survive a failed read and a second tab', () => {
+    const KEY = 'lootLogHistory:calibrationEnhancing_char-1';
+    const ids = (list) => list.map((r) => r.id);
+
+    beforeEach(() => {
+        game.unavailable = false;
+    });
+
+    test('a load that cannot read storage keeps the observations in memory', async () => {
+        await calibration.recordCompletion(completedSession());
+        game.unavailable = true;
+        calibration.store.reset();
+
+        await calibration._load();
+
+        expect(ids(await calibration.getRecords())).toEqual(['session_1:5']);
+    });
+
+    test('a save while storage is unreadable is skipped and what is stored stays', async () => {
+        await calibration.recordCompletion(completedSession());
+        game.unavailable = true;
+
+        await calibration.recordCompletion(completedSession({ id: 'session_2' }));
+
+        game.unavailable = false;
+        expect(ids(game.stored[KEY])).toEqual(['session_1:5']);
+        expect(ids(await calibration.getRecords())).toEqual(['session_1:5', 'session_2:5']);
+    });
+
+    test('a save folds in observations another tab wrote meanwhile', async () => {
+        await calibration.recordCompletion(completedSession({ endTime: 1 }));
+        game.stored[KEY] = [...game.stored[KEY], { id: 'theirs', t: 3 }];
+
+        await calibration.recordCompletion(completedSession({ id: 'session_2', endTime: 2 }));
+
+        expect(ids(game.stored[KEY])).toEqual(['session_1:5', 'session_2:5', 'theirs']);
+        expect(ids(await calibration.getRecords())).toEqual(['session_1:5', 'session_2:5', 'theirs']);
+    });
+
+    test('once storage reads again the next save lands everything', async () => {
+        game.unavailable = true;
+        await calibration.recordCompletion(completedSession({ endTime: 1 }));
+        await calibration.recordCompletion(completedSession({ id: 'session_2', endTime: 2 }));
+        expect(game.stored[KEY]).toBeUndefined();
+
+        game.unavailable = false;
+        await calibration.recordCompletion(completedSession({ id: 'session_3', endTime: 3 }));
+
+        expect(ids(game.stored[KEY])).toEqual(['session_1:5', 'session_2:5', 'session_3:5']);
+    });
+
+    test('a character switch forgets the departing character’s observations', async () => {
+        await calibration.recordCompletion(completedSession());
+        game.characterId = 'char-2';
+
+        await calibration.recordCompletion(completedSession({ id: 'session_9' }));
+
+        expect(ids(game.stored['lootLogHistory:calibrationEnhancing_char-2'])).toEqual(['session_9:5']);
+        expect(ids(game.stored[KEY])).toEqual(['session_1:5']);
+        game.characterId = 'char-1';
     });
 });

@@ -24,7 +24,7 @@ import {
     totalsSince,
     foldRoomResult,
 } from './labyrinth-outcome-log.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { createPersistedRecord } from '../../utils/persisted-record.js';
 
 /**
  * Deciding a side needs far fewer fights than measuring a rate
@@ -42,6 +42,66 @@ const OUTCOME_STORAGE_VERSION = 2;
 /** Legacy global values are dropped, not inherited — see OUTCOME_STORAGE_KEY */
 export const DISCARD_LEGACY = { migrate: 'discard' };
 
+/**
+ * Fold the stored fight record under the one in memory.
+ *
+ * The totals are counters that only ever grow, so per room the bucket that
+ * has counted more fights is the more complete one and wins whole — never a
+ * field-by-field max, which would stitch clears from one count onto attempts
+ * from another. A tab that recorded fights before its read landed keeps them
+ * only when its bucket is the larger; the alternative, summing, would double
+ * every fight both sides already share. The seen-set and the baseline are one
+ * tab's working state and memory's copy wins.
+ *
+ * A stored document of another version is not merged at all: the version bump
+ * exists to drop it, and that drop is the one intentional overwrite here.
+ *
+ * @param {Object|null} stored - The stored document
+ * @param {Object} memory - The in-memory document
+ * @returns {Object}
+ */
+export function mergeOutcomeDocuments(stored, memory) {
+    const mine = memory || emptyOutcomeDocument();
+    if (!stored || stored.version !== OUTCOME_STORAGE_VERSION) return mine;
+
+    const totals = { ...(stored.totals || {}) };
+    for (const [key, bucket] of Object.entries(mine.totals || {})) {
+        const theirs = totals[key];
+        totals[key] = theirs && bucketWeight(theirs) > bucketWeight(bucket) ? theirs : bucket;
+    }
+    const seen = mine.seen && Object.keys(mine.seen).length ? mine.seen : stored.seen || {};
+    return {
+        version: OUTCOME_STORAGE_VERSION,
+        totals,
+        seen,
+        baseline: mine.baseline ?? stored.baseline ?? null,
+    };
+}
+
+/** How many things a bucket has counted — the measure of which copy is fuller */
+function bucketWeight(bucket) {
+    return (Number(bucket?.attempts) || 0) + (Number(bucket?.rooms) || 0);
+}
+
+/** A fresh document of the current shape */
+function emptyOutcomeDocument() {
+    return { version: OUTCOME_STORAGE_VERSION, totals: {}, seen: {}, baseline: null };
+}
+
+/**
+ * The record on disk, kept through the shared load/save discipline: an
+ * unreadable probe keeps the totals in memory, and a save folds in what
+ * another tab stored rather than overwriting it.
+ */
+const outcomeRecord = createPersistedRecord({
+    base: OUTCOME_STORAGE_KEY,
+    store: 'settings',
+    empty: emptyOutcomeDocument,
+    merge: mergeOutcomeDocuments,
+    migrate: 'discard',
+    label: 'LabyrinthClearRate',
+});
+
 /** Prototype methods mixed into LabyrinthClearRate */
 export const outcomeMethods = {
     /**
@@ -55,45 +115,75 @@ export const outcomeMethods = {
      */
     async loadOutcomes() {
         if (this._outcomesLoaded) return;
-        this._outcomesLoaded = true;
         try {
-            const stored = (await readScoped(OUTCOME_STORAGE_KEY, 'settings', {}, DISCARD_LEGACY)) || {};
             // Anything written before the stripped-room fix counted defeats and
             // nothing else — a cleared room stops naming its monster, so the
             // scan that looked for one never saw a single win. Those totals are
             // not a small sample of the truth, they are every loss and no
             // victory, so they are dropped rather than carried forward and
-            // quietly poisoning every verdict from here on.
-            if (stored.version === OUTCOME_STORAGE_VERSION) {
-                this._outcomes = stored.totals || {};
-                this._outcomesSeen = stored.seen || {};
-                this._baseline = stored.baseline || null;
-            } else {
-                this._outcomes = {};
-                this._outcomesSeen = {};
-                this._baseline = null;
-            }
+            // quietly poisoning every verdict from here on (the merge declines
+            // any stored document of another version).
+            //
+            // A read that could not be made leaves memory alone and is retried
+            // at the next call, so no record is ever written over on the
+            // strength of a failed read.
+            outcomeRecord.set(this._outcomeDocument());
+            const readable = await outcomeRecord.load();
+            this._adoptOutcomeDocument(outcomeRecord.get());
+            this._outcomesLoaded = readable;
         } catch (error) {
             console.error('[LabyrinthClearRate] Loading fight outcomes failed:', error);
         }
     },
 
-    /** Write the record and the per-room state it is counted against */
-    async saveOutcomes() {
+    /**
+     * Write the record and the per-room state it is counted against.
+     *
+     * Folds in whatever another tab stored meanwhile and is skipped when
+     * storage cannot be read first; `overwrite` is for the reset, which means
+     * to lose the record.
+     * @param {{overwrite?: boolean}} [options]
+     * @returns {Promise<boolean>} Whether a write landed
+     */
+    async saveOutcomes({ overwrite = false } = {}) {
         try {
-            await writeScoped(
-                OUTCOME_STORAGE_KEY,
-                {
-                    version: OUTCOME_STORAGE_VERSION,
-                    totals: this._outcomes,
-                    seen: this._outcomesSeen,
-                    baseline: this._baseline,
-                },
-                'settings'
-            );
+            outcomeRecord.set(this._outcomeDocument());
+            const landed = await outcomeRecord.save({ overwrite });
+            this._adoptOutcomeDocument(outcomeRecord.get());
+            return landed;
         } catch (error) {
             console.error('[LabyrinthClearRate] Saving fight outcomes failed:', error);
+            return false;
         }
+    },
+
+    /** The record as stored, from the singleton's fields */
+    _outcomeDocument() {
+        return {
+            version: OUTCOME_STORAGE_VERSION,
+            totals: this._outcomes || {},
+            seen: this._outcomesSeen || {},
+            baseline: this._baseline || null,
+        };
+    },
+
+    /** Take a (merged) document back into the singleton's fields */
+    _adoptOutcomeDocument(doc) {
+        this._outcomes = doc?.totals || {};
+        this._outcomesSeen = doc?.seen || {};
+        this._baseline = doc?.baseline || null;
+    },
+
+    /**
+     * Forget the record in memory without touching storage — for a character
+     * switch, so the next load reads the arriving character's record.
+     */
+    forgetOutcomes() {
+        outcomeRecord.reset();
+        this._outcomes = {};
+        this._outcomesSeen = {};
+        this._baseline = null;
+        this._outcomesLoaded = false;
     },
 
     /**
@@ -274,7 +364,8 @@ export const outcomeMethods = {
         this._outcomesSeen = {};
         this._baseline = null;
         this._outcomesLoaded = true;
-        await this.saveOutcomes();
+        // The one write meant to lose the record
+        await this.saveOutcomes({ overwrite: true });
     },
 
     /**

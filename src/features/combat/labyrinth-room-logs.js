@@ -35,7 +35,7 @@ import { splitModelCohorts, calibrationReport } from './labyrinth-calibration.js
 import { exportMeta, buildAccuracyExport, sanitizeExport, downloadJson } from './labyrinth-accuracy-export.js';
 import { formatKMB, timeReadable } from '../../utils/formatters.js';
 import { ROOM_TRAVEL_SECONDS } from './labyrinth-formulas.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 
 /** Re-exported from labyrinth-formulas.js, where it now lives */
 export { ROOM_TRAVEL_SECONDS };
@@ -69,6 +69,23 @@ function tallyHitsMisses(tally) {
  * pre-scoping global log is adopted by the main character once.
  */
 const STORAGE_KEY = 'labyrinthRoomLogs';
+
+/**
+ * What makes two stored rooms the same room: the run and floor it was on, and
+ * the moment it began. A session carries no id of its own; two rooms of one run
+ * cannot begin in the same millisecond, and the run key keeps a clock that
+ * repeats across runs from matching.
+ * @param {Object} session - A finished room
+ * @returns {string|null}
+ */
+export function sessionIdentity(session) {
+    const startedAt = Number(session?.startedAt);
+    if (!Number.isFinite(startedAt)) return null;
+    return `${session.runKey || ''}|${startedAt}`;
+}
+
+/** Newest first, the order the log is kept in */
+const newestFirst = (a, b) => (Number(b?.startedAt) || 0) - (Number(a?.startedAt) || 0);
 /** Used when the setting is unreadable; the setting itself is the real bound */
 const DEFAULT_SESSIONS = 120;
 /** However large the log is set, one room cannot fill it */
@@ -195,6 +212,22 @@ class LabyrinthRoomLogs {
     constructor() {
         this.isInitialized = false;
         this.sessions = [];
+        // The stored log, kept through the shared load/save discipline so a
+        // read that could not be made — or a second tab of this character —
+        // cannot erase rooms already on record. Merged by room identity, newest
+        // first, capped at the configured size.
+        this.record = createPersistedRecord({
+            base: STORAGE_KEY,
+            store: 'settings',
+            empty: () => ({ sessions: [] }),
+            merge: (stored, memory) => ({
+                sessions: mergeById(sessionIdentity, newestFirst)(stored?.sessions, memory?.sessions).slice(
+                    0,
+                    this.logSize()
+                ),
+            }),
+            label: 'LabyrinthRoomLogs',
+        });
         this.activeSession = null;
         this.labContext = null; // { runKey, roomKey, room }
         this.roomData = null;
@@ -299,10 +332,11 @@ class LabyrinthRoomLogs {
         if (!config.getSetting('labyrinthRoomLogs')) return;
         this.isInitialized = true;
 
-        const stored = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
-        if (Array.isArray(stored?.sessions)) {
-            this.sessions = stored.sessions.slice(0, this.logSize());
-        }
+        // Rooms finished before the read lands are folded in rather than lost;
+        // an unreadable store keeps what memory has rather than blanking it
+        this.record.set({ sessions: this.sessions });
+        await this.record.load();
+        this.adoptMerged();
 
         // Bring the accumulated calibration fights back into memory, so the pool
         // survives a reload rather than starting empty each session
@@ -404,6 +438,8 @@ class LabyrinthRoomLogs {
         // reads the arriving character's log rather than persisting this one's
         // under their key.
         this.sessions = [];
+        this.record.reset();
+        labFightRecorder.forget();
         this.activeSession = null;
         this.isInitialized = false;
     }
@@ -1249,22 +1285,46 @@ class LabyrinthRoomLogs {
         ).catch((error) => console.error('[LabyrinthRoomLogs] Recording a finished room failed:', error));
     }
 
-    persist() {
+    /**
+     * Write the log. Rooms another tab stored meanwhile are folded in, and the
+     * write is skipped when storage cannot be read first.
+     * @returns {Promise<boolean>} Whether a write landed
+     */
+    async persist() {
         const sessions = this.sessions.map((session) => {
             const copy = { ...session };
             delete copy.lastSnapshot;
             return copy;
         });
-        writeScoped(STORAGE_KEY, { sessions }, 'settings').catch((error) => {
+        this.record.set({ sessions });
+        try {
+            const landed = await this.record.save();
+            this.adoptMerged();
+            return landed;
+        } catch (error) {
             console.error('[LabyrinthRoomLogs] Failed to persist logs:', error);
-        });
+            return false;
+        }
+    }
+
+    /**
+     * Take rooms the stored record had and this tab did not, keeping this
+     * tab's own room objects — a room still waiting for its experience is
+     * credited through the object the log holds, so that object must stay.
+     */
+    adoptMerged() {
+        const mine = new Map(this.sessions.map((session) => [sessionIdentity(session), session]));
+        this.sessions = this.record
+            .get()
+            .sessions.map((session) => mine.get(sessionIdentity(session)) || session)
+            .slice(0, this.logSize());
     }
 
     clearLogs() {
         this.sessions = [];
         this.activeSession = null;
         this.fight = null;
-        this.persist();
+        this.record.clear().catch((error) => console.error('[LabyrinthRoomLogs] Failed to clear logs:', error));
         this.renderIfOpen();
     }
 

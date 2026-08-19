@@ -428,10 +428,7 @@ class LabyrinthClearRate {
         this._combatCacheLoaded = false;
         // The fight record is one character's; dropping it here is what makes
         // the next load read it back under whichever character is then current
-        this._outcomes = {};
-        this._outcomesSeen = {};
-        this._baseline = null;
-        this._outcomesLoaded = false;
+        this.forgetOutcomes();
         this.simQueue = [];
         this.simRunning = false;
         this.recommendations.clear();

@@ -5,8 +5,9 @@
 
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
+import storage from '../../core/storage.js';
 import { sessionKey, archiveSession } from './combat-session-history.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
 
 /**
  * How long a finished run stays on the overlay.
@@ -34,6 +35,28 @@ const CONSUMABLE_TRACKER_KEY = 'consumableTracker';
 const PARTY_TRACKERS_KEY = 'partyConsumableTrackers';
 const PARTY_SNAPSHOTS_KEY = 'partyConsumableSnapshots';
 const LATEST_RUN_KEY = 'latestCombatRun';
+
+/**
+ * Whether this character's copy of a record can be read right now.
+ *
+ * The trackers here are live counters of the run in hand — memory is the
+ * truth and is written out whole, which is right for a counter. What must not
+ * happen is the write landing when the read side is down: a tab that could
+ * not read its stored counts would then write its own, smaller ones over
+ * them. So every write probes first and stands down when the probe cannot
+ * be made. (The loads already keep memory on a failed read: `readScoped`
+ * answers null there and null is never adopted.)
+ * @param {string} base - The unscoped key
+ * @returns {Promise<boolean>}
+ */
+async function storeReadable(base) {
+    const probed = await storage.tryGet(characterKey(base), COMBAT_STORE);
+    if (probed === null) {
+        console.warn(`[Combat Stats] ${base} not saved: storage could not be read first`);
+        return false;
+    }
+    return true;
+}
 const COMBAT_STORE = 'combatStats';
 const DISCARD_LEGACY = { migrate: 'discard' };
 
@@ -280,6 +303,7 @@ class CombatStatsDataCollector {
      */
     async saveConsumableTracking() {
         try {
+            if (!(await storeReadable(CONSUMABLE_TRACKER_KEY))) return false;
             const MAX_WINDOW_MS = 24 * 60 * 60 * 1000;
 
             // Save current player tracker
@@ -334,8 +358,10 @@ class CombatStatsDataCollector {
 
             // Save party snapshots
             await writeScoped(PARTY_SNAPSHOTS_KEY, this.partyConsumableSnapshots, COMBAT_STORE);
+            return true;
         } catch (error) {
             console.error('[Combat Stats] Error saving consumable tracking:', error);
+            return false;
         }
     }
 
@@ -720,8 +746,11 @@ class CombatStatsDataCollector {
             // Store in memory
             this.latestCombatData = combatData;
 
-            // Store in IndexedDB
-            await writeScoped(LATEST_RUN_KEY, combatData, COMBAT_STORE);
+            // Store in IndexedDB — unless storage cannot be read, in which
+            // case the stored run stays and memory carries this one
+            if (await storeReadable(LATEST_RUN_KEY)) {
+                await writeScoped(LATEST_RUN_KEY, combatData, COMBAT_STORE);
+            }
 
             // Also save tracking state periodically
             await this.saveConsumableTracking();

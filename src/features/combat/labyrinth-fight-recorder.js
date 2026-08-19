@@ -28,7 +28,7 @@
  * enough to hold and write without thinking about it.
  */
 
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import { scriptVersion } from '../../utils/script-version.js';
 
 /** The labyrinth store, shared with the sim cache — this is labyrinth history */
@@ -41,8 +41,52 @@ const MAX_ATTEMPTS = 500;
 /** A fight shorter than this is an abandon, not a fight, and says nothing about a rate */
 const MIN_FIGHT_SECONDS = 3;
 
-let attempts = [];
-let loaded = false;
+/**
+ * What makes two stored attempts the same fight.
+ *
+ * Attempts recorded from here on carry their own `recordId`. Older ones do
+ * not, and are told apart by the fight's own clock and its measurements —
+ * two real fights never share all of those, so only a genuine duplicate
+ * collapses.
+ * @param {Object} attempt - A stored attempt
+ * @returns {string}
+ */
+export function attemptIdentity(attempt) {
+    if (attempt?.recordId) return String(attempt.recordId);
+    return [
+        'legacy',
+        attempt?.monsterHrid,
+        attempt?.roomLevel,
+        attempt?.battleStartedAt,
+        attempt?.resolvedAt,
+        attempt?.seconds,
+        attempt?.outcome,
+        attempt?.monsterHpEnd,
+        attempt?.playerHpEnd,
+        attempt?.monsterDamage,
+        attempt?.playerDamageTaken,
+    ].join('|');
+}
+
+/** An id no other tab or session will mint */
+function newRecordId() {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * The pool, kept through the shared load/save discipline: a read that could
+ * not be made keeps the fights in memory, a save folds in what another tab
+ * stored, and the ring cap is applied to the union (oldest fall off first).
+ */
+const record = createPersistedRecord({
+    base: KEY,
+    store: STORE,
+    empty: () => [],
+    merge: (stored, memory) => mergeById(attemptIdentity)(stored, memory).slice(-MAX_ATTEMPTS),
+    label: 'LabyrinthFightRecorder',
+});
+
+let attempts = record.get();
 let loading = null;
 
 /**
@@ -68,27 +112,51 @@ function modelMarker() {
  * @returns {Promise<Array<Object>>}
  */
 export async function load() {
-    if (loaded) return attempts;
+    if (record.isLoaded()) return attempts;
     if (loading) return loading;
     loading = (async () => {
         try {
-            const stored = await readScoped(KEY, STORE, null);
-            if (Array.isArray(stored)) attempts = stored.slice(-MAX_ATTEMPTS);
+            record.set(attempts);
+            await record.load();
+            attempts = record.get();
         } catch (error) {
             console.error('[LabyrinthFightRecorder] Reading the fight pool failed:', error);
         }
-        loaded = true;
         loading = null;
         return attempts;
     })();
     return loading;
 }
 
-/** Write the pool out. Fire-and-forget: a lost write costs one fight, not the run. */
+/**
+ * Forget the pool in memory without touching storage — for a character
+ * switch, so the next load reads the arriving character's pool rather than
+ * writing the departing one's under their key.
+ */
+export function forget() {
+    record.reset();
+    attempts = record.get();
+    loading = null;
+}
+
+/**
+ * Write the pool out. Fire-and-forget: a lost write costs one fight, not the
+ * run. Skipped when storage cannot be read first, so the pool on disk is never
+ * blindly overwritten.
+ * @returns {Promise<boolean>} Whether a write landed
+ */
 function persist() {
-    Promise.resolve(writeScoped(KEY, attempts, STORE)).catch((error) =>
-        console.error('[LabyrinthFightRecorder] Writing the fight pool failed:', error)
-    );
+    record.set(attempts);
+    return record
+        .save()
+        .then((landed) => {
+            attempts = record.get();
+            return landed;
+        })
+        .catch((error) => {
+            console.error('[LabyrinthFightRecorder] Writing the fight pool failed:', error);
+            return false;
+        });
 }
 
 /**
@@ -156,6 +224,7 @@ export function noteAttempt(attempt) {
     };
 
     attempts.push({
+        recordId: newRecordId(),
         monsterHrid: String(attempt.monsterHrid),
         monsterName: attempt.monsterName ? String(attempt.monsterName) : null,
         roomLevel: Math.max(0, Math.floor(Number(attempt.roomLevel) || 0)),
@@ -231,7 +300,7 @@ export function recordingStatus(fingerprint) {
 /** Throw away every accumulated fight. */
 export function clearRecording() {
     attempts = [];
-    persist();
+    record.clear().catch((error) => console.error('[LabyrinthFightRecorder] Clearing the fight pool failed:', error));
 }
 
 /**
@@ -284,6 +353,7 @@ export function downloadRecording(extra = {}) {
 
 export default {
     load,
+    forget,
     noteAttempt,
     recordedAttempts,
     recordingStatus,

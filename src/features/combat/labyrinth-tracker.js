@@ -4,19 +4,29 @@
  */
 
 import webSocketHook from '../../core/websocket.js';
-import storage from '../../core/storage.js';
 import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
+import { createPersistedRecord } from '../../utils/persisted-record.js';
 
 const STORAGE_KEY_PREFIX = 'monsterBestLevels';
 const STORE_NAME = 'labyrinth';
+
 /**
- * Get character-scoped storage key for labyrinth best levels.
- * @returns {string}
+ * Fold the stored best levels under the ones in memory: per monster the
+ * higher level wins, because a best-ever only goes up. So a tab that read
+ * nothing cannot write a lower level over a stored higher one, and two tabs
+ * each keep the other's bests.
+ * @param {Object} stored - Stored map, monster → { name, bestLevel }
+ * @param {Object} memory - In-memory map
+ * @returns {Object}
  */
-function getStorageKey() {
-    const charId = dataManager.getCurrentCharacterId() || 'default';
-    return `${STORAGE_KEY_PREFIX}_${charId}`;
+export function mergeBestLevels(stored, memory) {
+    const out = { ...(stored && typeof stored === 'object' ? stored : {}) };
+    for (const [hrid, entry] of Object.entries(memory && typeof memory === 'object' ? memory : {})) {
+        const held = out[hrid];
+        if (!held || !(Number(held.bestLevel) > Number(entry?.bestLevel))) out[hrid] = entry;
+    }
+    return out;
 }
 
 const COMBAT_ROOM_TYPE = '/labyrinth_room_types/combat';
@@ -26,6 +36,19 @@ class LabyrinthTracker {
     constructor() {
         this.prevRoomData = null;
         this.monsterBestLevels = {};
+        // Kept through the shared load/save discipline: a read that could not
+        // be made keeps the levels in memory rather than blanking them, and a
+        // save folds in what is stored (higher level wins) instead of
+        // overwriting it. Character-scoped under `monsterBestLevels_<id>`.
+        this.record = createPersistedRecord({
+            base: STORAGE_KEY_PREFIX,
+            store: STORE_NAME,
+            empty: () => ({}),
+            merge: mergeBestLevels,
+            migrate: 'discard',
+            immediate: true,
+            label: 'LabyrinthTracker',
+        });
         this.handlers = {};
         this.isInitialized = false;
         this.updateListeners = [];
@@ -62,6 +85,11 @@ class LabyrinthTracker {
 
         this.prevRoomData = null;
         this.updateListeners = [];
+        // The bests are one character's; forgotten here so the next initialize
+        // — which is how a character switch arrives — reads the arriving
+        // character's rather than writing these under their key
+        this.monsterBestLevels = {};
+        this.record.reset();
         this.isInitialized = false;
     }
 
@@ -156,22 +184,28 @@ class LabyrinthTracker {
      */
     async loadData() {
         try {
-            const data = await storage.getJSON(getStorageKey(), STORE_NAME, {});
-            this.monsterBestLevels = data || {};
+            this.record.set(this.monsterBestLevels);
+            await this.record.load();
+            this.monsterBestLevels = this.record.get();
         } catch (error) {
             console.error('[LabyrinthTracker] Failed to load data:', error);
-            this.monsterBestLevels = {};
         }
     }
 
     /**
-     * Save best levels to IndexedDB
+     * Save best levels to IndexedDB. Skipped when storage cannot be read
+     * first; otherwise the higher of stored and memory is kept per monster.
+     * @returns {Promise<boolean>} Whether a write landed
      */
     async saveData() {
         try {
-            await storage.setJSON(getStorageKey(), this.monsterBestLevels, STORE_NAME, true);
+            this.record.set(this.monsterBestLevels);
+            const landed = await this.record.save();
+            this.monsterBestLevels = this.record.get();
+            return landed;
         } catch (error) {
             console.error('[LabyrinthTracker] Failed to save data:', error);
+            return false;
         }
     }
 

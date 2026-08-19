@@ -10,7 +10,7 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const store = vi.hoisted(() => ({ saved: null, tracking: null, actions: [] }));
+const store = vi.hoisted(() => ({ saved: null, tracking: null, actions: [], writes: [], unavailable: false }));
 
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -33,7 +33,15 @@ vi.mock('../../core/storage.js', () => ({
     default: {
         get: read,
         getJSON: read,
-        set: async () => true,
+        tryGet: async (key) => {
+            if (store.unavailable) return null;
+            const value = await read(key);
+            return value == null ? { found: false, value: null } : { found: true, value };
+        },
+        set: async (key, value) => {
+            store.writes.push([key, value]);
+            return true;
+        },
         setJSON: async () => true,
         delete: async () => true,
         getAllKeys: async () => [],
@@ -67,8 +75,56 @@ beforeEach(() => {
     store.saved = null;
     store.tracking = null;
     store.actions = [];
+    store.writes = [];
+    store.unavailable = false;
     collector.isInitialized = false;
     collector.latestCombatData = null;
+});
+
+describe('the trackers are not written over on the strength of a failed read', () => {
+    test('a load that cannot read storage keeps the counters in memory', async () => {
+        collector.consumableTracker.actualConsumed = { '/items/tea': 3 };
+        store.unavailable = true;
+
+        await collector.loadConsumableTracking();
+
+        expect(collector.consumableTracker.actualConsumed).toEqual({ '/items/tea': 3 });
+    });
+
+    test('a save while storage is unreadable is skipped, leaving the stored counts alone', async () => {
+        collector.consumableTracker.actualConsumed = { '/items/tea': 3 };
+        store.unavailable = true;
+
+        expect(await collector.saveConsumableTracking()).toBe(false);
+
+        expect(store.writes).toEqual([]);
+    });
+
+    test('a save that can read storage writes every tracker under the character key', async () => {
+        collector.consumableTracker.actualConsumed = { '/items/tea': 3 };
+
+        expect(await collector.saveConsumableTracking()).toBe(true);
+
+        expect(store.writes.map(([key]) => key)).toEqual([
+            'consumableTracker_me',
+            'partyConsumableTrackers_me',
+            'partyConsumableSnapshots_me',
+        ]);
+        expect(store.writes[0][1].actualConsumed).toEqual({ '/items/tea': 3 });
+    });
+
+    test('once storage reads again the next save lands', async () => {
+        store.unavailable = true;
+        collector.consumableTracker.actualConsumed = { '/items/tea': 3 };
+        await collector.saveConsumableTracking();
+        expect(store.writes).toEqual([]);
+
+        store.unavailable = false;
+        collector.consumableTracker.actualConsumed['/items/tea'] = 4;
+        await collector.saveConsumableTracking();
+
+        expect(store.writes[0][1].actualConsumed).toEqual({ '/items/tea': 4 });
+    });
 });
 
 describe('coming back to a run already in progress', () => {

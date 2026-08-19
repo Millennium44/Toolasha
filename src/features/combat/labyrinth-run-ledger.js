@@ -31,13 +31,30 @@
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import { labyrinthRunState } from '../notifications/notification-predicates.js';
 
 const STORAGE_KEY = 'labyrinthRunLedger';
 const STORE = 'labyrinth';
 /** Endings kept; older ones fall off the back */
 const MAX_RUNS = 30;
+
+/** Newest ending first, the order the ring is kept in */
+const newestFirst = (a, b) => (Number(b?.endedAt) || 0) - (Number(a?.endedAt) || 0);
+
+/**
+ * The ring on disk, kept through the shared load/save discipline: a read that
+ * could not be made cannot truncate it to one run, and a save folds in
+ * endings another tab recorded. Merged by the run's own start stamp (`key`),
+ * newest first, capped at MAX_RUNS.
+ */
+const ledgerRecord = createPersistedRecord({
+    base: STORAGE_KEY,
+    store: STORE,
+    empty: () => [],
+    merge: (stored, memory) => mergeById((run) => run?.key, newestFirst)(stored, memory).slice(0, MAX_RUNS),
+    label: 'LabyrinthRunLedger',
+});
 
 /**
  * The grid width of a floor — 4×4 on floor 1, one wider per floor, 8×8 from
@@ -162,6 +179,23 @@ class LabyrinthRunLedger {
         this.state = { phase: 'unknown', run: null };
         this.unregister = null;
         this.recorded = new Set();
+        /** Whose endings the record in memory holds; a change means forget them first */
+        this.ledgerOwner = null;
+    }
+
+    /**
+     * The ring, with the departing character's endings forgotten when the
+     * character has changed since — the key is resolved per access, and the
+     * memory behind it must never be written under another character's key.
+     * @returns {Object} The persisted record
+     */
+    _ledger() {
+        const owner = dataManager.getCurrentCharacterId?.() || null;
+        if (owner !== this.ledgerOwner) {
+            ledgerRecord.reset();
+            this.ledgerOwner = owner;
+        }
+        return ledgerRecord;
     }
 
     initialize() {
@@ -200,11 +234,17 @@ class LabyrinthRunLedger {
         }
     }
 
-    /** Append one ending to the ring. */
+    /**
+     * Append one ending to the ring. Loaded first, so a read that could not be
+     * made keeps what is in memory rather than truncating the ring to this
+     * one run; the save itself folds in what another tab stored meanwhile.
+     * @param {Object} ended - The ending
+     * @returns {Promise<boolean>} Whether a write landed
+     */
     async _append(ended) {
-        const runs = (await readScoped(STORAGE_KEY, STORE, [])) || [];
-        runs.unshift(ended);
-        await writeScoped(STORAGE_KEY, runs.slice(0, MAX_RUNS), STORE);
+        const ledger = this._ledger();
+        await ledger.load();
+        return ledger.update((runs) => [ended, ...runs].slice(0, MAX_RUNS));
     }
 
     /**
@@ -213,7 +253,9 @@ class LabyrinthRunLedger {
      */
     async runs() {
         if (!config.getSetting('labyrinthRunLedger')) return [];
-        return (await readScoped(STORAGE_KEY, STORE, [])) || [];
+        const ledger = this._ledger();
+        await ledger.load();
+        return ledger.get().slice();
     }
 }
 

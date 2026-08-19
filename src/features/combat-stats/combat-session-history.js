@@ -27,7 +27,8 @@
  * state, since the loot totals only ever grow.
  */
 
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import dataManager from '../../core/data-manager.js';
+import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 
 /**
  * Where the list lives.
@@ -48,6 +49,56 @@ const STORE_NAME = 'combatStats';
  * through and small enough not to be a thing that grows forever.
  */
 export const MAX_SESSIONS = 20;
+
+/**
+ * The identity a stored session is merged on: the key `withSession` stamps,
+ * or the same thing derived for a snapshot written before it was stamped.
+ * @param {Object} session - A stored session
+ * @returns {string|null}
+ */
+function sessionIdentity(session) {
+    return session?.key || sessionKey(session);
+}
+
+/** When a session began, as a number, for ordering newest first */
+function startedAt(session) {
+    const raw = session?.combatStartTime;
+    const ms = typeof raw === 'number' ? raw : new Date(raw).getTime();
+    return Number.isFinite(ms) ? ms : 0;
+}
+
+/**
+ * The list on disk, kept through the shared load/save discipline: a read that
+ * could not be made keeps the list in memory rather than writing one session
+ * over all of them, and a save folds in runs another tab archived. Merged by
+ * session key, newest first, capped at MAX_SESSIONS.
+ */
+const sessionRecord = createPersistedRecord({
+    base: STORE_KEY,
+    store: STORE_NAME,
+    empty: () => [],
+    merge: (stored, memory) =>
+        mergeById(sessionIdentity, (a, b) => startedAt(b) - startedAt(a))(stored, memory).slice(0, MAX_SESSIONS),
+    label: 'CombatSessionHistory',
+});
+
+/** Whose sessions the record in memory holds — a change means forget them first */
+let recordOwner = null;
+
+/**
+ * The record, with the departing character's sessions forgotten when the
+ * character has changed: the key is resolved per access, and memory must never
+ * be written under another character's key.
+ * @returns {Object} The persisted record
+ */
+function record() {
+    const owner = dataManager.getCurrentCharacterId?.() || null;
+    if (owner !== recordOwner) {
+        sessionRecord.reset();
+        recordOwner = owner;
+    }
+    return sessionRecord;
+}
 
 /**
  * Which run a snapshot belongs to.
@@ -88,8 +139,9 @@ export function withSession(history, snapshot) {
  */
 export async function loadSessions() {
     try {
-        const saved = await readScoped(STORE_KEY, STORE_NAME, [], { migrate: 'adopt' });
-        return Array.isArray(saved) ? saved : [];
+        const sessions = record();
+        await sessions.load();
+        return sessions.get().slice();
     } catch (error) {
         console.error('[CombatSessionHistory] Reading the session list failed:', error);
         return [];
@@ -104,19 +156,23 @@ export async function loadSessions() {
  */
 export async function archiveSession(snapshot) {
     try {
-        const history = withSession(await loadSessions(), snapshot);
-        await writeScoped(STORE_KEY, history, STORE_NAME, true);
-        return history;
+        // Loaded first so a read that could not be made keeps what is in
+        // memory rather than writing this one run over the list; the save
+        // folds in what another tab archived meanwhile
+        const sessions = record();
+        await sessions.load();
+        await sessions.update((history) => withSession(history, snapshot));
+        return sessions.get().slice();
     } catch (error) {
         console.error('[CombatSessionHistory] Archiving a session failed:', error);
         return [];
     }
 }
 
-/** Forget every archived run. @returns {Promise<void>} */
+/** Forget every archived run — the one write meant to lose entries. @returns {Promise<void>} */
 export async function clearSessions() {
     try {
-        await writeScoped(STORE_KEY, [], STORE_NAME, true);
+        await record().clear();
     } catch (error) {
         console.error('[CombatSessionHistory] Clearing the session list failed:', error);
     }

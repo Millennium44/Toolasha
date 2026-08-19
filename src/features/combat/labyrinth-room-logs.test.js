@@ -27,11 +27,61 @@ vi.mock('./labyrinth-tick-capture.js', () => ({
         captureFile: () => ({ ticks: [] }),
     },
 }));
-vi.mock('../../core/storage.js', () => ({ default: { getJSON: async () => null, setJSON: async () => {} } }));
-vi.mock('../../core/data-manager.js', () => ({ default: { getSkills: () => null } }));
+const storageMock = vi.hoisted(() => {
+    const stores = new Map();
+    const storeFor = (name) => {
+        if (!stores.has(name)) stores.set(name, new Map());
+        return stores.get(name);
+    };
+    return {
+        stores,
+        storeFor,
+        unavailable: false,
+        reset() {
+            stores.clear();
+            storageMock.unavailable = false;
+        },
+        get: async (key, store = 'settings', fallback = null) => {
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
+        },
+        getJSON: async () => null,
+        setJSON: async () => {},
+        tryGet: async (key, store = 'settings') => {
+            if (storageMock.unavailable) return null;
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null
+                ? { found: true, value: structuredClone(map.get(key)) }
+                : { found: false, value: null };
+        },
+        set: async (key, value, store = 'settings') => {
+            if (storageMock.unavailable) return false;
+            storeFor(store).set(key, structuredClone(value));
+            return true;
+        },
+        delete: async (key, store = 'settings') => {
+            storeFor(store).delete(key);
+            return true;
+        },
+        getAllKeys: async (store = 'settings') => Array.from(storeFor(store).keys()),
+    };
+});
+vi.mock('../../core/storage.js', () => ({ default: storageMock }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getSkills: () => null,
+        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterGameMode: () => 'standard',
+    },
+}));
+vi.mock('../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'char1',
+    requestAdoptionConsent: () => Promise.resolve(null),
+}));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 
-const { groupByFloor, floorSummary, labyrinthRoomLogs, ROOM_TRAVEL_SECONDS } = await import('./labyrinth-room-logs.js');
+const { groupByFloor, floorSummary, labyrinthRoomLogs, ROOM_TRAVEL_SECONDS, sessionIdentity } =
+    await import('./labyrinth-room-logs.js');
 const { default: labFightRecorder } = await import('./labyrinth-fight-recorder.js');
 
 const room = (over = {}) => ({
@@ -950,5 +1000,88 @@ describe('the pool tab browses what the recorder holds', () => {
         labFightRecorder.clearRecording();
         labyrinthRoomLogs.render(false);
         expect(listText()).toContain('No fights recorded on this gear yet');
+    });
+});
+
+describe('the room log survives a failed read and a second tab', () => {
+    const LOG_KEY = 'labyrinthRoomLogs_char1';
+    const stored = () => storageMock.storeFor('settings').get(LOG_KEY)?.sessions;
+    const roomAt = (startedAt, over = {}) => room({ startedAt, endedAt: startedAt + 60_000, ...over });
+
+    beforeEach(() => {
+        storageMock.reset();
+        labyrinthRoomLogs.record.reset();
+        labyrinthRoomLogs.sessions = [];
+    });
+
+    afterEach(() => {
+        labyrinthRoomLogs.record.reset();
+        labyrinthRoomLogs.sessions = [];
+        storageMock.reset();
+    });
+
+    test('a room is told apart by its run and the moment it began', () => {
+        expect(sessionIdentity(roomAt(5))).toBe('run|15|5');
+        expect(sessionIdentity({ runKey: 'x' })).toBeNull();
+    });
+
+    test('a load that cannot read storage keeps the rooms already in memory', async () => {
+        labyrinthRoomLogs.sessions = [roomAt(1)];
+        labyrinthRoomLogs.record.set({ sessions: labyrinthRoomLogs.sessions });
+        storageMock.unavailable = true;
+
+        await labyrinthRoomLogs.record.load();
+        labyrinthRoomLogs.adoptMerged();
+
+        expect(labyrinthRoomLogs.sessions).toHaveLength(1);
+    });
+
+    test('a save while storage is unreadable is skipped and what is stored stays', async () => {
+        labyrinthRoomLogs.sessions = [roomAt(1)];
+        await labyrinthRoomLogs.persist();
+        expect(stored()).toHaveLength(1);
+
+        storageMock.unavailable = true;
+        labyrinthRoomLogs.sessions = [roomAt(2), ...labyrinthRoomLogs.sessions];
+        expect(await labyrinthRoomLogs.persist()).toBe(false);
+
+        storageMock.unavailable = false;
+        expect(stored()).toHaveLength(1);
+        expect(labyrinthRoomLogs.sessions).toHaveLength(2);
+    });
+
+    test('a save folds in rooms another tab stored meanwhile, newest first', async () => {
+        labyrinthRoomLogs.sessions = [roomAt(1)];
+        await labyrinthRoomLogs.persist();
+        storageMock.storeFor('settings').set(LOG_KEY, { sessions: [roomAt(3), roomAt(1)] });
+
+        labyrinthRoomLogs.sessions = [roomAt(2), roomAt(1)];
+        await labyrinthRoomLogs.persist();
+
+        expect(stored().map((s) => s.startedAt)).toEqual([3, 2, 1]);
+        expect(labyrinthRoomLogs.sessions.map((s) => s.startedAt)).toEqual([3, 2, 1]);
+    });
+
+    test('once storage reads again the next save lands everything', async () => {
+        storageMock.unavailable = true;
+        labyrinthRoomLogs.sessions = [roomAt(1)];
+        await labyrinthRoomLogs.persist();
+        labyrinthRoomLogs.sessions = [roomAt(2), ...labyrinthRoomLogs.sessions];
+        await labyrinthRoomLogs.persist();
+        expect(stored()).toBeUndefined();
+
+        storageMock.unavailable = false;
+        labyrinthRoomLogs.sessions = [roomAt(3), ...labyrinthRoomLogs.sessions];
+        await labyrinthRoomLogs.persist();
+
+        expect(stored().map((s) => s.startedAt)).toEqual([3, 2, 1]);
+    });
+
+    test('the tab keeps its own room objects through a merge', async () => {
+        const mine = roomAt(1);
+        labyrinthRoomLogs.sessions = [mine];
+        await labyrinthRoomLogs.persist();
+
+        expect(labyrinthRoomLogs.sessions[0]).toBe(mine);
     });
 });

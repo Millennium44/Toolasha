@@ -30,7 +30,7 @@
  */
 
 import config from '../../core/config.js';
-import storage from '../../core/storage.js';
+import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import dataManager from '../../core/data-manager.js';
 import { SessionState, getCurrentLegCounters } from '../enhancement/enhancement-session.js';
 import { attemptTailProbability } from '../enhancement/attempt-percentile.js';
@@ -41,11 +41,55 @@ const STORE_NAME = 'lootLogHistory';
 /** Plenty to see whether the percentiles scatter or pile up */
 const MAX_RECORDS = 200;
 
+/** Oldest first, the order the observations are kept in */
+const oldestFirst = (a, b) => (Number(a?.t) || 0) - (Number(b?.t) || 0);
+
+/**
+ * Fold the stored observations under the ones in memory: the union by id,
+ * memory's copy winning, oldest first, the newest MAX_RECORDS kept.
+ * @param {Array<Object>} stored - The stored observations
+ * @param {Array<Object>} memory - The in-memory observations
+ * @returns {Array<Object>}
+ */
+export function mergeEnhancementRecords(stored, memory) {
+    return mergeById((record) => record?.id, oldestFirst)(stored, memory).slice(-MAX_RECORDS);
+}
+
 class EnhancementCalibration {
     constructor() {
         this.records = null;
         /** Serialises writes against each other and against the first load */
         this.queue = Promise.resolve();
+        // The observations on disk, kept through the shared load/save
+        // discipline: a read that could not be made keeps memory rather than
+        // blanking it, and a save folds in what another tab wrote. Scoped
+        // under `calibrationEnhancing_<id>`.
+        this.store = createPersistedRecord({
+            base: 'calibrationEnhancing',
+            store: STORE_NAME,
+            empty: () => [],
+            merge: mergeEnhancementRecords,
+            migrate: 'discard',
+            label: 'EnhancementCalibration',
+        });
+        /** Whose observations the record in memory holds; a change means forget them first */
+        this.owner = null;
+    }
+
+    /**
+     * The record, with the departing character's observations forgotten when
+     * the character has changed since, so they are never written under
+     * another character's key.
+     * @returns {Object} The persisted record
+     */
+    _store() {
+        const owner = dataManager.getCurrentCharacterId() || null;
+        if (this.owner !== null && owner !== this.owner) {
+            this.store.reset();
+            this.records = null;
+        }
+        this.owner = owner;
+        return this.store;
     }
 
     /**
@@ -62,29 +106,43 @@ class EnhancementCalibration {
      * @returns {Promise<Array<Object>>} The records
      */
     async _load() {
-        if (this.records) return this.records;
         const key = this._key();
         if (!key) {
-            this.records = [];
+            this.records = this.records || [];
             return this.records;
         }
+        const store = this._store();
+        if (this.records && store.isLoaded()) return this.records;
         try {
-            this.records = await storage.get(key, STORE_NAME, []);
+            store.set(this.records || []);
+            await store.load();
+            this.records = store.get();
         } catch (error) {
             console.error('[EnhancementCalibration] Could not read history:', error);
-            this.records = [];
+            this.records = this.records || [];
         }
         return this.records;
     }
 
-    /** Persist the observations. */
-    async _save() {
+    /**
+     * Persist the observations, folding in what another tab wrote meanwhile.
+     * Skipped when storage cannot be read first.
+     * @param {{overwrite?: boolean}} [options] - `overwrite` for the one
+     *   intentional wipe, `clear`
+     * @returns {Promise<boolean>} Whether a write landed
+     */
+    async _save({ overwrite = false } = {}) {
         const key = this._key();
-        if (!key) return;
+        if (!key) return false;
         try {
-            await storage.set(key, this.records, STORE_NAME);
+            const store = this._store();
+            store.set(this.records || []);
+            const landed = await store.save({ overwrite });
+            this.records = store.get();
+            return landed;
         } catch (error) {
             console.error('[EnhancementCalibration] Could not save history:', error);
+            return false;
         }
     }
 
@@ -132,6 +190,8 @@ class EnhancementCalibration {
         let written = false;
         this.queue = this.queue
             .then(async () => {
+                // Notice a character switch before touching the list
+                this._store();
                 await this._load();
                 if (this.records.some((held) => held.id === record.id)) return;
                 this.records.push(record);
@@ -169,7 +229,7 @@ class EnhancementCalibration {
     /** Forget every observation. */
     async clear() {
         this.records = [];
-        await this._save();
+        await this._save({ overwrite: true });
     }
 }
 

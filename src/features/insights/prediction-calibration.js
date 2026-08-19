@@ -31,7 +31,7 @@
  */
 
 import config from '../../core/config.js';
-import storage from '../../core/storage.js';
+import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { calculateGatheringProfit } from '../actions/gathering-profit.js';
@@ -46,6 +46,20 @@ const STORE_NAME = 'lootLogHistory';
 
 /** Enough history to see a trend, small enough to keep in memory and redraw */
 const MAX_RECORDS = 1000;
+
+/** Oldest first, the order the ledger is kept in */
+const oldestFirst = (a, b) => (Number(a?.t) || 0) - (Number(b?.t) || 0);
+
+/**
+ * Fold the stored ledger under the one in memory: the union by record id,
+ * memory's copy winning, oldest first, the newest MAX_RECORDS kept.
+ * @param {Array<Object>} stored - The stored ledger
+ * @param {Array<Object>} memory - The in-memory ledger
+ * @returns {Array<Object>}
+ */
+export function mergeCalibrationRecords(stored, memory) {
+    return mergeById((record) => record?.id, oldestFirst)(stored, memory).slice(-MAX_RECORDS);
+}
 
 /** Under a minute a run's actual rate is mostly rounding on the clock */
 export const MIN_DURATION_SEC = 60;
@@ -72,6 +86,43 @@ class PredictionCalibration {
         /** Serialises the async handler against itself */
         this.queue = Promise.resolve();
         this.lootLogMath = null;
+        // The ledger on disk, kept through the shared load/save discipline: a
+        // read that could not be made keeps the pairs in memory rather than
+        // blanking them, and a save folds in what another tab wrote rather
+        // than overwriting it. Character-scoped under `calibration_<id>`.
+        this.store = createPersistedRecord({
+            base: 'calibration',
+            store: STORE_NAME,
+            empty: () => [],
+            merge: mergeCalibrationRecords,
+            migrate: 'discard',
+            label: 'PredictionCalibration',
+        });
+        /** Whose pairs the record in memory holds; a change means forget them first */
+        this.owner = null;
+    }
+
+    /**
+     * The record, with the departing character's pairs forgotten when the
+     * character has changed since: the key is resolved per access, and what is
+     * in memory must never be written under another character's key.
+     * @returns {Object} The persisted record
+     */
+    _store() {
+        const owner = dataManager.getCurrentCharacterId() || null;
+        if (this.owner !== null && owner !== this.owner) {
+            this.store.reset();
+            this.records = null;
+            this.recorded.clear();
+        }
+        this.owner = owner;
+        return this.store;
+    }
+
+    /** Take the (merged) record back into the fields the rest reads */
+    _sync() {
+        this.records = this.store.get();
+        for (const record of this.records) this.recorded.add(record.id);
     }
 
     /**
@@ -114,12 +165,16 @@ class PredictionCalibration {
             return this.records;
         }
         try {
-            this.records = await storage.get(key, STORE_NAME, []);
+            const store = this._store();
+            // Pairs written before the read landed are folded under what is
+            // stored; a read that could not be made keeps them as they are
+            store.set(this.records || []);
+            await store.load();
+            this._sync();
         } catch (error) {
             console.error('[PredictionCalibration] Could not read history:', error);
-            this.records = [];
+            this.records = this.records || [];
         }
-        for (const record of this.records) this.recorded.add(record.id);
         return this.records;
     }
 
@@ -145,6 +200,7 @@ class PredictionCalibration {
      */
     async _process(entries) {
         if (this.ready) await this.ready;
+        this._store();
         if (!this.records) await this._load();
 
         const sorted = entries
@@ -260,14 +316,25 @@ class PredictionCalibration {
         }
     }
 
-    /** Persist the pairs. */
-    async _save() {
+    /**
+     * Persist the pairs, folding in what another tab wrote meanwhile. Skipped
+     * when storage cannot be read first.
+     * @param {{overwrite?: boolean}} [options] - `overwrite` for the one
+     *   intentional wipe, `clear`
+     * @returns {Promise<boolean>} Whether a write landed
+     */
+    async _save({ overwrite = false } = {}) {
         const key = this._key();
-        if (!key) return;
+        if (!key) return false;
         try {
-            await storage.set(key, this.records, STORE_NAME);
+            const store = this._store();
+            store.set(this.records || []);
+            const landed = await store.save({ overwrite });
+            this._sync();
+            return landed;
         } catch (error) {
             console.error('[PredictionCalibration] Could not save history:', error);
+            return false;
         }
     }
 
@@ -286,6 +353,9 @@ class PredictionCalibration {
     async addRecord(record) {
         if (!record?.id) return false;
         if (this.ready) await this.ready;
+        // Notice a character switch before touching the ledger, so the pair
+        // joins the arriving character's rather than the departing one's
+        this._store();
         if (!this.records) await this._load();
         if (this.recorded.has(record.id)) return false;
 
@@ -326,7 +396,7 @@ class PredictionCalibration {
         this.records = [];
         this.recorded.clear();
         this.pending.clear();
-        await this._save();
+        await this._save({ overwrite: true });
     }
 
     /** Cleanup when disabled. */
@@ -334,6 +404,14 @@ class PredictionCalibration {
         for (const unregister of this.unregisterHandlers) unregister();
         this.unregisterHandlers = [];
         this.pending.clear();
+        // The pairs are one character's; forgotten here so the next
+        // initialize — which is how a character switch arrives — reads the
+        // arriving character's rather than folding these into theirs
+        this.store.reset();
+        this.records = null;
+        this.recorded.clear();
+        this.owner = null;
+        this.ready = null;
         this.initialized = false;
     }
 }

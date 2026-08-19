@@ -4,6 +4,7 @@ const game = vi.hoisted(() => ({
     setting: true,
     characterId: 'char1',
     saved: {},
+    unavailable: false,
     clientData: { combatMonsterDetailMap: {}, skillDetailMap: {} },
     wsHandlers: {},
 }));
@@ -20,23 +21,41 @@ vi.mock('../../core/websocket.js', () => ({
 }));
 vi.mock('../../core/storage.js', () => ({
     default: {
-        getJSON: async (key, storeName, defaultValue) => game.saved[key] ?? defaultValue,
-        setJSON: async (key, value) => {
-            game.saved[key] = value;
+        get: async (key, storeName, defaultValue) => game.saved[key] ?? defaultValue,
+        tryGet: async (key) => {
+            if (game.unavailable) return null;
+            return game.saved[key] != null
+                ? { found: true, value: structuredClone(game.saved[key]) }
+                : { found: false, value: null };
         },
+        set: async (key, value) => {
+            if (game.unavailable) return false;
+            game.saved[key] = structuredClone(value);
+            return true;
+        },
+        delete: async (key) => {
+            delete game.saved[key];
+            return true;
+        },
+        getAllKeys: async () => Object.keys(game.saved),
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getCurrentCharacterId: () => game.characterId,
+        getCurrentCharacterGameMode: () => 'standard',
         getInitClientData: () => game.clientData,
     },
+}));
+vi.mock('../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'char1',
+    requestAdoptionConsent: () => Promise.resolve(null),
 }));
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => game.setting },
 }));
 
-const labyrinthTracker = (await import('./labyrinth-tracker.js')).default;
+const { default: labyrinthTracker, mergeBestLevels } = await import('./labyrinth-tracker.js');
 
 function combatRoom(overrides = {}) {
     return {
@@ -54,6 +73,7 @@ describe('labyrinth tracker', () => {
         game.setting = true;
         game.characterId = 'char1';
         game.saved = {};
+        game.unavailable = false;
         game.clientData = { combatMonsterDetailMap: {}, skillDetailMap: {} };
         game.wsHandlers = {};
         labyrinthTracker.disable();
@@ -234,6 +254,8 @@ describe('labyrinth tracker', () => {
 
         game.wsHandlers.labyrinth_updated({ labyrinth: { roomData: [[combatRoom()]] } });
         game.wsHandlers.labyrinth_updated({ labyrinth: { roomData: [[combatRoom({ isCleared: true })]] } });
+        // The write probes storage first, so it lands a tick later
+        await labyrinthTracker.record.flushed();
 
         expect(game.saved['monsterBestLevels_char1']['/monsters/chimerical_beast'].bestLevel).toBe(40);
     });
@@ -243,5 +265,67 @@ describe('labyrinth tracker', () => {
 
         expect(() => game.wsHandlers.labyrinth_updated({ labyrinth: {} })).not.toThrow();
         expect(labyrinthTracker.getBestLevel('/monsters/chimerical_beast')).toBeNull();
+    });
+});
+
+describe('the best levels survive a failed read and a second tab', () => {
+    const KEY = 'monsterBestLevels_char1';
+    const best = (level) => ({ name: 'Beast', bestLevel: level });
+
+    beforeEach(() => {
+        game.saved = {};
+        game.unavailable = false;
+        labyrinthTracker.disable();
+    });
+
+    test('the merge keeps the higher level per monster', () => {
+        expect(mergeBestLevels({ a: best(10), b: best(5) }, { a: best(7), c: best(1) })).toEqual({
+            a: best(10),
+            b: best(5),
+            c: best(1),
+        });
+        expect(mergeBestLevels(null, { a: best(2) })).toEqual({ a: best(2) });
+    });
+
+    test('a load that cannot read storage keeps the levels in memory', async () => {
+        labyrinthTracker.monsterBestLevels = { '/monsters/a': best(40) };
+        game.unavailable = true;
+
+        await labyrinthTracker.loadData();
+
+        expect(labyrinthTracker.getBestLevel('/monsters/a')).toBe(40);
+    });
+
+    test('a save while storage is unreadable is skipped and what is stored stays', async () => {
+        game.saved[KEY] = { '/monsters/a': best(50) };
+        labyrinthTracker.monsterBestLevels = { '/monsters/b': best(10) };
+        game.unavailable = true;
+
+        expect(await labyrinthTracker.saveData()).toBe(false);
+
+        expect(game.saved[KEY]).toEqual({ '/monsters/a': best(50) });
+    });
+
+    test('a save folds in what another tab stored, the higher level winning', async () => {
+        game.saved[KEY] = { '/monsters/a': best(50), '/monsters/c': best(5) };
+        labyrinthTracker.monsterBestLevels = { '/monsters/a': best(30), '/monsters/b': best(10) };
+
+        await labyrinthTracker.saveData();
+
+        expect(game.saved[KEY]).toEqual({ '/monsters/a': best(50), '/monsters/b': best(10), '/monsters/c': best(5) });
+        expect(labyrinthTracker.getBestLevel('/monsters/a')).toBe(50);
+    });
+
+    test('once storage reads again the next save lands everything', async () => {
+        game.unavailable = true;
+        labyrinthTracker.monsterBestLevels = { '/monsters/a': best(30) };
+        await labyrinthTracker.saveData();
+        expect(game.saved[KEY]).toBeUndefined();
+
+        game.unavailable = false;
+        labyrinthTracker.monsterBestLevels['/monsters/b'] = best(10);
+        await labyrinthTracker.saveData();
+
+        expect(game.saved[KEY]).toEqual({ '/monsters/a': best(30), '/monsters/b': best(10) });
     });
 });

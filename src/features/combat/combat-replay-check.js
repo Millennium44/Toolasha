@@ -210,6 +210,7 @@ import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatRelativeTime, formatKMB } from '../../utils/formatters.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { createPersistedRecord, mergeById } from '../../utils/persisted-record.js';
 import { scriptVersion } from '../../utils/script-version.js';
 import { hashPlayerName } from './labyrinth-accuracy-export.js';
 
@@ -1620,6 +1621,36 @@ function observationSignature(observation) {
     return `${fights.length}:${fights[0]?.damageDealt}:${total}`;
 }
 
+/** Oldest first, the order both lists are kept in */
+const oldestFirst = (field) => (a, b) => (Number(a?.[field]) || 0) - (Number(b?.[field]) || 0);
+
+/**
+ * The observations on disk, kept through the shared load/save discipline: a
+ * read that could not be made keeps what is in memory, and a save folds in
+ * what another tab stored rather than overwriting it. An observation's
+ * identity is the same signature `remember` dedupes on; the newest
+ * MAX_OBSERVATIONS survive the fold.
+ */
+const observationRecord = createPersistedRecord({
+    base: STORAGE_KEY,
+    store: 'settings',
+    empty: () => [],
+    merge: (stored, memory) =>
+        mergeById(observationSignature, oldestFirst('recordedAt'))(stored, memory).slice(-MAX_OBSERVATIONS),
+    migrate: 'discard',
+    label: 'ReplayCheck',
+});
+
+/** The check history, same discipline; a check is identified by when it ran */
+const historyRecord = createPersistedRecord({
+    base: HISTORY_KEY,
+    store: 'settings',
+    empty: () => [],
+    merge: (stored, memory) => pruneHistory(mergeById((entry) => entry?.at)(stored, memory)),
+    migrate: 'discard',
+    label: 'ReplayCheck',
+});
+
 class ReplayCheck {
     constructor() {
         this.observations = [];
@@ -1665,11 +1696,17 @@ class ReplayCheck {
         if (this.loaded) return;
         this.loaded = true;
         try {
-            this.observations = (await readScoped(STORAGE_KEY, 'settings', [], DISCARD_LEGACY)) || [];
+            // Anything observed before the read landed is folded under what
+            // is stored, and a read that could not be made keeps it as it is
+            observationRecord.set(this.observations);
+            await observationRecord.load();
+            this.observations = observationRecord.get();
             // Pruned on the way in as well as on the way out: an install left
             // alone for a month comes back to a table of checks that describe a
             // character it no longer has
-            this.history = pruneHistory(await readScoped(HISTORY_KEY, 'settings', [], DISCARD_LEGACY));
+            historyRecord.set(this.history);
+            await historyRecord.load();
+            this.history = pruneHistory(historyRecord.get());
             // Before the in-memory recording, so a session that was interrupted
             // and then restarted keeps both halves in the order they happened
             await this.recover();
@@ -1728,10 +1765,33 @@ class ReplayCheck {
             // the write, and one failed write per segment rather than a stream
             if (storage.isQuotaExceeded()) return;
 
-            await writeScoped(STORAGE_KEY, this.observations, 'settings');
+            await this.saveObservations();
         } catch (error) {
             console.error('[ReplayCheck] Keeping the observation failed:', error);
         }
+    }
+
+    /**
+     * Write the observations, folding in what another tab stored meanwhile.
+     * Skipped when storage cannot be read first.
+     * @returns {Promise<boolean>} Whether a write landed
+     */
+    async saveObservations() {
+        observationRecord.set(this.observations);
+        const landed = await observationRecord.save();
+        this.observations = observationRecord.get();
+        return landed;
+    }
+
+    /**
+     * Write the check history, same discipline.
+     * @returns {Promise<boolean>} Whether a write landed
+     */
+    async saveHistory() {
+        historyRecord.set(this.history);
+        const landed = await historyRecord.save();
+        this.history = historyRecord.get();
+        return landed;
     }
 
     /**
@@ -1793,7 +1853,7 @@ class ReplayCheck {
                 `[ReplayCheck] Recovered ${count} fight${count === 1 ? '' : 's'} from an interrupted recording`
             );
             if (storage.isQuotaExceeded()) return;
-            await writeScoped(STORAGE_KEY, this.observations, 'settings');
+            await this.saveObservations();
         } catch (error) {
             console.error('[ReplayCheck] Recovering the interrupted recording failed:', error);
         }
@@ -1904,7 +1964,7 @@ class ReplayCheck {
             this.history = pruneHistory([...this.history, entry]);
             if (storage.isQuotaExceeded()) return;
 
-            await writeScoped(HISTORY_KEY, this.history, 'settings');
+            await this.saveHistory();
         } catch (error) {
             console.error('[ReplayCheck] Keeping the check result failed:', error);
         }
@@ -2044,8 +2104,9 @@ class ReplayCheck {
         this.lastSimResult = null;
         this.uptime = null;
         this.error = null;
-        await writeScoped(STORAGE_KEY, [], 'settings');
-        await writeScoped(HISTORY_KEY, [], 'settings');
+        // The one write meant to lose entries
+        await observationRecord.clear();
+        await historyRecord.clear();
         await this.clearCheckpoint();
     }
 
@@ -2063,6 +2124,8 @@ class ReplayCheck {
         // is the same character's and goes for the same reason.
         this.observations = [];
         this.history = [];
+        observationRecord.reset();
+        historyRecord.reset();
         this.comparison = null;
         this.lastSimResult = null;
         this.uptime = null;

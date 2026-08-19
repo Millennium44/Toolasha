@@ -19,7 +19,7 @@ const shrines = vi.hoisted(() => ({ detailMap: {}, owned: {} }));
 const community = vi.hoisted(() => ({ levels: {} }));
 
 /** Backing store for the mocked storage module: `${storeName}:${key}` -> value */
-const db = vi.hoisted(() => ({ map: new Map() }));
+const db = vi.hoisted(() => ({ map: new Map(), unavailable: false }));
 
 /** The mocked inventory the supply reader sees */
 const bag = vi.hoisted(() => ({ items: null }));
@@ -92,14 +92,24 @@ const dbGet = async (key, storeName = 'settings', defaultValue = null) => {
     return stored === undefined || stored === null ? defaultValue : stored;
 };
 const dbSet = async (key, value, storeName = 'settings') => {
+    if (db.unavailable) return false;
     db.map.set(`${storeName}:${key}`, value);
     return true;
+};
+/** The probe the persisted-record discipline reads through: null when storage cannot be read */
+const dbTryGet = async (key, storeName = 'settings') => {
+    if (db.unavailable) return null;
+    const stored = db.map.get(`${storeName}:${key}`);
+    return stored === undefined || stored === null
+        ? { found: false, value: null }
+        : { found: true, value: structuredClone(stored) };
 };
 
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: dbGet,
         getJSON: dbGet,
+        tryGet: dbTryGet,
         set: dbSet,
         setJSON: dbSet,
         delete: async (key, storeName = 'settings') => db.map.delete(`${storeName}:${key}`),
@@ -1010,10 +1020,8 @@ describe('a recommend run keeps the combat cache', () => {
 describe('per-character fight outcomes', () => {
     beforeEach(() => {
         db.map.clear();
-        labyrinthClearRate._outcomes = {};
-        labyrinthClearRate._outcomesSeen = {};
-        labyrinthClearRate._baseline = null;
-        labyrinthClearRate._outcomesLoaded = false;
+        db.unavailable = false;
+        labyrinthClearRate.forgetOutcomes();
     });
 
     test('outcomes are written under this character’s key', async () => {
@@ -1053,6 +1061,91 @@ describe('per-character fight outcomes', () => {
         expect(labyrinthClearRate._outcomes).toEqual({});
         expect(db.map.has('settings:labyrinthFightOutcomes')).toBe(false);
         expect(db.map.has('settings:labyrinthFightOutcomes_me')).toBe(false);
+    });
+
+    test('a load that cannot read storage keeps the totals in memory and retries later', async () => {
+        db.map.set('settings:labyrinthFightOutcomes_me', {
+            version: 2,
+            totals: { theirs: { attempts: 5, clears: 1 } },
+        });
+        labyrinthClearRate._outcomes = { mine: { attempts: 1, clears: 1 } };
+        db.unavailable = true;
+
+        await labyrinthClearRate.loadOutcomes();
+
+        expect(labyrinthClearRate._outcomes).toEqual({ mine: { attempts: 1, clears: 1 } });
+        expect(labyrinthClearRate._outcomesLoaded).toBe(false);
+
+        db.unavailable = false;
+        await labyrinthClearRate.loadOutcomes();
+        expect(Object.keys(labyrinthClearRate._outcomes).sort()).toEqual(['mine', 'theirs']);
+        expect(labyrinthClearRate._outcomesLoaded).toBe(true);
+    });
+
+    test('a save while storage is unreadable is skipped and what is stored stays', async () => {
+        db.map.set('settings:labyrinthFightOutcomes_me', {
+            version: 2,
+            totals: { theirs: { attempts: 5, clears: 1 } },
+        });
+        labyrinthClearRate._outcomes = { mine: { attempts: 1, clears: 1 } };
+        db.unavailable = true;
+
+        expect(await labyrinthClearRate.saveOutcomes()).toBe(false);
+
+        expect(db.map.get('settings:labyrinthFightOutcomes_me').totals).toEqual({ theirs: { attempts: 5, clears: 1 } });
+        expect(labyrinthClearRate._outcomes).toEqual({ mine: { attempts: 1, clears: 1 } });
+    });
+
+    test('a save folds in rooms another tab stored, the fuller count of a shared room winning', async () => {
+        await labyrinthClearRate.loadOutcomes();
+        labyrinthClearRate._outcomes = { shared: { attempts: 2, clears: 1 }, mine: { attempts: 1, clears: 0 } };
+        db.map.set('settings:labyrinthFightOutcomes_me', {
+            version: 2,
+            totals: { shared: { attempts: 6, clears: 3 }, theirs: { attempts: 1, clears: 1 } },
+        });
+
+        await labyrinthClearRate.saveOutcomes();
+
+        const written = db.map.get('settings:labyrinthFightOutcomes_me').totals;
+        expect(written).toEqual({
+            shared: { attempts: 6, clears: 3 },
+            mine: { attempts: 1, clears: 0 },
+            theirs: { attempts: 1, clears: 1 },
+        });
+        expect(labyrinthClearRate._outcomes).toEqual(written);
+    });
+
+    test('once storage reads again the next save lands everything', async () => {
+        db.unavailable = true;
+        labyrinthClearRate._outcomes = { mine: { attempts: 1, clears: 0 } };
+        await labyrinthClearRate.saveOutcomes();
+        expect(db.map.has('settings:labyrinthFightOutcomes_me')).toBe(false);
+
+        db.unavailable = false;
+        labyrinthClearRate._outcomes.mine = { attempts: 2, clears: 1 };
+        await labyrinthClearRate.saveOutcomes();
+
+        expect(db.map.get('settings:labyrinthFightOutcomes_me').totals).toEqual({ mine: { attempts: 2, clears: 1 } });
+    });
+
+    test('a reset is the one overwrite: it drops what is stored', async () => {
+        db.map.set('settings:labyrinthFightOutcomes_me', {
+            version: 2,
+            totals: { theirs: { attempts: 5, clears: 1 } },
+        });
+
+        await labyrinthClearRate.resetOutcomes();
+
+        expect(db.map.get('settings:labyrinthFightOutcomes_me').totals).toEqual({});
+    });
+
+    test('a stored document of an older version is dropped rather than merged', async () => {
+        db.map.set('settings:labyrinthFightOutcomes_me', { version: 1, totals: { old: { attempts: 9, clears: 9 } } });
+        labyrinthClearRate._outcomes = { mine: { attempts: 1, clears: 1 } };
+
+        await labyrinthClearRate.saveOutcomes();
+
+        expect(db.map.get('settings:labyrinthFightOutcomes_me').totals).toEqual({ mine: { attempts: 1, clears: 1 } });
     });
 
     test('the legacy combat sim cache is discarded too', async () => {

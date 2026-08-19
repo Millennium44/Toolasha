@@ -40,12 +40,28 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, _store, fallback) => (store.data.has(key) ? store.data.get(key) : fallback),
+        tryGet: async (key) => {
+            if (store.unavailable) return null;
+            return store.data.has(key) && store.data.get(key) != null
+                ? { found: true, value: structuredClone(store.data.get(key)) }
+                : { found: false, value: null };
+        },
         set: async (key, value) => {
+            if (store.unavailable) return false;
             store.data.set(key, value);
             return true;
         },
+        delete: async (key) => {
+            store.data.delete(key);
+            return true;
+        },
+        getAllKeys: async () => Array.from(store.data.keys()),
         isQuotaExceeded: () => store.quota,
     },
+}));
+vi.mock('../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'char1',
+    requestAdoptionConsent: () => Promise.resolve(null),
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -155,6 +171,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 beforeEach(() => {
     store.data.clear();
     store.quota = false;
+    store.unavailable = false;
     game.dto = loadout();
     game.zone = { zoneHrid: '/actions/combat/fly', difficultyTier: 0 };
     game.lastRun = null;
@@ -2457,5 +2474,76 @@ describe('the panel, on everything it now says', () => {
         replayCheckPanel.show({ remember: false });
 
         expect(text()).not.toContain('Past checks');
+    });
+});
+
+describe('observations and history survive a failed read and a second tab', () => {
+    /** An observation whose signature is its own */
+    const obs = (recordedAt, damage) => ({ recordedAt, fights: [{ damageDealt: damage }] });
+    const entry = (at) => ({ at, zoneHrid: '/actions/combat/fly', result: 'ok' });
+
+    test('a load that cannot read storage keeps what is in memory', async () => {
+        replayCheck.observations = [obs(1, 10)];
+        replayCheck.history = [entry(Date.now())];
+        store.unavailable = true;
+
+        await replayCheck.load();
+
+        expect(replayCheck.observations).toHaveLength(1);
+        expect(replayCheck.history).toHaveLength(1);
+    });
+
+    test('a save while storage is unreadable is skipped and what is stored stays', async () => {
+        store.data.set(OBSERVATIONS_KEY, [obs(1, 10)]);
+        store.data.set(HISTORY_KEY, [entry(Date.now() - 1000)]);
+        replayCheck.observations = [obs(2, 20)];
+        replayCheck.history = [entry(Date.now())];
+        store.unavailable = true;
+
+        expect(await replayCheck.saveObservations()).toBe(false);
+        expect(await replayCheck.saveHistory()).toBe(false);
+
+        expect(store.data.get(OBSERVATIONS_KEY)).toEqual([obs(1, 10)]);
+        expect(store.data.get(HISTORY_KEY)).toHaveLength(1);
+        expect(replayCheck.observations).toEqual([obs(2, 20)]);
+    });
+
+    test('a save folds in what another tab stored meanwhile', async () => {
+        const now = Date.now();
+        store.data.set(OBSERVATIONS_KEY, [obs(1, 10), obs(3, 30)]);
+        store.data.set(HISTORY_KEY, [entry(now - 3000)]);
+        replayCheck.observations = [obs(1, 10), obs(2, 20)];
+        replayCheck.history = [entry(now - 2000)];
+
+        await replayCheck.saveObservations();
+        await replayCheck.saveHistory();
+
+        expect(store.data.get(OBSERVATIONS_KEY).map((o) => o.recordedAt)).toEqual([1, 2, 3]);
+        expect(replayCheck.observations.map((o) => o.recordedAt)).toEqual([1, 2, 3]);
+        expect(store.data.get(HISTORY_KEY).map((e) => e.at)).toEqual([now - 3000, now - 2000]);
+        expect(replayCheck.history).toHaveLength(2);
+    });
+
+    test('once storage reads again the next save lands everything', async () => {
+        store.unavailable = true;
+        replayCheck.observations = [obs(1, 10)];
+        await replayCheck.saveObservations();
+        expect(store.data.has(OBSERVATIONS_KEY)).toBe(false);
+
+        store.unavailable = false;
+        replayCheck.observations = [...replayCheck.observations, obs(2, 20)];
+        await replayCheck.saveObservations();
+
+        expect(store.data.get(OBSERVATIONS_KEY).map((o) => o.recordedAt)).toEqual([1, 2]);
+    });
+
+    test('forgetting is the one overwrite', async () => {
+        store.data.set(OBSERVATIONS_KEY, [obs(1, 10)]);
+        store.data.set(HISTORY_KEY, [entry(Date.now())]);
+
+        await replayCheck.forget();
+
+        expect(store.data.get(OBSERVATIONS_KEY)).toEqual([]);
+        expect(store.data.get(HISTORY_KEY)).toEqual([]);
     });
 });

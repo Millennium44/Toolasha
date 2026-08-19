@@ -1,12 +1,68 @@
-import { describe, test, expect } from 'vitest';
-import {
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+
+const storageMock = vi.hoisted(() => {
+    const stores = new Map();
+    const storeFor = (name) => {
+        if (!stores.has(name)) stores.set(name, new Map());
+        return stores.get(name);
+    };
+    return {
+        stores,
+        storeFor,
+        unavailable: false,
+        reset() {
+            stores.clear();
+            storageMock.unavailable = false;
+        },
+        get: async (key, store = 'settings', fallback = null) => {
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
+        },
+        tryGet: async (key, store = 'settings') => {
+            if (storageMock.unavailable) return null;
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null
+                ? { found: true, value: structuredClone(map.get(key)) }
+                : { found: false, value: null };
+        },
+        set: async (key, value, store = 'settings') => {
+            if (storageMock.unavailable) return false;
+            storeFor(store).set(key, structuredClone(value));
+            return true;
+        },
+        delete: async (key, store = 'settings') => {
+            storeFor(store).delete(key);
+            return true;
+        },
+        getAllKeys: async (store = 'settings') => Array.from(storeFor(store).keys()),
+    };
+});
+const game = vi.hoisted(() => ({ characterId: 'char1' }));
+
+vi.mock('../../core/storage.js', () => ({ default: storageMock }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        getCurrentCharacterId: () => game.characterId,
+        getCurrentCharacterGameMode: () => 'standard',
+        characterData: null,
+    },
+}));
+vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
+vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
+vi.mock('../../utils/adoption-consent.js', () => ({
+    getAdoptionTargetId: async () => 'char1',
+    requestAdoptionConsent: () => Promise.resolve(null),
+}));
+
+const {
+    default: labyrinthRunLedger,
     gridSize,
     roomsFullClear,
     roomsRush,
     torchesForPlan,
     rushFloorTable,
     foldSighting,
-} from './labyrinth-run-ledger.js';
+} = await import('./labyrinth-run-ledger.js');
 
 describe('the grid arithmetic, straight from the game guide', () => {
     test('floor 1 is 4×4, one wider per floor, capped at 8×8 from floor 5', () => {
@@ -73,5 +129,81 @@ describe('foldSighting', () => {
         const s = foldSighting(start, active(), 1000).state;
         expect(foldSighting(s, {}, 2000).ended).toBeNull();
         expect(foldSighting(s, {}, 2000).state.phase).toBe('active');
+    });
+});
+
+describe('the ring survives a failed read and a second tab', () => {
+    const KEY = 'labyrinthRunLedger_char1';
+    const stored = () => storageMock.storeFor('labyrinth').get(KEY);
+    const ending = (key, endedAt = Number(key)) => ({ key, floor: 3, endedAt });
+
+    beforeEach(() => {
+        storageMock.reset();
+        game.characterId = 'char1';
+        labyrinthRunLedger.ledgerOwner = null;
+        labyrinthRunLedger.recorded.clear();
+    });
+
+    test('an ending is appended newest first under the character key', async () => {
+        await labyrinthRunLedger._append(ending('1'));
+        await labyrinthRunLedger._append(ending('2'));
+
+        expect(stored().map((run) => run.key)).toEqual(['2', '1']);
+        expect((await labyrinthRunLedger.runs()).map((run) => run.key)).toEqual(['2', '1']);
+    });
+
+    test('a read that cannot be made keeps the ring in memory instead of truncating it', async () => {
+        await labyrinthRunLedger._append(ending('1'));
+        storageMock.unavailable = true;
+
+        await labyrinthRunLedger._append(ending('2'));
+
+        expect((await labyrinthRunLedger.runs()).map((run) => run.key)).toEqual(['2', '1']);
+    });
+
+    test('a save while storage is unreadable is skipped and what is stored stays', async () => {
+        await labyrinthRunLedger._append(ending('1'));
+        storageMock.unavailable = true;
+
+        expect(await labyrinthRunLedger._append(ending('2'))).toBe(false);
+
+        storageMock.unavailable = false;
+        expect(stored().map((run) => run.key)).toEqual(['1']);
+    });
+
+    test('a save folds in endings another tab recorded meanwhile', async () => {
+        await labyrinthRunLedger._append(ending('1'));
+        storageMock.storeFor('labyrinth').set(KEY, [ending('3'), ending('1')]);
+
+        await labyrinthRunLedger._append(ending('2'));
+
+        expect(stored().map((run) => run.key)).toEqual(['3', '2', '1']);
+    });
+
+    test('once storage reads again the next save lands everything', async () => {
+        storageMock.unavailable = true;
+        await labyrinthRunLedger._append(ending('1'));
+        await labyrinthRunLedger._append(ending('2'));
+        expect(stored()).toBeUndefined();
+
+        storageMock.unavailable = false;
+        await labyrinthRunLedger._append(ending('3'));
+
+        expect(stored().map((run) => run.key)).toEqual(['3', '2', '1']);
+    });
+
+    test('a character switch forgets the departing character’s endings', async () => {
+        await labyrinthRunLedger._append(ending('1'));
+        game.characterId = 'char2';
+
+        await labyrinthRunLedger._append(ending('9'));
+
+        expect(
+            storageMock
+                .storeFor('labyrinth')
+                .get('labyrinthRunLedger_char2')
+                .map((run) => run.key)
+        ).toEqual(['9']);
+        expect(stored().map((run) => run.key)).toEqual(['1']);
     });
 });

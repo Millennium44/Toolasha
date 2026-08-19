@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat and labyrinth histories survive failed reads and stale tabs
+
+The labyrinth room log, fight pool, fight-outcome totals, run ledger and best-level map, the combat replay check's observations and check history, the combat session history and consumable trackers, and the prediction/enhancement calibration ledgers now go through the shared persisted-record discipline: a read that cannot be made keeps the in-memory copy instead of blanking it, every save folds what is stored under memory (rooms, fights, runs, sessions and pairs unioned by identity; outcome buckets by whichever counted more; best levels by the higher) and is skipped when storage cannot be read first, and a character switch forgets the departing character's records before the next load. Intentional resets and "forget" buttons remain the one overwrite.
+
 ### Guild XP, trial records and the trial trace manifest survive failed reads and stale tabs
 
 The guild XP histories, the weekly trial record (and its work-base, roster and stats blobs), and the trial trace's manifest got the listing-log treatment: a read that cannot be trusted keeps the in-memory copy instead of blanking it, every save re-reads and folds what is stored under memory (samples unioned by time, memory winning; archived cycles never resurrected) and is skipped outright when storage cannot be read first. The trace holds its events and re-probes an unreadable manifest (for up to two minutes / 5000 events) rather than writing a fresh one that would orphan every stored chunk.
