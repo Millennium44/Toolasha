@@ -2130,6 +2130,15 @@ class GuildTrials {
         this.blockHtml = new Map();
         /** When the record last went to storage; writes run at the sampling cadence, not the render one */
         this.lastRecordSaveAt = 0;
+        /**
+         * True while the stored record has not been read successfully — the
+         * load found storage unreadable, so the in-memory record may be
+         * missing everything on disk. The next save re-reads first and folds
+         * the stored copy in (the write itself merges regardless).
+         */
+        this.recordUnread = false;
+        /** Guards the re-read above against the sampler starting a second one */
+        this.rereading = false;
         /** Where the cycle was last seen to be: scheduled, live or completed */
         this.phase = null;
         /** The last combat forecast, for the per-player panel to echo */
@@ -2247,7 +2256,10 @@ class GuildTrials {
             loadWorkBases(),
             guildLoadoutCapture.initialize(),
         ]);
-        this.record = mergeTrialRecords(stored, this.record);
+        // A read that could not be made leaves the in-memory record as it is:
+        // the one a tick built in the meantime, or none — never a fresh week
+        // written back over the stored one
+        this._adoptStored(stored);
         this._publishTrialNames();
 
         // Merged under whatever a tick learned while the read was in flight, so
@@ -2315,6 +2327,7 @@ class GuildTrials {
             this.characterId = newId;
             this.adopting = false;
             this.lastRecordSaveAt = 0;
+            this.recordUnread = false;
             // The switch message arrives *before* the arriving character's own
             // data does, so for a moment every source of a guild name still
             // holds the departing one's. Adopting then would file the new
@@ -2353,6 +2366,60 @@ class GuildTrials {
     }
 
     /**
+     * Fold a record read from storage into the one in hand.
+     *
+     * `null` is a read that could not be made, not an empty week: the in-memory
+     * record stands and is flagged so the next save re-reads before writing.
+     * @param {Object|null} stored - What `loadTrialRecord` answered
+     */
+    _adoptStored(stored) {
+        if (stored === null) {
+            this.recordUnread = true;
+            return;
+        }
+        this.recordUnread = false;
+        this.record = mergeTrialRecords(stored, this.record);
+    }
+
+    /**
+     * Write the record, re-reading first when the stored copy was never read.
+     *
+     * Not awaited by the sampler: the write already merges what is stored under
+     * the record in hand and refuses to write blind, so all this adds is that a
+     * record held since a failed load learns what is on disk the first time
+     * storage answers again — one key read, only while it is needed.
+     * @param {Object} [options]
+     * @param {boolean} [options.overwrite=false] - Write as-is; for the cycle archive only
+     * @returns {Promise<boolean>} Whether the write was queued
+     */
+    async _persistRecord({ overwrite = false } = {}) {
+        const guildName = this.guildName;
+        const characterId = this.characterId;
+        const guildId = this._guildId();
+        try {
+            if (this.recordUnread && !overwrite && !this.rereading) {
+                this.rereading = true;
+                try {
+                    const stored = await loadTrialRecord(guildName, Date.now(), characterId, { guildId });
+                    // The world may have moved while the read was in flight
+                    if (this.characterId === characterId && this.guildName === guildName) {
+                        this._adoptStored(stored);
+                    }
+                } finally {
+                    this.rereading = false;
+                }
+                // Still unreadable: the save would be refused on the same read
+                if (this.recordUnread) return false;
+            }
+            if (this.characterId !== characterId || this.guildName !== guildName || !this.record) return false;
+            return await saveTrialRecord(guildName, this.record, characterId, { guildId, overwrite });
+        } catch (error) {
+            console.error('[GuildTrials] Saving the trial record failed:', error);
+            return false;
+        }
+    }
+
+    /**
      * Read the arriving character's own record, once there is one to read.
      * @returns {Promise<void>}
      */
@@ -2368,7 +2435,10 @@ class GuildTrials {
         // Another switch may have happened while the read was in flight
         if (this.characterId !== characterId) return;
 
-        this.record = stored;
+        // Unreadable: the arriving character's record starts this week empty
+        // (the departing one's is not theirs) and is folded in by the next save
+        this.record = stored ?? emptyRecord(trialWeekStart(Date.now()), { guildId: this._guildId() });
+        this.recordUnread = stored === null;
         this._publishTrialNames();
     }
 
@@ -2435,13 +2505,15 @@ class GuildTrials {
         this.adopting = true;
         try {
             const stored = await loadTrialRecord(name, Date.now(), this.characterId, { guildId: this._guildId() });
-            this.record = mergeTrialRecords(stored, this.record);
+            // The name is adopted either way; a record under it that could not
+            // be read now is folded in by the next save's re-read
+            this._adoptStored(stored);
             this.guildName = name;
             guildTrialRecorder.setGuildName(name);
             guildTrialAbilities.setGuildName?.(name);
             guildMemberSkills.setGuildName(name).catch(() => {});
             guildLoadoutCapture.setGuildName?.(name)?.catch?.(() => {});
-            await saveTrialRecord(name, this.record, this.characterId, { guildId: this._guildId() });
+            await this._persistRecord();
         } catch (error) {
             console.error('[GuildTrials] Moving the record onto the guild key failed:', error);
         } finally {
@@ -2629,7 +2701,7 @@ class GuildTrials {
             // which is the sampling interval's own promise anyway.
             if (tiles.length && now - this.lastRecordSaveAt >= SAMPLE_MS) {
                 this.lastRecordSaveAt = now;
-                saveTrialRecord(this.guildName, this.record, this.characterId, { guildId: this._guildId() });
+                this._persistRecord();
             }
 
             // A live reading on a real trial card is evidence a trial is running,
@@ -2999,7 +3071,9 @@ class GuildTrials {
             this.record = archiveCycle(this.record, 'a new cycle is scheduled', now);
             this.blockHtml.clear();
             guildTrialDamage.reset?.();
-            saveTrialRecord(this.guildName, this.record, this.characterId, { guildId: this._guildId() });
+            // The one write meant to lose tiles — they have just been archived,
+            // and a merge would bring the stored copies back to life
+            this._persistRecord({ overwrite: true });
         }
     }
 

@@ -90,6 +90,12 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../core/storage.js', () => ({
     default: {
         get: async (key, _store, fallback) => (key in game.store ? game.store[key] : fallback),
+        tryGet: async (key) => {
+            if (game.unavailable) return null;
+            return key in game.store
+                ? { found: true, value: structuredClone(game.store[key]) }
+                : { found: false, value: null };
+        },
         set: async (key, value) => {
             game.store[key] = value;
             return true;
@@ -216,6 +222,7 @@ const guildTrialAbilities = (await import('./guild-trial-abilities.js')).default
 const { NOTICE_BOARD_NAME } = await import('./guild-notice-board.fixture.js');
 const { forecastTrial } = await import('./guild-trial-forecast.js');
 const { trialWeekStart } = await import('./guild-trials-math.js');
+const { saveTrialRecord } = await import('./guild-trials-store.js');
 
 const now = Date.parse('2026-08-04T12:00:00Z');
 
@@ -1189,6 +1196,7 @@ describe('the panel, end to end', () => {
         game.prices = {};
         game.buildingLevels = {};
         game.store = {};
+        game.unavailable = false;
         game.members = [];
         game.characterId = null;
         game.characterData = null;
@@ -1849,6 +1857,114 @@ describe('the panel, end to end', () => {
         expect(guildTrials.record.history[0].tiles['skilling::milking'].pointsByTier).toEqual({ 6: 840 });
         expect(text()).not.toContain('840');
         expect(text()).not.toContain('Banked5 tiers');
+    });
+
+    describe('the record cannot be wiped by a failed read or a stale copy', () => {
+        const KEY = 'guildTrials_Milky Way';
+        const sample = (t) => ({ t, readings: [{ current: t % 1000, max: 4000 }] });
+        const storedRecord = (times) => ({
+            weekStart: trialWeekStart(now),
+            guildName: 'Milky Way',
+            tiles: {
+                'skilling::milking': {
+                    name: 'Milking',
+                    kind: 'skilling',
+                    tier: 2,
+                    samples: times.map(sample),
+                    tiers: [],
+                },
+            },
+        });
+        const storedTimes = () => (game.store[KEY]?.tiles['skilling::milking']?.samples || []).map((s) => s.t);
+        const memoryTimes = () => (guildTrials.record?.tiles['skilling::milking']?.samples || []).map((s) => s.t);
+
+        beforeEach(async () => {
+            // The guild name is a fixture field earlier tests move; this block
+            // is about one guild's record under its own key
+            trialsFeature.cleanup();
+            game.guildName = 'Milky Way';
+            game.characterId = null;
+            await trialsFeature.initialize();
+        });
+
+        test('a load while storage is unavailable keeps the record in hand rather than starting the week over', async () => {
+            trialsFeature.cleanup();
+            game.store[KEY] = storedRecord([now - 20_000]);
+            game.unavailable = true;
+            await trialsFeature.initialize();
+
+            // Nothing could be read, and nothing in hand: no fresh week invented
+            // that a save could write back over the stored one
+            expect(guildTrials.record).toBeNull();
+            expect(guildTrials.recordUnread).toBe(true);
+
+            // A tick records, and its save is refused while storage is dark
+            buildTab([{ name: 'Milking', level: 110, bar: '1,000 / 4,000' }]);
+            fire();
+            await vi.advanceTimersByTimeAsync(10);
+            expect(memoryTimes()).toEqual([now]);
+            expect(storedTimes()).toEqual([now - 20_000]);
+        });
+
+        test('a save merges what is stored under the record in hand, so another writer’s samples survive', async () => {
+            // Samples this tab never loaded: another tab's, written in between
+            game.store[KEY] = storedRecord([now - 20_000]);
+            guildTrials.record = storedRecord([now - 10_000]);
+
+            // The singleton remembers its last save across tests; this one is due
+            guildTrials.lastRecordSaveAt = 0;
+            buildTab([{ name: 'Milking', level: 110, bar: '1,000 / 4,000' }]);
+            fire();
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(storedTimes()).toEqual([now - 20_000, now - 10_000, now]);
+        });
+
+        test('once storage is back, the next save folds the stored record in and lands everything', async () => {
+            trialsFeature.cleanup();
+            game.store[KEY] = storedRecord([now - 20_000]);
+            game.unavailable = true;
+            await trialsFeature.initialize();
+            buildTab([{ name: 'Milking', level: 110, bar: '1,000 / 4,000' }]);
+            fire();
+            await vi.advanceTimersByTimeAsync(10);
+            expect(storedTimes()).toEqual([now - 20_000]);
+
+            game.unavailable = false;
+            vi.setSystemTime(now + 5_000);
+            fire();
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(storedTimes()).toEqual([now - 20_000, now, now + 5_000]);
+            // And the record in hand has learned what was on disk all along
+            expect(memoryTimes()).toEqual([now - 20_000, now, now + 5_000]);
+            expect(guildTrials.recordUnread).toBe(false);
+        });
+
+        test('archiving a cycle is the one save that may lose tiles, and a stale copy cannot bring them back', async () => {
+            guildTrials.record = storedRecord([now - 20_000]);
+            guildTrials.lastRecordSaveAt = 0;
+            game.store[KEY] = storedRecord([now - 20_000]);
+
+            document.body.innerHTML = '';
+            const root = document.createElement('div');
+            root.className = 'GuildPanel_trialsContent__a';
+            root.innerHTML =
+                '<div class="GuildPanel_eventStatusRow__b">Scheduled Wed 04:00 PM 2h 24m</div>' +
+                '<div class="GuildPanel_tile__c"><div class="GuildPanel_tileName__d">Milking</div>' +
+                '<div class="GuildPanel_tileSummary__e">Lv.130</div><div>0 pts</div></div>';
+            document.body.appendChild(root);
+            fire();
+            await vi.advanceTimersByTimeAsync(10);
+
+            expect(game.store[KEY].tiles['skilling::milking']).toBeUndefined();
+            expect(game.store[KEY].history).toHaveLength(1);
+
+            // A tab that never archived writes its copy: the tile stays archived
+            await saveTrialRecord('Milky Way', storedRecord([now - 20_000]));
+            expect(game.store[KEY].tiles['skilling::milking']).toBeUndefined();
+            expect(game.store[KEY].history).toHaveLength(1);
+        });
     });
 
     test('nothing is drawn on the guild Overview tab', () => {
@@ -2734,7 +2850,7 @@ describe('the panel, end to end', () => {
             expect(text()).toContain('Last trial');
 
             vi.setSystemTime(now + 120_000);
-            fire(buildTab([{ name: 'Trial Milking', level: 110, bar: '1,000 / 4,000' }]));
+            fire(buildTab([{ name: 'Milking', level: 110, bar: '1,000 / 4,000' }]));
 
             expect(text()).not.toContain('Last trial');
             expect(text()).toContain('Trial payout');
@@ -2872,6 +2988,7 @@ describe('the two trial tabs, as the game draws them', () => {
         game.prices = {};
         game.buildingLevels = {};
         game.store = {};
+        game.unavailable = false;
         game.members = [];
         game.characterId = null;
         game.characterData = null;
@@ -3030,7 +3147,7 @@ describe('the two trial tabs, as the game draws them', () => {
         expect(document.body.textContent).toContain('Trial payout');
     });
 
-    test('the skill’s base work is learned the moment tier, target and party line up', () => {
+    test('the skill’s base work is learned the moment tier, target and party line up', async () => {
         // Trials tab: Alchemy T6 banked (840 pts), 2 signed up. In Progress:
         // the T7 pool at 65,280 — which is 40,000 × 1.6 × 1.02, so the base
         // falls out exactly, and is written down for every later trial
@@ -3040,6 +3157,8 @@ describe('the two trial tabs, as the game draws them', () => {
         fire();
 
         expect(guildTrials.workBases.alchemy?.baseWork).toBeCloseTo(40_000, 6);
+        // The write re-reads storage first, so it lands a few microtasks later
+        await vi.advanceTimersByTimeAsync(0);
         expect(game.store.guildTrialsWorkBases?.alchemy?.baseWork).toBeCloseTo(40_000, 6);
     });
 
@@ -4631,6 +4750,7 @@ describe('the payout block, audited', () => {
         game.prices = {};
         game.buildingLevels = {};
         game.store = {};
+        game.unavailable = false;
         game.members = [];
         game.characterId = null;
         game.characterData = null;

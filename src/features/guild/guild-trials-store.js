@@ -351,17 +351,35 @@ export function mergeTrialRecords(base, incoming) {
     const baseWeek = Number.isFinite(base?.weekStart) ? base.weekStart : null;
     const incomingWeek = Number.isFinite(incoming?.weekStart) ? incoming.weekStart : null;
 
-    if (baseWeek === null) return incoming ? { weekStart: incomingWeek, tiles: incoming.tiles || {} } : emptyRecord(0);
-    if (incomingWeek === null) return { weekStart: baseWeek, tiles: base.tiles || {} };
-    if (baseWeek !== incomingWeek) {
-        const newer = baseWeek > incomingWeek ? base : incoming;
-        return { weekStart: newer.weekStart, tiles: newer.tiles || {} };
-    }
+    // Whole-record wins carry their archive and provenance with them: a record
+    // that has just archived a cycle is mostly its history, and the save that
+    // merges it over last week's stored copy must not strip that off
+    const whole = (record) => ({
+        weekStart: record.weekStart,
+        tiles: record.tiles || {},
+        guildId: record.guildId ?? null,
+        guildName: record.guildName ?? null,
+        history: Array.isArray(record.history) ? record.history : [],
+    });
+    if (baseWeek === null) return incoming ? whole(incoming) : emptyRecord(0);
+    if (incomingWeek === null) return whole(base);
+    if (baseWeek !== incomingWeek) return whole(baseWeek > incomingWeek ? base : incoming);
 
+    // Archived cycles unioned, not concatenated: both sides usually hold the
+    // same cycles, and doubling them up would push the oldest past the cap
+    const history = [];
+    const seenCycles = new Set();
+    for (const cycle of [...(base.history || []), ...(incoming.history || [])]) {
+        if (!cycle) continue;
+        const mark = `${cycle.archivedAt ?? ''}:${cycle.weekStart ?? ''}:${cycle.reason ?? ''}`;
+        if (seenCycles.has(mark)) continue;
+        seenCycles.add(mark);
+        history.push(cycle);
+    }
     const provenance = {
         guildId: base.guildId ?? incoming.guildId ?? null,
         guildName: base.guildName ?? incoming.guildName ?? null,
-        history: [...(base.history || []), ...(incoming.history || [])].slice(-MAX_ARCHIVED_CYCLES),
+        history: history.slice(-MAX_ARCHIVED_CYCLES),
     };
     const tiles = { ...(base.tiles || {}) };
     for (const [key, tile] of Object.entries(incoming.tiles || {})) {
@@ -422,22 +440,45 @@ export function mergeTrialRecords(base, incoming) {
         };
     }
 
+    // A live tile that one side has already put away is the archived tile seen
+    // from a copy that had not archived yet — a stale tab's, or one written
+    // before this side's archive landed. It is not brought back to life; the
+    // archive holds it. Only a tile with nothing newer than its archived copy
+    // is dropped, so a genuinely new trial under the same key survives.
+    const newestOf = (tile) => tile?.samples?.[tile.samples.length - 1]?.t ?? 0;
+    for (const cycle of provenance.history) {
+        for (const [key, archived] of Object.entries(cycle?.tiles || {})) {
+            if (tiles[key] && newestOf(tiles[key]) <= newestOf(archived)) delete tiles[key];
+        }
+    }
+
     return { weekStart: baseWeek, tiles, ...provenance };
 }
 
 /**
  * Read a guild's record, discarding one from a previous week.
+ *
+ * "Absent" and "unreadable" are different answers. No record, or last week's,
+ * is a fresh week and says so; a read that could not be made (the connection
+ * dropped, the transaction failed) is `null`, and the caller keeps whatever it
+ * holds in memory rather than starting the week over — a fresh record taken
+ * for the truth and then written back is how a week of samples used to vanish.
  * @param {string|null} guildName - Guild name
  * @param {number} [now] - Clock, in ms
  * @param {string|number|null} [characterId] - The viewing character, for the fallback key
- * @returns {Promise<Object>} The record, or a fresh one
+ * @returns {Promise<Object|null>} The record, a fresh one when absent, or null when the read cannot be trusted
  */
 export async function loadTrialRecord(guildName, now = Date.now(), characterId = null, { guildId = null } = {}) {
     const weekStart = trialWeekStart(now);
     const fresh = () => emptyRecord(weekStart, { guildId, guildName });
 
     try {
-        const record = await storage.get(guildTrialsStorageKey(guildName, characterId), STORE_NAME, null);
+        const probe = await storage.tryGet(guildTrialsStorageKey(guildName, characterId), STORE_NAME);
+        if (probe === null) {
+            console.warn('[GuildTrialsStore] The trial record could not be read; keeping the in-memory copy');
+            return null;
+        }
+        const record = probe.found ? probe.value : null;
         if (!record || typeof record !== 'object') return fresh();
 
         // A record from a previous week is last week's ladder, not this one's
@@ -464,13 +505,62 @@ export async function loadTrialRecord(guildName, now = Date.now(), characterId =
 
         if (cleaned.purged.length) {
             console.warn('[GuildTrialsStore] Dropping stored tiles that are not trials:', cleaned.purged.join(', '));
-            await saveTrialRecord(guildName, cleaned.record, characterId, { guildId });
+            // As-is: the record was read a moment ago, and the heal is meant to
+            // lose tiles a merge would bring straight back
+            await saveTrialRecord(guildName, cleaned.record, characterId, { guildId, overwrite: true });
         }
         return cleaned.record;
     } catch (error) {
         console.error('[GuildTrialsStore] Failed to load trial samples:', error);
-        return fresh();
+        return null;
     }
+}
+
+/**
+ * One save at a time per key, in order. Two interleaved read-merge-writes to
+ * the same key could each miss what the other merged in.
+ * @type {Map<string, Promise<boolean>>}
+ */
+const saveChains = new Map();
+
+/**
+ * Re-read a key, fold what is stored under the value in hand, and write.
+ *
+ * The write is refused when the read cannot be trusted — a blind write from a
+ * copy that may be missing everything is precisely the accident this exists to
+ * prevent — and the caller's next save retries. The probe is a single key read,
+ * which is what makes it cheap enough for the five-second sampler.
+ * @param {string} key - Storage key
+ * @param {*} value - The in-memory value
+ * @param {function(*, *): *} merge - `(stored, memory) → merged`, memory winning
+ * @param {Object} [options]
+ * @param {boolean} [options.overwrite=false] - Write as-is; for intentional losses only
+ * @returns {Promise<boolean>} Whether the write was queued
+ */
+function probeMergeWrite(key, value, merge, { overwrite = false } = {}) {
+    const run = async () => {
+        try {
+            let toWrite = value;
+            if (!overwrite) {
+                const probe = await storage.tryGet(key, STORE_NAME);
+                if (probe === null) {
+                    console.warn(`[GuildTrialsStore] ${key} not saved: storage could not be read first`);
+                    return false;
+                }
+                if (probe.found && probe.value && typeof probe.value === 'object') {
+                    toWrite = merge(probe.value, value);
+                }
+            }
+            await storage.set(key, toWrite, STORE_NAME);
+            return true;
+        } catch (error) {
+            console.error(`[GuildTrialsStore] Failed to save ${key}:`, error);
+            return false;
+        }
+    };
+    const chain = (saveChains.get(key) || Promise.resolve()).then(run, run);
+    saveChains.set(key, chain);
+    return chain;
 }
 
 /**
@@ -601,25 +691,41 @@ export async function clearTrialStorage() {
 
 /**
  * Write a guild's record.
+ *
+ * What is stored is re-read and folded under the record in hand first
+ * ({@link mergeTrialRecords}: samples unioned, the fresher tile's identity
+ * standing), so samples another tab took, or that were written before a read
+ * failed, survive; and the write is refused outright when storage cannot be
+ * read. Writes to one key run in order.
  * @param {string|null} guildName - Guild name
  * @param {Object} record - The record
  * @param {string|number|null} [characterId] - The viewing character, for the fallback key
+ * @param {Object} [options]
+ * @param {boolean} [options.overwrite=false] - Write the record as-is. For the
+ *   one write that is meant to lose tiles: archiving a finished cycle.
  * @returns {Promise<boolean>} True when the write was queued
  */
-export async function saveTrialRecord(guildName, record, characterId = null, { guildId = null } = {}) {
-    try {
-        // Stamped on the way out, so the next session can tell whose it is
-        const stamped = {
-            ...record,
-            guildId: record?.guildId ?? guildId ?? null,
-            guildName: record?.guildName ?? guildName ?? null,
+export async function saveTrialRecord(
+    guildName,
+    record,
+    characterId = null,
+    { guildId = null, overwrite = false } = {}
+) {
+    // Stamped on the way out, so the next session can tell whose it is
+    const stamped = {
+        ...record,
+        guildId: record?.guildId ?? guildId ?? null,
+        guildName: record?.guildName ?? guildName ?? null,
+    };
+    const fold = (stored, memory) => {
+        const merged = mergeTrialRecords(stored, memory);
+        return {
+            ...merged,
+            guildId: merged.guildId ?? stamped.guildId,
+            guildName: merged.guildName ?? stamped.guildName,
         };
-        await storage.set(guildTrialsStorageKey(guildName, characterId), stamped, STORE_NAME);
-        return true;
-    } catch (error) {
-        console.error('[GuildTrialsStore] Failed to save trial samples:', error);
-        return false;
-    }
+    };
+    return probeMergeWrite(guildTrialsStorageKey(guildName, characterId), stamped, fold, { overwrite });
 }
 
 // ─── Learned work bases ─────────────────────────────────────────────────────
@@ -663,13 +769,8 @@ export async function loadWorkBases() {
  * @returns {Promise<boolean>} True when the write was queued
  */
 export async function saveWorkBases(bases) {
-    try {
-        await storage.set(WORK_BASES_KEY, bases || {}, STORE_NAME);
-        return true;
-    } catch (error) {
-        console.error('[GuildTrialsStore] Failed to save the learned work bases:', error);
-        return false;
-    }
+    // Stored under memory, per skill: a base another tab learned is kept
+    return probeMergeWrite(WORK_BASES_KEY, bases || {}, (stored, memory) => ({ ...stored, ...memory }));
 }
 
 // ─── The spectated fight's roster ───────────────────────────────────────────
@@ -712,13 +813,10 @@ export async function loadTrialRoster() {
  * @returns {Promise<boolean>} True when the write was queued
  */
 export async function saveTrialRoster(entry) {
-    try {
-        await storage.set(ROSTER_KEY, entry, STORE_NAME);
-        return true;
-    } catch (error) {
-        console.error('[GuildTrialsStore] Failed to save the trial roster:', error);
-        return false;
-    }
+    // The roster in hand is the fight on screen; the stored one only fills
+    // fields it does not state. Refused, not written blind, when storage
+    // cannot be read
+    return probeMergeWrite(ROSTER_KEY, entry, (stored, memory) => ({ ...stored, ...memory }));
 }
 
 // ─── Measured-vs-reported trial stats ───────────────────────────────────────
@@ -756,13 +854,13 @@ export async function loadTrialStats(now = Date.now()) {
  * @returns {Promise<boolean>} True when the write was queued
  */
 export async function saveTrialStats(blob) {
-    try {
-        await storage.set(STATS_KEY, blob, STORE_NAME);
-        return true;
-    } catch (error) {
-        console.error('[GuildTrialsStore] Failed to save trial stats:', error);
-        return false;
-    }
+    // Same week: the encounters are unioned, this copy's winning; another
+    // week's stored blob is last week's trial and the new one replaces it
+    const fold = (stored, memory) =>
+        stored?.weekStart === memory?.weekStart
+            ? { ...stored, ...memory, trials: { ...(stored.trials || {}), ...(memory.trials || {}) } }
+            : memory;
+    return probeMergeWrite(STATS_KEY, blob, fold);
 }
 
 // ─── Building bonuses ───────────────────────────────────────────────────────

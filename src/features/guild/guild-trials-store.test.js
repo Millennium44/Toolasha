@@ -17,6 +17,8 @@ const game = vi.hoisted(() => ({
     buildingLevels: {},
     settings: {},
     failNextRead: false,
+    // A dropped IndexedDB connection: reads say they could not be made
+    unavailable: false,
 }));
 
 vi.mock('../../core/storage.js', () => ({
@@ -27,6 +29,16 @@ vi.mock('../../core/storage.js', () => ({
                 throw new Error('IndexedDB is having a day');
             }
             return key in game.store ? game.store[key] : fallback;
+        },
+        tryGet: async (key) => {
+            if (game.unavailable) return null;
+            if (game.failNextRead) {
+                game.failNextRead = false;
+                throw new Error('IndexedDB is having a day');
+            }
+            return key in game.store
+                ? { found: true, value: structuredClone(game.store[key]) }
+                : { found: false, value: null };
         },
         set: async (key, value) => {
             game.store[key] = value;
@@ -74,6 +86,12 @@ const {
     readPayoutBonuses,
     recordTileSample,
     saveTrialRecord,
+    loadWorkBases,
+    saveWorkBases,
+    loadTrialRoster,
+    saveTrialRoster,
+    loadTrialStats,
+    saveTrialStats,
     tileKey,
 } = await import('./guild-trials-store.js');
 
@@ -91,6 +109,7 @@ beforeEach(() => {
     game.buildingLevels = {};
     game.settings = {};
     game.failNextRead = false;
+    game.unavailable = false;
 });
 
 describe('keys', () => {
@@ -240,9 +259,13 @@ describe('loading and saving', () => {
         expect(await loadTrialRecord('Milky Way', now)).toMatchObject({ weekStart: thisWeek, tiles: {} });
     });
 
-    test('a storage failure is a fresh record, not a crash', async () => {
+    test('a storage failure is "unreadable", not a fresh record and not a crash', async () => {
+        // A fresh record taken for the truth here is what used to be written
+        // back over the stored week
         game.failNextRead = true;
-        expect(await loadTrialRecord('Milky Way', now)).toMatchObject({ weekStart: thisWeek, tiles: {} });
+        expect(await loadTrialRecord('Milky Way', now)).toBeNull();
+        game.unavailable = true;
+        expect(await loadTrialRecord('Milky Way', now)).toBeNull();
     });
 
     test('saving round-trips', async () => {
@@ -927,5 +950,100 @@ describe('what the game says a tier is worth', () => {
         expect(merged.signups).toEqual({ signed: 3, total: 56 });
         expect(merged.pointsByTier).toEqual({ 5: 1200 });
         expect(merged.tier).toBe(5);
+    });
+});
+
+describe('the record cannot be wiped by a failed read or a stale copy', () => {
+    const KEY = 'guildTrials_Milky Way';
+    const sample = (t) => ({ t, readings: [{ current: t % 1000, max: 4000 }] });
+    const record = (times, extra = {}) => ({
+        weekStart: thisWeek,
+        guildName: 'Milky Way',
+        tiles: {
+            'skilling::milking': { name: 'Milking', kind: 'skilling', tier: 2, samples: times.map(sample), tiers: [] },
+        },
+        history: [],
+        ...extra,
+    });
+    const storedTimes = () => (game.store[KEY]?.tiles['skilling::milking']?.samples || []).map((s) => s.t);
+
+    test('a save while storage cannot be read is skipped, not written blind over the stored record', async () => {
+        game.store[KEY] = record([1, 2, 3]);
+        game.unavailable = true;
+
+        expect(await saveTrialRecord('Milky Way', record([4]))).toBe(false);
+        expect(storedTimes()).toEqual([1, 2, 3]);
+    });
+
+    test('a save merges what is stored under the record in hand, so another writer’s samples survive', async () => {
+        game.store[KEY] = record([1, 2]);
+
+        expect(await saveTrialRecord('Milky Way', record([2, 3]))).toBe(true);
+        expect(storedTimes()).toEqual([1, 2, 3]);
+    });
+
+    test('once storage is back, the next save lands everything', async () => {
+        game.store[KEY] = record([1]);
+        game.unavailable = true;
+        await saveTrialRecord('Milky Way', record([2]));
+        expect(storedTimes()).toEqual([1]);
+
+        game.unavailable = false;
+        await saveTrialRecord('Milky Way', record([2, 3]));
+        expect(storedTimes()).toEqual([1, 2, 3]);
+    });
+
+    test('an overwrite is the one save that may lose tiles, and it keeps the archive', async () => {
+        game.store[KEY] = record([1, 2]);
+        const archived = archiveCycle(record([1, 2]), 'a new cycle is scheduled', now);
+
+        await saveTrialRecord('Milky Way', archived, null, { overwrite: true });
+        expect(game.store[KEY].tiles).toEqual({});
+        expect(game.store[KEY].history).toHaveLength(1);
+
+        // A tab that never archived cannot bring the tile back to life
+        await saveTrialRecord('Milky Way', record([1, 2]));
+        expect(game.store[KEY].tiles).toEqual({});
+        expect(game.store[KEY].history).toHaveLength(1);
+    });
+
+    test('a merge does not double up the archived cycles both sides hold', () => {
+        const cycle = { archivedAt: now, reason: 'a new cycle is scheduled', weekStart: thisWeek, tiles: {} };
+        const merged = mergeTrialRecords(record([1], { history: [cycle] }), record([2], { history: [cycle] }));
+        expect(merged.history).toHaveLength(1);
+    });
+
+    test('a record that has moved on a week keeps its archive and provenance through a merge', () => {
+        const lastWeek = record([1], { weekStart: thisWeek - 7 * 24 * 3600_000 });
+        const cycle = { archivedAt: now, reason: 'a new cycle is scheduled', weekStart: thisWeek, tiles: {} };
+        const merged = mergeTrialRecords(lastWeek, record([2], { history: [cycle], guildId: 'g1' }));
+        expect(merged.weekStart).toBe(thisWeek);
+        expect(merged.history).toEqual([cycle]);
+        expect(merged.guildId).toBe('g1');
+        expect(merged.guildName).toBe('Milky Way');
+    });
+
+    test('the learned work bases, the roster and the stats merge the same way and refuse a blind write', async () => {
+        game.store.guildTrialsWorkBases = { crafting: { baseWork: 40_000 } };
+        await saveWorkBases({ milking: { baseWork: 30_000 } });
+        expect(await loadWorkBases()).toEqual({ crafting: { baseWork: 40_000 }, milking: { baseWork: 30_000 } });
+
+        game.store.guildTrialsStats = { weekStart: thisWeek, trials: { a: { reported: 1 } } };
+        await saveTrialStats({ weekStart: thisWeek, trials: { b: { reported: 2 } } });
+        expect((await loadTrialStats(now)).trials).toEqual({ a: { reported: 1 }, b: { reported: 2 } });
+        // Last week's comparison is not folded into this week's
+        await saveTrialStats({ weekStart: thisWeek + 7 * 24 * 3600_000, trials: { c: { reported: 3 } } });
+        expect(game.store.guildTrialsStats.trials).toEqual({ c: { reported: 3 } });
+
+        game.store.guildTrialsRoster = { battleId: 1, roster: { 0: 'Ada' }, at: 1 };
+        await saveTrialRoster({ battleId: 2, roster: { 0: 'Bea' }, at: 2 });
+        expect(await loadTrialRoster()).toEqual({ battleId: 2, roster: { 0: 'Bea' }, at: 2 });
+
+        game.unavailable = true;
+        expect(await saveWorkBases({ milking: { baseWork: 1 } })).toBe(false);
+        expect(await saveTrialStats({ weekStart: thisWeek, trials: {} })).toBe(false);
+        expect(await saveTrialRoster({ battleId: 3, roster: {}, at: 3 })).toBe(false);
+        expect(game.store.guildTrialsWorkBases.milking.baseWork).toBe(30_000);
+        expect(game.store.guildTrialsRoster.battleId).toBe(2);
     });
 });

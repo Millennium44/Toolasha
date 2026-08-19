@@ -63,6 +63,18 @@ export const FLUSH_INTERVAL_MS = 10_000;
 export const RESUME_WINDOW_MS = 3 * 60 * 60 * 1000;
 
 /**
+ * How long a restore whose manifest read failed keeps waiting for storage before
+ * it gives up and starts a fresh trace — and how many events it will hold in
+ * memory meanwhile. The manifest is the index of every chunk on disk, and a
+ * failed read is not "no trace": writing a new manifest over one that could not
+ * be read orphans every chunk the old one named. So the trace holds its events
+ * and re-probes, bounded because held events are parsed payloads in a tab that
+ * also has to render the fight.
+ */
+export const UNKNOWN_MANIFEST_GIVE_UP_MS = 2 * 60 * 1000;
+export const UNKNOWN_MANIFEST_GIVE_UP_EVENTS = 5000;
+
+/**
  * The trial battle stream, verbatim. Mirrors the names `guild-trial-damage.js`
  * subscribes to: the tier-opening message (roster, tier-scaled boss — every one
  * is a boundary marker in the trace), the spectator tick firehose, the
@@ -104,6 +116,8 @@ class GuildTrialTrace {
      * @param {number} [options.flushEvents] - Pending lines that force a flush
      * @param {number} [options.flushIntervalMs] - Age of pending lines that forces a flush
      * @param {number} [options.resumeWindowMs] - How recent a persisted trace must be to resume
+     * @param {number} [options.unknownGiveUpMs] - How long to wait on an unreadable manifest
+     * @param {number} [options.unknownGiveUpEvents] - How many events to hold while waiting
      */
     constructor({
         maxEvents = MAX_EVENTS,
@@ -111,16 +125,25 @@ class GuildTrialTrace {
         flushEvents = FLUSH_EVENTS,
         flushIntervalMs = FLUSH_INTERVAL_MS,
         resumeWindowMs = RESUME_WINDOW_MS,
+        unknownGiveUpMs = UNKNOWN_MANIFEST_GIVE_UP_MS,
+        unknownGiveUpEvents = UNKNOWN_MANIFEST_GIVE_UP_EVENTS,
     } = {}) {
         this.maxEvents = maxEvents;
         this.maxStoredBytes = maxStoredBytes;
         this.flushEvents = flushEvents;
         this.flushIntervalMs = flushIntervalMs;
         this.resumeWindowMs = resumeWindowMs;
+        this.unknownGiveUpMs = unknownGiveUpMs;
+        this.unknownGiveUpEvents = unknownGiveUpEvents;
         this.initialized = false;
         this.handlers = null;
         this._restored = false;
         this._restorePromise = Promise.resolve();
+        /** True while the manifest could not be read and the restore is still waiting on storage */
+        this._manifestUnknown = false;
+        this._unknownSince = 0;
+        this._lastProbeAt = 0;
+        this._probing = false;
         this._reset();
     }
 
@@ -172,12 +195,73 @@ class GuildTrialTrace {
         }
 
         this._restorePromise = this._restore()
-            .catch((error) => console.error('[GuildTrialTrace] Restoring the persisted trace failed:', error))
-            .then(() => {
-                this._restored = true;
-                const queued = this._queue;
-                this._queue = [];
-                for (const message of queued) this._record(message.type, message.data, message.at);
+            .catch((error) => {
+                console.error('[GuildTrialTrace] Restoring the persisted trace failed:', error);
+                return 'unknown';
+            })
+            .then((outcome) => {
+                if (outcome === 'unknown') {
+                    // The manifest could not be read. That is not "no trace": a
+                    // fresh manifest written now would orphan every chunk the
+                    // unreadable one names. Hold events and ask again; see
+                    // _retryProbe for how long.
+                    this._manifestUnknown = true;
+                    this._unknownSince = Date.now();
+                    this._lastProbeAt = this._unknownSince;
+                    console.warn('[GuildTrialTrace] The trace manifest could not be read; holding events until it can');
+                    return;
+                }
+                this._settleRestore();
+            });
+    }
+
+    /**
+     * The restore is decided: replay what arrived meanwhile through the normal
+     * path. Sequence numbers are only ever allocated from here on, so chunks
+     * written after an adoption continue from the adopted manifest's last.
+     */
+    _settleRestore() {
+        this._manifestUnknown = false;
+        this._restored = true;
+        const queued = this._queue;
+        this._queue = [];
+        for (const message of queued) this._record(message.type, message.data, message.at);
+    }
+
+    /**
+     * Ask storage for the manifest again, from a message that arrived while it
+     * was unknown. Rate-limited to the flush interval, and bounded: past
+     * `unknownGiveUpMs` or `unknownGiveUpEvents` held, the trace gives up and
+     * starts fresh — logged, because that fresh manifest may be orphaning chunks.
+     */
+    _retryProbe() {
+        if (this._probing || !this._manifestUnknown) return;
+        const now = Date.now();
+        const overdue =
+            now - this._unknownSince >= this.unknownGiveUpMs || this._queue.length >= this.unknownGiveUpEvents;
+        if (!overdue && now - this._lastProbeAt < this.flushIntervalMs) return;
+
+        this._probing = true;
+        this._lastProbeAt = now;
+        this._restorePromise = this._restore()
+            .catch((error) => {
+                console.error('[GuildTrialTrace] Re-reading the trace manifest failed:', error);
+                return 'unknown';
+            })
+            .then((outcome) => {
+                if (!this._manifestUnknown) return; // cleared meanwhile
+                if (outcome === 'unknown') {
+                    if (!overdue) return;
+                    console.warn(
+                        `[GuildTrialTrace] The trace manifest stayed unreadable for ${Math.round(
+                            (Date.now() - this._unknownSince) / 1000
+                        )}s with ${this._queue.length} events held; starting a fresh trace`
+                    );
+                }
+                this._settleRestore();
+            })
+            .finally(() => {
+                this._probing = false;
             });
     }
 
@@ -203,10 +287,18 @@ class GuildTrialTrace {
      * Read the persisted manifest: resume a trace whose stream went quiet less
      * than the resume window ago, delete anything older. A live in-memory trace
      * (re-initialize without a reload) is never overwritten.
+     *
+     * A read that could not be made is told apart from "no manifest": the first
+     * answers `'unknown'` and the caller waits; only a trustworthy absence goes
+     * on to the legacy-adoption read and a fresh start.
+     * @returns {Promise<'adopted'|'fresh'|'unknown'>} What was decided
      */
     async _restore() {
-        const manifest = await readScoped(MANIFEST_BASE, TRACE_STORE, null);
-        if (!manifest || this.traceId) return;
+        if (this.traceId) return 'fresh';
+        const probe = await storage.tryGet(characterKey(MANIFEST_BASE), TRACE_STORE);
+        if (probe === null) return 'unknown';
+        const manifest = probe.found ? probe.value : await readScoped(MANIFEST_BASE, TRACE_STORE, null);
+        if (!manifest) return 'fresh';
 
         const fresh =
             typeof manifest.lastEventAt === 'number' && Date.now() - manifest.lastEventAt <= this.resumeWindowMs;
@@ -215,7 +307,7 @@ class GuildTrialTrace {
                 await storage.delete(characterKey(chunkBase(seq)), TRACE_STORE);
             }
             await storage.delete(characterKey(MANIFEST_BASE), TRACE_STORE);
-            return;
+            return 'fresh';
         }
 
         const stats = Array.isArray(manifest.chunkStats)
@@ -241,6 +333,7 @@ class GuildTrialTrace {
         this.lastEventAt = manifest.lastEventAt;
         this.lastFlushAt = Date.now();
         this.resumed = true;
+        return 'adopted';
     }
 
     /**
@@ -260,6 +353,7 @@ class GuildTrialTrace {
                 // arrival time so replaying it cannot start a trace the restore
                 // is about to adopt over
                 this._queue.push({ type, data, at: Date.now() });
+                if (this._manifestUnknown) this._retryProbe();
                 return;
             }
             this._record(type, data, Date.now());
@@ -444,13 +538,15 @@ class GuildTrialTrace {
     /**
      * How much has been traced, for a button to read. Counts persisted chunks
      * plus the unflushed pending lines.
-     * @returns {{running: boolean, eventCount: number, duplicatesDiscarded: number,
+     * @returns {{running: boolean, eventCount: number, heldCount: number, duplicatesDiscarded: number,
      *   eventsDropped: number, traceId: string|null, startedAt: number|null}}
      */
     status() {
         return {
             running: Boolean(this.initialized && this.traceId && this._enabled()),
             eventCount: this.eventCount,
+            // Events held back while the persisted manifest could not be read
+            heldCount: this._queue.length,
             duplicatesDiscarded: this.duplicatesDiscarded,
             eventsDropped: this.eventsDropped,
             traceId: this.traceId,
@@ -483,6 +579,12 @@ class GuildTrialTrace {
         const restored = this._restored;
         this._reset();
         this._restored = restored;
+        // Whatever the unreadable manifest named is being thrown away anyway;
+        // there is nothing left to wait for
+        if (this._manifestUnknown) {
+            this._manifestUnknown = false;
+            this._restored = true;
+        }
         try {
             for (const seq of seqs) await storage.delete(characterKey(chunkBase(seq)), TRACE_STORE);
             await storage.delete(characterKey(MANIFEST_BASE), TRACE_STORE);

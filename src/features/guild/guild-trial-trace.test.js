@@ -47,8 +47,15 @@ vi.mock('../../utils/character-key.js', () => ({
         return true;
     },
 }));
+// `unavailable` stands in for a dropped IndexedDB connection: a read that says
+// it could not be made, rather than one that says "nothing there"
+const storageMock = vi.hoisted(() => ({ unavailable: false }));
 vi.mock('../../core/storage.js', () => ({
     default: {
+        tryGet: async (key) => {
+            if (storageMock.unavailable) return null;
+            return store.has(key) ? { found: true, value: store.get(key) } : { found: false, value: null };
+        },
         delete: async (key) => {
             store.delete(key);
             return true;
@@ -85,6 +92,7 @@ const tick = { battleId: 1, tier: 2, pMap: { 0: { cHP: 100 } }, mMap: { 0: { cHP
 
 beforeEach(async () => {
     settings.guildTrialDiagnosticTrace = true;
+    storageMock.unavailable = false;
     store.clear();
     await trace.clear();
     trace.initialize();
@@ -414,6 +422,162 @@ describe('persistence', () => {
             expect([...store.keys()].some((key) => key.startsWith('trialTrace'))).toBe(false);
             expect(instance.status().eventCount).toBe(0);
             expect(instance.activeTraceId()).toBeNull();
+        } finally {
+            instance.cleanup();
+        }
+    });
+
+    /**
+     * A manifest and one chunk, as a tab that died mid-fight leaves them.
+     * @returns {{id: string, startedAt: number}} The persisted trace's identity
+     */
+    function persistedTrace() {
+        const startedAt = Date.now() - 60_000;
+        store.set('trialTraceManifest_c1', {
+            traceId: 'held-trace',
+            startedAt,
+            chunkSeqs: [0, 1],
+            chunkStats: [
+                { seq: 0, events: 2, bytes: 100 },
+                { seq: 1, events: 1, bytes: 50 },
+            ],
+            eventCount: 3,
+            firstEventType: 'new_guild_battle',
+            lastEventAt: Date.now() - 30_000,
+        });
+        store.set('trialTraceChunk_0_c1', {
+            seq: 0,
+            events: 2,
+            gz: false,
+            data: '{"type":"new_guild_battle"}\n{"type":"guild_battle_updated"}',
+        });
+        store.set('trialTraceChunk_1_c1', { seq: 1, events: 1, gz: false, data: '{"type":"guild_battle_updated"}' });
+        return { id: 'held-trace', startedAt };
+    }
+
+    test('a manifest that cannot be read does not start a fresh trace: events are held', async () => {
+        persistedTrace();
+        storageMock.unavailable = true;
+
+        const instance = new GuildTrialTrace({ flushEvents: 1 });
+        instance.initialize();
+        await instance.whenReady();
+        try {
+            emit('guild_battle_updated', tick);
+            emit('guild_battle_updated', { ...tick, pMap: { 0: { cHP: 90 } } });
+            await instance._settle();
+
+            // No trace started, nothing flushed, and above all no manifest
+            // written over the one that could not be read
+            expect(instance.activeTraceId()).toBeNull();
+            expect(instance.status().running).toBe(false);
+            expect(instance.status().heldCount).toBe(2);
+            expect(store.get('trialTraceManifest_c1').traceId).toBe('held-trace');
+            expect(store.has('trialTraceChunk_2_c1')).toBe(false);
+        } finally {
+            instance.cleanup();
+        }
+    });
+
+    test('once the manifest reads, it is adopted and the held events are stitched on in order', async () => {
+        vi.useFakeTimers();
+        try {
+            const { id, startedAt } = persistedTrace();
+            storageMock.unavailable = true;
+
+            const instance = new GuildTrialTrace({ flushEvents: 1, flushIntervalMs: 1000 });
+            instance.initialize();
+            await instance.whenReady();
+            try {
+                emit('guild_battle_updated', { ...tick, pMap: { 0: { cHP: 90 } } });
+                emit('guild_battle_updated', { ...tick, pMap: { 0: { cHP: 80 } } });
+                await instance._settle();
+                expect(instance.activeTraceId()).toBeNull();
+
+                // Storage comes back; the next message past the retry interval re-probes
+                storageMock.unavailable = false;
+                vi.advanceTimersByTime(1500);
+                emit('guild_battle_updated', { ...tick, pMap: { 0: { cHP: 70 } } });
+                await instance._settle();
+
+                expect(instance.activeTraceId()).toBe(id);
+                expect(instance.status().startedAt).toBe(startedAt);
+                expect(instance.status().heldCount).toBe(0);
+                expect(instance.status().eventCount).toBe(6); // 3 persisted + 3 held
+
+                // New chunks continue after the adopted manifest's last seq —
+                // the replay lands as one chunk, so no seq collides with a stored one
+                const manifest = store.get('trialTraceManifest_c1');
+                expect(manifest.traceId).toBe(id);
+                expect(manifest.chunkSeqs).toEqual([0, 1, 2]);
+                expect(store.get('trialTraceChunk_2_c1').events).toBe(3);
+                expect(manifest.resumed).toBe(true);
+
+                const events = await tracedEvents(instance);
+                expect(events.slice(3).map((event) => event.payload.pMap[0].cHP)).toEqual([90, 80, 70]);
+                // Held events keep their real arrival order and times
+                expect(events[3].at).toBeLessThanOrEqual(events[4].at);
+                expect(events[4].at).toBeLessThanOrEqual(events[5].at);
+            } finally {
+                instance.cleanup();
+            }
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a manifest that stays unreadable past the bound gives way to a fresh trace, and says so', async () => {
+        vi.useFakeTimers();
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            persistedTrace();
+            storageMock.unavailable = true;
+
+            const instance = new GuildTrialTrace({ flushEvents: 1, flushIntervalMs: 1000, unknownGiveUpMs: 5000 });
+            instance.initialize();
+            await instance.whenReady();
+            try {
+                emit('guild_battle_updated', tick);
+                vi.advanceTimersByTime(2000);
+                emit('guild_battle_updated', { ...tick, pMap: { 0: { cHP: 90 } } });
+                await instance._settle();
+                expect(instance.activeTraceId()).toBeNull(); // still within the bound: still waiting
+
+                vi.advanceTimersByTime(4000);
+                emit('guild_battle_updated', { ...tick, pMap: { 0: { cHP: 80 } } });
+                await instance._settle();
+
+                expect(instance.activeTraceId()).toEqual(expect.any(String));
+                expect(instance.activeTraceId()).not.toBe('held-trace');
+                expect(instance.status().heldCount).toBe(0);
+                expect(instance.status().eventCount).toBe(3); // nothing held was lost
+                expect(warn).toHaveBeenCalledWith(expect.stringContaining('starting a fresh trace'));
+            } finally {
+                instance.cleanup();
+            }
+        } finally {
+            warn.mockRestore();
+            vi.useRealTimers();
+        }
+    });
+
+    test('the held-event bound also gives up, before the clock does', async () => {
+        persistedTrace();
+        storageMock.unavailable = true;
+
+        const instance = new GuildTrialTrace({ flushEvents: 100, unknownGiveUpEvents: 3 });
+        instance.initialize();
+        await instance.whenReady();
+        try {
+            emit('guild_battle_updated', tick);
+            emit('guild_battle_updated', { ...tick, pMap: { 0: { cHP: 90 } } });
+            await instance._settle();
+            expect(instance.activeTraceId()).toBeNull();
+
+            emit('guild_battle_updated', { ...tick, pMap: { 0: { cHP: 80 } } });
+            await instance._settle();
+            expect(instance.activeTraceId()).toEqual(expect.any(String));
+            expect(instance.status().eventCount).toBe(3);
         } finally {
             instance.cleanup();
         }

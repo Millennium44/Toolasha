@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Guild XP, trial records and the trial trace manifest survive failed reads and stale tabs
+
+The guild XP histories, the weekly trial record (and its work-base, roster and stats blobs), and the trial trace's manifest got the listing-log treatment: a read that cannot be trusted keeps the in-memory copy instead of blanking it, every save re-reads and folds what is stored under memory (samples unioned by time, memory winning; archived cycles never resurrected) and is skipped outright when storage cannot be read first. The trace holds its events and re-probes an unreadable manifest (for up to two minutes / 5000 events) rather than writing a fresh one that would orphan every stored chunk.
+
 ### A shared persisted-record helper for histories that must not be wiped
 
 `utils/persisted-record.js` packages the load/save discipline the market-history fix established — probe with a read that tells "absent" from "could not read", keep memory on an unreadable probe, probe-merge-write on save and refuse to write blind, serialized saves, an explicit clear — with merges for id-keyed arrays, maps, and sample-series maps, so every accumulating record can adopt it instead of hand-rolling the pattern.

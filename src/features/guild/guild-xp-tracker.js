@@ -309,6 +309,43 @@ export function pruneDepartedMembers(history, currentIds) {
     return departed;
 }
 
+/**
+ * Two XP history maps folded into one, the second winning where they clash.
+ *
+ * Each map is `name → [{t, xp}]`. Per name the two series are unioned by
+ * sample timestamp, the in-memory sample standing when both sides hold the
+ * same instant, and the result is sorted by time. Nothing is compacted here:
+ * the next `pushXP` tidies the tail, and a few extra samples are cheaper than
+ * a rule that drops what another tab recorded. Series only one side knows —
+ * a guild first seen on another tab's leaderboard, a member sampled before a
+ * failed read — are kept rather than overwritten.
+ * @param {Object<string, Array<{t: number, xp: number}>>} stored - As read from storage
+ * @param {Object<string, Array<{t: number, xp: number}>>} memory - The fresher, in-memory map
+ * @returns {Object<string, Array<{t: number, xp: number}>>} Merged map
+ */
+export function mergeXPHistories(stored, memory) {
+    const base = stored && typeof stored === 'object' ? stored : {};
+    const fresh = memory && typeof memory === 'object' ? memory : {};
+    const out = {};
+    for (const name of new Set([...Object.keys(base), ...Object.keys(fresh)])) {
+        const storedArr = Array.isArray(base[name]) ? base[name] : [];
+        const memArr = Array.isArray(fresh[name]) ? fresh[name] : [];
+        if (!storedArr.length) {
+            out[name] = memArr;
+            continue;
+        }
+        const byTime = new Map();
+        for (const sample of storedArr) {
+            if (sample && Number.isFinite(sample.t)) byTime.set(sample.t, sample);
+        }
+        for (const sample of memArr) {
+            if (sample && Number.isFinite(sample.t)) byTime.set(sample.t, sample);
+        }
+        out[name] = [...byTime.values()].sort((a, b) => a.t - b.t);
+    }
+    return out;
+}
+
 class GuildXPTracker {
     constructor() {
         this.initialized = false;
@@ -321,6 +358,83 @@ class GuildXPTracker {
         this.memberXPHistory = {}; // characterID → [{t, xp}]
         this.memberMeta = {}; // characterID → {name, gameMode, joinTime, invitedBy, ...}
         this.unregisterHandlers = [];
+        /** One save chain per storage key, so read-merge-writes never interleave */
+        this._saveChains = new Map();
+    }
+
+    /**
+     * Turn a `storage.tryGet` probe into a history map, telling a failed read
+     * apart from an absent one.
+     *
+     * A read that could not be made is not an empty history: taking it for one
+     * and then writing it back is how a guild's week of samples used to vanish
+     * over a dropped IndexedDB connection. On failure the caller's in-memory
+     * map stands (the same record, kept), or an empty map when the key is a
+     * record this tab has never held — which is safe only because every save
+     * merges the stored map under memory first.
+     * @param {{found: boolean, value: *}|null} probe - What `storage.tryGet` answered
+     * @param {Object} memory - The map to keep when the read cannot be trusted
+     * @param {string} key - Storage key, for the log line
+     * @returns {Object} The stored map, `{}` when absent, or `memory` on failure
+     */
+    _resolveLoad(probe, memory, key) {
+        if (probe === null) {
+            console.warn(`[GuildXPTracker] ${key} could not be read; keeping the in-memory copy`);
+            return memory && typeof memory === 'object' ? memory : {};
+        }
+        return probe.found && probe.value && typeof probe.value === 'object' ? probe.value : {};
+    }
+
+    /**
+     * Read a history map, keeping `memory` when the read cannot be trusted.
+     * @param {string} key - Storage key
+     * @param {Object} memory - The map to keep on a failed read
+     * @returns {Promise<Object>} See `_resolveLoad`
+     */
+    async _loadMap(key, memory) {
+        return this._resolveLoad(await storage.tryGet(key, STORE_NAME), memory, key);
+    }
+
+    /**
+     * Persist a history map: re-read, merge what is stored under memory, write.
+     *
+     * Memory wins per sample, so the stored copy only ever grows from here —
+     * samples another tab recorded, or that were written before a read failed,
+     * survive. When storage cannot be read the write is refused rather than made
+     * blind; the next save retries. Saves to one key run one at a time, in order.
+     *
+     * The merge is folded into `map` in place (it keeps its identity), so a
+     * guild switch that swaps the field between queue and run does not merge the
+     * wrong guild's record.
+     * @param {string} key - Storage key
+     * @param {Object} map - The live in-memory map for that key
+     * @param {Object} [options]
+     * @param {boolean} [options.overwrite=false] - Write the map as-is. For the
+     *   intentional losses — a reset, a prune straight after a successful load.
+     * @returns {Promise<boolean>} Whether a write was queued
+     */
+    _persist(key, map, { overwrite = false } = {}) {
+        const run = async () => {
+            try {
+                if (!overwrite) {
+                    const probe = await storage.tryGet(key, STORE_NAME);
+                    if (probe === null) {
+                        console.warn(`[GuildXPTracker] ${key} not saved: storage could not be read first`);
+                        return false;
+                    }
+                    if (probe.found && probe.value && typeof probe.value === 'object') {
+                        Object.assign(map, mergeXPHistories(probe.value, map));
+                    }
+                }
+                return await storage.set(key, map, STORE_NAME);
+            } catch (error) {
+                console.error(`[GuildXPTracker] Failed to save ${key}:`, error);
+                return false;
+            }
+        };
+        const chain = (this._saveChains.get(key) || Promise.resolve()).then(run, run);
+        this._saveChains.set(key, chain);
+        return chain;
     }
 
     async initialize() {
@@ -378,6 +492,8 @@ class GuildXPTracker {
 
         const guildName = guild.name;
         const guildXP = guild.experience;
+        const previousGuildName = this.ownGuildName;
+        const previousGuildID = this.ownGuildID;
         this.ownGuildName = guildName;
         this.guildCreatedAt = guild.createdAt;
         this.guildType = guild.guildType || null;
@@ -415,14 +531,28 @@ class GuildXPTracker {
 
         // Load persisted histories
         const endLoad = performanceMonitor.startSpan('bg:guildXPTracker', 'load history');
-        this.guildXPHistory = await storage.get(`guildXP_${guildName}`, STORE_NAME, {});
+        // A failed read keeps what this tab already holds for the same record;
+        // a record this tab has never held starts empty, which the merge-on-save
+        // below makes safe
+        const guildProbe = await storage.tryGet(`guildXP_${guildName}`, STORE_NAME);
+        this.guildXPHistory = this._resolveLoad(
+            guildProbe,
+            guildName === previousGuildName ? this.guildXPHistory : {},
+            `guildXP_${guildName}`
+        );
         // Histories recorded before repeats were rejected end in two identical
         // readings, which reads as a rate of zero. Heal them on the way in.
         for (const [name, arr] of Object.entries(this.guildXPHistory)) {
             this.guildXPHistory[name] = dropFlatRepeats(arr);
         }
+        let membersProbe = null;
         if (this.ownGuildID) {
-            this.memberXPHistory = await storage.get(`memberXP_${this.ownGuildID}`, STORE_NAME, {});
+            membersProbe = await storage.tryGet(`memberXP_${this.ownGuildID}`, STORE_NAME);
+            this.memberXPHistory = this._resolveLoad(
+                membersProbe,
+                this.ownGuildID === previousGuildID ? this.memberXPHistory : {},
+                `memberXP_${this.ownGuildID}`
+            );
             // Self-heal on the way in. The history map never forgets anybody it
             // has ever sampled, so a member who left the guild kept their weekly
             // rate, did nothing all day because they were gone, and sat in the
@@ -437,7 +567,7 @@ class GuildXPTracker {
                         `no longer in the guild: ${departed.slice(0, 8).join(', ')}` +
                         `${departed.length > 8 ? `, +${departed.length - 8} more` : ''}`
                 );
-                storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME);
+                this._persist(`memberXP_${this.ownGuildID}`, this.memberXPHistory, { overwrite: true });
             }
         }
         endLoad();
@@ -464,10 +594,14 @@ class GuildXPTracker {
         // purpose is to not write yet. The trace read it as a six-second save;
         // the actual write is milliseconds, and flushAll on unload covers the
         // tab closing before the timer lands.
+        //
+        // Straight after a successful load, memory is storage plus the heal and
+        // the prune above, both of which are meant to lose entries — so that one
+        // save writes as-is; a load that failed goes through the merge instead.
         const endSave = performanceMonitor.startSpan('bg:guildXPTracker', 'queue save');
-        storage.set(`guildXP_${guildName}`, this.guildXPHistory, STORE_NAME);
+        this._persist(`guildXP_${guildName}`, this.guildXPHistory, { overwrite: guildProbe !== null });
         if (this.ownGuildID) {
-            storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME);
+            this._persist(`memberXP_${this.ownGuildID}`, this.memberXPHistory, { overwrite: membersProbe !== null });
         }
         endSave();
     }
@@ -504,7 +638,7 @@ class GuildXPTracker {
 
         const t = Date.now();
         pushXP(this.guildXPHistory[name], { t, xp: guild.experience });
-        storage.set(`guildXP_${name}`, this.guildXPHistory, STORE_NAME);
+        this._persist(`guildXP_${name}`, this.guildXPHistory);
     }
 
     /**
@@ -522,8 +656,11 @@ class GuildXPTracker {
         const newGuildID = charIds.length > 0 ? guildCharacterMap[charIds[0]].guildID : null;
 
         if (newGuildID && this.ownGuildID && newGuildID !== this.ownGuildID) {
-            // Guild switched — clear stale member data and load fresh from storage
-            this.memberXPHistory = await storage.get(`memberXP_${newGuildID}`, STORE_NAME, {});
+            // Guild switched — drop the old guild's member data and load the new
+            // guild's record. A read that fails here starts the new record empty
+            // rather than carrying the old guild's members into it; nothing is
+            // lost because every save merges what is stored under memory first.
+            this.memberXPHistory = await this._loadMap(`memberXP_${newGuildID}`, {});
             this.memberMeta = {};
         }
 
@@ -580,7 +717,7 @@ class GuildXPTracker {
         }
 
         if (this.ownGuildID) {
-            storage.set(`memberXP_${this.ownGuildID}`, this.memberXPHistory, STORE_NAME);
+            this._persist(`memberXP_${this.ownGuildID}`, this.memberXPHistory);
         }
     }
 
@@ -622,7 +759,7 @@ class GuildXPTracker {
         }
 
         if (this.ownGuildName) {
-            storage.set(`guildXP_${this.ownGuildName}`, this.guildXPHistory, STORE_NAME);
+            this._persist(`guildXP_${this.ownGuildName}`, this.guildXPHistory);
         }
     }
 
@@ -847,7 +984,8 @@ class GuildXPTracker {
     async resetMemberData() {
         if (!this.ownGuildID) return;
         this.memberXPHistory = {};
-        await storage.set(`memberXP_${this.ownGuildID}`, {}, STORE_NAME);
+        // The one member write that is meant to lose entries
+        await this._persist(`memberXP_${this.ownGuildID}`, this.memberXPHistory, { overwrite: true });
     }
 
     /**
