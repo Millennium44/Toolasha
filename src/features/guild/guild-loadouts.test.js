@@ -41,6 +41,7 @@ const {
     loadLoadouts,
     loadoutList,
     MAX_LOADOUTS,
+    pruneCharacterOnlyLoadouts,
     purgeMonsterLoadouts,
     readAbilities,
     saveLoadouts,
@@ -431,5 +432,98 @@ describe('storage', () => {
         expect((await loadLoadouts('char-1', 'OldGuild')).players.cream).toBeDefined();
         expect((await loadLoadouts('char-1', 'NewGuild')).players.cream).toBeUndefined();
         expect((await loadLoadouts('char-1', 'NewGuild')).players.rick).toBeDefined();
+    });
+});
+
+describe('the game’s own monster list', () => {
+    beforeEach(() => {
+        game.store = {};
+        game.clientData = {
+            combatMonsterDetailMap: {
+                '/monsters/salamander': { name: 'Salamander' },
+                '/monsters/giant_scorpion': { name: 'Giant Scorpion' },
+                '/monsters/shadow_archer': { name: 'Shadow Archer' },
+            },
+        };
+    });
+
+    test('a zone monster’s Battle Info sheet is refused, name only', () => {
+        // Not a trial encounter and not carrying a `/monsters/` hrid — the
+        // popup scrape has neither. Only the game data says what it is
+        expect(isMonsterUnit({ name: 'Giant Scorpion' })).toBe(true);
+        expect(isMonsterUnit({ name: 'shadow archer' })).toBe(true);
+        expect(isMonsterUnit({ name: 'Tib' })).toBe(false);
+    });
+
+    test('a monster payload never becomes a loadout', () => {
+        const monster = {
+            unit: {
+                isPlayer: true,
+                name: 'Salamander',
+                combatDetails: { combatLevel: 90, maxHitpoints: 5000, combatStats: {} },
+                combatAbilities: [],
+            },
+        };
+        expect(extractLoadout(monster, { at: now })).toBeNull();
+    });
+
+    test('stored monster sheets are purged, whatever they are called', () => {
+        const record = {
+            players: {
+                salamander: { name: 'Salamander', at: now, rows: [] },
+                'giant scorpion': { name: 'Giant Scorpion', at: now, rows: [] },
+                tib: { name: 'Tib', at: now, rows: [] },
+            },
+            updatedAt: now,
+        };
+        const { record: cleaned, purged } = purgeMonsterLoadouts(record);
+
+        expect(purged.sort()).toEqual(['Giant Scorpion', 'Salamander']);
+        expect(Object.keys(cleaned.players)).toEqual(['tib']);
+    });
+
+    test('with no game data loaded the older name checks still stand', () => {
+        game.clientData = {};
+        expect(isMonsterUnit({ name: 'Trial Chameleon' })).toBe(true);
+        expect(isMonsterUnit({ name: 'Salamander' })).toBe(false);
+    });
+});
+
+describe('the character-only key stops being a mixing bowl', () => {
+    beforeEach(() => {
+        game.store = {};
+        game.clientData = {};
+    });
+
+    test('what the guild key holds is dropped from the character-only key', async () => {
+        await saveLoadouts('char-1', {
+            players: {
+                tib: { name: 'Tib', at: now, rows: [] },
+                legacy: { name: 'Legacy', at: now - 1, rows: [] },
+            },
+            updatedAt: now,
+        });
+
+        const dropped = await pruneCharacterOnlyLoadouts('char-1', {
+            players: { tib: { name: 'Tib', at: now, rows: [] } },
+        });
+
+        expect(dropped).toEqual(['Tib']);
+        const left = await loadLoadouts('char-1');
+        expect(left.players.tib).toBeUndefined();
+        expect(left.players.legacy).toBeDefined();
+    });
+
+    test('a character-only record the guild key has never seen is left alone', async () => {
+        await saveLoadouts('char-1', { players: { legacy: { name: 'Legacy', at: now, rows: [] } }, updatedAt: now });
+        expect(await pruneCharacterOnlyLoadouts('char-1', { players: {} })).toEqual([]);
+        expect((await loadLoadouts('char-1')).players.legacy).toBeDefined();
+    });
+
+    test('pruning may empty the record, which the ordinary save refuses to write', async () => {
+        await saveLoadouts('char-1', { players: { tib: { name: 'Tib', at: now, rows: [] } }, updatedAt: now });
+        await pruneCharacterOnlyLoadouts('char-1', { players: { tib: { name: 'Tib', at: now, rows: [] } } });
+
+        expect((await loadLoadouts('char-1')).players).toEqual({});
     });
 });

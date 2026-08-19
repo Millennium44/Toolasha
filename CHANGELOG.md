@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Seen loadouts stay in the guild they were seen in, and monsters are never members
+
+Changing guild used to hand the new guild the old guild's whole roster: the character-only record was adopted wholesale onto the new guild's key the first time it was empty. A guild key now takes only sightings from this session before its name arrived, the character-only key stops accumulating duplicates once a guild key exists (and is left on disk as legacy rather than deleted), and each guild's own record stays intact for if you go back. Battle Info sheets for monsters — any name the game data lists, not just trial bosses — are refused on capture and purged from anything already stored.
+
 ### Trial Abilities fills from the roster store, and the cycler reaches everyone
 
 The panel now adopts any Battle Info sheet the Guild Roster already holds for an outstanding player (taken since the session began), so it can never lag the roster's "seen 1m" again. "Open next Battle Info" asks players least-recently-asked first with your own card last — it used to re-click the first card in the DOM (yours) on every press and never reach the teammates beside it. Unit clicks also go through the game's own React handler, which the party cards require when a click is not a trusted user gesture.

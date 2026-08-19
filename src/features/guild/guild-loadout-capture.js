@@ -43,6 +43,7 @@ import {
     loadLoadouts,
     loadoutKey,
     loadoutList,
+    pruneCharacterOnlyLoadouts,
     purgeMonsterLoadouts,
     saveLoadouts,
 } from './guild-loadouts.js';
@@ -157,6 +158,12 @@ class GuildLoadoutCapture {
         this.guildName = null;
         /** When this session began, so pre-adoption sightings can be told apart */
         this.startedAt = 0;
+        /**
+         * When the record last stopped belonging to a guild — a character
+         * switch, or a guild the character has left. Sightings older than this
+         * cannot be shown to belong to whatever guild is named next.
+         */
+        this.guildEpochAt = 0;
         this.unregister = [];
         this.timers = createTimerRegistry();
         this.lastSocketAt = 0;
@@ -269,20 +276,32 @@ class GuildLoadoutCapture {
      * Move the record onto the guild's own key, once the guild is known.
      *
      * The same lazy adoption the trial record does, for the same reason: the
-     * guild's name arrives on socket traffic after this initialises. Three
-     * cases, in the order a switched character hits them:
+     * guild's name arrives on socket traffic after this initialises. The guild
+     * key is always the base — whatever is stored under it is this guild's own
+     * history — and the only question is which of the sightings in hand may
+     * join it.
      *
-     * - **The guild key already holds a record.** It is this guild's own
-     *   history and it wins outright; only sightings captured *this session*
-     *   (which happened in this guild, whatever key held them) are folded in.
-     *   The character-only record is deliberately not — it may span guilds,
-     *   which is the reported leak: Cream and ICMeow from the guild the
-     *   character left, listed beside the new guild's fighters.
-     * - **The guild key is empty.** The character-only record adopts onto it
-     *   once — the common case of a character who never switches, whose whole
-     *   history belongs to this one guild.
-     * - **`null`** simply forgets which guild the record is keyed by, for a
-     *   character switch; the next name to arrive re-adopts.
+     * **The rule: only sightings this session could have watched happen in
+     * *this* guild.** That is `at >= max(startedAt, guildEpochAt)`, and only
+     * when no other guild has been named since — the window between this
+     * module initialising and the guild's name arriving, during which the
+     * character was demonstrably in the guild now being named. Anything older
+     * is a sighting from a previous session under no guild at all, and a
+     * previous session may have been a previous guild.
+     *
+     * What that costs and why it is worth it: a character who has never
+     * switched guilds loses nothing stored under the guild key and keeps
+     * re-collecting into it, but the sightings sitting in the *character-only*
+     * key from before this shipped are not carried over. They are not deleted
+     * either — the character-only key stands as legacy, so nothing is
+     * destroyed on the strength of a name that has just arrived. The
+     * alternative is what was reported: `guildLoadouts_30404` and
+     * `guildLoadouts_30404_SuperMoo` byte-identical minutes after the switch,
+     * the whole of the Testmaxxing roster adopted onto SuperMoo's key because
+     * SuperMoo's key happened to be empty.
+     *
+     * `null` forgets which guild the record is keyed by, for a character
+     * switch, and starts a new epoch; the next name to arrive re-adopts.
      *
      * @param {string|null} name - The guild's name, or null to forget
      * @returns {Promise<void>}
@@ -290,6 +309,7 @@ class GuildLoadoutCapture {
     async setGuildName(name) {
         try {
             if (!name) {
+                if (this.guildName !== null) this.guildEpochAt = Date.now();
                 this.guildName = null;
                 return;
             }
@@ -301,19 +321,27 @@ class GuildLoadoutCapture {
             // A switch may have happened while the read was in flight
             if (this.guildName !== before) return;
 
-            if (Object.keys(stored.players || {}).length) {
-                this.record = stored;
-                for (const player of loadoutList(held)) {
-                    if (Number.isFinite(player?.at) && player.at >= this.startedAt) {
-                        this.record = foldLoadout(this.record, player);
-                    }
-                }
-            }
-            // else: the character-only record adopts wholesale — `this.record`
-            // already holds it
+            // A name arriving over another name is a guild change, and every
+            // sighting in hand was taken inside the guild being left
+            const since = before === null ? Math.max(this.startedAt, this.guildEpochAt) : Infinity;
 
+            let record = purgeMonsterLoadouts(stored).record || { players: {}, updatedAt: 0 };
+            for (const player of loadoutList(held)) {
+                if (Number.isFinite(player?.at) && player.at >= since) record = foldLoadout(record, player);
+            }
+
+            this.record = record;
             this.guildName = name;
+            this.guildEpochAt = Date.now();
             this._queueSave();
+
+            // Now that the guild key holds them, the character-only key must
+            // not go on holding them too — that duplicate is what the old
+            // wholesale adoption spread across guilds
+            const dropped = await pruneCharacterOnlyLoadouts(this.characterId, this.record);
+            if (dropped.length) {
+                console.info('[GuildLoadoutCapture] Character-only record pruned:', dropped.join(', '));
+            }
         } catch (error) {
             console.error('[GuildLoadouts] Adopting the guild key failed:', error);
         }

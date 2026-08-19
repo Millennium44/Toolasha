@@ -275,7 +275,16 @@ export function extractLoadout(payload, { at = Date.now(), source = 'battle_unit
  * - an hrid under `/monsters/`, which no character has;
  * - a name containing "trial", which no character may have — the game reserves
  *   it and it is what `guild-trial-damage.js`' own gate keys off;
- * - a name that reduces to one of the five trial encounters.
+ * - a name that reduces to one of the five trial encounters;
+ * - a name the game itself lists as a monster ({@link monsterNames}).
+ *
+ * The last of those is what the first four missed. The trial boss was the
+ * reported case and the encounter list covered it, but a Battle Info sheet
+ * opened on *any* zone or labyrinth monster arrives on the same message and was
+ * filed as a member: Salamander, Shadow Archer, Giant Scorpion, Giant Mantis and
+ * Frost Sniper were all found sitting in a live guild's roster record. Asking
+ * the game's own `combatMonsterDetailMap` costs one cached pass over the map and
+ * catches every one of them.
  *
  * @param {Object} unit - A unit from `battle_unit_fetched` or `new_battle`
  * @returns {boolean} True when it must not be stored as a member
@@ -287,13 +296,43 @@ export function isMonsterUnit(unit) {
     const hrids = [unit.combatMonsterHrid, unit.monsterHrid, unit.hrid, unit.character?.hrid];
     if (hrids.some((hrid) => typeof hrid === 'string' && hrid.startsWith('/monsters/'))) return true;
 
-    const name = String(unit.character?.name || unit.name || '')
-        .toLowerCase()
-        .replace(/[/_-]+/g, ' ');
-    if (!name) return false;
+    const raw = String(unit.character?.name || unit.name || '')
+        .trim()
+        .toLowerCase();
+    if (!raw) return false;
+    if (monsterNames().has(raw)) return true;
+
+    const name = raw.replace(/[/_-]+/g, ' ');
     if (/\btrial\b/.test(name)) return true;
 
     return COMBAT_ENCOUNTERS.some((encounter) => name.split(/\s+/).includes(encounter));
+}
+
+/** The last `combatMonsterDetailMap` seen, and the names read off it */
+let monsterNameCache = { map: null, names: new Set() };
+
+/**
+ * Every monster the game knows, lowercased.
+ *
+ * Cached against the identity of the map rather than a flag, so the set is
+ * built once per client-data load and rebuilt for free if the data is replaced.
+ * An empty set when the game data has not arrived — the name checks below still
+ * apply, and {@link purgeMonsterLoadouts} runs again once it has.
+ *
+ * @returns {Set<string>} Lowercased monster names
+ */
+export function monsterNames() {
+    const map = dataManager.getInitClientData?.()?.combatMonsterDetailMap;
+    if (!map || typeof map !== 'object') return new Set();
+    if (monsterNameCache.map === map) return monsterNameCache.names;
+
+    const names = new Set();
+    for (const detail of Object.values(map)) {
+        const name = typeof detail?.name === 'string' ? detail.name.trim().toLowerCase() : '';
+        if (name) names.add(name);
+    }
+    monsterNameCache = { map, names };
+    return names;
 }
 
 /**
@@ -437,18 +476,71 @@ export async function loadLoadouts(characterId, guildName = null) {
 
 /**
  * Write a character's record.
+ *
+ * An empty record is refused by default: a write of `{}` is nearly always a
+ * failed load on its way to erasing a history, and the debounced save is the
+ * one place that would do it. {@link pruneCharacterOnlyLoadouts} is the one
+ * caller that means it, and says so.
+ *
  * @param {string|number|null} characterId - Viewing character id
  * @param {Object} record - The record
  * @param {string|null} [guildName] - The character's guild, when known
+ * @param {Object} [options] - Write options
+ * @param {boolean} [options.allowEmpty=false] - Permit writing a record with no players
  * @returns {Promise<boolean>} True when the write was queued
  */
-export async function saveLoadouts(characterId, record, guildName = null) {
+export async function saveLoadouts(characterId, record, guildName = null, { allowEmpty = false } = {}) {
     try {
-        if (!Object.keys(record?.players || {}).length) return false;
+        if (!allowEmpty && !Object.keys(record?.players || {}).length) return false;
         await storage.set(guildLoadoutsStorageKey(characterId, guildName), record, LOADOUT_STORE);
         return true;
     } catch (error) {
         console.error('[GuildLoadouts] Failed to save seen loadouts:', error);
         return false;
+    }
+}
+
+/**
+ * Stop the character-only key being a mixing bowl.
+ *
+ * `guildLoadouts_<char>` is written only while the guild's name has not
+ * arrived yet — a window of a few seconds at the start of every session. Over
+ * many sessions and more than one guild it accumulates everybody the character
+ * has ever stood next to, under no guild at all, which is exactly the record
+ * that used to be adopted wholesale onto a new guild's key.
+ *
+ * So once a guild key exists, whatever is *also* under it is dropped from the
+ * character-only key: the guild key is the authoritative copy of those
+ * sightings and two copies is how they leak. Pruning rather than deleting —
+ * anything the guild key has never held stays where it is, since it is the
+ * only copy of it and the guild it belongs to cannot be worked out after the
+ * fact. Monster sheets go at the same time.
+ *
+ * @param {string|number|null} characterId - Viewing character id
+ * @param {Object|null} guildRecord - The record now held under the guild key
+ * @returns {Promise<string[]>} The names dropped
+ */
+export async function pruneCharacterOnlyLoadouts(characterId, guildRecord) {
+    try {
+        const record = await loadLoadouts(characterId, null);
+        const players = record.players || {};
+        const held = new Set(Object.keys(guildRecord?.players || {}));
+
+        const dropped = [];
+        const kept = {};
+        for (const [key, entry] of Object.entries(players)) {
+            if (held.has(key) || isMonsterUnit(entry)) {
+                dropped.push(entry?.name || key);
+                continue;
+            }
+            kept[key] = entry;
+        }
+        if (!dropped.length) return [];
+
+        await saveLoadouts(characterId, { ...record, players: kept }, null, { allowEmpty: true });
+        return dropped;
+    } catch (error) {
+        console.error('[GuildLoadouts] Pruning the character-only record failed:', error);
+        return [];
     }
 }

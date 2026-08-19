@@ -464,4 +464,137 @@ describe('guild scoping', () => {
         expect(names).toContain('Rick');
         expect(names).toContain('Fresh');
     });
+
+    test('an empty guild key does not inherit the character-only record’s older people', async () => {
+        // The reported state: `guildLoadouts_30404` and
+        // `guildLoadouts_30404_SuperMoo` byte-identical minutes after the
+        // switch, the whole Testmaxxing roster adopted because SuperMoo's key
+        // happened to be empty
+        guildLoadoutCapture.record = {
+            players: {
+                sarintest: { name: 'sarintest', rows: [], at: 1 },
+                orven: { name: 'orven', rows: [], at: 1 },
+            },
+            updatedAt: 1,
+        };
+        game.wsHandlers.battle_unit_fetched(sheet('Fresh'));
+
+        await guildLoadoutCapture.setGuildName('SuperMoo');
+
+        const names = guildLoadoutCapture.seen().map((player) => player.name);
+        expect(names).toEqual(['Fresh']);
+        expect(names).not.toContain('sarintest');
+        expect(names).not.toContain('orven');
+    });
+
+    test('the character-only record is left on disk rather than deleted', async () => {
+        game.store[guildLoadoutsStorageKey('char-1')] = {
+            players: { legacy: { name: 'Legacy', rows: [], at: 1 } },
+            updatedAt: 1,
+        };
+        game.wsHandlers.battle_unit_fetched(sheet('Fresh'));
+        await guildLoadoutCapture.setGuildName('SuperMoo');
+        await vi.advanceTimersByTimeAsync(2000);
+
+        expect(game.store[guildLoadoutsStorageKey('char-1')].players.legacy).toBeDefined();
+    });
+
+    test('whatever the guild key now holds is dropped from the character-only key', async () => {
+        game.store[guildLoadoutsStorageKey('char-1')] = {
+            players: {
+                legacy: { name: 'Legacy', rows: [], at: 1 },
+                fresh: { name: 'Fresh', rows: [], at: 1 },
+            },
+            updatedAt: 1,
+        };
+        game.wsHandlers.battle_unit_fetched(sheet('Fresh'));
+        await guildLoadoutCapture.setGuildName('SuperMoo');
+        await vi.advanceTimersByTimeAsync(2000);
+
+        const characterOnly = game.store[guildLoadoutsStorageKey('char-1')].players;
+        expect(characterOnly.fresh).toBeUndefined();
+        expect(characterOnly.legacy).toBeDefined();
+    });
+
+    test('a second guild name inherits nothing seen inside the first', async () => {
+        game.wsHandlers.battle_unit_fetched(sheet('Testmaxxer'));
+        await guildLoadoutCapture.setGuildName('Testmaxxing');
+        await vi.advanceTimersByTimeAsync(2000);
+
+        await guildLoadoutCapture.setGuildName('SuperMoo');
+        expect(guildLoadoutCapture.seen()).toEqual([]);
+        // …and the guild they left keeps its own, for if they go back
+        expect(game.store[guildLoadoutsStorageKey('char-1', 'Testmaxxing')].players.testmaxxer).toBeDefined();
+    });
+});
+
+describe('monsters are never loadouts', () => {
+    const monsters = {
+        '/monsters/salamander': { name: 'Salamander' },
+        '/monsters/frost_sniper': { name: 'Frost Sniper' },
+    };
+
+    beforeEach(() => {
+        game.store = {};
+        game.characterId = 'char-1';
+        game.clientData = { combatMonsterDetailMap: monsters };
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-04T12:00:00Z'));
+        guildLoadoutCapture.cleanup();
+        guildLoadoutCapture.record = { players: {}, updatedAt: 0 };
+        guildLoadoutCapture.guildName = null;
+        guildLoadoutCapture.lastSocketAt = 0;
+    });
+
+    afterEach(() => {
+        guildLoadoutCapture.cleanup();
+        guildLoadoutCapture.guildName = null;
+        document.body.innerHTML = '';
+        vi.useRealTimers();
+    });
+
+    test('a stored entry named after a monster is purged on load', async () => {
+        game.store[guildLoadoutsStorageKey('char-1')] = {
+            players: {
+                salamander: { name: 'Salamander', rows: [{ label: 'Armor', value: '10' }], at: 5 },
+                tib: { name: 'Tib', rows: [], at: 5 },
+            },
+            updatedAt: 5,
+        };
+
+        await guildLoadoutCapture.initialize();
+
+        expect(guildLoadoutCapture.seen().map((player) => player.name)).toEqual(['Tib']);
+        expect(game.store[guildLoadoutsStorageKey('char-1')].players.salamander).toBeUndefined();
+    });
+
+    test('a monster’s Battle Info sheet is not folded in', async () => {
+        await guildLoadoutCapture.initialize();
+
+        game.wsHandlers.battle_unit_fetched({
+            unit: {
+                isPlayer: true,
+                name: 'Frost Sniper',
+                combatDetails: { combatLevel: 90, maxHitpoints: 5000, combatStats: {} },
+                combatAbilities: [],
+            },
+        });
+
+        expect(guildLoadoutCapture.seen()).toEqual([]);
+    });
+
+    test('a monster popup is not scraped as a member', async () => {
+        await guildLoadoutCapture.initialize();
+
+        const node = modal([
+            'Salamander - Lv.90',
+            ['Max HP', '5,000'],
+            ['Armor', '120'],
+            ['Water resist', '30'],
+            ['Stab evasion', '400'],
+        ]);
+        game.observers.Modal_modalContent(node);
+
+        expect(guildLoadoutCapture.seen()).toEqual([]);
+    });
 });
