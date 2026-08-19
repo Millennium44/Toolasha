@@ -40,6 +40,7 @@ import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { registeredRows } from '../../utils/overlay-rows.js';
 import { showToast } from '../../utils/toast.js';
 import overlayPanel from './overlay-panel.js';
+import { syncManager } from '../sync/index.js';
 import enhancementUI from '../enhancement/enhancement-ui.js';
 import {
     goalPlanner,
@@ -241,6 +242,22 @@ function panelCommands() {
             target: guildTrialScoreboard(),
         },
         { name: 'Settings', hint: "Toolasha's settings tab", run: () => openSettings() },
+        // Same UI bundle as the palette. Offered only when a push could
+        // succeed — a sync command on an unconfigured install would only toast
+        ...(syncManager.isConfigured()
+            ? [
+                  {
+                      name: 'Sync push',
+                      hint: 'Push settings and data to GitHub now',
+                      run: () => syncManager.push(),
+                  },
+                  {
+                      name: 'Sync pull',
+                      hint: 'Pull the GitHub copy onto this device',
+                      run: () => syncManager.pull(),
+                  },
+              ]
+            : []),
         {
             name: 'Health report',
             // Reached through the page, like every other cross-bundle target

@@ -3552,6 +3552,16 @@ export const settingsGroups = {
                     'the rest — the same contents as "Back Up Everything" — which on a played-in account can be many ' +
                     'megabytes and is split across several files inside the gist.',
             },
+            sync_onSwitch: {
+                id: 'sync_onSwitch',
+                label: 'Push to GitHub after switching characters',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'With sync configured, switching characters pushes a few seconds later, so the character ' +
+                    'you just left has its latest changes on GitHub without waiting for the quarter-hour timer. ' +
+                    'Skipped when nothing changed.',
+            },
             sync_auto: {
                 id: 'sync_auto',
                 label: 'Sync automatically',

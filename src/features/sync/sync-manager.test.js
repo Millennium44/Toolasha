@@ -12,6 +12,11 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 
+const character = vi.hoisted(() => ({ id: 'char-A' }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: { getCurrentCharacterId: () => character.id },
+}));
+
 const stored = vi.hoisted(() => ({ map: {} }));
 vi.mock('../../core/storage.js', () => ({
     default: {
@@ -549,5 +554,40 @@ describe('the silent startup pull never raises a dialog', () => {
         expect(result).toMatchObject({ skipped: true, reason: 'conflict' });
         expect(dialog.calls).toBe(0);
         expect(payload.applied).toBeUndefined();
+    });
+});
+
+describe('push on character switch', () => {
+    test('a re-initialise for a different character schedules one silent push; a page load does not', async () => {
+        vi.useFakeTimers();
+        settings.values.sync_onSwitch = true;
+        character.id = 'char-A';
+        const pushes = vi.spyOn(syncManager, 'push').mockResolvedValue({ ok: true });
+
+        try {
+            // First initialise of the page: never fires, whatever the setting says
+            syncManager.cleanup();
+            await syncManager.initialize();
+            await vi.advanceTimersByTimeAsync(6 * 1000);
+            expect(pushes).not.toHaveBeenCalled();
+
+            // The switch: teardown, another character, re-initialise
+            syncManager.cleanup();
+            character.id = 'char-B';
+            await syncManager.initialize();
+            await vi.advanceTimersByTimeAsync(6 * 1000);
+            expect(pushes).toHaveBeenCalledTimes(1);
+            expect(pushes).toHaveBeenCalledWith({ silent: true });
+
+            // The same character again is not a switch
+            syncManager.cleanup();
+            await syncManager.initialize();
+            await vi.advanceTimersByTimeAsync(6 * 1000);
+            expect(pushes).toHaveBeenCalledTimes(1);
+        } finally {
+            syncManager.cleanup();
+            pushes.mockRestore();
+            vi.useRealTimers();
+        }
     });
 });

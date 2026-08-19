@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sync from the command palette, and optionally on every character switch
+
+"Sync push" and "Sync pull" join the command palette when sync is configured, so a sync is a keystroke away instead of a walk into settings. A new setting (off by default) pushes a few seconds after switching characters, so the character just left has its latest changes on GitHub without waiting out the quarter-hour timer — free when nothing changed.
+
 ### Cross-device auto-sync stops dying quietly
 
 Three faults conspired: the change-detection hash included the payload's own timestamp, so "unchanged, skip" never fired and — worse — the hash remembered after a pull could never match a local rebuild, manufacturing a permanent "both sides changed" conflict; that conflict raised its dialog even from the silent startup pull, where nobody answers it; and the unanswered dialog held the sync busy, so every 15-minute auto-push declined without a word for the rest of the session. The hash now ignores the timestamp, the silent pull stands down instead of asking, and a sync wedged busy for over five minutes is taken over.

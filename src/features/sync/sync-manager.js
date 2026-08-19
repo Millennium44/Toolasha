@@ -24,6 +24,7 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { showToast } from '../../utils/toast.js';
@@ -59,6 +60,17 @@ export const AUTO_PUSH_INTERVAL_MS = 15 * 60 * 1000;
 /** Startup pull waits this long so it is not competing with the game's own load */
 const STARTUP_DELAY_MS = 20 * 1000;
 
+/** How long after a character switch the on-switch push waits for the dust. */
+const SWITCH_PUSH_DELAY_MS = 5 * 1000;
+
+/**
+ * The character the manager last initialised for. Module-scoped on purpose:
+ * a character switch tears the feature down and re-initialises it, and the
+ * only thing that survives to say "this is a switch, not a page load" is the
+ * module itself.
+ */
+let lastCharacterId = null;
+
 /** A sync busy longer than this is wedged, and a new one may take over. */
 const BUSY_STUCK_MS = 5 * 60 * 1000;
 
@@ -89,6 +101,26 @@ class SyncManager {
         }
 
         this._startAuto();
+
+        // A re-initialise for a DIFFERENT character is a switch: push shortly,
+        // so the character just left has its changes on GitHub without waiting
+        // out the quarter-hour timer. The unchanged-skip makes this free when
+        // nothing moved; the first initialise of a page load never fires it.
+        const characterId = dataManager.getCurrentCharacterId?.() ?? null;
+        if (
+            lastCharacterId !== null &&
+            characterId !== null &&
+            characterId !== lastCharacterId &&
+            config.getSetting('sync_onSwitch', false) &&
+            this.isConfigured()
+        ) {
+            this.timers.registerTimeout(
+                setTimeout(() => {
+                    this.push({ silent: true });
+                }, SWITCH_PUSH_DELAY_MS)
+            );
+        }
+        if (characterId !== null) lastCharacterId = characterId;
     }
 
     /** Stop timers and setting listeners. */
