@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### "Past weeks" stays on the Trials tab
+
+The archived-cycles block was also drawn on the In Progress tab, where the live view's layout stretched it into an empty box above the fight or skilling row. It now renders only on the Trials tab.
+
 ### User-authored records (custom tabs, price overrides, pins, goals, settings) survive failed reads
 
 Custom inventory tabs, custom price overrides, alchemy item pins, goal planner goals, equipment savings goals, the philo calculator's cost overrides, named overlay layouts, and the settings map itself now follow the curated-record discipline: a read that cannot be made keeps what is in hand instead of blanking it, a save before the record has been read back folds the stored record under memory (and is refused when storage cannot be read first), and after a readable load a removal sticks. A settings map built from schema defaults because the store could not be read is never written whole — it goes through a merge-save that keeps every stored entry the session left at its default.

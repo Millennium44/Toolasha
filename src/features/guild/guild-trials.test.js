@@ -2276,6 +2276,20 @@ describe('the panel, end to end', () => {
         expect(text()).not.toContain('Past weeks');
     });
 
+    test('the In Progress view never draws “Past weeks” — past cycles are the Trials tab’s', () => {
+        const root = buildTab([{ name: 'Alchemy', level: 130, bar: '18,850 / 65,280' }]);
+        // The live skilling row marks the In Progress view; on the Trials tab it
+        // does not exist. The block used to land at the top of this view,
+        // stretched by its layout into an empty box over the live cards.
+        const challenge = document.createElement('div');
+        challenge.className = 'SkillingInstancePanel_challengeArea__x';
+        root.appendChild(challenge);
+        guildTrials.record = { ...guildTrials.record, history: [archivedWeek()] };
+        fire(root);
+
+        expect(text()).not.toContain('Past weeks');
+    });
+
     test('a finished cycle stops projecting a future', () => {
         document.body.innerHTML = '';
         const root = document.createElement('div');

@@ -1887,6 +1887,20 @@ function fightMonsterGrid(card) {
 }
 
 /**
+ * Whether the trials content on screen is the In Progress view — the live
+ * combat fight (`BattlePanel_monstersArea`) or the live skilling row
+ * (`SkillingInstancePanel_challengeArea`) — rather than the Trials tab's
+ * sign-up cards. Neither container exists on the Trials tab.
+ * @param {Element} root - The trials content element
+ * @returns {boolean}
+ */
+export function isInProgressView(root) {
+    return Boolean(
+        root?.querySelector?.('[class*="BattlePanel_monstersArea"], [class*="SkillingInstancePanel_challengeArea"]')
+    );
+}
+
+/**
  * The grid column just past the wave's boss cards — the sidecar's column.
  *
  * `grid-row:1` alone left the sidecar's column to auto-placement, and
@@ -3701,6 +3715,11 @@ class GuildTrials {
      * @returns {boolean} Whether a history block is on screen
      */
     _renderHistory(root, now = Date.now(), bonuses = null) {
+        // The In Progress tab is the live fight or the live skilling row; past
+        // cycles are the Trials tab's business. On the In Progress view the
+        // block landed at the top and was stretched by the view's own layout
+        // into an empty box over the live cards.
+        if (isInProgressView(root)) return false;
         const summaries = this._pastWeekSummaries(now, bonuses);
         if (!summaries.length) return false;
 
