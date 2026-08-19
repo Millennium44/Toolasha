@@ -492,4 +492,27 @@ describe('leaderboard XP tracker', () => {
         // 3 levels over (72 − 1) hours
         expect(stats.lastWeekXPH).toBeCloseTo(3 / 71, 6);
     });
+
+    test('an unknown cohort filter (the live Steam boards) splits the rank series too', () => {
+        game.handlers.leaderboard_updated({
+            leaderboardCategory: 'total_level',
+            gameModeFilter: 'standard',
+            leaderboard: { rows: [{ name: 'M', value1: 1842, value2: 1, rank: 2833 }] },
+        });
+        game.handlers.leaderboard_updated({
+            leaderboardCategory: 'total_level',
+            gameModeFilter: 'standard',
+            playerCohortFilter: 'steam',
+            leaderboard: { rows: [{ name: 'M', value1: 1842, value2: 1, rank: 1255 }] },
+        });
+
+        expect(leaderboardXPTracker.playerXPHistory['rank|total_level|standard_M']).toEqual([
+            { t: expect.any(Number), r: 2833 },
+        ]);
+        expect(leaderboardXPTracker.playerXPHistory['rank|total_level|standard/steam_M']).toEqual([
+            { t: expect.any(Number), r: 1255 },
+        ]);
+        // No "▲1578" from reading the Steam board after the all-players one
+        expect(leaderboardXPTracker.getPreviousRank('M', 'total_level')).toBeNull();
+    });
 });

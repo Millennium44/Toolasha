@@ -237,9 +237,19 @@ export function isWeeklyBoard(category) {
  * @returns {string} A stable key, 'all' when nothing narrows the view
  */
 export function filterKeyOf(data) {
-    const parts = [data?.gameModeFilter, data?.guildTypeFilter, data?.trialFilter].filter(
-        (part) => typeof part === 'string' && part && part !== 'all'
-    );
+    if (!data || typeof data !== 'object') return 'all';
+    // Every narrowing the message carries, not a fixed list: the live server
+    // has Standard (Steam) / Ironcow (Steam) cohort boards the test server
+    // does not, and whatever field names that cohort, it must split the rank
+    // series too — ranks read across two views of one board are not moves.
+    // `leaderboardType` is included for the same reason; the category and the
+    // revision are not filters.
+    const parts = Object.keys(data)
+        .filter((key) => key === 'leaderboardType' || /Filter$/.test(key))
+        .sort()
+        .map((key) => [key, data[key]])
+        .filter(([, value]) => typeof value === 'string' && value && value !== 'all')
+        .map(([, value]) => value);
     return parts.length ? parts.join('/') : 'all';
 }
 
