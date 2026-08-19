@@ -3554,13 +3554,14 @@ export const settingsGroups = {
             },
             sync_onSwitch: {
                 id: 'sync_onSwitch',
-                label: 'Push to GitHub after switching characters',
+                label: 'Push to GitHub on hand-off (character switch or session takeover)',
                 type: 'checkbox',
                 default: false,
                 help:
-                    'With sync configured, switching characters pushes a few seconds later, so the character ' +
-                    'you just left has its latest changes on GitHub without waiting for the quarter-hour timer. ' +
-                    'Skipped when nothing changed.',
+                    'With sync configured, this device pushes when it stops being the active session: a few ' +
+                    'seconds after switching characters, and immediately when another login takes the session ' +
+                    'over (a phone, say) — whose own startup pulls then collect the changes. Skipped when ' +
+                    'nothing changed.',
             },
             sync_auto: {
                 id: 'sync_auto',

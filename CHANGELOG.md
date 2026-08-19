@@ -6,9 +6,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Sync from the command palette, and optionally on every character switch
+### Sync from the command palette, on hand-off, and both ways while two devices are open
 
-"Sync push" and "Sync pull" join the command palette when sync is configured, so a sync is a keystroke away instead of a walk into settings. A new setting (off by default) pushes a few seconds after switching characters, so the character just left has its latest changes on GitHub without waiting out the quarter-hour timer — free when nothing changed.
+"Sync push" and "Sync pull" join the command palette when sync is configured. A new hand-off setting (off by default) pushes when this device stops being the active session — a few seconds after a character switch, and immediately when another login takes the session over — whose own startup pulls (now staggered at 20s/80s/200s so they cannot race the hand-off push) collect the changes. With auto-sync on, a silent pull also runs between the pushes, so two open devices converge instead of only pushing past each other; a silent pull applies only clean fast-forwards and stands down on conflict.
 
 ### Cross-device auto-sync stops dying quietly
 

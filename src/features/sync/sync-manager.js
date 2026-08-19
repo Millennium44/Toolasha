@@ -25,6 +25,8 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import domObserver from '../../core/dom-observer.js';
+import { GAME } from '../../utils/selectors.js';
 import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { showToast } from '../../utils/toast.js';
@@ -57,11 +59,19 @@ const KEY_CHUNK_COUNT = 'toolasha_sync_chunkCount';
  */
 export const AUTO_PUSH_INTERVAL_MS = 15 * 60 * 1000;
 
-/** Startup pull waits this long so it is not competing with the game's own load */
-const STARTUP_DELAY_MS = 20 * 1000;
-
 /** How long after a character switch the on-switch push waits for the dust. */
 const SWITCH_PUSH_DELAY_MS = 5 * 1000;
+
+/**
+ * Startup pulls, staggered. One pull twenty seconds in raced the handoff: a
+ * phone logging in pulls before the tab it kicked has finished pushing, and
+ * misses it by seconds. The retries are nearly free — a pull whose remote is
+ * not newer stops at the manifest read.
+ */
+const STARTUP_PULL_DELAYS_MS = [20 * 1000, 80 * 1000, 200 * 1000];
+
+/** The periodic silent pull sits between the pushes rather than beside them. */
+const AUTO_PULL_OFFSET_MS = Math.floor(AUTO_PUSH_INTERVAL_MS / 2);
 
 /**
  * The character the manager last initialised for. Module-scoped on purpose:
@@ -93,7 +103,10 @@ class SyncManager {
 
         const restart = () => {
             this.timers.clearAll();
+            this.handoffUnregister?.();
+            this.handoffUnregister = null;
             this._startAuto();
+            this._watchHandoff();
         };
         for (const key of ['sync_enabled', 'sync_auto']) {
             config.onSettingChange(key, restart);
@@ -101,6 +114,7 @@ class SyncManager {
         }
 
         this._startAuto();
+        this._watchHandoff();
 
         // A re-initialise for a DIFFERENT character is a switch: push shortly,
         // so the character just left has its changes on GitHub without waiting
@@ -125,6 +139,9 @@ class SyncManager {
 
     /** Stop timers and setting listeners. */
     cleanup() {
+        this.handoffUnregister?.();
+        this.handoffUnregister = null;
+        this.handoffPushed = false;
         this.timers.clearAll();
         for (const [key, callback] of this.settingListeners) config.offSettingChange(key, callback);
         this.settingListeners = [];
@@ -411,17 +428,65 @@ class SyncManager {
     _startAuto() {
         if (!config.getSetting('sync_auto', false) || !this.isConfigured()) return;
 
-        this.timers.registerTimeout(
-            setTimeout(() => {
-                this.pull({ silent: true });
-            }, STARTUP_DELAY_MS)
-        );
+        for (const delay of STARTUP_PULL_DELAYS_MS) {
+            this.timers.registerTimeout(
+                setTimeout(() => {
+                    this.pull({ silent: true });
+                }, delay)
+            );
+        }
 
         this.timers.registerInterval(
             setInterval(() => {
                 this.push({ silent: true });
             }, AUTO_PUSH_INTERVAL_MS)
         );
+
+        // The other half of a two-device loop: the pushes above put changes up,
+        // and this brings the other device's changes down while both stay open.
+        // A silent pull is safe to run unattended — it applies only a clean
+        // fast-forward (remote newer, nothing changed here) and stands down on
+        // a conflict without asking.
+        this.timers.registerTimeout(
+            setTimeout(() => {
+                this.timers.registerInterval(
+                    setInterval(() => {
+                        this.pull({ silent: true });
+                    }, AUTO_PUSH_INTERVAL_MS)
+                );
+                this.pull({ silent: true });
+            }, AUTO_PULL_OFFSET_MS)
+        );
+    }
+
+    /**
+     * Push the moment another login takes this session over.
+     *
+     * The game replaces the page with its connection banner when a second
+     * device logs the character in; the socket is gone but GitHub is not, so
+     * this is the last, best moment to hand the session's changes to the
+     * device that just took over — whose own staggered startup pulls will
+     * collect them seconds later. Once per banner: the flag rearms only after
+     * the banner goes away (a reconnect), so a flickering connection does not
+     * hammer the gist.
+     * @private
+     */
+    _watchHandoff() {
+        if (!config.getSetting('sync_onSwitch', false) || !this.isConfigured()) return;
+        this.handoffUnregister = domObserver.onClass('SyncHandoff', 'GamePage_connectionMessage', () => {
+            if (this.handoffPushed) return;
+            if (!document.querySelector(GAME.CONNECTION_MESSAGE)) return;
+            this.handoffPushed = true;
+            this.push({ silent: true });
+            // Rearm when the banner clears — checked lazily on the next appearance
+            const rearm = setInterval(() => {
+                if (!document.querySelector(GAME.CONNECTION_MESSAGE)) {
+                    this.handoffPushed = false;
+                    clearInterval(rearm);
+                }
+            }, 30 * 1000);
+            this.timers.registerInterval(rearm);
+        });
     }
 
     /**
