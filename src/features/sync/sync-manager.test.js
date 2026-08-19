@@ -45,7 +45,8 @@ vi.mock('./sync-payload.js', () => ({
         payload.applied = json;
         return { restored: {}, exportedAt: null };
     },
-    hashPayload: (text) => `h:${text}`,
+    // Content hash, as the real one: the exportedAt stamp does not participate
+    contentHash: (text) => `h:${String(text).replace(/"exportedAt":"[^"]*",/, '')}`,
 }));
 
 const gist = vi.hoisted(() => ({
@@ -114,7 +115,19 @@ describe('guards', () => {
 
     test('a second concurrent operation is refused rather than interleaved', async () => {
         syncManager.busy = true;
+        syncManager.busySince = Date.now();
         expect((await syncManager.push()).reason).toBe('busy');
+    });
+
+    test('a sync wedged busy for long enough is taken over, not honoured forever', async () => {
+        // The failure this guards: an abandoned conflict dialog (or a hung
+        // request) held `busy` for the rest of the session, and every
+        // 15-minute auto-push declined silently for days
+        syncManager.busy = true;
+        syncManager.busySince = Date.now() - 6 * 60 * 1000;
+        const result = await syncManager.push();
+        expect(result.ok).toBe(true);
+        syncManager.busy = false;
     });
 });
 
@@ -517,6 +530,24 @@ describe('passphrase encryption', () => {
         const result = await syncManager.pull();
         expect(result.ok).toBe(false);
         expect(result.reason).toBe('passphrase');
+        expect(payload.applied).toBeUndefined();
+    });
+});
+
+describe('the silent startup pull never raises a dialog', () => {
+    test('both sides changed in silent mode stands down as a conflict, without asking', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:what-we-pushed'; // local content differs
+        gist.read = {
+            manifest: { exportedAt: '2026-02-01T00:00:00.000Z', chunks: 1, hash: 'h:remote' },
+            payload: '{"remote":1}',
+        };
+        dialog.answer = 'pull'; // would apply, if anything dared ask
+
+        const result = await syncManager.pull({ silent: true });
+        expect(result).toMatchObject({ skipped: true, reason: 'conflict' });
+        expect(dialog.calls).toBe(0);
         expect(payload.applied).toBeUndefined();
     });
 });

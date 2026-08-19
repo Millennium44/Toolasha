@@ -31,7 +31,7 @@ import { askChoice } from '../../utils/choice-dialog.js';
 import { GistError, findSyncGist, readSyncGist, writeSyncGist, chunkPayload } from './gist-client.js';
 import { compressionAvailable, gzipText, gunzipToText } from './sync-compress.js';
 import { encryptText, encryptBytes, decryptText, decryptBytes, bytesToBase64, base64ToBytes } from './sync-crypto.js';
-import { buildPayloadJSON, applyPayload, hashPayload } from './sync-payload.js';
+import { buildPayloadJSON, applyPayload, contentHash } from './sync-payload.js';
 
 const STORE = 'settings';
 
@@ -58,6 +58,9 @@ export const AUTO_PUSH_INTERVAL_MS = 15 * 60 * 1000;
 
 /** Startup pull waits this long so it is not competing with the game's own load */
 const STARTUP_DELAY_MS = 20 * 1000;
+
+/** A sync busy longer than this is wedged, and a new one may take over. */
+const BUSY_STUCK_MS = 5 * 60 * 1000;
 
 class SyncManager {
     constructor() {
@@ -132,7 +135,7 @@ class SyncManager {
         const scope = config.getSetting('sync_scope', 'settings');
 
         const payload = await buildPayloadJSON(scope);
-        const hash = hashPayload(payload);
+        const hash = contentHash(payload);
 
         if (silent && hash === (await storage.get(KEY_LAST_HASH, STORE, null))) {
             return { ok: true, skipped: true, reason: 'unchanged' };
@@ -276,11 +279,21 @@ class SyncManager {
         // Both sides moved: the remote is ahead of what we last exchanged, and so
         // are we. Newest-wins would throw away whichever is older without saying
         // so, which is not a thing to do to a year of history.
-        const localHash = hashPayload(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')));
+        const localHash = contentHash(await buildPayloadJSON(config.getSetting('sync_scope', 'settings')));
         const lastHash = await storage.get(KEY_LAST_HASH, STORE, null);
         const localChanged = Boolean(lastHash) && localHash !== lastHash;
 
         if (localChanged) {
+            // The silent path is the unattended one (the startup pull). A
+            // modal it raises sits unanswered behind the game while `busy`
+            // stays held, and every 15-minute auto-push for the rest of the
+            // session returns 'busy' without a word — the "auto-sync randomly
+            // stops until I reload" report. Unattended pulls stand down and
+            // leave the decision to a human-initiated sync.
+            if (silent) {
+                console.warn('[Sync] Startup pull found both sides changed; leaving it for a manual sync.');
+                return { ok: true, skipped: true, reason: 'conflict' };
+            }
             const answer = await askChoice({
                 title: 'Sync conflict',
                 message:
@@ -300,7 +313,11 @@ class SyncManager {
         await this._remember({
             gistId,
             exportedAt: remoteAt,
-            hash: manifest?.hash ?? hashPayload(payload),
+            // The CONTENT hash of what was applied — remembered so the next
+            // local rebuild of the same content compares equal. The manifest's
+            // own hash (older devices hashed the raw text, stamp included)
+            // could never match a rebuild and manufactured a permanent conflict
+            hash: contentHash(payload),
             chunkCount: Number(manifest?.chunks) || 0,
         });
 
@@ -434,11 +451,21 @@ class SyncManager {
             return { ok: false, reason: 'no-token' };
         }
         if (this.busy) {
-            if (!silent) showToast('A sync is already running.', { kind: 'warn' });
-            return { ok: false, reason: 'busy' };
+            // A sync that has been "running" this long is a wedged one — a
+            // hung request or an abandoned dialog — and honouring its lock
+            // forever is how auto-push died quietly for days. Take over.
+            if (Date.now() - (this.busySince || 0) > BUSY_STUCK_MS) {
+                console.warn(
+                    `[Sync] A ${label} is taking over a sync stuck busy since ${new Date(this.busySince).toISOString()}.`
+                );
+            } else {
+                if (!silent) showToast('A sync is already running.', { kind: 'warn' });
+                return { ok: false, reason: 'busy' };
+            }
         }
 
         this.busy = true;
+        this.busySince = Date.now();
         try {
             return await operation();
         } catch (error) {

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Cross-device auto-sync stops dying quietly
+
+Three faults conspired: the change-detection hash included the payload's own timestamp, so "unchanged, skip" never fired and — worse — the hash remembered after a pull could never match a local rebuild, manufacturing a permanent "both sides changed" conflict; that conflict raised its dialog even from the silent startup pull, where nobody answers it; and the unanswered dialog held the sync busy, so every 15-minute auto-push declined without a word for the rest of the session. The hash now ignores the timestamp, the silent pull stands down instead of asking, and a sync wedged busy for over five minutes is taken over.
+
 ### Trials you did not join are forecast from tier-clear timing, and wear their tier again
 
 The old "Est. fill ~x pts/s" fitted a rate to the card's stated points, which only move when a tier banks — a regression over a staircase. It now measures the gap between tier badges, whose pool size is known exactly, and reports the guild's work rate, the next tier's ETA and the tiers left by walking the ladder one tier at a time with the rate falling as the tiers climb (flattening at the Lv.300 cap, where success rates stop falling). Unjoined cards get their expected tier back — they could never produce the measured fill rate the old forecast demanded — and the small "T17" marker beside a card's "Lv.260" returns, no longer wiped for good by the game's first redraw and reading the banked count once the level caps.

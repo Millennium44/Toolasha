@@ -212,6 +212,23 @@ export function hashPayload(text) {
 }
 
 /**
+ * Hash a payload by its CONTENT, ignoring the `exportedAt` stamp.
+ *
+ * The payload text embeds the moment it was built, so hashing the raw text
+ * makes every build look different: the auto-push's "unchanged, skip" never
+ * fired, and worse, the hash remembered after a pull (the remote text, with
+ * the remote's stamp) could never equal a local rebuild — so every later pull
+ * read "this device has changed", raised the conflict dialog even from the
+ * silent startup pull, and the unanswered modal held the sync busy for days.
+ *
+ * @param {string} text - Payload text as produced by `buildPayloadJSON()`
+ * @returns {string} Hash of the payload with its `exportedAt` removed
+ */
+export function contentHash(text) {
+    return hashPayload(String(text).replace(/"exportedAt":"[^"]*",/, ''));
+}
+
+/**
  * The `exportedAt` of a payload without parsing the whole thing.
  *
  * A full-scope payload can be megabytes; `JSON.parse` on it just to read one
