@@ -1,6 +1,21 @@
 /**
  * Task Sorter
- * Sorts tasks in the task board by skill type
+ * Sorts tasks in the task board by skill type.
+ *
+ * The board only ever rearranges itself at three moments, and every one of them
+ * is something the player just did:
+ *
+ *  - the Tasks panel is opened, and auto-sort is on;
+ *  - "Read" is pressed to claim new tasks, and sort-after-read is on — new
+ *    tasks always arrive at the end, so a sorted board comes apart without it;
+ *  - the Sort Tasks button is pressed, which sorts immediately whatever else is
+ *    happening.
+ *
+ * Nothing else sorts. A reroll, a discard, a Back press, a quest update from
+ * the server: the board stays exactly as it is. Cards that move on their own
+ * are cards that move out from under a click, and the reroll flow — where a
+ * chooser sits open over a card for as long as the player keeps pressing — is
+ * where that was happening.
  */
 
 import { GAME, TOOLASHA } from '../../utils/selectors.js';
@@ -9,7 +24,7 @@ import dataManager from '../../core/data-manager.js';
 import taskIcons from './task-icons.js';
 import taskIconFilters from './task-icon-filters.js';
 import taskRerollProtection from './task-reroll-protection.js';
-import { boardHasConfirmingCard, armConfirmSettleWatch, onConfirmFlowSettled } from './task-card-state.js';
+import { boardHasConfirmingCard } from './task-card-state.js';
 import domObserver from '../../core/dom-observer.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -21,8 +36,6 @@ class TaskSorter {
         this.timerRegistry = createTimerRegistry();
         this.readClickHandler = null;
         this.settleObserver = null;
-        /** Set while the settle watch is subscribed to; see `sortTasks` */
-        this.unsubscribeSettle = null;
 
         // Task type ordering (combat tasks go to bottom)
         this.TASK_ORDER = {
@@ -49,13 +62,6 @@ class TaskSorter {
         // Use DOM observer to watch for task panel appearing
         this.watchTaskPanel();
         this.watchReadButton();
-
-        // Only with auto-sort on. Subscribing regardless would re-order the
-        // board behind a player who has never asked for it to be ordered,
-        // seconds after they closed a reroll chooser.
-        if (config.getSetting('taskSorter_autoSort')) {
-            this.unsubscribeSettle = onConfirmFlowSettled(() => this.sortTasks());
-        }
 
         this.initialized = true;
     }
@@ -371,20 +377,12 @@ class TaskSorter {
         // One of the cards is showing a reroll chooser or a discard
         // confirmation and is waiting on a second click. Re-appending the cards
         // moves that one out of the DOM and back, which is exactly the click
-        // being pulled out from under the player, so the automatic passes leave
-        // the board alone.
-        //
-        // What happens next depends on who asked. Auto-sort is a standing
-        // instruction that the board be in order, and a reroll is the commonest
-        // way it stops being — so with auto-sort on this arms the settle watch
-        // and sorts as soon as no card is mid-flow. Without it, sorting is
-        // something the player does, and re-ordering the board some seconds
-        // after they closed a chooser is not what they pressed anything for:
-        // the board waits for the button. A `force` press of that button is the
-        // player asking for order right now, mid-flow and all, so it does not
-        // defer.
+        // being pulled out from under the player, so an automatic pass leaves
+        // the board alone and does not come back for it: a board that rearranges
+        // itself some seconds after a reroll is the thing this feature was
+        // making worse, not better. A `force` press of the Sort Tasks button is
+        // the player asking for order right now, mid-flow and all.
         if (!force && boardHasConfirmingCard(taskList)) {
-            if (this.unsubscribeSettle) armConfirmSettleWatch();
             return;
         }
 
@@ -435,8 +433,6 @@ class TaskSorter {
             this.readClickHandler = null;
         }
         this.stopSettleWatch();
-        this.unsubscribeSettle?.();
-        this.unsubscribeSettle = null;
 
         this.timerRegistry.clearAll();
         this.initialized = false;

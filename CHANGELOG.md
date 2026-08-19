@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The task list sorts only when you ask it to
+
+Auto-sort now runs at exactly two moments — opening the Tasks panel, and pressing Read with sort-after-claim on — and the Sort Tasks button whenever you press it. A closing reroll chooser no longer re-orders the board a second after you pressed Back.
+
 ### Task card overlays follow a rerolled task
 
 Paying for a reroll leaves the game's chooser open over the new task, and every row Toolasha draws on a card — the estimate block, the profit and rating lines, the reroll-spend line — was held back while a card was mid-flow, so those rows went on describing the task that had just been thrown away until Back was pressed. A mid-flow card is still left alone, except when the task on it has actually changed.

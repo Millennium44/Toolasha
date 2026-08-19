@@ -189,7 +189,7 @@ describe('sorting after Read', () => {
     });
 });
 
-describe('a board the player asked to keep sorted', () => {
+describe('when the board is allowed to rearrange itself', () => {
     /**
      * Start the sorter over with auto-sort set one way or the other.
      * @param {boolean} autoSort - Whether the player has asked for a sorted board
@@ -212,35 +212,63 @@ describe('a board the player asked to keep sorted', () => {
         return { list, chooser };
     }
 
-    test('sorts itself once the reroll the player was making is finished', () => {
-        // The gap this closes: a reroll is the commonest way a sorted board
-        // stops being sorted, and the pass that would have fixed it is the one
-        // the chooser held back. Nothing re-ran when the chooser closed, so an
-        // auto-sorted board sat unsorted until the panel was reopened.
+    test('a closing reroll chooser does not sort the board, auto-sort on or off', () => {
+        // The board rearranging itself a second after a reroll is what this
+        // policy exists to stop: the cards move under the hand that is still
+        // pressing Back, and nothing the player did asked for it.
+        for (const autoSort of [true, false]) {
+            document.body.replaceChildren();
+            restart(autoSort);
+            const { list, chooser } = boardMidReroll();
+
+            taskSorter.sortTasks();
+            chooser.remove();
+            vi.advanceTimersByTime(2000);
+
+            expect(order(list)).toEqual(['Defeat - Slashy', 'Cooking - Stew', 'Milking - Cow']);
+        }
+    });
+
+    test('opening the panel sorts, with auto-sort on', () => {
         restart(true);
-        const { list, chooser } = boardMidReroll();
+        const list = board(['Defeat - Slashy', 'Cooking - Stew', 'Milking - Cow']);
 
-        taskSorter.sortTasks();
-        expect(order(list)).toEqual(['Defeat - Slashy', 'Cooking - Stew', 'Milking - Cow']);
-
-        chooser.remove();
-        vi.advanceTimersByTime(1000);
+        const header = document.createElement('div');
+        header.className = 'TasksPanel_taskSlotCount__abc';
+        list.parentElement.appendChild(header);
+        taskSorter.addSortButton(header);
+        vi.advanceTimersByTime(200);
 
         expect(order(list)).toEqual(['Milking - Cow', 'Cooking - Stew', 'Defeat - Slashy']);
     });
 
-    test('with auto-sort off the board waits for the button', () => {
-        // Sorting is something the player does, and re-ordering the board a
-        // second after they closed a chooser is not what they pressed anything
-        // for
+    test('opening the panel leaves the board alone with auto-sort off', () => {
         restart(false);
-        const { list, chooser } = boardMidReroll();
+        const list = board(['Defeat - Slashy', 'Cooking - Stew', 'Milking - Cow']);
 
-        taskSorter.sortTasks();
-        chooser.remove();
-        vi.advanceTimersByTime(1000);
+        const header = document.createElement('div');
+        header.className = 'TasksPanel_taskSlotCount__abc';
+        list.parentElement.appendChild(header);
+        taskSorter.addSortButton(header);
+        vi.advanceTimersByTime(200);
 
         expect(order(list)).toEqual(['Defeat - Slashy', 'Cooking - Stew', 'Milking - Cow']);
+    });
+
+    test('claiming new tasks sorts only with the after-claim option on', () => {
+        restart(false);
+        settings.values.taskSorter_sortAfterRead = false;
+        const list = board(['Defeat - Slashy', 'Milking - Cow']);
+        const read = readButton(list);
+
+        read.click();
+        vi.advanceTimersByTime(500);
+        expect(order(list)).toEqual(['Defeat - Slashy', 'Milking - Cow']);
+
+        settings.values.taskSorter_sortAfterRead = true;
+        read.click();
+        vi.advanceTimersByTime(500);
+        expect(order(list)).toEqual(['Milking - Cow', 'Defeat - Slashy']);
     });
 
     test('a direct Sort press is honoured at once, reroll chooser open and all', () => {
@@ -252,17 +280,5 @@ describe('a board the player asked to keep sorted', () => {
         taskSorter.sortTasks(true);
 
         expect(order(list)).toEqual(['Milking - Cow', 'Cooking - Stew', 'Defeat - Slashy']);
-    });
-
-    test('cleanup takes the subscription with it', () => {
-        restart(true);
-        const { list, chooser } = boardMidReroll();
-
-        taskSorter.sortTasks();
-        taskSorter.cleanup();
-        chooser.remove();
-        vi.advanceTimersByTime(1000);
-
-        expect(order(list)).toEqual(['Defeat - Slashy', 'Cooking - Stew', 'Milking - Cow']);
     });
 });
