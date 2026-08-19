@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Leaderboard rate columns: per-day, catch-up time, rank movement, every board
+
+The leaderboard's rate columns now read `XP/h` · `XP/day` · `Rank ↑ in` — the day figure measured when two readings fall within 24h and projected (marked) otherwise; the catch-up column says how long until a row overtakes the one above at both rows' rates (a floor when the row above has no rate). Rank movement since the previous reading shows beside the game's rank (▲2 / ▼1). Columns are named for what the board counts (`Points/h` on Guild Points), and the Guilds tab's Level board is recorded like the rest. Fixed along the way: one-column boards (Guild Points, Buildings, Task Points…) were recorded as 0, so they could never show a rate; a weekly board's reset now restarts its series instead of freezing it.
+
 ### Leaderboard XP/h columns explain themselves, and record your own row
 
 A reading is only taken when you open a board and the board moves every 20 minutes, so most cells had no rate — and showed nothing, which read as broken. Each rate now carries the span it was measured over ("3h", "22d"), and an empty cell says why on hover ("1 reading", "—" for no two readings within 24h). The game sends your own row separately from the page, and it was never recorded; it is now.

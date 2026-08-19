@@ -62,7 +62,112 @@ function unratedCell(stats) {
 }
 
 /**
- * Why "Last day XP/h" has no figure.
+ * What a board counts, read off its own value column header: "Experience" is
+ * XP; "Guild Points", "Task Points", "Weekly Points" are Points; anything else
+ * is taken as written ("Buildings", "Depth").
+ * @param {Element} theadTr - The board's header row, before this module's columns
+ * @returns {string} The unit, for "XP/h" / "Points/h"
+ */
+export function boardUnit(theadTr) {
+    const native = Array.from(theadTr?.children || []).filter((th) => !th.classList.contains(CSS_PREFIX));
+    const text = native[native.length - 1]?.textContent?.replace(/[△▽▲▼]/g, '').trim() || '';
+    if (!text || /experience/i.test(text)) return 'XP';
+    if (/points?$/i.test(text)) return 'Points';
+    return text;
+}
+
+/**
+ * Rank movement since the previous reading, appended to the game's Rank cell:
+ * "▲2" for two places up, "▼1" for one down, nothing when unchanged or unknown.
+ * @param {Element} rankCell - The row's first cell
+ * @param {Object} stats - The row, with `rank` and `previousRank`
+ */
+function markRankDelta(rankCell, stats) {
+    if (!rankCell) return;
+    rankCell.querySelector(`.${CSS_PREFIX}-delta`)?.remove();
+    const previous = stats?.previousRank;
+    if (!previous || !Number.isFinite(stats.rank) || previous.rank === stats.rank) return;
+    const up = previous.rank - stats.rank; // a smaller number is a better rank
+    const span = document.createElement('span');
+    span.className = `${CSS_PREFIX}-delta`;
+    span.style.cssText = `margin-left:4px; font-size:0.8em; color:${up > 0 ? '#7fd6a3' : '#e07b7b'};`;
+    span.textContent = `${up > 0 ? '▲' : '▼'}${Math.abs(up)}`;
+    span.title = `Was #${previous.rank} at the previous reading, ${shortSpan(Date.now() - previous.at)} ago.`;
+    rankCell.appendChild(span);
+}
+
+/**
+ * The day figure: the measured 24h-window rate scaled to a day when there are
+ * two readings within the day, else the last rate projected over a day and
+ * marked as projected — a rate is a rate, but a measured day and a guess from
+ * twenty minutes are not the same fact.
+ * @param {Object} stats - From the tracker
+ * @returns {{value: number, projected: boolean}}
+ */
+export function xpPerDay(stats) {
+    if (stats?.lastDayXPH > 0 && stats.dayReadings >= 2) return { value: stats.lastDayXPH * 24, projected: false };
+    if (stats?.lastXPH > 0) return { value: stats.lastXPH * 24, projected: true };
+    return { value: 0, projected: false };
+}
+
+/**
+ * How long until a row overtakes the one above it, at the two rows' rates.
+ *
+ * The gap closes at (mine − theirs) per hour. When the row above has no rate
+ * yet it is taken as standing still and the answer is marked as a floor — it
+ * is the soonest it could be, not the likely figure.
+ * @param {Object} me - Row stats: `value`, `lastXPH`
+ * @param {Object|null} above - The row one rank up, or null (top, or off the page)
+ * @returns {{hours: number, floor: boolean, reason: string}} `hours` 0 when it is not happening
+ */
+export function timeToOvertake(me, above) {
+    if (!above) return { hours: 0, floor: false, reason: me?.rank === 1 ? 'top' : 'unknown-above' };
+    const gap = Number(above.value) - Number(me?.value);
+    if (!(Number.isFinite(gap) && gap > 0)) return { hours: 0, floor: false, reason: 'no-gap' };
+    const mine = Number(me?.lastXPH) || 0;
+    if (!(mine > 0)) return { hours: 0, floor: false, reason: 'no-rate' };
+    const theirs = Number(above.lastXPH) || 0;
+    const closing = mine - theirs;
+    if (!(closing > 0)) return { hours: 0, floor: false, reason: 'not-gaining' };
+    return { hours: gap / closing, floor: !(theirs > 0), reason: 'ok' };
+}
+
+/**
+ * The catch-up cell: a duration, a "≥" floor marker when the row above has no
+ * rate, or a dim reason.
+ * @param {{hours: number, floor: boolean, reason: string}} catchUp - From {@link timeToOvertake}
+ * @param {Object} stats - The row
+ * @returns {string} Markup
+ */
+function catchUpCell(catchUp, stats) {
+    const dim = (text, title) => `<span style="opacity:0.35;" title="${esc(title)}">${text}</span>`;
+    switch (catchUp.reason) {
+        case 'ok': {
+            const span = shortSpan(catchUp.hours * 3600000);
+            const who = esc(String(stats.rank - 1));
+            return catchUp.floor
+                ? `≥${span} <span style="opacity:0.55; font-size:0.85em;" title="${esc(
+                      `At this row's XP/h, if #${who} stands still — #${who} has no rate yet, so this is the soonest it could be.`
+                  )}">floor</span>`
+                : `<span title="${esc(`Overtakes #${who} at the current XP/h of both rows.`)}">${span}</span>`;
+        }
+        case 'top':
+            return dim('—', 'Already first.');
+        case 'unknown-above':
+            return dim('—', 'The row one rank up is not on this page.');
+        case 'no-gap':
+            return dim('—', 'No gap to close — tied, or the value above could not be read.');
+        case 'no-rate':
+            return dim('—', 'No XP/h rate for this row yet.');
+        case 'not-gaining':
+            return dim('—', 'Not gaining on the row above at the current rates.');
+        default:
+            return '';
+    }
+}
+
+/**
+ * Why "XP/day" has no figure.
  * @param {Object} stats - From the tracker
  * @returns {string} Markup
  */
@@ -97,9 +202,7 @@ class LeaderboardXPDisplay {
         this.unregisterObservers.push(unregLeaderboard);
 
         this._boundRefreshLeaderboard = (data) => {
-            if (data?.leaderboardCategory !== 'guild') {
-                this._refreshLeaderboardIfVisible(data?.leaderboardCategory);
-            }
+            this._refreshLeaderboardIfVisible(data?.leaderboardCategory);
         };
         webSocketHook.on('leaderboard_updated', this._boundRefreshLeaderboard);
         this.unregisterObservers.push(() => webSocketHook.off('leaderboard_updated', this._boundRefreshLeaderboard));
@@ -122,24 +225,50 @@ class LeaderboardXPDisplay {
         const theadTr = tableEl.querySelector('thead tr');
         if (!theadTr) return;
 
+        // What the board counts, from its own last native column — "Experience"
+        // is XP, "Guild Points" and "Task Points" are points, and the rate
+        // columns should say so rather than calling everything XP
+        const unit = boardUnit(theadTr);
+
         const allStats = [];
         for (const row of rows) {
             const name = row.children[1]?.textContent?.trim();
             const stats = name
                 ? leaderboardXPTracker.getPlayerStats(name, resolvedCategory)
                 : { lastXPH: 0, lastDayXPH: 0, samples: 0 };
-            allStats.push({ name, ...stats });
+            // The game's own rank and value for the row, for the catch-up column
+            const rankText = row.children[0]?.textContent?.replace(/[^\d]/g, '') || '';
+            allStats.push({
+                name,
+                ...stats,
+                rank: rankText ? parseInt(rankText, 10) : null,
+                value: leaderboardXPTracker.getLatestValue(name, resolvedCategory),
+                perDay: xpPerDay(stats),
+                previousRank: name ? leaderboardXPTracker.getPreviousRank(name, resolvedCategory) : null,
+            });
         }
 
+        // Rank movement since the previous reading, in the game's own Rank cell
+        for (let i = 0; i < rows.length; i++) markRankDelta(rows[i].children[0], allStats[i]);
+
         const byLastXPH = allStats.slice().sort((a, b) => b.lastXPH - a.lastXPH);
-        const byLastDayXPH = allStats.slice().sort((a, b) => b.lastDayXPH - a.lastDayXPH);
+        const byPerDay = allStats.slice().sort((a, b) => b.perDay.value - a.perDay.value);
         for (let i = 0; i < byLastXPH.length; i++) byLastXPH[i].lastXPH_rank = i + 1;
-        for (let i = 0; i < byLastDayXPH.length; i++) byLastDayXPH[i].lastDayXPH_rank = i + 1;
+        for (let i = 0; i < byPerDay.length; i++) byPerDay[i].perDay_rank = i + 1;
+
+        // Who each row is chasing: the row one rank above it, wherever it sits
+        // on the page (the personal row is drawn first, out of order)
+        const byRank = new Map();
+        for (const s of allStats) if (s.rank !== null && !byRank.has(s.rank)) byRank.set(s.rank, s);
+        const catchUps = allStats.map((s) => {
+            const above = s.rank !== null && s.rank > 1 ? byRank.get(s.rank - 1) || null : null;
+            return timeToOvertake(s, above);
+        });
 
         const insertAfter = theadTr.children.length - 1;
 
         addColumn(tableEl, CSS_PREFIX, {
-            name: 'Last XP/h',
+            name: `${unit}/h`,
             insertAfter,
             data: allStats.map((s) => s.lastXPH),
             format: (v, i) =>
@@ -154,18 +283,37 @@ class LeaderboardXPDisplay {
         });
 
         addColumn(tableEl, CSS_PREFIX, {
-            name: 'Last day XP/h',
+            name: `${unit}/day`,
             insertAfter: insertAfter + 1,
-            data: allStats.map((s) => s.lastDayXPH),
-            format: (v, i) =>
-                !v || v <= 0
-                    ? unratedDayCell(allStats[i])
-                    : `${fNum(v)} ${rankBadge(allStats[i].lastDayXPH_rank)}` +
-                      spanNote(allStats[i].daySpanMs, 'across the readings of the last 24h'),
+            data: allStats.map((s) => s.perDay.value),
+            format: (v, i) => {
+                const s = allStats[i];
+                if (!v || v <= 0) return unratedDayCell(s);
+                const figure = `${s.perDay.projected ? '~' : ''}${fNum(v)} ${rankBadge(s.perDay_rank)}`;
+                return s.perDay.projected
+                    ? figure +
+                          ` <span style="opacity:0.55; font-size:0.85em;" title="${esc(
+                              `Projected from the ${unit}/h rate — fewer than two readings within the last 24h. ` +
+                                  'Open this board again tomorrow and it becomes a measured day.'
+                          )}">proj.</span>`
+                    : figure + spanNote(s.daySpanMs, 'across the readings of the last 24h, scaled to a day');
+            },
             makeSortable: true,
-            sortId: 'lastDayXPH',
+            sortId: 'perDay',
             skipFirst: true,
-            sortData: allStats.map((s) => s.lastDayXPH),
+            sortData: allStats.map((s) => s.perDay.value),
+        });
+
+        addColumn(tableEl, CSS_PREFIX, {
+            name: 'Rank ↑ in',
+            insertAfter: insertAfter + 2,
+            data: catchUps.map((c) => c.hours),
+            format: (v, i) => catchUpCell(catchUps[i], allStats[i]),
+            makeSortable: true,
+            sortId: 'catchUp',
+            skipFirst: true,
+            // Sooner first when sorted descending; never-catching rows sink
+            sortData: catchUps.map((c) => (c.hours > 0 ? 1 / c.hours : 0)),
         });
 
         const rankHeader = Array.from(theadTr.children).find((el) => el.textContent.trim() === 'Rank');
@@ -185,7 +333,9 @@ class LeaderboardXPDisplay {
         const allTables = document.querySelectorAll('[class*="LeaderboardPanel_leaderboardTable"]');
         for (const tableEl of allTables) {
             if (!tableEl.closest('[class*="GuildPanel"]')) {
-                tableEl.querySelectorAll(`th.${CSS_PREFIX}, td.${CSS_PREFIX}`).forEach((el) => el.remove());
+                tableEl
+                    .querySelectorAll(`th.${CSS_PREFIX}, td.${CSS_PREFIX}, .${CSS_PREFIX}-delta`)
+                    .forEach((el) => el.remove());
                 this._renderLeaderboard(tableEl, category);
             }
         }
@@ -196,7 +346,7 @@ class LeaderboardXPDisplay {
             unregister();
         }
         this.unregisterObservers = [];
-        document.querySelectorAll(`.${CSS_PREFIX}`).forEach((el) => el.remove());
+        document.querySelectorAll(`.${CSS_PREFIX}, .${CSS_PREFIX}-delta`).forEach((el) => el.remove());
         this.initialized = false;
     }
 }

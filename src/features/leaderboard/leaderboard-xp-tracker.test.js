@@ -57,18 +57,51 @@ describe('leaderboard XP tracker', () => {
         vi.useRealTimers();
     });
 
-    test('the guild category is not recorded here — it has its own tracker', () => {
+    test('the guild Level board is recorded like any other, with the rank on each reading', () => {
         game.handlers.leaderboard_updated({
             leaderboardCategory: 'guild',
-            leaderboard: { rows: [{ name: 'Someone', value2: 1000 }] },
+            leaderboard: { rows: [{ name: 'Someone', value2: 1000, rank: 4 }] },
         });
 
-        expect(leaderboardXPTracker.getPlayerStats('Someone', 'guild')).toMatchObject({
-            lastXPH: 0,
-            lastHourXPH: 0,
-            lastDayXPH: 0,
-            samples: 0,
+        expect(leaderboardXPTracker.playerXPHistory['guild_Someone']).toEqual([
+            { t: expect.any(Number), xp: 1000, r: 4 },
+        ]);
+    });
+
+    test('a board that reset (weekly) starts its series over instead of freezing at the old high', () => {
+        leaderboardXPTracker.playerXPHistory['guild_weekly_points_G'] = [
+            { t: 1000, xp: 500 },
+            { t: 2000, xp: 900 },
+        ];
+        game.handlers.leaderboard_updated({
+            leaderboardCategory: 'guild_weekly_points',
+            leaderboard: { rows: [{ name: 'G', value2: 30, rank: 1 }] },
         });
+
+        const series = leaderboardXPTracker.playerXPHistory['guild_weekly_points_G'];
+        expect(series).toHaveLength(1);
+        expect(series[0].xp).toBe(30);
+    });
+
+    test('a rank change with no value change updates the rank on the standing reading', () => {
+        leaderboardXPTracker.playerXPHistory['foraging_P'] = [{ t: 1000, xp: 500, r: 7 }];
+        game.handlers.leaderboard_updated({
+            leaderboardCategory: 'foraging',
+            leaderboard: { rows: [{ name: 'P', value2: 500, rank: 8 }] },
+        });
+
+        expect(leaderboardXPTracker.playerXPHistory['foraging_P']).toEqual([{ t: 1000, xp: 500, r: 8 }]);
+    });
+
+    test('getPreviousRank reads the reading before the latest, and is null without two ranked readings', () => {
+        leaderboardXPTracker.playerXPHistory['foraging_Q'] = [
+            { t: 1000, xp: 1, r: 9 },
+            { t: 5000, xp: 2, r: 6 },
+        ];
+        expect(leaderboardXPTracker.getPreviousRank('Q', 'foraging')).toEqual({ rank: 9, at: 1000 });
+        leaderboardXPTracker.playerXPHistory['foraging_R'] = [{ t: 1000, xp: 1, r: 9 }];
+        expect(leaderboardXPTracker.getPreviousRank('R', 'foraging')).toBeNull();
+        expect(leaderboardXPTracker.getLatestValue('Q', 'foraging')).toBe(2);
     });
 
     test('a single reading is not enough for a rate', () => {
@@ -326,5 +359,29 @@ describe('leaderboard XP tracker', () => {
         expect(leaderboardXPTracker.playerXPHistory['milking_Me']).toHaveLength(1);
         expect(leaderboardXPTracker.playerXPHistory['milking_Me'][0].xp).toBe(42);
         expect(leaderboardXPTracker.playerXPHistory['milking_Top']).toHaveLength(1);
+    });
+
+    test('a one-column board (Guild Points) is read from value1, not the absent value2', () => {
+        game.handlers.leaderboard_updated({
+            leaderboardCategory: 'guild_points',
+            leaderboard: {
+                columnNames: ['leaderboardPanel.guildPoints'],
+                rows: [{ name: 'G', value1: 286216, rank: 12 }],
+            },
+        });
+
+        expect(leaderboardXPTracker.playerXPHistory['guild_points_G'][0].xp).toBe(286216);
+    });
+
+    test('a two-column board still reads the experience in value2', () => {
+        game.handlers.leaderboard_updated({
+            leaderboardCategory: 'foraging',
+            leaderboard: {
+                columnNames: ['leaderboardPanel.level', 'leaderboardPanel.experience'],
+                rows: [{ name: 'P', value1: 150, value2: 1415884350, rank: 1 }],
+            },
+        });
+
+        expect(leaderboardXPTracker.playerXPHistory['foraging_P'][0].xp).toBe(1415884350);
     });
 });

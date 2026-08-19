@@ -47,6 +47,11 @@ function pushXP(arr, d) {
     if (arr.length === 0 || d.xp >= arr[arr.length - 1].xp) {
         arr.push(d);
     } else {
+        // A drop is a board that reset (the weekly guild boards start over
+        // each week; XP itself never goes down). A series that ignored it
+        // stayed stuck at the old high until the new count climbed past it,
+        // with no rate in between — start the series over instead.
+        arr.splice(0, arr.length, d);
         return;
     }
 
@@ -192,6 +197,18 @@ class LeaderboardXPTracker {
         // leaderboard_updated arrives before storage resolves, causing history to be overwritten.
         // An unreadable store keeps whatever is in memory rather than blanking it.
         await this.history.load();
+        // Readings of 0 are the one-column boards as recorded before the value
+        // column was read correctly; left in place they would pair with the
+        // first real reading into a rate from nothing. Dropped once, here.
+        const map = this.history.get();
+        let purged = false;
+        for (const [key, series] of Object.entries(map)) {
+            if (Array.isArray(series) && series.length && series.every((sample) => !(sample?.xp > 0))) {
+                delete map[key];
+                purged = true;
+            }
+        }
+        if (purged) this.history.save({ overwrite: true });
 
         this._boundOnLeaderboardUpdated = (data) => this._onLeaderboardUpdated(data);
         webSocketHook.on('leaderboard_updated', this._boundOnLeaderboardUpdated);
@@ -205,7 +222,10 @@ class LeaderboardXPTracker {
      * @param {Object} data - leaderboard_updated message
      */
     _onLeaderboardUpdated(data) {
-        if (data.leaderboardCategory === 'guild') return;
+        // Every board is recorded, the guild Level board included — it used to
+        // be skipped for having "its own tracker", but that one follows only
+        // the player's guild, and the rate columns on the Guilds tab need every
+        // guild on the page.
 
         // The player's own row rides beside the page as `personalRow` — it is
         // not in `rows` unless they happen to rank on that page — and was never
@@ -217,10 +237,17 @@ class LeaderboardXPTracker {
         this.lastLeaderboardCategory = data.leaderboardCategory;
         let changed = false;
 
+        // The board's number is its LAST value column: Level/Experience boards
+        // carry two (level in value1, XP in value2); Guild Points, Buildings,
+        // Task Points and the like carry one, in value1 — reading value2 there
+        // recorded zero for every row, and those boards never had a rate
+        const columns = Array.isArray(data.leaderboard?.columnNames) ? data.leaderboard.columnNames.length : 0;
+        const valueField = columns > 0 ? `value${columns}` : 'value2';
+
         for (const row of rows) {
             const name = row.name;
-            const xp = row.value2;
-            if (!name || xp === undefined) continue;
+            const xp = row[valueField] ?? row.value2 ?? row.value1;
+            if (!name || xp === undefined || xp === null) continue;
 
             const key = `${data.leaderboardCategory}_${name}`;
             if (!this.playerXPHistory[key]) {
@@ -229,8 +256,16 @@ class LeaderboardXPTracker {
             const history = this.playerXPHistory[key];
             // Only record when XP changes — repeated same-XP navigations would otherwise
             // extend the time window without changing the delta, causing rates to decay.
+            const rank = Number.isFinite(row.rank) ? row.rank : undefined;
             if (history.length === 0 || history[history.length - 1].xp !== xp) {
-                pushXP(history, { t, xp });
+                pushXP(history, rank === undefined ? { t, xp } : { t, xp, r: rank });
+                changed = true;
+            } else if (rank !== undefined && history[history.length - 1].r !== rank) {
+                // Same value, different place: somebody else moved. The rank is
+                // the row's, not the value's, so it is refreshed on the reading
+                // that stands — without that a rank change with no XP change
+                // would never be seen
+                history[history.length - 1].r = rank;
                 changed = true;
             }
         }
@@ -251,6 +286,31 @@ class LeaderboardXPTracker {
     getPlayerStats(playerName, category) {
         const key = `${category}_${playerName}`;
         return calcStats(this.playerXPHistory[key]);
+    }
+
+    /**
+     * The rank the row held at the reading before the latest, with when that
+     * was — for "moved up two since last time".
+     * @param {string} playerName
+     * @param {string} category
+     * @returns {{rank: number, at: number}|null} Null without two readings carrying ranks
+     */
+    getPreviousRank(playerName, category) {
+        const series = this.playerXPHistory[`${category}_${playerName}`];
+        if (!Array.isArray(series) || series.length < 2) return null;
+        const previous = series[series.length - 2];
+        return Number.isFinite(previous?.r) ? { rank: previous.r, at: previous.t } : null;
+    }
+
+    /**
+     * The latest recorded value (XP, points) for a row on a board.
+     * @param {string} playerName
+     * @param {string} category
+     * @returns {number|null}
+     */
+    getLatestValue(playerName, category) {
+        const series = this.playerXPHistory[`${category}_${playerName}`];
+        return Array.isArray(series) && series.length ? series[series.length - 1].xp : null;
     }
 
     /**
