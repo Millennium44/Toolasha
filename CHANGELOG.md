@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Market history can no longer be wiped, and buy-form autofill stops fighting itself
+
+The personal listing log was rewritten wholesale from memory on every listing event, and a read that failed (IndexedDB connection dropped, another tab upgrading the database) came back as an empty log — the next event wrote that emptiness over the whole history, which is how days of Market History vanished and imports disappeared. Saves are now read-merge-write, serialized, and simply skipped when storage cannot be read first; a failed load keeps the in-memory copy; imports and Clear History go through the log's owner. Separately, every feature with a marketplace autofill watched every buy modal and wrote its own quantity, so a stale lazily-kept amount from one feature overrode the one you had just clicked ("needs 20 of one and 400 of the other, both tabs say 20"); now only the most recently set quantity fills, and a one-shot quantity is consumed by an actual buy form rather than by whatever modal opened first.
+
 ### The trial diagnostic trace survives reloads and holds a full-hour fight
 
 The opt-in trial trace no longer lives only in memory: events are kept as pre-stringified NDJSON lines and flushed to character-scoped IndexedDB chunks (gzipped, every 500 events or 10 seconds), so a mid-fight reload resumes the same trace and a 50-player hour (~36k ticks) fits comfortably. A trace idle for over 3 hours is discarded on startup; event and stored-byte caps evict oldest chunks as runaway protection, and the export stitches chunks plus unflushed events back into one file.

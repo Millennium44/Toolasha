@@ -207,4 +207,69 @@ describe('createAutofillManager', () => {
         expect(observerState.handlers['Test-Observer']).toBeUndefined();
         expect(manager.getQuantity()).toBeNull();
     });
+
+    test('the manager whose quantity was set last is the only one that fills', () => {
+        // Two features, both watching: one left a lazily recomputed 20 standing
+        // (they persist on purpose), the other was just clicked for 400
+        const stale = createAutofillManager('Stale-Feature');
+        const clicked = createAutofillManager('Clicked-Feature');
+        stale.initialize();
+        clicked.initialize();
+        stale.setPendingCalculation(() => 20);
+        clicked.setPendingCalculation(() => 400);
+
+        const modal = buildModal();
+        // Observer order used to decide the winner; the stale one runs last here
+        observerState.handlers['Clicked-Feature'](modal);
+        observerState.handlers['Stale-Feature'](modal);
+
+        expect(modal.querySelector('input').value).toBe('400');
+    });
+
+    test('setting a quantity again hands the fill back to that manager', () => {
+        const a = createAutofillManager('A');
+        const b = createAutofillManager('B');
+        a.initialize();
+        b.initialize();
+        a.setQuantity(20);
+        b.setQuantity(400);
+        a.setQuantity(7);
+
+        const modal = buildModal();
+        observerState.handlers['B'](modal);
+        observerState.handlers['A'](modal);
+
+        expect(modal.querySelector('input').value).toBe('7');
+    });
+
+    test('a static quantity survives an unrelated modal and fills the buy form that follows', () => {
+        const manager = createAutofillManager('Test-Observer');
+        manager.initialize();
+        manager.setQuantity(25);
+
+        const other = buildModal({ headerText: 'Confirm' });
+        observerState.handlers['Test-Observer'](other);
+        expect(manager.getQuantity()).toBe(25);
+
+        const buy = buildModal();
+        observerState.handlers['Test-Observer'](buy);
+        expect(buy.querySelector('input').value).toBe('25');
+        expect(manager.getQuantity()).toBeNull();
+    });
+
+    test('clearing or cleaning up a manager releases the fill to nobody, not to a stale one', () => {
+        const stale = createAutofillManager('Stale');
+        const current = createAutofillManager('Current');
+        stale.initialize();
+        current.initialize();
+        stale.setPendingCalculation(() => 20);
+        current.setQuantity(400);
+        current.clearQuantity();
+
+        const modal = buildModal();
+        observerState.handlers['Stale'](modal);
+        observerState.handlers['Current'](modal);
+
+        expect(modal.querySelector('input').value).toBe('');
+    });
 });

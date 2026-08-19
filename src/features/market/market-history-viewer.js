@@ -1820,7 +1820,7 @@ class MarketHistoryViewer {
             }
 
             // Save to storage
-            await writeScoped(this.storageKey, existingListings, 'marketListings', true);
+            await estimatedListingAge.importListings(existingListings);
             await estimatedListingAge.addAnchors(newAnchors);
 
             // Remove progress message
@@ -1985,7 +1985,7 @@ class MarketHistoryViewer {
             }
 
             // Save to storage
-            await writeScoped(this.storageKey, existingListings, 'marketListings', true);
+            await estimatedListingAge.importListings(existingListings);
             await estimatedListingAge.addAnchors(newAnchors);
 
             // Remove progress message
@@ -2049,15 +2049,14 @@ class MarketHistoryViewer {
             // anchor growth and were never mirrored.
             await estimatedListingAge.addAnchors(this.listings.map((l) => ({ id: l.id, timestamp: l.timestamp })));
 
-            // Clear from storage
-            await writeScoped(this.storageKey, [], 'marketListings', true);
+            // The log's owner clears it: its saves merge what is stored under
+            // what is in memory, so a bare empty write here would be refilled
+            // from its memory on the next listing event
+            await estimatedListingAge.clearPersonalListings();
 
             // Clear local data
             this.listings = [];
             this.filteredListings = [];
-
-            // Reset EstimatedListingAge so it doesn't re-save old entries on next WebSocket event
-            await estimatedListingAge.loadHistoricalData();
 
             // Show success message
             alert('Market history cleared successfully.');

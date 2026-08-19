@@ -100,24 +100,24 @@ function handleBuyModal(modal, activeQuantity, pendingCalculation) {
 
     // Check if we have a quantity to fill
     if (!quantity || quantity <= 0) {
-        return;
+        return false;
     }
 
     // Check if this is a "Buy Now" modal
     const header = modal.querySelector('div[class*="MarketplacePanel_header"]');
     if (!header) {
-        return;
+        return false;
     }
 
     const headerText = header.textContent.trim();
     if (!headerText.includes('Buy Now') && !headerText.includes('Buy Listing')) {
-        return;
+        return false;
     }
 
     // Find the quantity input - need to be specific to avoid enhancement level input
     const quantityInput = findQuantityInput(modal);
     if (!quantityInput) {
-        return;
+        return false;
     }
 
     // Set the quantity value through the prototype setter React does not own
@@ -136,7 +136,22 @@ function handleBuyModal(modal, activeQuantity, pendingCalculation) {
     // Trigger input event to notify React
     const inputEvent = new Event('input', { bubbles: true });
     quantityInput.dispatchEvent(inputEvent);
+    return true;
 }
+
+/**
+ * The manager whose quantity was set most recently — the only one that fills.
+ *
+ * Ten features each keep a manager, and every one of them watches every buy
+ * modal. Left to themselves they all write into the same quantity box and the
+ * last observer to run wins, so a feature's lazily recomputed quantity (kept
+ * alive on purpose, so the next purchase fills the remaining amount) went on
+ * overriding the quantity the feature you had just clicked in meant to fill —
+ * "needs 20 of one and 400 of the other, and both tabs say 20". The intent set
+ * last is the intent the player acted on last, so it is the one that stands;
+ * every other manager stays quiet until something sets it again.
+ */
+let latestIntentOwner = null;
 
 /**
  * Create an autofill manager instance
@@ -148,6 +163,12 @@ export function createAutofillManager(observerId) {
     let activeQuantity = null;
     let pendingCalculation = null;
     let observerUnregister = null;
+    const self = {};
+
+    /** Stand down from filling, without touching another manager's claim */
+    const releaseIntent = () => {
+        if (latestIntentOwner === self) latestIntentOwner = null;
+    };
 
     return {
         /**
@@ -157,6 +178,7 @@ export function createAutofillManager(observerId) {
         setQuantity(quantity) {
             activeQuantity = quantity;
             pendingCalculation = null;
+            latestIntentOwner = self;
         },
 
         /**
@@ -168,6 +190,7 @@ export function createAutofillManager(observerId) {
         setPendingCalculation(fn) {
             pendingCalculation = fn;
             activeQuantity = null;
+            latestIntentOwner = self;
         },
 
         /**
@@ -176,6 +199,7 @@ export function createAutofillManager(observerId) {
         clearQuantity() {
             activeQuantity = null;
             pendingCalculation = null;
+            releaseIntent();
         },
 
         /**
@@ -204,10 +228,15 @@ export function createAutofillManager(observerId) {
             if (observerUnregister) return observerUnregister;
 
             observerUnregister = domObserver.onClass(observerId, 'Modal_modalContainer', (modal) => {
-                handleBuyModal(modal, activeQuantity, pendingCalculation);
-                // Clear static quantity after use (one-shot) — pendingCalculation persists intentionally
-                if (activeQuantity !== null && !pendingCalculation) {
+                // Only the most recently set intent fills; see latestIntentOwner
+                if (latestIntentOwner !== self) return;
+                const filled = handleBuyModal(modal, activeQuantity, pendingCalculation);
+                // Clear static quantity once it has actually gone into a buy
+                // form (one-shot) — not on whatever modal happened to open
+                // first. pendingCalculation persists intentionally.
+                if (filled && activeQuantity !== null && !pendingCalculation) {
                     activeQuantity = null;
+                    releaseIntent();
                 }
             });
             return observerUnregister;
@@ -224,6 +253,7 @@ export function createAutofillManager(observerId) {
             }
             activeQuantity = null;
             pendingCalculation = null;
+            releaseIntent();
         },
     };
 }

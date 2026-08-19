@@ -13,7 +13,7 @@ import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import marketAPI from '../../api/marketplace.js';
 import { formatRelativeTime, formatDateTime } from '../../utils/formatters.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { readScoped, writeScoped, characterKey } from '../../utils/character-key.js';
 import { GAME } from '../../utils/selectors.js';
 
 /** Store both halves of the old shared key live in */
@@ -185,12 +185,29 @@ class EstimatedListingAge {
                 await this.loadAnchors();
             }
 
-            const stored = (await readScoped(LISTINGS_BASE, LISTINGS_STORE, [], { migrate: 'adopt' })) || [];
+            // A read that could not be made is not an empty log. `readScoped`
+            // folds the two together, so the scoped key is checked first with a
+            // read that tells them apart; only a trustworthy "absent" goes on to
+            // the legacy-adoption path. On failure the in-memory log stands —
+            // taking a failed read for an empty one, and then writing it back,
+            // is how a whole history used to vanish.
+            const probe = await storage.tryGet(characterKey(LISTINGS_BASE), LISTINGS_STORE);
+            if (probe === null) {
+                console.warn('[EstimatedListingAge] Listing log could not be read; keeping the in-memory copy');
+                this.rebuildEstimationPoints();
+                return;
+            }
+            const stored = probe.found
+                ? probe.value
+                : (await readScoped(LISTINGS_BASE, LISTINGS_STORE, [], { migrate: 'adopt' })) || [];
 
             // Load all historical data (no time-based filtering). Entries without
             // an itemHrid are anchors, which now live in their own global key.
-            const personal = stored.filter((entry) => entry && entry.itemHrid);
-            this.knownListings = personal.sort((a, b) => a.id - b.id);
+            const personal = (Array.isArray(stored) ? stored : []).filter((entry) => entry && entry.itemHrid);
+            // Stored is the truth, but anything recorded in memory that storage
+            // has not seen yet (another tab's write landed in between, or a save
+            // is still in flight) is kept rather than dropped on the floor
+            this.knownListings = this._mergeListings(personal, this.knownListings);
 
             // An array adopted from before the split still carries its anchor
             // half; drop it now rather than re-filtering it on every read
@@ -199,10 +216,33 @@ class EstimatedListingAge {
             }
         } catch (error) {
             console.error('[EstimatedListingAge] Failed to load historical data:', error);
-            this.knownListings = [];
+            // Keep whatever is in memory; an empty array here would be written
+            // back over the stored log by the next listing event
         }
 
         this.rebuildEstimationPoints();
+    }
+
+    /**
+     * Two listing logs folded into one, by id, the second winning on a clash.
+     *
+     * The second argument is the fresher view — the in-memory log, which has
+     * seen every status update this tab has — so its copy of a listing stands;
+     * listings only the first side knows about (another tab's, an import's,
+     * one written before a failed read) are kept rather than overwritten.
+     * @param {Array<Object>} base - Listings, typically as stored
+     * @param {Array<Object>} fresh - Listings, typically in memory
+     * @returns {Array<Object>} Merged, sorted by id
+     */
+    _mergeListings(base, fresh) {
+        const byId = new Map();
+        for (const listing of base || []) {
+            if (listing && typeof listing.id === 'number') byId.set(listing.id, listing);
+        }
+        for (const listing of fresh || []) {
+            if (listing && typeof listing.id === 'number') byId.set(listing.id, listing);
+        }
+        return [...byId.values()].sort((a, b) => a.id - b.id);
     }
 
     /**
@@ -335,14 +375,49 @@ class EstimatedListingAge {
     }
 
     /**
-     * Save listing data to IndexedDB
+     * Save the listing log to IndexedDB.
+     *
+     * Read-merge-write, serialized: what is stored is re-read and folded under
+     * the in-memory log before the write, so a second tab's listings, an import
+     * the viewer wrote straight to storage, or records this tab never loaded are
+     * carried forward rather than overwritten. When the pre-write read cannot be
+     * made the write is skipped outright — the log in memory is kept and the
+     * next save retries — because a blind overwrite from a possibly-empty copy
+     * is exactly the accident this exists to prevent.
+     *
+     * @param {Object} [options]
+     * @param {boolean} [options.overwrite=false] - Write the in-memory log as-is.
+     *   For deletions and clears, whose whole point is that the stored copy
+     *   loses entries; callers re-sync from storage immediately before.
+     * @returns {Promise<boolean>} Whether a write landed
      */
-    async saveHistoricalData() {
-        try {
-            await writeScoped(LISTINGS_BASE, this.knownListings, LISTINGS_STORE, true);
-        } catch (error) {
-            console.error('[EstimatedListingAge] Failed to save historical data:', error);
-        }
+    async saveHistoricalData({ overwrite = false } = {}) {
+        const run = async () => {
+            try {
+                if (!overwrite) {
+                    const probe = await storage.tryGet(characterKey(LISTINGS_BASE), LISTINGS_STORE);
+                    if (probe === null) {
+                        console.warn('[EstimatedListingAge] Listing log not saved: storage could not be read first');
+                        return false;
+                    }
+                    const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
+                    const personal = stored.filter((entry) => entry && entry.itemHrid);
+                    const merged = this._mergeListings(personal, this.knownListings);
+                    if (merged.length !== this.knownListings.length) {
+                        this.knownListings = merged;
+                        this.rebuildEstimationPoints();
+                    }
+                }
+                return await writeScoped(LISTINGS_BASE, this.knownListings, LISTINGS_STORE, true);
+            } catch (error) {
+                console.error('[EstimatedListingAge] Failed to save historical data:', error);
+                return false;
+            }
+        };
+        // One save at a time, in order: two interleaved read-merge-writes could
+        // each miss the other's entries
+        this._saveChain = (this._saveChain || Promise.resolve()).then(run, run);
+        return this._saveChain;
     }
 
     /**
@@ -355,7 +430,33 @@ class EstimatedListingAge {
         await this.loadHistoricalData();
         this.knownListings = this.knownListings.filter((l) => l.id !== listingId);
         this.rebuildEstimationPoints();
+        await this.saveHistoricalData({ overwrite: true });
+    }
+
+    /**
+     * Fold imported listings into this character's log and persist.
+     *
+     * Through the owner rather than a direct write, so the import lands in the
+     * in-memory log as well as in storage — an import written around it used
+     * to be overwritten by the next listing event's save.
+     * @param {Array<Object>} listings - Full listing records, as the log stores them
+     */
+    async importListings(listings) {
+        this.knownListings = this._mergeListings(this.knownListings, listings);
+        this.rebuildEstimationPoints();
         await this.saveHistoricalData();
+    }
+
+    /**
+     * Empty this character's listing log, in memory and in storage.
+     *
+     * The one write that is meant to lose entries, so it bypasses the
+     * merge-on-write that every other save goes through.
+     */
+    async clearPersonalListings() {
+        this.knownListings = [];
+        this.rebuildEstimationPoints();
+        await this.saveHistoricalData({ overwrite: true });
     }
 
     /**

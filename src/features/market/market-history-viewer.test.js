@@ -34,6 +34,16 @@ const storageMock = vi.hoisted(() => {
             const map = storeFor(store);
             return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
         }),
+        // A read that says whether it worked; tests flip `unavailable` to
+        // stand in for a dropped IndexedDB connection
+        unavailable: false,
+        tryGet: vi.fn(async (key, store = 'settings') => {
+            if (storageMock.unavailable) return null;
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null
+                ? { found: true, value: structuredClone(map.get(key)) }
+                : { found: false, value: null };
+        }),
         set: vi.fn(async (key, value, store = 'settings') => {
             storeFor(store).set(key, structuredClone(value));
             return true;
@@ -69,6 +79,8 @@ const estimatedListingAgeMock = vi.hoisted(() => ({
     loadHistoricalData: vi.fn(async () => {}),
     markActiveListings: vi.fn(async () => {}),
     deleteListing: vi.fn(async () => {}),
+    clearPersonalListings: vi.fn(async () => {}),
+    importListings: vi.fn(async () => {}),
 }));
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
@@ -136,33 +148,29 @@ describe('clearHistory', () => {
         ]);
     });
 
-    test('backfills anchors before the personal log is actually cleared from storage', async () => {
+    test('backfills anchors before the personal log is actually cleared', async () => {
         marketHistoryViewer.listings = [{ id: 1, timestamp: 1000, itemHrid: '/items/a' }];
 
         await marketHistoryViewer.clearHistory();
 
         const addOrder = estimatedListingAgeMock.addAnchors.mock.invocationCallOrder[0];
-        const setOrder = storageMock.set.mock.invocationCallOrder[0];
-        expect(addOrder).toBeLessThan(setOrder);
+        const clearOrder = estimatedListingAgeMock.clearPersonalListings.mock.invocationCallOrder[0];
+        expect(addOrder).toBeLessThan(clearOrder);
     });
 
-    test('clears the scoped personal-log key, but leaves no trace of touching the anchor key', async () => {
+    test('clears through the log owner, and never writes the log or anchor keys itself', async () => {
         marketHistoryViewer.listings = [{ id: 1, timestamp: 1000, itemHrid: '/items/a' }];
 
         await marketHistoryViewer.clearHistory();
 
-        expect(storageMock.storeFor('marketListings').get(LOG_KEY)).toEqual([]);
+        // The owner's saves merge stored under memory; a bare empty write from
+        // here would be refilled on the next listing event, so the clear has to
+        // be the owner's own
+        expect(estimatedListingAgeMock.clearPersonalListings).toHaveBeenCalled();
+        expect(storageMock.storeFor('marketListings').has(LOG_KEY)).toBe(false);
         // The anchor pool itself is estimatedListingAge's to manage — this module
         // never writes marketListingAnchors directly.
         expect(storageMock.storeFor('marketListings').has('marketListingAnchors')).toBe(false);
-    });
-
-    test('resets EstimatedListingAge in-memory state so it does not resurrect cleared entries', async () => {
-        marketHistoryViewer.listings = [{ id: 1, timestamp: 1000, itemHrid: '/items/a' }];
-
-        await marketHistoryViewer.clearHistory();
-
-        expect(estimatedListingAgeMock.loadHistoricalData).toHaveBeenCalled();
     });
 
     test('confirmation dialog tells the user anonymous anchors are kept', async () => {

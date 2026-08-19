@@ -274,6 +274,48 @@ class Storage {
     }
 
     /**
+     * Read a key and say whether the read itself worked.
+     *
+     * `get` folds "the key is absent" and "the database could not be read"
+     * into one default value, which is the right shape for a setting and the
+     * wrong shape for a history: a writer that takes a failed read for an empty
+     * record and writes it back has just erased the record. This returns
+     * `null` when the read could not be trusted — database unavailable, a
+     * transaction that failed — so a read-merge-write caller can decline to
+     * write rather than write blind.
+     * @param {string} key - Storage key
+     * @param {string} storeName - Object store name (default: 'settings')
+     * @returns {Promise<{found: boolean, value: *}|null>} The read, or null when it could not be made
+     */
+    async tryGet(key, storeName = 'settings') {
+        if (!this.db) {
+            console.warn(`[Storage] Database not available, cannot read key: ${key}`);
+            return null;
+        }
+
+        return new Promise((resolve) => {
+            try {
+                const transaction = this.db.transaction([storeName], 'readonly');
+                const store = transaction.objectStore(storeName);
+                const request = store.get(key);
+
+                request.onsuccess = () => {
+                    const value = request.result;
+                    resolve(value != null ? { found: true, value } : { found: false, value: null });
+                };
+
+                request.onerror = () => {
+                    console.error(`[Storage] Failed to read key ${key}:`, request.error);
+                    resolve(null);
+                };
+            } catch (error) {
+                console.error(`[Storage] Read transaction failed for key ${key}:`, error);
+                resolve(null);
+            }
+        });
+    }
+
+    /**
      * Set a value in storage (debounced by default)
      * @param {string} key - Storage key
      * @param {*} value - Value to store

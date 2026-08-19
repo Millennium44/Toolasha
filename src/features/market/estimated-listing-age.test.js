@@ -29,6 +29,16 @@ const storageMock = vi.hoisted(() => {
             const map = storeFor(store);
             return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
         }),
+        // A read that says whether it worked; tests flip `unavailable` to
+        // stand in for a dropped IndexedDB connection
+        unavailable: false,
+        tryGet: vi.fn(async (key, store = 'settings') => {
+            if (storageMock.unavailable) return null;
+            const map = storeFor(store);
+            return map.has(key) && map.get(key) != null
+                ? { found: true, value: structuredClone(map.get(key)) }
+                : { found: false, value: null };
+        }),
         // Cloned on write, as IndexedDB does: the module hands the same array to
         // two keys in a row and a mock that stored the reference would show them
         // sharing a log they do not actually share
@@ -109,7 +119,16 @@ beforeEach(() => {
     estimatedListingAge.anchors = [];
     estimatedListingAge.estimationPoints = [];
     estimatedListingAge.anchorsLoaded = false;
-    for (const fn of [storageMock.get, storageMock.set, storageMock.delete, storageMock.getJSON, storageMock.setJSON])
+    estimatedListingAge._saveChain = null;
+    storageMock.unavailable = false;
+    for (const fn of [
+        storageMock.get,
+        storageMock.set,
+        storageMock.delete,
+        storageMock.getJSON,
+        storageMock.setJSON,
+        storageMock.tryGet,
+    ])
         fn.mockClear();
 });
 
@@ -638,5 +657,109 @@ describe('clearing the personal log keeps the anonymous anchor mirror', () => {
 
         expect(estimatedListingAge.anchors).toEqual([{ id: 500, timestamp: 1000 }]);
         expect(estimatedListingAge.estimateTimestamp(500)).toBe(1000);
+    });
+});
+
+describe('the listing log cannot be wiped by a failed read or a stale copy', () => {
+    const row = (id, extra = {}) => ({
+        id,
+        timestamp: id * 1000,
+        createdTimestamp: new Date(id * 1000).toISOString(),
+        itemHrid: '/items/a',
+        enhancementLevel: 0,
+        price: 1,
+        orderQuantity: 1,
+        filledQuantity: 1,
+        isSell: true,
+        status: 'filled',
+        ...extra,
+    });
+    const storedLog = () => storageMock.storeFor('marketListings').get(LOG_KEY);
+
+    test('a load while storage is unavailable keeps the in-memory log rather than blanking it', async () => {
+        knownAs([row(1), row(2)]);
+        storageMock.unavailable = true;
+
+        await estimatedListingAge.loadHistoricalData();
+
+        expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([1, 2]);
+    });
+
+    test('a save while storage cannot be read is skipped, not written blind over the stored log', async () => {
+        storageMock.storeFor('marketListings').set(LOG_KEY, [row(1), row(2), row(3)]);
+        // The failure mode that used to wipe histories: memory emptied by a
+        // failed load, then a listing event saves that emptiness back
+        knownAs([]);
+        storageMock.unavailable = true;
+
+        estimatedListingAge.recordListing(row(4));
+        await estimatedListingAge._saveChain;
+
+        expect(storedLog().map((l) => l.id)).toEqual([1, 2, 3]);
+        expect(storageMock.set).not.toHaveBeenCalled();
+    });
+
+    test('a save merges what is stored under what is in memory, so rows from another writer survive', async () => {
+        // Rows this tab has never loaded — another tab's, or an import written
+        // straight to storage
+        storageMock.storeFor('marketListings').set(LOG_KEY, [row(1), row(2, { status: 'unknown' })]);
+        knownAs([row(2, { status: 'filled' })]);
+
+        estimatedListingAge.recordListing(row(3));
+        await estimatedListingAge._saveChain;
+
+        expect(storedLog().map((l) => l.id)).toEqual([1, 2, 3]);
+        // Memory's fresher status wins on the clash
+        expect(storedLog().find((l) => l.id === 2).status).toBe('filled');
+        expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([1, 2, 3]);
+    });
+
+    test('once storage is back, the next save lands everything recorded meanwhile', async () => {
+        storageMock.storeFor('marketListings').set(LOG_KEY, [row(1)]);
+        knownAs([]);
+        storageMock.unavailable = true;
+        estimatedListingAge.recordListing(row(2));
+        await estimatedListingAge._saveChain;
+        expect(storedLog().map((l) => l.id)).toEqual([1]);
+
+        storageMock.unavailable = false;
+        estimatedListingAge.recordListing(row(3));
+        await estimatedListingAge._saveChain;
+
+        expect(storedLog().map((l) => l.id)).toEqual([1, 2, 3]);
+    });
+
+    test('importListings lands in memory and storage together', async () => {
+        storageMock.storeFor('marketListings').set(LOG_KEY, [row(1)]);
+        knownAs([row(1)]);
+
+        await estimatedListingAge.importListings([row(1), row(9)]);
+        // A later listing event must not undo the import
+        estimatedListingAge.recordListing(row(10));
+        await estimatedListingAge._saveChain;
+
+        expect(storedLog().map((l) => l.id)).toEqual([1, 9, 10]);
+    });
+
+    test('clearPersonalListings is the one write allowed to lose rows, and stays cleared', async () => {
+        storageMock.storeFor('marketListings').set(LOG_KEY, [row(1), row(2)]);
+        knownAs([row(1), row(2)]);
+
+        await estimatedListingAge.clearPersonalListings();
+        expect(storedLog()).toEqual([]);
+
+        estimatedListingAge.recordListing(row(3));
+        await estimatedListingAge._saveChain;
+        expect(storedLog().map((l) => l.id)).toEqual([3]);
+    });
+
+    test('deleteListing still removes the row despite merge-on-write', async () => {
+        storageMock.storeFor('marketListings').set(LOG_KEY, [row(1), row(2)]);
+        knownAs([row(1), row(2)]);
+
+        await estimatedListingAge.deleteListing(1);
+
+        expect(storedLog().map((l) => l.id)).toEqual([2]);
+        expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([2]);
     });
 });
