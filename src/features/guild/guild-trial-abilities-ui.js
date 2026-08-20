@@ -12,6 +12,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
+import webSocketHook from '../../core/websocket.js';
 import { clickThroughReact } from '../../utils/react-click.js';
 import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildMemberSkills, { findBattleUnits, orderUnitsToAsk, REQUEST_TIMEOUT_MS } from './guild-member-skills.js';
@@ -525,6 +526,42 @@ function drawPlayers(body, state, abilityDetailMap) {
     }
 }
 
+/** The non-aura abilities worth a headcount: party-saving utility picks */
+export const UTILITY_ABILITY_HRIDS = ['/abilities/revive', '/abilities/invincible', '/abilities/insanity'];
+
+/**
+ * The utility headcount card: how many captured players run Revive,
+ * Invincible and Insanity, named in the tooltip.
+ * @param {HTMLElement} body - Panel body
+ * @param {Object} state - From `guildTrialAbilities.state()`
+ * @param {Object} abilityDetailMap - Game data
+ */
+function drawUtilityCounts(body, state, abilityDetailMap) {
+    const card = panelCard(body, 'Utility coverage', ACCENT);
+    for (const hrid of UTILITY_ABILITY_HRIDS) {
+        const users = state.participants
+            .filter((row) => row.captured && row.capture?.abilities?.some((ability) => ability.hrid === hrid))
+            .map((row) => row.name);
+        const name = abilityName(hrid, abilityDetailMap);
+        if (users.length) {
+            card.appendChild(
+                panelLine(name, `${users.length} — ${users.join(', ')}`, ROW_COLORS.good, 'Among captured players.')
+            );
+        } else {
+            card.appendChild(
+                panelLine(
+                    name,
+                    'none',
+                    state.complete ? ROW_COLORS.bad : ROW_COLORS.dim,
+                    state.complete
+                        ? 'Every participant is captured and nobody equips it.'
+                        : 'Not seen yet — some participants still need Battle Info.'
+                )
+            );
+        }
+    }
+}
+
 /**
  * A small control button in the panel's idiom.
  * @param {string} label - Button text
@@ -597,8 +634,11 @@ export const guildTrialAbilitiesPanel = createPanel({
         drawHeader(body, state);
         drawPlan(body, state);
         drawAuraCoverage(body, state, abilityDetailMap);
-        drawPlayers(body, state, abilityDetailMap);
+        drawUtilityCounts(body, state, abilityDetailMap);
+        // Controls above the player list on purpose: the list grows a row per
+        // capture, and buttons that keep moving down are buttons you miss
         drawControls(body, state);
+        drawPlayers(body, state, abilityDetailMap);
     },
 });
 
@@ -656,6 +696,12 @@ export function adoptStoredCaptures() {
 
 /** Unsubscribe from the loadout capture's events; set in `initialize` */
 let offCaptured = null;
+
+/** The trial-tick handler, kept so cleanup can unsubscribe exactly it */
+let onTrialTick = null;
+
+/** The lifecycle messages a live trial announces itself with */
+const TRIAL_TICK_MESSAGES = ['new_guild_battle', 'new_guild_skilling'];
 
 /**
  * A loadout landed somewhere in the client — fold it in and redraw.
@@ -727,11 +773,30 @@ export default {
         // meantime rather than replacing it, so the order is safe both ways.
         offCaptured?.();
         offCaptured = guildLoadoutCapture.onCaptured?.((event) => onCapturedEvent(event)) ?? null;
+
+        // A new trial's first tick blanks a session left over from the last
+        // one, so the panel never opens onto a roster the trial has outlived;
+        // a tick inside the session window is this trial's own and changes
+        // nothing (the store guards the age, not this handler)
+        if (onTrialTick) for (const type of TRIAL_TICK_MESSAGES) webSocketHook.off(type, onTrialTick);
+        onTrialTick = () => {
+            try {
+                const before = guildTrialAbilities.session?.startedAt ?? null;
+                guildTrialAbilities.noteTrialActivity(Date.now());
+                if ((guildTrialAbilities.session?.startedAt ?? null) !== before) guildTrialAbilitiesPanel.render();
+            } catch (error) {
+                console.error('[GuildTrialAbilitiesUI] Trial tick handling failed:', error);
+            }
+        };
+        for (const type of TRIAL_TICK_MESSAGES) webSocketHook.on(type, onTrialTick);
+
         await guildTrialAbilities.initialize(guildName);
     },
     cleanup: () => {
         offCaptured?.();
         offCaptured = null;
+        if (onTrialTick) for (const type of TRIAL_TICK_MESSAGES) webSocketHook.off(type, onTrialTick);
+        onTrialTick = null;
         guildTrialAbilitiesPanel.hide({ remember: false });
         guildTrialAbilities.cleanup();
     },

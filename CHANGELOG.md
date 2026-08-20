@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial Abilities: fresh panel each trial, fixed controls, utility headcount
+
+A new trial's first tick blanks the previous trial's roster automatically instead of waiting for a first capture; the Controls row moved above the player list so its buttons stop drifting down as captures land; and a Utility coverage card counts who runs Revive, Invincible and Insanity.
+
 ### The profile score and abilities panels move where you put them
 
 The score panel (Combat/Skiller Score with the export buttons) is draggable by its title row and defaults to sitting beside the profile on its left rather than falling to the right over the modal; the abilities panel's existing drag now remembers its position too. Both restore where you left them.

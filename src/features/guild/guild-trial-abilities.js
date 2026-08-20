@@ -453,6 +453,23 @@ class GuildTrialAbilities {
     }
 
     /**
+     * A live-trial tick arrived (`new_guild_battle` / `new_guild_skilling`).
+     *
+     * Blanks a session left over from a PREVIOUS trial the moment the next
+     * trial's first tick arrives — no Trials-page visit and no first capture
+     * needed — while a session younger than the session window is this trial's
+     * own and is never touched, however many per-tier re-fires arrive.
+     *
+     * @param {number} [at] - Clock
+     */
+    noteTrialActivity(at = Date.now()) {
+        if (!this.session) return;
+        if (at - this.session.startedAt <= SESSION_MAX_AGE_MS) return;
+        this._start(at);
+        this._persist();
+    }
+
+    /**
      * Throw the session away and start collecting again. The button.
      * @param {number} [at] - Clock
      * @returns {Object} The fresh session

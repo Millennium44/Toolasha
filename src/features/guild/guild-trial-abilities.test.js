@@ -162,6 +162,28 @@ describe('session reset rules', () => {
         expect(s.session.players).toEqual({});
     });
 
+    test('a trial tick blanks a session from the previous trial, never the live one', () => {
+        const s = session();
+        s.recordCapture(snap('Alice', 1, []), { at: NOW });
+
+        // Per-tier re-fires inside the same trial change nothing
+        s.noteTrialActivity(NOW + 30 * 60 * 1000);
+        expect(Object.keys(s.session.players)).toHaveLength(1);
+        expect(s.session.startedAt).toBe(NOW);
+
+        // The next trial's first tick, a day later, opens onto a blank roster
+        const nextTrial = NOW + 24 * 60 * 60 * 1000;
+        s.noteTrialActivity(nextTrial);
+        expect(s.session.players).toEqual({});
+        expect(s.session.startedAt).toBe(nextTrial);
+    });
+
+    test('a trial tick with no session at all is a no-op', () => {
+        const s = session();
+        s.noteTrialActivity(NOW);
+        expect(s.session).toBeNull();
+    });
+
     test('a wrong-guild name drops the session; the same guild keeps it', () => {
         const s = session();
         s.recordCapture(snap('Alice', 1, []), { at: NOW });
