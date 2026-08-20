@@ -142,6 +142,7 @@ const {
     toggleLaddering,
     isLaddering,
     enhancementCost,
+    upgradeBaseCost,
     resetEquipmentSavings,
     setLocked,
     watchAbility,
@@ -1813,5 +1814,65 @@ describe('the panel draws house levels', () => {
         expect(text()).not.toContain(FAILED);
         // The headline names it, and Everything counts it
         expect(text()).toContain('1 house level');
+    });
+});
+
+describe('the base a refinement recipe consumes is priced at the output level', () => {
+    const priceBase = () => 10_000_000; // a fresh +0
+
+    test('a plain upgrade recipe: any owned copy is free, missing costs a +0', () => {
+        const recipe = { upgradeItemHrid: '/items/spear', retainAllEnhancement: false };
+        game.inventory = [{ itemHrid: '/items/spear', count: 1, enhancementLevel: 0 }];
+        expect(upgradeBaseCost(recipe, 12, priceBase)).toBe(0);
+
+        game.inventory = [];
+        expect(upgradeBaseCost(recipe, 12, priceBase)).toBe(10_000_000);
+    });
+
+    test('retainAllEnhancement: a +0 in the bag is a starting point, not a free base', () => {
+        const recipe = { upgradeItemHrid: '/items/spear', retainAllEnhancement: true };
+        game.details['/items/spear'] = {
+            name: 'Spear',
+            itemLevel: 90,
+            enhancementCosts: [{ itemHrid: '/items/shard', count: 2 }],
+        };
+        game.prices['/items/shard:0'] = { ask: 1000, bid: 900 };
+        game.inventory = [{ itemHrid: '/items/spear', count: 1, enhancementLevel: 0 }];
+        window.Toolasha = {
+            Utils: {
+                enhancementCalculator: {
+                    calculateEnhancement: () => ({ attempts: 200, protectionCount: 0 }),
+                },
+                enhancementConfig: {
+                    getAutoDetectedParams: () => ({ enhancingLevel: 100, toolBonus: 10 }),
+                },
+            },
+        };
+
+        const cost = upgradeBaseCost(recipe, 5, priceBase);
+        // The bag copy is the start of the enhance run - a run, not zero, and
+        // not a fresh +0 on top
+        expect(cost).toBeGreaterThan(0);
+        expect(cost).toBeLessThan(10_000_000);
+        expect(cost).toBe(enhancementCost('/items/spear', 5, 0));
+    });
+
+    test('retainAllEnhancement: a copy already at the level is simply consumed', () => {
+        const recipe = { upgradeItemHrid: '/items/spear', retainAllEnhancement: true };
+        game.inventory = [{ itemHrid: '/items/spear', count: 1, enhancementLevel: 12 }];
+        expect(upgradeBaseCost(recipe, 12, priceBase)).toBe(0);
+    });
+
+    test('retainAllEnhancement: a listed base at the level competes with the enhance run', () => {
+        const recipe = { upgradeItemHrid: '/items/spear', retainAllEnhancement: true };
+        game.details['/items/spear'] = {
+            name: 'Spear',
+            itemLevel: 90,
+            enhancementCosts: [{ itemHrid: '/items/shard', count: 2 }],
+        };
+        game.prices['/items/shard:0'] = { ask: 1000, bid: 900 };
+        game.inventory = [];
+        game.prices['/items/spear:5'] = { ask: 1, bid: 1 }; // absurdly cheap direct listing
+        expect(upgradeBaseCost(recipe, 5, priceBase)).toBe(1);
     });
 });

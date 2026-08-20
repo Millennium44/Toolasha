@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Equipment Watch prices refinement bases at the level the output needs
+
+A refinement recipe carries the base's enhancement into the ★ output, so a ★+12 is made from a +12 base — but the craft costing treated any owned base as free and priced a missing one at +0. The base is now costed at the output's level: a copy already there is consumed, a lower copy is an enhance run from where it stands, none at all is a fresh +0 plus the run (or a direct listing at the level, whichever is cheaper), and the card names the level it is counting.
+
 ### Foldable Trial Abilities cards, and the walk sorts after reading
 
 Every card in the Trial Abilities panel folds from its heading, remembered across reloads. The reroll walk's Read press now runs the task sorter (only with auto-sort on) before planning its next press, so revealed tasks land in order.

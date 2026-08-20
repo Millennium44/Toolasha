@@ -918,6 +918,9 @@ export function recipeFor(itemHrid) {
                 count: (input.count || 0) * (1 - saved),
             })),
             upgradeItemHrid: action.upgradeItemHrid || null,
+            // Refinement recipes carry the base's enhancement into the output:
+            // a ★+12 made this way is made FROM a +12 base, not a +0
+            retainAllEnhancement: Boolean(action.retainAllEnhancement),
             outputCount: output.count || 1,
         };
     }
@@ -1264,7 +1267,7 @@ function costOf(itemHrid, enhancementLevel) {
     // upgrade you already hold the base of is a completely different figure —
     // a Furious Spear you own becomes a Refined one for the price of the shards
     const recipe = recipeFor(itemHrid);
-    const materials = craftMaterialsCost(itemHrid, recipe);
+    const materials = craftMaterialsCost(itemHrid, recipe, enhancementLevel);
 
     if (materials === null) return { cost: null, ask, crafted: true, recipe };
     // The trade-in still applies: crafting the replacement does not stop you
@@ -1293,14 +1296,19 @@ function costOf(itemHrid, enhancementLevel) {
  * @param {Object|null} recipe - From `recipeFor`
  * @returns {number|null} Coins for one, or null when it cannot be priced
  */
-function craftMaterialsCost(itemHrid, recipe) {
+function craftMaterialsCost(itemHrid, recipe, enhancementLevel = 0) {
     const planner = craftingPlanCalculator()?.computeBestCraftingPlan;
+    const plannerBase = (hrid) => {
+        if (planner) {
+            const plan = planner(hrid, 1, 'ask');
+            if (plan && Number.isFinite(plan.totalCost)) return plan.totalCost;
+        }
+        const ask = getItemPrices(hrid, 0)?.ask || 0;
+        return ask > 0 ? ask : null;
+    };
 
     if (planner && recipe?.inputItems?.length) {
         try {
-            // The base piece is not a cost when it is already in the bag, and the
-            // planner has no way to know that — so it is priced without it and
-            // the plan for the inputs alone is what is asked for
             let total = 0;
             for (const input of recipe.inputItems) {
                 const plan = planner(input.itemHrid, input.count || 0, 'ask');
@@ -1308,11 +1316,9 @@ function craftMaterialsCost(itemHrid, recipe) {
                 total += plan.totalCost;
             }
 
-            if (recipe.upgradeItemHrid && !ownsBase(recipe.upgradeItemHrid)) {
-                const base = planner(recipe.upgradeItemHrid, 1, 'ask');
-                if (!base || !Number.isFinite(base.totalCost)) return null;
-                total += base.totalCost;
-            }
+            const base = upgradeBaseCost(recipe, enhancementLevel, plannerBase);
+            if (base === null) return null;
+            total += base;
 
             return total / (recipe.outputCount > 0 ? recipe.outputCount : 1);
         } catch (error) {
@@ -1320,13 +1326,58 @@ function craftMaterialsCost(itemHrid, recipe) {
         }
     }
 
-    return craftCost({
+    const flatBase = upgradeBaseCost(recipe, enhancementLevel, plannerBase);
+    if (flatBase === null) return null;
+    const flat = craftCost({
         inputItems: recipe?.inputItems,
         priceOf: (hrid) => getItemPrices(hrid, 0)?.ask || 0,
         outputCount: recipe?.outputCount,
-        haveBase: ownsBase(recipe?.upgradeItemHrid),
-        upgradeAsk: recipe?.upgradeItemHrid ? getItemPrices(recipe.upgradeItemHrid, 0)?.ask || 0 : 0,
+        // The base is priced level-aware above, never inside craftCost
+        haveBase: true,
+        upgradeAsk: 0,
     });
+    return flat === null ? null : flat + flatBase;
+}
+
+/**
+ * What the recipe's base piece costs, at the level the output demands.
+ *
+ * A plain upgrade recipe consumes its base at any level, so one in the bag is
+ * free and a missing one costs a +0. A `retainAllEnhancement` recipe is
+ * different: the output inherits the base's enhancement, so a ★+12 target is
+ * made FROM a +12 base — a bag copy only helps as a starting point for the
+ * enhance up, and the cost is whichever is cheaper of buying one already at
+ * the level and enhancing the best copy held (a fresh +0 when none is).
+ *
+ * @param {Object|null} recipe - From `recipeFor`
+ * @param {number} enhancementLevel - The level the OUTPUT is wanted at
+ * @param {Function} priceBase - +0 base price (planner or ask), null when unpriceable
+ * @returns {number|null} Coins, 0 when the base in hand suffices, null when unpriceable
+ */
+export function upgradeBaseCost(recipe, enhancementLevel, priceBase) {
+    const baseHrid = recipe?.upgradeItemHrid;
+    if (!baseHrid) return 0;
+
+    const needsLevel = recipe.retainAllEnhancement ? enhancementLevel || 0 : 0;
+    if (needsLevel <= 0) {
+        if (ownsBase(baseHrid)) return 0;
+        return priceBase(baseHrid);
+    }
+
+    const held = highestOwnedLevel(baseHrid);
+    if (held !== null && held >= needsLevel) return 0;
+
+    const candidates = [];
+    const directAsk = getItemPrices(baseHrid, needsLevel)?.ask || 0;
+    if (directAsk > 0) candidates.push(directAsk);
+
+    const run = enhancementCost(baseHrid, needsLevel, held ?? 0);
+    if (run !== null) {
+        const fresh = held !== null ? 0 : priceBase(baseHrid);
+        if (fresh !== null) candidates.push(run + fresh);
+    }
+
+    return candidates.length ? Math.min(...candidates) : null;
 }
 
 /**
@@ -2117,18 +2168,20 @@ function recipeLines(target) {
     }
 
     // Named rather than assumed: whether the base piece is a cost changes the
-    // figure entirely, and it depends on what is in the bag
+    // figure entirely, and it depends on what is in the bag. A recipe that
+    // retains enhancement needs the base AT the target's level, so ownership
+    // and the label are judged against that level, not against "any copy".
     if (recipe.upgradeItemHrid) {
-        const owned = (dataManager.getInventory?.() || []).some(
-            (item) => item.itemHrid === recipe.upgradeItemHrid && (item.count || 0) > 0
-        );
-        wrap.appendChild(
-            priceLine(
-                `Upgrades ${nameOf(recipe.upgradeItemHrid)}`,
-                owned ? 'you have one' : 'not owned, counted in',
-                owned ? ROW_COLORS.good : ROW_COLORS.accent
-            )
-        );
+        const needsLevel = recipe.retainAllEnhancement ? target.enhancementLevel || 0 : 0;
+        const held = highestOwnedLevel(recipe.upgradeItemHrid);
+        const owned = needsLevel > 0 ? held !== null && held >= needsLevel : held !== null;
+        const baseName = `${nameOf(recipe.upgradeItemHrid)}${needsLevel > 0 ? ` +${needsLevel}` : ''}`;
+        const status = owned
+            ? 'you have one'
+            : needsLevel > 0 && held !== null
+              ? `enhance yours (+${held}) up, counted in`
+              : 'not owned, counted in';
+        wrap.appendChild(priceLine(`Upgrades ${baseName}`, status, owned ? ROW_COLORS.good : ROW_COLORS.accent));
     }
 
     wrap.appendChild(
