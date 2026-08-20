@@ -505,7 +505,9 @@ class CombatScore {
      */
     positionPanel(panel, modal) {
         const modalRect = modal.getBoundingClientRect();
-        const panelWidth = 220;
+        // Measured, not assumed: the panel's real width varies with content
+        // (min 180, max 280) and a guessed 220 left it lapping the modal edge
+        const panelWidth = panel.offsetWidth || 220;
         const gap = 8;
 
         // Beside the modal on its left, never over it. When the screen is too
