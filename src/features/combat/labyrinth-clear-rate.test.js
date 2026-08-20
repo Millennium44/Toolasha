@@ -33,6 +33,7 @@ const settings = vi.hoisted(() => ({ map: new Map() }));
 vi.mock('../../core/config.js', () => ({
     default: {
         getSetting: vi.fn(() => true),
+        setSetting: vi.fn(),
         getSettingValue: (key, fallback) => (settings.map.has(key) ? settings.map.get(key) : fallback),
         setSettingValue: (key, value) => settings.map.set(key, value),
         Z_NOTIFICATION: 10500,
@@ -68,7 +69,14 @@ vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
         { typeHrid: detail.buffs[0].typeHrid, flatBoost: detail.buffs[0].flatBoost * level, ratioBoost: 0 },
     ],
 }));
-vi.mock('../combat-sim/combat-sim-runner.js', () => ({ runLabyrinthSimulation: vi.fn() }));
+/** Records worker-level cancellation, which is what a Cancel press has to reach */
+const cancelSpy = vi.hoisted(() => ({ fn: vi.fn() }));
+vi.mock('../combat-sim/combat-sim-runner.js', () => ({
+    runLabyrinthSimulation: vi.fn(),
+    runBlindBuffProbe: vi.fn(),
+    runPlayerStatProbe: vi.fn(),
+    cancelSimulation: cancelSpy.fn,
+}));
 // The supply planner asks the market what a missing shroud would cost. Importing
 // the real client drags in the socket connection state, which is a lot of
 // machinery for a note that these suites never assert on.
@@ -2657,5 +2665,277 @@ describe('refreshRoomDataFromLive', () => {
         expect(labyrinthClearRate.roomData[0][0].isCleared).toBe(false);
         expect(labyrinthClearRate.currentFloor).toBe(4);
         spy.mockRestore();
+    });
+});
+
+/**
+ * The control strip's calculate button.
+ *
+ * There used to be two of them — a full-width "Calculate Labyrinth" inside the
+ * collapsible body and a compact one beside the toggle for a folded bar — and
+ * with the body open both sat on screen doing the same thing. Worse, the
+ * injection kept only the first copy of the strip it found, so a copy the
+ * game's grid re-render had orphaned survived with its own buttons, including
+ * one built while auto-calc was off. What is pinned here is the invariant that
+ * replaced all of it: one strip, and exactly one calculate button, however many
+ * times the injection runs.
+ */
+describe('one calculate button, however often the strip is injected', () => {
+    const strips = () => document.querySelectorAll('.mwi-labyrinth-tile-controls');
+    const calcButtons = () => document.querySelectorAll('.mwi-labyrinth-tile-controls-button');
+    const visibleCalcButtons = () => Array.from(calcButtons()).filter((b) => b.style.display !== 'none');
+
+    /** A grid the strip can attach itself above */
+    function buildGrid(side = 2) {
+        document.body.innerHTML = '';
+        const parent = document.createElement('div');
+        for (let i = 0; i < side * side; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(parent);
+        document.body.appendChild(wrapper);
+        labyrinthClearRate.roomData = Array.from({ length: side }, () => new Array(side).fill(null));
+        labyrinthClearRate.currentFloor = 3;
+    }
+
+    /** Auto-calc on or off; every other checkbox setting reads false */
+    const setAutoCalc = (on) =>
+        configMock.getSetting.mockImplementation((key) => (key === 'labyrinthAutoCalcTiles' ? on : false));
+
+    beforeEach(() => {
+        settings.map.clear();
+        labyrinthClearRate._tileControlsCollapsed = false;
+        labyrinthClearRate.tileCalcRunning = false;
+        buildGrid();
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate._tileControlsCollapsed = undefined;
+        configMock.getSetting.mockImplementation(() => true);
+    });
+
+    test('auto-calc off: one strip and one visible calculate button after repeated renders', () => {
+        setAutoCalc(false);
+
+        labyrinthClearRate.injectTileControls();
+        labyrinthClearRate.injectTileControls();
+        labyrinthClearRate.injectTileControls();
+
+        expect(strips()).toHaveLength(1);
+        expect(calcButtons()).toHaveLength(1);
+        expect(visibleCalcButtons()).toHaveLength(1);
+        expect(visibleCalcButtons()[0].textContent).toBe('Calc');
+    });
+
+    test('auto-calc on: no manual calculate button at all', () => {
+        setAutoCalc(true);
+
+        labyrinthClearRate.injectTileControls();
+        labyrinthClearRate.injectTileControls();
+
+        expect(strips()).toHaveLength(1);
+        expect(visibleCalcButtons()).toHaveLength(0);
+    });
+
+    test('turning auto-calc on hides the button that was already drawn', () => {
+        setAutoCalc(false);
+        labyrinthClearRate.injectTileControls();
+        expect(visibleCalcButtons()).toHaveLength(1);
+
+        setAutoCalc(true);
+        labyrinthClearRate.injectTileControls();
+
+        expect(visibleCalcButtons()).toHaveLength(0);
+    });
+
+    test('a strip orphaned by a grid re-render is removed rather than left beside the new one', () => {
+        setAutoCalc(false);
+        labyrinthClearRate.injectTileControls();
+        // What a React re-render does: the old bar is detached from the grid it
+        // was placed against and parked somewhere else on the page
+        const orphan = document.querySelector('.mwi-labyrinth-tile-controls');
+        document.body.appendChild(orphan);
+
+        labyrinthClearRate.injectTileControls();
+
+        expect(strips()).toHaveLength(1);
+        expect(calcButtons()).toHaveLength(1);
+    });
+
+    test('the Uncapped toggle sits beside the precision input and writes the checkbox setting', () => {
+        setAutoCalc(false);
+        labyrinthClearRate.injectTileControls();
+
+        const uncapped = document.querySelector('.mwi-labyrinth-tile-controls-uncapped');
+        expect(uncapped).not.toBeNull();
+        expect(uncapped.getAttribute('aria-pressed')).toBe('false');
+        expect(uncapped.previousElementSibling.className).toContain('precision');
+
+        uncapped.click();
+
+        // `setSettingValue` writes `.value`, which `getSetting` ignores — a
+        // checkbox has to go through `setSetting` or the toggle does nothing
+        expect(configMock.setSetting).toHaveBeenCalledWith('labyrinthTileUncapped', true);
+    });
+});
+
+/**
+ * Cancelling a calculation. The promise is that the work stops — the fight in
+ * flight AND the rooms queued behind it — while everything already computed
+ * survives, and that the UI does not stay stuck saying "Cancel".
+ */
+describe('cancelling a floor calculation', () => {
+    beforeEach(() => {
+        cancelSpy.fn.mockClear();
+        labyrinthClearRate.tileCalcRunning = false;
+        labyrinthClearRate._simCancelRequested = false;
+        labyrinthClearRate.combatCache.clear();
+    });
+
+    afterEach(() => {
+        document.body.innerHTML = '';
+        labyrinthClearRate.tileCalcRunning = false;
+        labyrinthClearRate._simCancelRequested = false;
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate.simQueue = [];
+    });
+
+    test('a cancel terminates the worker, empties the queue, and keeps every cached result', () => {
+        labyrinthClearRate.combatCache.set('imp:200:1:1pp:', { clearChance: 0.5 });
+        labyrinthClearRate.simQueue = [{ monsterHrid: '/monsters/imp', roomLevel: 200, badge: null }];
+        labyrinthClearRate.tileCalcRunning = true;
+
+        labyrinthClearRate.cancelTileCalculation();
+
+        expect(cancelSpy.fn).toHaveBeenCalled();
+        expect(labyrinthClearRate.simCancelled()).toBe(true);
+        expect(labyrinthClearRate.simQueue).toHaveLength(0);
+        // The point of cancelling rather than reloading: prior work survives
+        expect(labyrinthClearRate.combatCache.get('imp:200:1:1pp:')).toEqual({ clearChance: 0.5 });
+    });
+
+    test('nothing is cancelled when nothing is running', () => {
+        labyrinthClearRate.cancelTileCalculation();
+        expect(cancelSpy.fn).not.toHaveBeenCalled();
+    });
+
+    test('a new batch reopens the cancellation scope', () => {
+        labyrinthClearRate.tileCalcRunning = true;
+        labyrinthClearRate.cancelTileCalculation();
+        expect(labyrinthClearRate.simCancelled()).toBe(true);
+
+        labyrinthClearRate.beginSimBatch();
+
+        expect(labyrinthClearRate.simCancelled()).toBe(false);
+    });
+
+    test('the button says Cancel while running and goes back to Calc afterwards', () => {
+        const btn = document.createElement('button');
+        btn.className = 'mwi-labyrinth-tile-controls-button';
+        document.body.appendChild(btn);
+        configMock.getSetting.mockImplementation(() => false);
+        labyrinthClearRate._tileControlsCollapsed = false;
+
+        labyrinthClearRate.tileCalcRunning = true;
+        labyrinthClearRate.syncTileCalcButton(2, 7);
+        expect(btn.textContent).toBe('Cancel 2/7');
+        expect(btn.style.display).not.toBe('none');
+
+        labyrinthClearRate.tileCalcRunning = false;
+        labyrinthClearRate.syncTileCalcButton();
+        expect(btn.textContent).toBe('Calc');
+        expect(btn.disabled).toBe(false);
+
+        configMock.getSetting.mockImplementation(() => true);
+        labyrinthClearRate._tileControlsCollapsed = undefined;
+    });
+
+    test('a cancelled room stops the rooms queued behind it', async () => {
+        // Two combat rooms; the first sim comes back cancelled, so the second
+        // must never be started
+        document.body.innerHTML = '';
+        const parent = document.createElement('div');
+        for (let i = 0; i < 2; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'LabyrinthPanel_roomCell_abc';
+            parent.appendChild(cell);
+        }
+        document.body.appendChild(parent);
+        labyrinthClearRate.roomData = [
+            [
+                { monsterHrid: '/monsters/imp', recommendedLevel: 100, isCleared: false },
+                { monsterHrid: '/monsters/imp', recommendedLevel: 120, isCleared: false },
+            ],
+        ];
+        labyrinthClearRate.combatCache.set('kept', { clearChance: 0.9 });
+        const spy = vi.spyOn(labyrinthClearRate, 'computeCombatClear').mockImplementation(async () => {
+            labyrinthClearRate._simCancelRequested = true;
+            return { cancelled: true, failed: true, clearChance: 0, expectedSeconds: Infinity };
+        });
+
+        await labyrinthClearRate.runTileCalculation();
+
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(labyrinthClearRate.tileCalcRunning).toBe(false);
+        expect(labyrinthClearRate._autoCalcFingerprint).toBeNull();
+        expect(labyrinthClearRate.combatCache.get('kept')).toEqual({ clearChance: 0.9 });
+        spy.mockRestore();
+        labyrinthClearRate.roomData = null;
+    });
+});
+
+/**
+ * A precision is part of a result's identity — two rooms simulated to ±1pp and
+ * ±0.2pp are different measurements — and so is whether the run was allowed to
+ * finish. Both have to survive the trip through the cache, or the Automation
+ * tab's own knobs would be read back off results computed under the map's.
+ */
+describe('precision and the fight cap reach the cache', () => {
+    afterEach(() => {
+        settings.map.clear();
+        labyrinthClearRate.combatCache.clear();
+    });
+
+    test('a precision files a result in its own slot, and no precision means the configured one', () => {
+        settings.map.set('labyrinthSimPrecision', 1);
+
+        expect(labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200, null, 2)).toContain(':2pp:');
+        expect(labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200)).toContain(':1pp:');
+        // Unchanged for every caller that never passes one — the stored keys
+        // from before this argument existed still resolve
+        expect(labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200, null, null)).toBe(
+            labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200)
+        );
+    });
+
+    test('an uncapped run refuses a cached result that stopped on the cap', async () => {
+        const key = labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200);
+        const wide = { clearChance: 0.36, hitTarget: false, trials: 20000 };
+        labyrinthClearRate.combatCache.set(key, wide);
+
+        // Capped: the cached answer is the answer
+        expect(await labyrinthClearRate.computeCombatClear('/monsters/imp', 200)).toBe(wide);
+
+        // Uncapped: serving that same "(capped)" band back would make the
+        // toggle do nothing, so it re-runs instead (and, with no player DTO in
+        // this suite, reports that it could not)
+        const rerun = await labyrinthClearRate.computeCombatClear('/monsters/imp', 200, { uncapped: true });
+        expect(rerun).not.toBe(wide);
+        expect(rerun.failed).toBe(true);
+        // The cached result is still there for the capped caller
+        expect(labyrinthClearRate.combatCache.get(key)).toBe(wide);
+    });
+
+    test('an uncapped run does reuse a result that reached its precision target', async () => {
+        const key = labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200);
+        const tight = { clearChance: 0.36, hitTarget: true, trials: 3000 };
+        labyrinthClearRate.combatCache.set(key, tight);
+
+        expect(await labyrinthClearRate.computeCombatClear('/monsters/imp', 200, { uncapped: true })).toBe(tight);
     });
 });

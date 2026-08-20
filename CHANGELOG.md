@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Lab sim: one calculate button, uncapped precision, and a cancel
+
+- The labyrinth control strip drew two calculate buttons at once (and a copy orphaned by a grid re-render kept its own); there is now exactly one, hidden entirely while auto-calc is on, and re-injecting the strip can no longer duplicate it.
+- An **Uncapped** toggle beside Precision ± lets a manual floor calculation run to its precision target instead of stopping at the fight budget and reporting a wide "(capped)" band; a 2,000,000-fight backstop still ends a run that can never converge.
+- The Automation tab gets its own Precision ± and Uncapped controls for its per-room sims and Recommend searches, so a plan can be pinned down harder than the map without slowing every tile badge.
+- Long runs are cancellable: the calculate button becomes **Cancel** with a room count while a calculation is in flight, and the Recommend button does the same. Cancelling terminates the worker and stops the rooms queued behind it, keeping every result already computed.
+
 ### Auto-filled prices stay inside the tradable range
 
 Matching the best standing offer could fill a price the game's daily tradable band no longer admits — a stale offer from before the band moved, leaving a buy listing nobody can sell to. A filled price outside the stated range is now pulled to the nearest bound (the floor, for the reported under-range buy).

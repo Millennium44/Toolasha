@@ -78,9 +78,14 @@ export const recommendationMethods = {
                 low = mid + 1;
                 continue;
             }
+            if (this.simCancelled()) break;
             // The search only needs this level placed above or below the bar,
-            // not measured against it
-            const result = await this.computeCombatClear(monsterHrid, roomLevel, { decideAgainst: targetRate });
+            // not measured against it — at the Automation tab's own precision
+            // and fight ceiling, which is what every sim this tab runs uses
+            const result = await this.computeCombatClear(monsterHrid, roomLevel, {
+                ...this.automationSimOptions(),
+                decideAgainst: targetRate,
+            });
             if (result.cancelled) break;
             if (result.clearChance >= targetRate) {
                 bestThreshold = mid;
@@ -244,6 +249,8 @@ export const recommendationMethods = {
     async runRecommendations() {
         if (this.recommendRunning) return;
         this.recommendRunning = true;
+        this.beginSimBatch();
+        this.refreshAutomationRunningState();
         this.recommendations.clear();
         // The combat cache is deliberately kept. A search run does not make a
         // cached sim wrong — only a gear change does, and
@@ -271,25 +278,54 @@ export const recommendationMethods = {
             rooms.push({ roomHrid, isSkill });
         }
 
-        const button = document.querySelector(`.${RECOMMEND_CONTROLS_CLASS} button`);
         const totalRooms = rooms.length;
         let completed = 0;
 
-        for (const { roomHrid, isSkill } of rooms) {
-            if (isSkill) {
-                const threshold = this.findRecommendedThreshold(roomHrid, targetRate);
-                this.recommendations.set(roomHrid, { threshold });
-            } else {
-                if (button) button.textContent = `Recommending... (${completed + 1}/${totalRooms})`;
-                const threshold = await this.findRecommendedThresholdCombat(roomHrid, targetRate);
-                this.recommendations.set(roomHrid, { threshold });
+        try {
+            for (const { roomHrid, isSkill } of rooms) {
+                // Cancelling a batch has to stop the queue of rooms behind the
+                // one being simulated, not only that room's sim
+                if (this.simCancelled()) break;
+                if (isSkill) {
+                    const threshold = this.findRecommendedThreshold(roomHrid, targetRate);
+                    this.recommendations.set(roomHrid, { threshold });
+                } else {
+                    this.refreshAutomationRunningState(completed + 1, totalRooms);
+                    const threshold = await this.findRecommendedThresholdCombat(roomHrid, targetRate);
+                    if (this.simCancelled()) break;
+                    this.recommendations.set(roomHrid, { threshold });
+                }
+                completed++;
             }
-            completed++;
+        } finally {
+            this.recommendRunning = false;
+            this.refreshAutomationRunningState();
         }
-
-        if (button) button.textContent = 'Recommend';
-        this.recommendRunning = false;
+        // Whatever the run did settle stays on screen — a cancelled batch keeps
+        // the rooms it got through rather than throwing the work away
         this.injectRecommendationBadges();
+    },
+
+    /**
+     * The Automation tab's Recommend button, in whichever of its two roles it
+     * is currently in: it starts a run, and while one is going it stops it.
+     * Also covers the badge queue behind the per-room table, so a long uncapped
+     * batch there is cancellable too.
+     * @param {number} [done] - Rooms started so far, for the progress hint
+     * @param {number} [total] - Rooms in this run
+     */
+    refreshAutomationRunningState(done = 0, total = 0) {
+        const button = document.querySelector(`.${RECOMMEND_CONTROLS_CLASS} .${RECOMMEND_CONTROLS_CLASS}-run`);
+        if (!button) return;
+        const running = !!this.recommendRunning || !!this.simRunning;
+        if (running) {
+            const hint = total > 0 ? ` (${done}/${total})` : '';
+            button.textContent = `Cancel${hint}`;
+            button.title = 'Stop the run. Rooms already simulated keep their results.';
+        } else {
+            button.textContent = 'Recommend';
+            button.title = 'Search every room for the highest skip threshold that still clears at the target win rate';
+        }
     },
 
     /**
@@ -425,6 +461,11 @@ export const recommendationMethods = {
             // now write straight through to the setting, so the only thing left
             // to protect is a field being typed into right now.
             if (rateInput && document.activeElement !== rateInput) rateInput.value = defaultRate;
+            const precisionInput = document.getElementById('mwi-automation-sim-precision');
+            if (precisionInput && document.activeElement !== precisionInput) {
+                precisionInput.value = String(this.getAutomationSimPrecisionPct());
+            }
+            this.refreshAutomationRunningState();
             return;
         }
 
@@ -459,15 +500,78 @@ export const recommendationMethods = {
         // way to "70" should not store 7
         rateInput.addEventListener('change', () => this.getRecommendTargetPct());
 
+        // The Automation tab's own precision. The per-room table and the floor
+        // map ask different questions — the table is a plan and is worth
+        // waiting longer for — and they used to share one number, so tightening
+        // the plan also slowed every tile badge down. Left empty it follows the
+        // map's setting, which is exactly what it did before this existed.
+        const precisionLabel = document.createElement('span');
+        precisionLabel.style.cssText = labelStyle;
+        precisionLabel.textContent = 'Precision ±';
+
+        const precisionInput = document.createElement('input');
+        precisionInput.type = 'number';
+        precisionInput.id = 'mwi-automation-sim-precision';
+        precisionInput.min = '0.1';
+        precisionInput.max = '10';
+        precisionInput.step = '0.5';
+        precisionInput.value = String(this.getAutomationSimPrecisionPct());
+        precisionInput.style.cssText = inputStyle;
+        precisionInput.title =
+            'How tightly this tab pins a room down before its sim stops, in percentage points. ' +
+            'Separate from the floor map’s precision, and saved as you change it.';
+        precisionInput.addEventListener('change', () => {
+            const n = Math.min(10, Math.max(0.1, Number(precisionInput.value) || this.getSimPrecisionPct()));
+            precisionInput.value = String(n);
+            config.setSettingValue('labyrinthAutomationSimPrecision', n);
+        });
+
+        const uncappedButton = document.createElement('button');
+        uncappedButton.id = 'mwi-automation-uncapped';
+        uncappedButton.textContent = 'Uncapped';
+        uncappedButton.title =
+            'Off: a room’s sim stops after the standard fight budget even if its clear chance is ' +
+            'still loose, and the result is marked "(capped)". On: this tab’s sims keep going until ' +
+            'the precision above is met, bounded by a safety backstop of 100× the normal budget. ' +
+            'Slow, and cancellable at any time.';
+        const syncUncapped = () => {
+            const on = this.getAutomationUncapped();
+            uncappedButton.style.cssText =
+                'padding:2px 10px; cursor:pointer; font-size:0.75rem; border-radius:4px; border:1px solid #555; ' +
+                `background:${on ? '#2f6b4f' : '#333'}; color:${on ? '#e8fff2' : '#ccc'};`;
+            uncappedButton.setAttribute('aria-pressed', on ? 'true' : 'false');
+        };
+        uncappedButton.addEventListener('click', () => {
+            // Checkbox settings live in `isTrue`, which only setSetting writes
+            config.setSetting('labyrinthAutomationUncapped', !this.getAutomationUncapped());
+            syncUncapped();
+        });
+        syncUncapped();
+
         const button = document.createElement('button');
+        button.className = `${RECOMMEND_CONTROLS_CLASS}-run`;
         button.textContent = 'Recommend';
         button.style.cssText =
             'padding:2px 10px; cursor:pointer; font-size:0.75rem; border-radius:4px; border:1px solid #555; background:#333; color:#ccc;';
-        button.addEventListener('click', () => this.runRecommendations());
+        // The same button stops the run it started — an uncapped batch across
+        // every room can take a very long time, and there is nowhere else the
+        // stop would obviously belong
+        button.addEventListener('click', () => {
+            if (this.recommendRunning || this.simRunning) {
+                this.cancelRunningSims();
+                this.refreshAutomationRunningState();
+            } else {
+                this.runRecommendations();
+            }
+        });
 
         container.appendChild(rateLabel);
         container.appendChild(rateInput);
+        container.appendChild(precisionLabel);
+        container.appendChild(precisionInput);
+        container.appendChild(uncappedButton);
         container.appendChild(button);
         table.parentNode.insertBefore(container, table);
+        this.refreshAutomationRunningState();
     },
 };

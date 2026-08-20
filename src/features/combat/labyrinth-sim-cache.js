@@ -13,7 +13,12 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { buildGameDataPayload, buildPlayerDTO, getCommunityBuffs } from '../combat-sim/combat-sim-adapter.js';
-import { runLabyrinthSimulation, runBlindBuffProbe, runPlayerStatProbe } from '../combat-sim/combat-sim-runner.js';
+import {
+    runLabyrinthSimulation,
+    runBlindBuffProbe,
+    runPlayerStatProbe,
+    cancelSimulation,
+} from '../combat-sim/combat-sim-runner.js';
 import {
     extractMonsterAttacks,
     extractPlayerAttacks,
@@ -98,6 +103,16 @@ const MAX_SIM_TRIALS = 20000;
  * still bounds it, so "uncapped" means "not stopped by the clock", not "forever".
  */
 const UNCAPPED_SIM_HOURS = 100000;
+/**
+ * The safety backstop an uncapped run still stops at: 100× `MAX_SIM_TRIALS`,
+ * i.e. two million fights. "Uncapped" means "not stopped by the ordinary cap
+ * or by the clock" — it does not mean a pathological setup (a room whose rate
+ * sits on a coin toss at a precision of ±0.1pp) may run literally forever, and
+ * a browser tab that never gives an answer is worse than a wide one. Nothing
+ * realistic reaches it: ±0.1pp on a 50% room needs roughly a million fights,
+ * so the backstop sits beyond the tightest precision the input allows.
+ */
+export const UNCAPPED_MAX_SIM_TRIALS = MAX_SIM_TRIALS * 100;
 /** Persisted mirror of combatCache, in the 'labyrinth' store */
 const COMBAT_CACHE_STORAGE_KEY = 'labyrinthCombatSimCache';
 const COMBAT_CACHE_STORE = 'labyrinth';
@@ -146,11 +161,97 @@ export function getSimHours() {
  * @returns {{targetHalfWidth: number, minTrials: number, maxTrials: number}}
  */
 export function getSimStopRule() {
+    return resolveSimStopRule();
+}
+
+/**
+ * A precision in percentage points, clamped to what the inputs allow, or the
+ * configured one when nothing usable was passed.
+ * @param {number|null|undefined} precisionPct
+ * @returns {number}
+ */
+export function clampPrecisionPct(precisionPct) {
+    const raw = Number(precisionPct);
+    if (!(raw > 0)) return getSimPrecisionPct();
+    return Math.min(10, Math.max(0.1, raw));
+}
+
+/**
+ * The stopping rule for one measurement sim.
+ *
+ * `uncapped` lifts the ordinary `MAX_SIM_TRIALS` ceiling — the thing that
+ * makes a wide result report "(capped)" — to the `UNCAPPED_MAX_SIM_TRIALS`
+ * backstop, so the run ends when the precision target is met rather than when
+ * the fight budget runs out. It never lifts it to infinity; see the constant.
+ *
+ * @param {{uncapped?: boolean, precisionPct?: number}} [options]
+ * @returns {{targetHalfWidth: number, minTrials: number, maxTrials: number}}
+ */
+export function resolveSimStopRule({ uncapped = false, precisionPct = null } = {}) {
     return {
-        targetHalfWidth: getSimPrecisionPct() / 100,
+        targetHalfWidth: clampPrecisionPct(precisionPct) / 100,
         minTrials: MIN_SIM_TRIALS,
-        maxTrials: MAX_SIM_TRIALS,
+        maxTrials: uncapped ? UNCAPPED_MAX_SIM_TRIALS : MAX_SIM_TRIALS,
     };
+}
+
+/**
+ * The stopping rule for a decision sim — "is this room above or below the
+ * bar", which is far cheaper than measuring its rate. Uncapped raises the
+ * give-up point by the same factor, so a room sitting exactly on the bar in an
+ * uncapped automation run gets a real attempt at deciding before it gives up.
+ * @param {{uncapped?: boolean, decideAgainst: number}} options
+ * @returns {{decideAgainst: number, minTrials: number, maxTrials: number}}
+ */
+export function resolveDecisionStopRule({ uncapped = false, decideAgainst }) {
+    return {
+        decideAgainst,
+        minTrials: DECISION_MIN_TRIALS,
+        maxTrials: uncapped ? DECISION_MAX_TRIALS * 100 : DECISION_MAX_TRIALS,
+    };
+}
+
+/**
+ * The simulated-hours ceiling for a run. An uncapped run lifts it high enough
+ * that the clock never binds before the trial backstop does.
+ * @param {boolean} [uncapped]
+ * @returns {number}
+ */
+export function resolveSimHours(uncapped = false) {
+    return uncapped ? UNCAPPED_SIM_HOURS : getSimHours();
+}
+
+/**
+ * The precision the Automation tab's own sims run to, in percentage points.
+ *
+ * Its own knob, because the per-room table and the floor map are asking
+ * different questions: the map wants an answer about the room you are standing
+ * in front of now, the table wants a plan, and a plan is worth waiting longer
+ * for. Unset (0) means "whatever the map is using", which is what every
+ * automation sim did before this existed — so an untouched install keeps its
+ * cached results, which are keyed on the precision they were run at.
+ * @returns {number}
+ */
+export function getAutomationSimPrecisionPct() {
+    return clampPrecisionPct(config.getSettingValue('labyrinthAutomationSimPrecision', 0));
+}
+
+/**
+ * Whether the Automation tab's sims ignore the fight ceiling and run to their
+ * precision target (bounded by the backstop above).
+ * @returns {boolean}
+ */
+export function getAutomationUncapped() {
+    return config.getSetting('labyrinthAutomationUncapped') === true;
+}
+
+/**
+ * The options every automation-side sim is run with — the per-room table's
+ * badges and the Recommend search alike.
+ * @returns {{precisionPct: number, uncapped: boolean}}
+ */
+export function automationSimOptions() {
+    return { precisionPct: getAutomationSimPrecisionPct(), uncapped: getAutomationUncapped() };
 }
 
 // Registered rather than imported from the export module: that direction would
@@ -176,13 +277,16 @@ export const simCacheMethods = {
     /**
      * Build cache key for a combat sim result
      */
-    buildCombatCacheKey(monsterHrid, roomLevel, decideAgainst = null) {
+    buildCombatCacheKey(monsterHrid, roomLevel, decideAgainst = null, precisionPct = null) {
         const loadoutId = this.getLabyrinthLoadoutId(monsterHrid);
         const crateHrids = this.getCrateHrids();
         // Results from the two stopping rules must not share a slot. A decided
         // one is deliberately coarse — forty fights can leave ±12 points — and
         // a tile badge reading it would present that as a measurement.
-        const mode = decideAgainst === null ? `${this.getSimPrecisionPct()}pp` : `dec${decideAgainst}`;
+        // The precision is part of the slot, so the Automation tab's own
+        // precision files its results separately from the map's when the two
+        // differ, and in the same slot when they don't.
+        const mode = decideAgainst === null ? `${clampPrecisionPct(precisionPct)}pp` : `dec${decideAgainst}`;
         // The full-ability toggle changes the fight entirely, so its two states
         // must not share a cache slot — flipping it re-sims rather than serving a
         // result computed under the other rule.
@@ -409,6 +513,44 @@ export const simCacheMethods = {
     getSimPrecisionPct,
     getSimHours,
     getSimStopRule,
+    getAutomationSimPrecisionPct,
+    getAutomationUncapped,
+    automationSimOptions,
+
+    /**
+     * Stop whatever is being simulated right now, everywhere on this screen.
+     *
+     * Two levels, because a batch is not one sim: the worker running the
+     * current fight is terminated (its promise rejects with 'Cancelled', which
+     * `computeCombatClear` turns into a `cancelled` result), and the flag left
+     * behind stops the *loop* that would otherwise start the next room. An
+     * uncapped run can occupy a core for minutes, and cancelling only the
+     * fight in flight would have the batch march straight into the next one.
+     *
+     * Nothing cached is touched: results computed before the stop stay valid
+     * and stay on screen, which is the whole point of stopping rather than
+     * reloading.
+     */
+    cancelRunningSims() {
+        this._simCancelRequested = true;
+        this.simQueue = [];
+        cancelSimulation();
+    },
+
+    /**
+     * Open a fresh cancellation scope for a batch about to start.
+     */
+    beginSimBatch() {
+        this._simCancelRequested = false;
+    },
+
+    /**
+     * Whether the batch in progress has been cancelled.
+     * @returns {boolean}
+     */
+    simCancelled() {
+        return this._simCancelRequested === true;
+    },
 
     /**
      * Throw away every recorded fight, so the calibration replay starts fresh.
@@ -670,13 +812,22 @@ export const simCacheMethods = {
         const rawBar = Number(options.decideAgainst);
         const bar = Number.isFinite(rawBar) && rawBar > 0 && rawBar < 1 ? rawBar : null;
 
-        const cacheKey = this.buildCombatCacheKey(monsterHrid, roomLevel, bar);
-        if (this.combatCache.has(cacheKey)) return this.combatCache.get(cacheKey);
+        const uncapped = options.uncapped === true;
+        const precisionPct = clampPrecisionPct(options.precisionPct);
+
+        const cacheKey = this.buildCombatCacheKey(monsterHrid, roomLevel, bar, precisionPct);
+        const cached = this.combatCache.get(cacheKey);
+        // A cached result answers the question unless this run was asked to be
+        // uncapped and the cached one stopped on the fight ceiling instead of
+        // on precision — that wide "(capped)" band is exactly what the caller
+        // ticked Uncapped to get rid of, so serving it back would make the
+        // toggle do nothing.
+        if (cached && !(uncapped && cached.hitTarget === false)) return cached;
 
         // A measured result already in hand answers a decision for free, as
         // long as its interval clears the bar — no reason to simulate again
         if (bar !== null) {
-            const measured = this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel, null));
+            const measured = this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel, null, precisionPct));
             if (
                 measured?.trials > 0 &&
                 decidedAgainst(Math.round(measured.clearChance * measured.trials), measured.trials, bar)
@@ -701,17 +852,14 @@ export const simCacheMethods = {
                 monsterHrid,
                 roomLevel,
                 crates: crateHrids,
-                // An uncapped run lifts the simulated-hours ceiling so a slow
-                // room runs to its precision target rather than stopping wide
-                hours: options.uncapped ? UNCAPPED_SIM_HOURS : this.getSimHours(),
+                // An uncapped run lifts the simulated-hours ceiling and the
+                // fight ceiling alike, so a slow room runs to its precision
+                // target rather than stopping wide
+                hours: resolveSimHours(uncapped),
                 precision:
                     bar === null
-                        ? this.getSimStopRule()
-                        : {
-                              decideAgainst: bar,
-                              minTrials: DECISION_MIN_TRIALS,
-                              maxTrials: DECISION_MAX_TRIALS,
-                          },
+                        ? resolveSimStopRule({ uncapped, precisionPct })
+                        : resolveDecisionStopRule({ uncapped, decideAgainst: bar }),
                 // The character's own, the way the Lab Sim panel passes them.
                 // Neither of the two the engine models — wisdom and combat drop
                 // quantity — moves a win rate, so the hardcoded zeroes this
@@ -816,12 +964,22 @@ export const simCacheMethods = {
     async processSimQueue() {
         if (this.simRunning) return;
         this.simRunning = true;
-        while (this.simQueue.length > 0) {
-            const { monsterHrid, roomLevel, badge } = this.simQueue.shift();
-            if (!badge.isConnected) continue;
-            const result = await this.computeCombatClear(monsterHrid, roomLevel);
-            if (badge.isConnected) this.updateBadge(badge, result, roomLevel);
+        this.beginSimBatch();
+        // The Automation tab's own precision and cap, not the floor map's —
+        // this queue is what fills the per-room table's cached badges
+        const simOptions = this.automationSimOptions();
+        try {
+            while (this.simQueue.length > 0) {
+                if (this.simCancelled()) break;
+                const { monsterHrid, roomLevel, badge } = this.simQueue.shift();
+                if (!badge.isConnected) continue;
+                const result = await this.computeCombatClear(monsterHrid, roomLevel, simOptions);
+                if (result?.cancelled) break;
+                if (badge.isConnected) this.updateBadge(badge, result, roomLevel);
+            }
+        } finally {
+            this.simRunning = false;
+            this.refreshAutomationRunningState?.();
         }
-        this.simRunning = false;
     },
 };

@@ -71,7 +71,7 @@ import {
     remainingWord,
 } from './labyrinth-supplies.js';
 import { outcomeMethods } from './labyrinth-outcomes.js';
-import { simCacheMethods, DEFAULT_SIM_PRECISION_PCT } from './labyrinth-sim-cache.js';
+import { simCacheMethods, DEFAULT_SIM_PRECISION_PCT, UNCAPPED_MAX_SIM_TRIALS } from './labyrinth-sim-cache.js';
 import { recommendationMethods, RECOMMEND_CLASS, RECOMMEND_CONTROLS_CLASS } from './labyrinth-recommendation.js';
 
 /**
@@ -2407,11 +2407,25 @@ class LabyrinthClearRate {
         if (!gridParent || !gridParent.parentElement) return;
 
         const host = this.findEntriesRowHost(gridParent);
-        const existing = document.querySelector(`.${TILE_CONTROLS_CLASS}`);
-        if (existing && existing.isConnected) {
-            const placedCorrectly = host ? existing.parentElement === host : existing.nextElementSibling === gridParent;
-            if (placedCorrectly) return;
-            existing.remove();
+        // Every copy, not just the first. `querySelector` inspected only the
+        // one it happened to find: if that one was placed correctly it returned
+        // and left any other copy standing, and a stale copy the game's grid
+        // re-render had orphaned kept its own buttons — including a calculate
+        // button built while auto-calc was off, which is how two of them ended
+        // up on screen at once. Keep at most one correctly-placed bar and drop
+        // the rest, so any number of re-injections settles on a single strip.
+        const placedCorrectly = (el) =>
+            el.isConnected && (host ? el.parentElement === host : el.nextElementSibling === gridParent);
+        const copies = Array.from(document.querySelectorAll(`.${TILE_CONTROLS_CLASS}`));
+        const keep = copies.find(placedCorrectly) || null;
+        for (const copy of copies) {
+            if (copy !== keep) copy.remove();
+        }
+        if (keep) {
+            // Already there and in the right place — only the auto-calc-driven
+            // visibility can have gone stale under it
+            this.syncTileCalcButton();
+            return;
         }
 
         const container = document.createElement('div');
@@ -2433,15 +2447,6 @@ class LabyrinthClearRate {
             container.appendChild(g);
             return g;
         };
-
-        const button = document.createElement('button');
-        button.className = `${TILE_CONTROLS_CLASS}-button`;
-        button.textContent = 'Calculate Labyrinth';
-        button.style.cssText =
-            'min-width:96px; padding:0 10px; height:20px; border:0; border-radius:5px; background:#3a88ff; ' +
-            'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
-        button.addEventListener('click', () => this.runTileCalculation());
-        container.appendChild(button);
 
         const precisionLabel = document.createElement('span');
         precisionLabel.style.cssText = 'font-size:11px; opacity:0.92; white-space:nowrap;';
@@ -2471,7 +2476,34 @@ class LabyrinthClearRate {
             // the persisted mirror the next time anything was written, which
             // cost a session of sims for a knob that was already accounted for.
         });
-        group(precisionLabel, precisionInput);
+        // Beside the precision it modifies: the number says how tight an answer
+        // to hold out for, this says whether the fight budget is allowed to end
+        // the run before that answer arrives.
+        const uncappedButton = document.createElement('button');
+        uncappedButton.className = `${TILE_CONTROLS_CLASS}-uncapped`;
+        uncappedButton.textContent = 'Uncapped';
+        uncappedButton.title =
+            'Off: a room stops after the standard fight budget even if its clear chance is still ' +
+            'loose, and the tooltip marks the result "(capped)". On: a manual calculation keeps ' +
+            'simulating until the precision above is met. A safety backstop of 100× the normal ' +
+            `budget (${(UNCAPPED_MAX_SIM_TRIALS / 1000).toLocaleString()}K fights) still ends a ` +
+            'run that can never converge. Cancel stops one at any time.';
+        uncappedButton.style.cssText =
+            'flex:0 0 auto; padding:0 8px; height:20px; border:0; border-radius:5px; ' +
+            'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
+        const syncUncapped = () => {
+            const on = this.tileCalcUncapped();
+            uncappedButton.style.background = on ? 'rgba(60,180,120,0.85)' : 'rgba(120,134,160,0.85)';
+            uncappedButton.setAttribute('aria-pressed', on ? 'true' : 'false');
+        };
+        uncappedButton.addEventListener('click', () => {
+            // A checkbox setting lives in `isTrue`, which only `setSetting`
+            // writes — see the auto-calc toggle below for the same trap
+            config.setSetting('labyrinthTileUncapped', !this.tileCalcUncapped());
+            syncUncapped();
+        });
+        syncUncapped();
+        group(precisionLabel, precisionInput, uncappedButton);
 
         const pathButton = document.createElement('button');
         pathButton.className = `${TILE_CONTROLS_CLASS}-path-button`;
@@ -2616,26 +2648,32 @@ class LabyrinthClearRate {
             'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
         if (this._tileControlsCollapsed === undefined) this._tileControlsCollapsed = isMobileMode();
 
-        // A one-tap floor calc beside the toggle, so a collapsed bar on a phone
-        // can still recalculate without being expanded. Only when auto-calc is
-        // off — with it on the floor recomputes itself and the button is noise.
+        // The one calculate button. There used to be two — a full-width
+        // "Calculate Labyrinth" inside the collapsible body and this one beside
+        // the toggle for a folded bar on a phone — and with the body open both
+        // were on screen doing the same thing. One button, always reachable
+        // (it sits outside the collapsible body), which also gives cancellation
+        // somewhere unambiguous to live. Hidden entirely while auto-calc is on:
+        // the floor recomputes itself, so a manual press is noise.
         const autoCalcOn = () => !!config.getSetting('labyrinthAutoCalcTiles');
         const calcButton = document.createElement('button');
-        calcButton.className = `${TILE_CONTROLS_CLASS}-quick-calc`;
-        calcButton.title = 'Calculate this floor now';
+        calcButton.className = `${TILE_CONTROLS_CLASS}-button`;
         calcButton.style.cssText =
             'flex:0 0 auto; padding:0 8px; height:20px; border:0; border-radius:5px; background:#3a88ff; ' +
             'color:#fff; font-size:11px; font-weight:700; line-height:1; white-space:nowrap; cursor:pointer;';
-        calcButton.addEventListener('click', () => this.runTileCalculation());
+        // Mid-run the same button is the Cancel, so the press that started a
+        // long uncapped calculation is the press that stops it
+        calcButton.addEventListener('click', () => {
+            if (this.tileCalcRunning) this.cancelTileCalculation();
+            else this.runTileCalculation();
+        });
 
         const applyCollapsed = () => {
             const collapsed = this._tileControlsCollapsed;
             body.style.display = collapsed ? 'none' : 'contents';
             toggle.textContent = collapsed ? '▸ Labyrinth' : '▾ Labyrinth';
             toggle.title = collapsed ? 'Show labyrinth controls' : 'Hide labyrinth controls';
-            // Just a "C" while folded so it fits on the toggle's line on a phone;
-            // the full word once the controls are open and there is room for it.
-            calcButton.textContent = collapsed ? 'C' : 'Calc';
+            this.syncTileCalcButton();
         };
         toggle.addEventListener('click', () => {
             this._tileControlsCollapsed = !this._tileControlsCollapsed;
@@ -2653,7 +2691,7 @@ class LabyrinthClearRate {
             const on = autoCalcOn();
             autoButton.textContent = on ? 'Auto-calc: on' : 'Enable auto-calc';
             autoButton.style.background = on ? 'rgba(60,180,120,0.85)' : 'rgba(120,134,160,0.85)';
-            calcButton.style.display = on ? 'none' : '';
+            this.syncTileCalcButton();
         };
         autoButton.addEventListener('click', () => {
             const next = !autoCalcOn();
@@ -2671,7 +2709,7 @@ class LabyrinthClearRate {
         body.insertBefore(autoButton, track);
         syncAuto();
 
-        // Toggle and quick-calc share one nowrap line — a flex item of their own,
+        // Toggle and calculate share one nowrap line — a flex item of their own,
         // so a narrow phone bar keeps them together instead of stacking them.
         const header = document.createElement('span');
         header.style.cssText = 'display:inline-flex; align-items:center; gap:4px; flex:0 0 auto;';
@@ -2680,6 +2718,7 @@ class LabyrinthClearRate {
         container.appendChild(header);
         container.appendChild(body);
         applyCollapsed();
+        this.syncTileCalcButton();
 
         if (host) {
             container.style.margin = '2px 0 2px 12px';
@@ -2745,13 +2784,55 @@ class LabyrinthClearRate {
         if (bar) bar.style.width = `${Math.min(100, Math.max(0, ratio * 100)).toFixed(1)}%`;
     }
 
-    setTileButtonRunning(running) {
+    /**
+     * Whether manual floor calculations ignore the fight ceiling and run to the
+     * precision target (bounded by the backstop in labyrinth-sim-cache).
+     * @returns {boolean}
+     */
+    tileCalcUncapped() {
+        return config.getSetting('labyrinthTileUncapped') === true;
+    }
+
+    /**
+     * The single calculate button's whole state, in one place: whether it is on
+     * screen at all (auto-calc hides it), what it says, and whether pressing it
+     * starts or stops a run. Called from every path that can change any of
+     * those — a re-render, the auto-calc toggle, the collapse toggle, and the
+     * start/end of a calculation — so the three can never disagree.
+     * @param {number|null} [progress] - Rooms done so far, for the running label
+     * @param {number|null} [total] - Rooms in this run
+     */
+    syncTileCalcButton(progress = null, total = null) {
         const btn = document.querySelector(`.${TILE_CONTROLS_CLASS}-button`);
-        if (btn) {
-            btn.disabled = running;
-            btn.textContent = running ? 'Calculating...' : 'Calculate Labyrinth';
-            btn.style.opacity = running ? '0.75' : '1';
+        if (!btn) return;
+        const running = !!this.tileCalcRunning;
+        // With auto-calc on there is nothing for a manual press to add, and a
+        // cancelled auto pass would just be re-triggered by the next re-render
+        btn.style.display = config.getSetting('labyrinthAutoCalcTiles') && !running ? 'none' : '';
+        btn.disabled = false;
+        btn.style.opacity = '1';
+        if (running) {
+            const hint = total > 0 ? ` ${Math.min(progress ?? 0, total)}/${total}` : '';
+            btn.textContent = `Cancel${hint}`;
+            btn.title = 'Stop this calculation. Rooms already simulated keep their results.';
+            btn.style.background = '#c25151';
+            return;
         }
+        btn.textContent = this._tileControlsCollapsed ? 'C' : 'Calc';
+        btn.title = 'Calculate this floor now';
+        btn.style.background = '#3a88ff';
+    }
+
+    /**
+     * Stop the floor calculation in progress: the fight in flight and the rooms
+     * still queued behind it. Badges already drawn stay, and so does every
+     * cached sim — cancelling gives up the rest of the work, not the work done.
+     */
+    cancelTileCalculation() {
+        if (!this.tileCalcRunning) return;
+        this.cancelRunningSims();
+        this.setTileStatus('Cancelled');
+        this.syncTileCalcButton();
     }
 
     /**
@@ -2759,8 +2840,11 @@ class LabyrinthClearRate {
      */
     async runTileCalculation(options = {}) {
         const auto = options.auto === true;
-        // Lift the sim's time cap for this run, so slow rooms reach precision
-        const uncapped = options.uncapped === true;
+        // Lift the sim's fight and time ceilings for this run, so slow rooms
+        // reach precision. Explicit for a caller that asks (Recompute); for a
+        // manual press it is the strip's own Uncapped toggle. Never for an auto
+        // pass — those fire off DOM re-renders and must stay bounded.
+        const uncapped = options.uncapped === true || (!auto && this.tileCalcUncapped());
         if (this.tileCalcRunning) return;
         if (!this.roomData) {
             if (!auto) this.setTileStatus('No labyrinth data');
@@ -2834,10 +2918,12 @@ class LabyrinthClearRate {
         }
 
         this.tileCalcRunning = true;
-        this.setTileButtonRunning(true);
+        this.beginSimBatch();
+        this.syncTileCalcButton(0, total);
         this.setTileStatus('');
         this.setTileProgress(0);
         let completed = 0;
+        let cancelled = false;
 
         try {
             for (const target of skillingTargets) {
@@ -2856,9 +2942,20 @@ class LabyrinthClearRate {
 
             let combatRetryNeeded = 0;
             for (const target of combatTargets) {
+                // Between rooms as well as during one: cancelling an uncapped
+                // batch has to stop the queue, not just the fight in flight
+                if (this.simCancelled()) {
+                    cancelled = true;
+                    break;
+                }
                 const result = await this.computeCombatClear(target.room.monsterHrid, target.roomLevel, { uncapped });
+                if (result?.cancelled || this.simCancelled()) {
+                    cancelled = true;
+                    break;
+                }
                 completed++;
                 this.setTileProgress(completed / total);
+                this.syncTileCalcButton(completed, total);
 
                 if (!result || result.failed) {
                     // Sim inputs not ready (e.g. loadout snapshots still loading) —
@@ -2877,6 +2974,16 @@ class LabyrinthClearRate {
                     // so the next auto pass re-sims it with loaded snapshots
                     combatRetryNeeded++;
                 }
+            }
+
+            if (cancelled) {
+                // A partial pass is not a settled one: leave the fingerprint
+                // unset so the rooms that never ran are picked up next time,
+                // and leave every badge already drawn exactly where it is.
+                this._autoCalcFingerprint = null;
+                this.setTileProgress(completed / total);
+                this.setTileStatus('Cancelled');
+                return;
             }
 
             this.setTileProgress(1);
@@ -2903,7 +3010,7 @@ class LabyrinthClearRate {
             this.setTileStatus('Failed');
         } finally {
             this.tileCalcRunning = false;
-            this.setTileButtonRunning(false);
+            this.syncTileCalcButton();
         }
     }
 

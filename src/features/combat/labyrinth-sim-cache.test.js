@@ -30,9 +30,22 @@ vi.mock('../combat-sim/combat-sim-runner.js', () => ({
     runLabyrinthSimulation: async () => ({}),
     runBlindBuffProbe: async () => [],
     runPlayerStatProbe: async () => null,
+    cancelSimulation: () => {},
 }));
 
-const { getSimStopRule, getSimHours, getSimPrecisionPct, simCacheMethods } = await import('./labyrinth-sim-cache.js');
+const {
+    getSimStopRule,
+    getSimHours,
+    getSimPrecisionPct,
+    simCacheMethods,
+    resolveSimStopRule,
+    resolveDecisionStopRule,
+    resolveSimHours,
+    getAutomationSimPrecisionPct,
+    getAutomationUncapped,
+    automationSimOptions,
+    UNCAPPED_MAX_SIM_TRIALS,
+} = await import('./labyrinth-sim-cache.js');
 const { buildAccuracyExport } = await import('./labyrinth-accuracy-export.js');
 
 afterEach(() => settings.map.clear());
@@ -74,5 +87,78 @@ describe('wiring into the accuracy export', () => {
         settings.map.set('labyrinthRecommendSimHours', 7);
         const file = buildAccuracyExport({});
         expect(file.simConfig).toEqual({ stopRule: getSimStopRule(), hours: 7 });
+    });
+});
+
+/**
+ * "Uncapped" is a promise about which stopping rule applies, and the one thing
+ * it must not mean is "runs forever" — a tab that never answers is worse than a
+ * wide answer. So both halves are pinned: the ordinary ceiling is genuinely
+ * lifted, and the backstop it is lifted to is finite and far above anything the
+ * tightest precision the input allows could need.
+ */
+describe('resolving the fight cap', () => {
+    test('capped is the ordinary ceiling', () => {
+        expect(resolveSimStopRule({ uncapped: false }).maxTrials).toBe(20000);
+    });
+
+    test('uncapped lifts it to the backstop, which is finite', () => {
+        const rule = resolveSimStopRule({ uncapped: true });
+        expect(rule.maxTrials).toBe(UNCAPPED_MAX_SIM_TRIALS);
+        expect(rule.maxTrials).toBe(20000 * 100);
+        expect(Number.isFinite(rule.maxTrials)).toBe(true);
+    });
+
+    test('the precision target is untouched by the cap, and the floor on trials stays', () => {
+        settings.map.set('labyrinthSimPrecision', 2);
+        const capped = resolveSimStopRule({ uncapped: false });
+        const uncapped = resolveSimStopRule({ uncapped: true });
+        expect(uncapped.targetHalfWidth).toBe(capped.targetHalfWidth);
+        expect(uncapped.minTrials).toBe(capped.minTrials);
+    });
+
+    test('an explicit precision overrides the configured one, clamped the same way', () => {
+        settings.map.set('labyrinthSimPrecision', 2);
+        expect(resolveSimStopRule({ precisionPct: 0.5 }).targetHalfWidth).toBeCloseTo(0.005, 10);
+        // Out of range and unusable values both fall back to the sane end
+        expect(resolveSimStopRule({ precisionPct: 99 }).targetHalfWidth).toBeCloseTo(0.1, 10);
+        expect(resolveSimStopRule({ precisionPct: 0 }).targetHalfWidth).toBeCloseTo(0.02, 10);
+    });
+
+    test('a decision run gives up later when uncapped, not never', () => {
+        expect(resolveDecisionStopRule({ decideAgainst: 0.7 }).maxTrials).toBe(4000);
+        expect(resolveDecisionStopRule({ decideAgainst: 0.7, uncapped: true }).maxTrials).toBe(400000);
+        expect(resolveDecisionStopRule({ decideAgainst: 0.7, uncapped: true }).decideAgainst).toBe(0.7);
+    });
+
+    test('the clock is lifted too, so time never binds before the backstop does', () => {
+        expect(resolveSimHours(false)).toBe(3);
+        expect(resolveSimHours(true)).toBe(100000);
+    });
+});
+
+/**
+ * The Automation tab's precision is its own knob, but an untouched install must
+ * keep following the map's — cached results are keyed on the precision they were
+ * run at, so a default that differed would silently re-sim every room.
+ */
+describe('the Automation tab’s own sim settings', () => {
+    test('unset, it follows the floor map’s precision', () => {
+        settings.map.set('labyrinthSimPrecision', 2.5);
+        expect(getAutomationSimPrecisionPct()).toBe(2.5);
+    });
+
+    test('set, it wins, clamped to the input’s range', () => {
+        settings.map.set('labyrinthSimPrecision', 2.5);
+        settings.map.set('labyrinthAutomationSimPrecision', 0.5);
+        expect(getAutomationSimPrecisionPct()).toBe(0.5);
+        settings.map.set('labyrinthAutomationSimPrecision', 40);
+        expect(getAutomationSimPrecisionPct()).toBe(10);
+    });
+
+    test('the options handed to every automation sim carry both knobs', () => {
+        settings.map.set('labyrinthAutomationSimPrecision', 3);
+        expect(automationSimOptions()).toEqual({ precisionPct: 3, uncapped: false });
+        expect(getAutomationUncapped()).toBe(false);
     });
 });
