@@ -15,6 +15,8 @@ import { handleViewCardClick, handleViewCardFromSnapshot } from './character-car
 import { buildScorePanel } from './build-score-panel.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { makeDraggable } from '../../utils/floating-panel.js';
+import { saveGeometry, restoreGeometry } from '../../utils/panel-geometry.js';
 import loadoutSnapshot from '../combat/loadout-snapshot.js';
 import combatSimUI from '../combat-sim/combat-sim-ui.js';
 import { buildPlayerDTOFromProfile } from '../combat-sim/combat-sim-adapter.js';
@@ -358,7 +360,7 @@ class CombatScore {
 
         // Create panel HTML
         panel.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <div id="mwi-score-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; cursor: move; user-select: none;">
                 <div style="font-weight: bold; color: ${config.COLOR_ACCENT}; font-size: 0.9rem; flex: 1;">${escapeHtml(playerName)}</div>
                 ${breakdownLinkHTML}
                 <span id="mwi-score-close-btn" style="
@@ -477,8 +479,17 @@ class CombatScore {
         document.body.appendChild(panel);
         this.currentPanel = panel;
 
-        // Position panel next to modal
+        // Position panel next to modal, then let a remembered drag position win
         this.positionPanel(panel, modalContainer);
+        restoreGeometry(panel, 'profileCombatScore', { width: 180, height: 80 }).catch(() => {});
+
+        // Grab the title row to move it; the position is remembered
+        const dragHandle = panel.querySelector('#mwi-score-header');
+        if (dragHandle) {
+            makeDraggable(panel, dragHandle, ({ left, top }) => {
+                saveGeometry('profileCombatScore', { left, top }).catch(() => {});
+            });
+        }
 
         // Set up event listeners
         this.setupPanelEvents(panel, modalContainer, scoreData, equipmentHiddenText, profileData);
@@ -497,14 +508,12 @@ class CombatScore {
         const panelWidth = 220;
         const gap = 8;
 
-        // Try left side first
-        if (modalRect.left - gap - panelWidth >= 10) {
-            panel.style.left = modalRect.left - panelWidth - gap + 'px';
-        } else {
-            // Fall back to right side
-            panel.style.left = modalRect.right + gap + 'px';
-        }
-
+        // Beside the modal on its left, never over it. When the screen is too
+        // narrow for that the panel pins to the viewport edge — some overlap is
+        // then unavoidable, but the panel sits above the modal and can be
+        // dragged off; the old fall-back to the right side put it over the
+        // modal's content more often than beside it.
+        panel.style.left = Math.max(10, modalRect.left - panelWidth - gap) + 'px';
         panel.style.top = modalRect.top + 'px';
     }
 
@@ -918,6 +927,7 @@ class CombatScore {
 
         // Position panel below modal
         this.positionAbilitiesPanel(panel, modalContainer);
+        restoreGeometry(panel, 'profileAbilities', { width: 300, height: 100 }).catch(() => {});
 
         // Set up event listeners
         this.setupAbilitiesPanelEvents(panel);
@@ -1011,28 +1021,12 @@ class CombatScore {
             });
         }
 
-        // Drag to move — pointer events so a finger works too; mousedown never
-        // fires on a touchscreen
+        // Drag to move through the shared handle, position remembered across
+        // profiles and reloads like the other floating panels
         const header = panel.querySelector('#mwi-abilities-header');
         if (header) {
-            header.style.touchAction = 'none';
-            const dragOffset = { x: 0, y: 0 };
-            const onMove = (e) => {
-                panel.style.left = e.clientX - dragOffset.x + 'px';
-                panel.style.top = e.clientY - dragOffset.y + 'px';
-            };
-            const onUp = () => {
-                document.removeEventListener('pointermove', onMove);
-                document.removeEventListener('pointerup', onUp);
-                document.removeEventListener('pointercancel', onUp);
-            };
-            header.addEventListener('pointerdown', (e) => {
-                if (e.target.id === 'mwi-abilities-close-btn') return;
-                dragOffset.x = e.clientX - panel.offsetLeft;
-                dragOffset.y = e.clientY - panel.offsetTop;
-                document.addEventListener('pointermove', onMove);
-                document.addEventListener('pointerup', onUp);
-                document.addEventListener('pointercancel', onUp);
+            makeDraggable(panel, header, ({ left, top }) => {
+                saveGeometry('profileAbilities', { left, top }).catch(() => {});
             });
         }
     }

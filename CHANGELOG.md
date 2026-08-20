@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The profile score and abilities panels move where you put them
+
+The score panel (Combat/Skiller Score with the export buttons) is draggable by its title row and defaults to sitting beside the profile on its left rather than falling to the right over the modal; the abilities panel's existing drag now remembers its position too. Both restore where you left them.
+
 ### The Elite achievement reminder draws its icon
 
 The profile modal is SharableProfile's own container, not the generic Modal family the feature climbed for — so it stopped one level under the header and the icon never appeared. It climbs to the right container now.
