@@ -251,9 +251,14 @@ function drawPerPlayer(container, breakdown) {
         nameCell.addEventListener('dblclick', (event) => event.stopPropagation());
     });
 
+    const dot = breakdown.players.reduce((sum, player) => sum + (player.dotDamage || 0), 0);
     container.title =
         'Damage per second and hit rate, per player, from attributed hits.\n' +
         'The caster is whoever’s mana fell on the tick, since the game attributes nothing.\n' +
+        (dot > 0
+            ? `Includes ${formatLargeNumber(Math.round(dot))} of DoT/reflect — health lost with no hit ` +
+              'counter behind it, so it moves the damage and not the hit rate.\n'
+            : '') +
         'Double-click for the breakdown by ability.';
 }
 

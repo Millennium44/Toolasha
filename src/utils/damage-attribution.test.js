@@ -3,6 +3,7 @@ import {
     newAttributionState,
     noteActions,
     findCaster,
+    findActors,
     attributeTick,
     foldEvents,
     isDamagingAction,
@@ -55,11 +56,16 @@ describe('attributeTick', () => {
         expect(events[0]).toMatchObject({ playerIndex: '0', monsterIndex: '0', amount: 400, isMiss: false });
     });
 
-    test('health falling with no counter rise is a bleed, not a hit', () => {
-        // Crediting it would hand a damage-over-time effect to whatever ability
-        // happened to be mid-cast
+    test('health falling with no counter rise is a bleed, counted as its own class', () => {
+        // Real damage, and it used to vanish: the per-player tables disagreed
+        // with the party total by exactly the damage-over-time volume. Filed
+        // under `dot` rather than under whatever ability happened to be
+        // mid-cast, and carrying no swing of its own
         const state = started();
-        expect(attributeTick(tick({ 0: monster(900, 0) }, { 0: { cMP: 100 } }), state)).toEqual([]);
+        const events = attributeTick(tick({ 0: monster(900, 0) }, { 0: { cMP: 100 } }), state);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ playerIndex: '0', amount: 100, isDot: true, action: 'dot' });
     });
 
     test('a counter rise with no health lost is a miss', () => {
@@ -420,5 +426,155 @@ describe('the presence rung, and the party-of-one rung below it', () => {
 
         expect(events).toHaveLength(1);
         expect(events[0]).toMatchObject({ playerIndex: '0', amount: 100 });
+    });
+});
+
+describe('damage over time and reflect', () => {
+    const bleedState = () => {
+        const state = newAttributionState();
+        attributeTick(tick({ 0: monster(1000, 3) }, { 0: { cMP: 100 } }), state);
+        return state;
+    };
+
+    test('un-countered health loss is credited, apart from the hit counts', () => {
+        const state = bleedState();
+        const tally = foldEvents({}, attributeTick(tick({ 0: monster(880, 3) }, { 0: { cMP: 100 } }), state));
+
+        expect(tally['0'].damage).toBe(120);
+        expect(tally['0'].dotDamage).toBe(120);
+        // A bleed is not a swing: nothing here is a hit, a crit or a miss
+        expect(tally['0'].hits).toBe(0);
+        expect(tally['0'].crits).toBe(0);
+        expect(tally['0'].misses).toBe(0);
+    });
+
+    test('a hit on the same run still counts as a hit and only as a hit', () => {
+        const state = bleedState();
+        const events = [
+            ...attributeTick(tick({ 0: monster(880, 3) }, { 0: { cMP: 100 } }), state),
+            ...attributeTick(tick({ 0: monster(600, 4) }, { 0: { cMP: 90 } }), state),
+        ];
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+
+        expect(tally['0'].hits).toBe(1);
+        expect(tally['0'].damage).toBe(400);
+        expect(tally['0'].dotDamage).toBe(120);
+    });
+
+    test('health rising with no counter is not damage', () => {
+        const state = bleedState();
+        expect(attributeTick(tick({ 0: monster(1000, 3) }, { 0: { cMP: 100 } }), state)).toEqual([]);
+    });
+
+    test('the per-enemy tally carries it too, without a swing', () => {
+        const state = bleedState();
+        const events = attributeTick(tick({ 0: monster(880, 3) }, { 0: { cMP: 100 } }), state);
+        const enemies = foldEnemies({}, events, () => 'Trial Badger');
+
+        expect(enemies['Trial Badger'].damage).toBe(120);
+        expect(enemies['Trial Badger'].dotDamage).toBe(120);
+        expect(enemies['Trial Badger'].hits).toBe(0);
+    });
+});
+
+describe('a collision too big to adjudicate', () => {
+    /** n players, all present, none of them separable by counter or mana */
+    const crowd = (count) => Object.fromEntries([...Array(count)].map((_, index) => [index, { cHP: 100, cMP: 50 }]));
+
+    const seeded = (count) => {
+        const state = newAttributionState();
+        state.lastSwing = '0';
+        attributeTick({ pMap: crowd(count), mMap: { 0: monster(10_000, 1) } }, state);
+        return state;
+    };
+
+    test('a small one still falls to the last swinger', () => {
+        const state = seeded(3);
+        const { actors, shared } = findActors(crowd(3), state, { soloFallback: false });
+
+        expect(shared).toBe(false);
+        expect(actors).toEqual(['0']);
+    });
+
+    test('a big one is split equally between everybody present', () => {
+        const state = seeded(20);
+        const { actors, shared } = findActors(crowd(20), state, { soloFallback: false });
+
+        expect(shared).toBe(true);
+        expect(actors).toHaveLength(20);
+    });
+
+    test('the split sums to exactly the tick’s damage', () => {
+        const state = seeded(7);
+        const events = attributeTick({ pMap: crowd(7), mMap: { 0: monster(9_300, 2) } }, state, {
+            soloFallback: false,
+        });
+
+        expect(events).toHaveLength(7);
+        expect(events.reduce((sum, event) => sum + event.amount, 0)).toBeCloseTo(700, 9);
+
+        const tally = foldEvents({}, events, { filterNonDamaging: false });
+        const total = Object.values(tally).reduce((sum, row) => sum + row.damage, 0);
+        expect(total).toBeCloseTo(700, 9);
+        // Seven fractional swings are one swing, so a hit count still means what it says
+        const hits = Object.values(tally).reduce((sum, row) => sum + row.hits, 0);
+        expect(hits).toBeCloseTo(1, 9);
+    });
+
+    test('a shared tick answers no single caster', () => {
+        const state = seeded(20);
+        expect(findCaster(crowd(20), state, { soloFallback: false })).toBeNull();
+    });
+
+    test('a counter or a lone mana drop still names one person in a crowd', () => {
+        const state = seeded(20);
+        const casting = { ...crowd(20), 5: { cHP: 100, cMP: 10 } };
+
+        expect(findActors(casting, state, { soloFallback: false })).toEqual({ actors: ['5'], shared: false });
+    });
+});
+
+describe('a monster respawning into a slot', () => {
+    const unit = (cHP, mHP, dmgCounter) => ({ cHP, mHP, dmgCounter, critCounter: 0 });
+
+    test('a changed maximum re-baselines the slot and registers nothing', () => {
+        const state = newAttributionState();
+        attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(200, 1000, 4) } }, state);
+
+        // A different monster in the same slot: full bar, fresh counters
+        const events = attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(2000, 2000, 0) } }, state);
+
+        expect(events).toEqual([]);
+        expect(state.monstersHP['0']).toBe(2000);
+        expect(state.monstersMaxHP['0']).toBe(2000);
+    });
+
+    test('a residual-health respawn registers nothing either', () => {
+        // The dangerous shape: the slot still had health, so the diff would
+        // have been counted as real damage rather than ignored as a heal
+        const state = newAttributionState();
+        attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(900, 1000, 4) } }, state);
+        const events = attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(400, 500, 9) } }, state);
+
+        expect(events).toEqual([]);
+    });
+
+    test('the tick after the re-baseline counts normally', () => {
+        const state = newAttributionState();
+        attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(200, 1000, 4) } }, state);
+        attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(2000, 2000, 0) } }, state);
+        const events = attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(1700, 2000, 1) } }, state);
+
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ amount: 300, isDot: false });
+    });
+
+    test('the same maximum throughout is one monster and counts as one', () => {
+        const state = newAttributionState();
+        attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(1000, 1000, 0) } }, state);
+        const events = attributeTick({ pMap: { 0: { cMP: 50 } }, mMap: { 0: unit(940, 1000, 1) } }, state);
+
+        expect(events).toHaveLength(1);
+        expect(events[0].amount).toBe(60);
     });
 });

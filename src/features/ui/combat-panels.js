@@ -665,8 +665,29 @@ function dpsRow(cells, { dim = false, indent = 0 } = {}) {
  * @returns {string}
  */
 function countAndShare(count, outOf) {
-    if (!(outOf > 0)) return formatWithSeparator(count);
-    return `${formatWithSeparator(count)} (${((count / outOf) * 100).toFixed(1)}%)`;
+    // Rounded at the last moment: a tick shared between several actors carries a
+    // fractional swing, and the ledger keeps the fraction so the sum stays exact
+    const whole = Math.round(count || 0);
+    if (!(outOf > 0)) return formatWithSeparator(whole);
+    return `${formatWithSeparator(whole)} (${((count / outOf) * 100).toFixed(1)}%)`;
+}
+
+/**
+ * The damage-over-time share of a row, for a tooltip.
+ *
+ * Bleeds and reflects move a monster's health without moving its hit counter,
+ * so they carry no swing, no crit and no ability — they are inside the damage
+ * figure and invisible in every column beside it. Saying so is the difference
+ * between a row that looks miscounted and one that explains itself.
+ *
+ * @param {Object} row - Anything carrying `damage` and `dotDamage`
+ * @returns {string} A sentence with a trailing newline, or nothing
+ */
+function dotNote(row) {
+    const dot = Number(row?.dotDamage) || 0;
+    if (!(dot > 0)) return '';
+    const share = row.damage > 0 ? ` (${((dot / row.damage) * 100).toFixed(1)}% of it)` : '';
+    return `Damage incl. ${formatKMB(dot)} DoT/reflect${share} — no swing, crit or ability behind it.\n`;
 }
 
 /**
@@ -1025,13 +1046,13 @@ export const dpsPanel = new CombatPanel({
                 // of a party total is on the rows underneath, where it says
                 // something; on the only player in a solo run it says 100%.
                 { text: formatKMB(player.damage), color: ROW_COLORS.good },
-                { text: formatWithSeparator(swings) },
+                { text: formatWithSeparator(Math.round(swings)) },
                 { text: countAndShare(player.hits, swings), color: ROW_COLORS.good },
                 { text: countAndShare(player.crits, player.hits), color: ROW_COLORS.gold },
                 { text: countAndShare(player.misses, swings), color: ROW_COLORS.bad },
             ]);
             row.style.cursor = 'pointer';
-            row.title = 'Click for the per-ability breakdown.';
+            row.title = dotNote(player) + 'Click for the per-ability breakdown.';
             row.addEventListener('click', () => {
                 if (open) expandedRows.delete(player.index);
                 else expandedRows.add(player.index);

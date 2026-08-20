@@ -576,6 +576,31 @@ class GuildTrialScoreboard {
     }
 
     /**
+     * How much of the split is damage no hit counter confirmed.
+     *
+     * Bleeds and reflects move the boss's health without moving its hit
+     * counter. They used to be discarded, which is why this table used to add
+     * up to less than the boss bar; they are inside the damage figures now and
+     * carry no swing, no crit and no ability, so a row's hit count can look
+     * small beside its damage without either being wrong. Silent when there is
+     * none of it.
+     *
+     * @param {Object} breakdown - From `guildTrialDamage.breakdown()`
+     * @returns {string} A sentence, or an empty string
+     */
+    _dotNote(breakdown) {
+        const dot = Number(breakdown?.totalDotDamage) || 0;
+        const total = Number(breakdown?.totalDamage) || 0;
+        if (!(dot > 0)) return '';
+
+        const share = total > 0 ? ` (${((dot / total) * 100).toFixed(0)}% of the total)` : '';
+        return (
+            ` Includes ${formatKMB(dot)} of DoT/reflect${share} — health lost with no hit counter behind it,` +
+            ` so it moves the damage and not the hit or crit rates.`
+        );
+    }
+
+    /**
      * The per-player split as the builds predict it.
      *
      * Rebuilt on every draw rather than cached: a build captured mid-trial has to
@@ -685,6 +710,7 @@ class GuildTrialScoreboard {
                   this._ownRowNote(breakdown) +
                   this._namingNote(breakdown) +
                   this._coverageNote(breakdown) +
+                  this._dotNote(breakdown) +
                   '</div>'
                 : `<div style="color:${DIM}; font-size:10px; line-height:1.5; margin-bottom:6px;">` +
                   'Attributed off this client’s own battle feed.</div>';

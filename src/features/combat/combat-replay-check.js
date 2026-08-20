@@ -616,6 +616,7 @@ export function replayFights(ticks) {
                 if (monster?.name) monsters[index] = monster.name;
             }
             attribution.monstersHP = {};
+            attribution.monstersMaxHP = {};
             attribution.dmgCounter = {};
             attribution.critCounter = {};
             taken.monsters = {};

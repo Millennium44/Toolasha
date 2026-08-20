@@ -10,10 +10,12 @@
  * and the attacker is named by the counters first — the player whose
  * `atkCounter` rose — then by presence (a lone player in the tick owns its
  * action: their reflect, their DoT), then the unique mana-spender, then the
- * last player to swing. It refuses bleed ticks (health falling with no
- * counter) and refuses to guess a multi-player tick nothing can split. The
- * presence rung was adopted *from* the method under comparison, after the
- * referee below proved it right on every counter-decidable tick.
+ * last player to swing. It credits bleed ticks (health falling with no counter)
+ * to the same actor its rungs name, as a labelled class of their own, and
+ * splits a multi-player tick nothing can separate rather than awarding it. Both
+ * of those and the presence rung above were adopted *from* the methods under
+ * comparison, after the referee below proved them right on every
+ * counter-decidable tick.
  *
  * **Presence** (KikiMeter v3, reimplemented faithfully here): the server is
  * claimed to group each `battle_updated` by actor, so *being in `pMap` is the
@@ -34,7 +36,9 @@
  *   health falling, with no swing anywhere near — is the aggro-tank case, and
  *   crediting them is suspect.
  * - Health falling with no monster `dmgCounter` rise is a bleed; no counter can
- *   arbitrate it, so it is tallied apart rather than scored for either side.
+ *   arbitrate it, so it is tallied apart rather than scored for either side —
+ *   both engines now credit it, so the class measures its volume rather than a
+ *   disagreement.
  *
  * The same signals also test the presence method's foundational claim directly:
  * over every tick where a hit landed on a monster, how often was a player who

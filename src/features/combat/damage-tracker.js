@@ -225,7 +225,7 @@ export function battleBreakdown() {
  * What each player has done this run.
  *
  * @returns {{seconds: number, players: Array<Object>}} Players biggest first,
- *   each with `damage`, `dps`, `hits`, `crits`, `misses`, `accuracy`, `critRate`
+ *   each with `damage`, `dotDamage`, `dps`, `hits`, `crits`, `misses`, `accuracy`, `critRate`
  *   and an `abilities` list. `dps` is null until there is enough of a run to
  *   divide by.
  */
@@ -238,9 +238,16 @@ export function damageBreakdown() {
             index,
             name: names[index] || `Player ${Number(index) + 1}`,
             damage: entry.damage,
-            hits: entry.hits,
-            crits: entry.crits,
-            misses: entry.misses,
+            // The part of `damage` no swing counter confirmed — a bleed
+            // ticking, thorns firing. Inside the total, named separately so a
+            // breakdown can say "incl. X DoT/reflect"
+            dotDamage: entry.dotDamage || 0,
+            // Rounded here and nowhere earlier: a tick shared between the
+            // players present carries a fractional swing, and the ledger keeps
+            // the fraction so the sum stays exact
+            hits: Math.round(entry.hits),
+            crits: Math.round(entry.crits),
+            misses: Math.round(entry.misses),
             // Null rather than zero: no swings is not a 0% hit rate, it is
             // nothing to compute one from
             accuracy: swings > 0 ? entry.hits / swings : null,
@@ -267,9 +274,10 @@ export function damageBreakdown() {
         return {
             name,
             damage: entry.damage,
-            hits: entry.hits,
-            crits: entry.crits,
-            misses: entry.misses,
+            dotDamage: entry.dotDamage || 0,
+            hits: Math.round(entry.hits),
+            crits: Math.round(entry.crits),
+            misses: Math.round(entry.misses),
             kills: entry.kills,
             // What a kill is worth: the health bar it took to empty. Null when
             // the monster has never been seen alive this session, because a
@@ -485,6 +493,7 @@ export default {
                 if (data?.battleId !== battleId) {
                     battleId = data?.battleId;
                     state.monstersHP = {};
+                    state.monstersMaxHP = {};
                     state.dmgCounter = {};
                     state.critCounter = {};
 

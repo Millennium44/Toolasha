@@ -64,9 +64,49 @@
  * last mana drop, because the payload cannot separate them — and a tick that
  * names nobody at all credits nobody rather than the wrong body.
  *
+ * ## Health that fell without a counter is still damage
+ *
+ * A hit is `dmgCounter` rising, and everything else used to be discarded. A
+ * bleed tick and a thorns reflect move a monster's health without moving its
+ * hit counter, so every point of it fell out of the per-player tables while
+ * still showing up in the party total measured off the boss bar — the two
+ * disagreed by exactly the damage-over-time volume. Those ticks are now their
+ * own event class (`isDot`), attributed by the same rungs as a hit and folded
+ * into a `dotDamage` subtotal that rides *inside* `damage`, so every total that
+ * already existed is now right and the breakdown can still name the share.
+ * Hit, miss and crit counts do not move for them: a bleed is not a swing.
+ *
+ * ## A collision too big to adjudicate is split, not awarded
+ *
+ * When several players act on one tick and nothing above can separate them, the
+ * last rung used to hand the whole tick to whoever swung most recently. In a
+ * five-person party that is a rounding error; in a thirty-person guild trial it
+ * is a systematic bias towards one slot, and the slot is chosen by iteration
+ * order rather than by anything that happened. Above
+ * {@link COLLISION_SPLIT_THRESHOLD} players present, the tick's damage is split
+ * equally between them instead — imperfect, but bounded: nobody who acted reads
+ * zero, and nobody collects a crowd's work.
+ *
+ * Equal rather than weighted by damage already confirmed. KikiMeter tried the
+ * weighted version on real trial captures and abandoned it: players who never
+ * won a solo-confirmed tick stayed at zero while the early winners took the
+ * whole ambiguous stream — rich-get-richer, 56% mean error against the game's
+ * own end-of-trial figures.
+ *
+ * ## A slot's maximum health changing is a new monster in it
+ *
+ * `new_guild_battle` arrives once to three times in a whole hour, so a trial's
+ * baselines have no periodic safety net the way a personal fight's do (a
+ * `new_battle` every wave). A monster respawning into the same slot would read
+ * as its predecessor healing, or worse as phantom damage. Any change to a
+ * slot's `mHP` is therefore a new instance: re-baseline the slot and count
+ * nothing across the transition.
+ *
  * The model is DPs' and the Floating Combat Text tool's, from MWI Combat Suite
  * by Frotty (MIT) — see `third-party/mwi-combat-suite/` and
- * `docs/THIRD-PARTY-LICENSES.md`. The code is Toolasha's own.
+ * `docs/THIRD-PARTY-LICENSES.md`. The un-countered-damage event class, the
+ * bounded equal split and the max-health respawn guard are KikiMeter v3.32.1's
+ * by ZhuLiMoon (MIT) — see `third-party/kikimeter/`. The code is Toolasha's own.
  */
 
 /**
@@ -80,6 +120,8 @@ export function newAttributionState() {
         party: {},
         lastSwing: null,
         monstersHP: {},
+        // Each slot's stated maximum, so a respawn into it is recognised
+        monstersMaxHP: {},
         dmgCounter: {},
         critCounter: {},
         actions: {},
@@ -125,19 +167,40 @@ export function noteActions(state, players) {
 }
 
 /**
- * Which player acted this tick.
+ * How many players may be present in one tick before an unresolved collision is
+ * split rather than awarded.
+ *
+ * Three is where a party stops being adjudicable by inspection. Below it the
+ * existing chain — mana, then the last swinger — is a reasonable guess about a
+ * handful of people; above it, in a guild trial's twenty-plus, "whoever swung
+ * last" is an iteration-order artifact dressed as an attribution. KikiMeter's
+ * field figures on real trial captures: ~13% of messages are collisions, up to
+ * 23 actors at once.
+ */
+export const COLLISION_SPLIT_THRESHOLD = 3;
+
+/**
+ * Who acted this tick, and whether the tick had to be shared between them.
+ *
+ * The rungs, strongest first: a lone attack counter rising, a lone player in
+ * the tick, a lone mana drop, a party of one. When none of them fires and more
+ * than {@link COLLISION_SPLIT_THRESHOLD} players are present, the tick is
+ * *shared* — every present player gets an equal fraction of it — and below that
+ * it falls to the last swinger as it always did.
  *
  * @param {Object} pMap - This tick's players
  * @param {Object} state - From `newAttributionState`, mutated
- * @param {Object} [options] - `{soloFallback}`; see below
+ * @param {Object} [options] - `{soloFallback, collisionThreshold}`
  * @param {boolean} [options.soloFallback] - Whether "the party has one member, so it was them"
  *   may be used on a tick that names nobody at all. True for this client's own fights, where
  *   the party is genuinely known from `new_battle`; false for a spectated guild trial, where
  *   there is no party statement and the rung would fire off whichever slot happened to appear
  *   first. The presence rung above it is unaffected — it reads this tick's own payload
- * @returns {string|null} The player index, or null when nobody can be identified
+ * @param {number} [options.collisionThreshold] - Overrides {@link COLLISION_SPLIT_THRESHOLD}
+ * @returns {{actors: string[], shared: boolean}} The players the tick belongs to, and whether
+ *   it is being divided between them rather than owned by one
  */
-export function findCaster(pMap, state, { soloFallback = true } = {}) {
+export function findActors(pMap, state, { soloFallback = true, collisionThreshold = COLLISION_SPLIT_THRESHOLD } = {}) {
     const indices = Object.keys(pMap || {});
     const swung = [];
     const spent = [];
@@ -160,13 +223,15 @@ export function findCaster(pMap, state, { soloFallback = true } = {}) {
         }
     }
 
+    const one = (index) => ({ actors: [index], shared: false });
+
     // `atkCounter` is what it sounds like, and it almost always names one person:
     // in a five-character party, two of them swung on the same tick three times
     // in fourteen hundred, one of which dealt damage. Rare enough to identify
     // by, not so rare that the tie can be pretended away.
     if (swung.length === 1) {
         state.lastSwing = swung[0];
-        return swung[0];
+        return one(swung[0]);
     }
 
     // The delta names the actor. A tick's `pMap` carries the player whose
@@ -175,44 +240,79 @@ export function findCaster(pMap, state, { soloFallback = true } = {}) {
     // the counters on a five-player recording: this rung was right on every
     // tick the counters could decide, and the last-swinger fallback it
     // replaces was provably wrong on 5.7% of the party's damage.
-    if (indices.length === 1) return indices[0];
+    if (indices.length === 1) return one(indices[0]);
 
     // Several people at once. A unique mana drop separates the caster; two
     // drops on one tick separate nothing, and "whoever iterated last" is an
     // artifact of key order, not an attribution.
-    if (spent.length === 1) return spent[0];
+    if (spent.length === 1) return one(spent[0]);
 
     // A tick that names nobody at all, in a fight whose party is one person.
     if (soloFallback && Object.keys(state.party).length === 1) {
-        return Object.keys(state.party)[0];
+        return one(Object.keys(state.party)[0]);
     }
 
-    // The last character to swing — the final fallback for a multi-player
-    // tick nothing above could split.
-    return state.lastSwing;
+    // A crowd nothing could separate. Splitting it equally is wrong about every
+    // individual and right about the shape: the alternative awards the whole
+    // thing to one slot for no reason a player could point at.
+    if (indices.length > collisionThreshold) return { actors: [...indices], shared: true };
+
+    // The last character to swing — still the fallback for the small collision,
+    // where a handful of people is a guess rather than a bias.
+    return state.lastSwing ? one(state.lastSwing) : { actors: [], shared: false };
 }
+
+/**
+ * Which player acted this tick.
+ *
+ * The single-owner view of {@link findActors}, kept for callers that want one
+ * name or nothing: a shared tick answers null, because no one player owns it.
+ *
+ * @param {Object} pMap - This tick's players
+ * @param {Object} state - From `newAttributionState`, mutated
+ * @param {Object} [options] - Passed to {@link findActors}
+ * @returns {string|null} The player index, or null when nobody can be identified
+ */
+export function findCaster(pMap, state, options) {
+    const { actors, shared } = findActors(pMap, state, options);
+    return shared ? null : (actors[0] ?? null);
+}
+
+/**
+ * The label an un-countered health loss is filed under.
+ *
+ * Not the ability the player was preparing: a bleed landing now was applied
+ * some seconds ago, and thorns are not cast at all. Filing it under whatever
+ * happened to be mid-cast would credit a rotation with damage it did not do.
+ */
+export const DOT_ACTION = 'dot';
 
 /**
  * The hits in one tick.
  *
  * @param {Object} tick - A `battle_updated` payload
  * @param {Object} state - From `newAttributionState`, mutated
- * @param {Object} [options] - Passed to {@link findCaster}; `{soloFallback}`
+ * @param {Object} [options] - Passed to {@link findActors}; `{soloFallback, collisionThreshold}`
  * @returns {Array<Object>} Hits as
- *   `{playerIndex, monsterIndex, amount, isCrit, isMiss, isHeal, action}`, and
+ *   `{playerIndex, monsterIndex, amount, isCrit, isMiss, isHeal, isDot, weight, action}`, and
  *   deaths as `{monsterIndex, isKill}` — the two are separate events because a
- *   bleed can land the killing blow on a tick where no counter moved
+ *   bleed can land the killing blow on a tick where no counter moved. `weight`
+ *   is 1 for a tick one player owns and 1/n for one shared between n of them,
+ *   so a swing count still sums to the number of swings
  */
 export function attributeTick(tick, state, options) {
     const { mMap, pMap } = tick || {};
-    const caster = findCaster(pMap, state, options);
+    const { actors } = findActors(pMap, state, options);
     const events = [];
+    const weight = actors.length ? 1 / actors.length : 0;
 
     for (const [index, monster] of Object.entries(mMap || {})) {
         const health = Number(monster?.currentHitpoints ?? monster?.cHP);
         if (!Number.isFinite(health)) continue;
 
+        const maxHealth = Number(monster?.maxHitpoints ?? monster?.mHP);
         const beforeHealth = state.monstersHP[index];
+        const beforeMax = state.monstersMaxHP[index];
         const beforeDamage = state.dmgCounter[index];
         const beforeCrits = state.critCounter[index];
 
@@ -222,9 +322,17 @@ export function attributeTick(tick, state, options) {
         state.monstersHP[index] = health;
         state.dmgCounter[index] = damageCount;
         state.critCounter[index] = critCount;
+        if (Number.isFinite(maxHealth)) state.monstersMaxHP[index] = maxHealth;
 
         // First sighting of a monster is not a hit for its entire health bar
         if (beforeHealth === undefined) continue;
+
+        // A different maximum in the same slot is a different monster in it.
+        // The trial stream only restates its roster once or twice an hour, so
+        // a respawn between those has nothing else to announce it — and the
+        // slot's previous corpse read against the newcomer's full bar is
+        // either a phantom heal or, with residual health, phantom damage.
+        if (Number.isFinite(maxHealth) && beforeMax !== undefined && maxHealth !== beforeMax) continue;
 
         // A death is its own event, separate from the hit that caused it.
         // Merging the two would lose every kill landed by a bleed — the health
@@ -235,24 +343,47 @@ export function attributeTick(tick, state, options) {
             events.push({ monsterIndex: index, isKill: true });
         }
 
-        // A hit is the counter rising. Health falling on its own is a bleed or
-        // a tick of something, and crediting it to whoever last cast would
-        // hand a damage-over-time effect to the wrong ability.
-        const hit = beforeDamage !== undefined && damageCount > beforeDamage;
-        if (!hit) continue;
-        if (caster === null) continue;
+        if (!actors.length) continue;
 
         const change = beforeHealth - health;
-        events.push({
-            playerIndex: caster,
-            monsterIndex: index,
-            amount: Math.abs(change),
-            isCrit: beforeCrits !== undefined && critCount > beforeCrits,
-            // The one case a health diff cannot express on its own
-            isMiss: change === 0,
-            isHeal: change < 0,
-            action: state.actions[caster] || 'idle',
-        });
+        // A hit is the counter rising. Health falling without it is a bleed
+        // ticking or a reflect firing — real damage, and the actor rungs name
+        // its owner exactly as they name a swing's, so it is emitted as its own
+        // class rather than discarded. It is emphatically not a swing, which is
+        // why it carries no crit, miss or ability of its own.
+        const hit = beforeDamage !== undefined && damageCount > beforeDamage;
+        if (!hit) {
+            if (!(change > 0)) continue;
+            for (const actor of actors) {
+                events.push({
+                    playerIndex: actor,
+                    monsterIndex: index,
+                    amount: change * weight,
+                    isCrit: false,
+                    isMiss: false,
+                    isHeal: false,
+                    isDot: true,
+                    weight,
+                    action: DOT_ACTION,
+                });
+            }
+            continue;
+        }
+
+        for (const actor of actors) {
+            events.push({
+                playerIndex: actor,
+                monsterIndex: index,
+                amount: Math.abs(change) * weight,
+                isCrit: beforeCrits !== undefined && critCount > beforeCrits,
+                // The one case a health diff cannot express on its own
+                isMiss: change === 0,
+                isHeal: change < 0,
+                isDot: false,
+                weight,
+                action: state.actions[actor] || 'idle',
+            });
+        }
     }
     return events;
 }
@@ -274,11 +405,26 @@ export function isDamagingAction(action, nonDamaging = NON_DAMAGING) {
 /**
  * Fold events into a per-player tally.
  *
+ * ## Fractions are expected
+ *
+ * A tick shared between the players present carries `weight` below 1, and both
+ * the damage and the swing counts take that weight — so a party's hits still
+ * sum to the number of swings the payload showed, and nothing is rounded here
+ * where the rounding would compound. Display code rounds; the ledger does not.
+ *
+ * ## `damage` includes `dotDamage`
+ *
+ * Deliberately, and it is the reason nothing downstream had to be taught about
+ * damage-over-time to stop under-reporting it: `damage` is the whole of what a
+ * player did, and `dotDamage` is the part of that which no swing counter ever
+ * confirmed. A breakdown can name the share ("incl. X DoT/reflect"); a total
+ * cannot get it wrong by forgetting to add a second field.
+ *
  * @param {Object} tally - `{}` or a previous return, mutated
  * @param {Array<Object>} events - From `attributeTick`
  * @param {Object} [options] - `{filterNonDamaging, nonDamaging, nameOf}`. `nameOf`
  *   turns a monster index into a name; without it the per-enemy split is skipped.
- * @returns {Object} Player index → `{damage, hits, crits, misses, byAbility, byEnemy}`
+ * @returns {Object} Player index → `{damage, dotDamage, hits, crits, misses, byAbility, byEnemy}`
  */
 export function foldEvents(tally, events, { filterNonDamaging = true, nonDamaging, nameOf } = {}) {
     for (const event of events || []) {
@@ -288,22 +434,29 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
 
         const player = (tally[event.playerIndex] = tally[event.playerIndex] || {
             damage: 0,
+            dotDamage: 0,
             hits: 0,
             crits: 0,
             misses: 0,
             byAbility: {},
             byEnemy: {},
         });
+        // A row banked before this field existed, or merged from one
+        if (!Number.isFinite(player.dotDamage)) player.dotDamage = 0;
+        const weight = Number.isFinite(event.weight) && event.weight > 0 ? event.weight : 1;
 
         // Counted before the filter: a miss is a swing that happened, and
         // dropping it would flatter the hit rate of whatever was cast
-        if (event.isMiss) player.misses++;
+        if (event.isMiss) player.misses += weight;
         if (filterNonDamaging && !isDamagingAction(event.action, nonDamaging)) continue;
 
-        if (!event.isMiss && !event.isHeal) {
+        if (event.isDot) {
             player.damage += event.amount;
-            player.hits++;
-            if (event.isCrit) player.crits++;
+            player.dotDamage += event.amount;
+        } else if (!event.isMiss && !event.isHeal) {
+            player.damage += event.amount;
+            player.hits += weight;
+            if (event.isCrit) player.crits += weight;
         }
 
         const ability = (player.byAbility[event.action] = player.byAbility[event.action] || {
@@ -312,11 +465,14 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
             crits: 0,
             misses: 0,
         });
-        if (event.isMiss) ability.misses++;
+        if (event.isMiss) ability.misses += weight;
+        // A bleed has no swing behind it on this tick, so it moves the damage
+        // under its own label and leaves the counts alone
+        else if (event.isDot) ability.damage += event.amount;
         else if (!event.isHeal) {
             ability.damage += event.amount;
-            ability.hits++;
-            if (event.isCrit) ability.crits++;
+            ability.hits += weight;
+            if (event.isCrit) ability.crits += weight;
         }
 
         // The same split again, by what was being hit rather than by what was
@@ -341,16 +497,19 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
         });
 
         if (event.isMiss) {
-            enemy.misses++;
-            against.misses++;
+            enemy.misses += weight;
+            against.misses += weight;
+        } else if (event.isDot) {
+            enemy.damage += event.amount;
+            against.damage += event.amount;
         } else if (!event.isHeal) {
             enemy.damage += event.amount;
-            enemy.hits++;
+            enemy.hits += weight;
             against.damage += event.amount;
-            against.hits++;
+            against.hits += weight;
             if (event.isCrit) {
-                enemy.crits++;
-                against.crits++;
+                enemy.crits += weight;
+                against.crits += weight;
             }
         }
     }
@@ -372,7 +531,7 @@ export function foldEvents(tally, events, { filterNonDamaging = true, nonDamagin
  * @param {Object} tally - `{}` or a previous return, mutated
  * @param {Array<Object>} events - From `attributeTick`
  * @param {Function} nameOf - `(monsterIndex) => string|null`
- * @returns {Object} Monster name → `{damage, hits, crits, misses, kills, byAbility}`
+ * @returns {Object} Monster name → `{damage, dotDamage, hits, crits, misses, kills, byAbility}`
  */
 export function foldEnemies(tally, events, nameOf) {
     for (const event of events || []) {
@@ -385,6 +544,7 @@ export function foldEnemies(tally, events, nameOf) {
             crits: 0,
             misses: 0,
             kills: 0,
+            dotDamage: 0,
             byAbility: {},
         });
 
@@ -400,17 +560,23 @@ export function foldEnemies(tally, events, nameOf) {
             misses: 0,
         });
 
+        const weight = Number.isFinite(event.weight) && event.weight > 0 ? event.weight : 1;
         if (event.isMiss) {
-            enemy.misses++;
-            ability.misses++;
+            enemy.misses += weight;
+            ability.misses += weight;
+        } else if (event.isDot) {
+            // Real damage the monster took, with no swing behind it here
+            enemy.damage += event.amount;
+            enemy.dotDamage = (enemy.dotDamage || 0) + event.amount;
+            ability.damage += event.amount;
         } else if (!event.isHeal) {
             enemy.damage += event.amount;
-            enemy.hits++;
+            enemy.hits += weight;
             ability.damage += event.amount;
-            ability.hits++;
+            ability.hits += weight;
             if (event.isCrit) {
-                enemy.crits++;
-                ability.crits++;
+                enemy.crits += weight;
+                ability.crits += weight;
             }
         }
     }

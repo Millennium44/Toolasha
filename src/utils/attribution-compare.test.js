@@ -135,17 +135,18 @@ describe('compareRecording', () => {
         expect(report.players['1'].presence).toBe(100);
     });
 
-    it('sets bleed ticks apart instead of scoring them for either side', () => {
+    it('sets bleed ticks apart, and both engines now credit them alike', () => {
         const report = compareRecording([
             newBattle(),
-            // Health falls with no counter movement: ours refuses, presence credits
+            // Health falls with no counter movement: no counter can arbitrate it,
+            // so it is tallied apart — but it is real damage and both credit it
             tick({ 1: { cHP: 900, cMP: 800 } }, { 0: { cHP: 9950, dmgCounter: 0 } }),
         ]);
 
         expect(report.classes.bleed).toEqual({ ticks: 1, damage: 50 });
         expect(report.adjudication.bleed).toEqual({ ticks: 1, damage: 50 });
         expect(report.players['1'].presence).toBe(50);
-        expect(report.players['1'].ours).toBe(0);
+        expect(report.players['1'].ours).toBe(50);
     });
 
     it('reports the tick ours cannot attribute at all', () => {

@@ -89,6 +89,7 @@ function onBattleUpdated(data) {
             enemyHealth.clear();
             allyHealth.clear();
             attribution.monstersHP = {};
+            attribution.monstersMaxHP = {};
             attribution.dmgCounter = {};
             attribution.critCounter = {};
         }

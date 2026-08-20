@@ -366,18 +366,21 @@ describe('the endpoint reconciliation', () => {
         expect(fight.unattributedDealt).toBe(0);
     });
 
-    test('counterless damage the attribution refuses lands in the residual', () => {
+    test('counterless damage is credited too, and the residual closes', () => {
         // The bleed: health falls with no counter movement, so the hit gate
-        // refuses it — but the monster is still down those hitpoints
+        // refuses it as a *swing* — but the monster is still down those
+        // hitpoints, and they are now attributed as their own class. The
+        // residual this test used to measure is what that closed.
         const bleed = {
             at: 2000,
             type: 'battle_updated',
             payload: { mMap: { 0: { cHP: 55, mHP: 100, dmgCounter: 1, critCounter: 0 } } },
         };
         const [fight] = replayFights([battle(), hit(1000, 1, 80), bleed, hit(3000, 2, 30), close(4000)]);
-        expect(fight.players['0'].damage).toBe(45); // 20 + 25, the counted hits
+        expect(fight.players['0'].damage).toBe(70); // 20 + 25 counted, 25 bled
+        expect(fight.players['0'].dotDamage).toBe(25);
         expect(fight.endpointDealt).toBe(70); // 100 → 30, every point of it
-        expect(fight.unattributedDealt).toBe(25); // the bleed, by subtraction
+        expect(fight.unattributedDealt).toBe(0);
     });
 
     test('a self-heal raises what the endpoints owe, not the residual', () => {
