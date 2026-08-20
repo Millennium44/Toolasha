@@ -816,39 +816,36 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.17.0](https://github.com/Millennium44/Toolasha/compare/v3.16.0...v3.17.0) (2026-08-20)
 
-
 ### Features
 
-* collapse all and expand all buttons in the settings tab ([e22d311](https://github.com/Millennium44/Toolasha/commit/e22d311dacd467989f9eb7e10c5fe97f72fa1ad5))
-* copy sync setup to the device's other characters in one click ([d9acd98](https://github.com/Millennium44/Toolasha/commit/d9acd98ebc5137219acc11a40be9e43a54307a45))
-* elite achievement reminder icon on player profiles (ported from upstream) ([66fd646](https://github.com/Millennium44/Toolasha/commit/66fd646a82eb1db63d36424443a7c9c4ff3db3d4))
-* history chart reopens on the item it was last showing ([184975f](https://github.com/Millennium44/Toolasha/commit/184975fc244980b5916ca7fd1794f24ff1e274c2))
-* lab sim uncapped precision, cancel, automation precision, and single calc button ([a27d9a2](https://github.com/Millennium44/Toolasha/commit/a27d9a2064e3992581be1c6c34e3bc85d70f1ddf))
-* next/back cycling flow across my listings (ported from upstream) ([4b3349d](https://github.com/Millennium44/Toolasha/commit/4b3349dac4420945070b7650365997185e15255d))
-* offline progress economics (ported from upstream) ([6075631](https://github.com/Millennium44/Toolasha/commit/607563139d932cb09ab0b5f803970eb78d689a6a))
-* opt-in update check with a configurable interval ([c896e05](https://github.com/Millennium44/Toolasha/commit/c896e053ade1a04400e256c9d6e14aed9190b1ee))
-* reroll walk reads unread tasks as its first press ([22d608e](https://github.com/Millennium44/Toolasha/commit/22d608e5d837239441a31d9f12ff88b2b71b070c))
-* risk of ruin calculator for chests, alchemy, and enhancing (ported from upstream) ([5a62c22](https://github.com/Millennium44/Toolasha/commit/5a62c227046b9e2b81ce0a417d070636a00b681b))
-* update check runs in-tab on the interval, accepts 0 hours, and introduces itself once ([d0581a5](https://github.com/Millennium44/Toolasha/commit/d0581a549a225ce220c999f3c760aa240f6effa3))
-
+- collapse all and expand all buttons in the settings tab ([e22d311](https://github.com/Millennium44/Toolasha/commit/e22d311dacd467989f9eb7e10c5fe97f72fa1ad5))
+- copy sync setup to the device's other characters in one click ([d9acd98](https://github.com/Millennium44/Toolasha/commit/d9acd98ebc5137219acc11a40be9e43a54307a45))
+- elite achievement reminder icon on player profiles (ported from upstream) ([66fd646](https://github.com/Millennium44/Toolasha/commit/66fd646a82eb1db63d36424443a7c9c4ff3db3d4))
+- history chart reopens on the item it was last showing ([184975f](https://github.com/Millennium44/Toolasha/commit/184975fc244980b5916ca7fd1794f24ff1e274c2))
+- lab sim uncapped precision, cancel, automation precision, and single calc button ([a27d9a2](https://github.com/Millennium44/Toolasha/commit/a27d9a2064e3992581be1c6c34e3bc85d70f1ddf))
+- next/back cycling flow across my listings (ported from upstream) ([4b3349d](https://github.com/Millennium44/Toolasha/commit/4b3349dac4420945070b7650365997185e15255d))
+- offline progress economics (ported from upstream) ([6075631](https://github.com/Millennium44/Toolasha/commit/607563139d932cb09ab0b5f803970eb78d689a6a))
+- opt-in update check with a configurable interval ([c896e05](https://github.com/Millennium44/Toolasha/commit/c896e053ade1a04400e256c9d6e14aed9190b1ee))
+- reroll walk reads unread tasks as its first press ([22d608e](https://github.com/Millennium44/Toolasha/commit/22d608e5d837239441a31d9f12ff88b2b71b070c))
+- risk of ruin calculator for chests, alchemy, and enhancing (ported from upstream) ([5a62c22](https://github.com/Millennium44/Toolasha/commit/5a62c227046b9e2b81ce0a417d070636a00b681b))
+- update check runs in-tab on the interval, accepts 0 hours, and introduces itself once ([d0581a5](https://github.com/Millennium44/Toolasha/commit/d0581a549a225ce220c999f3c760aa240f6effa3))
 
 ### Bug Fixes
 
-* auto-filled listing prices clamp into the tradable range ([e42578e](https://github.com/Millennium44/Toolasha/commit/e42578ec5e0ae68416eea70bfdf1ddcd661d6cd6))
-* concurrent market fetches share one in-flight request ([387d2e3](https://github.com/Millennium44/Toolasha/commit/387d2e3f1735f704993436987e79acf251baa468))
-* decompose bulk scaling, locale-proof loot log and inventory badges, countless equipped items in highest-owned ([a86c1a8](https://github.com/Millennium44/Toolasha/commit/a86c1a8c81633eaba5468dc28b6d810ab0874dbc))
-* default the Welcome Back one-liner off in favour of the offline economics block ([919810a](https://github.com/Millennium44/Toolasha/commit/919810aebd28695d60396a5a29224b900faf7f6f))
-* palette settings picks navigate again after the game moved its Settings link ([1b26f94](https://github.com/Millennium44/Toolasha/commit/1b26f94f5ba387c9e3b7a0d985054d607009da0e))
-* read websocket messages past a foreign hook that throws mid-getter ([889b278](https://github.com/Millennium44/Toolasha/commit/889b2780a922af7d5e1e5fcc5930eb08375fee55))
-* reroll walk retries an ignored Read press, react-click passes a fuller event ([41aaf0b](https://github.com/Millennium44/Toolasha/commit/41aaf0b442e2e1dfa5b9aa8fdb88d0c290766a8a))
-* resolve item identity by icon sprite instead of translated display name ([d3c2de0](https://github.com/Millennium44/Toolasha/commit/d3c2de0862cfd1c1f6180cb16bebbff3a3366f18))
-* risk of ruin panel closes, remembers it, and can be reopened ([bbe3b13](https://github.com/Millennium44/Toolasha/commit/bbe3b13a8a745da976aade9d8d72dabfdf22ab58))
-
+- auto-filled listing prices clamp into the tradable range ([e42578e](https://github.com/Millennium44/Toolasha/commit/e42578ec5e0ae68416eea70bfdf1ddcd661d6cd6))
+- concurrent market fetches share one in-flight request ([387d2e3](https://github.com/Millennium44/Toolasha/commit/387d2e3f1735f704993436987e79acf251baa468))
+- decompose bulk scaling, locale-proof loot log and inventory badges, countless equipped items in highest-owned ([a86c1a8](https://github.com/Millennium44/Toolasha/commit/a86c1a8c81633eaba5468dc28b6d810ab0874dbc))
+- default the Welcome Back one-liner off in favour of the offline economics block ([919810a](https://github.com/Millennium44/Toolasha/commit/919810aebd28695d60396a5a29224b900faf7f6f))
+- palette settings picks navigate again after the game moved its Settings link ([1b26f94](https://github.com/Millennium44/Toolasha/commit/1b26f94f5ba387c9e3b7a0d985054d607009da0e))
+- read websocket messages past a foreign hook that throws mid-getter ([889b278](https://github.com/Millennium44/Toolasha/commit/889b2780a922af7d5e1e5fcc5930eb08375fee55))
+- reroll walk retries an ignored Read press, react-click passes a fuller event ([41aaf0b](https://github.com/Millennium44/Toolasha/commit/41aaf0b442e2e1dfa5b9aa8fdb88d0c290766a8a))
+- resolve item identity by icon sprite instead of translated display name ([d3c2de0](https://github.com/Millennium44/Toolasha/commit/d3c2de0862cfd1c1f6180cb16bebbff3a3366f18))
+- risk of ruin panel closes, remembers it, and can be reopened ([bbe3b13](https://github.com/Millennium44/Toolasha/commit/bbe3b13a8a745da976aade9d8d72dabfdf22ab58))
 
 ### Performance Improvements
 
-* keep two features' stored values off the startup critical path ([606c64d](https://github.com/Millennium44/Toolasha/commit/606c64d6950460eb9e8d09bd8502086c25db3e80))
-* stop slow storage loads from serializing feature startup ([a4f5480](https://github.com/Millennium44/Toolasha/commit/a4f5480793de2957a4d4b5d472ec54496eacad93))
+- keep two features' stored values off the startup critical path ([606c64d](https://github.com/Millennium44/Toolasha/commit/606c64d6950460eb9e8d09bd8502086c25db3e80))
+- stop slow storage loads from serializing feature startup ([a4f5480](https://github.com/Millennium44/Toolasha/commit/a4f5480793de2957a4d4b5d472ec54496eacad93))
 
 ## [3.16.0](https://github.com/Millennium44/Toolasha/compare/v3.15.0...v3.16.0) (2026-08-20)
 
