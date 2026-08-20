@@ -38,11 +38,15 @@
  * actor-grouping stated as plainly as a payload can state it.
  *
  * Mana sits below both: only an ability costs mana, so a **unique** `cMP` drop
- * still separates the caster out of a crowd. Unique, not last-of-several —
- * with synchronized builds two casts land on the same tick, and "whoever
- * iterated last wins" is an iteration-order artifact, not an attribution.
- * The last swinger remains as the final fallback for the multi-player tick
- * nothing else can split.
+ * still separates the caster out of a *small* party. Unique, not
+ * last-of-several — with synchronized builds two casts land on the same tick,
+ * and "whoever iterated last wins" is an iteration-order artifact, not an
+ * attribution. And only up to {@link COLLISION_SPLIT_THRESHOLD} present
+ * players: past that, "exactly one person spent mana" stops being evidence,
+ * because most of a trial's roster auto-attacks and leaves no mana trace, so
+ * the one caster on the tick would collect everybody's damage. The last swinger
+ * remains as the final fallback for the multi-player tick nothing else can
+ * split.
  *
  * ## Every payload arrives twice
  *
@@ -60,9 +64,9 @@
  *
  * ## What it deliberately does not do
  *
- * It does not guess. A tick where several players act at once falls back to the
- * last mana drop, because the payload cannot separate them — and a tick that
- * names nobody at all credits nobody rather than the wrong body.
+ * It does not guess. A small tick where several players act at once falls back
+ * to the lone mana drop, because the payload cannot separate them otherwise —
+ * and a tick that names nobody at all credits nobody rather than the wrong body.
  *
  * ## Health that fell without a counter is still damage
  *
@@ -176,6 +180,15 @@ export function noteActions(state, players) {
  * last" is an iteration-order artifact dressed as an attribution. KikiMeter's
  * field figures on real trial captures: ~13% of messages are collisions, up to
  * 23 actors at once.
+ *
+ * It gates the **mana rung as well as the fallback**, and for the same reason
+ * rather than a merely similar one: a lone `cMP` drop identifies the caster
+ * only while everybody present could plausibly have cast. In a twelve- to
+ * twenty-three-player trial most of the roster is auto-attacking and never
+ * touches its mana, so "exactly one drop" is temporal coincidence — the one
+ * spender is simply the only person who *could* leave a trace — and awarding
+ * them the tick systematically inflates whoever casts most. Above the
+ * threshold both rungs are skipped and the tick reaches the equal split.
  */
 export const COLLISION_SPLIT_THRESHOLD = 3;
 
@@ -183,7 +196,9 @@ export const COLLISION_SPLIT_THRESHOLD = 3;
  * Who acted this tick, and whether the tick had to be shared between them.
  *
  * The rungs, strongest first: a lone attack counter rising, a lone player in
- * the tick, a lone mana drop, a party of one. When none of them fires and more
+ * the tick, a lone mana drop in a party no larger than
+ * {@link COLLISION_SPLIT_THRESHOLD}, a party of one. When none of them fires
+ * and more
  * than {@link COLLISION_SPLIT_THRESHOLD} players are present, the tick is
  * *shared* — every present player gets an equal fraction of it — and below that
  * it falls to the last swinger as it always did.
@@ -245,7 +260,17 @@ export function findActors(pMap, state, { soloFallback = true, collisionThreshol
     // Several people at once. A unique mana drop separates the caster; two
     // drops on one tick separate nothing, and "whoever iterated last" is an
     // artifact of key order, not an attribution.
-    if (spent.length === 1) return one(spent[0]);
+    //
+    // Only in a party small enough for "exactly one person cast" to be a fact
+    // rather than a coincidence. In a five-person fight a lone mana drop is the
+    // caster; in a twenty-three-person trial most actors are auto-attacking and
+    // leave no mana trace at all, so the one member who happened to spend mana
+    // this tick collects the whole crowd's damage. KikiMeter's field hardening
+    // (26/07) capped the same rung at the same threshold for the same reason.
+    // Above it the rung is skipped outright and the tick falls to the equal
+    // split below, which is wrong about every individual and right about the
+    // shape.
+    if (spent.length === 1 && indices.length <= collisionThreshold) return one(spent[0]);
 
     // A tick that names nobody at all, in a fight whose party is one person.
     if (soloFallback && Object.keys(state.party).length === 1) {

@@ -8,7 +8,7 @@ MIT licensed, published as GreasyFork script 584984:
 The script is **not kept here**. It is a single 218 KB file and nothing in Toolasha builds
 against it; the version number above is what makes the attribution checkable, and the script
 can be fetched from that URL when a claim below needs re-reading. No KikiMeter source was
-copied. What was taken is the analysis — six specific findings, each of which Toolasha
+copied. What was taken is the analysis — seven specific findings, each of which Toolasha
 re-implemented against its own attribution module, its own storage and its own panels.
 
 ## What was adopted
@@ -31,6 +31,12 @@ re-implemented against its own attribution module, its own storage and its own p
   abandoned: players who never won a solo-confirmed tick stayed at zero while the early winners
   took the whole ambiguous stream. Measured mean error 56%, against the game's own end-of-trial
   figures. Toolasha did not repeat the experiment; it took the result.
+- **A lone mana drop is not evidence in a crowd.** The same threshold gates the mana rung, after
+  ZhuLiMoon's field hardening of 26/07: in a 12–23 player trial most of the roster is
+  auto-attacking and never spends mana, so "exactly one player's `cMP` fell this tick" identifies
+  the only member who _could_ leave a trace rather than the one who acted, and awarding them the
+  tick inflates whoever casts most. Toolasha now skips the rung above
+  `COLLISION_SPLIT_THRESHOLD` present players and lets the tick reach the equal split.
 - **A slot's maximum health changing is a new monster in it.** A guild trial receives
   `new_guild_battle` only one to three times an hour, so unlike personal combat it has no
   per-wave re-baseline. A monster respawning into the same slot is therefore caught by watching

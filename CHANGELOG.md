@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The mana-drop attribution rung respects the collision threshold
+
+- A lone mana drop only names the caster while three or fewer players are present. In a
+  12–23 player trial most of the roster auto-attacks and never spends mana, so the one member
+  whose mana moved was collecting the whole tick; above the threshold it now falls through to
+  the equal split. Another KikiMeter (ZhuLiMoon, MIT) field finding.
+
 ### Damage attribution counts bleeds, splits big collisions, and hardens the trial lifecycle
 
 Ideas adopted from KikiMeter (ZhuLiMoon, MIT) — see `docs/THIRD-PARTY-LICENSES.md`.

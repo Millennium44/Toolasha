@@ -34,6 +34,22 @@ code itself to be reused.
 
 Ported so far, all of it the analysis rather than the panels around it:
 
+Beyond the five analysis modules detailed below, the per-file record: **BRead** →
+`src/utils/ability-books.js`, `src/features/abilities/ability-book-panel.js`; **DPs** →
+`src/utils/damage-attribution.js`, `src/features/combat/damage-tracker.js`,
+`src/features/combat/portrait-dps.js`; **IHurt** → `src/utils/damage-taken.js`,
+`src/utils/expected-kills.js`, `src/features/combat/damage-taken-tracker.js`; **MAna** →
+`src/utils/mana-spend.js`, `src/features/combat/mana-tracker.js`; **GWhiz** →
+`src/utils/combat-level.js`, `src/utils/exp-session.js`, `src/features/ui/combat-level-panel.js`,
+`src/features/skills/skill-ttl-row.js`; **QCharm** → `src/utils/charm-value.js`,
+`src/features/inventory/charm-value-row.js`; **EWatch** → `src/utils/equipment-savings.js`,
+`src/features/inventory/equipment-savings-row.js`; **NTally** → `src/utils/watchlist.js`,
+`src/utils/drop-sources.js`, `src/features/inventory/watchlist.js`; **HWhat** and the floating
+combat text → `src/features/ui/combat-panels.js`, `src/features/ui/combat-text.js`; **OPanel** →
+`src/utils/overlay-format.js`, `src/utils/overlay-layout.js`, `src/utils/opanel-config.js`; plus
+`src/utils/chest-import.js` and `src/utils/combat-events.js`. Each file's own header names its
+source tool.
+
 - `src/utils/drop-luck.js` and `src/utils/complex-fft.js` — the drop-luck analysis, from
   `SimpleFFT`, `CharaFunc`, `CDFDropAnalyzer` and `RuckBattleDropAnalyzer`. The algorithm is
   Frotty's throughout: modelling session income as a product of characteristic functions, the
@@ -74,7 +90,7 @@ Full terms in `third-party/mwi-combat-suite/LICENSE.md`; what else the script co
 ## KikiMeter
 
 `src/utils/damage-attribution.js`, `src/features/guild/guild-trial-damage.js` and
-`src/features/guild/guild-trial-support.js` adopt six findings from **KikiMeter v3.32.1** by
+`src/features/guild/guild-trial-support.js` adopt seven findings from **KikiMeter v3.32.1** by
 ZhuLiMoon, under the MIT licence it declares in its own userscript header. **No code was
 copied**, and the script is not kept in this repository — it is a single 218 KB file nothing
 builds against, and the version number is what makes the attribution checkable.
@@ -91,6 +107,11 @@ What was taken is the analysis, all of it reached against real trial captures:
 - **Equally, not weighted by damage already confirmed.** ZhuLiMoon tried the weighted version
   and abandoned it — rich-get-richer, 56% mean error against the game's own end-of-trial
   figures. Toolasha took the result rather than repeating the experiment.
+- **A lone mana drop stops being evidence in a crowd.** Its field hardening of 26/07 caps the
+  mana rung at the same three-player threshold: in a 12–23 player trial most of the roster
+  auto-attacks and never touches its mana, so the single member whose mana moved is the only one
+  who _could_ leave a trace, not the only one who acted. Above the threshold Toolasha now skips
+  the rung and falls through to the equal split.
 - **A change in a monster slot's maximum health is a new monster in it.** A guild trial gets
   `new_guild_battle` one to three times an _hour_, so nothing else re-baselines a respawn.
 - **A revive is not a heal.** Zero to positive returns a whole bar at once and swamps every real
@@ -145,3 +166,70 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+
+## MWI Combat Simulator
+
+The simulation engine under `src/features/combat-sim/engine/` (~4,600 lines: combat units,
+buffs, consumables, triggers, equipment, monsters, zones, house rooms, and the event queue with
+its event classes) is a port of the **[MWI Combat Simulator](https://github.com/shykai/MWICombatSimulatorTest)**
+— MIT, Copyright (c) 2024 AmVoidGuy; the KuganDev → AmVoidGuy → shykai line, with vlad among its
+contributors. The engine runs in-game inside Toolasha, and the sim-site export format is
+implemented beside it. The MIT licence text, with the holder named, is vendored at `third-party/mwi-combat-simulator/LICENSE.md`.
+
+## Enhancelator
+
+The enhancement-strategy search in `src/features/enhancement/tooltip-enhancement.js` follows
+**[Enhancelator](https://doh-nuts.github.io/Enhancelator/)** by doh-nuts (MIT) — the per-level
+protection matrix, the mixed-strategy minimum, and the `fib()` / `mirrorFib()` breakdown
+functions in `src/libraries/enhancement-standalone.js`, which were taken directly. Enhancelator
+itself credits MangoFlavor for the underlying game mechanic. The MIT licence text, with the holder named, is vendored at `third-party/enhancelator/LICENSE.md`.
+
+## MWI Ultimate Enhancement Tracker
+
+The enhancement tracker (`src/features/enhancement/enhancement-ui.js`,
+`enhancement-handlers.js`, `enhancement-xp.js`) is based on
+**[MWI Ultimate Enhancement Tracker v3.7.9](https://greasyfork.org/en/scripts/531872)** by
+TheNeroNex (MIT) — its material-cost tracking, XP formulas and panel styling. The MIT licence text, with the holder named, is vendored at `third-party/ultimate-enhancement-tracker/LICENSE.md`.
+
+## MWI Game Commands
+
+The `/item`, `/wiki` and `/market` chat commands (`src/features/chat/chat-commands.js`) are
+ported from **[MWI Game Commands (Item/Wiki/Market)](https://greasyfork.org/en/scripts/563313)**
+by salairkas (MIT). The MIT licence text, with the holder named, is vendored at `third-party/mwi-game-commands/LICENSE.md`.
+
+## Labyrinth Clear Rate Calculator
+
+Parts of `src/features/combat/labyrinth-room-logs.js` — and material consulted throughout the
+labyrinth simulator — are ported from the
+**[Labyrinth Win Rate Calculator](https://greasyfork.org/en/scripts/566829)** by dakonglong
+(MIT). The MIT licence text, with the holder named, is vendored at `third-party/labyrinth-clear-rate/LICENSE.md`.
+
+## MWITools - Extended
+
+The settings-tab injection (`src/features/settings/settings-ui.js`) and the per-action output
+totals (`src/features/actions/output-totals.js`) are based on
+**[MWITools - Extended](https://greasyfork.org/en/scripts/540440)** by byteArray567
+(CC-BY-NC-SA-4.0 — the same licence as this project, so ShareAlike is satisfied by the project
+licence itself; this entry is the attribution the BY clause requires). No separate licence file
+is vendored because the licence is identical to this repository's own.
+
+## Edible Tools
+
+The loot-log statistics (`src/features/actions/loot-log-stats.js`) are ported from
+**[Edible Tools](https://greasyfork.org/en/scripts/499963)** by Truth_Light (CC-BY-NC-SA-4.0 —
+same licence as this project; this entry is the attribution the BY clause requires).
+
+## mooket I
+
+The mooket I pooled market-history endpoint by **IOMisaka** is one of the two sources the
+History panel can read from (`src/features/market/mooket/market-history-api.js`). Endpoint use
+only; no code was taken.
+
+## JIGS
+
+**[JIGS](https://greasyfork.org/en/scripts/550346)** by jigglymoose is credited for ideas behind
+the upgrade advisor, and Toolasha emits JIGS-compatible markers/library exports for
+interoperability. Ideas only — no code was taken, which is why nothing is vendored here. The
+same applies to **Milkonomy** by hyhfish and the **Character Sheet** by Tib: Toolasha writes
+their export/URL formats for interoperability, taking no code.

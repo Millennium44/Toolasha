@@ -526,11 +526,48 @@ describe('a collision too big to adjudicate', () => {
         expect(findCaster(crowd(20), state, { soloFallback: false })).toBeNull();
     });
 
-    test('a counter or a lone mana drop still names one person in a crowd', () => {
+    test('a counter still names one person in a crowd', () => {
+        // `atkCounter` is a statement about who acted, and it stays decisive
+        // however many people are present — the gate below applies to mana,
+        // which is only ever an inference
+        const state = newAttributionState();
+        const before = { ...crowd(20), 5: { cHP: 100, cMP: 50, atkCounter: 7 } };
+        attributeTick({ pMap: before, mMap: { 0: monster(10_000, 1) } }, state);
+        const swinging = { ...crowd(20), 5: { cHP: 100, cMP: 50, atkCounter: 8 } };
+
+        expect(findActors(swinging, state, { soloFallback: false })).toEqual({ actors: ['5'], shared: false });
+    });
+
+    test('a lone mana drop still names one person in a party small enough to adjudicate', () => {
+        const state = seeded(3);
+        const casting = { ...crowd(3), 2: { cHP: 100, cMP: 10 } };
+
+        expect(findActors(casting, state, { soloFallback: false })).toEqual({ actors: ['2'], shared: false });
+    });
+
+    test('a lone mana drop in a crowd is coincidence, not attribution', () => {
+        // Deliberately reversed from what this file used to assert. In a
+        // twenty-player trial most of the roster auto-attacks and never spends
+        // mana, so the single member whose mana moved is the only one who
+        // *could* leave a trace — not the only one who acted. KikiMeter's field
+        // hardening capped the rung at the same threshold after measuring the
+        // bias it produces. The tick falls through to the equal split instead.
         const state = seeded(20);
         const casting = { ...crowd(20), 5: { cHP: 100, cMP: 10 } };
 
-        expect(findActors(casting, state, { soloFallback: false })).toEqual({ actors: ['5'], shared: false });
+        const { actors, shared } = findActors(casting, state, { soloFallback: false });
+        expect(shared).toBe(true);
+        expect(actors).toHaveLength(20);
+    });
+
+    test('the gate moves with the threshold the caller passes', () => {
+        const state = seeded(20);
+        const casting = { ...crowd(20), 5: { cHP: 100, cMP: 10 } };
+
+        expect(findActors(casting, state, { soloFallback: false, collisionThreshold: 50 })).toEqual({
+            actors: ['5'],
+            shared: false,
+        });
     });
 });
 
