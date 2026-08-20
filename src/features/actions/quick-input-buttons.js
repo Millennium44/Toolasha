@@ -33,6 +33,25 @@ import bundledScrollSimulator from '../combat/scroll-simulator.js';
 import { scrollSimulator } from '../../utils/bundle-bridge.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
 
+/**
+ * Paint the add-mode toggle for the state it is in.
+ * @param {HTMLElement} btn - The toggle button
+ * @param {boolean} active - Whether add mode is on
+ * @returns {void}
+ */
+function applyToggleStyle(btn, active) {
+    if (!btn) return;
+    if (active) {
+        btn.style.background = 'rgba(215, 183, 255, 0.2)';
+        btn.style.color = '#d7b7ff';
+        btn.style.borderColor = '#d7b7ff';
+    } else {
+        btn.style.background = 'transparent';
+        btn.style.color = 'rgba(215, 183, 255, 0.5)';
+        btn.style.borderColor = 'rgba(215, 183, 255, 0.3)';
+    }
+}
+
 let _qibSpriteUrl = null;
 function scrollSpriteHtml(buffTypeHrid, size = 14) {
     if (_qibSpriteUrl === null) {
@@ -103,21 +122,64 @@ class QuickInputButtons {
         this.presetValues = [10, 100, 1000];
         this.cleanupRegistry = createCleanupRegistry();
         this._targetLevelByAction = new Map();
+        /** Live add-mode toggles, so a late-arriving stored value can repaint them */
+        this._addToggles = new Set();
+        /** Whether the player has toggled add mode themselves this session */
+        this._addModeTouched = false;
     }
 
     /**
      * Initialize the quick input buttons feature
+     *
+     * The stored add-mode flag is read *after* the observer is wired up rather
+     * than before it. Awaiting that one read here was the single most expensive
+     * thing in feature startup — a second of wall clock and a tenth of a
+     * millisecond of it our own code — and nothing about the buttons needs it:
+     * add mode is off by default, the toggle is drawn from `this.addMode`
+     * whenever a panel appears, and when the read lands any toggle already on
+     * screen is repainted. A player who beat the read to the toggle keeps their
+     * click; the stored value does not overwrite a deliberate one.
+     * @returns {void}
      */
-    async initialize() {
+    initialize() {
         if (this.isInitialized) {
             return;
         }
 
-        this.addMode = await storage.get('quickInput_addMode', 'settings', false);
-
         // Start observing for action panels
         this.startObserving();
         this.isInitialized = true;
+
+        this._loadAddMode();
+    }
+
+    /**
+     * Read the remembered add-mode off the critical path.
+     * @returns {Promise<void>} Resolves once the value has been applied
+     * @private
+     */
+    async _loadAddMode() {
+        try {
+            const stored = await storage.get('quickInput_addMode', 'settings', false);
+            // A teardown or a click in the meantime wins over the stored value.
+            if (!this.isInitialized || this._addModeTouched) return;
+            this.addMode = stored;
+            this._paintAddToggles();
+        } catch (error) {
+            console.error('[Quick Input Buttons] Reading the remembered add mode failed:', error);
+        }
+    }
+
+    /**
+     * Repaint every add-mode toggle currently on screen.
+     * @returns {void}
+     * @private
+     */
+    _paintAddToggles() {
+        for (const toggle of this._addToggles) {
+            if (toggle.isConnected) applyToggleStyle(toggle, this.addMode);
+            else this._addToggles.delete(toggle);
+        }
     }
 
     /**
@@ -173,18 +235,6 @@ class QuickInputButtons {
     _createCountPresetRow(panel, numberInput, gameData, actionDetails) {
         const fragment = document.createDocumentFragment();
 
-        const applyToggleStyle = (btn, active) => {
-            if (active) {
-                btn.style.background = 'rgba(215, 183, 255, 0.2)';
-                btn.style.color = '#d7b7ff';
-                btn.style.borderColor = '#d7b7ff';
-            } else {
-                btn.style.background = 'transparent';
-                btn.style.color = 'rgba(215, 183, 255, 0.5)';
-                btn.style.borderColor = 'rgba(215, 183, 255, 0.3)';
-            }
-        };
-
         const addToggle = document.createElement('button');
         addToggle.textContent = '+';
         addToggle.title = 'Toggle add mode: click to accumulate counts instead of setting them';
@@ -202,9 +252,12 @@ class QuickInputButtons {
             transition: background 0.15s, color 0.15s, border-color 0.15s;
         `;
         applyToggleStyle(addToggle, this.addMode);
+        this._addToggles.add(addToggle);
         addToggle.addEventListener('click', () => {
+            // A deliberate click outranks a stored value still in flight.
+            this._addModeTouched = true;
             this.addMode = !this.addMode;
-            applyToggleStyle(addToggle, this.addMode);
+            this._paintAddToggles();
             storage.set('quickInput_addMode', this.addMode, 'settings');
         });
         fragment.appendChild(addToggle);
@@ -834,6 +887,7 @@ class QuickInputButtons {
     disable() {
         try {
             this.cleanupRegistry.cleanupAll();
+            this._addToggles.clear();
             document.querySelectorAll('.mwi-collapsible-section').forEach((section) => section.remove());
             document.querySelectorAll('.mwi-quick-input-btn').forEach((button) => button.remove());
             document.querySelectorAll('[class*="SkillActionDetail_regularComponent"]').forEach((el) => {

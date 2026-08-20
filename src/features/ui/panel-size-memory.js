@@ -128,17 +128,19 @@ class PanelSizeMemory {
 
     /**
      * Start watching for drag-driven resizes and restore the remembered size.
+     *
+     * The remembered size is read *after* the watchers are in place, not before.
+     * Awaiting the read first meant a third of a second in which this feature —
+     * and, because initializers were awaited one after another, every feature
+     * behind it — did nothing at all. Nothing here needs the value to set up:
+     * `restore()` is a no-op while `saved` is null, the drag watcher only ever
+     * writes, and the size is replayed the moment the read lands.
+     * @returns {void}
      */
-    async initialize() {
+    initialize() {
         if (this.isInitialized) return;
         if (!config.getSetting('panelSizeMemory')) return;
         this.isInitialized = true;
-
-        try {
-            this.saved = await storage.get(STORAGE_KEY, 'settings', null);
-        } catch (error) {
-            console.error('[PanelSizeMemory] Failed to read saved size:', error);
-        }
 
         this.onPointerDown = () => {
             this.dragging = true;
@@ -162,6 +164,28 @@ class PanelSizeMemory {
             debounce: true,
             debounceDelay: 250,
         });
+        this.restore();
+
+        this._loadSaved();
+    }
+
+    /**
+     * Read the remembered size off the critical path and replay it.
+     * @returns {Promise<void>} Resolves once the size has been applied
+     * @private
+     */
+    async _loadSaved() {
+        let saved = null;
+        try {
+            saved = await storage.get(STORAGE_KEY, 'settings', null);
+        } catch (error) {
+            console.error('[PanelSizeMemory] Failed to read saved size:', error);
+            return;
+        }
+        // Torn down while the read was in flight, or a drag already produced a
+        // newer size — either way the stored one is stale now.
+        if (!this.isInitialized || this.saved || this.dragging) return;
+        this.saved = saved;
         this.restore();
     }
 
@@ -258,6 +282,7 @@ class PanelSizeMemory {
         }
         this.dragging = false;
         this.pending = null;
+        this.saved = null;
         this.isInitialized = false;
     }
 }
