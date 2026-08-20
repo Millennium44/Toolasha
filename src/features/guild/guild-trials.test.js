@@ -5035,3 +5035,111 @@ describe('the payout block, audited', () => {
         expect(text()).not.toContain('No Treasury level seen');
     });
 });
+
+describe('the guild message says a trial is running', () => {
+    const now = new Date('2026-08-19T12:00:00Z').getTime();
+
+    const message = (over = {}) => ({
+        guild: {
+            currentTrialsData: JSON.stringify({
+                combat: {
+                    status: 'in_progress',
+                    budgetRemainingMs: 1_800_000,
+                    parties: { 1: { done: false } },
+                    ...over,
+                },
+            }),
+        },
+    });
+
+    beforeEach(() => {
+        guildTrials.currentTrials = null;
+        guildTrials.socketPhase = null;
+    });
+
+    test('a combat trial in progress is read off the payload', () => {
+        vi.setSystemTime(now);
+        guildTrials._noteCurrentTrials(message());
+
+        expect(guildTrials.currentTrials.combat.inProgress).toBe(true);
+        expect(guildTrials.socketPhase).toBe('live');
+        expect(guildTrials._trialBudgetMs('combat', now)).toBe(1_800_000);
+    });
+
+    test('the deadline counts down from when it was stated', () => {
+        vi.setSystemTime(now);
+        guildTrials._noteCurrentTrials(message());
+
+        expect(guildTrials._trialBudgetMs('combat', now + 60_000)).toBe(1_740_000);
+        // Older than the budget it stated: that trial is over, and counting
+        // down past zero says nothing
+        expect(guildTrials._trialBudgetMs('combat', now + 40 * 60_000)).toBeNull();
+    });
+
+    test('every party done ends it, and so does the status leaving in_progress', () => {
+        vi.setSystemTime(now);
+        guildTrials._noteCurrentTrials(message());
+        guildTrials._noteCurrentTrials(message({ parties: { 1: { done: true } } }));
+        expect(guildTrials.socketPhase).toBe('completed');
+
+        guildTrials.socketPhase = null;
+        guildTrials._noteCurrentTrials(message());
+        guildTrials._noteCurrentTrials(message({ status: '' }));
+        expect(guildTrials.socketPhase).toBe('scheduled');
+    });
+
+    test('a malformed payload is survived and changes nothing', () => {
+        guildTrials._noteCurrentTrials({ guild: { currentTrialsData: '{broken' } });
+        guildTrials._noteCurrentTrials({ guild: {} });
+        guildTrials._noteCurrentTrials(undefined);
+
+        expect(guildTrials.currentTrials).toBeNull();
+        expect(guildTrials.socketPhase).toBeNull();
+        expect(guildTrials._trialBudgetMs('combat', now)).toBeNull();
+    });
+
+    test('the page beats the parse, and the parse fills a silent page', () => {
+        vi.setSystemTime(now);
+        guildTrials._noteCurrentTrials(message());
+
+        // Nothing on the tab: the socket's own answer is used
+        guildTrials.phase = null;
+        guildTrials._noteLifecycle({ phase: null }, [], now);
+        expect(guildTrials.phase).toBe('live');
+
+        // The tab says otherwise: what is on screen wins
+        guildTrials._noteLifecycle({ phase: 'completed' }, [], now + 1000);
+        expect(guildTrials.phase).toBe('completed');
+    });
+
+    test('the block draws a deadline, and warns when the projection runs past it', () => {
+        const analysis = analyseTrial(
+            {
+                name: 'Trial Badger',
+                kind: 'combat',
+                tier: 2,
+                samples: [
+                    { t: now, readings: [{ current: 618_000, max: 618_000 }] },
+                    { t: now + 10_000, readings: [{ current: 518_000, max: 618_000 }] },
+                ],
+                tiers: [],
+                pointsByTier: {},
+            },
+            { timeLeftMs: 20 * 60_000 }
+        );
+        const roomy = renderTrialBlock(analysis, 5, undefined, {
+            participating: true,
+            phase: 'live',
+            deadlineMs: 30 * 60_000,
+        });
+        expect(roomy).toContain('Deadline');
+        expect(roomy).not.toContain('does not clear in time');
+
+        const tight = renderTrialBlock(analysis, 5, undefined, {
+            participating: true,
+            phase: 'live',
+            deadlineMs: 1000,
+        });
+        expect(tight).toContain('does not clear in time');
+    });
+});

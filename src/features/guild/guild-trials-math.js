@@ -188,6 +188,88 @@ export function trialFromHrid(hrid) {
 }
 
 /**
+ * The trial budget the game counts down from: one hour, to the millisecond.
+ *
+ * `budgetRemainingMs` on the guild payload starts at exactly this and falls;
+ * anything above it is a payload this code does not understand, and is refused
+ * rather than displayed as a deadline further away than a trial can be.
+ */
+export const TRIAL_BUDGET_MS = 3_600_000;
+
+/**
+ * What the guild says about its trials, out of `guild_updated`.
+ *
+ * `currentTrialsData` is a **JSON string** on the guild object, not an object —
+ * which is presumably why nothing here had ever read it. Inside is a per-kind
+ * record: a `status` that goes `'' → 'in_progress' → something else`, a map of
+ * parties each carrying a `done` flag, and `budgetRemainingMs` counting down
+ * from {@link TRIAL_BUDGET_MS}.
+ *
+ * Its value is that it arrives **whether or not the guild panel is open**. Every
+ * lifecycle signal this feature has otherwise depends on somebody looking at the
+ * Trials tab, so a trial that starts and ends while the player is fishing is
+ * invisible. This is not; it is therefore used as an *additional* signal and
+ * never as an overriding one — a phase read off the page is a phase somebody can
+ * see, and beats a parse of a payload that may be describing the moment before.
+ *
+ * Everything is optional and everything is guarded: a malformed string, a
+ * renamed field or a shape this has never seen answers null rather than throwing
+ * inside a socket handler.
+ *
+ * That this field exists at all, and what is inside it, is KikiMeter v3.32.1's
+ * finding (ZhuLiMoon, MIT) — see `third-party/kikimeter/`.
+ *
+ * @param {string|Object} raw - `guild.currentTrialsData`, as it arrives
+ * @returns {{combat: Object|null, skilling: Object|null}|null} Per kind:
+ *   `{status, inProgress, allDone, parties, done, budgetRemainingMs}`; null when
+ *   nothing usable could be read
+ */
+export function parseCurrentTrialsData(raw) {
+    let parsed = raw;
+    if (typeof raw === 'string') {
+        const text = raw.trim();
+        if (!text) return null;
+        try {
+            parsed = JSON.parse(text);
+        } catch {
+            // A socket handler is the wrong place to throw, and a payload this
+            // does not understand is exactly the case it must survive
+            return null;
+        }
+    }
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    const read = (entry) => {
+        if (!entry || typeof entry !== 'object') return null;
+
+        const status = typeof entry.status === 'string' ? entry.status : null;
+        const parties = entry.parties && typeof entry.parties === 'object' ? entry.parties : null;
+        const values = parties ? Object.values(parties) : [];
+        const budget = Number(entry.budgetRemainingMs);
+
+        return {
+            status,
+            inProgress: status === 'in_progress',
+            parties: values.length,
+            // Every party finished. Empty is not "all done" — it is a record
+            // that has not been filled in yet, and reading it as completion
+            // would end a trial the moment it was announced
+            allDone: values.length > 0 && values.every((party) => party?.done === true),
+            done: values.filter((party) => party?.done === true).length,
+            // Refused rather than clamped when it is not a countdown from the
+            // hour: a deadline that is wrong is worse than a deadline that is
+            // absent, because a guild plans around it
+            budgetRemainingMs: Number.isFinite(budget) && budget >= 0 && budget <= TRIAL_BUDGET_MS ? budget : null,
+        };
+    };
+
+    const combat = read(parsed.combat);
+    const skilling = read(parsed.skilling);
+    if (!combat && !skilling) return null;
+    return { combat, skilling };
+}
+
+/**
  * Which tier a trial level belongs to.
  * @param {number} level - Trial level, e.g. 140
  * @returns {number|null} 1-based tier, or null below the first tier

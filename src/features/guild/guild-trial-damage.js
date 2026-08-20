@@ -87,6 +87,15 @@
  * {@link estimateDamageSplit} — a per-player split derived from the members'
  * captured builds, labelled as an estimate. Measured beats estimated whenever
  * measured exists, and the panels name the source either way.
+ *
+ * ## Where the lifecycle rules came from
+ *
+ * The trial-end handling — freezing the elapsed denominator when the trial ends,
+ * treating a stream quiet for three minutes as ended anyway, and leaving
+ * everything alone while the game's own per-member totals are still in flight —
+ * is KikiMeter v3.32.1's by ZhuLiMoon (MIT), which found each of them the hard
+ * way on live trials. See `third-party/kikimeter/` and
+ * `docs/THIRD-PARTY-LICENSES.md`. The code is Toolasha's own.
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -166,6 +175,34 @@ const MAX_TICK_GAP_MS = 2000;
  * soon after the spectator view closes.
  */
 const SPECTATOR_LIVE_WINDOW_MS = 8000;
+
+/**
+ * How long the trial stream may go quiet before it is treated as having ended
+ * without saying so.
+ *
+ * `end_guild_battle` is the honest signal and is used wherever it arrives, but
+ * it cannot be relied on to: a page closed mid-trial, a network cut a second
+ * before it, or a spectator view that simply stops being fed all leave the
+ * stream open forever. Three minutes is generous — the firehose ticks about
+ * twice a second and its widest genuine gap is a wave transition — and without
+ * it a trial that ended unannounced stays "live" indefinitely, which is the
+ * shape of the bug KikiMeter hit and hardened against.
+ */
+const STALE_STREAM_MS = 3 * 60 * 1000;
+
+/**
+ * How long after `end_guild_battle` the game's own per-member totals are still
+ * expected.
+ *
+ * They arrive about eight seconds later ({@link GUILD_TRIAL_STATS_MESSAGE}),
+ * and a member who goes back to farming the moment the trial ends starts a
+ * personal fight inside that window. Nothing of this trial may be reset or
+ * re-decided until the reconciliation has landed, or the comparison the panel
+ * exists to show is thrown away seconds before its other half arrives. A minute
+ * is many times the observed delay and still far short of anything that could
+ * swallow a real second trial.
+ */
+const RECONCILE_WINDOW_MS = 60_000;
 
 /**
  * Which of the five encounters a name is, if any.
@@ -426,11 +463,13 @@ export function battleMonsterNames(data) {
  * @param {Object} [input.names] - Player index → display name
  * @param {Object} [input.deaths] - Player index → death count
  * @param {number} [input.seconds] - Seconds of fighting measured
- * @returns {{players: Array<Object>, totalDamage: number, partyDps: number|null}} Rows, biggest first
+ * @returns {{players: Array<Object>, totalDamage: number, totalDotDamage: number,
+ *   partyDps: number|null}} Rows, biggest first
  */
 export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seconds = 0 } = {}) {
     const measurable = seconds >= MIN_SECONDS;
     const totalDamage = Object.values(tally).reduce((sum, entry) => sum + (entry?.damage || 0), 0);
+    const totalDotDamage = Object.values(tally).reduce((sum, entry) => sum + (entry?.dotDamage || 0), 0);
 
     const players = Object.entries(tally).map(([index, entry]) => {
         const swings = (entry.hits || 0) + (entry.misses || 0);
@@ -443,9 +482,16 @@ export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seco
             // the hits and mark the crits for everybody
             measured: true,
             damage: entry.damage || 0,
-            hits: entry.hits || 0,
-            crits: entry.crits || 0,
-            misses: entry.misses || 0,
+            // Inside `damage`, named apart: health the boss lost with no hit
+            // counter behind it — a bleed ticking or a reflect firing. It used
+            // to fall out of the split entirely, which is why the per-player
+            // table and the boss bar disagreed by exactly its volume
+            dotDamage: entry.dotDamage || 0,
+            // A tick shared between the players present carries a fractional
+            // swing; the ledger keeps the fraction, the table rounds it
+            hits: Math.round(entry.hits || 0),
+            crits: Math.round(entry.crits || 0),
+            misses: Math.round(entry.misses || 0),
             deaths: deaths[index] || 0,
             // Null rather than zero: no swings is nothing to compute a hit rate
             // from, and drawing it as 0% accuses somebody of missing everything
@@ -459,6 +505,7 @@ export function summariseTrialDamage({ tally = {}, names = {}, deaths = {}, seco
     return {
         players: players.sort((a, b) => b.damage - a.damage),
         totalDamage,
+        totalDotDamage,
         partyDps: measurable && seconds > 0 ? totalDamage / seconds : null,
     };
 }
@@ -648,6 +695,13 @@ class GuildTrialDamage {
         this.bankedSupport = {};
         this.playersHP = {};
         this.seconds = 0;
+        /**
+         * The elapsed denominator, held still once the trial has ended — see
+         * {@link _elapsedSeconds}. Null while the trial is running.
+         */
+        this.frozenSeconds = null;
+        /** True once the stream went quiet long enough to be called ended */
+        this.staleStream = false;
         this.lastTickAt = 0;
         this.battleId = null;
         this.active = false;
@@ -841,6 +895,8 @@ class GuildTrialDamage {
             this.active = true;
             this.reason = SPECTATED_TRIAL_NOTE;
             this.endedAt = null;
+            // A tier opening is the stream running again, whatever was frozen
+            this._unfreezeElapsed();
             if (!this.startedAt) this.startedAt = now;
             if (Number.isFinite(tier)) this.tierStarts[tier] = now;
 
@@ -961,6 +1017,13 @@ class GuildTrialDamage {
 
             this.endedAt = Date.now();
             this.active = false;
+            // The denominator stops here. It is accumulated from the gaps
+            // between ticks rather than off the wall clock, so it does not
+            // *decay* on its own — but ticks that trail in after the end, and a
+            // stream that resumes for something else, would both keep extending
+            // a figure that is finished. A trial's final DPS is a fact about
+            // the trial, and it stops moving when the trial does.
+            this._freezeElapsed();
         } catch (error) {
             console.error('[GuildTrialDamage] Reading the end of a trial failed:', error);
         }
@@ -1157,7 +1220,12 @@ class GuildTrialDamage {
             if (Object.keys(mMap).length) this.spectator.bossTicks += 1;
 
             const gap = now - this.lastTickAt;
-            if (this.lastTickAt && gap > 0 && gap < MAX_TICK_GAP_MS) this.seconds += gap / 1000;
+            // Nothing extends a trial that has already been called over — a
+            // trailing tick after `end_guild_battle` is the end of the fight
+            // being drawn, not more of it being fought
+            if (this.frozenSeconds === null && this.lastTickAt && gap > 0 && gap < MAX_TICK_GAP_MS) {
+                this.seconds += gap / 1000;
+            }
             this.lastTickAt = now;
             this.spectator.lastAt = now;
         } catch (error) {
@@ -1244,6 +1312,7 @@ class GuildTrialDamage {
         this._bankCurrentWave();
 
         this.state.monstersHP = {};
+        this.state.monstersMaxHP = {};
         this.state.dmgCounter = {};
         this.state.critCounter = {};
         // The counter baselines, actions and party keys are all per-slot, and
@@ -1281,6 +1350,8 @@ class GuildTrialDamage {
         this.guildBattleId = battleId;
         this.tier = tier;
         this.fights += 1;
+        // A different battle is a different trial, and its clock starts running
+        if (newFight) this._unfreezeElapsed();
         // A gap in the watching is not a gap in the fight, but it is a gap in
         // what was measured, and folding it into the elapsed seconds would
         // divide the damage by an hour nobody watched
@@ -1471,6 +1542,74 @@ class GuildTrialDamage {
     }
 
     /**
+     * Hold the elapsed denominator still.
+     *
+     * Idempotent: the first thing to notice the trial has ended wins, and the
+     * second — `end_guild_battle` arriving after the stale fallback already
+     * fired, or the other way round — changes nothing.
+     */
+    _freezeElapsed() {
+        if (this.frozenSeconds === null) this.frozenSeconds = this.seconds;
+    }
+
+    /** Let it run again, for a trial stream that has started afresh. */
+    _unfreezeElapsed() {
+        this.frozenSeconds = null;
+        this.staleStream = false;
+    }
+
+    /**
+     * The seconds a rate is divided by: the measurement while a trial runs, and
+     * the figure it finished on afterwards.
+     * @returns {number}
+     */
+    _elapsedSeconds() {
+        return this.frozenSeconds === null ? this.seconds : this.frozenSeconds;
+    }
+
+    /**
+     * Call a trial over when its stream has simply stopped.
+     *
+     * `end_guild_battle` is the statement and is preferred wherever it arrives;
+     * this is the fallback for when it never does — a page closed mid-trial, a
+     * connection dropped just before it, a spectator feed cut off. Without it a
+     * trial that ended unannounced stays live for the rest of the session, and
+     * every later personal fight is measured against its leftovers.
+     *
+     * Only ever ends; it cannot revive a trial, and a tick arriving afterwards
+     * unfreezes through the wave path above.
+     *
+     * @param {number} [now=Date.now()] - Clock, injectable for tests
+     */
+    _noteStaleStream(now = Date.now()) {
+        if (this.frozenSeconds !== null) return;
+        if (this.source !== 'spectated' || !this.spectator.lastAt) return;
+        if (now - this.spectator.lastAt <= STALE_STREAM_MS) return;
+
+        this.staleStream = true;
+        this.active = false;
+        if (!this.endedAt) this.endedAt = this.spectator.lastAt;
+        this._freezeElapsed();
+    }
+
+    /**
+     * Whether the game's own end-of-trial totals are still expected.
+     *
+     * `guild_trial_stats_updated` lands about eight seconds after the trial
+     * ends, and this window is the reason a personal fight started in the
+     * meantime must not touch anything: the reconciliation the panel exists to
+     * show is half-arrived, and re-deciding the module's state on a zone battle
+     * would archive the estimate against nothing.
+     *
+     * @param {number} [now=Date.now()] - Clock, injectable for tests
+     * @returns {boolean}
+     */
+    _awaitingReconciliation(now = Date.now()) {
+        if (!this.endedAt || this.reported) return false;
+        return now - this.endedAt < RECONCILE_WINDOW_MS;
+    }
+
+    /**
      * Whether the spectated trial stream is currently live — a
      * `guild_battle_updated` tick has landed within the last
      * {@link SPECTATOR_LIVE_WINDOW_MS}.
@@ -1497,6 +1636,12 @@ class GuildTrialDamage {
             // battle is active — the two streams are the game's own separation of
             // personal combat from the trial.
             if (this._spectatorStreamLive()) return;
+            // …and for the eight seconds after it ends, while the game's own
+            // per-member totals are still on their way. Re-deciding anything
+            // here would reset the very measurement they are about to be
+            // compared against, on the strength of a zone the player wandered
+            // back to. See `_awaitingReconciliation`.
+            if (this._awaitingReconciliation()) return;
 
             const monsterNames = battleMonsterNames(data);
             const verdict = isTrialBattle({ monsterNames, trialNames: this.trialNames });
@@ -1508,6 +1653,7 @@ class GuildTrialDamage {
 
             // Counters belong to the units of the fight they were read from
             this.state.monstersHP = {};
+            this.state.monstersMaxHP = {};
             this.state.dmgCounter = {};
             this.state.critCounter = {};
 
@@ -1557,6 +1703,8 @@ class GuildTrialDamage {
             // stream is the trial's only true source, so a `battle_updated` during
             // it is the client's own fight, not the trial's.
             if (this._spectatorStreamLive()) return;
+            // …nor while the ended trial's own totals are still expected
+            if (this._awaitingReconciliation()) return;
 
             // A battle this module never saw announced cannot be shown to be the
             // trial's, so it is not counted. That is the reload-mid-trial case,
@@ -1630,7 +1778,11 @@ class GuildTrialDamage {
      *   when there is nothing to draw, and `reason` says which flavour of nothing it is
      */
     breakdown() {
-        const ageMs = this.lastTickAt ? Date.now() - this.lastTickAt : null;
+        const now = Date.now();
+        // A stream that simply stopped is a trial that ended without saying so
+        this._noteStaleStream(now);
+        const seconds = this._elapsedSeconds();
+        const ageMs = this.lastTickAt ? now - this.lastTickAt : null;
 
         // A trial runs an hour. Anything older describes an event that has ended,
         // and a DPS table under a live trial card that is actually last week's
@@ -1651,7 +1803,7 @@ class GuildTrialDamage {
             tally: merged.tally,
             names: merged.names,
             deaths: merged.deaths,
-            seconds: this.seconds,
+            seconds,
         });
         const support = summariseSupport({ ...this.support, players: merged.support }, merged.names, merged.deaths);
 
@@ -1665,7 +1817,11 @@ class GuildTrialDamage {
             active: this.active,
             encounter: this.encounter,
             reason: this.reason,
-            seconds: this.seconds,
+            seconds,
+            // Whether that figure is still moving, and why it stopped if not:
+            // the game said the trial ended, or the stream simply went quiet
+            frozen: this.frozenSeconds !== null,
+            staleStream: this.staleStream,
             fights: this.fights,
             ageMs,
             // Where these figures came from, which every caption has to state

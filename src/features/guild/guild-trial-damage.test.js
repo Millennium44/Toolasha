@@ -72,6 +72,7 @@ const {
     GUILD_BATTLE_MESSAGE,
     guildTrialDamage,
     isTrialBattle,
+    MIN_SECONDS,
     SPECTATED_TRIAL_NOTE,
     summariseTrialDamage,
 } = await import('./guild-trial-damage.js');
@@ -1520,7 +1521,9 @@ describe('personal combat does not leak into a spectated trial', () => {
 
         const report = guildTrialDamage.breakdown();
         // The personal 50,000 never lands, and the module stays a spectator.
-        expect(report.totalDamage).toBe(0);
+        // The 1,000 the boss lost on the stream does — these ticks carry no
+        // monster hit counter, so it is counted as un-countered damage.
+        expect(report.totalDamage).toBe(1000);
         expect(report.source).toBe('spectated');
         expect(report.players.some((row) => row.name === 'MillenniumTest')).toBe(false);
     });
@@ -1635,5 +1638,163 @@ describe('per-name history is immutable across wave boundaries', () => {
         const rows = guildTrialDamage.breakdown().support.players;
         expect(rows.find((row) => row.name === 'NPD').damageTaken).toBe(850);
         expect(rows.find((row) => row.name === 'Rick')).toBeUndefined();
+    });
+});
+
+describe('the trial ends and its figures stop moving', () => {
+    const at = new Date('2026-08-19T16:00:00Z').getTime();
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(at);
+        game.clientData = {};
+        game.loadouts = [];
+        game.ownName = null;
+        game.storedRoster = null;
+        guildTrialDamage.storedRoster = null;
+        guildTrialDamage.initialize();
+        guildTrialDamage.reset();
+        guildTrialDamage.setTrialNames(['Trial Chameleon']);
+    });
+
+    afterEach(() => {
+        guildTrialDamage.cleanup();
+        vi.useRealTimers();
+        document.body.innerHTML = '';
+    });
+
+    const opening = (battleId = 11) => ({
+        battleId,
+        tier: 2,
+        players: [{ character: { id: 501, name: 'Rick' } }],
+        monsters: [{ hrid: '/monsters/trial_chameleon', name: 'Trial Chameleon', combatDetails: {} }],
+    });
+    const tick = (offsetMs, bossHp, bossDmg, battleId = 11) => {
+        vi.setSystemTime(at + offsetMs);
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            battleId,
+            tier: 2,
+            pMap: { 0: { cHP: 2000, mHP: 2000, cMP: 500, mMP: 500, atkCounter: bossDmg } },
+            mMap: { 0: { cHP: bossHp, mHP: 650_000, dmgCounter: bossDmg, critCounter: 0 } },
+        });
+    };
+    const endTrial = (offsetMs) => {
+        vi.setSystemTime(at + offsetMs);
+        game.wsHandlers.end_guild_battle({ battleId: 11, trialHrid: '/guild_combat/chameleon' });
+    };
+
+    test('the elapsed denominator freezes at the end and the DPS with it', () => {
+        game.wsHandlers.new_guild_battle(opening());
+        for (let step = 1; step <= 40; step += 1) tick(step * 250, 650_000 - step * 10_000, step);
+        endTrial(11_000);
+
+        const ended = guildTrialDamage.breakdown();
+        expect(ended.frozen).toBe(true);
+        expect(ended.seconds).toBeGreaterThan(MIN_SECONDS);
+        expect(ended.partyDps).toBeGreaterThan(0);
+
+        // An hour of wall clock later, with nothing on the wire
+        vi.setSystemTime(at + 60 * 60_000);
+        const later = guildTrialDamage.breakdown();
+        expect(later.seconds).toBe(ended.seconds);
+        expect(later.partyDps).toBe(ended.partyDps);
+    });
+
+    test('a tick trailing in after the end does not extend it', () => {
+        game.wsHandlers.new_guild_battle(opening());
+        for (let step = 1; step <= 40; step += 1) tick(step * 250, 650_000 - step * 10_000, step);
+        endTrial(11_000);
+        const frozenAt = guildTrialDamage.breakdown().seconds;
+
+        tick(11_200, 240_000, 41);
+        expect(guildTrialDamage.breakdown().seconds).toBe(frozenAt);
+    });
+
+    test('a new trial stream starts the clock again', () => {
+        game.wsHandlers.new_guild_battle(opening());
+        for (let step = 1; step <= 40; step += 1) tick(step * 250, 650_000 - step * 10_000, step);
+        endTrial(11_000);
+
+        vi.setSystemTime(at + 20_000);
+        game.wsHandlers.new_guild_battle(opening(12));
+        expect(guildTrialDamage.breakdown().frozen).toBe(false);
+    });
+
+    test('a stream that simply stops is called ended after three quiet minutes', () => {
+        game.wsHandlers.new_guild_battle(opening());
+        for (let step = 1; step <= 40; step += 1) tick(step * 250, 650_000 - step * 10_000, step);
+
+        // Two minutes of quiet is a long wave transition, not an ending
+        vi.setSystemTime(at + 10_000 + 2 * 60_000);
+        expect(guildTrialDamage.breakdown().staleStream).toBe(false);
+
+        // Three and a half is a trial that ended without saying so
+        vi.setSystemTime(at + 10_000 + 3.5 * 60_000);
+        const stale = guildTrialDamage.breakdown();
+        expect(stale.staleStream).toBe(true);
+        expect(stale.frozen).toBe(true);
+        expect(stale.active).toBe(false);
+        expect(stale.endedAt).toBeTruthy();
+
+        const seconds = stale.seconds;
+        vi.setSystemTime(at + 30 * 60_000);
+        expect(guildTrialDamage.breakdown().seconds).toBe(seconds);
+    });
+
+    test('a personal fight inside the reconciliation window changes nothing', () => {
+        game.wsHandlers.new_guild_battle(opening());
+        for (let step = 1; step <= 40; step += 1) tick(step * 250, 650_000 - step * 10_000, step);
+        endTrial(11_000);
+        const before = guildTrialDamage.breakdown();
+
+        // The player goes straight back to farming. The stats message is still
+        // eight seconds out, and it is the other half of the comparison.
+        vi.setSystemTime(at + 20_000);
+        game.wsHandlers.new_battle({
+            battleId: 4242,
+            monsters: [{ name: 'Chameleon', currentHitpoints: 100_000, maxHitpoints: 100_000 }],
+            players: { 0: { character: { name: 'Rick' } } },
+        });
+        vi.setSystemTime(at + 20_250);
+        game.wsHandlers.battle_updated({
+            battleId: 4242,
+            pMap: { 0: { cHP: 3000, mHP: 3000, cMP: 500, mMP: 500, atkCounter: 1 } },
+            mMap: { 0: { cHP: 50_000, mHP: 100_000, dmgCounter: 1, critCounter: 0 } },
+        });
+
+        const after = guildTrialDamage.breakdown();
+        expect(after.totalDamage).toBe(before.totalDamage);
+        expect(after.seconds).toBe(before.seconds);
+        expect(after.encounter).toBe(before.encounter);
+
+        // …and the game's own totals still land on the trial they belong to
+        vi.setSystemTime(at + 22_000);
+        game.wsHandlers.guild_trial_stats_updated({
+            guildTrialStatList: [
+                { characterId: 501, trialHrid: '/guild_combat/chameleon', damageDealt: 400_000, healingDone: 0 },
+            ],
+        });
+        expect(guildTrialDamage.breakdown().reported).toEqual({
+            Rick: { damage: 400_000, healing: 0, taken: 0 },
+        });
+    });
+
+    test('once the totals have landed, the next personal fight is judged normally', () => {
+        game.wsHandlers.new_guild_battle(opening());
+        tick(250, 640_000, 1);
+        endTrial(1000);
+        game.wsHandlers.guild_trial_stats_updated({
+            guildTrialStatList: [
+                { characterId: 501, trialHrid: '/guild_combat/chameleon', damageDealt: 10_000, healingDone: 0 },
+            ],
+        });
+
+        vi.setSystemTime(at + 20_000);
+        game.wsHandlers.new_battle({
+            battleId: 4243,
+            monsters: [{ name: 'Abyssal Imp' }],
+            players: { 0: { character: { name: 'Rick' } } },
+        });
+        expect(guildTrialDamage.breakdown().reason).toContain('not this week’s trial encounter');
     });
 });

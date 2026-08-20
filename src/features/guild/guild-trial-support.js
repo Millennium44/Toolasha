@@ -57,6 +57,15 @@
  * loaded. Buff abilities are found the same way, from effects that carry
  * `buffs`.
  *
+ * ## A corpse standing up is not a heal
+ *
+ * Health going from exactly zero to positive is a revive, and it returns the
+ * whole bar in one tick. Folded in as healing it dwarfs every real cast on the
+ * table — a healer credited with a party member's entire maximum, on a tick
+ * they may not have acted at all — so it is counted as a revive, per player,
+ * and its health is kept out of the attribution altogether. The idea is
+ * KikiMeter's (see `third-party/kikimeter/`).
+ *
  * ## Regeneration is not a failure to attribute, and it stopped being reported as one
  *
  * A watched trial with the party near full health showed "0 party hps" over
@@ -158,6 +167,9 @@ export function newSupportState() {
         emptySince: {},
         unattributedHealing: 0,
         regenHealing: 0,
+        // Health that came back with a player, rather than to one. See the
+        // revive branch in `foldSupportTick`
+        revivedHealth: 0,
         regenFraction: null,
         abilityKindsKnown: true,
     };
@@ -177,6 +189,8 @@ function emptyRow() {
         casts: 0,
         healCasts: 0,
         buffCasts: 0,
+        /** Times this player came back from exactly zero — never counted as healing */
+        revives: 0,
         castsByAbility: {},
         lowestHealthFraction: null,
         // Running out of mana is the thing a caster notices and the log never
@@ -259,7 +273,16 @@ export function foldSupportTick(state, pMap, actions = {}, detailMap, at = null)
             const before = state.lastHP[index];
             if (before !== undefined) {
                 const change = health - before;
-                if (change > 0) {
+                if (change > 0 && before === 0) {
+                    // A corpse coming back is not a heal. Zero to positive is a
+                    // revive — the whole bar returns at once, and crediting it
+                    // as healing hands the healer a burst several times the size
+                    // of anything they can actually cast, on a tick where they
+                    // may not even have acted. Counted as what it is and kept
+                    // out of the attribution entirely.
+                    row.revives += 1;
+                    state.revivedHealth += change;
+                } else if (change > 0) {
                     row.healingReceived += change;
                     // Health and maximum ride along so the regen classifier can
                     // ask "is this the same fraction of *this* unit's maximum,
@@ -432,7 +455,7 @@ export function splitRegenRises(state, rises) {
  * @param {Object} state - From {@link newSupportState}
  * @param {Object} [names] - Player index → display name
  * @returns {{players: Array<Object>, totals: Object, unattributedHealing: number,
- *   abilityKindsKnown: boolean}} Rows, most damage taken first
+ *   revivedHealth: number, abilityKindsKnown: boolean}} Rows, most damage taken first
  */
 export function summariseSupport(state, names = {}, deaths = {}) {
     const players = Object.entries(state?.players || {}).map(([index, row]) => ({
@@ -457,8 +480,12 @@ export function summariseSupport(state, names = {}, deaths = {}) {
             manaSpent: sum('manaSpent'),
             casts: sum('casts'),
             manaOuts: sum('manaOuts'),
+            revives: sum('revives'),
         },
         unattributedHealing: state?.unattributedHealing || 0,
+        // Kept out of every healing figure above: a revive returns the whole bar
+        // at once and no cast in the game does that
+        revivedHealth: state?.revivedHealth || 0,
         // The trial's own flat regeneration, identified by its shape — kept
         // apart from `unattributedHealing` because "the game healed everyone"
         // and "somebody's heal could not be credited" are different claims
@@ -483,7 +510,13 @@ export function supportCoverage() {
             'measured — health falling, per player, per tick. Post-mitigation and a floor: it is the health ' +
             'actually lost then healed back, not the game’s pre-mitigation Damage Taken, and damage healed on ' +
             'the same tick is invisible',
-        healingReceived: 'measured — health rising, per player, per tick',
+        healingReceived:
+            'measured — health rising, per player, per tick, except a rise from exactly zero, ' +
+            'which is a revive and is counted as one rather than as a heal',
+        revives:
+            'measured — health going from exactly zero to positive. The health it returns is never ' +
+            'attributed to a healer: no cast returns a whole bar, and crediting one would swamp every ' +
+            'real heal on the table',
         healingDone:
             'attributed when exactly one player cast a heal on the tick, or when a lone ability cast ' +
             'sits beside rises that are not regeneration-shaped (the tick is grouped by actor, so those ' +

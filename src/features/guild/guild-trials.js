@@ -122,6 +122,7 @@ import {
     inferBuildersHallBonus,
     levelFromTier,
     nextTierPreview,
+    parseCurrentTrialsData,
     partialTierCredit,
     payoutProjection,
     projectPace,
@@ -990,13 +991,22 @@ function bankedRow(analysis) {
  * @param {string|null} [options.phase] - `scheduled`, `live` or `completed`
  * @param {number|null} [options.startsInMs] - Countdown to the scheduled start
  * @param {Object|null} [options.forecast] - From `guild-trial-forecast.js`
+ * @param {number|null} [options.deadlineMs] - Milliseconds of the trial's hour left, from
+ *   the guild payload's own countdown rather than from a clock on the page
  * @returns {string} HTML
  */
 export function renderTrialBlock(
     analysis,
     participants,
     breakdown = guildTrialDamage.breakdown(),
-    { participating = null, phase = null, startsInMs = null, forecast = null, looseForecast = null } = {}
+    {
+        participating = null,
+        phase = null,
+        startsInMs = null,
+        forecast = null,
+        looseForecast = null,
+        deadlineMs = null,
+    } = {}
 ) {
     const unit = analysis.kind === 'combat' ? 'dmg' : 'work';
     const rows = [];
@@ -1170,6 +1180,24 @@ export function renderTrialBlock(
                 )} left.`
             )
         );
+
+        // The other half of "clears in 17m": whether there is still 17 minutes
+        // to clear it in. The countdown is the guild's own — it rides on
+        // `guild_updated` and needs no clock on the page — and set beside the
+        // projection it turns an estimate into a verdict.
+        if (Number.isFinite(deadlineMs)) {
+            const tight = analysis.etaMs !== null && analysis.etaMs > deadlineMs;
+            rows.push(
+                line(
+                    'Deadline',
+                    formatEta(deadlineMs),
+                    tight ? WARN : DIM,
+                    'Left of the trial’s hour, from the guild’s own countdown rather than from a clock on ' +
+                        'this tab.' +
+                        (tight ? ' The projection above runs past it: this tier does not clear in time.' : '')
+                )
+            );
+        }
     }
 
     if (!analysis.pace && !notMine) {
@@ -2113,6 +2141,14 @@ class GuildTrials {
         this.samplerId = null;
         /** Guild name seen on the socket, when the XP tracker is not the one who saw it */
         this.socketGuildName = null;
+        /**
+         * The last `currentTrialsData` read off `guild_updated`, with when it
+         * arrived — `{combat, skilling, at}`. The one trial signal that does not
+         * need the panel open; see {@link _noteCurrentTrials}.
+         */
+        this.currentTrials = null;
+        /** The phase that message implies, used only where the page says nothing */
+        this.socketPhase = null;
         /** The character whose record is in hand; a switch invalidates everything below it */
         this.characterId = null;
         /** True between a character switch and the arriving character's data landing */
@@ -2204,6 +2240,7 @@ class GuildTrials {
 
         this._refresh = (data) => {
             this._noteGuildName(data);
+            this._noteCurrentTrials(data);
             this._render(findTrialsRoot());
         };
         for (const type of ['guild_updated', 'guild_characters_updated', 'guild_trial_signup_updated']) {
@@ -2469,6 +2506,78 @@ class GuildTrials {
     _noteGuildName(data) {
         const name = data?.guild?.name;
         if (typeof name === 'string' && name.trim()) this.socketGuildName = name.trim();
+    }
+
+    /**
+     * What the guild message says about the trials in progress.
+     *
+     * The one lifecycle signal on this feature that does not need the panel
+     * open. Every other one is scraped off the Trials tab, so a trial that runs
+     * its whole hour while the player is fishing is invisible to the recorder
+     * and to the ability capture alike; `guild_updated` arrives regardless, and
+     * `currentTrialsData` on it states whether a combat trial is in progress
+     * and how much of its hour is left.
+     *
+     * Strictly additive. What is read here arms the things that only need to
+     * know a trial is running — it never sets the phase, because a phase read
+     * off the page is a phase somebody can see and this parse may be describing
+     * the moment before. {@link _noteLifecycle} consults it only when the page
+     * said nothing at all.
+     *
+     * @param {Object} [data] - A `guild_updated`-shaped payload
+     */
+    _noteCurrentTrials(data) {
+        try {
+            const read = parseCurrentTrialsData(data?.guild?.currentTrialsData ?? data?.currentTrialsData);
+            if (!read) return;
+
+            const now = Date.now();
+            this.currentTrials = { ...read, at: now };
+
+            const combat = read.combat;
+            if (!combat) return;
+
+            if (combat.inProgress && !combat.allDone) {
+                // The trial is running, stated by the server. Both of these
+                // debounce their own repeats, and both otherwise wait on
+                // somebody opening the Trials tab.
+                this.socketPhase = 'live';
+                guildTrialRecorder.noteActivity?.('guild-updated', now);
+                guildTrialAbilities.noteTrialActivity?.(now);
+            } else if (this.socketPhase === 'live') {
+                // It was running and is not any more — the status left
+                // `in_progress`, or every party finished. Either is an ending,
+                // and it is the only one that arrives with the panel shut.
+                this.socketPhase = combat.allDone ? 'completed' : 'scheduled';
+            }
+        } catch (error) {
+            console.error('[GuildTrials] Reading the guild’s trial status failed:', error);
+        }
+    }
+
+    /**
+     * How much of the trial's hour is left, as the server counts it.
+     *
+     * Only for a combat trial in progress, and only while the reading is fresh
+     * enough to still be counting down — `budgetRemainingMs` is a snapshot, so
+     * the time since it arrived is taken off it here rather than being drawn as
+     * though it had stood still.
+     *
+     * @param {string} kind - `combat` or `skilling`
+     * @param {number} [now=Date.now()] - Clock
+     * @returns {number|null} Milliseconds left, or null when nothing said
+     */
+    _trialBudgetMs(kind, now = Date.now()) {
+        const held = this.currentTrials;
+        const entry = held?.[kind === 'skilling' ? 'skilling' : 'combat'];
+        const stated = entry?.budgetRemainingMs;
+        if (!Number.isFinite(stated) || !entry?.inProgress) return null;
+
+        const elapsed = Number.isFinite(held.at) ? Math.max(0, now - held.at) : 0;
+        // Older than the budget it stated is a reading from a trial that has
+        // since ended, and counting down past zero says nothing
+        if (elapsed >= stated) return null;
+        return stated - elapsed;
     }
 
     /**
@@ -2856,6 +2965,7 @@ class GuildTrials {
                         startsInMs: status?.startsInMs ?? null,
                         forecast: this._forecast(tile, analysis, participants, tilePhase, timing),
                         looseForecast: timing,
+                        deadlineMs: this._trialBudgetMs(tile.kind, now),
                     }),
                     // Wide enough that a label and a figure fit on one line, and
                     // capped so it cannot stretch a whole panel — the reported
@@ -3158,7 +3268,11 @@ class GuildTrials {
      * @param {number} now - Clock
      */
     _noteLifecycle(status, tiles, now) {
-        const phase = status?.phase || null;
+        // The page first, always. `socketPhase` fills in only where the tab said
+        // nothing at all — a trial that started while the guild panel was shut
+        // is a real transition and the only place it can be seen is the wire.
+        // It never overrides: a stale parse must not un-say what is on screen.
+        const phase = status?.phase || this.socketPhase || null;
         const previous = this.phase;
         if (phase && phase !== this.phase) this.phase = phase;
 

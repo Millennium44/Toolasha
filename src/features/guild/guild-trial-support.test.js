@@ -374,3 +374,51 @@ describe('what it will not measure', () => {
         expect(coverage.healingReceived).toMatch(/^measured/);
     });
 });
+
+describe('a revive is not a heal', () => {
+    test('zero to positive counts as a revive and never as healing', () => {
+        const state = newSupportState();
+        // Down, then back
+        foldSupportTick(state, { 0: unit({ cHP: 400 }), 1: unit({ atkCounter: 1 }) }, {}, detailMap);
+        foldSupportTick(state, { 0: unit({ cHP: 0 }), 1: unit({ atkCounter: 1 }) }, {}, detailMap);
+        foldSupportTick(
+            state,
+            { 0: unit({ cHP: 1000 }), 1: unit({ atkCounter: 2, abilityHrid: '/abilities/rejuvenate' }) },
+            { 1: '/abilities/rejuvenate' },
+            detailMap
+        );
+
+        expect(state.players['0'].revives).toBe(1);
+        expect(state.players['0'].healingReceived).toBe(0);
+        expect(state.revivedHealth).toBe(1000);
+        // …and nothing lands on the healer who happened to be casting
+        expect(state.players['1'].healingDone).toBe(0);
+        expect(state.unattributedHealing).toBe(0);
+    });
+
+    test('an ordinary heal off a non-zero floor is still a heal', () => {
+        const state = newSupportState();
+        foldSupportTick(state, { 0: unit({ cHP: 1 }), 1: unit({ atkCounter: 1 }) }, {}, detailMap);
+        foldSupportTick(
+            state,
+            { 0: unit({ cHP: 900 }), 1: unit({ atkCounter: 2 }) },
+            { 1: '/abilities/rejuvenate' },
+            detailMap
+        );
+
+        expect(state.players['0'].revives).toBe(0);
+        expect(state.players['0'].healingReceived).toBe(899);
+        expect(state.players['1'].healingDone).toBe(899);
+    });
+
+    test('the summary carries the count and the health apart from healing', () => {
+        const state = newSupportState();
+        foldSupportTick(state, { 0: unit({ cHP: 0 }) }, {}, detailMap);
+        foldSupportTick(state, { 0: unit({ cHP: 1000 }) }, {}, detailMap);
+
+        const summary = summariseSupport(state, { 0: 'Bob' });
+        expect(summary.totals.revives).toBe(1);
+        expect(summary.totals.healingReceived).toBe(0);
+        expect(summary.revivedHealth).toBe(1000);
+    });
+});

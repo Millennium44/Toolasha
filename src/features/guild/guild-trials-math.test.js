@@ -14,8 +14,10 @@ import {
     ELIGIBLE_TOKEN_SHARE,
     isTrialName,
     MAX_TRIAL_NAME_CHARS,
+    parseCurrentTrialsData,
     PARTICIPANT_BONUS_SHARE,
     TRIAL_ACTIVE_MS,
+    TRIAL_BUDGET_MS,
     TRIAL_MAX_LEVEL,
     TRIAL_MAX_TIER,
     TRIAL_START_LEVEL,
@@ -1511,5 +1513,66 @@ describe('the payout, against four days of the guild’s own announcements', () 
         expect(payout.basePoints).toBeCloseTo(2400, 6);
         expect(payout.eligibleTokens).toBeCloseTo(1320, 6);
         expect(payout.participantTokens).toBeCloseTo(1980, 6);
+    });
+});
+
+describe('parseCurrentTrialsData', () => {
+    const blob = (over = {}) =>
+        JSON.stringify({
+            combat: {
+                status: 'in_progress',
+                budgetRemainingMs: 2_400_000,
+                parties: { 1: { done: false }, 2: { done: true } },
+                ...over,
+            },
+            skilling: { status: '', parties: {} },
+        });
+
+    test('reads the string the payload actually carries', () => {
+        const read = parseCurrentTrialsData(blob());
+
+        expect(read.combat.inProgress).toBe(true);
+        expect(read.combat.status).toBe('in_progress');
+        expect(read.combat.budgetRemainingMs).toBe(2_400_000);
+        expect(read.combat.parties).toBe(2);
+        expect(read.combat.done).toBe(1);
+        expect(read.combat.allDone).toBe(false);
+    });
+
+    test('every party done is the trial being over', () => {
+        const read = parseCurrentTrialsData(blob({ parties: { 1: { done: true }, 2: { done: true } } }));
+        expect(read.combat.allDone).toBe(true);
+    });
+
+    test('no parties at all is not "all done"', () => {
+        // A record that has not been filled in yet would otherwise end the
+        // trial the instant it was announced
+        const read = parseCurrentTrialsData(blob({ parties: {} }));
+        expect(read.combat.allDone).toBe(false);
+    });
+
+    test('a budget that is not a countdown from the hour is refused', () => {
+        expect(parseCurrentTrialsData(blob({ budgetRemainingMs: 9_999_999 })).combat.budgetRemainingMs).toBeNull();
+        expect(parseCurrentTrialsData(blob({ budgetRemainingMs: -1 })).combat.budgetRemainingMs).toBeNull();
+        expect(parseCurrentTrialsData(blob({ budgetRemainingMs: 'soon' })).combat.budgetRemainingMs).toBeNull();
+        expect(parseCurrentTrialsData(blob({ budgetRemainingMs: TRIAL_BUDGET_MS })).combat.budgetRemainingMs).toBe(
+            TRIAL_BUDGET_MS
+        );
+    });
+
+    test('a broken or absent payload answers null rather than throwing', () => {
+        expect(parseCurrentTrialsData('{not json')).toBeNull();
+        expect(parseCurrentTrialsData('')).toBeNull();
+        expect(parseCurrentTrialsData('   ')).toBeNull();
+        expect(parseCurrentTrialsData(null)).toBeNull();
+        expect(parseCurrentTrialsData(undefined)).toBeNull();
+        expect(parseCurrentTrialsData('null')).toBeNull();
+        expect(parseCurrentTrialsData('"a string"')).toBeNull();
+        expect(parseCurrentTrialsData('{"other":{}}')).toBeNull();
+        expect(parseCurrentTrialsData(42)).toBeNull();
+    });
+
+    test('an already-parsed object is read the same way', () => {
+        expect(parseCurrentTrialsData(JSON.parse(blob())).combat.inProgress).toBe(true);
     });
 });
