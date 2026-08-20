@@ -470,6 +470,23 @@ describe('the unread notice is read first', () => {
         expect(chipText()).toContain('✓ Done');
     });
 
+    test('a notice a press did not clear is offered again, a bounded few times', () => {
+        board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        const list = document.querySelector('[class*="TasksPanel_taskList"]');
+        unreadNotice(list);
+
+        walk.start();
+
+        // The notice stays: the click did not reach the game. Three presses, then on.
+        for (let press = 1; press <= 3; press++) {
+            expect(chipText()).toBe('▶ Read unread tasks');
+            walk.advance();
+            vi.advanceTimersByTime(3000);
+        }
+        expect(clicks).toEqual(['Notice:Read', 'Notice:Read', 'Notice:Read']);
+        expect(chipText()).toContain('Reroll #1');
+    });
+
     test('a notice already read elsewhere is walked past without a click', () => {
         const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
         const notice = unreadNotice(list);

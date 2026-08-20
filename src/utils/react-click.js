@@ -69,12 +69,18 @@ export function clickThroughReact(element, { reactFirst = false } = {}) {
         const handler = reactClickHandlerFor(element);
         if (!handler) return false;
         try {
+            // Shaped like a real React SyntheticEvent as far as game handlers
+            // look: some read `type`/`button`/`detail`, and a real event's
+            // `nativeEvent` is always truthy
             handler({
                 currentTarget: element,
                 target: element,
+                type: 'click',
+                button: 0,
+                detail: 1,
                 preventDefault() {},
                 stopPropagation() {},
-                nativeEvent: null,
+                nativeEvent: { type: 'click', button: 0, detail: 1 },
             });
             return true;
         } catch (error) {

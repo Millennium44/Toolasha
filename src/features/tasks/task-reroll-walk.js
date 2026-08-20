@@ -82,6 +82,9 @@ const PANEL_POSITION_KEY = 'taskRerollWalkPanelPosition';
 /** The board's "You have N unread tasks" notice, whose one button reads them */
 const UNREAD_NOTICE = '[class*="TasksPanel_unreadTasks"]';
 
+/** How many Read presses to offer before walking on past a notice that will not clear */
+const READ_PRESS_LIMIT = 3;
+
 /** How long the walk waits for the game to redraw a card after a UI-only click */
 const UI_SETTLE_MS = 120;
 /** How long it waits for a reroll or discard to come back from the server */
@@ -265,8 +268,10 @@ class TaskRerollWalk {
         /** Set by a plan that found the chooser drawn but unpressable; cleared each plan */
         this.pending = false;
         this.pendingRetries = 0;
-        /** Whether the unread-tasks notice has already been pressed (or was absent) this walk */
-        this.readDone = false;
+        /** Read presses made on the unread-tasks notice this walk */
+        this.readPresses = 0;
+        /** Whether any card press has been made — after that, Read is never offered */
+        this.walkBegun = false;
         this.step = null;
         this.message = '';
         this.index = 0;
@@ -523,9 +528,11 @@ class TaskRerollWalk {
     _plan() {
         // Unread tasks first: the board can be carrying a "You have N unread
         // tasks" notice whose Read press reveals them, and rerolling around
-        // hidden tasks walks an incomplete board. Offered once, as the walk's
-        // first press — after that the card indexes must stay put.
-        if (!this.readDone && this.index === 0) {
+        // hidden tasks walks an incomplete board. Offered only before any card
+        // press — after that the card indexes must stay put — and re-offered a
+        // bounded few times when a press did not clear it, since the notice
+        // still standing is the only proof the click reached the game.
+        if (!this.walkBegun && this.readPresses < READ_PRESS_LIMIT) {
             const readButton = this._readButton();
             if (readButton) {
                 return {
@@ -650,7 +657,8 @@ class TaskRerollWalk {
         this.index = 0;
         this.pendingRetries = 0;
         this.pending = false;
-        this.readDone = false;
+        this.readPresses = 0;
+        this.walkBegun = false;
         this.tally = { kept: 0, rerolled: 0, trashed: 0 };
         this.message = '';
         this.hidden = false;
@@ -738,12 +746,11 @@ class TaskRerollWalk {
             const readButton = this._readButton();
             if (!readButton) {
                 // Read elsewhere already — nothing to press, walk on
-                this.readDone = true;
                 this._replan();
                 return false;
             }
             clickThroughReact(readButton, { reactFirst: true });
-            this.readDone = true;
+            this.readPresses += 1;
             this.state = 'waiting';
             this._render();
             this._replanSoon(SERVER_SETTLE_MS);
@@ -765,6 +772,7 @@ class TaskRerollWalk {
         }
 
         clickThroughReact(button, { reactFirst: true });
+        this.walkBegun = true;
 
         if (planned.kind === 'pay') this.tally.rerolled += 1;
         if (planned.kind === 'confirmDiscard') this.tally.trashed += 1;

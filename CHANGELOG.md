@@ -24,7 +24,7 @@ Ported from upstream: the My Listings "Refresh" button now starts a cycle that o
 
 ### The reroll walk reads unread tasks first
 
-A board carrying the "You have N unread tasks" notice now has the walk offer Read as its first press, so rerolling never walks a board with tasks still hidden. One press, found by the notice's class rather than its wording, offered once per walk.
+A board carrying the "You have N unread tasks" notice now has the walk offer Read as its first press, so rerolling never walks a board with tasks still hidden. Found by the notice's class rather than its wording; a press the game ignored is offered again a bounded few times, and the shared react-click helper now passes a fuller synthetic event so game buttons that inspect it respond.
 
 ### Offline Progress economics
 
