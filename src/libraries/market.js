@@ -21,6 +21,7 @@ import marketDepthCap from '../features/market/market-depth-cap.js';
 import marketOrderTotals from '../features/market/market-order-totals.js';
 import marketHistoryViewer from '../features/market/market-history-viewer.js';
 import listingRefreshNavigator from '../features/market/listing-refresh-navigator.js';
+import listingNextNavigator from '../features/market/listing-next-navigator.js';
 import bulkSellAssistant from '../features/market/bulk-sell-assistant.js';
 import listingMarkers from '../features/market/listing-markers.js';
 import marketplaceBadgeFilter from '../features/market/marketplace-badge-filter.js';
@@ -98,6 +99,7 @@ toolashaRoot.Market = {
     marketOrderTotals,
     marketHistoryViewer,
     listingRefreshNavigator,
+    listingNextNavigator,
     bulkSellAssistant,
     listingMarkers,
     marketplaceBadgeFilter,

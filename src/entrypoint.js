@@ -595,6 +595,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'listingNextNavigator',
+            name: 'Listing Next Navigator',
+            category: 'Market',
+            module: Market.listingNextNavigator,
+            async: false,
+        },
+        {
             key: 'bulkSellAssistant',
             name: 'Bulk Sell Assistant',
             category: 'Market',

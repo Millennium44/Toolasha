@@ -32,7 +32,7 @@ import { createCleanupRegistry } from '../../../utils/cleanup-registry.js';
 import marketHistoryAPI from './market-history-api.js';
 import { freshestSighting } from './market-history-data.js';
 
-/** The header row that carries "N / M Listings", Upgrade Capacity and Refresh Next */
+/** The header row that carries "N / M Listings", Upgrade Capacity and the listing-cycle Refresh */
 const LISTING_COUNT_SEL = '[class*="MarketplacePanel_listingCount"]';
 const MY_LISTINGS_TABLE_SEL = '[class*="MarketplacePanel_myListingsTable"]';
 const CONTROLS_ID = 'mwi-mooket-listings-refresh';

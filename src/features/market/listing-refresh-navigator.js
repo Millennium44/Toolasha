@@ -1,8 +1,13 @@
 /**
  * Listing Refresh Navigator
  *
- * Adds a "Refresh Next" button next to "Upgrade Capacity" on the My Listings page.
- * Each click navigates to the next listing's order book, cycling through all listings.
+ * Adds a "Refresh" button next to "Upgrade Capacity" on the My Listings page that starts a
+ * cycling session through all listings. From there, listing-next-navigator.js exposes a
+ * "Next"/"Back to My Listings" button on each listing's order-book page, so the rest of the
+ * cycle never needs to come back through this table — opening a listing already refreshes it.
+ *
+ * Every navigation in a session is driven by a user click: starting one opens the first listing,
+ * and nothing advances on its own afterwards.
  *
  * Depends on listing-price-display.js stamping row.dataset.itemHrid / listingId.
  */
@@ -18,9 +23,9 @@ const BTN_CLASS = 'Button_button__1Fe9z Button_small__3fqC7';
 class ListingRefreshNavigator {
     constructor() {
         this.isInitialized = false;
-        this.lastListingId = null;
         this.watcher = null;
         this.refreshBtn = null;
+        this.session = null; // { items: [{itemHrid, enhancementLevel, listingId}], currentIndex }
     }
 
     initialize() {
@@ -51,8 +56,8 @@ class ListingRefreshNavigator {
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = BTN_CLASS;
-            btn.textContent = 'Refresh Next';
-            btn.addEventListener('click', () => this._refreshNext());
+            btn.textContent = 'Refresh';
+            btn.addEventListener('click', () => this._startSession());
 
             const upgradeBtn = Array.from(countContainer.querySelectorAll('button')).find((b) =>
                 b.textContent.includes('Upgrade Capacity')
@@ -77,34 +82,71 @@ class ListingRefreshNavigator {
         ensureButton();
     }
 
-    _refreshNext() {
+    _startSession() {
         const table = document.querySelector(TABLE_SEL);
         if (!table) return;
 
         const rows = Array.from(table.querySelectorAll('tbody tr'));
         if (rows.length === 0) return;
 
+        const items = rows
+            .map((row) => ({
+                itemHrid: row.dataset.itemHrid,
+                enhancementLevel: parseInt(row.dataset.enhancementLevel || '0', 10),
+                listingId: row.dataset.listingId || null,
+            }))
+            .filter((item) => Boolean(item.itemHrid));
+
+        if (items.length === 0) return;
+
+        // Resume where the previous session stopped, so a user who abandoned a cycle half-way
+        // and came back picks up at the next listing rather than starting over.
         let startIndex = 0;
-        if (this.lastListingId !== null) {
-            const lastIdx = rows.findIndex((row) => row.dataset.listingId === this.lastListingId);
-            if (lastIdx !== -1) {
-                startIndex = (lastIdx + 1) % rows.length;
-            }
+        const lastListingId = this.session?.items[this.session.currentIndex]?.listingId;
+        if (lastListingId != null) {
+            const lastIdx = items.findIndex((item) => item.listingId === lastListingId);
+            if (lastIdx !== -1) startIndex = (lastIdx + 1) % items.length;
         }
 
-        const row = rows[startIndex];
-        const itemHrid = row.dataset.itemHrid;
-        const enhancementLevel = parseInt(row.dataset.enhancementLevel || '0', 10);
+        this.session = { items, currentIndex: startIndex };
+        this._navigateToCurrent();
+    }
 
-        if (!itemHrid) return;
+    _navigateToCurrent() {
+        const item = this.session?.items[this.session.currentIndex];
+        if (!item?.itemHrid) return;
+        navigateToMarketplace(item.itemHrid, item.enhancementLevel);
+    }
 
-        this.lastListingId = row.dataset.listingId || null;
+    /**
+     * @returns {{current: {itemHrid: string, enhancementLevel: number, listingId: string|null},
+     *   index: number, total: number, isLast: boolean}|null} Null when no session is active.
+     */
+    getSessionProgress() {
+        if (!this.session) return null;
+        const { items, currentIndex } = this.session;
+        return {
+            current: items[currentIndex],
+            index: currentIndex,
+            total: items.length,
+            isLast: currentIndex >= items.length - 1,
+        };
+    }
 
-        if (this.refreshBtn) {
-            this.refreshBtn.textContent = `Refresh Next (${startIndex + 1}/${rows.length})`;
-        }
+    /**
+     * Advance the active session to the next listing and navigate to it. Called only from a
+     * user's click on the Next button.
+     * @returns {boolean} True when advanced; false when there is no session or already at the end.
+     */
+    advanceSession() {
+        if (!this.session || this.session.currentIndex >= this.session.items.length - 1) return false;
+        this.session.currentIndex += 1;
+        this._navigateToCurrent();
+        return true;
+    }
 
-        navigateToMarketplace(itemHrid, enhancementLevel);
+    endSession() {
+        this.session = null;
     }
 
     cleanup() {
@@ -117,7 +159,7 @@ class ListingRefreshNavigator {
                 this.refreshBtn.remove();
                 this.refreshBtn = null;
             }
-            this.lastListingId = null;
+            this.session = null;
             this.isInitialized = false;
         } catch (error) {
             console.error('[Listing Refresh Navigator] Disable failed part-way:', error);
