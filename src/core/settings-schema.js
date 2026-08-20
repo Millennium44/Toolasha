@@ -2908,12 +2908,14 @@ export const settingsGroups = {
                 id: 'welcomeBackValue',
                 label: 'Welcome Back modal: What the time offline was worth',
                 type: 'checkbox',
-                default: true,
+                default: false,
                 help:
                     'Adds one line to the game’s Welcome Back modal valuing what you gained and what got consumed ' +
                     'while you were away — net coins, coins per hour offline and XP per hour — priced at market ' +
                     'using the pricing mode from the Market settings. Items with no market price are left out of ' +
-                    'the total and counted instead, and the line is not drawn at all if nothing could be priced.',
+                    'the total and counted instead, and the line is not drawn at all if nothing could be priced. ' +
+                    'Off by default since the Offline Progress Economics block shows the same and more; turn this ' +
+                    'on for the compact one-liner instead.',
             },
         },
     },

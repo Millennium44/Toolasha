@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The old Welcome Back one-liner defaults off
+
+The Offline Progress Economics block now carries the Welcome Back valuation, so the older one-line summary defaults off; it remains available in settings for anyone preferring the compact form.
+
 ### Elite achievement reminder icon on player profiles
 
 A player's shared profile now shows a ✉️ icon next to their name when their Elite achievement tier is still incomplete; clicking it pre-fills a customizable whisper into the chat input (you still press Enter to send). Both the toggle and the message live in Settings under Combat.
