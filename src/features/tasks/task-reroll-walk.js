@@ -79,6 +79,9 @@ const BUTTON_CLASS = 'mwi-task-reroll-walk-btn';
 const PROTECTED_KEY_PREFIX = 'taskProtectedHrids';
 const PANEL_POSITION_KEY = 'taskRerollWalkPanelPosition';
 
+/** The board's "You have N unread tasks" notice, whose one button reads them */
+const UNREAD_NOTICE = '[class*="TasksPanel_unreadTasks"]';
+
 /** How long the walk waits for the game to redraw a card after a UI-only click */
 const UI_SETTLE_MS = 120;
 /** How long it waits for a reroll or discard to come back from the server */
@@ -262,6 +265,8 @@ class TaskRerollWalk {
         /** Set by a plan that found the chooser drawn but unpressable; cleared each plan */
         this.pending = false;
         this.pendingRetries = 0;
+        /** Whether the unread-tasks notice has already been pressed (or was absent) this walk */
+        this.readDone = false;
         this.step = null;
         this.message = '';
         this.index = 0;
@@ -404,6 +409,17 @@ class TaskRerollWalk {
     }
 
     /**
+     * The Read button on the board's "You have N unread tasks" notice, when the
+     * notice is showing. Found by the notice's own class, not its wording.
+     * @returns {HTMLElement|null}
+     * @private
+     */
+    _readButton() {
+        const list = document.querySelector(GAME.TASK_LIST);
+        return list?.querySelector(`${UNREAD_NOTICE} button`) || null;
+    }
+
+    /**
      * The card's own Reroll button — the one that opens the chooser.
      * @param {HTMLElement} card - A task card
      * @returns {HTMLElement|null}
@@ -505,6 +521,24 @@ class TaskRerollWalk {
      * @private
      */
     _plan() {
+        // Unread tasks first: the board can be carrying a "You have N unread
+        // tasks" notice whose Read press reveals them, and rerolling around
+        // hidden tasks walks an incomplete board. Offered once, as the walk's
+        // first press — after that the card indexes must stay put.
+        if (!this.readDone && this.index === 0) {
+            const readButton = this._readButton();
+            if (readButton) {
+                return {
+                    kind: 'read',
+                    card: readButton.closest(UNREAD_NOTICE) || readButton,
+                    slot: 0,
+                    label: 'Read unread tasks',
+                    button: null,
+                    signature: '',
+                };
+            }
+        }
+
         const trashAtLimit = Boolean(config.getSetting('tasks_rerollWalkTrashAtLimit'));
         const preference = String(config.getSettingValue('tasks_rerollWalkCurrency', 'auto') || 'auto');
         const cowbellValue = this._cowbellValue();
@@ -616,6 +650,7 @@ class TaskRerollWalk {
         this.index = 0;
         this.pendingRetries = 0;
         this.pending = false;
+        this.readDone = false;
         this.tally = { kept: 0, rerolled: 0, trashed: 0 };
         this.message = '';
         this.hidden = false;
@@ -625,7 +660,7 @@ class TaskRerollWalk {
         // and clicks nothing.
         this._loadThresholds();
 
-        if (!this._cards().length) {
+        if (!this._cards().length && !this._readButton()) {
             this.state = 'stopped';
             this.message = 'No tasks on the board.';
             this._render();
@@ -695,6 +730,26 @@ class TaskRerollWalk {
         if (this.state !== 'ready' || !this.step) return false;
 
         const planned = this.step;
+
+        // The Read press acts on the unread notice, not a task card, so the
+        // slot and signature checks below do not apply to it — the button being
+        // findable right now is the whole proof the notice is still there.
+        if (planned.kind === 'read') {
+            const readButton = this._readButton();
+            if (!readButton) {
+                // Read elsewhere already — nothing to press, walk on
+                this.readDone = true;
+                this._replan();
+                return false;
+            }
+            clickThroughReact(readButton, { reactFirst: true });
+            this.readDone = true;
+            this.state = 'waiting';
+            this._render();
+            this._replanSoon(SERVER_SETTLE_MS);
+            return true;
+        }
+
         const cards = this._cards();
 
         if (cards[planned.slot - 1] !== planned.card || !document.contains(planned.card)) {

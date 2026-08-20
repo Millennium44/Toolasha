@@ -6,6 +6,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Next/Back cycling across My Listings
+
+Ported from upstream: the My Listings "Refresh" button now starts a cycle that opens your first listing's order book, and a "Next (n/total)" button on each listing's page — replacing the game's now-redundant per-item Refresh — moves to the next one, ending in "Back to My Listings". One click per listing, with no bouncing back to the table in between.
+
+### The reroll walk reads unread tasks first
+
+A board carrying the "You have N unread tasks" notice now has the walk offer Read as its first press, so rerolling never walks a board with tasks still hidden. One press, found by the notice's class rather than its wording, offered once per walk.
+
+### Offline Progress economics
+
+Ported from upstream: the native Welcome Back modal gains a Revenue / Cost / Profit block with per-day projections, priced from the server's own offline item deltas through the same pricing-mode-aware stack as every other profit figure (custom overrides, container expected value, Coin/Cowbell/dungeon-token/Task-Token special cases, market tax). Revenue and Cost expand into the items behind them, and anything that could not be priced is named rather than counted as zero.
+
+### Risk of Ruin calculator
+
+Ported from upstream: a standalone panel estimating the chance of hitting 0 gold before reaching a target — a number of dungeon chests, alchemy Transmute actions, or an enhancement level — with a Kelly-style optimal bankroll share and a live marketplace widget capping how many actions the visible bid depth can absorb.
+
 ### Item identity no longer depends on the game's display language
 
 Custom inventory tabs, the guild exchange advisor, and the token-exchange capture all identified items by their translated display name, so each silently found nothing for players running the game in any non-English language. They now read the icon's locale-independent sprite reference (via a new shared `item-icon` util), keeping the name lookup only as a fallback.

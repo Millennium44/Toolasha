@@ -144,6 +144,22 @@ function board(specs) {
     return list;
 }
 
+/**
+ * Put the game's "You have N unread tasks" notice at the top of the board.
+ * @param {HTMLElement} list - The task list
+ * @returns {HTMLElement} The notice
+ */
+function unreadNotice(list) {
+    const notice = document.createElement('div');
+    notice.className = 'TasksPanel_unreadTasks__sVdle';
+    const button = document.createElement('button');
+    button.textContent = 'Read';
+    record(button, 'Notice', 'Read');
+    notice.appendChild(button);
+    list.prepend(notice);
+    return notice;
+}
+
 /** A resting card's buttons: Go, Reroll and the icon-only trash can */
 const AT_REST = ['Go', 'Reroll', ''];
 /** The reroll chooser */
@@ -414,6 +430,58 @@ describe('planning a walk down the board', () => {
         walk.start();
 
         expect(chipText()).toContain('No tasks on the board');
+    });
+});
+
+describe('the unread notice is read first', () => {
+    test('unread tasks are read before anything is rerolled, one press each', () => {
+        const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        const notice = unreadNotice(list);
+
+        walk.start();
+        expect(chipText()).toBe('▶ Read unread tasks');
+        expect(clicks).toEqual([]);
+
+        walk.advance();
+        expect(clicks).toEqual(['Notice:Read']);
+
+        // The game reveals the tasks and the notice goes away; the walk resumes
+        notice.remove();
+        vi.advanceTimersByTime(3000);
+        expect(chipText()).toContain('Reroll #1');
+
+        // A notice reappearing mid-walk is not pressed again — indexes must stay put
+        unreadNotice(list);
+        walk.advance();
+        expect(clicks).toEqual(['Notice:Read', 'Milking - Cow:Reroll']);
+    });
+
+    test('a board that is nothing but the notice still starts, reads, and finishes', () => {
+        const list = board([]);
+        const notice = unreadNotice(list);
+
+        walk.start();
+        expect(chipText()).toBe('▶ Read unread tasks');
+
+        walk.advance();
+        expect(clicks).toEqual(['Notice:Read']);
+        notice.remove();
+        vi.advanceTimersByTime(3000);
+        expect(chipText()).toContain('✓ Done');
+    });
+
+    test('a notice already read elsewhere is walked past without a click', () => {
+        const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        const notice = unreadNotice(list);
+
+        walk.start();
+        expect(chipText()).toBe('▶ Read unread tasks');
+
+        // Someone pressed the game's own Read before the walk's press
+        notice.remove();
+        walk.advance();
+        expect(clicks).toEqual([]);
+        expect(chipText()).toContain('Reroll #1');
     });
 });
 
