@@ -30,6 +30,11 @@ class WebSocketHook {
          */
         this.processedMessages = new Map(); // message hash -> timestamp
         this.recentActionCompleted = new Map(); // message content -> timestamp (50ms TTL dedup)
+
+        /** Pristine MessageEvent.data getter, fetched lazily when a foreign hook breaks (null = unobtainable) */
+        this.nativeDataGet = undefined;
+        /** The foreign-hook diagnostic is said once, not per message */
+        this.notedForeignHookFailure = false;
         this.messageCleanupInterval = null;
         this.isSocketWrapped = false;
         this.originalWebSocket = null;
@@ -74,7 +79,18 @@ class WebSocketHook {
 
             hookInstance.attachSocketListeners(socket);
 
-            const message = originalGet.call(this);
+            // `originalGet` is whatever the property held when Toolasha
+            // installed — on a page with several userscripts that can be
+            // another script's wrapper, and one of those throwing (seen live:
+            // a foreign hook's character-switch teardown) would otherwise
+            // break message delivery to this script and to the game alike.
+            let message;
+            try {
+                message = originalGet.call(this);
+            } catch (error) {
+                message = hookInstance.readDataBypassingForeignHooks(this, error);
+                if (message === undefined) throw error;
+            }
 
             hookInstance.markMessageEventProcessed(this);
             hookInstance.processMessage(message);
@@ -85,6 +101,53 @@ class WebSocketHook {
         Object.defineProperty(pageMessageEvent.prototype, 'data', dataProperty);
 
         this.isHooked = true;
+    }
+
+    /**
+     * Read a MessageEvent's data through a pristine native getter, sidestepping
+     * a broken foreign hook.
+     *
+     * Several userscripts hook `MessageEvent.prototype.data` on this page, each
+     * wrapping whichever getter it found — so the chain below Toolasha can
+     * contain another script's wrapper, and that wrapper throwing (observed
+     * live: a foreign hook's character-switch teardown raising mid-getter)
+     * would silently cut message delivery to everything above it. The native
+     * getter still exists untouched in a fresh same-origin frame; it is fetched
+     * once, cached, and works across realms because it reads an internal slot
+     * the realm does not partition.
+     *
+     * @param {MessageEvent} event - The event whose data the chain failed to produce
+     * @param {Error} error - What the chain threw, for the one-time diagnostic
+     * @returns {*} The data, or undefined when no native getter could be found
+     */
+    readDataBypassingForeignHooks(event, error) {
+        if (this.nativeDataGet === undefined) {
+            this.nativeDataGet = null;
+            try {
+                const iframe = document.createElement('iframe');
+                iframe.style.display = 'none';
+                (document.documentElement || document.body).appendChild(iframe);
+                const descriptor = Object.getOwnPropertyDescriptor(iframe.contentWindow.MessageEvent.prototype, 'data');
+                iframe.remove();
+                if (typeof descriptor?.get === 'function') this.nativeDataGet = descriptor.get;
+            } catch (frameError) {
+                console.error('[WebSocket] Could not obtain a native data getter:', frameError);
+            }
+        }
+        if (!this.nativeDataGet) return undefined;
+
+        if (!this.notedForeignHookFailure) {
+            this.notedForeignHookFailure = true;
+            console.warn(
+                "[WebSocket] Another script's MessageEvent.data hook threw; reading past it with the native getter. Its error:",
+                error
+            );
+        }
+        try {
+            return this.nativeDataGet.call(event);
+        } catch {
+            return undefined;
+        }
     }
 
     /**
@@ -198,7 +261,15 @@ class WebSocketHook {
             // twice, and raw tick captures came out half duplicates.
             this.markMessageEventProcessed(event);
 
-            const data = event.data;
+            // This read runs the whole hooked-getter chain, foreign wrappers
+            // included; one of them throwing must not cost this message
+            let data;
+            try {
+                data = event.data;
+            } catch (error) {
+                data = this.readDataBypassingForeignHooks(event, error);
+                if (data === undefined) return;
+            }
             if (typeof data !== 'string') {
                 return;
             }

@@ -504,3 +504,42 @@ describe('handler dispatch snapshots (upstream 03204a5)', () => {
         expect(calls).toEqual(['first', 'second']);
     });
 });
+
+describe('reading past a broken foreign MessageEvent hook', () => {
+    beforeEach(() => {
+        webSocketHook.nativeDataGet = undefined;
+        webSocketHook.notedForeignHookFailure = false;
+    });
+
+    test('a seeded native getter recovers the data and says so once', () => {
+        webSocketHook.nativeDataGet = function () {
+            return this._raw;
+        };
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const event = { _raw: msg('items_updated') };
+
+        const first = webSocketHook.readDataBypassingForeignHooks(event, new Error('foreign hook threw'));
+        const second = webSocketHook.readDataBypassingForeignHooks(event, new Error('again'));
+
+        expect(first).toBe(event._raw);
+        expect(second).toBe(event._raw);
+        expect(warn).toHaveBeenCalledTimes(1);
+        warn.mockRestore();
+    });
+
+    test('with no native getter obtainable it yields undefined rather than throwing', () => {
+        webSocketHook.nativeDataGet = null; // already tried, nothing found
+
+        expect(webSocketHook.readDataBypassingForeignHooks({}, new Error('x'))).toBeUndefined();
+    });
+
+    test('a native getter that itself fails on this event yields undefined', () => {
+        webSocketHook.nativeDataGet = function () {
+            throw new Error('not a MessageEvent');
+        };
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        expect(webSocketHook.readDataBypassingForeignHooks({}, new Error('x'))).toBeUndefined();
+        warn.mockRestore();
+    });
+});

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Message delivery survives another script's broken hook
+
+Several userscripts hook the same message pathway, each wrapping whichever hook it found, and one of them throwing (seen live during a character switch) silently cut message delivery to every script above it — history capture included. Toolasha now catches a foreign wrapper's throw and reads the message past it with a pristine native getter, logging one diagnostic naming the foreign error.
+
 ### An opt-in update check
 
 A new setting (off by default) compares the running version against the latest published release on page load and shows a click-through toast when a newer one exists; a second setting says how many hours a checked answer is trusted before the network is asked again. Only published releases count, and dev builds never notify.
