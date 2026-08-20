@@ -6,9 +6,25 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Update check: every-refresh option, in-tab repeats, and a one-time introduction
+
+The interval setting now accepts 0 (ask the network on every page load), an open tab re-checks on the same rhythm without needing a refresh (paced at least an hour apart, announcing each version once), and a first run with the feature off mentions once, ever, that the opt-in exists.
+
+### The History chart reopens on what it was last showing
+
+The panel used to open blank until an item was clicked; it now remembers the last item charted and restores it on open.
+
+### Ctrl+K settings picks navigate again
+
+The game moved Settings out of the nav list the palette searched, so picking a setting quietly did nothing until Settings was opened by hand. The palette now finds it in the main nav and clicks it through the game's own handler.
+
 ### The Risk of Ruin panel can be closed and reopened
 
 The calculator now remembers whether it was left open, folds to its header with a minimize control, and keeps the position it was dragged to — the same chrome the other floating panels share. Its corner launcher can be dismissed with a ✕, since a `⧉ Risk of Ruin` switch now sits in the tab strip beside Inventory (and the launcher comes back from Settings → Risk of Ruin).
+
+### Copy the sync setup to a device's other characters
+
+Sync settings are stored per character, so a main and an alt on one browser each needed the GitHub token pasted by hand. A button in the Cross-Device Sync section now copies that whole section — token, passphrase, scope and switches — onto the device's other characters, writing only to this browser's local database.
 
 ### Message delivery survives another script's broken hook
 

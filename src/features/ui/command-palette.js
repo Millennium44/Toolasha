@@ -39,6 +39,7 @@ import { settingsGroups } from '../../core/settings-schema.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { registeredRows } from '../../utils/overlay-rows.js';
 import { showToast } from '../../utils/toast.js';
+import { clickThroughReact } from '../../utils/react-click.js';
 import overlayPanel from './overlay-panel.js';
 import { syncManager } from '../sync/index.js';
 import enhancementUI from '../enhancement/enhancement-ui.js';
@@ -325,11 +326,19 @@ function settingEntries() {
  * @param {string} [settingId] - Which row to expand to, scroll to and flash
  * @returns {Promise<void>}
  */
-async function openSettings(search = '', settingId = '') {
+export async function openSettings(search = '', settingId = '') {
     try {
-        const links = document.querySelectorAll('[class*="NavigationBar_minorNavigationLink"]');
+        // Settings moved out of the minor-links list into the main nav's
+        // NavigationBar_nav entries; the old selector found nothing, so a
+        // palette pick left the page where it was and the queued waits below
+        // only resolved once the player opened Settings by hand. Both classes
+        // are searched, and the click goes through the fiber handler in case
+        // the nav ignores a synthetic one.
+        const links = document.querySelectorAll(
+            '[class*="NavigationBar_nav__"], [class*="NavigationBar_minorNavigationLink"]'
+        );
         const settingsLink = [...links].find((link) => (link.textContent || '').trim().toLowerCase() === 'settings');
-        settingsLink?.click();
+        if (settingsLink) clickThroughReact(settingsLink, { reactFirst: true });
 
         const tab = await waitFor('#toolasha-settings-tab');
         tab?.click();
