@@ -2238,6 +2238,13 @@ export const settingsGroups = {
                 default: false,
                 help: "Draws the run's DPS and total damage over each character in the battle panel, matched by name. Off by default because the portraits are already busy with health and mana",
             },
+            combatUnitBadges: {
+                id: 'combatUnitBadges',
+                label: 'Unit badges: Show each player’s DPS and share of the damage on their portrait',
+                type: 'checkbox',
+                default: false,
+                help: "A small “1,240/s · 22%” on every party tile — the full card and the mini units beside it — matched by name. During a guild trial it reads the spectated trial split instead of this client's own fight. Off by default because the portraits are already busy",
+            },
             portraitDpsPosition: {
                 id: 'portraitDpsPosition',
                 label: 'Portrait DPS: Where to put it',

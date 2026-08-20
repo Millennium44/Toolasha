@@ -85,8 +85,10 @@ const {
     guildTrialDamage,
     isTrialBattle,
     MIN_SECONDS,
+    liveTrialSplit,
     SPECTATED_TRIAL_NOTE,
     summariseTrialDamage,
+    TRIAL_BADGE_WINDOW_MS,
 } = await import('./guild-trial-damage.js');
 
 /** The six ticks the wire capture kept, byte for byte */
@@ -1841,5 +1843,42 @@ describe('the trial ends and its figures stop moving', () => {
             players: { 0: { character: { name: 'Rick' } } },
         });
         expect(guildTrialDamage.breakdown().reason).toContain('not this week’s trial encounter');
+    });
+});
+
+describe('the split a live portrait may be badged with', () => {
+    const at = 1_800_000_000_000;
+
+    /** A tracker stub with just the two things the accessor consults */
+    const tracker = (lastAt, report) => ({ spectator: { lastAt }, breakdown: () => report });
+
+    const measured = {
+        measured: true,
+        players: [{ name: 'Player01', damage: 100, dps: 10, share: 100 }],
+        partyDps: 10,
+        seconds: 10,
+    };
+
+    test('a stream that ticked a moment ago hands over its rows', () => {
+        expect(liveTrialSplit(at, tracker(at - 1000, measured))).toEqual({
+            players: measured.players,
+            partyDps: 10,
+            seconds: 10,
+        });
+    });
+
+    test('a stream gone quiet answers null rather than last hour’s figures', () => {
+        // Not an empty table: a caller that gets rows back should be able to
+        // draw them without a second liveness check of its own
+        expect(liveTrialSplit(at, tracker(at - TRIAL_BADGE_WINDOW_MS - 1, measured))).toBeNull();
+    });
+
+    test('a trial nothing was measured for answers null', () => {
+        expect(liveTrialSplit(at, tracker(at - 1000, { measured: false, players: [] }))).toBeNull();
+    });
+
+    test('a client that has never spectated answers null', () => {
+        expect(liveTrialSplit(at, tracker(0, measured))).toBeNull();
+        expect(liveTrialSplit(at, {})).toBeNull();
     });
 });

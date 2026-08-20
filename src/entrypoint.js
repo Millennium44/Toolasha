@@ -1105,6 +1105,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'combatUnitBadges',
+            name: 'Combat Unit Badges',
+            category: 'Combat',
+            module: Combat.combatUnitBadges,
+            async: false,
+        },
+        {
             key: 'partyProfileButton',
             name: 'Party Profile Button',
             category: 'Combat',

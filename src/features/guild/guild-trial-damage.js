@@ -1945,5 +1945,39 @@ export function bossHpCeiling(bossSheets) {
 
 const guildTrialDamage = new GuildTrialDamage();
 
+/**
+ * How recently the spectated stream must have ticked for its per-player figures
+ * to be worth drawing on a live portrait.
+ *
+ * Longer than {@link SPECTATOR_LIVE_WINDOW_MS}, which decides whether a
+ * *personal* fight is side-combat and has to be tight, and shorter than the
+ * trial hour: a badge is a live readout, and half a minute of silence means the
+ * fight view has stopped being fed. Past it the portraits fall back to this
+ * client's own damage tracker rather than freezing on the trial's last figures.
+ */
+export const TRIAL_BADGE_WINDOW_MS = 30_000;
+
+/**
+ * The trial's per-player split, but only while it is live enough to badge with.
+ *
+ * The minimal accessor the portrait overlays need, so nothing outside this
+ * module has to know how a trial's liveness is decided or re-derive a share
+ * from a tally. Null — not an empty table — whenever the answer would be a
+ * stale trial's, because a caller that gets rows back should be able to draw
+ * them without a second liveness check of its own.
+ *
+ * @param {number} [now=Date.now()] - Clock, injectable for tests
+ * @param {Object} [instance] - The tracker, injectable for tests
+ * @returns {{players: Array<Object>, partyDps: number|null, seconds: number}|null}
+ */
+export function liveTrialSplit(now = Date.now(), instance = guildTrialDamage) {
+    const lastAt = instance?.spectator?.lastAt || 0;
+    if (!lastAt || now - lastAt > TRIAL_BADGE_WINDOW_MS) return null;
+
+    const report = instance.breakdown?.();
+    if (!report?.measured) return null;
+    return { players: report.players, partyDps: report.partyDps ?? null, seconds: report.seconds };
+}
+
 export default guildTrialDamage;
 export { guildTrialDamage };
