@@ -1523,6 +1523,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'When enabled, uses crafting cost instead of market price for upgrade items if cheaper, and factors crafting time into profit/hr calculations.',
             },
+            offlineProgressEconomics: {
+                id: 'offlineProgressEconomics',
+                label: 'Offline Progress: Show Revenue/Cost/Profit summary',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a Revenue/Cost/Profit summary (with per-day projections, and each side expandable into the items behind it) to the native Welcome Back modal, priced with your Pricing & Profit settings from the server’s own offline item deltas. Overlaps with the UI setting “Welcome Back modal: What the time offline was worth” — turn that one off if you would rather have only this block.',
+            },
         },
     },
 

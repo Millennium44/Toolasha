@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Offline Progress economics
+
+Ported from upstream: the native Welcome Back modal gains a Revenue / Cost / Profit block with per-day projections, priced from the server's own offline item deltas through the same pricing-mode-aware stack as every other profit figure (custom overrides, container expected value, Coin/Cowbell/dungeon-token/Task-Token special cases, market tax). Revenue and Cost expand into the items behind them, and anything that could not be priced is named rather than counted as zero.
+
 ### Next/Back cycling across My Listings
 
 Ported from upstream: the My Listings "Refresh" button now starts a cycle that opens your first listing's order book, and a "Next (n/total)" button on each listing's page — replacing the game's now-redundant per-item Refresh — moves to the next one, ending in "Back to My Listings". One click per listing, with no bouncing back to the table in between.

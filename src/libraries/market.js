@@ -56,6 +56,9 @@ import { abilityBookPanel } from '../features/abilities/ability-book-panel.js';
 // Side-effect import: registers the Charm Value overlay row
 import '../features/inventory/charm-value-row.js';
 
+// Offline Progress features
+import offlineProgressEconomics from '../features/offline-progress/offline-progress-economics.js';
+
 // Inventory features
 import inventoryBadgeManager from '../features/inventory/inventory-badge-manager.js';
 import inventorySort from '../features/inventory/inventory-sort.js';
@@ -107,6 +110,7 @@ toolashaRoot.Market = {
     profitCalculator,
     alchemyProfitCalculator,
     networthFeature,
+    offlineProgressEconomics,
     inventoryBadgeManager,
     inventorySort,
     inventoryBadgePrices,

@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
     initData: null,
     itemDetails: {},
     prices: {},
+    priceCalls: [],
+    customPrices: {},
     dungeonTokenValues: {},
 }));
 
@@ -40,7 +42,14 @@ vi.mock('../../utils/token-valuation.js', () => ({
 }));
 
 vi.mock('../../utils/market-data.js', () => ({
-    getItemPrice: (hrid) => (hrid in mocks.prices ? mocks.prices[hrid] : null),
+    getItemPrice: (hrid, options) => {
+        mocks.priceCalls.push([hrid, options]);
+        return hrid in mocks.prices ? mocks.prices[hrid] : null;
+    },
+}));
+
+vi.mock('../settings/custom-price-overrides.js', () => ({
+    getCustomPrice: (hrid, enhancementLevel, side) => mocks.customPrices[`${hrid}:${enhancementLevel}:${side}`] ?? null,
 }));
 
 vi.mock('../../utils/profit-helpers.js', () => ({
@@ -69,6 +78,8 @@ beforeEach(() => {
         [GEM_HRID]: 1000,
         [JUNK_HRID]: 50,
     };
+    mocks.priceCalls = [];
+    mocks.customPrices = {};
     mocks.dungeonTokenValues = {};
     mocks.initData = {
         openableLootDropMap: {
@@ -120,6 +131,89 @@ describe('getDropPrice', () => {
     test('a regular item with a zero or negative market price also prices as null', () => {
         mocks.prices['/items/free_thing'] = 0;
         expect(expectedValueCalculator.getDropPrice('/items/free_thing')).toBeNull();
+    });
+});
+
+describe('resolveSellSideValue', () => {
+    test('a resolved value carries where it came from and whether the caller still owes tax', () => {
+        expect(expectedValueCalculator.resolveSellSideValue(GEM_HRID)).toEqual({
+            value: 1000,
+            source: 'market',
+            needsTax: true,
+        });
+    });
+
+    test('the enhancement level reaches the market lookup instead of being pinned to zero', () => {
+        expectedValueCalculator.resolveSellSideValue(GEM_HRID, 5);
+        expect(mocks.priceCalls.at(-1)).toEqual([GEM_HRID, { enhancementLevel: 5, context: 'profit', side: 'sell' }]);
+    });
+
+    test('a price that came from a custom override says so', () => {
+        mocks.customPrices[`${GEM_HRID}:0:sell`] = 1000;
+        expect(expectedValueCalculator.resolveSellSideValue(GEM_HRID).source).toBe('custom');
+    });
+
+    test('the special cases are already net figures, so none of them asks for tax', () => {
+        mocks.prices['/items/bag_of_10_cowbells'] = 1000;
+        mocks.dungeonTokenValues['/items/chimerical_token'] = 4200;
+        expectedValueCalculator.containerCache.set(CHEST_HRID, 777);
+
+        for (const hrid of ['/items/coin', '/items/cowbell', '/items/chimerical_token', CHEST_HRID]) {
+            expect(expectedValueCalculator.resolveSellSideValue(hrid).needsTax).toBe(false);
+        }
+    });
+
+    test('a cached container resolves as expected value, not as a market price', () => {
+        expectedValueCalculator.containerCache.set(CHEST_HRID, 777);
+        expect(expectedValueCalculator.resolveSellSideValue(CHEST_HRID)).toEqual({
+            value: 777,
+            source: 'expectedValue',
+            needsTax: false,
+        });
+    });
+
+    test('an unpriceable item resolves to null so a caller can say so rather than count zero', () => {
+        expect(expectedValueCalculator.resolveSellSideValue('/items/unpriced')).toBeNull();
+    });
+
+    test('getDropPrice still answers exactly the value this resolver produces', () => {
+        mocks.dungeonTokenValues['/items/sinister_token'] = 7;
+        expect(expectedValueCalculator.getDropPrice('/items/sinister_token')).toBe(
+            expectedValueCalculator.resolveSellSideValue('/items/sinister_token').value
+        );
+    });
+});
+
+describe('resolveBuySideValue', () => {
+    test('an ordinary item is priced buy side, with the enhancement level carried through', () => {
+        expect(expectedValueCalculator.resolveBuySideValue(GEM_HRID, 3)).toEqual({ value: 1000, source: 'market' });
+        expect(mocks.priceCalls.at(-1)).toEqual([GEM_HRID, { enhancementLevel: 3, context: 'profit', side: 'buy' }]);
+    });
+
+    test('coin is still face value', () => {
+        expect(expectedValueCalculator.resolveBuySideValue('/items/coin')).toEqual({ value: 1, source: 'coin' });
+    });
+
+    test('cowbell is a tenth of the bag with no tax taken off — nothing is being sold', () => {
+        mocks.prices['/items/bag_of_10_cowbells'] = 1000;
+        expect(expectedValueCalculator.resolveBuySideValue('/items/cowbell')).toEqual({
+            value: 100,
+            source: 'cowbell',
+        });
+    });
+
+    test('a consumed container is worth what replacing it costs, not what opening it pays', () => {
+        expectedValueCalculator.containerCache.set(GEM_HRID, 99999);
+        expect(expectedValueCalculator.resolveBuySideValue(GEM_HRID)).toEqual({ value: 1000, source: 'market' });
+    });
+
+    test('a buy-side custom override is labelled as one', () => {
+        mocks.customPrices[`${GEM_HRID}:0:buy`] = 1000;
+        expect(expectedValueCalculator.resolveBuySideValue(GEM_HRID).source).toBe('custom');
+    });
+
+    test('an unpriceable item resolves to null', () => {
+        expect(expectedValueCalculator.resolveBuySideValue('/items/unpriced')).toBeNull();
     });
 });
 

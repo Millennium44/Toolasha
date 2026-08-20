@@ -646,6 +646,13 @@ function registerFeatures() {
             healthCheck: () => injectedInto('[class*="Header_totalLevel"]', '.mwi-networth-header'),
         },
         {
+            key: 'offlineProgressEconomics',
+            name: 'Offline Progress Economics',
+            category: 'Economy',
+            module: Market.offlineProgressEconomics,
+            async: false,
+        },
+        {
             key: 'inventoryBadgeManager',
             name: 'Inventory Badge Manager',
             category: 'Inventory',
