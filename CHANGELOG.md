@@ -6,6 +6,25 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Damage attribution counts bleeds, splits big collisions, and hardens the trial lifecycle
+
+Ideas adopted from KikiMeter (ZhuLiMoon, MIT) — see `docs/THIRD-PARTY-LICENSES.md`.
+
+- Bleed and reflect damage is counted instead of discarded, so per-player tables no longer come
+  up short against the party total; it is labelled in the breakdowns and moves no hit or crit rate.
+- A tick several players share, with more than three present and nothing to separate them, is
+  split equally between them rather than handed to whoever swung last.
+- A monster whose maximum health changes is a new monster in that slot: re-baselined, and the
+  transition counts nothing.
+- `new_battle` skips the content-hash dedup — consecutive waves could collide in the hash window
+  and drop the message every baseline is seeded from.
+- Trial DPS freezes when the trial ends, and a stream quiet for three minutes is treated as ended;
+  a personal fight started while the game's own end-of-trial totals are still in flight no longer
+  disturbs them.
+- A player coming back from zero health is counted as a revive, not as healing.
+- `guild_updated.currentTrialsData` is now read: it says a trial is running without the guild panel
+  being open, and the In Progress card gains a Deadline line from its own countdown.
+
 ### Equipment Watch prices refinement bases at the level the output needs
 
 A refinement recipe carries the base's enhancement into the ★ output, so a ★+12 is made from a +12 base — but the craft costing treated any owned base as free and priced a missing one at +0. The base is now costed at the output's level: a copy already there is consumed, a lower copy is an enhance run from where it stands, none at all is a fresh +0 plus the run (or a direct listing at the level, whichever is cheaper), and the card names the level it is counting.

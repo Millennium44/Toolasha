@@ -71,6 +71,46 @@ both, across a worker pool and from the game's own shop data rather than a hardc
 Full terms in `third-party/mwi-combat-suite/LICENSE.md`; what else the script contains in
 `third-party/mwi-combat-suite/README.md`.
 
+## KikiMeter
+
+`src/utils/damage-attribution.js`, `src/features/guild/guild-trial-damage.js` and
+`src/features/guild/guild-trial-support.js` adopt six findings from **KikiMeter v3.32.1** by
+ZhuLiMoon, under the MIT licence it declares in its own userscript header. **No code was
+copied**, and the script is not kept in this repository — it is a single 218 KB file nothing
+builds against, and the version number is what makes the attribution checkable.
+
+What was taken is the analysis, all of it reached against real trial captures:
+
+- **Health lost without the monster's hit counter moving is still damage.** A bleed tick and a
+  thorns reflect are counted like anything else. Toolasha gated on the counter and discarded
+  that volume, which is exactly why its per-player tables disagreed with the party total off the
+  boss bar. It is now a labelled event class, kept out of the hit, crit and miss counts.
+- **An unsplittable collision is divided, not awarded.** ~13% of trial messages have several
+  players acting at once, up to 23 of them; handing the tick to whoever swung most recently is
+  an iteration-order artifact. Above three present, it is split equally.
+- **Equally, not weighted by damage already confirmed.** ZhuLiMoon tried the weighted version
+  and abandoned it — rich-get-richer, 56% mean error against the game's own end-of-trial
+  figures. Toolasha took the result rather than repeating the experiment.
+- **A change in a monster slot's maximum health is a new monster in it.** A guild trial gets
+  `new_guild_battle` one to three times an _hour_, so nothing else re-baselines a respawn.
+- **A revive is not a heal.** Zero to positive returns a whole bar at once and swamps every real
+  cast on the table.
+- **`guild_updated.currentTrialsData` is a JSON string** carrying each trial's status, per-party
+  `done` flags and `budgetRemainingMs` counting down from exactly 3,600,000 — the one trial
+  lifecycle signal that arrives whether or not the guild panel is open, and the basis of both
+  the freeze at trial end and the stale-stream fallback.
+
+The code against all of it is Toolasha's own, written into an attribution module that already
+existed and differs in substance — counter-first rungs where KikiMeter consults no counters at
+all, a per-ability and per-enemy split it does not keep, and the roster read off the game's own
+`new_guild_battle` rather than scraped out of the DOM. Its floating meter, class detection and
+history panels are not reproduced.
+
+<https://greasyfork.org/scripts/584984>
+
+Full terms in `third-party/kikimeter/LICENSE.md`; what was and was not adopted, in detail, in
+`third-party/kikimeter/README.md`.
+
 ## mooket II
 
 `src/features/market/mooket/` is adapted from **mooket II** by Q7, used under the MIT
