@@ -23,6 +23,7 @@ import pformancePanel from '../dev/pformance-panel.js';
 import bundledTreasureTracker from '../inventory/treasure-tracker.js';
 import overlayPanel from '../ui/overlay-panel.js';
 import syncManager from '../sync/sync-manager.js';
+import { copySyncSetupToOtherCharacters } from '../sync/sync-setup-copy.js';
 import { treasureTracker } from '../../utils/bundle-bridge.js';
 import {
     getCustomPriceOverrides,
@@ -1441,7 +1442,24 @@ class SettingsUI {
             })
         );
 
+        // The token and the switches above are stored per character, so a main
+        // and an iron cow on one browser otherwise need the same token pasted
+        // twice. Local write only — see sync-setup-copy.js.
+        const copyRow = document.createElement('div');
+        copyRow.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px;';
+        const copyBtn = makeButton(
+            "Copy sync setup to this device's other characters",
+            'Copying…',
+            copySyncSetupToOtherCharacters
+        );
+        copyBtn.title =
+            'Copies the settings in this section — token, passphrase, scope and switches — onto the other ' +
+            "characters this device has settings for. Written to this browser's local database only; nothing " +
+            'is uploaded.';
+        copyRow.appendChild(copyBtn);
+
         wrapper.appendChild(row);
+        wrapper.appendChild(copyRow);
         wrapper.appendChild(status);
         container.appendChild(wrapper);
     }

@@ -425,6 +425,45 @@ class SettingsStorage {
     }
 
     /**
+     * Merge a handful of setting entries into every other known character's
+     * stored map, leaving the rest of their settings alone.
+     *
+     * The whole-map copies above are the "make this alt like my main" gesture;
+     * this is the narrow one — a few keys that describe a device rather than a
+     * playstyle, such as the sync group's token and switches.
+     *
+     * A known character with nothing stored is skipped rather than seeded: a
+     * map holding six keys would, on that character's next load, read as a
+     * settings map written by some other build of the script and set off the
+     * first-run reconciliation. It is named in the result instead.
+     *
+     * @param {Object} entries - Setting entries by id, shaped as loadSettings() writes them
+     * @returns {Promise<{copied: Array<{id: string, name: string}>, skipped: Array<{id: string, name: string}>}>}
+     */
+    async copySettingEntriesToOtherCharacters(entries) {
+        const ids = Object.keys(entries || {});
+        const copied = [];
+        const skipped = [];
+        if (ids.length === 0) return { copied, skipped };
+
+        for (const character of await this.getKnownCharacters()) {
+            if (String(character.id) === String(this.currentCharacterId)) continue;
+            const characterKey = `${this.storageKey}_${character.id}`;
+            const stored = await storage.getJSON(characterKey, this.storageArea, null);
+            if (!stored || typeof stored !== 'object' || Object.keys(stored).length === 0) {
+                skipped.push(character);
+                continue;
+            }
+            const merged = { ...stored };
+            for (const id of ids) merged[id] = { ...entries[id] };
+            await storage.setJSON(characterKey, merged, this.storageArea, true);
+            copied.push(character);
+        }
+
+        return { copied, skipped };
+    }
+
+    /**
      * Copy another character's whole settings map onto the current character.
      *
      * The inverse of the sync buttons: they push this character's settings out,
