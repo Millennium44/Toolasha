@@ -49,6 +49,7 @@ import guildTrialDamage, {
 } from './guild-trial-damage.js';
 import guildTrialStatsModal from './guild-trial-stats-modal.js';
 import { guildLoadoutCapture } from './guild-loadout-capture.js';
+import guildTrialAbilities from './guild-trial-abilities.js';
 import { guildTrialRecorder } from './guild-trial-recorder.js';
 import { buildGuildReport } from './guild-trial-report.js';
 
@@ -78,6 +79,26 @@ export const TYPE_COLORS = {
     ranged: '#c084fc',
     magic: '#5aa9e6',
 };
+
+/**
+ * A role chip beside a name on the board, or nothing.
+ *
+ * The visible label comes from `class-inference.js`' own bucket table — a fixed
+ * set of words this file controls — and is stripped to letters before it goes
+ * into the string, so nothing off the wire can reach the markup through it.
+ *
+ * @param {Object|null} verdict - From `guildTrialAbilities.classes()`
+ * @returns {string} HTML, or '' when nothing is known about this player
+ */
+export function classTagHTML(verdict) {
+    const label = String(verdict?.short || '').replace(/[^A-Z]/g, '');
+    if (!label) return '';
+    return (
+        `<span title="${label} — inferred from what this player was seen casting this trial, ` +
+        `not from a Battle Info capture." style="color:${DIM}; font-size:9px; letter-spacing:0.5px; ` +
+        `border:1px solid ${DIM}; border-radius:3px; padding:0 3px;">${label}</span>`
+    );
+}
 
 /**
  * The damage type a player fights with, from their captured loadout.
@@ -773,18 +794,26 @@ class GuildTrialScoreboard {
                   'No member builds have been captured either, so there is nothing to estimate from.') +
             '</div>';
 
+        // Read once for the whole table rather than per row: the map is built
+        // off the roster, and rebuilding it forty times a redraw would be forty
+        // passes over the same participants
+        const classes = guildTrialAbilities.classes?.() || {};
+
         const list = rows.length
-            ? rows.map((row) => this._rowHTML(row)).join('')
+            ? rows.map((row) => this._rowHTML(row, classes)).join('')
             : estimated
               ? estimate.players
                     .map((row, position) =>
-                        this._rowHTML({
-                            name: row.name,
-                            rank: position + 1,
-                            value: null,
-                            perSecond: row.dps,
-                            share: row.share,
-                        })
+                        this._rowHTML(
+                            {
+                                name: row.name,
+                                rank: position + 1,
+                                value: null,
+                                perSecond: row.dps,
+                                share: row.share,
+                            },
+                            classes
+                        )
                     )
                     .join('') + unestimated
               : unsplit || nothing;
@@ -850,9 +879,10 @@ class GuildTrialScoreboard {
     /**
      * One ranked row, with its bar.
      * @param {Object} row - From {@link scoreboardRows}
+     * @param {Object} [classes] - Lowercased name → verdict, from `guildTrialAbilities.classes()`
      * @returns {string} HTML
      */
-    _rowHTML(row) {
+    _rowHTML(row, classes = {}) {
         const type = damageTypeOf(row.name);
         const color = type ? TYPE_COLORS[type] : ACCENT;
         const width = Math.max(2, Math.min(100, row.share ?? 0));
@@ -887,6 +917,13 @@ class GuildTrialScoreboard {
             `<div style="display:flex; gap:6px; align-items:baseline;">` +
             `<span style="color:${DIM}; width:14px;">${row.rank}</span>` +
             `<span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${row.name}</span>` +
+            classTagHTML(
+                classes?.[
+                    String(row.name || '')
+                        .trim()
+                        .toLowerCase()
+                ]
+            ) +
             `<span style="margin-left:auto; color:${color}; font-weight:600;">${figure}</span>` +
             `</div>` +
             `<div style="display:flex; gap:6px; color:${DIM}; font-size:10px;">` +

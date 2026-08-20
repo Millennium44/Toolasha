@@ -513,6 +513,83 @@ function abilityRow(capture, abilityDetailMap) {
 }
 
 /**
+ * How a class tag is coloured — one hue per role, so a roster reads as a shape
+ * rather than as a column of identical chips.
+ */
+const CLASS_COLORS = {
+    tank: ROW_COLORS.accent,
+    healer: ROW_COLORS.good,
+    fireMage: ROW_COLORS.bad,
+    waterMage: ROW_COLORS.accent,
+    natureMage: ROW_COLORS.good,
+    mage: ROW_COLORS.violet,
+    ranged: ROW_COLORS.gold,
+    melee: ROW_COLORS.neutral,
+};
+
+/**
+ * What a class chip says and what it says when hovered.
+ *
+ * Exported for its own sake: the wording is the whole of the honesty here — the
+ * tag is an inference and the tooltip has to name the evidence it was drawn
+ * from, or a reader has no way to tell a watched rotation from a guess off a
+ * weapon.
+ *
+ * @param {Object|null} classTag - From `guildTrialAbilities.state()`
+ * @returns {{text: string, title: string, color: string}|null} Null when there is no verdict
+ */
+export function classTagText(classTag) {
+    if (!classTag?.short) return null;
+
+    const seen = (classTag.evidence || [])
+        .map((hrid) => String(hrid).split('/').pop().replace(/_/g, ' '))
+        .filter(Boolean);
+
+    return {
+        text: classTag.short,
+        color: CLASS_COLORS[classTag.key] || ROW_COLORS.dim,
+        title:
+            `${classTag.label} — inferred from ${classTag.basis}` +
+            (seen.length ? `: ${seen.join(', ')}` : '') +
+            '. An inference, not a statement: a Battle Info capture is the only authority on a kit.',
+    };
+}
+
+/**
+ * A participant's name line, with its class tag beside the name.
+ *
+ * @param {Object} row - A `state().participants` row
+ * @param {string} value - The status text on the right
+ * @param {string} color - Its colour
+ * @param {string} [title] - Hover text for the line
+ * @returns {HTMLElement}
+ */
+function playerLine(row, value, color, title = '') {
+    const line = panelLine(row.name, value, color, title);
+    const tag = classTagText(row.classTag);
+    if (!tag) return line;
+
+    const chip = document.createElement('span');
+    chip.textContent = tag.text;
+    chip.title = tag.title;
+    Object.assign(chip.style, {
+        color: tag.color,
+        fontSize: '9px',
+        letterSpacing: '0.5px',
+        border: `1px solid ${tag.color}`,
+        borderRadius: '3px',
+        padding: '0 3px',
+        marginLeft: '5px',
+        opacity: '0.85',
+        whiteSpace: 'nowrap',
+    });
+    // After the name span rather than at the end: the status text is
+    // right-aligned, and a chip pushed against it would read as part of it
+    line.firstChild?.after(chip);
+    return line;
+}
+
+/**
  * The players card: capture status and kits, in the sort the moment calls for.
  * @param {HTMLElement} body - Panel body
  * @param {Object} state - From `guildTrialAbilities.state()`
@@ -531,15 +608,15 @@ function drawPlayers(body, state, abilityDetailMap) {
 
     for (const row of sortParticipants(state.participants, state.complete)) {
         if (!row.capture) {
-            card.appendChild(panelLine(row.name, 'needs Battle Info', ROW_COLORS.bad));
+            card.appendChild(playerLine(row, 'needs Battle Info', ROW_COLORS.bad));
             continue;
         }
         if (!row.captured) {
             // Seen, but only as a stat sheet: unavailable is not the same claim
             // as "no abilities equipped", so the player stays outstanding
             card.appendChild(
-                panelLine(
-                    row.name,
+                playerLine(
+                    row,
                     'abilities unavailable — needs Battle Info',
                     ROW_COLORS.bad,
                     'A stat-only sighting; the popup payload carried no ability list.'
@@ -548,7 +625,7 @@ function drawPlayers(body, state, abilityDetailMap) {
             continue;
         }
         const tier = tierText(row.capture.capturedTier);
-        card.appendChild(panelLine(row.name, `captured${tier ? ` (${tier})` : ''}`, ROW_COLORS.good));
+        card.appendChild(playerLine(row, `captured${tier ? ` (${tier})` : ''}`, ROW_COLORS.good));
         card.appendChild(abilityRow(row.capture, abilityDetailMap));
 
         // Only a player the plan names says anything here: an unplanned player

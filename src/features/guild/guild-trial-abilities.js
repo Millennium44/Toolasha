@@ -44,6 +44,7 @@
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import guildTrialPlan, { comparePlan } from './guild-trial-plan.js';
+import { inferClass, newCastLog, noteCast } from '../../utils/class-inference.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
 
 /** Object store the session lives in — shared with the rest of the guild history */
@@ -65,6 +66,30 @@ export const TRIAL_START_GRACE_MS = 5 * 60 * 1000;
  */
 export function sessionStorageKey(guildName) {
     return `${SESSION_KEY_PREFIX}_${guildName || 'default'}`;
+}
+
+/**
+ * The three fields of a captured stat sheet that say anything about a role.
+ *
+ * Kept rather than the whole `combatStats` object because the session is
+ * persisted and a sheet is forty numbers, thirty-nine of which are nobody's
+ * business here. `threat` is the tank signal, the style and damage type are the
+ * weapon's own answer for a player whose casts have never been streamed.
+ *
+ * @param {Object|null} stats - `combatDetails.combatStats` from a snapshot
+ * @returns {{threat: number, combatStyleHrid: string|null, damageType: string|null}|null}
+ */
+export function classSheet(stats) {
+    if (!stats || typeof stats !== 'object') return null;
+    const threat = Number(stats.threat);
+    const style = stats.combatStyleHrid || stats.combatStyleHrids?.[0] || null;
+    const damageType = stats.damageType || null;
+    if (!Number.isFinite(threat) && !style && !damageType) return null;
+    return {
+        threat: Number.isFinite(threat) ? threat : 0,
+        combatStyleHrid: style,
+        damageType,
+    };
 }
 
 /**
@@ -295,6 +320,15 @@ class GuildTrialAbilities {
         this.roster = [];
         /** Tier as last fed in; stamped onto captures, never subscribed for */
         this.currentTier = null;
+        /**
+         * Observed casts per player this trial, keyed by lowercased name — the
+         * only key the tick stream can offer, since `guild_battle_updated`
+         * identifies its units by slot index and nothing else. Live-only and
+         * never persisted: it is an inference off a stream, and a stale one
+         * read back after a reload would be a claim about a trial that has
+         * ended. See `src/utils/class-inference.js`.
+         */
+        this.casts = {};
     }
 
     /**
@@ -533,6 +567,9 @@ class GuildTrialAbilities {
             capturedAt: authoritative ? when : (existing?.capturedAt ?? null),
             capturedTier: authoritative ? (tier ?? null) : (existing?.capturedTier ?? null),
             source: snapshot.source ?? existing?.source ?? null,
+            // The three role-bearing numbers off the stat sheet, kept so a
+            // class tag survives a page that never sees this player cast
+            classStats: classSheet(snapshot.stats) ?? existing?.classStats ?? null,
             abilitiesAuthoritative: authoritative || existing?.abilitiesAuthoritative === true,
             abilities: authoritative
                 ? (snapshot.abilities || []).map((ability) => ({
@@ -551,6 +588,83 @@ class GuildTrialAbilities {
         this._recheckComplete(arrivedAt);
         this._persist();
         return entry;
+    }
+
+    /**
+     * One ability seen being cast by a named player, from a live trial tick.
+     *
+     * Fed by `guild-trial-damage.js` off the spectated stream, which is the only
+     * place a roster member who has never been clicked says anything about their
+     * build. Cheap on purpose — it runs per player per tick, twice a second —
+     * and it writes nothing to storage: a repeat of an hrid already logged only
+     * bumps a counter.
+     *
+     * A session is *not* started by a cast. A tick arriving with no session in
+     * hand is a trial this module has not been told about yet, and inventing one
+     * here would give it a start time an hour wrong.
+     *
+     * @param {string} name - The player's name, as the unit resolver gave it
+     * @param {string} abilityHrid - What the tick said they were preparing
+     * @returns {boolean} Whether this was a new distinct ability for them
+     */
+    noteAbilityCast(name, abilityHrid) {
+        const key = String(name || '')
+            .trim()
+            .toLowerCase();
+        if (!key) return false;
+
+        const log = (this.casts[key] = this.casts[key] || newCastLog());
+        return noteCast(log, abilityHrid);
+    }
+
+    /**
+     * The role a participant appears to be playing, from everything known.
+     *
+     * The captured kit and sheet where one exists, the watched casts otherwise,
+     * and both together where both exist — `inferClass` weighs them. Null when
+     * nothing supports a verdict, which is most of a roster early in a trial.
+     *
+     * @param {{name?: string, capture?: Object|null}} row - A `participants()` row
+     * @param {Object} abilityDetailMap - Game data
+     * @returns {Object|null} The verdict, from `inferClass`
+     */
+    classOf(row, abilityDetailMap = this._abilityMap()) {
+        const name = String(row?.name || row?.capture?.name || '')
+            .trim()
+            .toLowerCase();
+        return inferClass(
+            {
+                casts: name ? this.casts[name] || null : null,
+                kit: row?.capture?.abilities || null,
+                stats: row?.capture?.classStats || null,
+            },
+            abilityDetailMap
+        );
+    }
+
+    /**
+     * Every participant's inferred role, keyed by lowercased name.
+     *
+     * The cheap half of {@link GuildTrialAbilities#state} — no aura aggregation
+     * and no plan comparison — for the surfaces that redraw on a timer and only
+     * want the tags. The scoreboard is one: it is built off the damage
+     * breakdown's names rather than off the roster, so a name is all it can
+     * look a role up by.
+     *
+     * @param {Object} [abilityDetailMap] - Game data
+     * @returns {Object<string, Object>} Lowercased name → verdict
+     */
+    classes(abilityDetailMap = this._abilityMap()) {
+        const map = {};
+        for (const row of this.participants()) {
+            const name = String(row.name || '')
+                .trim()
+                .toLowerCase();
+            if (!name) continue;
+            const verdict = this.classOf(row, abilityDetailMap);
+            if (verdict) map[name] = verdict;
+        }
+        return map;
     }
 
     /**
@@ -575,11 +689,16 @@ class GuildTrialAbilities {
      *
      * @param {Object} [abilityDetailMap] - Game data; defaults to the live map
      * @returns {Object} `{startedAt, guildName, captureTier, capturedTiers, rosterCount, capturedCount,
-     *   outstanding, participants, notCurrent, complete, completedAt, auras, coverage, plan, planCompare}`
+     *   outstanding, participants, notCurrent, complete, completedAt, auras, coverage, plan, planCompare,
+     *   classes}` — each participant row carries a `classTag`, and `classes` is the same
+     *   verdicts keyed by lowercased name
      */
     state(abilityDetailMap = this._abilityMap()) {
         const session = this.session;
-        const rows = this.participants();
+        // Each row carries its inferred role. Computed here rather than in
+        // `participants()` because that runs on every capture and every roster
+        // feed to re-check completion, and a class tag is display state
+        const rows = this.participants().map((row) => ({ ...row, classTag: this.classOf(row, abilityDetailMap) }));
         const outstanding = rows.filter((row) => !row.captured);
         const capturedCount = rows.length - outstanding.length;
         const complete = rows.length > 0 && outstanding.length === 0;
@@ -616,6 +735,14 @@ class GuildTrialAbilities {
             coverage,
             plan,
             planCompare,
+            // The same verdicts keyed by lowercased name, for the surfaces that
+            // have a name and no participant row — the scoreboard, which is
+            // built off the damage breakdown rather than off the roster
+            classes: Object.fromEntries(
+                rows
+                    .filter((row) => row.classTag && row.name)
+                    .map((row) => [row.name.trim().toLowerCase(), row.classTag])
+            ),
         };
     }
 
@@ -682,6 +809,9 @@ class GuildTrialAbilities {
      * @param {number} at - Clock
      */
     _start(at) {
+        // A new trial is new evidence: the previous hour's casts say nothing
+        // about who turned up for this one
+        this.casts = {};
         this.session = {
             startedAt: at,
             guildName: this.guildName,

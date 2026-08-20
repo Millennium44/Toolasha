@@ -23,6 +23,7 @@ const game = vi.hoisted(() => ({
     ownName: null,
     storedRoster: null,
     storedStats: null,
+    casts: [],
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -58,6 +59,17 @@ vi.mock('../../core/websocket.js', () => ({
 vi.mock('./guild-loadout-capture.js', () => ({
     guildLoadoutCapture: { seen: () => game.loadouts, forPlayer: () => null },
     default: { seen: () => game.loadouts, forPlayer: () => null },
+}));
+
+// The class accumulator reaches storage through the abilities session; here it
+// is a list, so a test can assert what the stream fed it
+vi.mock('./guild-trial-abilities.js', () => ({
+    default: {
+        noteAbilityCast: (name, hrid) => {
+            game.casts.push([name, hrid]);
+            return true;
+        },
+    },
 }));
 
 const {
@@ -1142,6 +1154,39 @@ describe('the tier-opening message', () => {
         game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
         game.wsHandlers[GUILD_BATTLE_MESSAGE](GUILD_BATTLE_TICKS[2]);
         expect(guildTrialDamage.breakdown().names['19']).toMatchObject({ name: 'Player20', source: 'roster' });
+    });
+
+    test('a tick’s abilityHrid is filed under the player who cast it', () => {
+        game.casts = [];
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+
+        const tick = {
+            ...GUILD_BATTLE_TICKS[1],
+            pMap: {
+                0: { cHP: 100, mHP: 100, abilityHrid: '/abilities/fireball' },
+                1: { cHP: 100, mHP: 100, isAutoAtk: true },
+            },
+        };
+        game.wsHandlers[GUILD_BATTLE_MESSAGE](tick);
+
+        // Slot 0 is named by the roster; slot 1 carried no ability, so nothing
+        // is filed for it — an auto-attack classifies nobody
+        expect(game.casts).toEqual([['Player01', '/abilities/fireball']]);
+    });
+
+    test('a slot no source could name files nothing', () => {
+        // A placeholder is a slot, not a person, and evidence attached to one
+        // would move to somebody else at the next tier's re-deal
+        game.casts = [];
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            type: 'guild_battle_updated',
+            battleId: 77,
+            tier: 1,
+            pMap: { 4: { cHP: 100, mHP: 100, abilityHrid: '/abilities/fireball' } },
+            mMap: {},
+        });
+
+        expect(game.casts).toEqual([]);
     });
 
     test('a page refresh mid-tier reads the roster back, for the same battle only', async () => {

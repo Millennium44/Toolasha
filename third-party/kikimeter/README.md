@@ -8,7 +8,7 @@ MIT licensed, published as GreasyFork script 584984:
 The script is **not kept here**. It is a single 218 KB file and nothing in Toolasha builds
 against it; the version number above is what makes the attribution checkable, and the script
 can be fetched from that URL when a claim below needs re-reading. No KikiMeter source was
-copied. What was taken is the analysis — seven specific findings, each of which Toolasha
+copied. What was taken is the analysis — eight specific findings, each of which Toolasha
 re-implemented against its own attribution module, its own storage and its own panels.
 
 ## What was adopted
@@ -44,6 +44,11 @@ re-implemented against its own attribution module, its own storage and its own p
 - **A revive is not a heal.** Health going from exactly zero to positive returns a whole bar in
   one tick, and folded into healing it dwarfs every real cast on the table. Counted as a revive
   and kept out of the attribution — `src/features/guild/guild-trial-support.js`.
+- **A trial row says what class it is.** KikiMeter tags each row with the player's class, which
+  is what makes a meter readable in a trial where nobody knows twenty of the names. Toolasha's
+  `src/utils/class-inference.js` is written from scratch against the game's own `abilityDetailMap`
+  — the effect type, `combatStyleHrid` and `damageType` of what a unit is seen preparing — rather
+  than against a table of ability names, and every tag carries the hrids it was inferred from.
 - **A trial ends, and the figures stop.** `end_guild_battle` is the honest signal, and
   `guild_updated.currentTrialsData` (a JSON _string_ carrying `status`, per-party `done` flags
   and `budgetRemainingMs` counting down from exactly 3,600,000) is the one that arrives whether
@@ -58,7 +63,7 @@ re-implemented against its own attribution module, its own storage and its own p
 - **The DOM name scraping.** KikiMeter reads the trial roster out of `MiniUnit_name` elements
   with a slot-offset heuristic. Toolasha reads `new_guild_battle`'s own `players[]`, which it
   already had.
-- **The panels.** KikiMeter is a floating meter window with its own recount, class detection and
-  history. Toolasha's figures live in the game's own guild panel and in its existing rows.
+- **The panels.** KikiMeter is a floating meter window with its own recount and history.
+  Toolasha's figures live in the game's own guild panel and in its existing rows.
 - **Its `battle_updated` handling.** The two scripts separate personal combat from trial combat
   differently; Toolasha's spectator-liveness window predates this and was left alone.

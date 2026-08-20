@@ -39,6 +39,7 @@ vi.mock('../../utils/panel-z-index.js', () => ({
 }));
 
 const {
+    classTagHTML,
     damageOverCeiling,
     damageTypeOf,
     guildTrialScoreboard,
@@ -590,5 +591,26 @@ describe('the panel', () => {
         guildTrialScoreboard.open();
         guildTrialScoreboard.open();
         expect(document.querySelectorAll(`.${PANEL_CLASS}`)).toHaveLength(1);
+    });
+});
+
+describe('the class chip on a board row', () => {
+    test('a verdict draws its short label and says it is an inference', () => {
+        const html = classTagHTML({ key: 'ranged', label: 'Ranged', short: 'RANGED' });
+
+        expect(html).toContain('>RANGED<');
+        expect(html).toContain('inferred from what this player was seen casting');
+    });
+
+    test('nothing known draws nothing', () => {
+        expect(classTagHTML(null)).toBe('');
+        expect(classTagHTML({ label: 'Tank' })).toBe('');
+    });
+
+    test('only letters reach the markup', () => {
+        // The label comes from this fork's own bucket table, and is stripped
+        // anyway — a board row is an HTML string, and nothing off the wire may
+        // reach it through a field that is supposed to be a fixed word
+        expect(classTagHTML({ short: '<img onerror=x>' })).toBe('');
     });
 });

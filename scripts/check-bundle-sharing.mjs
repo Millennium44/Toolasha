@@ -85,6 +85,17 @@ const ALLOWLIST = new Map([
         // panels across every bundle, so a copy in each is only weight.
         'stateless factory; persistence delegated to the shared panel-geometry global',
     ],
+    [
+        'src/utils/class-inference.js',
+        // Constants (the bucket table) and pure functions over arguments the
+        // caller owns: newCastLog hands back a plain object, noteCast mutates
+        // the one it is given, and inferClass reads game data passed in. No
+        // module-level mutable state and no import-time side effects — the
+        // accumulated evidence lives on guildTrialAbilities, which is a single
+        // instance in the combat bundle. The trial panels are in the ui bundle
+        // and the trial stream is in combat, so both reach it.
+        'constants and pure functions; the accumulated state lives on the caller, not here',
+    ],
 ]);
 
 /** Import suffixes handled by custom rollup plugins; their targets are not part of the shared JS graph */

@@ -102,6 +102,7 @@ import dataManager from '../../core/data-manager.js';
 import webSocketHook from '../../core/websocket.js';
 import { attributeTick, foldEvents, newAttributionState, noteActions } from '../../utils/damage-attribution.js';
 import { guildLoadoutCapture } from './guild-loadout-capture.js';
+import guildTrialAbilities from './guild-trial-abilities.js';
 import { isMonsterUnit } from './guild-loadouts.js';
 import { autoAttackDps } from './guild-trial-forecast.js';
 import {
@@ -1182,6 +1183,7 @@ class GuildTrialDamage {
             // reads the persisted roster back, gated on the battle id matching
             if (!Object.keys(this.roster).length) this._adoptStoredRoster(battleId, tier);
             this._nameUnits(pMap);
+            this._noteClassEvidence(pMap);
             this._readPool(mMap, tier, now);
 
             // Before `noteActions`, exactly as the ordinary path does it: the hit
@@ -1230,6 +1232,38 @@ class GuildTrialDamage {
             this.spectator.lastAt = now;
         } catch (error) {
             console.error('[GuildTrialDamage] Reading a spectated trial tick failed:', error);
+        }
+    }
+
+    /**
+     * File each tick's `abilityHrid` under the player who cast it.
+     *
+     * The Trial Abilities panel's problem is that a roster of fifty is clicked
+     * through five at a time, so most of it is a column of names nothing is
+     * known about. The stream answers a *narrower* question for free: whatever
+     * a unit is preparing resolves through the game's ability data to a style,
+     * an element and an effect type, which is enough for a role.
+     *
+     * Two honesty conditions, both of them refusals:
+     *
+     * - **Only a named slot.** A placeholder — `Player 7`, a slot no source
+     *   could put a name to — files nothing. Evidence attached to a slot index
+     *   would move to a different person at the next tier's re-deal.
+     * - **Only what the stream actually carries.** `abilityHrid` is present for
+     *   some units and absent for others (it is reliably there for the
+     *   watcher's own unit); a member it never arrives for simply earns no tag,
+     *   and their captured kit remains the only thing that can give them one.
+     *
+     * @param {Object} pMap - The tick's players
+     */
+    _noteClassEvidence(pMap) {
+        for (const [index, unit] of Object.entries(pMap || {})) {
+            const hrid = unit?.abilityHrid || unit?.preparingAbilityHrid;
+            if (!hrid) continue;
+
+            const entry = this.unitNames[index];
+            if (!entry?.name || entry.source === 'placeholder') continue;
+            guildTrialAbilities.noteAbilityCast?.(entry.name, hrid);
         }
     }
 

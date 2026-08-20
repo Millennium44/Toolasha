@@ -76,6 +76,7 @@ const {
     headerLine,
     completionLine,
     staleSessionNote,
+    classTagText,
 } = await import('./guild-trial-abilities-ui.js');
 const { resetPlanUi } = await import('./guild-trial-abilities-ui.js');
 const guildTrialPlan = (await import('./guild-trial-plan.js')).default;
@@ -162,6 +163,7 @@ describe('trial abilities panel', () => {
         guildTrialAbilities.roster = [];
         guildTrialAbilities.guildName = null;
         guildTrialAbilities.currentTier = null;
+        guildTrialAbilities.casts = {};
         guildTrialPlan.record?.set({});
         guildTrialPlan.cache = null;
         vi.useRealTimers();
@@ -571,5 +573,81 @@ describe('trial abilities panel', () => {
         expect(capture.listeners).toHaveLength(1);
         feature.cleanup();
         expect(capture.listeners).toHaveLength(0);
+    });
+});
+
+describe('class tags on the players card', () => {
+    const fireball = {
+        name: 'Fireball',
+        abilityEffects: [
+            {
+                effectType: '/ability_effect_types/damage',
+                combatStyleHrid: '/combat_styles/magic',
+                damageType: '/damage_types/fire',
+            },
+        ],
+    };
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW);
+        document.body.replaceChildren();
+        game.abilityDetailMap = { '/abilities/fireball': fireball };
+        capture.listeners = [];
+        capture.players = {};
+        resetTrialUnitRequests();
+        resetPlanUi();
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        feature.cleanup();
+        guildTrialAbilities.session = null;
+        guildTrialAbilities.roster = [];
+        guildTrialAbilities.guildName = null;
+        guildTrialAbilities.currentTier = null;
+        guildTrialAbilities.casts = {};
+        guildTrialPlan.record?.set({});
+        guildTrialPlan.cache = null;
+        vi.useRealTimers();
+    });
+
+    test('a chip sits beside the name of a player whose casts have been watched', async () => {
+        await feature.initialize('Cats');
+        guildTrialAbilities.setRoster(['Alice', 'Bob']);
+        guildTrialAbilities.noteTrialStart(NOW);
+        guildTrialAbilities.noteAbilityCast('Alice', '/abilities/fireball');
+
+        openTrialAbilitiesPanel();
+
+        const chips = [...guildTrialAbilitiesPanel.panel.querySelectorAll('span')].filter(
+            (span) => span.textContent === 'FIRE'
+        );
+        expect(chips).toHaveLength(1);
+        expect(chips[0].title).toContain('Fire Mage');
+        // The evidence, so a reader can check the claim against the person
+        expect(chips[0].title).toContain('fireball');
+        // Bob cast nothing and gets no chip, rather than a default one
+        expect(text()).toContain('Bob');
+        expect(text()).not.toContain(FAILED);
+    });
+
+    test('the wording says it is an inference, never a capture', () => {
+        const tag = classTagText({
+            key: 'healer',
+            label: 'Healer',
+            short: 'HEAL',
+            basis: 'an ally heal in the ability stream',
+            evidence: ['/abilities/bloom'],
+        });
+
+        expect(tag.text).toBe('HEAL');
+        expect(tag.title).toContain('inferred from an ally heal in the ability stream: bloom');
+        expect(tag.title).toContain('Battle Info capture is the only authority');
+    });
+
+    test('no verdict draws nothing at all', () => {
+        expect(classTagText(null)).toBeNull();
+        expect(classTagText({ label: 'Mage' })).toBeNull();
     });
 });

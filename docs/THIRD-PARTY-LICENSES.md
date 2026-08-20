@@ -90,7 +90,7 @@ Full terms in `third-party/mwi-combat-suite/LICENSE.md`; what else the script co
 ## KikiMeter
 
 `src/utils/damage-attribution.js`, `src/features/guild/guild-trial-damage.js` and
-`src/features/guild/guild-trial-support.js` adopt seven findings from **KikiMeter v3.32.1** by
+`src/features/guild/guild-trial-support.js` adopt eight findings from **KikiMeter v3.32.1** by
 ZhuLiMoon, under the MIT licence it declares in its own userscript header. **No code was
 copied**, and the script is not kept in this repository — it is a single 218 KB file nothing
 builds against, and the version number is what makes the attribution checkable.
@@ -124,8 +124,14 @@ What was taken is the analysis, all of it reached against real trial captures:
 The code against all of it is Toolasha's own, written into an attribution module that already
 existed and differs in substance — counter-first rungs where KikiMeter consults no counters at
 all, a per-ability and per-enemy split it does not keep, and the roster read off the game's own
-`new_guild_battle` rather than scraped out of the DOM. Its floating meter, class detection and
-history panels are not reproduced.
+`new_guild_battle` rather than scraped out of the DOM. Its floating meter and history panels are
+not reproduced.
+
+Naming each trial row's class is KikiMeter's idea too, and `src/utils/class-inference.js` takes
+it. The rules are Toolasha's own and read the game's `abilityDetailMap` — an effect's type, its
+`combatStyleHrid` and its `damageType` — rather than matching ability names, so a new ability
+classifies itself; every verdict carries the evidence it was drawn from, and a captured stat
+sheet's `threat` outranks the stream.
 
 <https://greasyfork.org/scripts/584984>
 

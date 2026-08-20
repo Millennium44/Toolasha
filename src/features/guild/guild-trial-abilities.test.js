@@ -623,3 +623,120 @@ describe('exportSnapshot', () => {
         expect(out.missingAuras).toBeUndefined();
     });
 });
+
+describe('class tags from the ability stream', () => {
+    /** Ability data with a style and an element on it, as `class-inference` reads */
+    const STREAM_GAME = {
+        ...GAME,
+        '/abilities/fireball': {
+            name: 'Fireball',
+            abilityEffects: [
+                {
+                    effectType: '/ability_effect_types/damage',
+                    combatStyleHrid: '/combat_styles/magic',
+                    damageType: '/damage_types/fire',
+                },
+            ],
+        },
+        '/abilities/steady_shot': {
+            name: 'Steady Shot',
+            abilityEffects: [
+                {
+                    effectType: '/ability_effect_types/damage',
+                    combatStyleHrid: '/combat_styles/ranged',
+                    damageType: '/damage_types/physical',
+                },
+            ],
+        },
+        '/abilities/bloom': {
+            name: 'Bloom',
+            abilityEffects: [{ effectType: '/ability_effect_types/heal', targetType: 'lowestHpAlly' }],
+        },
+    };
+
+    test('a member nobody has clicked still earns a tag from what they cast', () => {
+        const s = session(['Alice', 'Bob']);
+        s.noteTrialStart(NOW);
+        s.noteAbilityCast('Alice', '/abilities/fireball');
+        s.noteAbilityCast('Alice', '/abilities/fireball');
+
+        const state = s.state(STREAM_GAME);
+        const alice = state.participants.find((row) => row.name === 'Alice');
+
+        // No capture at all — the row is still "needs Battle Info"
+        expect(alice.captured).toBe(false);
+        expect(alice.classTag).toMatchObject({ key: 'fireMage', label: 'Fire Mage' });
+        expect(alice.classTag.evidence).toEqual(['/abilities/fireball']);
+        // And a member nothing has been seen from stays blank rather than guessed
+        expect(state.participants.find((row) => row.name === 'Bob').classTag).toBeNull();
+    });
+
+    test('the name key is case-insensitive, as the fight view’s spelling is not guaranteed', () => {
+        const s = session(['Alice']);
+        s.noteTrialStart(NOW);
+        s.noteAbilityCast('alice', '/abilities/steady_shot');
+
+        expect(s.state(STREAM_GAME).participants[0].classTag.key).toBe('ranged');
+    });
+
+    test('a healer is named by the heal, not by the damage they also do', () => {
+        const s = session(['Alice']);
+        s.noteTrialStart(NOW);
+        s.noteAbilityCast('Alice', '/abilities/fireball');
+        s.noteAbilityCast('Alice', '/abilities/bloom');
+
+        expect(s.state(STREAM_GAME).participants[0].classTag.key).toBe('healer');
+    });
+
+    test('threat on a captured sheet outranks the stream', () => {
+        const s = session(['Alice']);
+        s.noteTrialStart(NOW);
+        s.noteAbilityCast('Alice', '/abilities/fireball');
+        s.recordCapture(snap('Alice', 1, [], { stats: { threat: 4, combatStyleHrids: ['/combat_styles/smash'] } }), {
+            at: NOW,
+        });
+
+        expect(s.state(STREAM_GAME).participants[0].classTag.key).toBe('tank');
+    });
+
+    test('the sheet’s own style tags a captured member whose casts were never streamed', () => {
+        const s = session(['Alice']);
+        s.noteTrialStart(NOW);
+        s.recordCapture(
+            snap('Alice', 1, [], { stats: { combatStyleHrids: ['/combat_styles/ranged'], damageType: '' } }),
+            { at: NOW }
+        );
+
+        expect(s.state(STREAM_GAME).participants[0].classTag).toMatchObject({
+            key: 'ranged',
+            basis: expect.stringContaining('weapon style'),
+        });
+    });
+
+    test('a new trial forgets the previous hour’s casts', () => {
+        const s = session(['Alice']);
+        s.noteTrialStart(NOW);
+        s.noteAbilityCast('Alice', '/abilities/fireball');
+        expect(s.state(STREAM_GAME).participants[0].classTag.key).toBe('fireMage');
+
+        s.noteTrialStart(NOW + SESSION_MAX_AGE_MS + 1000);
+        expect(s.state(STREAM_GAME).participants[0].classTag).toBeNull();
+    });
+
+    test('a cast for a name with no session in hand starts no session', () => {
+        const s = new GuildTrialAbilities();
+        s.guildName = 'Cats';
+
+        expect(s.noteAbilityCast('Alice', '/abilities/fireball')).toBe(true);
+        expect(s.session).toBeNull();
+    });
+
+    test('classes() is the same verdicts keyed by lowercased name', () => {
+        const s = session(['Alice', 'Bob']);
+        s.noteTrialStart(NOW);
+        s.noteAbilityCast('Alice', '/abilities/steady_shot');
+
+        expect(s.classes(STREAM_GAME)).toEqual({ alice: expect.objectContaining({ key: 'ranged' }) });
+        expect(s.state(STREAM_GAME).classes).toEqual(s.classes(STREAM_GAME));
+    });
+});
