@@ -112,6 +112,7 @@ import * as equipmentSavings from '../utils/equipment-savings.js';
 import * as gameServer from '../utils/game-server.js';
 import * as gameText from '../utils/game-text.js';
 import * as guildCreditPricing from '../utils/guild-credit-pricing.js';
+import * as itemIcon from '../utils/item-icon.js';
 import * as keyLedger from '../utils/key-ledger.js';
 import * as numberParser from '../utils/number-parser.js';
 import * as partyLint from '../utils/party-lint.js';
@@ -224,6 +225,7 @@ toolashaRoot.Utils = {
     gameServer,
     gameText,
     guildCreditPricing,
+    itemIcon,
     keyLedger,
     numberParser,
     partyLint,

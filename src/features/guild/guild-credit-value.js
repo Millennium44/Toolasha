@@ -13,6 +13,7 @@ import domObserver from '../../core/dom-observer.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { itemHridFromIcon } from '../../utils/item-icon.js';
 import webSocketHook from '../../core/websocket.js';
 import {
     navigateToMarketplace,
@@ -171,13 +172,18 @@ class GuildCreditValue {
 
         const tokenHrid = Object.keys(itemDetailMap).find((hrid) => hrid.includes('guild_token'));
         const selectorContainer = modalEl.querySelector('[class*="ItemSelector_itemContainer"]');
+        // Identity from the icon sprite (locale independent); the translatable
+        // aria-label only backs up the name comparison for older markup
+        const selectedItemHrid = itemHridFromIcon(selectorContainer, itemDetailMap);
         const selectedItemName =
             selectorContainer?.querySelector('svg[aria-label]')?.getAttribute('aria-label') || null;
 
         captureTokenExchangeFromModal(modalEl, {
             creditItemHrid: creditHrid,
             creditName: titleText,
+            selectedItemHrid,
             selectedItemName,
+            tokenHrid: tokenHrid || null,
             tokenName: (tokenHrid && itemDetailMap[tokenHrid]?.name) || 'Guild Token',
         });
     }
@@ -212,6 +218,7 @@ class GuildCreditValue {
             const buyGPC = buyPrice > 0 ? (buyPrice * conv.itemCount) / conv.creditCount : null;
 
             rows.push({
+                hrid,
                 name: item.name,
                 itemCount: conv.itemCount,
                 creditCount: conv.creditCount,
@@ -544,8 +551,11 @@ class GuildCreditValue {
     _renderExchangeAdvisor(modalEl, creditHrid, rows) {
         modalEl.querySelectorAll('.mwi-exchange-advisor').forEach((el) => el.remove());
 
-        // The source item is inside ItemSelector_itemContainer; its SVG has aria-label="Item Name"
+        // The source item is inside ItemSelector_itemContainer. Its identity comes from
+        // the icon's <use> sprite reference (locale independent); the SVG's aria-label
+        // is the translated display name and only backs it up.
         const selectorContainer = modalEl.querySelector('[class*="ItemSelector_itemContainer"]');
+        const selectedItemHrid = itemHridFromIcon(selectorContainer, dataManager.getInitClientData()?.itemDetailMap);
         const itemSvg = selectorContainer?.querySelector('svg[aria-label]');
         const selectedItemName = itemSvg?.getAttribute('aria-label') || null;
 
@@ -570,14 +580,16 @@ class GuildCreditValue {
             border:1px solid rgba(255,255,255,0.1); background:rgba(0,0,0,0.2);
         `;
 
-        if (!selectedItemName) {
+        if (!selectedItemHrid && !selectedItemName) {
             // No item selected yet
             advisor.innerHTML = `<div style="color:#6b7280; text-align:center;">Select an item to see exchange advice</div>`;
             modalEl.querySelector(`.${CSS_CLASS}`)?.insertAdjacentElement('afterend', advisor);
             return;
         }
 
-        const selectedRow = validRows.find((r) => r.name === selectedItemName);
+        const selectedRow = selectedItemHrid
+            ? validRows.find((r) => r.hrid === selectedItemHrid)
+            : validRows.find((r) => r.name === selectedItemName);
 
         if (!selectedRow) {
             // Item in modal has no conversion for this credit type

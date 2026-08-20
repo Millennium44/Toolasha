@@ -405,8 +405,28 @@ describe('reading the token exchange off the dialog', () => {
         expect(game.captures[0][1]).toEqual({
             creditItemHrid: '/items/guild_credit_1',
             creditName: 'Trade Credit',
+            selectedItemHrid: null,
             selectedItemName: 'Guild Token',
+            tokenHrid: '/items/guild_token',
             tokenName: 'Guild Token',
+        });
+    });
+
+    test('a selection carrying its icon sprite hands the capture the hrid, whatever the label says', () => {
+        const modal = buildExchangeModal('Trade Credit');
+        const selector = document.createElement('div');
+        selector.className = 'ItemSelector_itemContainer_x';
+        // A French client: translated label, same sprite
+        selector.innerHTML =
+            '<svg aria-label="Jeton de guilde"><use href="/static/media/items_sprite.abc.svg#guild_token"></use></svg>';
+        modal.appendChild(selector);
+
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+
+        expect(game.captures).toHaveLength(1);
+        expect(game.captures[0][1]).toMatchObject({
+            selectedItemHrid: '/items/guild_token',
+            selectedItemName: 'Jeton de guilde',
         });
     });
 

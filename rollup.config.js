@@ -170,6 +170,7 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/game-server.js')), 'Toolasha.Utils.gameServer'],
     [normalize(join(__dirname, 'src/utils/game-text.js')), 'Toolasha.Utils.gameText'],
     [normalize(join(__dirname, 'src/utils/guild-credit-pricing.js')), 'Toolasha.Utils.guildCreditPricing'],
+    [normalize(join(__dirname, 'src/utils/item-icon.js')), 'Toolasha.Utils.itemIcon'],
     [normalize(join(__dirname, 'src/utils/key-ledger.js')), 'Toolasha.Utils.keyLedger'],
     [normalize(join(__dirname, 'src/utils/mobile.js')), 'Toolasha.Utils.mobile'],
     [normalize(join(__dirname, 'src/utils/number-parser.js')), 'Toolasha.Utils.numberParser'],

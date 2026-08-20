@@ -70,6 +70,21 @@ function tile(name, count) {
     return `<div class="Item_itemContainer__q"><svg aria-label="${name}"></svg>${countEl}</div>`;
 }
 
+/**
+ * An item tile carrying its icon's sprite reference, the way live markup does.
+ * @param {string} spriteId - The `<use>` fragment id (the hrid's last segment)
+ * @param {string} label - The translated aria-label
+ * @param {number|null} count - Displayed count, or null for a tile with none
+ * @returns {string} Markup
+ */
+function spriteTile(spriteId, label, count) {
+    const countEl = count === null ? '' : `<div class="Item_count__x">${count}</div>`;
+    return (
+        `<div class="Item_itemContainer__q"><svg aria-label="${label}">` +
+        `<use href="/static/media/items_sprite.abc.svg#${spriteId}"></use></svg>${countEl}</div>`
+    );
+}
+
 beforeEach(() => {
     store.data = {};
     store.writes = 0;
@@ -126,6 +141,32 @@ describe('reading the dialog', () => {
         const el = modal('<div>4 → 1</div>');
 
         expect(readTokenExchangeFromModal(el, { ...greenContext, selectedItemName: 'Beast Hide' })).toBeNull();
+    });
+
+    test('the tiles are matched by icon sprite, whatever language they are labelled in', () => {
+        // A French client labels the tiles in French, so name matching finds nothing —
+        // the sprite reference is the same in every locale
+        const el = modal(
+            spriteTile('guild_token', 'Jeton de guilde', 1) +
+                spriteTile('green_guild_credit', 'Crédit de guilde vert', 10)
+        );
+
+        expect(readTokenExchangeFromModal(el, { ...greenContext, tokenHrid: '/items/guild_token' })).toMatchObject({
+            creditsPerToken: 10,
+            via: 'tiles',
+        });
+    });
+
+    test('the selected-item guard judges by hrid when the icon resolved one', () => {
+        const el = modal('<div>1 → 10</div>');
+        const hridContext = { ...greenContext, selectedItemName: null, tokenHrid: '/items/guild_token' };
+
+        // The selection resolved to the token: a token exchange, in any language
+        expect(
+            readTokenExchangeFromModal(el, { ...hridContext, selectedItemHrid: '/items/guild_token' })
+        ).toMatchObject({ creditsPerToken: 10 });
+        // The selection resolved to something else: not one, even with no name to compare
+        expect(readTokenExchangeFromModal(el, { ...hridContext, selectedItemHrid: '/items/beast_hide' })).toBeNull();
     });
 
     test('a dialog whose credit is not a credit is not an exchange', () => {

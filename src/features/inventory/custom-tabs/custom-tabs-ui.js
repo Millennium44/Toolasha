@@ -20,6 +20,7 @@ import inventoryBadgeManager from '../inventory-badge-manager.js';
 // to the static import for dev single-bundle builds.
 import loadoutSnapshotLocal from '../../combat/loadout-snapshot.js';
 import { loadoutSnapshot } from '../../../utils/bundle-bridge.js';
+import { itemHridFromIcon } from '../../../utils/item-icon.js';
 function getLoadoutSnapshot() {
     return loadoutSnapshot() || loadoutSnapshotLocal;
 }
@@ -1275,10 +1276,7 @@ export default class CustomTabsUI {
         const map = new Map();
         const tiles = invContainer.querySelectorAll('[class*="Item_itemContainer"]');
         for (const tile of tiles) {
-            const svg = tile.querySelector('svg[aria-label]');
-            if (!svg) continue;
-            const baseName = svg.getAttribute('aria-label');
-            const hrid = this._nameToHrid(baseName);
+            const hrid = this._tileBaseHrid(tile);
             if (!hrid) continue;
             // Always register under base hrid (matches all enhancement levels)
             if (!map.has(hrid)) map.set(hrid, []);
@@ -1369,15 +1367,26 @@ export default class CustomTabsUI {
     }
 
     /**
+     * The base item HRID a tile shows — from the icon's `<use>` sprite reference
+     * first (locale independent), falling back to the translatable aria-label
+     * through the name map.
+     * @param {HTMLElement} tile - Item tile element
+     * @returns {string|null} Base HRID like "/items/sword", or null
+     */
+    _tileBaseHrid(tile) {
+        const spriteHrid = itemHridFromIcon(tile, dataManager.getInitClientData()?.itemDetailMap);
+        if (spriteHrid) return spriteHrid;
+        const baseName = tile.querySelector('svg[aria-label]')?.getAttribute('aria-label');
+        return baseName ? this._nameToHrid(baseName) : null;
+    }
+
+    /**
      * Extract the full HRID (including enhancement level) from a tile DOM element.
      * @param {HTMLElement} tile - Item tile element
      * @returns {string|null} HRID like "/items/sword" or "/items/sword+3", or null
      */
     _getHridFromTile(tile) {
-        const svg = tile.querySelector('svg[aria-label]');
-        if (!svg) return null;
-        const baseName = svg.getAttribute('aria-label');
-        const hrid = this._nameToHrid(baseName);
+        const hrid = this._tileBaseHrid(tile);
         if (!hrid) return null;
         const enhEl = tile.querySelector('[class*="Item_enhancementLevel"]');
         if (enhEl) {
@@ -3046,11 +3055,15 @@ export default class CustomTabsUI {
         if (actionMenu.querySelector('.toolasha-ct-add-to-tab')) return;
         if (!this._config?.tabs?.length) return;
 
-        // Resolve item HRID and enhancement level from the action menu DOM
+        // Resolve item HRID and enhancement level from the action menu DOM. The menu
+        // shows the item's own tile, so its icon sprite resolves the identity locale
+        // independently; the translated Item_name text is only the fallback. Scoped to
+        // the item container so an unrelated icon in the menu can't be mistaken for it.
+        const itemContainer = actionMenu.querySelector('[class*="Item_itemContainer"]');
         const nameEl = actionMenu.querySelector('[class*="Item_name"]');
-        if (!nameEl) return;
-        const itemName = nameEl.textContent.trim();
-        const hrid = this._nameToHrid(itemName);
+        const hrid =
+            itemHridFromIcon(itemContainer, dataManager.getInitClientData()?.itemDetailMap) ||
+            (nameEl ? this._nameToHrid(nameEl.textContent.trim()) : null);
         if (!hrid) return;
 
         const enhEl = actionMenu.querySelector('[class*="Item_enhancementLevel"]');

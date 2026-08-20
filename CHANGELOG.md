@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Item identity no longer depends on the game's display language
+
+Custom inventory tabs, the guild exchange advisor, and the token-exchange capture all identified items by their translated display name, so each silently found nothing for players running the game in any non-English language. They now read the icon's locale-independent sprite reference (via a new shared `item-icon` util), keeping the name lookup only as a fallback.
+
 ### Four fixes adopted from upstream's recent findings
 
 An upstream sweep turned up bugs our shared-lineage code still had: decompose profit ignored `bulkMultiplier`, undercounting items consumed multiple-per-action (e.g. Holy Milk) on both cost and output; the loot log matched rows to data by reverse-parsing locale-formatted dates (three hardcoded locales — any other silently showed nothing) and now matches by row position; inventory badges resolved items by translated display name and now use the locale-independent icon sprite; and "highest owned" enhancement resolution dropped equipped items lacking a count field, letting a lower duplicate in the bag outrank the worn copy.

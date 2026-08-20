@@ -45,6 +45,7 @@
  */
 
 import storage from '../../core/storage.js';
+import { itemHridFromIcon } from '../../utils/item-icon.js';
 
 /** Object store the record lives in — shared with guild XP and trial history */
 const STORE_NAME = 'guildHistory';
@@ -129,6 +130,26 @@ function readArrow(modalEl) {
 }
 
 /**
+ * Whether a tile shows the given item, judged by identity where possible.
+ *
+ * The icon's `<use>` sprite reference is locale independent, so when both an
+ * hrid and a sprite are available the comparison is exact in any language. The
+ * translated display name is only the fallback for markup with no sprite (or a
+ * caller with no hrid) — where it still fails for non-English locales, as the
+ * expected names come from `itemDetailMap` and are always English.
+ *
+ * @param {Element} tile - An item container
+ * @param {string|null} itemHrid - The item's hrid, when the caller knows it
+ * @param {string} itemName - The item's English display name
+ * @returns {boolean} Whether the tile shows that item
+ */
+function tileShows(tile, itemHrid, itemName) {
+    const spriteHrid = itemHridFromIcon(tile);
+    if (spriteHrid && itemHrid) return spriteHrid === itemHrid;
+    return tileName(tile) === itemName;
+}
+
+/**
  * The name an item tile shows, from whichever of the three ways the game labels
  * one is present.
  * @param {Element} tile - An item container
@@ -158,11 +179,14 @@ function tileCount(tile) {
  * The exchange the modal's item tiles state, if they state one.
  *
  * @param {Element} modalEl - The exchange modal
- * @param {string} creditName - The credit the modal is exchanging into
- * @param {string} tokenName - What a guild token is called
+ * @param {Object} sides - Both sides of the exchange, as the caller resolved them
+ * @param {string} sides.creditName - The credit the modal is exchanging into
+ * @param {string|null} [sides.creditItemHrid] - Its hrid
+ * @param {string} sides.tokenName - What a guild token is called
+ * @param {string|null} [sides.tokenHrid] - Its hrid
  * @returns {{tokens: number, credits: number}|null} Both sides, or null
  */
-function readTiles(modalEl, creditName, tokenName) {
+function readTiles(modalEl, { creditName, creditItemHrid, tokenName, tokenHrid }) {
     const tiles = Array.from(modalEl.querySelectorAll?.('[class*="Item_itemContainer"]') || []);
     if (tiles.length === 0) return null;
 
@@ -170,10 +194,8 @@ function readTiles(modalEl, creditName, tokenName) {
     let credits = 0;
 
     for (const tile of tiles) {
-        const name = tileName(tile);
-        if (!name) continue;
-        if (!tokens && name === tokenName) tokens = tileCount(tile);
-        else if (!credits && name === creditName) credits = tileCount(tile);
+        if (!tokens && tileShows(tile, tokenHrid, tokenName)) tokens = tileCount(tile);
+        else if (!credits && tileShows(tile, creditItemHrid, creditName)) credits = tileCount(tile);
     }
 
     if (!(tokens > 0) || !(credits > 0)) return null;
@@ -192,20 +214,35 @@ function readTiles(modalEl, creditName, tokenName) {
  * @param {Object} context - What the caller already resolved
  * @param {string} context.creditItemHrid - The credit the modal exchanges into
  * @param {string} context.creditName - Its display name
- * @param {string} [context.selectedItemName] - The item selected on the give side
+ * @param {string} [context.selectedItemHrid] - The hrid of the item selected on the give side
+ * @param {string} [context.selectedItemName] - Its display name (fallback when no hrid resolved)
+ * @param {string} [context.tokenHrid] - The guild token's hrid
  * @param {string} [context.tokenName='Guild Token'] - What a token is called
  * @returns {{creditItemHrid: string, creditsPerToken: number, tokensPerExchange: number,
  *   creditsPerExchange: number, via: string}|null} The reading
  */
 export function readTokenExchangeFromModal(modalEl, context = {}) {
-    const { creditItemHrid, creditName, selectedItemName, tokenName = 'Guild Token' } = context;
+    const {
+        creditItemHrid,
+        creditName,
+        selectedItemHrid,
+        selectedItemName,
+        tokenHrid = null,
+        tokenName = 'Guild Token',
+    } = context;
     if (!modalEl || !isCreditHrid(creditItemHrid) || !creditName) return null;
     // Only the dialog that is actually offering the token exchange states its
-    // rate; every other one is stating some item's rate
-    if (selectedItemName && selectedItemName !== tokenName) return null;
+    // rate; every other one is stating some item's rate. Judged by hrid when the
+    // selection's icon resolved one (locale independent); by display name only
+    // as the fallback for older markup.
+    if (selectedItemHrid && tokenHrid) {
+        if (selectedItemHrid !== tokenHrid) return null;
+    } else if (selectedItemName && selectedItemName !== tokenName) {
+        return null;
+    }
 
     const arrow = readArrow(modalEl);
-    const reading = arrow || readTiles(modalEl, creditName, tokenName);
+    const reading = arrow || readTiles(modalEl, { creditName, creditItemHrid, tokenName, tokenHrid });
     if (!reading) return null;
 
     const { tokens, credits } = reading;
