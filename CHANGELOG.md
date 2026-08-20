@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Elite achievement reminder icon on player profiles
+
+A player's shared profile now shows a ✉️ icon next to their name when their Elite achievement tier is still incomplete; clicking it pre-fills a customizable whisper into the chat input (you still press Enter to send). Both the toggle and the message live in Settings under Combat.
+
 ### Risk of Ruin calculator
 
 Ported from upstream: a standalone panel estimating the chance of hitting 0 gold before reaching a target — a number of dungeon chests, alchemy Transmute actions, or an enhancement level — with a Kelly-style optimal bankroll share and a live marketplace widget capping how many actions the visible bid depth can absorb.

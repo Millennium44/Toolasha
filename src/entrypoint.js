@@ -1013,6 +1013,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'eliteAchievementReminder',
+            name: 'Elite Achievement Reminder',
+            category: 'Profile',
+            module: Combat.eliteAchievementReminder,
+            async: false,
+        },
+        {
             key: 'loadoutEnhancementDisplay',
             name: 'Loadout Enhancement Display',
             category: 'Combat',
