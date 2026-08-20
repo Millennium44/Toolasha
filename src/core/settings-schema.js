@@ -2243,7 +2243,7 @@ export const settingsGroups = {
                 label: 'Unit badges: Show each player’s DPS and share of the damage on their portrait',
                 type: 'checkbox',
                 default: false,
-                help: "A small “1,240/s · 22%” on every party tile — the full card and the mini units beside it — matched by name. During a guild trial it reads the spectated trial split instead of this client's own fight. Off by default because the portraits are already busy",
+                help: "A small “1,240/s · 22%” on every party tile — the full card and the mini units beside it — matched by name. During a guild trial it reads the spectated trial split instead of this client's own fight. With Portrait DPS also on, the badge leaves the full cards to it and covers the mini units it never reaches — the two never state the same run twice. Off by default because the portraits are already busy",
             },
             portraitDpsPosition: {
                 id: 'portraitDpsPosition',

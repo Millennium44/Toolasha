@@ -216,13 +216,35 @@ export function partyTiles(area) {
 
     const tiles = [];
     for (const el of area.querySelectorAll(`${GAME.COMBAT_UNIT}, ${GAME.MINI_UNIT}`)) {
+        const fullCard = Boolean(el.matches?.(GAME.COMBAT_UNIT));
         const name =
             el.querySelector(GAME.COMBAT_UNIT_NAME)?.textContent?.trim() ||
             el.querySelector(GAME.MINI_UNIT_NAME)?.textContent?.trim() ||
             '';
-        if (name) tiles.push({ el, name });
+        if (name) tiles.push({ el, name, fullCard });
     }
     return tiles;
+}
+
+/**
+ * The tiles a given source is allowed to badge.
+ *
+ * Portrait DPS draws the same run — richer, and only on the full cards. With
+ * both features on, a run-sourced badge on a full card states the same figure
+ * twice from two measurement windows, which reads as a disagreement rather
+ * than a confirmation. So run-sourced badges yield the full cards to Portrait
+ * DPS and keep the mini units it never touches; a trial-sourced badge is a
+ * different metric (the spectated split, not this client's fight) and draws
+ * everywhere.
+ *
+ * @param {Array<{el: HTMLElement, name: string, fullCard: boolean}>} tiles - From {@link partyTiles}
+ * @param {'trial'|'run'} source - Where the rows came from
+ * @param {boolean} portraitDpsOn - Whether the Portrait DPS feature is enabled
+ * @returns {Array<{el: HTMLElement, name: string, fullCard: boolean}>}
+ */
+export function tilesForSource(tiles, source, portraitDpsOn) {
+    if (source !== 'run' || !portraitDpsOn) return tiles;
+    return tiles.filter((tile) => !tile.fullCard);
 }
 
 class CombatUnitBadges {
@@ -290,7 +312,8 @@ class CombatUnitBadges {
             if (!area) return;
 
             const { players, source } = badgeSource();
-            const pairs = matchTiles(partyTiles(area), badgeRows(players));
+            const tiles = tilesForSource(partyTiles(area), source, config.getSetting('portraitDps') === true);
+            const pairs = matchTiles(tiles, badgeRows(players));
 
             this._prune(area, new Set(pairs.map((pair) => pair.el)));
             for (const { el, row } of pairs) this._badge(el, badgeText(row, source));

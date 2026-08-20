@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Unit badges and Portrait DPS stop stating the same run twice
+
+With both on, a full card carried the run's figure from two measurement windows. Run-sourced badges now leave the full cards to Portrait DPS and keep the mini units it never reaches; a trial-split badge is a different metric and still draws everywhere.
+
 ### Every borrowed tool credited, licences vendored
 
 An attribution audit found ports that predate this fork with no notice retained. Credits now cover the MWI Combat Simulator engine (AmVoidGuy/Shykai/KuganDev/vlad), Enhancelator (doh-nuts), the Ultimate Enhancement Tracker (TheNeroNex), MWITools-Extended (byteArray567), MWI Game Commands (salairkas), Edible Tools (Truth_Light), Milkonomy (hyhfish), the Character Sheet (Tib), mooket I (IOMisaka), and shykai on MWITools — across the header, the listing credits, the per-file licences doc, and vendored licence texts; every engine file now carries its provenance line.

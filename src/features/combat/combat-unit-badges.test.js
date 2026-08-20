@@ -22,7 +22,12 @@ const opts = vi.hoisted(() => ({
 }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => opts.enabled, getSettingValue: (_key, fallback) => fallback },
+    default: {
+        // portraitDps answers its own switch so the yield-to-portrait gate
+        // stays out of tests that are not about it
+        getSetting: (key) => (key === 'portraitDps' ? (opts.portraitDps ?? false) : opts.enabled),
+        getSettingValue: (_key, fallback) => fallback,
+    },
 }));
 vi.mock('../../core/dom-observer.js', () => ({
     default: {
@@ -52,6 +57,7 @@ const {
     badgeSource,
     badgeText,
     matchTiles,
+    tilesForSource,
     partyTiles,
     default: feature,
     combatUnitBadges,
@@ -334,5 +340,24 @@ describe('lifecycle', () => {
         opts.run = { players: [{ name: 'Alice', damage: 10, dps: 1 }] };
         expect(() => feature.initialize()).not.toThrow();
         expect(() => feature.redraw()).not.toThrow();
+    });
+});
+
+describe('yielding the full cards to Portrait DPS', () => {
+    const tiles = [
+        { el: {}, name: 'A', fullCard: true },
+        { el: {}, name: 'B', fullCard: false },
+    ];
+
+    test('a run-sourced badge with Portrait DPS on keeps only the mini units', () => {
+        expect(tilesForSource(tiles, 'run', true)).toEqual([tiles[1]]);
+    });
+
+    test('with Portrait DPS off, run badges draw everywhere', () => {
+        expect(tilesForSource(tiles, 'run', false)).toEqual(tiles);
+    });
+
+    test('a trial split is a different metric and always draws everywhere', () => {
+        expect(tilesForSource(tiles, 'trial', true)).toEqual(tiles);
     });
 });
