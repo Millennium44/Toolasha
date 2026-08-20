@@ -104,6 +104,10 @@ it can be seen:
 - **jigglymoose** — author of
   [JIGS](https://greasyfork.org/en/scripts/550346-jigs-jigglymoose-s-intelligent-gear-simulator),
   for several of the ideas behind the upgrade advisor.
+- **ZhuLiMoon** — author of
+  [KikiMeter](https://greasyfork.org/en/scripts/584984-kikimeter) (MIT), whose
+  attribution field-work informed this fork's trial damage metering — DoT
+  counting, collision splitting, and respawn re-baselining among it.
 - **dakonglong** — author of the
   [Labyrinth Win Rate Calculator](https://greasyfork.org/en/scripts/566829-%E8%BF%B7%E5%AE%AB%E8%83%9C%E7%8E%87%E8%AE%A1%E7%AE%97%E5%99%A8),
   for the code and inspiration behind the labyrinth simulator.
