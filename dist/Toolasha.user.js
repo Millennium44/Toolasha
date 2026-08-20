@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Toolasha (Millennium44)
 // @namespace    http://tampermonkey.net/
-// @version      3.17.0
+// @version      3.18.0
 // @description  Toolasha (Millennium44 fork) — enhanced tools for Milky Way Idle: combat & labyrinth simulators with upgrade advisors, per-character data, cross-device sync, goal planner, guild tools, overlay, mobile support. Built on work by bot7420, Celasha, Frotty, Q7, jigglymoose, dakonglong, and the combat-sim team — full credits in the listing info.
-// @author       Millennium44 (fork of Celasha and Claude's Toolasha). Thank you to bot7420, DrDucky, Frotty, Truth_Light, AlphB, qu, and sentientmilk for providing the basis for a lot of this; to Shykai, amVoidGuy, vlad, and kuganDev for their immense work on the combat sim; and to Paradoxian for extensive bug finding, testing, and detailed writeups. Thanks to Miku, Orvel, Jigglymoose, Incinarator, Knerd, Maarg, MekaPyon, and others for their time and help; to SilkyPanda for contributing several features; to Steez for testing and catching my mistakes; to Tib for the Character Cards; to Sapnas for deep testing and singlehandedly improving performance; to vidonnus for infrastructure, bug fixes, engineering, and issue raising; and to Zaeter for the name. This fork also draws on code and ideas from other Milky Way Idle tools: MWITools by bot7420, MWI Combat Suite by Frotty, JIGS by jigglymoose, the Labyrinth Win Rate Calculator by dakonglong, and the mooket market pools by Q7 (mooket II) and IOMisaka (mooket I).
+// @author       Millennium44 (fork of Celasha and Claude's Toolasha). Thank you to bot7420, DrDucky, Frotty, Truth_Light, AlphB, qu, and sentientmilk for providing the basis for a lot of this; to Shykai, amVoidGuy, vlad, and kuganDev for their immense work on the combat sim; and to Paradoxian for extensive bug finding, testing, and detailed writeups. Thanks to Miku, Orvel, Jigglymoose, Incinarator, Knerd, Maarg, MekaPyon, and others for their time and help; to SilkyPanda for contributing several features; to Steez for testing and catching my mistakes; to Tib for the Character Cards; to Sapnas for deep testing and singlehandedly improving performance; to vidonnus for infrastructure, bug fixes, engineering, and issue raising; and to Zaeter for the name. This fork also draws on code and ideas from other Milky Way Idle tools: MWITools by bot7420 and shykai, the MWI Combat Simulator engine by AmVoidGuy/Shykai/KuganDev/vlad, MWI Combat Suite by Frotty, Enhancelator by doh-nuts, the Ultimate Enhancement Tracker by TheNeroNex, MWITools-Extended by byteArray567, MWI Game Commands by salairkas, Edible Tools by Truth_Light, JIGS by jigglymoose, KikiMeter by ZhuLiMoon, the Labyrinth Win Rate Calculator by dakonglong, the mooket market pools by Q7 (mooket II) and IOMisaka (mooket I), the Milkonomy export format by hyhfish, and the Character Sheet format by Tib.
 // @license      CC-BY-NC-SA-4.0
 // @run-at       document-start
 // @match        https://www.milkywayidle.com/*
@@ -22,13 +22,13 @@
 // @require      https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js
 // @require      https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js
 // @require      https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0/dist/chartjs-plugin-datalabels.min.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9bf370b91c92eec27a6c0e69526155b200fbba02/dist/libraries/toolasha-core.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9bf370b91c92eec27a6c0e69526155b200fbba02/dist/libraries/toolasha-utils.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9bf370b91c92eec27a6c0e69526155b200fbba02/dist/libraries/toolasha-sim.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9bf370b91c92eec27a6c0e69526155b200fbba02/dist/libraries/toolasha-market.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9bf370b91c92eec27a6c0e69526155b200fbba02/dist/libraries/toolasha-actions.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9bf370b91c92eec27a6c0e69526155b200fbba02/dist/libraries/toolasha-combat.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9bf370b91c92eec27a6c0e69526155b200fbba02/dist/libraries/toolasha-ui.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@3132feb8ad6f1adc6492e16b5b8043dea8563a55/dist/libraries/toolasha-core.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@3132feb8ad6f1adc6492e16b5b8043dea8563a55/dist/libraries/toolasha-utils.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@3132feb8ad6f1adc6492e16b5b8043dea8563a55/dist/libraries/toolasha-sim.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@3132feb8ad6f1adc6492e16b5b8043dea8563a55/dist/libraries/toolasha-market.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@3132feb8ad6f1adc6492e16b5b8043dea8563a55/dist/libraries/toolasha-actions.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@3132feb8ad6f1adc6492e16b5b8043dea8563a55/dist/libraries/toolasha-combat.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@3132feb8ad6f1adc6492e16b5b8043dea8563a55/dist/libraries/toolasha-ui.js
 // ==/UserScript==
 // Note: Combat Sim auto-import requires Tampermonkey for cross-domain storage. Not available on Steam (use manual clipboard copy/paste instead).
 
@@ -1142,6 +1142,13 @@
                 async: false,
             },
             {
+                key: 'combatUnitBadges',
+                name: 'Combat Unit Badges',
+                category: 'Combat',
+                module: Combat.combatUnitBadges,
+                async: false,
+            },
+            {
                 key: 'partyProfileButton',
                 name: 'Party Profile Button',
                 category: 'Combat',
@@ -1973,7 +1980,7 @@
         // Expose minimal user-facing API
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
-        targetWindow.Toolasha.version = '3.17.0';
+        targetWindow.Toolasha.version = '3.18.0';
         // Which fork this build came from. Version numbers are shared with
         // upstream, so the what's-new popup keys on the (fork, version) pair —
         // the same number on a different fork is still an update.
