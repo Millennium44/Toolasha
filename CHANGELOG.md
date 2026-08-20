@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Sort the marketplace grid by alchemy profit
+
+The sort control gains a mode dropdown: alongside the existing production/gathering profit per hour, it can now rank items by what insta-buying them at ask, running their best alchemy action, and insta-selling the outputs at bid pays — per item or per hour. Every figure comes off the existing alchemy profit calculator, so catalysts, success rates, tea costs and the coin fee are already in it; only the pricing is forced to the insta flow, whatever the global pricing mode says. The chosen mode persists.
+
 ### A sync pull combines both devices' histories instead of picking one
 
 Pulling used to write whole storage keys, so two devices that had each opened chests, filled listings or recorded XP clobbered one another's history wholesale. Records that can only grow are now folded together key by key through the merges each feature already owns, and the conflict dialog gains a recommended "Merge and push the result back" that sends the union straight up to the gist.

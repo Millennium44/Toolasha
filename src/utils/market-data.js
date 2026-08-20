@@ -13,6 +13,39 @@ import { refreshMarketValues, reconcileBook } from './market-values.js';
 const loggedWarnings = new Set();
 
 /**
+ * A pricing mode forced on the `'profit'` context for the duration of one call.
+ *
+ * Some surfaces describe a flow the user's global pricing mode does not:
+ * the marketplace's alchemy sort quotes insta-buying the input at ask and
+ * insta-selling the outputs at bid, which is `'conservative'` whatever the
+ * setting says. Rather than thread an override through every `getItemPrice`
+ * call inside the profit calculators, the override sits here — the one place
+ * that turns the setting into an ask/bid choice.
+ */
+let profitPricingModeOverride = null;
+
+/**
+ * Run `fn` with the `'profit'` pricing context pinned to a specific mode.
+ *
+ * Synchronous only: the override is global for its duration, so an awaited
+ * callback would leak it across whatever else ran in the meantime. Nesting is
+ * safe — the previous override is restored, not cleared.
+ *
+ * @param {string|null} mode - A `profitCalc_pricingMode` value ('conservative'|'hybrid'|'optimistic'|'patientBuy'), or null for no override
+ * @param {Function} fn - Synchronous callback
+ * @returns {*} Whatever `fn` returns
+ */
+export function withProfitPricingMode(mode, fn) {
+    const previous = profitPricingModeOverride;
+    profitPricingModeOverride = mode;
+    try {
+        return fn();
+    } finally {
+        profitPricingModeOverride = previous;
+    }
+}
+
+/**
  * Get item price based on pricing mode and context
  * @param {string} itemHrid - Item HRID
  * @param {Object} options - Configuration options
@@ -212,7 +245,7 @@ export function getPricingMode(context, side = 'sell') {
     // Get pricing mode from settings based on context
     switch (context) {
         case 'profit': {
-            const profitMode = config.getSettingValue('profitCalc_pricingMode');
+            const profitMode = profitPricingModeOverride || config.getSettingValue('profitCalc_pricingMode');
 
             // Convert profit calculation modes to price types based on transaction side
             // Conservative: Ask/Bid (instant buy materials, instant sell output)

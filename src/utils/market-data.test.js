@@ -2,7 +2,8 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 
 import marketAPI from '../api/marketplace.js';
 import { getCustomPrice } from '../features/settings/custom-price-overrides.js';
-import { isPriceOverridden, getPriceAgeString } from './market-data.js';
+import config from '../core/config.js';
+import { isPriceOverridden, getPriceAgeString, getPricingMode, withProfitPricingMode } from './market-data.js';
 
 vi.mock('../api/marketplace.js', () => ({
     default: {
@@ -82,5 +83,54 @@ describe('getPriceAgeString', () => {
         marketAPI.getDataAge.mockReturnValue(2 * 60 * 60_000 + 5 * 60_000); // 2h 5m
 
         expect(getPriceAgeString()).toBe('prices 2h 5m old');
+    });
+});
+
+describe('withProfitPricingMode', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        config.getSettingValue.mockReturnValue('optimistic');
+    });
+
+    test("pins the profit context's mode for the duration of the call", () => {
+        // Optimistic is bid-in/ask-out; conservative is the insta flow
+        expect(getPricingMode('profit', 'buy')).toBe('bid');
+
+        withProfitPricingMode('conservative', () => {
+            expect(getPricingMode('profit', 'buy')).toBe('ask');
+            expect(getPricingMode('profit', 'sell')).toBe('bid');
+        });
+
+        expect(getPricingMode('profit', 'buy')).toBe('bid');
+    });
+
+    test('restores the previous override rather than clearing it, so nesting works', () => {
+        withProfitPricingMode('conservative', () => {
+            withProfitPricingMode('patientBuy', () => {
+                expect(getPricingMode('profit', 'buy')).toBe('bid');
+            });
+            expect(getPricingMode('profit', 'buy')).toBe('ask');
+        });
+    });
+
+    test('a throwing callback still gives the setting back', () => {
+        expect(() =>
+            withProfitPricingMode('conservative', () => {
+                throw new Error('boom');
+            })
+        ).toThrow('boom');
+
+        expect(getPricingMode('profit', 'buy')).toBe('bid');
+    });
+
+    test('leaves other contexts alone', () => {
+        config.getSettingValue.mockReturnValue('bid');
+        withProfitPricingMode('conservative', () => {
+            expect(getPricingMode('networth')).toBe('bid');
+        });
+    });
+
+    test('returns what the callback returns', () => {
+        expect(withProfitPricingMode('conservative', () => 42)).toBe(42);
     });
 });

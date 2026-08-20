@@ -1100,6 +1100,21 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a button to sort marketplace items by profit/hour. Items without profit data (drop-only) appear at the end.',
             },
+            marketSort_mode: {
+                id: 'marketSort_mode',
+                label: 'Marketplace: Sort mode',
+                type: 'select',
+                default: 'profit',
+                options: [
+                    { value: 'profit', label: 'Production/gathering profit per hour' },
+                    { value: 'alchemyProfit', label: 'Alchemy profit per item' },
+                    { value: 'alchemyProfitPerHour', label: 'Alchemy profit per hour' },
+                ],
+                help:
+                    'Which figure the marketplace sort button ranks by. The alchemy modes insta-buy the item at ask, ' +
+                    'run its best alchemy action, and insta-sell the outputs at bid, whatever the global pricing mode is. ' +
+                    'The dropdown next to the sort button changes this too.',
+            },
             fillMarketOrderPrice: {
                 id: 'fillMarketOrderPrice',
                 label: 'Auto-fill marketplace orders with optimal price',
