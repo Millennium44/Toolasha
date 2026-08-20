@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Auto-filled prices stay inside the tradable range
+
+Matching the best standing offer could fill a price the game's daily tradable band no longer admits — a stale offer from before the band moved, leaving a buy listing nobody can sell to. A filled price outside the stated range is now pulled to the nearest bound (the floor, for the reported under-range buy).
+
+### Slow storage reads no longer serialize feature startup
+
+Feature initializers were awaited one after another, so six features that between them spent about three seconds parked on IndexedDB reads — and half a millisecond running code — added up instead of overlapping. Quick input buttons and panel size memory now set themselves up first and apply the stored value when it arrives, and a handful of features whose wait is nobody else's business are started concurrently.
+
 ### Collapse all and expand all in the settings tab
 
 Two buttons beside the settings search fold or open every group at once, remembered the same way the per-group toggles are.

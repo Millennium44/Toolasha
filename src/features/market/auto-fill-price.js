@@ -6,6 +6,39 @@
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { parseItemCount } from '../../utils/number-parser.js';
+import { setReactInputValue } from '../../utils/react-input.js';
+
+/**
+ * The tradable range a listing modal states, when it states one.
+ *
+ * The game bounds each item's postable prices to a daily band ("Tradable
+ * range: 307M – 375M"), but the best standing offer can sit OUTSIDE it — a
+ * stale order from before the band moved. Matching that offer fills a price
+ * the range no longer admits, and a buy listing under the floor is one nobody
+ * can sell to.
+ *
+ * @param {string} text - The modal's text content
+ * @returns {{min: number, max: number}|null} The band, or null when unstated
+ */
+export function tradableRangeFrom(text) {
+    const match = String(text || '').match(/tradable range:?\s*([\d.,\s]+[kmbt]?)\s*[–—-]\s*([\d.,\s]+[kmbt]?)/i);
+    if (!match) return null;
+    const min = parseItemCount(match[1], NaN);
+    const max = parseItemCount(match[2], NaN);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || min > max) return null;
+    return { min, max };
+}
+
+/**
+ * Where a price outside the band should land: the nearest admitted bound.
+ * @param {number} price - The filled price
+ * @param {{min: number, max: number}} range - The band
+ * @returns {number} The price, clamped into the band
+ */
+export function clampToRange(price, range) {
+    return Math.min(Math.max(price, range.min), range.max);
+}
 
 class AutoFillPrice {
     constructor() {
@@ -99,6 +132,14 @@ class AutoFillPrice {
             this.adjustPrice(modal, isBuyOrder, isSellOrder);
         }, 50);
         this.timerRegistry.registerTimeout(adjustTimeout);
+
+        // Once the strategy click has settled, pull a price the band no longer
+        // admits back inside it — matching a stale offer under the floor fills
+        // a listing nobody can trade against
+        const clampTimeout = setTimeout(() => {
+            this.clampPriceToTradableRange(modal);
+        }, 150);
+        this.timerRegistry.registerTimeout(clampTimeout);
     }
 
     /**
@@ -145,6 +186,30 @@ class AutoFillPrice {
                 if (button) button.click();
             }
             // If 'match', do nothing (use best sell price as-is)
+        }
+    }
+
+    /**
+     * Rewrite the filled price to the nearest bound of the modal's tradable
+     * range when it landed outside it. Modals stating no range (or in a locale
+     * whose wording differs) are left exactly as filled.
+     * @param {HTMLElement} modal - Modal container element
+     */
+    clampPriceToTradableRange(modal) {
+        const range = tradableRangeFrom(modal.textContent);
+        if (!range) return;
+
+        const input = modal.querySelector(
+            'div[class*="MarketplacePanel_inputContainer"] div[class*="MarketplacePanel_priceInputs"] input'
+        );
+        if (!input) return;
+
+        const price = parseItemCount(input.value, NaN);
+        if (!Number.isFinite(price)) return;
+
+        const clamped = clampToRange(price, range);
+        if (clamped !== price) {
+            setReactInputValue(input, String(clamped));
         }
     }
 
