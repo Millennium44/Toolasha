@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Risk of Ruin defaults off
+
+Both the calculator and its corner launcher now default off; the feature is one settings toggle away for whoever wants it.
+
 ### The character roster stops duplicating
 
 The known-characters list compared the game's numeric character id against its own stored strings, so the existing entry was never found and every add pushed a duplicate — rosters grew into the hundreds and the sync-setup copy reported copying to 164 "characters". Ids are stored and compared as strings now, and an inflated roster collapses itself to one entry per character on the first read.
