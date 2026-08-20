@@ -46,6 +46,23 @@ describe('isGameSocket', () => {
         expect(webSocketHook.isGameSocket({ url: 'wss://example.com/ws' })).toBe(false);
         expect(webSocketHook.isGameSocket(null)).toBe(false);
         expect(webSocketHook.isGameSocket({})).toBe(false);
+        // A url that is not a string is not a url
+        expect(webSocketHook.isGameSocket({ url: 12 })).toBe(false);
+    });
+
+    test('accepts a socket from another realm', () => {
+        // Another userscript replacing `window.WebSocket` with its own
+        // constructor — a Tampermonkey sandbox and the page do not share
+        // prototypes, so `instanceof WebSocket` would be silently false here
+        // and the game's traffic would simply stop being seen
+        class ForeignWebSocket {
+            constructor(url) {
+                this.url = url;
+            }
+            send() {}
+        }
+
+        expect(webSocketHook.isGameSocket(new ForeignWebSocket('wss://api.milkywayidle.com/ws'))).toBe(true);
     });
 });
 
@@ -134,6 +151,29 @@ describe('content-hash deduplication', () => {
 
         webSocketHook.processMessage(message);
         webSocketHook.processMessage(message);
+
+        expect(handler).toHaveBeenCalledTimes(2);
+    });
+
+    test('new_battle survives the hash, so every baseline is re-seeded', () => {
+        // It seeds every monster and player baseline there is, and two
+        // consecutive waves of the same zone open identically for well past a
+        // hundred characters. Dropped, the next fight is diffed against the
+        // last one's units
+        const handler = vi.fn();
+        webSocketHook.on('new_battle', handler);
+
+        const battle = (id) =>
+            JSON.stringify({
+                type: 'new_battle',
+                combatMonsterHrid: '/monsters/abyssal_imp',
+                players: [{ character: { name: 'MillenniumTest' } }],
+                battleId: id,
+            });
+
+        expect(battle(41).slice(0, 100)).toBe(battle(42).slice(0, 100));
+        webSocketHook.processMessage(battle(41));
+        webSocketHook.processMessage(battle(42));
 
         expect(handler).toHaveBeenCalledTimes(2);
     });

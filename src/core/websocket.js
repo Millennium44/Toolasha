@@ -151,12 +151,22 @@ class WebSocketHook {
     }
 
     /**
-     * Check if a WebSocket instance belongs to the game server
-     * @param {WebSocket} socket - WebSocket instance
+     * Check if a socket belongs to the game server.
+     *
+     * Duck-typed on purpose, and it must stay that way. Several MWI userscripts
+     * replace `window.WebSocket` with a constructor of their own — sometimes
+     * from another realm, since a Tampermonkey sandbox and the page do not share
+     * prototypes — and against one of those `socket instanceof WebSocket` is
+     * silently false. A gate written that way does not fail loudly; it simply
+     * stops seeing the game's traffic on whichever page load another script won
+     * the constructor. What identifies the game's socket is what it *is*: a URL
+     * pointing at the game's server, and something to send on.
+     *
+     * @param {WebSocket|Object} socket - Anything socket-shaped
      * @returns {boolean} True if game socket
      */
     isGameSocket(socket) {
-        if (!socket || !socket.url) {
+        if (!socket || typeof socket.url !== 'string') {
             return false;
         }
 
@@ -333,6 +343,14 @@ class WebSocketHook {
             // same battle, same unit ids — and differ only in hitpoints further
             // in, so the 100-char hash would drop the update that matters
             messageType === 'battle_updated' ||
+            // The message every baseline is seeded from, and it opens with its
+            // type, its battle id and the first monster's hrid — a hundred
+            // characters two consecutive waves of the same zone fill
+            // identically. The `processedMessages` map evicts at a hundred
+            // entries, so a hash that collided minutes ago can be gone and back
+            // again; the one that is dropped is the one that re-baselines the
+            // fight, and everything diffed afterwards is against the wrong units
+            messageType === 'new_battle' ||
             // The guild trial's spectator stream, and the worst hash collision
             // of the lot: every tick opens `{"type":"guild_battle_updated",
             // "battleId":1,"tier":2,"pMap":{"1":{"cHP":…` — type, battle and
