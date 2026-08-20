@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### An opt-in update check
+
+A new setting (off by default) compares the running version against the latest published release on page load and shows a click-through toast when a newer one exists; a second setting says how many hours a checked answer is trusted before the network is asked again. Only published releases count, and dev builds never notify.
+
 ### The old Welcome Back one-liner defaults off
 
 The Offline Progress Economics block now carries the Welcome Back valuation, so the older one-line summary defaults off; it remains available in settings for anyone preferring the compact form.

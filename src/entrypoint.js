@@ -1229,6 +1229,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'updateCheck',
+            name: 'Update Check',
+            category: 'UI',
+            module: UI.updateCheck,
+            async: false,
+        },
+        {
             key: 'welcomeBackValue',
             name: 'Welcome Back Value',
             category: 'UI',

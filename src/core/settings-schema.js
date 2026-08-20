@@ -2904,6 +2904,28 @@ export const settingsGroups = {
                 max: 100,
                 help: 'Height of the inventory/equipment panel beside the fight, as a percentage of the window. Set it taller to see more inventory at once, shorter to give the fight room. 0 leaves the height the game picks',
             },
+            updateCheck: {
+                id: 'updateCheck',
+                label: 'Check for a newer Toolasha release',
+                type: 'checkbox',
+                default: false,
+                help:
+                    'On page load, compares the running version against the latest published release and shows a ' +
+                    'toast when a newer one exists, with a click-through to the install page. The check is cached ' +
+                    'and only goes to the network as often as the interval below allows. Your userscript manager ' +
+                    'still updates on its own schedule either way.',
+            },
+            updateCheckHours: {
+                id: 'updateCheckHours',
+                label: 'Update check: Hours between checks',
+                type: 'number',
+                default: 6,
+                min: 1,
+                max: 168,
+                help:
+                    'How long a checked answer is trusted before the next page load asks the network again. ' +
+                    'Refreshes inside the window reuse the cached answer and cost nothing.',
+            },
             welcomeBackValue: {
                 id: 'welcomeBackValue',
                 label: 'Welcome Back modal: What the time offline was worth',

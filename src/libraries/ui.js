@@ -21,6 +21,7 @@ import commandPalette from '../features/ui/command-palette.js';
 // Side-effect import: registers the Houses overlay row at module scope
 import { describeHouses } from '../features/house/house-affordability.js';
 import combatPanelScale from '../features/ui/combat-panel-scale.js';
+import updateCheck from '../features/ui/update-check.js';
 import welcomeBackValue from '../features/ui/welcome-back-value.js';
 import combatText from '../features/ui/combat-text.js';
 import { dpsPanel, deathsPanel, profitPanel, combatProfitView } from '../features/ui/combat-panels.js';
@@ -166,6 +167,7 @@ toolashaRoot.UI = {
     overlayTabButton,
     commandPalette,
     combatPanelScale,
+    updateCheck,
     welcomeBackValue,
     altClickNavigation,
     collectionNavigation,
