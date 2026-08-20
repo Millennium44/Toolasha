@@ -120,7 +120,18 @@ class MarketHistoryPanel {
         this.pinButton = null;
         // Starts hidden. A panel that appears over the marketplace the moment
         // you open it is in the way of the thing you opened.
-        this.prefs = { x: 20, y: 120, w: 520, h: 300, days: 7, open: false, locked: false, mode: 'iconPrice' };
+        this.prefs = {
+            x: 20,
+            y: 120,
+            w: 520,
+            h: 300,
+            days: 7,
+            open: false,
+            locked: false,
+            mode: 'iconPrice',
+            /** What the chart last drew, restored on the next open */
+            lastItem: null,
+        };
         this.tabButton = null;
         this.tabWatcher = null;
         this.watchlist = [];
@@ -211,6 +222,11 @@ class MarketHistoryPanel {
             if (saved) {
                 this.prefs = { ...this.prefs, ...saved };
                 delete this.prefs.watchlist;
+            }
+            // Open on what was last shown instead of a blank chart; a click on
+            // any item replaces it as before
+            if (!this.current && this.prefs.lastItem?.itemHrid) {
+                this.current = { ...this.prefs.lastItem };
             }
             await splitLegacyWatchlist(saved);
             // Another character's list must not survive a switch, whether or
@@ -623,6 +639,12 @@ class MarketHistoryPanel {
 
     async showItem(itemHrid, enhancementLevel) {
         this.current = { itemHrid, enhancementLevel };
+        // Remembered so the panel reopens on what it was last showing rather
+        // than blank; a lazy write, since showItem fires on every item click
+        if (this.prefs.lastItem?.itemHrid !== itemHrid || this.prefs.lastItem?.enhancementLevel !== enhancementLevel) {
+            this.prefs.lastItem = { itemHrid, enhancementLevel };
+            this.savePrefs();
+        }
         const key = `${priceKey(itemHrid, enhancementLevel)}:${this.prefs.days}`;
         if (!this.prefs.open || this.shown === key) return;
         this.shown = key;
