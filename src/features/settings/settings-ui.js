@@ -990,6 +990,22 @@ class SettingsUI {
         `;
         this.changedOnlyButton = changedButton;
 
+        // Collapse/expand all: with this many groups, folding them one header
+        // at a time is busywork in both directions
+        const buttonStyle = changedButton.style.cssText;
+        const collapseAllButton = document.createElement('button');
+        collapseAllButton.textContent = '▸ All';
+        collapseAllButton.className = 'toolasha-collapse-all';
+        collapseAllButton.title = 'Collapse every settings group';
+        collapseAllButton.style.cssText = buttonStyle;
+        const expandAllButton = document.createElement('button');
+        expandAllButton.textContent = '▾ All';
+        expandAllButton.className = 'toolasha-expand-all';
+        expandAllButton.title = 'Expand every settings group';
+        expandAllButton.style.cssText = buttonStyle;
+        collapseAllButton.addEventListener('click', () => this.setAllGroupsCollapsed(container, true));
+        expandAllButton.addEventListener('click', () => this.setAllGroupsCollapsed(container, false));
+
         // Input event listener
         searchInput.addEventListener('input', (e) => {
             this.searchQuery = e.target.value;
@@ -1014,8 +1030,27 @@ class SettingsUI {
 
         searchContainer.appendChild(searchInput);
         searchContainer.appendChild(changedButton);
+        searchContainer.appendChild(collapseAllButton);
+        searchContainer.appendChild(expandAllButton);
         searchContainer.appendChild(clearButton);
         container.appendChild(searchContainer);
+    }
+
+    /**
+     * Collapse or expand every settings group at once, remembered the same way
+     * the per-group toggles are.
+     * @param {HTMLElement} container - The settings card holding the groups
+     * @param {boolean} collapsed - Fold everything, or open everything
+     */
+    setAllGroupsCollapsed(container, collapsed) {
+        for (const group of container.querySelectorAll('.toolasha-settings-group')) {
+            group.classList.toggle('collapsed', collapsed);
+            const key = group.dataset.group;
+            if (!key) continue;
+            if (collapsed) this.collapsedGroups.add(key);
+            else this.collapsedGroups.delete(key);
+        }
+        storage.set(COLLAPSED_GROUPS_KEY, [...this.collapsedGroups], 'settings');
     }
 
     /**

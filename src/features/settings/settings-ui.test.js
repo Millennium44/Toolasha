@@ -599,3 +599,19 @@ describe('what auto-detection is currently deciding', () => {
         expect(document.querySelector('#mobileMode option[value="on"]').textContent.trim()).toBe('On');
     });
 });
+
+describe('collapse all and expand all', () => {
+    test('one press folds every group, the other opens them, and both are remembered', () => {
+        const panel = drawPanel();
+        const groups = [...panel.querySelectorAll('.toolasha-settings-group')];
+        expect(groups.length).toBeGreaterThan(0);
+
+        panel.querySelector('.toolasha-collapse-all').click();
+        expect(groups.every((g) => g.classList.contains('collapsed'))).toBe(true);
+        expect(settingsUI.collapsedGroups.size).toBe(groups.length);
+
+        panel.querySelector('.toolasha-expand-all').click();
+        expect(groups.some((g) => g.classList.contains('collapsed'))).toBe(false);
+        expect(settingsUI.collapsedGroups.size).toBe(0);
+    });
+});

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Collapse all and expand all in the settings tab
+
+Two buttons beside the settings search fold or open every group at once, remembered the same way the per-group toggles are.
+
 ### Update check: every-refresh option, in-tab repeats, and a one-time introduction
 
 The interval setting now accepts 0 (ask the network on every page load), an open tab re-checks on the same rhythm without needing a refresh (paced at least an hour apart, announcing each version once), and a first run with the feature off mentions once, ever, that the opt-in exists.
