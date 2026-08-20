@@ -20,6 +20,28 @@ const featureRegistry = [];
  * used to reach the player as a feature that is simply absent, with the reason
  * in a console nobody has open; the caller needs the list to be able to say so.
  *
+ * Features are initialized in registry order and each is awaited before the next
+ * one starts, *unless* its registry entry sets `concurrent: true`. Such a
+ * feature is still started in its turn — its synchronous half runs at exactly
+ * the same point it always did — but the waiting is deferred to the end, so its
+ * `await` overlaps everything after it instead of delaying it.
+ *
+ * Why that is worth a flag. Almost none of feature startup is our own CPU: six
+ * features between them spent 2.9 s inside `initialize()` and half a millisecond
+ * of it running code, the rest parked on an IndexedDB read that nothing else
+ * wanted. Awaited one after another those reads add up; overlapped, the group
+ * costs what its slowest member costs.
+ *
+ * Why it is opt-in rather than the default. Serial initialization is load-bearing
+ * in places that are not obvious from the registry: three features race to
+ * `marketAPI.fetch()` behind an `isLoaded()` check that only holds because they
+ * cannot run at once (and the game rate-limits that endpoint); tooltip sections
+ * and the task panel's buttons appear in the order their observers were
+ * registered, which for a post-`await` registration means the order the reads
+ * happened to finish in. A feature is safe to mark only when what it awaits is
+ * its own — its own storage record, its own panel — and nothing downstream is
+ * ordered against what it does afterwards.
+ *
  * @returns {Promise<Array<{key: string, name: string, reason: string}>>} Failures, in registry order
  */
 async function initializeFeatures() {
@@ -28,50 +50,97 @@ async function initializeFeatures() {
         return [];
     }
 
-    const errors = [];
     performanceMonitor.mark('features:start', { registered: featureRegistry.length });
 
+    // One slot per started feature, filled in place, so failures come back in
+    // registry order however the promises happen to settle.
+    const slots = [];
+    const pending = [];
+
+    /**
+     * Record what a feature's initializer cost, once it has finished.
+     *
+     * The timing is split on purpose. A single wall-clock span around
+     * `await feature.initialize()` blamed a feature for time it merely *parked*
+     * in — a sync feature (e.g. autoAllButton) that happens to `await undefined`
+     * at the moment a heavy storage read resolves elsewhere would absorb that
+     * read's cost and top the "slowest features" list while doing nothing.
+     * `own` is the feature's synchronous work up to the point it returns or
+     * suspends; `total` still spans the await so a genuinely async initializer
+     * is not undercounted. A large gap between them means the cost is time spent
+     * waiting, not this feature's own work — and now that the waits overlap,
+     * those totals overlap too, so they are a timeline and not a sum.
+     *
+     * @param {Object} feature - Registry entry
+     * @param {number} startedAt - Boot-relative start of its initializer
+     * @param {number} ownMs - Synchronous self-time
+     * @returns {void}
+     */
+    const recordTiming = (feature, startedAt, ownMs) => {
+        const totalMs = performanceMonitor.sinceBoot() - startedAt;
+        performanceMonitor.snapshot(`init:${feature.key}`, totalMs, startedAt);
+        if (totalMs - ownMs >= 1) {
+            performanceMonitor.snapshot(`init:${feature.key}:own`, ownMs, startedAt);
+        }
+    };
+
     for (const feature of featureRegistry) {
+        const isEnabled = (() => {
+            try {
+                return feature.customCheck ? feature.customCheck() : config.isFeatureEnabled(feature.key);
+            } catch (error) {
+                console.error(`[Toolasha] Enabled check for ${feature.name} threw:`, error);
+                return false;
+            }
+        })();
+
+        if (!isEnabled) {
+            continue;
+        }
+
+        const slot = { key: feature.key, name: feature.name, reason: null };
+        slots.push(slot);
+
+        const startedAt = performanceMonitor.sinceBoot();
+        let started;
         try {
-            const isEnabled = feature.customCheck ? feature.customCheck() : config.isFeatureEnabled(feature.key);
-
-            if (!isEnabled) {
-                continue;
-            }
-
-            // Initialize feature. Always await so rejections from async
-            // initializers land in this try/catch even when the registry
-            // entry forgot to set the async flag (awaiting sync undefined
-            // is harmless).
-            //
-            // The timing is split on purpose. The old single wall-clock span
-            // around `await feature.initialize()` blamed a feature for time
-            // it merely *parked* in — a sync feature (e.g. autoAllButton) that
-            // happens to `await undefined` at the moment a heavy storage read
-            // resolves elsewhere would absorb that read's cost and top the
-            // "slowest features" list while doing nothing. `own` is the
-            // feature's synchronous work up to the point it returns/suspends;
-            // `total` still spans the await so a genuinely async initializer is
-            // not undercounted. A large gap between them means the cost is
-            // deferred work draining here, not this feature.
-            const startedAt = performanceMonitor.sinceBoot();
-            const pending = feature.initialize();
-            const ownMs = performanceMonitor.sinceBoot() - startedAt;
-            await pending;
-            const totalMs = performanceMonitor.sinceBoot() - startedAt;
-            performanceMonitor.snapshot(`init:${feature.key}`, totalMs, startedAt);
-            if (totalMs - ownMs >= 1) {
-                performanceMonitor.snapshot(`init:${feature.key}:own`, ownMs, startedAt);
-            }
+            started = feature.initialize();
         } catch (error) {
-            errors.push({
-                key: feature.key,
-                name: feature.name,
-                reason: `Initialization threw: ${error.message}`,
-            });
+            // A synchronous throw never becomes a promise, so it is settled here.
+            slot.reason = `Initialization threw: ${error.message}`;
             console.error(`[Toolasha] Failed to initialize ${feature.name}:`, error);
+            continue;
+        }
+        const ownMs = performanceMonitor.sinceBoot() - startedAt;
+
+        if (!started || typeof started.then !== 'function') {
+            recordTiming(feature, startedAt, ownMs);
+            continue;
+        }
+
+        // Attach the handlers now rather than at the end: an initializer that
+        // rejects before anything awaits it is an unhandled rejection otherwise.
+        const settled = started.then(
+            () => recordTiming(feature, startedAt, ownMs),
+            (error) => {
+                recordTiming(feature, startedAt, ownMs);
+                slot.reason = `Initialization threw: ${error?.message}`;
+                console.error(`[Toolasha] Failed to initialize ${feature.name}:`, error);
+            }
+        );
+
+        if (feature.concurrent) {
+            pending.push(settled);
+        } else {
+            await settled;
         }
     }
+
+    if (pending.length > 0) {
+        await Promise.all(pending);
+    }
+
+    const errors = slots.filter((slot) => slot.reason !== null).map(({ key, name, reason }) => ({ key, name, reason }));
 
     performanceMonitor.mark('features:done', { failed: errors.length });
 

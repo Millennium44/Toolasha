@@ -73,20 +73,49 @@ export function initTimeline(snapshots) {
 }
 
 /**
+ * Union length of a set of [startedAt, endedAt] intervals.
+ *
+ * @param {Array<{startedAt: number, endedAt: number}>} rows - Any timeline rows
+ * @returns {number} Milliseconds during which at least one of them was running
+ */
+function coveredMs(rows) {
+    const ordered = [...rows].sort((a, b) => a.startedAt - b.startedAt);
+    let total = 0;
+    let from = null;
+    let to = null;
+    for (const row of ordered) {
+        if (from === null || row.startedAt > to) {
+            if (from !== null) total += to - from;
+            from = row.startedAt;
+            to = row.endedAt;
+        } else if (row.endedAt > to) {
+            to = row.endedAt;
+        }
+    }
+    if (from !== null) total += to - from;
+    return total;
+}
+
+/**
  * How much of the startup was spent on features at all.
+ *
+ * `blocking` is how long the page was actually held up, which is the union of
+ * the feature spans and not their sum: feature initializers are started
+ * together and their waits overlap, so adding the durations would report six
+ * features waiting one second each as six seconds of delay when the player
+ * waited one. Non-overlapping spans still add up exactly as before.
  *
  * @param {Array<Object>} timeline - From `initTimeline`
  * @returns {{blocking: number, background: number, span: number, slowest: Array<Object>}}
  */
 export function initSummary(timeline) {
-    let blocking = 0;
     let background = 0;
     let span = 0;
     for (const row of timeline) {
         if (row.background) background += row.ms;
-        else blocking += row.ms;
         span = Math.max(span, row.endedAt);
     }
+    const blocking = coveredMs(timeline.filter((row) => !row.background));
     const slowest = [...timeline].sort((a, b) => b.ms - a.ms).slice(0, 10);
     return { blocking, background, span, slowest };
 }

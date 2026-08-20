@@ -810,14 +810,22 @@ function registerFeatures() {
             name: 'Max Produceable',
             category: 'Actions',
             module: Actions.maxProduceable,
-            async: false,
+            async: true,
+            // Half a second of it is the shared sort manager's storage read,
+            // which nothing after this feature is ordered against; the counts
+            // it draws are absolutely positioned, so the observer landing later
+            // does not move them.
+            concurrent: true,
         },
         {
             key: 'gatheringStats',
             name: 'Gathering Stats',
             category: 'Actions',
             module: Actions.gatheringStats,
-            async: false,
+            async: true,
+            // Waits on the same sort-manager read as max produceable, and
+            // overlaps it rather than queueing behind it.
+            concurrent: true,
         },
         {
             key: 'requiredMaterials',
@@ -882,6 +890,11 @@ function registerFeatures() {
             category: 'Alchemy',
             module: Actions.alchemyItemPins,
             async: true,
+            // Waits only on its own pin record. The menu observer it registers
+            // afterwards shares a class with alchemy item dimming, which styles
+            // individual items rather than reordering them, so which of the two
+            // registers first does not show.
+            concurrent: true,
         },
         {
             key: 'teaRecommendation',
@@ -1250,7 +1263,7 @@ function registerFeatures() {
             name: 'Panel Size Memory',
             category: 'UI',
             module: UI.panelSizeMemory,
-            async: true,
+            async: false,
         },
         {
             key: 'tabReorder',
@@ -1680,6 +1693,9 @@ function registerFeatures() {
             category: 'General',
             module: UI.ironCowFarmPanel,
             async: true,
+            // Waits only on its own stored loop and overrides, and reopens its
+            // own panel; nothing else touches either.
+            concurrent: true,
         },
         {
             key: 'accountView',

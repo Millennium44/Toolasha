@@ -19,6 +19,8 @@ class ActionPanelSort {
         this.sortMode = 'default'; // 'default' | 'profit' | 'xp' | 'coinsPerXp'
         this.sortTimeout = null; // Debounce timer
         this.initialized = false;
+        /** In-flight load, so concurrent callers share one read @type {Promise<void>|null} */
+        this._loading = null;
         this.timerRegistry = createTimerRegistry();
         this.handlers = {};
         this.pinChangeListeners = [];
@@ -45,28 +47,46 @@ class ActionPanelSort {
 
     /**
      * Initialize - load pinned actions from storage
+     *
+     * Two features (max produceable, gathering stats) both await this, and they
+     * are now started together rather than one after the other, so the second
+     * caller arrives while the first is still parked on its storage read — with
+     * only the `initialized` flag to guard it, both would read, both would set
+     * the mode, and both would notify the listeners. The in-flight promise is
+     * the guard that holds under concurrency: the second caller awaits the first
+     * caller's load instead of starting its own.
+     * @returns {Promise<void>}
      */
     async initialize() {
         if (this.initialized) return;
+        if (this._loading) return this._loading;
 
-        const pinnedData = await storage.getJSON(this._getPinnedStorageKey(), 'settings', []);
-        this.pinnedActions = new Set(pinnedData);
-        this.sortMode = await storage.get(this._getSortStorageKey(), 'settings', 'default');
-        this.initialized = true;
-        this._notifySortModeListeners();
+        this._loading = (async () => {
+            const pinnedData = await storage.getJSON(this._getPinnedStorageKey(), 'settings', []);
+            this.pinnedActions = new Set(pinnedData);
+            this.sortMode = await storage.get(this._getSortStorageKey(), 'settings', 'default');
+            this.initialized = true;
+            this._notifySortModeListeners();
 
-        // Listen for character switch to clear character-specific data
-        if (!this.handlers.characterSwitch) {
-            this.handlers.characterSwitch = () => this.onCharacterSwitching();
-            dataManager.on('character_switching', this.handlers.characterSwitch);
-        }
+            // Listen for character switch to clear character-specific data
+            if (!this.handlers.characterSwitch) {
+                this.handlers.characterSwitch = () => this.onCharacterSwitching();
+                dataManager.on('character_switching', this.handlers.characterSwitch);
+            }
 
-        // Listen for character initialized to reload pins for the new character
-        if (!this.handlers.characterInit) {
-            this.handlers.characterInit = (data) => {
-                if (data?._isCharacterSwitch) this.onCharacterInitialized();
-            };
-            dataManager.on('character_initialized', this.handlers.characterInit);
+            // Listen for character initialized to reload pins for the new character
+            if (!this.handlers.characterInit) {
+                this.handlers.characterInit = (data) => {
+                    if (data?._isCharacterSwitch) this.onCharacterInitialized();
+                };
+                dataManager.on('character_initialized', this.handlers.characterInit);
+            }
+        })();
+
+        try {
+            await this._loading;
+        } finally {
+            this._loading = null;
         }
     }
 
@@ -78,6 +98,7 @@ class ActionPanelSort {
         this.pinnedActions.clear();
         this.cachedStats = {};
         this.initialized = false;
+        this._loading = null;
     }
 
     /**
@@ -105,6 +126,7 @@ class ActionPanelSort {
             this.handlers.characterInit = null;
         }
         this.initialized = false;
+        this._loading = null;
     }
 
     /**

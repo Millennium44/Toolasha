@@ -119,6 +119,165 @@ describe('initializeFeatures', () => {
     });
 });
 
+describe('concurrent features do not serialize', () => {
+    /** A feature whose initialize parks on a promise the test resolves by hand. */
+    function slowFeature(key, concurrent = true) {
+        let release;
+        const held = new Promise((resolve) => {
+            release = resolve;
+        });
+        const startedAt = [];
+        return {
+            release,
+            startedAt,
+            entry: {
+                key,
+                name: key,
+                concurrent,
+                initialize: async () => {
+                    startedAt.push(true);
+                    await held;
+                },
+            },
+        };
+    }
+
+    test('every enabled feature is started before any of them is waited on', async () => {
+        // The point of the change: six features each parked on a storage read
+        // used to cost the sum of those reads. Nothing here resolves until all
+        // three have started, so this deadlocks if the loop awaits one at a time.
+        const a = slowFeature('a');
+        const b = slowFeature('b');
+        const c = slowFeature('c');
+        for (const key of ['a', 'b', 'c']) state.enabledFeatures.add(key);
+        featureRegistry.replaceFeatures([a.entry, b.entry, c.entry]);
+
+        const done = featureRegistry.initializeFeatures();
+        await Promise.resolve();
+
+        expect([a.startedAt.length, b.startedAt.length, c.startedAt.length]).toEqual([1, 1, 1]);
+
+        a.release();
+        b.release();
+        c.release();
+        await expect(done).resolves.toEqual([]);
+    });
+
+    test('a slow feature still holds up the resolve, so callers see a finished startup', async () => {
+        const slow = slowFeature('slow');
+        state.enabledFeatures.add('slow');
+        featureRegistry.replaceFeatures([slow.entry]);
+
+        let settled = false;
+        const done = featureRegistry.initializeFeatures().then(() => {
+            settled = true;
+        });
+        await Promise.resolve();
+        expect(settled).toBe(false);
+
+        slow.release();
+        await done;
+        expect(settled).toBe(true);
+    });
+
+    test('a feature that has not opted in is still awaited before the next one starts', async () => {
+        // Serial init is load-bearing where features race for the same endpoint
+        // or inject into the same container, so overlapping is opt-in.
+        const blocking = slowFeature('blocking', false);
+        const behind = slowFeature('behind');
+        state.enabledFeatures.add('blocking');
+        state.enabledFeatures.add('behind');
+        featureRegistry.replaceFeatures([blocking.entry, behind.entry]);
+
+        const done = featureRegistry.initializeFeatures();
+        await Promise.resolve();
+        expect(behind.startedAt).toHaveLength(0);
+
+        blocking.release();
+        await vi.waitFor(() => expect(behind.startedAt).toHaveLength(1));
+        behind.release();
+        await done;
+    });
+
+    test('the synchronous half of each initializer still runs in registry order', async () => {
+        // Ordering is what makes this safe: only the waiting overlaps.
+        const order = [];
+        for (const key of ['first', 'second', 'third']) state.enabledFeatures.add(key);
+        featureRegistry.replaceFeatures([
+            {
+                key: 'first',
+                name: 'First',
+                concurrent: true,
+                initialize: async () => {
+                    order.push('first');
+                    await Promise.resolve();
+                    order.push('first:after');
+                },
+            },
+            { key: 'second', name: 'Second', initialize: () => order.push('second') },
+            {
+                key: 'third',
+                name: 'Third',
+                concurrent: true,
+                initialize: async () => {
+                    order.push('third');
+                },
+            },
+        ]);
+
+        await featureRegistry.initializeFeatures();
+        expect(order.slice(0, 3)).toEqual(['first', 'second', 'third']);
+        expect(order).toContain('first:after');
+    });
+
+    test('a rejection from one feature does not stop the others from finishing', async () => {
+        state.enabledFeatures.add('boom');
+        state.enabledFeatures.add('ok');
+        const okInit = vi.fn(async () => {});
+        featureRegistry.replaceFeatures([
+            {
+                key: 'boom',
+                name: 'Boom',
+                concurrent: true,
+                initialize: async () => {
+                    throw new Error('nope');
+                },
+            },
+            { key: 'ok', name: 'Ok', initialize: okInit },
+        ]);
+
+        const errors = await featureRegistry.initializeFeatures();
+        expect(errors).toEqual([{ key: 'boom', name: 'Boom', reason: 'Initialization threw: nope' }]);
+        expect(okInit).toHaveBeenCalledTimes(1);
+    });
+
+    test('failures come back in registry order however the promises settle', async () => {
+        for (const key of ['early', 'late']) state.enabledFeatures.add(key);
+        featureRegistry.replaceFeatures([
+            {
+                key: 'early',
+                name: 'Early',
+                concurrent: true,
+                initialize: async () => {
+                    await new Promise((resolve) => setTimeout(resolve, 5));
+                    throw new Error('slow failure');
+                },
+            },
+            {
+                key: 'late',
+                name: 'Late',
+                concurrent: true,
+                initialize: async () => {
+                    throw new Error('fast failure');
+                },
+            },
+        ]);
+
+        const errors = await featureRegistry.initializeFeatures();
+        expect(errors.map((error) => error.key)).toEqual(['early', 'late']);
+    });
+});
+
 describe('getFeature / getAllFeatures / getFeaturesByCategory', () => {
     test('getFeature returns null for an unknown key', () => {
         expect(featureRegistry.getFeature('nonexistent')).toBeNull();

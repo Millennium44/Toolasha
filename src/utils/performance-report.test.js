@@ -99,6 +99,28 @@ describe('what the summary adds up', () => {
         expect(summary.background).toBe(4000);
     });
 
+    test('overlapping features are counted once, not added up', () => {
+        // Feature initializers are started together, so their waits overlap.
+        // Three features that each waited a second, all at once, held the page
+        // up for a second — reporting three would be reporting the old design.
+        const overlapping = new Map([
+            ['init:a', { duration: 1000, startedAt: 100 }],
+            ['init:b', { duration: 900, startedAt: 150 }],
+            ['init:c', { duration: 800, startedAt: 200 }],
+        ]);
+
+        expect(initSummary(initTimeline(overlapping)).blocking).toBe(1000);
+    });
+
+    test('features separated by a gap still add up', () => {
+        const apart = new Map([
+            ['init:a', { duration: 100, startedAt: 0 }],
+            ['init:b', { duration: 100, startedAt: 500 }],
+        ]);
+
+        expect(initSummary(initTimeline(apart)).blocking).toBe(200);
+    });
+
     test('the span runs to the last thing that finished', () => {
         expect(initSummary(initTimeline(SNAPSHOTS)).span).toBe(21200 + 4000);
     });
