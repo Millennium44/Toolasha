@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Toolasha (Millennium44)
 // @namespace    http://tampermonkey.net/
-// @version      3.16.0
+// @version      3.17.0
 // @description  Toolasha (Millennium44 fork) — enhanced tools for Milky Way Idle: combat & labyrinth simulators with upgrade advisors, per-character data, cross-device sync, goal planner, guild tools, overlay, mobile support. Built on work by bot7420, Celasha, Frotty, Q7, jigglymoose, dakonglong, and the combat-sim team — full credits in the listing info.
 // @author       Millennium44 (fork of Celasha and Claude's Toolasha). Thank you to bot7420, DrDucky, Frotty, Truth_Light, AlphB, qu, and sentientmilk for providing the basis for a lot of this; to Shykai, amVoidGuy, vlad, and kuganDev for their immense work on the combat sim; and to Paradoxian for extensive bug finding, testing, and detailed writeups. Thanks to Miku, Orvel, Jigglymoose, Incinarator, Knerd, Maarg, MekaPyon, and others for their time and help; to SilkyPanda for contributing several features; to Steez for testing and catching my mistakes; to Tib for the Character Cards; to Sapnas for deep testing and singlehandedly improving performance; to vidonnus for infrastructure, bug fixes, engineering, and issue raising; and to Zaeter for the name. This fork also draws on code and ideas from other Milky Way Idle tools: MWITools by bot7420, MWI Combat Suite by Frotty, JIGS by jigglymoose, the Labyrinth Win Rate Calculator by dakonglong, and the mooket market pools by Q7 (mooket II) and IOMisaka (mooket I).
 // @license      CC-BY-NC-SA-4.0
@@ -22,13 +22,13 @@
 // @require      https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js
 // @require      https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js
 // @require      https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0/dist/chartjs-plugin-datalabels.min.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@48c8dcc91d30ee6d3912adecb43acddf0149542a/dist/libraries/toolasha-core.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@48c8dcc91d30ee6d3912adecb43acddf0149542a/dist/libraries/toolasha-utils.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@48c8dcc91d30ee6d3912adecb43acddf0149542a/dist/libraries/toolasha-sim.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@48c8dcc91d30ee6d3912adecb43acddf0149542a/dist/libraries/toolasha-market.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@48c8dcc91d30ee6d3912adecb43acddf0149542a/dist/libraries/toolasha-actions.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@48c8dcc91d30ee6d3912adecb43acddf0149542a/dist/libraries/toolasha-combat.js
-// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@48c8dcc91d30ee6d3912adecb43acddf0149542a/dist/libraries/toolasha-ui.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9bf370b91c92eec27a6c0e69526155b200fbba02/dist/libraries/toolasha-core.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9bf370b91c92eec27a6c0e69526155b200fbba02/dist/libraries/toolasha-utils.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9bf370b91c92eec27a6c0e69526155b200fbba02/dist/libraries/toolasha-sim.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9bf370b91c92eec27a6c0e69526155b200fbba02/dist/libraries/toolasha-market.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9bf370b91c92eec27a6c0e69526155b200fbba02/dist/libraries/toolasha-actions.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9bf370b91c92eec27a6c0e69526155b200fbba02/dist/libraries/toolasha-combat.js
+// @require      https://cdn.jsdelivr.net/gh/Millennium44/Toolasha@9bf370b91c92eec27a6c0e69526155b200fbba02/dist/libraries/toolasha-ui.js
 // ==/UserScript==
 // Note: Combat Sim auto-import requires Tampermonkey for cross-domain storage. Not available on Steam (use manual clipboard copy/paste instead).
 
@@ -600,6 +600,13 @@
                 async: false,
             },
             {
+                key: 'marketDepthCap',
+                name: 'Market Depth Cap',
+                category: 'Market',
+                module: Market.marketDepthCap,
+                async: false,
+            },
+            {
                 key: 'marketOrderTotals',
                 name: 'Market Order Totals',
                 category: 'Market',
@@ -622,6 +629,13 @@
                 name: 'Listing Refresh Navigator',
                 category: 'Market',
                 module: Market.listingRefreshNavigator,
+                async: false,
+            },
+            {
+                key: 'listingNextNavigator',
+                name: 'Listing Next Navigator',
+                category: 'Market',
+                module: Market.listingNextNavigator,
                 async: false,
             },
             {
@@ -681,6 +695,13 @@
                 module: Market.networthFeature,
                 async: false,
                 healthCheck: () => injectedInto('[class*="Header_totalLevel"]', '.mwi-networth-header'),
+            },
+            {
+                key: 'offlineProgressEconomics',
+                name: 'Offline Progress Economics',
+                category: 'Economy',
+                module: Market.offlineProgressEconomics,
+                async: false,
             },
             {
                 key: 'inventoryBadgeManager',
@@ -826,14 +847,22 @@
                 name: 'Max Produceable',
                 category: 'Actions',
                 module: Actions.maxProduceable,
-                async: false,
+                async: true,
+                // Half a second of it is the shared sort manager's storage read,
+                // which nothing after this feature is ordered against; the counts
+                // it draws are absolutely positioned, so the observer landing later
+                // does not move them.
+                concurrent: true,
             },
             {
                 key: 'gatheringStats',
                 name: 'Gathering Stats',
                 category: 'Actions',
                 module: Actions.gatheringStats,
-                async: false,
+                async: true,
+                // Waits on the same sort-manager read as max produceable, and
+                // overlaps it rather than queueing behind it.
+                concurrent: true,
             },
             {
                 key: 'requiredMaterials',
@@ -898,6 +927,11 @@
                 category: 'Alchemy',
                 module: Actions.alchemyItemPins,
                 async: true,
+                // Waits only on its own pin record. The menu observer it registers
+                // afterwards shares a class with alchemy item dimming, which styles
+                // individual items rather than reordering them, so which of the two
+                // registers first does not show.
+                concurrent: true,
             },
             {
                 key: 'teaRecommendation',
@@ -1033,6 +1067,13 @@
                 name: 'Character Card Button',
                 category: 'Profile',
                 module: Combat.characterCardButton,
+                async: false,
+            },
+            {
+                key: 'eliteAchievementReminder',
+                name: 'Elite Achievement Reminder',
+                category: 'Profile',
+                module: Combat.eliteAchievementReminder,
                 async: false,
             },
             {
@@ -1238,6 +1279,16 @@
                 async: false,
             },
             {
+                key: 'updateCheck',
+                name: 'Update Check',
+                category: 'UI',
+                module: UI.updateCheck,
+                async: false,
+                // Always initialized: with the setting off it says once, ever, that
+                // the opt-in exists; the setting gates the actual checking inside
+                customCheck: () => true,
+            },
+            {
                 key: 'welcomeBackValue',
                 name: 'Welcome Back Value',
                 category: 'UI',
@@ -1249,7 +1300,7 @@
                 name: 'Panel Size Memory',
                 category: 'UI',
                 module: UI.panelSizeMemory,
-                async: true,
+                async: false,
             },
             {
                 key: 'tabReorder',
@@ -1516,6 +1567,13 @@
                 async: false,
             },
             {
+                key: 'riskOfRuin',
+                name: 'Risk of Ruin Calculator',
+                category: 'Risk of Ruin',
+                module: UI.riskOfRuinUI,
+                async: false,
+            },
+            {
                 key: 'guildXPTracker',
                 name: 'Guild XP Tracker',
                 category: 'Guild',
@@ -1672,6 +1730,9 @@
                 category: 'General',
                 module: UI.ironCowFarmPanel,
                 async: true,
+                // Waits only on its own stored loop and overrides, and reopens its
+                // own panel; nothing else touches either.
+                concurrent: true,
             },
             {
                 key: 'accountView',
@@ -1912,7 +1973,7 @@
         // Expose minimal user-facing API
         const targetWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
-        targetWindow.Toolasha.version = '3.16.0';
+        targetWindow.Toolasha.version = '3.17.0';
         // Which fork this build came from. Version numbers are shared with
         // upstream, so the what's-new popup keys on the (fork, version) pair —
         // the same number on a different fork is still an update.
