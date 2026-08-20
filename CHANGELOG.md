@@ -893,6 +893,39 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.18.0](https://github.com/Millennium44/Toolasha/compare/v3.17.0...v3.18.0) (2026-08-20)
+
+
+### Features
+
+* class tags for trial rosters from the ability stream ([17531a9](https://github.com/Millennium44/Toolasha/commit/17531a95f3dbce0e9666234a50a0f43f75763a8f))
+* foldable trial abilities cards, and the reroll walk sorts after reading ([28e8458](https://github.com/Millennium44/Toolasha/commit/28e84585e8b53706afb0850de66165edf49b0fbc))
+* live DPS badges on combat unit portraits ([1571941](https://github.com/Millennium44/Toolasha/commit/1571941d77f6789947149ff3ab8a6a3f07d08160))
+* profile score and abilities panels drag and remember their position ([0bf2dc2](https://github.com/Millennium44/Toolasha/commit/0bf2dc207fca99e79d01bbee047fe378207c2533))
+* trial abilities panel resets per trial, pins its controls, and counts utility picks ([3320921](https://github.com/Millennium44/Toolasha/commit/33209217c8b1ca0b177835eaca53f1516aaa6383))
+* trial lifecycle reads currentTrialsData and freezes DPS at trial end ([c3d8021](https://github.com/Millennium44/Toolasha/commit/c3d8021d20ac6fafb360129340a6c5a96e4068df))
+
+
+### Bug Fixes
+
+* damage attribution counts DoTs, splits big collisions, and re-baselines respawns ([553c85b](https://github.com/Millennium44/Toolasha/commit/553c85bfabc24dacc9b6c26f07be936241507387))
+* elite achievement reminder finds the profile modal and draws its icon ([d71ff48](https://github.com/Millennium44/Toolasha/commit/d71ff48e43ef01cbae6bdce41483fcc81fd0c17a))
+* equipment watch prices retainAllEnhancement bases at the output's level ([317f037](https://github.com/Millennium44/Toolasha/commit/317f037ed8e6523dc6bbcfb5307b53e4bd8e21be))
+* known-characters roster deduplicates and stops re-adding the same character ([83f4329](https://github.com/Millennium44/Toolasha/commit/83f432924c1ff00167ab0a0fd0fa829936492e1d))
+* mana-drop attribution rung respects the collision threshold ([bbc7997](https://github.com/Millennium44/Toolasha/commit/bbc7997b3ba5f0968454dde55e58df1c7ed3f194))
+* risk of ruin calculator and its launcher default off ([2bd1079](https://github.com/Millennium44/Toolasha/commit/2bd10798a254519780cf5828e05acf3e3a625ed7))
+* run-sourced unit badges yield the full cards to Portrait DPS ([7b02ed6](https://github.com/Millennium44/Toolasha/commit/7b02ed6dfed14fafe21e0afff3e6ebbf72da18a4))
+* score panel measures its width before parking beside the modal ([c3614c2](https://github.com/Millennium44/Toolasha/commit/c3614c2f4cdf9209b3a9c7eb0faa8263c8559acf))
+* websocket hook dedup and socket-gate hardening ([13df25a](https://github.com/Millennium44/Toolasha/commit/13df25a1f97a30ca20c68c83f81022391738f0b5))
+
+
+### Documentation
+
+* credit KikiMeter (MIT) for the ideas adopted ([f7c07d2](https://github.com/Millennium44/Toolasha/commit/f7c07d2b6b1ee46c201297ced64bd31d68257e47))
+* credit KikiMeter by ZhuLiMoon in the userscript header ([0f4cd81](https://github.com/Millennium44/Toolasha/commit/0f4cd81bdc3d3a4eea201e3713b81bdb5b1fa603))
+* credit ZhuLiMoon's KikiMeter in the listing credits ([7677ef1](https://github.com/Millennium44/Toolasha/commit/7677ef1a138fcca19b9736e98e273d705b2ed10e))
+* retain every ported tool's licence notice and credit its author ([f7bec5a](https://github.com/Millennium44/Toolasha/commit/f7bec5ac9398fae7b675918a915cdd81d4638d37))
+
 ## [3.17.0](https://github.com/Millennium44/Toolasha/compare/v3.16.0...v3.17.0) (2026-08-20)
 
 ### Features
