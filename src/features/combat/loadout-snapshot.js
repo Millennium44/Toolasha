@@ -77,7 +77,11 @@ export function highestOwnedEnhancements(items) {
     const inventory = items || dataManager.characterItems || dataManager.characterData?.characterItems || [];
     const highest = new Map();
     for (const item of inventory) {
-        if (!item?.itemHrid || !(item.count > 0)) continue;
+        // Equipped items don't reliably carry a count field the way stacked inventory
+        // items do — requiring count > 0 dropped them, letting a lower-enhancement
+        // duplicate in the bag outrank the actually-equipped higher copy. Skip only an
+        // explicit zero (a stack that was consumed), matching loadout-enhancement-display.
+        if (!item?.itemHrid || item.count === 0) continue;
         const level = item.enhancementLevel || 0;
         if (!highest.has(item.itemHrid) || level > highest.get(item.itemHrid)) {
             highest.set(item.itemHrid, level);

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Four fixes adopted from upstream's recent findings
+
+An upstream sweep turned up bugs our shared-lineage code still had: decompose profit ignored `bulkMultiplier`, undercounting items consumed multiple-per-action (e.g. Holy Milk) on both cost and output; the loot log matched rows to data by reverse-parsing locale-formatted dates (three hardcoded locales — any other silently showed nothing) and now matches by row position; inventory badges resolved items by translated display name and now use the locale-independent icon sprite; and "highest owned" enhancement resolution dropped equipped items lacking a count field, letting a lower duplicate in the bag outrank the worn copy.
+
 ### Sort the marketplace grid by alchemy profit
 
 The sort control gains a mode dropdown: alongside the existing production/gathering profit per hour, it can now rank items by what insta-buying them at ask, running their best alchemy action, and insta-selling the outputs at bid pays — per item or per hour. Every figure comes off the existing alchemy profit calculator, so catalysts, success rates, tea costs and the coin fee are already in it; only the pricing is forced to the insta flow, whatever the global pricing mode says. The chosen mode persists.

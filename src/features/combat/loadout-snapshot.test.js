@@ -58,6 +58,18 @@ describe('the best copy owned', () => {
         expect(highestOwnedEnhancements().get(CAPE)).toBe(5);
     });
 
+    test('an equipped copy with no count field still counts', () => {
+        // Equipped items don't reliably carry a count the way stacked inventory
+        // items do — a missing count must not let a lower duplicate in the bag
+        // outrank the actually-equipped higher copy
+        game.items = [
+            { itemHrid: CAPE, enhancementLevel: 12, itemLocationHrid: '/item_locations/back' },
+            owned(CAPE, 5),
+        ];
+
+        expect(highestOwnedEnhancements().get(CAPE)).toBe(12);
+    });
+
     test('an item you own none of is absent rather than zero', () => {
         expect(highestOwnedEnhancements().has(CAPE)).toBe(false);
     });

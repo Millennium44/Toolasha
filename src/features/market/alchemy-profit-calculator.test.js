@@ -409,6 +409,45 @@ describe('official alchemy rules', () => {
         expect(essence(11) / essence(10)).toBeCloseTo(2, 3);
     });
 
+    test('decompose consumes and yields at bulk scale (e.g. Holy Milk, 2 per action)', () => {
+        const bulkItem = (bulkMultiplier) => ({
+            name: 'Holy Milk',
+            itemLevel: 50,
+            sellPrice: 40,
+            alchemyDetail: { decomposeItems: [{ itemHrid: '/items/cheese', count: 2 }], bulkMultiplier },
+        });
+        const run = (bulkMultiplier) => {
+            mocks.initClientData = {
+                ...mocks.initClientData,
+                itemDetailMap: { ...ITEM_DETAIL_MAP, '/items/holy_milk': bulkItem(bulkMultiplier) },
+            };
+            return alchemyProfitCalculator.calculateDecomposeProfit('/items/holy_milk');
+        };
+        mocks.itemPrices = { '/items/holy_milk': 100, '/items/cheese': 50 };
+
+        const single = run(1);
+        const bulk = run(2);
+
+        // Input: two copies consumed per action, each at the per-item price
+        const singleInput = single.requirementCosts.find((c) => c.itemHrid === '/items/holy_milk');
+        const bulkInput = bulk.requirementCosts.find((c) => c.itemHrid === '/items/holy_milk');
+        expect(singleInput).toMatchObject({ count: 1, price: 100, costPerAction: 100 });
+        expect(bulkInput).toMatchObject({ count: 2, price: 100, costPerAction: 200 });
+        // Per-attempt cost grows by the extra copy (100) plus the coin fee's own
+        // bulk scaling ((10 + itemLevel 50) × 5 = 300, already bulk-aware in alchemy-fees)
+        expect(bulk.costPerAttempt - single.costPerAttempt).toBeCloseTo(400, 8);
+        const singleFee = single.requirementCosts.find((c) => c.itemHrid === '/items/coin');
+        const bulkFee = bulk.requirementCosts.find((c) => c.itemHrid === '/items/coin');
+        expect(bulkFee.costPerAction).toBe(2 * singleFee.costPerAction);
+
+        // Output: base decompose items double with it
+        const singleDrop = single.dropRevenues.find((d) => d.itemHrid === '/items/cheese');
+        const bulkDrop = bulk.dropRevenues.find((d) => d.itemHrid === '/items/cheese');
+        expect(singleDrop.count).toBe(2);
+        expect(bulkDrop.count).toBe(4);
+        expect(bulkDrop.revenuePerAttempt).toBeCloseTo(2 * singleDrop.revenuePerAttempt, 8);
+    });
+
     test('an unenhanced decompose yields no enhancing essence at all', () => {
         const result = alchemyProfitCalculator.calculateDecomposeProfit('/items/cheese_hat', 0);
         expect(result.dropRevenues.find((d) => d.itemHrid === '/items/enhancing_essence')).toBeUndefined();

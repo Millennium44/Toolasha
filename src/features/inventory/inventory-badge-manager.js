@@ -337,17 +337,19 @@ class InventoryBadgeManager {
                 sliceStart = performance.now();
             }
 
-            // Get item HRID from SVG aria-label
+            // Get item HRID from the icon's <use> sprite reference, not the translatable
+            // aria-label — the label is rendered in whatever language the player has
+            // selected in-game, while the sprite href is a stable internal asset ID
+            // (e.g. #radiant_fiber), so this works regardless of locale. The name map
+            // remains only as a fallback for anything the sprite doesn't resolve.
             const svg = itemElem.querySelector('svg');
             if (!svg) continue;
 
-            const itemName = svg.getAttribute('aria-label');
-            if (!itemName) continue;
-
-            // Find item HRID
-            const itemHrid = this.findItemHrid(itemName, gameData);
+            const itemHrid =
+                this.getItemHridFromContainer(itemElem, gameData) ||
+                this.findItemHrid(svg.getAttribute('aria-label'), gameData);
             if (!itemHrid) {
-                console.warn('[InventoryBadgeManager] Could not find HRID for item:', itemName);
+                console.warn('[InventoryBadgeManager] Could not find HRID for item:', itemElem);
                 continue;
             }
 
@@ -587,11 +589,22 @@ class InventoryBadgeManager {
     }
 
     /**
-     * Find item HRID from item name
-     * @param {string} itemName - Item display name
+     * Get an item's HRID from its inventory container's icon sprite reference — locale
+     * independent, unlike the translatable aria-label text. Validated against the item
+     * detail map so an unexpected sprite id falls through to the name-based fallback.
+     * @param {HTMLElement} itemContainer - Inventory item container element
      * @param {Object} gameData - Game data
-     * @returns {string|null} Item HRID
+     * @returns {string|null} Item HRID or null
      */
+    getItemHridFromContainer(itemContainer, gameData) {
+        const useElement = itemContainer.querySelector('svg use');
+        const href = useElement?.getAttribute('href');
+        const match = href?.match(/#(.+)$/);
+        if (!match) return null;
+        const itemHrid = `/items/${match[1]}`;
+        return gameData?.itemDetailMap?.[itemHrid] ? itemHrid : null;
+    }
+
     /**
      * Build reverse lookup map from item name to HRID
      * Built once on first use, cached thereafter

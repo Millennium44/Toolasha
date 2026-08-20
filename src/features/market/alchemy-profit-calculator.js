@@ -852,11 +852,15 @@ class AlchemyProfitCalculator {
                 actionTime: actionStats.actionTime,
             });
 
-            // Get input cost (market price of the item being decomposed)
-            const inputPrice = getItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel });
-            if (inputPrice === null) {
+            // Get input cost (market price of the item being decomposed).
+            // Some items (e.g. Holy Milk) consume multiple copies per action — bulkMultiplier
+            // scales both the input consumed and the base decompose outputs received.
+            const bulkMultiplier = itemDetails.alchemyDetail?.bulkMultiplier || 1;
+            const pricePerItem = getItemPrice(itemHrid, { context: 'profit', side: 'buy', enhancementLevel });
+            if (pricePerItem === null) {
                 return null; // No market data
             }
+            const inputPrice = pricePerItem * bulkMultiplier;
 
             // Calculate output value
             let outputValue = 0;
@@ -867,12 +871,13 @@ class AlchemyProfitCalculator {
                 const outputPrice = getItemPrice(output.itemHrid, { context: 'profit', side: 'sell' });
                 if (outputPrice !== null) {
                     const afterTax = calculatePriceAfterTax(outputPrice);
-                    const dropValue = afterTax * output.count;
+                    const outputCount = output.count * bulkMultiplier;
+                    const dropValue = afterTax * outputCount;
                     outputValue += dropValue;
 
                     dropDetails.push({
                         itemHrid: output.itemHrid,
-                        count: output.count,
+                        count: outputCount,
                         price: outputPrice,
                         afterTax,
                         isEssence: false,
@@ -968,8 +973,8 @@ class AlchemyProfitCalculator {
             const requirementCosts = [
                 {
                     itemHrid,
-                    count: 1,
-                    price: inputPrice,
+                    count: bulkMultiplier,
+                    price: pricePerItem,
                     costPerAction: inputPrice,
                     costPerHour: inputPrice * actionsPerHourWithEfficiency,
                     enhancementLevel: enhancementLevel || 0,
