@@ -1081,6 +1081,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a standalone calculator estimating the chance of hitting 0 gold before reaching a target number of dungeon chests, alchemy Transmute actions, or an enhancement level.',
             },
+            riskOfRuin_showLauncher: {
+                id: 'riskOfRuin_showLauncher',
+                label: 'Risk of Ruin: Show the corner launcher button',
+                type: 'checkbox',
+                default: true,
+                help: 'The "Risk of Ruin" button pinned to the bottom-right corner. Turn it off (or press its ✕) to get the corner back — the ⧉ Risk of Ruin tab beside Inventory still opens the calculator.',
+            },
             riskOfRuin_trials: {
                 id: 'riskOfRuin_trials',
                 label: 'Risk of Ruin: Monte Carlo trial count',
@@ -2917,14 +2924,16 @@ export const settingsGroups = {
             },
             updateCheckHours: {
                 id: 'updateCheckHours',
-                label: 'Update check: Hours between checks',
+                label: 'Update check: Hours between checks (0 = every refresh)',
                 type: 'number',
                 default: 6,
-                min: 1,
+                min: 0,
                 max: 168,
                 help:
-                    'How long a checked answer is trusted before the next page load asks the network again. ' +
-                    'Refreshes inside the window reuse the cached answer and cost nothing.',
+                    'How long a checked answer is trusted before the network is asked again — on page load, and ' +
+                    'on the same rhythm while a tab stays open, so hearing about a release needs no refresh. ' +
+                    'Refreshes inside the window reuse the cached answer and cost nothing. At 0 every page load ' +
+                    'asks the network (the in-tab repeat still paces itself at least an hour apart).',
             },
             welcomeBackValue: {
                 id: 'welcomeBackValue',

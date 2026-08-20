@@ -1234,6 +1234,9 @@ function registerFeatures() {
             category: 'UI',
             module: UI.updateCheck,
             async: false,
+            // Always initialized: with the setting off it says once, ever, that
+            // the opt-in exists; the setting gates the actual checking inside
+            customCheck: () => true,
         },
         {
             key: 'welcomeBackValue',

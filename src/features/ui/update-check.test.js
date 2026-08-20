@@ -39,6 +39,7 @@ vi.mock('../sync/gist-client.js', () => ({
         return state.response;
     },
 }));
+vi.mock('./command-palette.js', () => ({ openSettings: vi.fn() }));
 vi.mock('../../utils/script-version.js', () => ({ scriptVersion: () => state.version }));
 vi.mock('../../utils/toast.js', () => ({
     showToast: (message, options) => {
@@ -88,12 +89,30 @@ describe('the check', () => {
         expect(state.stored.updateCheckState.latestVersion).toBe('3.17.0');
     });
 
-    test('the setting off means no request and no toast', async () => {
+    test('the setting off means no request; the opt-in is introduced once, ever', async () => {
         state.settings.updateCheck = false;
 
         await boot();
 
         expect(state.requests).toEqual([]);
+        expect(state.toasts).toHaveLength(1);
+        expect(state.toasts[0].message).toContain('off by default');
+
+        // The next page load says nothing — the flag was written down
+        updateCheck.cleanup();
+        await boot();
+        expect(state.toasts).toHaveLength(1);
+    });
+
+    test('running with the setting on never shows the introduction, even if turned off later', async () => {
+        await boot();
+        expect(state.stored.updateCheckIntroduced).toBe(true);
+
+        state.settings.updateCheck = false;
+        state.toasts = [];
+        updateCheck.cleanup();
+        await boot();
+
         expect(state.toasts).toEqual([]);
     });
 
@@ -113,6 +132,45 @@ describe('the check', () => {
         await boot();
 
         expect(state.requests).toHaveLength(1);
+    });
+
+    test('an interval of zero asks the network on every load, however fresh the cache', async () => {
+        state.settings.updateCheckHours = 0;
+        state.stored.updateCheckState = { checkedAt: Date.now() - 1000, latestVersion: '3.16.0' };
+
+        await boot();
+
+        expect(state.requests).toHaveLength(1);
+    });
+
+    test('an open tab re-checks on the interval without a refresh, announcing a version once', async () => {
+        await boot();
+        expect(state.requests).toHaveLength(1);
+        expect(state.toasts).toHaveLength(1);
+
+        // Hours later, still open: the cache has gone stale and a repeat asks again,
+        // but the same version is not announced twice. (Two periods: a repeat that
+        // fires just inside the TTL is correctly answered from cache.)
+        await vi.advanceTimersByTimeAsync(12 * 60 * 60 * 1000 + 60 * 1000);
+        expect(state.requests.length).toBeGreaterThanOrEqual(2);
+        expect(state.toasts).toHaveLength(1);
+
+        // A newer release than the announced one is news again
+        state.response = { status: 200, text: JSON.stringify({ tag_name: 'v3.18.0' }) };
+        await vi.advanceTimersByTimeAsync(12 * 60 * 60 * 1000 + 60 * 1000);
+        expect(state.toasts).toHaveLength(2);
+        expect(state.toasts[1].message).toContain('v3.18.0');
+    });
+
+    test('at interval 0 the in-tab repeat still paces itself an hour apart', async () => {
+        state.settings.updateCheckHours = 0;
+        await boot();
+        expect(state.requests).toHaveLength(1);
+
+        await vi.advanceTimersByTimeAsync(59 * 60 * 1000);
+        expect(state.requests).toHaveLength(1);
+        await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+        expect(state.requests).toHaveLength(2);
     });
 
     test('being current is not news', async () => {
@@ -146,6 +204,7 @@ describe('the check', () => {
         await boot();
 
         expect(state.toasts).toEqual([]);
-        expect(state.writes).toEqual([]);
+        // The introduced flag is written regardless; the failed answer is not
+        expect(state.writes).not.toContain('updateCheckState');
     });
 });

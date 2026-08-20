@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The Risk of Ruin panel can be closed and reopened
+
+The calculator now remembers whether it was left open, folds to its header with a minimize control, and keeps the position it was dragged to — the same chrome the other floating panels share. Its corner launcher can be dismissed with a ✕, since a `⧉ Risk of Ruin` switch now sits in the tab strip beside Inventory (and the launcher comes back from Settings → Risk of Ruin).
+
 ### Message delivery survives another script's broken hook
 
 Several userscripts hook the same message pathway, each wrapping whichever hook it found, and one of them throwing (seen live during a character switch) silently cut message delivery to every script above it — history capture included. Toolasha now catches a foreign wrapper's throw and reads the message past it with a pristine native getter, logging one diagnostic naming the foreign error.
