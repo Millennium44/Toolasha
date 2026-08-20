@@ -184,6 +184,25 @@ const utilsExternalGlobals = new Map([
     // shared-state work). One shared copy keeps reach-throughs greppable at
     // runtime; core still carries its own inline copy because it loads first.
     [normalize(join(__dirname, 'src/utils/bundle-bridge.js')), 'Toolasha.Utils.bundleBridge'],
+    // Risk of Ruin: the panel lives in ui, and market-depth-cap.js (market) reads the last
+    // computed cost-per-action off it, so every module the panel pulls in is reachable from
+    // both bundles. The worker manager holds the pool singleton — a second copy would spin up
+    // a second set of workers.
+    [normalize(join(__dirname, 'src/utils/risk-of-ruin-engine.js')), 'Toolasha.Utils.riskOfRuinEngine'],
+    [normalize(join(__dirname, 'src/utils/risk-of-ruin-worker-manager.js')), 'Toolasha.Utils.riskOfRuinWorkerManager'],
+    [normalize(join(__dirname, 'src/utils/optimal-bankroll-share.js')), 'Toolasha.Utils.optimalBankrollShare'],
+    [
+        normalize(join(__dirname, 'src/utils/risk-of-ruin-adapters/alchemy-adapter.js')),
+        'Toolasha.Utils.riskOfRuinAlchemyAdapter',
+    ],
+    [
+        normalize(join(__dirname, 'src/utils/risk-of-ruin-adapters/dungeon-chest-adapter.js')),
+        'Toolasha.Utils.riskOfRuinDungeonChestAdapter',
+    ],
+    [
+        normalize(join(__dirname, 'src/utils/risk-of-ruin-adapters/enhancement-adapter.js')),
+        'Toolasha.Utils.riskOfRuinEnhancementAdapter',
+    ],
 ]);
 
 // The combat simulator engine, which is its own bundle.

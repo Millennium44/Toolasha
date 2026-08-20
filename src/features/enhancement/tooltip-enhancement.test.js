@@ -91,6 +91,7 @@ let calculateEnhancementPath;
 let buildEnhancementTooltipHTML;
 let buildEnhancementMilestonesHTML;
 let calculateMinimumSellPrice;
+let calculatePerAttemptMaterialCost;
 
 beforeAll(async () => {
     globalThis.math = mathjs;
@@ -99,6 +100,7 @@ beforeAll(async () => {
         buildEnhancementTooltipHTML,
         buildEnhancementMilestonesHTML,
         calculateMinimumSellPrice,
+        calculatePerAttemptMaterialCost,
     } = await import('./tooltip-enhancement.js'));
 });
 
@@ -401,5 +403,41 @@ describe('buildEnhancementMilestonesHTML — stats source indicator', () => {
 
         expect(out).toContain('Pro');
         expect(out).toContain('Celestial enhancer');
+    });
+});
+
+describe('calculatePerAttemptMaterialCost', () => {
+    test('sums coin line items 1:1 and priced materials at ask, marking hasCost true', () => {
+        const result = calculatePerAttemptMaterialCost({
+            enhancementCosts: [
+                { itemHrid: '/items/coin', count: 5000 },
+                { itemHrid: MATERIAL, count: 3 },
+            ],
+        });
+
+        expect(result.cost).toBe(5000 + 3 * 5000);
+        expect(result.hasCost).toBe(true);
+        expect(result.costPartial).toBe(false);
+    });
+
+    test('flags costPartial when a material has no price, without discarding priced materials', () => {
+        const result = calculatePerAttemptMaterialCost({
+            enhancementCosts: [
+                { itemHrid: MATERIAL, count: 2 },
+                { itemHrid: '/items/unpriced_material', count: 1 },
+            ],
+        });
+
+        expect(result.cost).toBe(10000);
+        expect(result.hasCost).toBe(true);
+        expect(result.costPartial).toBe(true);
+    });
+
+    test('returns a zero-cost, non-partial result when there are no enhancement costs', () => {
+        expect(calculatePerAttemptMaterialCost({ enhancementCosts: [] })).toEqual({
+            cost: 0,
+            hasCost: false,
+            costPartial: false,
+        });
     });
 });

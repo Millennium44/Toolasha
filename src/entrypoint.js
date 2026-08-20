@@ -563,6 +563,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'marketDepthCap',
+            name: 'Market Depth Cap',
+            category: 'Market',
+            module: Market.marketDepthCap,
+            async: false,
+        },
+        {
             key: 'marketOrderTotals',
             name: 'Market Order Totals',
             category: 'Market',
@@ -1483,6 +1490,13 @@ function registerFeatures() {
             name: 'Enhancement XPH Calculator',
             category: 'Enhancement',
             module: UI.xphCalculator,
+            async: false,
+        },
+        {
+            key: 'riskOfRuin',
+            name: 'Risk of Ruin Calculator',
+            category: 'Risk of Ruin',
+            module: UI.riskOfRuinUI,
             async: false,
         },
         {

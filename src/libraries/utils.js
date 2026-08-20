@@ -118,6 +118,15 @@ import * as numberParser from '../utils/number-parser.js';
 import * as partyLint from '../utils/party-lint.js';
 import * as profileCommand from '../utils/profile-command.js';
 import * as progressEta from '../utils/progress-eta.js';
+// Risk of Ruin: the panel is in the ui bundle and market-depth-cap.js (market) reads its last
+// result, so the engine, the worker-pool manager and the three adapters are reachable from two
+// bundles. The worker manager owns the pool singleton — one copy, or two pools spin up.
+import * as riskOfRuinEngine from '../utils/risk-of-ruin-engine.js';
+import * as riskOfRuinWorkerManager from '../utils/risk-of-ruin-worker-manager.js';
+import * as optimalBankrollShare from '../utils/optimal-bankroll-share.js';
+import * as riskOfRuinAlchemyAdapter from '../utils/risk-of-ruin-adapters/alchemy-adapter.js';
+import * as riskOfRuinDungeonChestAdapter from '../utils/risk-of-ruin-adapters/dungeon-chest-adapter.js';
+import * as riskOfRuinEnhancementAdapter from '../utils/risk-of-ruin-adapters/enhancement-adapter.js';
 import * as roomSkills from '../utils/room-skills.js';
 import * as tableColumns from '../utils/table-columns.js';
 import * as watchlist from '../utils/watchlist.js';
@@ -231,6 +240,12 @@ toolashaRoot.Utils = {
     partyLint,
     profileCommand,
     progressEta,
+    optimalBankrollShare,
+    riskOfRuinAlchemyAdapter,
+    riskOfRuinDungeonChestAdapter,
+    riskOfRuinEngine,
+    riskOfRuinEnhancementAdapter,
+    riskOfRuinWorkerManager,
     roomSkills,
     tableColumns,
     watchlist,

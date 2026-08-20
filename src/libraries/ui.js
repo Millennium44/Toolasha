@@ -89,6 +89,9 @@ import enhancementFeature from '../features/enhancement/enhancement-feature.js';
 import '../features/enhancement/enhancement-session-row.js';
 import xphCalculator from '../features/enhancement/xph-calculator.js';
 
+// Risk of Ruin
+import riskOfRuinUI from '../features/risk-of-ruin/risk-of-ruin-ui.js';
+
 // Insights
 import predictionCalibration from '../features/insights/index.js';
 
@@ -201,6 +204,7 @@ toolashaRoot.UI = {
     alchemyActionProtection,
     enhancementFeature,
     xphCalculator,
+    riskOfRuinUI,
     predictionCalibration,
     leaderboardXPTracker,
     leaderboardXPDisplay,

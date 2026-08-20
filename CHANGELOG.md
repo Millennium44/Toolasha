@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Risk of Ruin calculator
+
+Ported from upstream: a standalone panel estimating the chance of hitting 0 gold before reaching a target — a number of dungeon chests, alchemy Transmute actions, or an enhancement level — with a Kelly-style optimal bankroll share and a live marketplace widget capping how many actions the visible bid depth can absorb.
+
 ### Offline Progress economics
 
 Ported from upstream: the native Welcome Back modal gains a Revenue / Cost / Profit block with per-day projections, priced from the server's own offline item deltas through the same pricing-mode-aware stack as every other profit figure (custom overrides, container expected value, Coin/Cowbell/dungeon-token/Task-Token special cases, market tax). Revenue and Cost expand into the items behind them, and anything that could not be priced is named rather than counted as zero.
