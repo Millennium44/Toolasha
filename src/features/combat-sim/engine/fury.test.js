@@ -1,3 +1,4 @@
+// Ported from the MWI Combat Simulator (MIT (c) 2024 AmVoidGuy) - see third-party/mwi-combat-simulator/.
 /**
  * Fury stacks, and the one event that expires them.
  *

@@ -85,7 +85,7 @@ game:
 This fork stands on other people's work, and the recognition belongs here where
 it can be seen:
 
-- **bot7420** — author of the original
+- **bot7420 and shykai** — authors of the original
   [MWITools](https://greasyfork.org/en/scripts/494467), which Toolasha began as a
   rewrite of.
 - **Celasha** — author and maintainer of upstream
@@ -97,6 +97,8 @@ it can be seen:
   (TReasure), and the watchlist model (NTally); also the idea behind the battle
   panel scaling (**Scaley Way Idle**) and the overlay's one-row-per-feature shape
   (**OPanel**).
+- **IOMisaka** — author of the mooket I pooled market history, one of the two
+  sources the History panel reads from.
 - **Q7** — author of the
   [market history viewer](https://greasyfork.org/scripts/531109) (MIT) whose API
   usage, volume-split estimate and price panel shape this fork's market history
@@ -108,12 +110,38 @@ it can be seen:
   [KikiMeter](https://greasyfork.org/en/scripts/584984-kikimeter) (MIT), whose
   attribution field-work informed this fork's trial damage metering — DoT
   counting, collision splitting, and respawn re-baselining among it.
+- **doh-nuts** — author of
+  [Enhancelator](https://doh-nuts.github.io/Enhancelator/) (MIT), whose
+  enhancement-strategy search — the per-level protection matrix, mixed-strategy
+  minimum, and Fibonacci mirror breakdown — this fork's enhancement maths
+  follows.
+- **TheNeroNex** — author of the
+  [MWI Ultimate Enhancement Tracker](https://greasyfork.org/en/scripts/531872)
+  (MIT), whose material-cost tracking, XP formulas and tracker-panel styling
+  this fork's enhancement tracker is built on.
+- **byteArray567** — author of
+  [MWITools - Extended](https://greasyfork.org/en/scripts/540440)
+  (CC-BY-NC-SA-4.0), whose settings-tab injection and per-action output totals
+  this fork's settings UI and output totals are based on.
+- **salairkas** — author of
+  [MWI Game Commands](https://greasyfork.org/en/scripts/563313) (MIT), which
+  this fork's `/item`, `/wiki` and `/market` chat commands are ported from.
+- **Truth_Light** — author of
+  [Edible Tools](https://greasyfork.org/en/scripts/499963) (CC-BY-NC-SA-4.0),
+  whose loot-log tracker this fork's loot-log statistics are ported from.
+- **hyhfish** — author of [Milkonomy](https://hyhfish.github.io/milkonomy/),
+  whose export format this fork writes.
+- **Tib** — author of the
+  [MWI Character Sheet](https://tib-san.gitlab.io/mwi-character-sheet/), whose
+  card format the Character Cards feature writes.
 - **dakonglong** — author of the
   [Labyrinth Win Rate Calculator](https://greasyfork.org/en/scripts/566829-%E8%BF%B7%E5%AE%AB%E8%83%9C%E7%8E%87%E8%AE%A1%E7%AE%97%E5%99%A8),
   for the code and inspiration behind the labyrinth simulator.
-- **Shykai, amVoidGuy, vlad and kuganDev** — for their immense work on the
-  [MWI Combat Simulator](https://shykai.github.io/MWICombatSimulatorTest/dist/)
-  this script integrates with.
+- **AmVoidGuy, Shykai, KuganDev and vlad** — authors of the
+  [MWI Combat Simulator](https://github.com/shykai/MWICombatSimulatorTest)
+  (MIT, © 2024 AmVoidGuy), **whose simulation engine this fork ports and runs
+  in-game** (`src/features/combat-sim/engine/`), and whose sim-site export
+  format the script writes.
 - And everyone in the upstream header's thank-you list — testers, bug-finders,
   and contributors whose time shaped both the upstream script and this fork.
 

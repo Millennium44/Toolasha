@@ -1,3 +1,4 @@
+// Ported from the MWI Combat Simulator (MIT (c) 2024 AmVoidGuy) - see third-party/mwi-combat-simulator/.
 /**
  * The labyrinth builds a monster at difficultyTier 0, which drops every
  * tier-gated ability — leaving a monster like the Cyclops as a bare

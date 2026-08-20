@@ -1,3 +1,4 @@
+// Ported from the MWI Combat Simulator (MIT (c) 2024 AmVoidGuy) - see third-party/mwi-combat-simulator/.
 import { randomSetup } from './rng.js';
 
 /** Stand-in for a buff type nothing is currently applying */

@@ -1,3 +1,4 @@
+// Ported from the MWI Combat Simulator (MIT (c) 2024 AmVoidGuy) - see third-party/mwi-combat-simulator/.
 import { random } from './rng.js';
 import { recordUnknown } from './sim-warnings.js';
 

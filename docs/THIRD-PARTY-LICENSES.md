@@ -167,7 +167,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-
 ## MWI Combat Simulator
 
 The simulation engine under `src/features/combat-sim/engine/` (~4,600 lines: combat units,

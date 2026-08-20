@@ -1,7 +1,7 @@
 /**
  * Chat Commands Module
  * Adds /item, /wiki, /market and /shrines commands to in-game chat
- * Port of MWI Game Commands by Mists, integrated into Toolasha architecture
+ * Port of MWI Game Commands by salairkas (published handle; "Mists" in-game), integrated into Toolasha architecture. MIT - see third-party/mwi-game-commands/.
  *
  * Every command is intercepted before the game sees the Enter key, so nothing
  * typed here is ever sent to the server: `handleKeydown` cancels the event and

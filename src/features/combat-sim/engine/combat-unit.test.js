@@ -1,3 +1,4 @@
+// Ported from the MWI Combat Simulator (MIT (c) 2024 AmVoidGuy) - see third-party/mwi-combat-simulator/.
 /**
  * Tests for CombatUnit buff-source stacking
  * Game rule: the strongest source of a buff applies; when it expires the

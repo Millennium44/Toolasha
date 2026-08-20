@@ -1,3 +1,4 @@
+// Ported from the MWI Combat Simulator (MIT (c) 2024 AmVoidGuy) - see third-party/mwi-combat-simulator/.
 import { random, syncEncounterRng } from './rng.js';
 import { hasConverged, isStoppingRule } from './wilson.js';
 
