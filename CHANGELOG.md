@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Foldable Trial Abilities cards, and the walk sorts after reading
+
+Every card in the Trial Abilities panel folds from its heading, remembered across reloads. The reroll walk's Read press now runs the task sorter (only with auto-sort on) before planning its next press, so revealed tasks land in order.
+
 ### Trial Abilities: fresh panel each trial, fixed controls, utility headcount
 
 A new trial's first tick blanks the previous trial's roster automatically instead of waiting for a first capture; the Controls row moved above the player list so its buttons stop drifting down as captures land; and a Utility coverage card counts who runs Revive, Invincible and Insanity.

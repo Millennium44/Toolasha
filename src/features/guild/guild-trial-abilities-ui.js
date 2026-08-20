@@ -22,8 +22,50 @@ import { formatEta } from '../../utils/progress-eta.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
+import storage from '../../core/storage.js';
 
 const ACCENT = '#a8d6a0';
+
+/** Which cards are folded, by key; loaded once in `initialize` */
+const collapsedCards = new Set();
+
+/** Where the folded-card set is written down */
+const COLLAPSED_CARDS_KEY = 'guildTrialAbilities_collapsedCards';
+
+/**
+ * A card whose heading folds it.
+ *
+ * The heading always draws (with a ▾/▸ state marker) and clicking it toggles
+ * the fold, remembered across reloads; the caller checks `collapsed` and skips
+ * its rows when true, so a folded card is its one-line heading.
+ *
+ * @param {HTMLElement} body - Panel body
+ * @param {string} title - Card title
+ * @param {string} key - Storage key for this card's fold state
+ * @returns {{card: HTMLElement, collapsed: boolean}}
+ */
+function collapsibleCard(body, title, key) {
+    const collapsed = collapsedCards.has(key);
+    const card = panelCard(body, '', ACCENT);
+    const heading = document.createElement('div');
+    heading.textContent = `${collapsed ? '▸' : '▾'} ${title}`;
+    Object.assign(heading.style, {
+        color: ACCENT,
+        fontWeight: 'bold',
+        marginBottom: '3px',
+        cursor: 'pointer',
+        userSelect: 'none',
+    });
+    heading.title = collapsed ? 'Expand' : 'Collapse';
+    heading.addEventListener('click', () => {
+        if (collapsedCards.has(key)) collapsedCards.delete(key);
+        else collapsedCards.add(key);
+        storage.setJSON(COLLAPSED_CARDS_KEY, [...collapsedCards], 'settings').catch(() => {});
+        guildTrialAbilitiesPanel.render();
+    });
+    card.appendChild(heading);
+    return { card, collapsed };
+}
 
 /** Exact section title — the label the export's readers key their eyes on too */
 export const AURA_SECTION_TITLE = 'Equipped aura coverage';
@@ -277,7 +319,8 @@ function drawHeader(body, state) {
  * @param {Object} abilityDetailMap - Game data
  */
 function drawAuraCoverage(body, state, abilityDetailMap) {
-    const card = panelCard(body, AURA_SECTION_TITLE, ACCENT);
+    const { card, collapsed } = collapsibleCard(body, AURA_SECTION_TITLE, 'auras');
+    if (collapsed) return;
     const hrids = Object.keys(state.coverage).sort((a, b) =>
         abilityName(a, abilityDetailMap).localeCompare(abilityName(b, abilityDetailMap))
     );
@@ -377,7 +420,8 @@ export function verdictLine(verdict) {
  * @param {Object} state - From `guildTrialAbilities.state()`
  */
 function drawPlan(body, state) {
-    const card = panelCard(body, 'Plan', ACCENT);
+    const { card, collapsed } = collapsibleCard(body, 'Plan', 'plan');
+    if (collapsed) return;
     card.appendChild(panelNote(planStatusLine(state.planCompare)));
 
     const details = document.createElement('details');
@@ -475,7 +519,12 @@ function abilityRow(capture, abilityDetailMap) {
  * @param {Object} abilityDetailMap - Game data
  */
 function drawPlayers(body, state, abilityDetailMap) {
-    const card = panelCard(body, `Players (${state.capturedCount}/${state.rosterCount})`, ACCENT);
+    const { card, collapsed } = collapsibleCard(
+        body,
+        `Players (${state.capturedCount}/${state.rosterCount})`,
+        'players'
+    );
+    if (collapsed) return;
     if (!state.participants.length) {
         card.appendChild(panelNote('No participants fed in yet.'));
     }
@@ -537,7 +586,8 @@ export const UTILITY_ABILITY_HRIDS = ['/abilities/revive', '/abilities/invincibl
  * @param {Object} abilityDetailMap - Game data
  */
 function drawUtilityCounts(body, state, abilityDetailMap) {
-    const card = panelCard(body, 'Utility coverage', ACCENT);
+    const { card, collapsed } = collapsibleCard(body, 'Utility coverage', 'utility');
+    if (collapsed) return;
     for (const hrid of UTILITY_ABILITY_HRIDS) {
         const users = state.participants
             .filter((row) => row.captured && row.capture?.abilities?.some((ability) => ability.hrid === hrid))
@@ -586,7 +636,8 @@ function controlButton(label, title, onClick) {
  * @param {Object} state - From `guildTrialAbilities.state()`
  */
 function drawControls(body, state) {
-    const card = panelCard(body, 'Controls', ACCENT);
+    const { card, collapsed } = collapsibleCard(body, 'Controls', 'controls');
+    if (collapsed) return;
     Object.assign(card.style, { flexDirection: 'row', flexWrap: 'wrap', gap: '6px' });
 
     card.appendChild(
@@ -773,6 +824,15 @@ export default {
         // meantime rather than replacing it, so the order is safe both ways.
         offCaptured?.();
         offCaptured = guildLoadoutCapture.onCaptured?.((event) => onCapturedEvent(event)) ?? null;
+
+        // Which cards the player keeps folded, restored before the first draw
+        try {
+            const saved = await storage.getJSON(COLLAPSED_CARDS_KEY, 'settings', []);
+            collapsedCards.clear();
+            for (const key of Array.isArray(saved) ? saved : []) collapsedCards.add(String(key));
+        } catch (error) {
+            console.error('[GuildTrialAbilitiesUI] Loading fold state failed:', error);
+        }
 
         // A new trial's first tick blanks a session left over from the last
         // one, so the panel never opens onto a roster the trial has outlived;

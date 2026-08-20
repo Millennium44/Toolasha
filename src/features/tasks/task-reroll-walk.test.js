@@ -51,6 +51,8 @@ vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {
 // the tests drive the walk directly instead
 vi.mock('../../utils/dom-observer-helpers.js', () => ({ createMutationWatcher: () => () => {} }));
 vi.mock('./task-profit-calculator.js', () => ({ getCowbellValue: () => market.cowbellValue }));
+const sorter = vi.hoisted(() => ({ sortTasks: vi.fn() }));
+vi.mock('./task-sorter.js', () => ({ default: sorter }));
 
 const {
     default: taskRerollWalkFeature,
@@ -468,6 +470,36 @@ describe('the unread notice is read first', () => {
         notice.remove();
         vi.advanceTimersByTime(3000);
         expect(chipText()).toContain('✓ Done');
+    });
+
+    test('reading respects the auto-sort setting: sort runs after the press, before the next plan', () => {
+        settings.values.taskSorter_autoSort = true;
+        sorter.sortTasks.mockClear();
+        const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        const notice = unreadNotice(list);
+
+        walk.start();
+        walk.advance();
+        expect(sorter.sortTasks).not.toHaveBeenCalled(); // not before the board settles
+
+        notice.remove();
+        vi.advanceTimersByTime(3000);
+        expect(sorter.sortTasks).toHaveBeenCalledTimes(1);
+        expect(chipText()).toContain('Reroll #1');
+    });
+
+    test('with auto-sort off, reading never sorts', () => {
+        settings.values.taskSorter_autoSort = false;
+        sorter.sortTasks.mockClear();
+        const list = board([{ name: 'Milking - Cow', buttons: AT_REST, quest: quest(MILKING) }]);
+        const notice = unreadNotice(list);
+
+        walk.start();
+        walk.advance();
+        notice.remove();
+        vi.advanceTimersByTime(3000);
+
+        expect(sorter.sortTasks).not.toHaveBeenCalled();
     });
 
     test('a notice a press did not clear is offered again, a bounded few times', () => {

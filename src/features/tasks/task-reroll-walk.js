@@ -59,6 +59,7 @@ import webSocketHook from '../../core/websocket.js';
 import { GAME } from '../../utils/selectors.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { clickThroughReact } from '../../utils/react-click.js';
+import taskSorter from './task-sorter.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import {
@@ -753,7 +754,23 @@ class TaskRerollWalk {
             this.readPresses += 1;
             this.state = 'waiting';
             this._render();
-            this._replanSoon(SERVER_SETTLE_MS);
+            // Reading reveals tasks appended unsorted; a player running
+            // auto-sort expects them ordered, and the walk plans against
+            // whatever order it finds — so sort first, then replan against
+            // the settled board. No sort without the setting, as everywhere.
+            this.timerRegistry.clearAll();
+            this.timerRegistry.registerTimeout(
+                setTimeout(() => {
+                    if (config.getSetting('taskSorter_autoSort')) {
+                        try {
+                            taskSorter.sortTasks();
+                        } catch (error) {
+                            console.error('[TaskRerollWalk] Post-read sort failed:', error);
+                        }
+                    }
+                    this._replan();
+                }, SERVER_SETTLE_MS)
+            );
             return true;
         }
 

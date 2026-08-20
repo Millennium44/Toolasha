@@ -128,7 +128,9 @@ const FAILED = 'could not be drawn';
 /** The card whose heading starts with the given text */
 function card(title) {
     for (const heading of guildTrialAbilitiesPanel.panel.querySelectorAll('div')) {
-        if ((heading.firstChild?.textContent || '').startsWith(title)) return heading;
+        // Collapsible headings carry a ▾/▸ state marker before the title
+        const text = (heading.firstChild?.textContent || '').replace(/^[▾▸]\s*/, '');
+        if (text.startsWith(title)) return heading;
     }
     return null;
 }
