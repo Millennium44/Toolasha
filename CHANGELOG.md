@@ -723,6 +723,29 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.16.0](https://github.com/Millennium44/Toolasha/compare/v3.15.0...v3.16.0) (2026-08-20)
+
+
+### Features
+
+* marketplace sort by alchemy profit (insta-buy, transmute, insta-sell) ([c6a3da2](https://github.com/Millennium44/Toolasha/commit/c6a3da23cf2298d81370a6a3751c9cdadafaa50a))
+* sync merges additive histories key by key instead of overwriting them ([3f71580](https://github.com/Millennium44/Toolasha/commit/3f71580157266824b4689a2d789400cbffaff114))
+* sync push and pull in the command palette, and an optional push after switching characters ([65a392a](https://github.com/Millennium44/Toolasha/commit/65a392aff0c5ff78ead36f1859caad8db9c1e532))
+* sync pushes on session takeover and pulls periodically, with staggered startup pulls for the hand-off ([b788868](https://github.com/Millennium44/Toolasha/commit/b7888686e6072478779fe28dbeaceb227dff02cd))
+* unjoined trials forecast from tier-clear timing with per-tier work decline, and regain their expected tier ([500a9e1](https://github.com/Millennium44/Toolasha/commit/500a9e14fc1c8c15f51db30f04dcf22a3b09a848))
+
+
+### Bug Fixes
+
+* auto-sync no longer wedges on a phantom conflict its own timestamp manufactured ([2f6fdef](https://github.com/Millennium44/Toolasha/commit/2f6fdef7a6a81e56548fb01da3a7362ecefd14c4))
+* every feature's disable ends disabled even if teardown throws; registry warns loudly when one does ([f730a16](https://github.com/Millennium44/Toolasha/commit/f730a1681d6a0318cf684201111bccc4d221c64d))
+* unjoined-trial estimates show fractional rates and price tiers at the latest step ([518a34e](https://github.com/Millennium44/Toolasha/commit/518a34ef663ae926694aff5389177c659d21d9d4))
+
+
+### Tests
+
+* feature lifecycle smoke test with real helper APIs ([80525fd](https://github.com/Millennium44/Toolasha/commit/80525fd520c983b73bdc8217ed9d5b7df12d89ee))
+
 ## [3.15.0](https://github.com/Millennium44/Toolasha/compare/v3.14.0...v3.15.0) (2026-08-19)
 
 ### Features
