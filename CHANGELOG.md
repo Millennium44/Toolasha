@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The character roster stops duplicating
+
+The known-characters list compared the game's numeric character id against its own stored strings, so the existing entry was never found and every add pushed a duplicate — rosters grew into the hundreds and the sync-setup copy reported copying to 164 "characters". Ids are stored and compared as strings now, and an inflated roster collapses itself to one entry per character on the first read.
+
 ### Concurrent market fetches share one request
 
 marketplace.json is rate-limited and a burst of parallel fetches trips a temporary block; several features fetch at startup behind nothing but an is-it-loaded check. Concurrent callers now share one in-flight request, and a forced refresh arriving behind a plain one waits it out before going to the network — sequential, never a burst.

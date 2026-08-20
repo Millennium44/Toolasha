@@ -362,42 +362,74 @@ class SettingsStorage {
      * @returns {Promise<void>}
      */
     async addToKnownCharacters(characterId, characterName) {
+        // The game sends the id as a NUMBER and the stored list holds STRINGS,
+        // so a strict compare against the raw value never matched — every call
+        // pushed a fresh duplicate of the same character, and rosters grew into
+        // the hundreds. Everything below works in strings.
+        const id = String(characterId);
         const raw = await storage.getJSON(this.knownCharactersKey, this.storageArea, []);
         const list = this._normalizeKnownCharacters(raw);
-        const existing = list.find((c) => c.id === characterId);
+        const existing = list.find((c) => c.id === id);
         if (existing) {
             if (characterName && existing.name !== characterName) {
                 existing.name = characterName;
                 await storage.setJSON(this.knownCharactersKey, list, this.storageArea, true);
+            } else if (list.length !== raw.length) {
+                // The normalize pass collapsed historic duplicates — keep that
+                await storage.setJSON(this.knownCharactersKey, list, this.storageArea, true);
             }
         } else {
-            list.push({ id: characterId, name: characterName || characterId });
+            list.push({ id, name: characterName || id });
             await storage.setJSON(this.knownCharactersKey, list, this.storageArea, true);
         }
     }
 
     /**
-     * Normalise stored known-characters to [{id, name}] regardless of legacy format.
+     * Normalise stored known-characters to [{id, name}] regardless of legacy
+     * format, one entry per id.
+     *
+     * Rosters written before the id-type fix hold the same character dozens of
+     * times (a number-vs-string compare never found the existing entry), so
+     * duplicates are collapsed here: one entry per id, keeping the best name
+     * seen for it — a real name over an id echoed as one.
+     *
      * @param {Array} raw
      * @returns {Array<{id: string, name: string}>}
      * @private
      */
     _normalizeKnownCharacters(raw) {
         if (!Array.isArray(raw)) return [];
-        return raw.map((entry) =>
-            typeof entry === 'object' && entry !== null
-                ? { id: String(entry.id), name: entry.name || String(entry.id) }
-                : { id: String(entry), name: String(entry) }
-        );
+        const byId = new Map();
+        for (const entry of raw) {
+            const normalized =
+                typeof entry === 'object' && entry !== null
+                    ? { id: String(entry.id), name: entry.name || String(entry.id) }
+                    : { id: String(entry), name: String(entry) };
+            const kept = byId.get(normalized.id);
+            // Later entries win, except a real name is never replaced by an id echo
+            if (!kept || normalized.name !== normalized.id || kept.name === kept.id) {
+                byId.set(normalized.id, normalized);
+            }
+        }
+        return [...byId.values()];
     }
 
     /**
      * Get list of known characters as [{id, name}] objects.
+     *
+     * Reads self-heal: a roster the duplicate bug inflated is collapsed and,
+     * when that changed anything, written back, so the fix applies itself on
+     * the first read after updating.
+     *
      * @returns {Promise<Array<{id: string, name: string}>>}
      */
     async getKnownCharacters() {
         const raw = await storage.getJSON(this.knownCharactersKey, this.storageArea, []);
-        return this._normalizeKnownCharacters(raw);
+        const list = this._normalizeKnownCharacters(raw);
+        if (Array.isArray(raw) && list.length !== raw.length) {
+            await storage.setJSON(this.knownCharactersKey, list, this.storageArea, true);
+        }
+        return list;
     }
 
     /**

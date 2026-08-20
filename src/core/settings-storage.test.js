@@ -281,3 +281,52 @@ describe('a settings store that cannot be read', () => {
         });
     });
 });
+
+describe('the known-characters roster holds one entry per character', () => {
+    beforeEach(() => {
+        stored.clear();
+        outage.on = false;
+    });
+
+    test('a numeric game id matches the stored string entry instead of duplicating it', async () => {
+        stored.set('json:known_character_ids', [{ id: '30404', name: 'MillenniumTest' }]);
+
+        // The game sends the id as a number; before the type fix this pushed a duplicate
+        await settingsStorage.addToKnownCharacters(30404, 'MillenniumTest');
+
+        const list = await settingsStorage.getKnownCharacters();
+        expect(list).toEqual([{ id: '30404', name: 'MillenniumTest' }]);
+    });
+
+    test('a roster the duplicate bug inflated heals itself on read', async () => {
+        stored.set('json:known_character_ids', [
+            { id: '30404', name: '30404' },
+            ...Array.from({ length: 150 }, () => ({ id: 30404, name: 'MillenniumTest' })),
+            ...Array.from({ length: 7 }, () => ({ id: '32030', name: 'MillenniumTestIC' })),
+        ]);
+
+        const list = await settingsStorage.getKnownCharacters();
+
+        expect(list).toEqual([
+            { id: '30404', name: 'MillenniumTest' },
+            { id: '32030', name: 'MillenniumTestIC' },
+        ]);
+        // Healed roster is written back, so the collapse happens once
+        expect(stored.get('json:known_character_ids')).toHaveLength(2);
+    });
+
+    test('a real name is never replaced by an id echoed as one', async () => {
+        stored.set('json:known_character_ids', [
+            { id: '30404', name: 'MillenniumTest' },
+            { id: '30404', name: '30404' },
+        ]);
+
+        expect(await settingsStorage.getKnownCharacters()).toEqual([{ id: '30404', name: 'MillenniumTest' }]);
+    });
+
+    test('a genuinely new character is still added, id stored as a string', async () => {
+        await settingsStorage.addToKnownCharacters(99999, 'NewAlt');
+
+        expect(await settingsStorage.getKnownCharacters()).toEqual([{ id: '99999', name: 'NewAlt' }]);
+    });
+});
