@@ -8,11 +8,15 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
+import domObserver from '../../core/dom-observer.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { formatWithSeparator, formatPercentage } from '../../utils/formatters.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import { makeDraggable } from '../../utils/floating-panel.js';
+import { attachMinimize } from '../../utils/panel-minimize.js';
+import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import {
     wilsonConfidenceInterval,
     minActionsForNonZeroRisk,
@@ -30,6 +34,11 @@ import { buildEnhancementModel } from '../../utils/risk-of-ruin-adapters/enhance
 
 const PANEL_ID = 'mwi-risk-of-ruin-panel';
 const LAUNCHER_ID = 'mwi-risk-of-ruin-launcher';
+const TAB_ID = 'mwi-risk-of-ruin-tab';
+/** Geometry/open-state key, shared with the rest of the floating panels */
+const PANEL_KEY = 'riskOfRuin';
+/** Whether the corner launcher is drawn at all; its ✕ writes this */
+const LAUNCHER_SETTING = 'riskOfRuin_showLauncher';
 const MAX_STEPS = 20000;
 
 const CHEST_HRIDS = [
@@ -66,8 +75,13 @@ class RiskOfRuinUI {
         this.isInitialized = false;
         this.timerRegistry = createTimerRegistry();
         this.panel = null;
-        this.isDragging = false;
-        this.dragOffset = { x: 0, y: 0 };
+        /** Whether the calculator window is up, mirrored into the launcher and the tab */
+        this.panelOpen = false;
+        this.detachDrag = null;
+        this.minimizeCtl = null;
+        this.launcher = null;
+        this.tabButton = null;
+        this.tabUnregister = null;
         // Last computed cost-per-action + per-item output quantities, for market-depth-cap.js's
         // live order-book widget to read — null whenever the last run had no revenue distribution
         // to key off (enhancement mode, or no successful run yet).
@@ -86,6 +100,10 @@ class RiskOfRuinUI {
                 this.disable();
             }
         });
+        // The launcher's ✕ writes this setting rather than hiding the element
+        // directly, so the Settings checkbox and the ✕ are the same switch and
+        // there is no second place for them to disagree in.
+        config.onSettingChange(LAUNCHER_SETTING, () => this._syncLauncher());
     }
 
     initialize() {
@@ -94,39 +112,202 @@ class RiskOfRuinUI {
 
         this.isInitialized = true;
         this._buildPanel();
+        this._syncLauncher();
+        this._watchTabStrip();
+
+        // Reopen where it was left. Fire and forget: this waits on the database
+        // and on knowing which character logged in, and the panel has no
+        // business being held closed until both answer.
+        reopenIfLeftOpen(PANEL_KEY, () => this._setPanelOpen(true, { remember: false }));
+    }
+
+    /**
+     * Draw or remove the corner launcher to match {@link LAUNCHER_SETTING}.
+     *
+     * The button used to be the only way in and could not be dismissed, which
+     * made a calculator most people open twice a week a permanent fixture over
+     * the bottom-right corner of the game. Now its ✕ turns it off and the tab
+     * beside Inventory is the way back.
+     */
+    _syncLauncher() {
+        if (!this.isInitialized) return;
+        const wanted = config.getSetting(LAUNCHER_SETTING) !== false;
+        if (!wanted) {
+            this.launcher?.remove();
+            this.launcher = null;
+            document.getElementById(LAUNCHER_ID)?.remove();
+            return;
+        }
+        if (this.launcher && document.body.contains(this.launcher)) return;
         this._buildLauncher();
     }
 
     _buildLauncher() {
-        const btn = document.createElement('button');
-        btn.id = LAUNCHER_ID;
-        btn.textContent = 'Risk of Ruin';
-        btn.style.cssText = `
+        const wrap = document.createElement('div');
+        wrap.id = LAUNCHER_ID;
+        wrap.style.cssText = `
             position: fixed;
             bottom: 12px;
             right: 12px;
             z-index: ${config.Z_FLOATING_PANEL};
+            display: flex;
+            align-items: stretch;
             background: linear-gradient(180deg, rgba(200,60,60,0.25) 0%, rgba(200,60,60,0.12) 100%);
-            color: #e0e0e0;
             border: 1px solid rgba(200,60,60,0.5);
             border-radius: 6px;
-            padding: 6px 12px;
+            overflow: hidden;
+        `;
+
+        const open = document.createElement('button');
+        open.id = `${LAUNCHER_ID}-open`;
+        open.textContent = 'Risk of Ruin';
+        open.title = 'Show or hide the Risk of Ruin calculator.';
+        open.style.cssText = `
+            background: none;
+            color: #e0e0e0;
+            border: none;
+            padding: 6px 10px;
             font-size: 12px;
             font-weight: 600;
+            font-family: inherit;
             cursor: pointer;
         `;
-        btn.addEventListener('click', () => this._toggle());
-        document.body.appendChild(btn);
+        open.addEventListener('click', () => this._toggle());
+
+        const dismiss = document.createElement('button');
+        dismiss.id = `${LAUNCHER_ID}-close`;
+        dismiss.textContent = '✕';
+        dismiss.title =
+            'Hide this button.\n\nThe calculator stays available from the ⧉ Risk of Ruin tab beside ' +
+            'Inventory, and this button comes back from Settings → Risk of Ruin.';
+        dismiss.style.cssText = `
+            background: none;
+            color: #aaa;
+            border: none;
+            border-left: 1px solid rgba(200,60,60,0.4);
+            padding: 6px 8px;
+            font-size: 11px;
+            line-height: 1;
+            font-family: inherit;
+            cursor: pointer;
+        `;
+        dismiss.addEventListener('click', (event) => {
+            event.stopPropagation();
+            config.setSetting(LAUNCHER_SETTING, false);
+            this._syncLauncher();
+        });
+
+        wrap.append(open, dismiss);
+        document.body.appendChild(wrap);
+        this.launcher = wrap;
+        this._syncControls();
     }
 
-    _toggle() {
+    /**
+     * Keep a `⧉ Risk of Ruin` switch in the character column's tab strip.
+     *
+     * Same shape as the Overlay and Bulk Sell switches: a clone of a real tab,
+     * so it inherits whatever the game currently thinks a tab looks like, with a
+     * glyph saying it opens a panel rather than changing what the column shows.
+     * The strip is rebuilt whenever the column changes view, so this watches
+     * rather than injecting once.
+     */
+    _watchTabStrip() {
+        this.tabUnregister = domObserver.onClass('RiskOfRuinUI', 'MuiTabs-flexContainer', () => this._ensureTab());
+        this._ensureTab();
+    }
+
+    /** The character column's tab strip — the only one holding an Inventory tab */
+    _findTabList() {
+        for (const list of document.querySelectorAll('[role="tablist"]')) {
+            for (const tab of list.querySelectorAll('[role="tab"]')) {
+                if (tab.textContent.trim() === 'Inventory') return list;
+            }
+        }
+        return null;
+    }
+
+    /** Put the switch in the strip, or put it back if the strip was rebuilt */
+    _ensureTab() {
+        if (!this.isInitialized) return;
+        const list = this._findTabList();
+        if (!list) return;
+        if (this.tabButton && list.contains(this.tabButton)) {
+            this._syncControls();
+            return;
+        }
+        this.tabButton?.remove();
+
+        // Never one of ours, and never a hidden one — a clone of a tab the game
+        // has set `display: none` on is a switch that is added and invisible.
+        const model = [...list.querySelectorAll('[role="tab"]')].find(
+            (tab) =>
+                tab.id !== TAB_ID &&
+                !tab.classList.contains('toolasha-inv-tab') &&
+                !tab.classList.contains('toolasha-skilling-opt-tab') &&
+                tab.style.display !== 'none'
+        );
+        if (!model) return;
+
+        const button = model.cloneNode(true);
+        button.id = TAB_ID;
+        button.title =
+            'Risk of Ruin — the chance of hitting 0 gold before you reach a target.\n\nClick to show or hide it.';
+        const badge = button.querySelector('[class*="TabsComponent_badge"]');
+        if (badge) badge.innerHTML = '<div style="text-align: center;"><div>⧉ Risk of Ruin</div></div>';
+        else button.textContent = '⧉ Risk of Ruin';
+
+        // It opens something rather than changing what this column shows, so it
+        // must not claim the selection the real tabs share
+        button.classList.remove('Mui-selected');
+        button.setAttribute('aria-selected', 'false');
+        button.setAttribute('tabindex', '-1');
+        button.removeAttribute('aria-controls');
+        button.removeAttribute('draggable');
+        button.style.removeProperty('display');
+        button.style.removeProperty('order');
+        button.style.removeProperty('opacity');
+        button.style.minWidth = 'auto';
+        button.style.cursor = 'pointer';
+
+        button.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this._toggle();
+        });
+
+        list.appendChild(button);
+        this.tabButton = button;
+        this._syncControls();
+    }
+
+    /** Dim both switches while the panel is down, so each says which state it is in */
+    _syncControls() {
+        const lit = this.panelOpen ? '1' : '0.6';
+        if (this.tabButton) this.tabButton.style.opacity = lit;
+        if (this.launcher) this.launcher.style.opacity = lit;
+    }
+
+    /**
+     * Show or hide the calculator, and remember which.
+     *
+     * @param {boolean} open - Whether it should be up
+     * @param {Object} [options] - `remember: false` when this *is* the restore
+     */
+    _setPanelOpen(open, { remember = true } = {}) {
         if (!this.panel) return;
-        const visible = this.panel.style.display !== 'none';
-        this.panel.style.display = visible ? 'none' : 'flex';
-        if (!visible) {
+        this.panelOpen = Boolean(open);
+        this.panel.style.display = this.panelOpen ? 'flex' : 'none';
+        if (this.panelOpen) {
             bringPanelToFront(this.panel);
             this._refillBankroll();
         }
+        if (remember) saveOpenState(PANEL_KEY, this.panelOpen);
+        this._syncControls();
+    }
+
+    _toggle() {
+        this._setPanelOpen(!this.panelOpen);
     }
 
     _buildPanel() {
@@ -162,13 +343,26 @@ class RiskOfRuinUI {
             border-radius: 8px 8px 0 0;
             flex-shrink: 0;
         `;
-        header.innerHTML = `
-            <span style="font-weight:700; font-size:14px; color:#e05c5c;">Risk of Ruin Calculator</span>
-            <button id="mwi-ror-close" style="
-                background:none; border:none; color:#aaa; font-size:22px;
-                cursor:pointer; padding:0; line-height:1;">×</button>
-        `;
-        this._setupDrag(header);
+        const heading = document.createElement('span');
+        heading.textContent = 'Risk of Ruin Calculator';
+        heading.style.cssText = 'font-weight:700; font-size:14px; color:#e05c5c;';
+
+        const controls = document.createElement('div');
+        controls.style.cssText = 'display:flex; align-items:center;';
+
+        const close = document.createElement('button');
+        close.id = 'mwi-ror-close';
+        close.textContent = '×';
+        close.title = 'Close';
+        close.style.cssText =
+            'background:none; border:none; color:#aaa; font-size:22px; cursor:pointer; padding:0 2px; line-height:1;';
+        close.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this._setPanelOpen(false);
+        });
+
+        controls.appendChild(close);
+        header.append(heading, controls);
 
         const body = document.createElement('div');
         body.style.cssText = 'overflow-y: auto; flex: 1; padding: 12px 14px;';
@@ -186,9 +380,22 @@ class RiskOfRuinUI {
         document.body.appendChild(this.panel);
         registerFloatingPanel(this.panel);
 
-        this.panel.querySelector('#mwi-ror-close').addEventListener('click', () => {
-            this.panel.style.display = 'none';
+        // The shared chrome: fold-to-header, drag by the header, and a
+        // remembered position — the same three every other floating panel here
+        // gets from simple-panel.js.
+        this.minimizeCtl = attachMinimize({
+            panel: this.panel,
+            header,
+            body: [body, status],
+            panelKey: PANEL_KEY,
+            beforeEl: close,
+            accent: '#e05c5c',
         });
+        this.detachDrag = makeDraggable(this.panel, header, (position) => {
+            saveGeometry(PANEL_KEY, { left: parseFloat(position.left), top: parseFloat(position.top) });
+        });
+        restoreGeometry(this.panel, PANEL_KEY, { width: 320, height: 200 });
+
         this.panel.addEventListener('mousedown', () => bringPanelToFront(this.panel));
 
         this.panel.querySelector('#mwi-ror-mode').addEventListener('change', () => this._renderModeInputs());
@@ -330,32 +537,6 @@ class RiskOfRuinUI {
                 bankrollInput.value = fmtGold(parseItemCount(bankrollInput.value, 0));
             });
         }
-    }
-
-    _setupDrag(header) {
-        header.addEventListener('mousedown', (e) => {
-            if (e.target.id === 'mwi-ror-close') return;
-            this.isDragging = true;
-            header.style.cursor = 'grabbing';
-            const rect = this.panel.getBoundingClientRect();
-            this.dragOffset = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-            bringPanelToFront(this.panel);
-
-            const onMove = (ev) => {
-                if (!this.isDragging) return;
-                this.panel.style.left = `${ev.clientX - this.dragOffset.x}px`;
-                this.panel.style.top = `${ev.clientY - this.dragOffset.y}px`;
-                this.panel.style.right = 'auto';
-            };
-            const onUp = () => {
-                this.isDragging = false;
-                header.style.cursor = 'grab';
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
-            };
-            document.addEventListener('mousemove', onMove);
-            document.addEventListener('mouseup', onUp);
-        });
     }
 
     /**
@@ -922,12 +1103,24 @@ class RiskOfRuinUI {
 
     disable() {
         this.timerRegistry.clearAll();
+        this.tabUnregister?.();
+        this.tabUnregister = null;
+        this.detachDrag?.();
+        this.detachDrag = null;
+        this.minimizeCtl?.destroy();
+        this.minimizeCtl = null;
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();
             this.panel = null;
         }
+        this.tabButton?.remove();
+        this.tabButton = null;
+        this.launcher?.remove();
+        this.launcher = null;
         document.getElementById(LAUNCHER_ID)?.remove();
+        document.getElementById(TAB_ID)?.remove();
+        this.panelOpen = false;
         this.isInitialized = false;
     }
 }
