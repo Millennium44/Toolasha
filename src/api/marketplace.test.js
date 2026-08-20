@@ -12,6 +12,8 @@ const createMocks = (isConnected) => {
         default: {
             getJSON,
             setJSON: vi.fn(),
+            get: vi.fn(async () => null),
+            set: vi.fn(async () => {}),
         },
     }));
 
@@ -111,6 +113,111 @@ describe('MarketAPI fetch', () => {
 
         warn.mockRestore();
         error.mockRestore();
+    });
+});
+
+describe('MarketAPI fetch in-flight dedup', () => {
+    beforeEach(() => {
+        vi.resetModules();
+        vi.stubGlobal('fetch', vi.fn());
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    /** A fetch response the API accepts, resolvable when the test says so */
+    function deferredResponse() {
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        fetch.mockImplementation(async () => {
+            await gate;
+            return { ok: true, json: async () => ({ marketData: { items: [] }, timestamp: 123 }) };
+        });
+        return () => release();
+    }
+
+    test('two concurrent callers share one network request', async () => {
+        // The startup case: several features fetch behind nothing but an
+        // isLoaded() check, and the endpoint rate-limits bursts
+        const { getJSON } = createMocks(true);
+        getJSON.mockResolvedValue(null);
+        const release = deferredResponse();
+
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        const first = marketAPI.fetch();
+        const second = marketAPI.fetch();
+        release();
+        const [a, b] = await Promise.all([first, second]);
+
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(a).toEqual({ items: [] });
+        expect(b).toEqual({ items: [] });
+    });
+
+    test('a later fetch after the first settles is its own request', async () => {
+        const { getJSON } = createMocks(true);
+        getJSON.mockResolvedValue(null);
+        const release = deferredResponse();
+
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        const first = marketAPI.fetch();
+        release();
+        await first;
+        // No cache mock change: getCachedData still returns null, so this goes out again
+        await marketAPI.fetch(true);
+
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    test('a force request behind a plain one waits it out, then refreshes — never in parallel', async () => {
+        const { getJSON } = createMocks(true);
+        getJSON.mockResolvedValue(null);
+
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        // Track how many requests are ever airborne at once
+        let active = 0;
+        let peak = 0;
+        fetch.mockImplementation(async () => {
+            active += 1;
+            peak = Math.max(peak, active);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            active -= 1;
+            return { ok: true, json: async () => ({ marketData: { items: [] }, timestamp: 123 }) };
+        });
+
+        const plain = marketAPI.fetch();
+        const forced = marketAPI.fetch(true);
+        await Promise.all([plain, forced]);
+
+        expect(fetch).toHaveBeenCalledTimes(2); // the force still refreshes...
+        expect(peak).toBe(1); // ...but sequentially — never a burst
+    });
+
+    test('a failed shared fetch clears the slot so the next call retries', async () => {
+        const { getJSON } = createMocks(true);
+        getJSON.mockResolvedValue(null);
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        fetch.mockResolvedValue({ ok: false, status: 500, statusText: 'boom' });
+
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        const [a, b] = await Promise.all([marketAPI.fetch(), marketAPI.fetch()]);
+        expect(a).toBeNull();
+        expect(b).toBeNull();
+        expect(fetch).toHaveBeenCalledTimes(1);
+
+        await marketAPI.fetch();
+        expect(fetch).toHaveBeenCalledTimes(2);
+
+        error.mockRestore();
+        warn.mockRestore();
     });
 });
 

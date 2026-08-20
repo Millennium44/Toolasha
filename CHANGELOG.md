@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Concurrent market fetches share one request
+
+marketplace.json is rate-limited and a burst of parallel fetches trips a temporary block; several features fetch at startup behind nothing but an is-it-loaded check. Concurrent callers now share one in-flight request, and a forced refresh arriving behind a plain one waits it out before going to the network — sequential, never a burst.
+
 ### Lab sim: one calculate button, uncapped precision, and a cancel
 
 - The labyrinth control strip drew two calculate buttons at once (and a copy orphaned by a grid re-render kept its own); there is now exactly one, hidden entirely while auto-calc is on, and re-injecting the strip can no longer duplicate it.

@@ -46,14 +46,52 @@ class MarketAPI {
 
         // Event listeners for price updates
         this.listeners = [];
+
+        /** The fetch currently running, shared by every concurrent caller */
+        this._inFlightFetch = null;
+        /** Whether that fetch was a forced one (a forced result satisfies anyone) */
+        this._inFlightForce = false;
     }
 
     /**
-     * Fetch market data from API or cache
+     * Fetch market data from API or cache.
+     *
+     * Concurrent callers share one request: several features fetch at startup
+     * behind nothing but an `isLoaded()` check, and marketplace.json is
+     * rate-limited — a burst of parallel fetches is exactly what trips its
+     * CloudFront 403 (see the catch below). A force request arriving behind a
+     * plain in-flight one waits it out and then refreshes — sequential, so
+     * still never a burst.
+     *
      * @param {boolean} forceFetch - Force a fresh fetch even if cache is valid
      * @returns {Promise<Object|null>} Market data object or null if failed
      */
     async fetch(forceFetch = false) {
+        if (this._inFlightFetch) {
+            if (!forceFetch || this._inFlightForce) return this._inFlightFetch;
+            await this._inFlightFetch.catch(() => {});
+        }
+
+        const run = this._fetchInner(forceFetch);
+        this._inFlightFetch = run;
+        this._inFlightForce = forceFetch;
+        try {
+            return await run;
+        } finally {
+            if (this._inFlightFetch === run) {
+                this._inFlightFetch = null;
+                this._inFlightForce = false;
+            }
+        }
+    }
+
+    /**
+     * The actual fetch, always reached through `fetch()`'s in-flight dedup.
+     * @param {boolean} forceFetch - Force a fresh fetch even if cache is valid
+     * @returns {Promise<Object|null>} Market data object or null if failed
+     * @private
+     */
+    async _fetchInner(forceFetch = false) {
         // Check cache first (unless force fetch)
         if (!forceFetch) {
             const cached = await this.getCachedData();
