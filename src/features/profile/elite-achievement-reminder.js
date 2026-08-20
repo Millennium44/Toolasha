@@ -98,8 +98,13 @@ class EliteAchievementReminder {
             if (!profilePanel) return;
 
             // Prefix-matched: the game ships these class names with a CSS-module
-            // hash suffix that changes on every rebuild
+            // hash suffix that changes on every rebuild. The profile modal is
+            // SharableProfile_modalContent — its own container, not the generic
+            // Modal_ family, and `[class*="Modal"]` never matched its lowercase
+            // "modal", so the climb used to stop at the tab wrapper below the
+            // header and the icon was never drawn.
             const modalContainer =
+                profilePanel.closest('[class*="SharableProfile_modalContent"]') ||
                 profilePanel.closest('[class*="Modal_modalContent"]') ||
                 profilePanel.closest('[class*="Modal"]') ||
                 profilePanel.parentElement;

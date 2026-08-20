@@ -76,11 +76,15 @@ describe('isEliteTierIncomplete', () => {
 });
 
 // Hashed suffixes on purpose: the game ships CSS-module class names with a
-// rebuild-specific hash, and the feature has to find these by prefix
+// rebuild-specific hash, and the feature has to find these by prefix.
+// The LIVE structure: the profile modal is SharableProfile's own container —
+// no generic Modal_ classes anywhere, and "modalContent" spelt with a
+// lowercase m, which a case-sensitive [class*="Modal"] never matches. This is
+// the markup that shipped while the icon silently failed to draw.
 function buildProfileModal() {
     document.body.innerHTML = `
-        <div class="Modal_modalContainer__2Yv1a">
-            <div class="Modal_modalContent__3ZY0k">
+        <div class="SharableProfile_modalContainer__1x9Qp">
+            <div class="SharableProfile_modalContent__2k8Wd">
                 <div class="SharableProfile_sharableProfile__1Kd0z">
                     <div class="SharableProfile_header__2FyXq">
                         <div class="CharacterName_characterName__1amXp">
@@ -176,7 +180,7 @@ describe('elite-achievement-reminder — icon injection', () => {
         expect(eliteAchievementReminder.currentIcon).not.toBeNull();
         const unregister = createMutationWatcher.mock.results.at(-1).value;
 
-        document.querySelector('[class*="Modal_modalContent"]').remove();
+        document.querySelector('[class*="SharableProfile_modalContent"]').remove();
         capturedMutationCallback();
 
         expect(eliteAchievementReminder.currentIcon).toBeNull();

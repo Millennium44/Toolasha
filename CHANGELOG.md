@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The Elite achievement reminder draws its icon
+
+The profile modal is SharableProfile's own container, not the generic Modal family the feature climbed for — so it stopped one level under the header and the icon never appeared. It climbs to the right container now.
+
 ### Risk of Ruin defaults off
 
 Both the calculator and its corner launcher now default off; the feature is one settings toggle away for whoever wants it.
