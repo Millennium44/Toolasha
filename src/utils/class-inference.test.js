@@ -32,6 +32,24 @@ const ABILITIES = {
     '/abilities/rejuvenate': heal('allAllies'),
     '/abilities/self_patch': heal('self'),
     '/abilities/toughness': { abilityEffects: [{ effectType: '/ability_effect_types/buff', targetType: 'self' }] },
+    '/abilities/spike_shell': {
+        abilityEffects: [
+            {
+                effectType: '/ability_effect_types/buff',
+                targetType: 'self',
+                buffs: [{ typeHrid: '/buff_types/physical_thorns' }, { typeHrid: '/buff_types/elemental_thorns' }],
+            },
+        ],
+    },
+    '/abilities/taunt': {
+        abilityEffects: [
+            {
+                effectType: '/ability_effect_types/buff',
+                targetType: 'self',
+                buffs: [{ typeHrid: '/buff_types/threat' }],
+            },
+        ],
+    },
 };
 
 /** A cast log holding the abilities named, in order, once each */
@@ -46,6 +64,7 @@ describe('reading one ability', () => {
         expect(abilityProfile('/abilities/fireball', ABILITIES)).toEqual({
             hrid: '/abilities/fireball',
             healsAlly: false,
+            tanks: false,
             damages: true,
             style: 'magic',
             element: 'fire',
@@ -111,6 +130,26 @@ describe('inferring a class', () => {
 
         expect(verdict).toMatchObject({ key: 'tank', short: CLASS_BUCKETS.tank.short });
         expect(verdict.basis).toContain('threat');
+    });
+
+    test('a thorns or taunt ability is a tank, cast or merely carried', () => {
+        // Seen casting it, auto-attacking otherwise
+        const cast1 = inferClass({ casts: cast('/abilities/spike_shell') }, ABILITIES);
+        expect(cast1.key).toBe('tank');
+        expect(cast1.basis).toContain('thorns');
+
+        // In the kit with a ranged weapon on the sheet: the kit wins over the weapon style
+        const kit = inferClass(
+            {
+                kit: [{ hrid: '/abilities/taunt' }, { hrid: '/abilities/steady_shot' }],
+                stats: { combatStyleHrids: ['/combat_styles/ranged'] },
+            },
+            ABILITIES
+        );
+        expect(kit.key).toBe('tank');
+
+        // A plain self-buff says nothing
+        expect(inferClass({ casts: cast('/abilities/toughness') }, ABILITIES)).toBeNull();
     });
 
     test('an ally heal outranks the damage a healer also does', () => {

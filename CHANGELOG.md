@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Class icons on the normal-combat per-player panel
 
-The Per-player panel now shows the same T95-weapon class chip the trial scoreboard does, read off what each slot has been seen casting this run (fire/water/nature staff, bow, melee, bulwark). Seeded from the kit and weapon the battle statement gives each slot, so an auto-attacker shows their weapon's class before any cast; the Taken and Healed tabs borrow the verdict by name.
+The Per-player panel now shows the same T95-weapon class chip the trial scoreboard does, read off what each slot has been seen casting this run (fire/water/nature staff, bow, melee, bulwark). Seeded from the kit and weapon the battle statement gives each slot, so an auto-attacker shows their weapon's class before any cast; a taunt, thorns or retaliation ability (Taunt, Provoke, Spike Shell, Retribution) cast or carried reads as Tank; the Taken and Healed tabs borrow the verdict by name.
 
 ### One Risk of Ruin tab on live installs
 

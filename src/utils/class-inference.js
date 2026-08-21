@@ -22,7 +22,10 @@
  * 1. **Threat on the sheet is a tank.** `combatStats.threat` is a stat nobody
  *    carries by accident — it exists to pull aggro — so a captured loadout with
  *    a nonzero one settles the question outright. Only a capture can say this;
- *    the stream carries no stats.
+ *    the stream carries no stats. **A taunt, thorns or retaliation ability**
+ *    cast or carried says the same thing from the kit side: a buff of type
+ *    threat, physical/elemental thorns or retaliation exists to be hit and
+ *    nobody else runs one.
  * 2. **An ally heal is a healer.** An `/ability_effect_types/heal` effect
  *    pointed at an ally. Self-heals do not count: every build life-steals.
  * 3. **The modal damage style of what they actually cast.** Magic splits again
@@ -63,6 +66,14 @@ const HEAL_EFFECT = '/ability_effect_types/heal';
 
 /** Ability effects that deal damage */
 const DAMAGE_EFFECT = '/ability_effect_types/damage';
+
+/** Buff types only a tank's kit carries — the thing to be hit, and the price of hitting it */
+const TANK_BUFFS = new Set([
+    '/buff_types/threat',
+    '/buff_types/physical_thorns',
+    '/buff_types/elemental_thorns',
+    '/buff_types/retaliation',
+]);
 
 /** How many distinct ability hrids a verdict keeps as its evidence */
 export const MAX_EVIDENCE = 6;
@@ -125,7 +136,7 @@ function tail(hrid) {
  *
  * @param {string} hrid - Ability hrid from a tick or a captured kit
  * @param {Object} [abilityDetailMap] - Game data
- * @returns {{hrid: string, healsAlly: boolean, damages: boolean, style: string, element: string}|null}
+ * @returns {{hrid: string, healsAlly: boolean, damages: boolean, tanks: boolean, style: string, element: string}|null}
  */
 export function abilityProfile(hrid, abilityDetailMap = {}) {
     const key = String(hrid || '');
@@ -136,12 +147,14 @@ export function abilityProfile(hrid, abilityDetailMap = {}) {
 
     let healsAlly = false;
     let damages = false;
+    let tanks = false;
     let style = '';
     let element = '';
 
     for (const effect of detail.abilityEffects || []) {
         const target = String(effect?.targetType || '');
         if (effect?.effectType === HEAL_EFFECT && target !== 'self') healsAlly = true;
+        if ((effect?.buffs || []).some((buff) => TANK_BUFFS.has(String(buff?.typeHrid || '')))) tanks = true;
         if (effect?.effectType !== DAMAGE_EFFECT) continue;
 
         damages = true;
@@ -151,7 +164,7 @@ export function abilityProfile(hrid, abilityDetailMap = {}) {
         if (!element) element = tail(effect?.damageType);
     }
 
-    return { hrid: key, healsAlly, damages, style, element };
+    return { hrid: key, healsAlly, damages, tanks, style, element };
 }
 
 /**
@@ -265,6 +278,12 @@ export function inferClass({ casts = null, kit = null, stats = null } = {}, abil
     for (const hrid of [...observed, ...kitHrids]) {
         const profile = abilityProfile(hrid, abilityDetailMap);
         if (profile) profiles.push(profile);
+    }
+
+    //    …and a taunt, thorns or retaliation ability is the kit-side statement
+    //    of the same thing
+    if (profiles.some((profile) => profile.tanks)) {
+        return verdict(CLASS_BUCKETS.tank, 'a taunt, thorns or retaliation ability in the kit');
     }
 
     // 2. Anybody who heals an ally is the healer, whatever else they cast —
