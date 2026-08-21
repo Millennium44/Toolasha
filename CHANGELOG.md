@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### All Zones sim: a Bestiary column
+
+The All Zones results table gains **Bestiary pts/day**: the simulated kills per monster in each zone against your Bestiary's defeated counts, scored on the game's own formula (1 point at the first kill, +2 at 10, +3 at 100 …), with when the first point lands and a hover listing each monster's count, rate and next threshold; the best zone is badged and the column sorts and exports. Needs the Bestiary loaded once (Achievements → Bestiary, or its Refresh) — the data manager now keeps `monsters_updated`.
+
 ### No normal-combat Per-player button on the trial's In Progress tab
 
 The party per-player opener stays off the guild trial's battle panel, which has its own scoreboard; only the party's own battle gets it.

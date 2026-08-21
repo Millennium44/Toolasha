@@ -27,6 +27,7 @@ import {
     loadAllZonesSnapshot,
 } from '../../utils/all-zones-snapshot.js';
 import { formatWithSeparator, formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
+import { monsterKillsPerHour, countsByMonster, zoneBestiaryOutlook } from '../../utils/bestiary.js';
 import { capProfitRate, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import {
     isSkillingGearItem,
@@ -2538,6 +2539,10 @@ class CombatSimUI {
 
         // Build row data
         const playerHrid = this._activePlayerTab || 'player1';
+        // The Bestiary, when the Achievements tab has loaded it: what each zone's
+        // kill rates are worth in points over the next day, from the counts held
+        const bestiaryRows = dataManager.getCharacterMonsters?.() || null;
+        const bestiaryCounts = bestiaryRows ? countsByMonster(bestiaryRows) : null;
         const rows = zoneResults
             .filter((r) => r && r.simResult)
             .map((r) => {
@@ -2548,6 +2553,13 @@ class CombatSimUI {
                 const totalXP = Object.values(xp).reduce((s, v) => s + v, 0) / simHours;
                 const playerDeaths = (sim.deaths?.[playerHrid] || 0) / simHours;
                 const encounters = (sim.encounters || 0) / simHours;
+                const bestiary = bestiaryCounts
+                    ? zoneBestiaryOutlook({
+                          killsPerHour: monsterKillsPerHour(sim, simHours),
+                          counts: bestiaryCounts,
+                          hours: 24,
+                      })
+                    : null;
 
                 return {
                     zone: r.zone.name,
@@ -2556,6 +2568,8 @@ class CombatSimUI {
                     encounters,
                     deaths: playerDeaths,
                     totalXP,
+                    bestiary: bestiary ? bestiary.pointsPerDay : null,
+                    _bestiary: bestiary,
                     stamina: (xp.stamina || 0) / simHours,
                     intelligence: (xp.intelligence || 0) / simHours,
                     attack: (xp.attack || 0) / simHours,
@@ -2599,6 +2613,17 @@ class CombatSimUI {
         // any sort or column hiding — neither is a property of the current view
         scoreAllZoneRows(rows);
         const best = bestAllZoneRows(rows);
+        // The Bestiary's own winner: most points in a day, ties to the earlier first point
+        const bestBestiary = bestiaryCounts
+            ? rows.reduce((top, row) => {
+                  if (!row._bestiary || !(row.bestiary > 0)) return top;
+                  if (!top) return row;
+                  if (row.bestiary !== top.bestiary) return row.bestiary > top.bestiary ? row : top;
+                  return (row._bestiary.firstPointHours ?? Infinity) < (top._bestiary.firstPointHours ?? Infinity)
+                      ? row
+                      : top;
+              }, null)
+            : null;
 
         // Six columns of zeros is what a single-style build normally produces,
         // and it is why the table needed a horizontal scrollbar
@@ -2621,6 +2646,16 @@ class CombatSimUI {
             { key: 'revenue', label: 'Rev/hr' },
             { key: 'expenses', label: 'Cost/hr' },
             { key: 'profit', label: 'Profit/hr' },
+            {
+                key: 'bestiary',
+                label: 'Bestiary pts/day',
+                title: bestiaryCounts
+                    ? 'Bestiary points a day of fighting here would earn — the simulated kills per monster against ' +
+                      'your defeated counts, points landing on each power of ten (1 at the first kill, +2 at 10, +3 ' +
+                      'at 100 …). Hover a cell for the monsters and when the first point lands.'
+                    : 'Open Achievements → Bestiary once (or press Refresh there) so the defeated counts are known; ' +
+                      'the column fills in on the next render.',
+            },
         ];
 
         // Sort
@@ -2674,7 +2709,8 @@ class CombatSimUI {
                         if (col.key === 'zone') {
                             const marks =
                                 (row === best.xp ? badge('best XP', '#8ab4f8') : '') +
-                                (row === best.profit ? badge('best profit', '#4caf50') : '');
+                                (row === best.profit ? badge('best profit', '#4caf50') : '') +
+                                (bestBestiary && row === bestBestiary ? badge('best bestiary', '#ffb74d') : '');
                             // Set this zone + tier as the Configure target
                             const targetBtn = row.zoneHrid
                                 ? `<button class="mwi-csim-target-btn" data-hrid="${row.zoneHrid}" data-tier="${row.tier}" title="Set as Configure target" style="margin-left:6px; background:rgba(74,158,255,0.15); border:1px solid rgba(74,158,255,0.4); color:#8ab4f8; border-radius:4px; padding:0 5px; font-size:10px; line-height:1.4; cursor:pointer;">&#9678;</button>`
@@ -2684,6 +2720,42 @@ class CombatSimUI {
                         } else if (col.key === 'tier') {
                             display = `T${val}`;
                             style += ' color:#888; text-align:center;';
+                        } else if (col.key === 'bestiary') {
+                            const outlook = row._bestiary;
+                            if (!outlook) {
+                                display = '—';
+                                style += ' text-align:right; color:#666;';
+                            } else {
+                                const first = Number.isFinite(outlook.firstPointHours)
+                                    ? outlook.firstPointHours < 1
+                                        ? `${Math.max(1, Math.round(outlook.firstPointHours * 60))}m`
+                                        : `${outlook.firstPointHours.toFixed(1)}h`
+                                    : null;
+                                display =
+                                    `${outlook.pointsPerDay.toFixed(1)}` +
+                                    (first ? `<span style="color:#888; font-size:9px;"> · 1st ${first}</span>` : '');
+                                const lines = outlook.monsters
+                                    .slice(0, 8)
+                                    .map((m) => {
+                                        const name =
+                                            gameData?.combatMonsterDetailMap?.[m.monsterHrid]?.name || m.monsterHrid;
+                                        const eta =
+                                            m.hoursToNext < 1
+                                                ? `${Math.max(1, Math.round(m.hoursToNext * 60))}m`
+                                                : `${m.hoursToNext.toFixed(1)}h`;
+                                        return `${name}: ${m.count} defeated, ${m.killsPerHour.toFixed(1)}/hr → next point at ${m.nextAt} in ${eta} (+${m.pointsGained} in 24h)`;
+                                    })
+                                    .join('\n');
+                                const cellTitle = `${outlook.pointsGained} points in the first 24 h here.\n${lines}`;
+                                style += ' text-align:right; font-variant-numeric:tabular-nums;';
+                                const bestVal = maxVals[col.key];
+                                if (bestVal !== undefined && val === bestVal && val > 0 && rows.length > 1) {
+                                    style += ' color:#4caf50; font-weight:600;';
+                                } else {
+                                    style += ' color:#e0e0e0;';
+                                }
+                                return `<td style="${style}" title="${cellTitle.replace(/"/g, '&quot;')}">${display}</td>`;
+                            }
                         } else if (col.key === 'deaths') {
                             display = val.toFixed(2);
                             style += ' text-align:right; font-variant-numeric:tabular-nums;';
@@ -2776,6 +2848,7 @@ class CombatSimUI {
                 { key: 'expenses', label: 'Cost/hr' },
                 { key: 'profit', label: 'Profit/hr' },
                 { key: 'profitDay', label: 'Profit/day' },
+                { key: 'bestiary', label: 'Bestiary pts/day' },
             ],
             rows,
         }));

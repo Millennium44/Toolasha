@@ -253,6 +253,7 @@ class DataManager {
 
                 // Clear old character data
                 this.characterData = null;
+                this.characterMonsters = null;
                 this.characterSkills = null;
                 this.characterItems = null;
                 this.characterActions = [];
@@ -427,6 +428,16 @@ class DataManager {
             if (this.applyAbilityUpdates(data.endCharacterAbilities)) {
                 this.emit('abilities_updated', data);
             }
+        });
+
+        // The Bestiary, as the Achievements tab fetches it (`get_monsters`):
+        // one row per monster with its defeated count. Nothing asks for it
+        // here — it arrives when the tab is opened or refreshed
+        this.webSocketHook.on('monsters_updated', (data) => {
+            if (!Array.isArray(data?.monsters)) return;
+            this.characterMonsters = data.monsters;
+            this.characterMonstersAt = Date.now();
+            this.emit('monsters_updated', data);
         });
 
         // Handle items_updated (inventory/equipment changes)
@@ -1137,6 +1148,15 @@ class DataManager {
      * Get player's inventory
      * @returns {Array|null} Character items
      */
+    /**
+     * The Bestiary as last fetched: one row per monster with its defeated count.
+     * @returns {Array<{monsterHrid: string, count: number, tierData?: string}>|null} Null until the
+     *   Achievements → Bestiary tab has loaded it this session
+     */
+    getCharacterMonsters() {
+        return this.characterMonsters || null;
+    }
+
     getInventory() {
         return this.characterItems ? [...this.characterItems] : null;
     }
