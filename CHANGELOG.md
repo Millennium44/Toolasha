@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### No normal-combat Per-player button on the trial's In Progress tab
+
+The party per-player opener stays off the guild trial's battle panel, which has its own scoreboard; only the party's own battle gets it.
+
 ### Trial Abilities: the class detector is scored against Battle Info
 
 Each captured player who has been seen casting gets a line under their kit — "detection ✓ Fire Mage" or "detection ✗ guessed Melee, Battle Info says Ranged" (tooltip names the evidence both ways) — and the header carries the scorecard: right / tested (%), plus how many are captured but untested because they have not cast yet.

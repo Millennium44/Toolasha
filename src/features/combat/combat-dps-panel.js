@@ -303,11 +303,26 @@ const timers = createTimerRegistry();
  * React throws the battle panel away whenever the Combat tab is left and
  * returned to, and an anchor captured once is stale with nothing to notice it.
  */
+/** Whether an element sits inside the guild panel — a trial's battle, not the party's */
+function inGuildPanel(element) {
+    return Boolean(element?.closest?.('[class*="GuildPanel"]'));
+}
+
 function inject() {
     if (typeof document === 'undefined') return;
-    if (document.getElementById(BUTTON_ID)) return;
+    const existing = document.getElementById(BUTTON_ID);
+    if (existing) {
+        // A button that landed in the trial's battle panel (In Progress tab)
+        // comes back out: the trial has its own per-player board
+        if (inGuildPanel(existing)) existing.remove();
+        else return;
+    }
 
-    const area = document.querySelector(PLAYERS_AREA) || document.querySelector(GAME.BATTLE_PANEL);
+    // The party's own battle, never the guild trial's: that panel renders the
+    // same players area inside the Guild tab and has a scoreboard of its own
+    const area =
+        Array.from(document.querySelectorAll(PLAYERS_AREA)).find((el) => !inGuildPanel(el)) ||
+        Array.from(document.querySelectorAll(GAME.BATTLE_PANEL)).find((el) => !inGuildPanel(el));
     if (!area) return;
 
     const button = document.createElement('button');

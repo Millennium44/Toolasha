@@ -250,6 +250,26 @@ describe('the opener, and the lifecycle', () => {
         expect(button()).not.toBeNull();
     });
 
+    test('the guild trial’s battle panel gets no button — it has a scoreboard of its own', () => {
+        // The In Progress tab renders the same players area inside the Guild panel
+        const guild = document.createElement('div');
+        guild.className = 'GuildPanel_guildPanel__1abcd';
+        const trialArea = document.createElement('div');
+        trialArea.className = 'BattlePanel_playersArea__2b3c4';
+        guild.appendChild(trialArea);
+        document.body.appendChild(guild);
+
+        feature.initialize();
+        for (const handler of opts.handlers) handler.callback(trialArea);
+        expect(button()).toBeNull();
+
+        // The party's own battle, elsewhere on the page, still gets it
+        const own = battlePanel();
+        for (const handler of opts.handlers) handler.callback(own);
+        expect(button()).not.toBeNull();
+        expect(own.contains(button())).toBe(true);
+    });
+
     test('one button however many times the observer fires', () => {
         const area = battlePanel();
         feature.initialize();
