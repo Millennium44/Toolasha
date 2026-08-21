@@ -28,6 +28,7 @@ import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
 import { setReactInputValue } from '../../utils/react-input.js';
+import { clickThroughReact } from '../../utils/react-click.js';
 import { testerShopEnabled, testerShopCoinCost } from '../../utils/tester-shop.js';
 
 /**
@@ -950,20 +951,36 @@ function nextBuyableTab() {
     );
 }
 
-/** A visible element whose own text is exactly this, case-insensitively */
+/**
+ * The shop card for an item, on screen.
+ *
+ * The game's own card class first (`ShopPanel_shopItem`); failing that, the
+ * deepest visible element whose text reads as a card — the item name first,
+ * a coin price last — since a filtered shop holds the card inside several
+ * containers that carry the very same text.
+ *
+ * @param {string} itemName - As the shop names it
+ * @returns {HTMLElement|null}
+ */
 function findShopCard(itemName) {
     const wanted = String(itemName || '')
         .trim()
         .toLowerCase();
     if (!wanted) return null;
+    const reads = (el) => {
+        const text = (el.textContent || '').trim().toLowerCase();
+        return text.startsWith(wanted) && text.includes('coin');
+    };
+    const card = Array.from(document.querySelectorAll('[class*="ShopPanel_shopItem"]')).find(
+        (el) => el.offsetParent !== null && reads(el)
+    );
+    if (card) return card;
+
     let best = null;
     for (const el of document.querySelectorAll('div, button, span')) {
-        if (el.offsetParent === null) continue;
-        const text = (el.textContent || '').trim().toLowerCase();
-        if (!text.startsWith(wanted) || !text.includes('coin')) continue;
-        // Inside a card the item name comes first and the price last; the
-        // smallest such element is the card rather than the panel around it
-        if (!best || text.length < (best.textContent || '').trim().length) best = el;
+        if (el.offsetParent === null || !reads(el)) continue;
+        // Equal text means nested containers: keep the deepest one
+        if (!best || (el.textContent || '').trim().length <= (best.textContent || '').trim().length) best = el;
     }
     return best;
 }
@@ -998,7 +1015,9 @@ async function buyOneFromTesterShop(itemName, quantity) {
         card = findShopCard(itemName);
     }
     if (!card) return { ok: false, reason: 'not found in the shop' };
-    card.click();
+    // The game ignores a plain synthetic click on many of its elements; go
+    // through React's own handler first
+    clickThroughReact(card, { reactFirst: true });
 
     let modal = null;
     for (let i = 0; i < 20 && !modal; i++) {
