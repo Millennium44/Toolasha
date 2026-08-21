@@ -126,10 +126,24 @@ class WebSocketHook {
             try {
                 const iframe = document.createElement('iframe');
                 iframe.style.display = 'none';
+                // Same-origin so its realm's getter works on this realm's
+                // events, but NO scripts: a frame that runs scripts is a frame
+                // a userscript manager may inject every matching script into,
+                // booting second copies of them against shared storage for the
+                // few milliseconds this helper exists
+                iframe.setAttribute('sandbox', 'allow-same-origin');
                 (document.documentElement || document.body).appendChild(iframe);
-                const descriptor = Object.getOwnPropertyDescriptor(iframe.contentWindow.MessageEvent.prototype, 'data');
-                iframe.remove();
-                if (typeof descriptor?.get === 'function') this.nativeDataGet = descriptor.get;
+                try {
+                    const descriptor = Object.getOwnPropertyDescriptor(
+                        iframe.contentWindow.MessageEvent.prototype,
+                        'data'
+                    );
+                    if (typeof descriptor?.get === 'function') this.nativeDataGet = descriptor.get;
+                } finally {
+                    // Gone whether or not the read worked — a helper frame left
+                    // in the document is a frame something else may notice
+                    iframe.remove();
+                }
             } catch (frameError) {
                 console.error('[WebSocket] Could not obtain a native data getter:', frameError);
             }

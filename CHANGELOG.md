@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The foreign-hook bypass frame runs no scripts
+
+The hidden same-origin frame the websocket hook borrows a native getter from is now sandboxed without scripts and always removed, so no userscript can be booted into it as a second copy sharing storage for the moment it exists.
+
 ### Per-player damage panel for normal combat
 
 - The guild trial's per-player board now exists for ordinary party and solo fights, off a new
