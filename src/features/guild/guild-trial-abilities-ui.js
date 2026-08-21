@@ -301,10 +301,13 @@ function drawHeader(body, state) {
         return;
     }
 
+    const score = classChecksLine(state.classChecks);
     if (state.complete) {
         card.appendChild(panelLine('Complete', completionLine(state), ROW_COLORS.good));
+        if (score) card.appendChild(panelLine('Class detection', score.text, score.color, score.title));
         return;
     }
+    if (score) card.appendChild(panelLine('Class detection', score.text, score.color, score.title));
 
     const tier = tierRangeLabel(state.capturedTiers, state.captureTier);
     if (tier) card.appendChild(panelLine('Capture tier', tier, ROW_COLORS.gold));
@@ -561,6 +564,54 @@ export function classTagText(classTag) {
 }
 
 /**
+ * What to say about one player's class check.
+ * @param {{guess: Object|null, actual: Object|null, agree: boolean|null}|null} check - From `state()`
+ * @returns {{text: string, color: string, title: string}|null} Null when there is nothing to compare
+ */
+export function classCheckLine(check) {
+    if (!check?.guess || !check?.actual) return null;
+    if (check.agree) {
+        return {
+            text: `detection ✓ ${check.actual.label}`,
+            color: ROW_COLORS.good,
+            title: `The casts said ${check.guess.label} (${check.guess.basis}); Battle Info agrees (${check.actual.basis}).`,
+        };
+    }
+    return {
+        text: `detection ✗ guessed ${check.guess.label}, Battle Info says ${check.actual.label}`,
+        color: ROW_COLORS.bad,
+        title:
+            `From casts: ${check.guess.label} — ${check.guess.basis}` +
+            (check.guess.evidence?.length
+                ? ` (${check.guess.evidence.map((h) => h.split('/').pop()).join(', ')})`
+                : '') +
+            `. From Battle Info: ${check.actual.label} — ${check.actual.basis}.`,
+    };
+}
+
+/**
+ * The detector's scorecard for the header: right, wrong, untested.
+ * @param {{agree: number, disagree: number, untested: number}|null} checks - From `state()`
+ * @returns {{text: string, color: string, title: string}|null} Null with nothing to score
+ */
+export function classChecksLine(checks) {
+    if (!checks) return null;
+    const tested = (checks.agree || 0) + (checks.disagree || 0);
+    if (!tested && !checks.untested) return null;
+    const pct = tested ? Math.round((checks.agree / tested) * 100) : null;
+    const text = tested
+        ? `${checks.agree}/${tested} right (${pct}%)` + (checks.untested ? ` · ${checks.untested} untested` : '')
+        : `${checks.untested} captured, none cast yet`;
+    return {
+        text,
+        color: !tested ? ROW_COLORS.dim : checks.disagree ? ROW_COLORS.gold : ROW_COLORS.good,
+        title:
+            'How the class guessed from the cast stream compares with Battle Info, per captured player. ' +
+            'Untested players are captured but have not been seen casting yet.',
+    };
+}
+
+/**
  * A participant's name line, with its class tag beside the name.
  *
  * @param {Object} row - A `state().participants` row
@@ -643,6 +694,17 @@ function drawPlayers(body, state, abilityDetailMap) {
         const tier = tierText(row.capture.capturedTier);
         card.appendChild(playerLine(row, `captured${tier ? ` (${tier})` : ''}`, ROW_COLORS.good));
         card.appendChild(abilityRow(row.capture, abilityDetailMap));
+
+        // The cast-stream guess against the sheet, for a player with both —
+        // what the class detector got right and what it got wrong, by name
+        const check = classCheckLine(row.classCheck);
+        if (check) {
+            const line = document.createElement('div');
+            line.textContent = check.text;
+            line.title = check.title;
+            Object.assign(line.style, { paddingLeft: '10px', color: check.color, fontSize: '0.9em' });
+            card.appendChild(line);
+        }
 
         // Only a player the plan names says anything here: an unplanned player
         // gets no line at all, so the list stays about the capture

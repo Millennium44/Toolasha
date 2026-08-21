@@ -727,6 +727,33 @@ class GuildTrialAbilities {
     }
 
     /**
+     * How the cast-stream guess holds up against what Battle Info says.
+     *
+     * The guess is the verdict from the casts alone; the truth is the verdict
+     * from the captured kit and sheet alone; they are compared by bucket. Only
+     * a player with both is a test — no casts yet is "untested", not wrong.
+     *
+     * @param {{name?: string, captured?: boolean, capture?: Object|null}} row - A `participants()` row
+     * @param {Object} [abilityDetailMap] - Game data
+     * @returns {{guess: Object|null, actual: Object|null, agree: boolean|null}|null}
+     *   Null when the player is not captured
+     */
+    classCheck(row, abilityDetailMap = this._abilityMap()) {
+        if (!row?.captured || !row.capture) return null;
+        const name = String(row.name || row.capture?.name || '')
+            .trim()
+            .toLowerCase();
+        const casts = name ? this.casts[name] || null : null;
+        const guess = casts ? inferClass({ casts }, abilityDetailMap) : null;
+        const actual = inferClass(
+            { kit: row.capture.abilities || null, stats: row.capture.classStats || null },
+            abilityDetailMap
+        );
+        const agree = guess && actual ? guess.key === actual.key : null;
+        return { guess, actual, agree };
+    }
+
+    /**
      * Everything the panel needs, computed fresh.
      *
      * @param {Object} [abilityDetailMap] - Game data; defaults to the live map
@@ -740,7 +767,21 @@ class GuildTrialAbilities {
         // Each row carries its inferred role. Computed here rather than in
         // `participants()` because that runs on every capture and every roster
         // feed to re-check completion, and a class tag is display state
-        const rows = this.participants().map((row) => ({ ...row, classTag: this.classOf(row, abilityDetailMap) }));
+        const rows = this.participants().map((row) => ({
+            ...row,
+            classTag: this.classOf(row, abilityDetailMap),
+            classCheck: this.classCheck(row, abilityDetailMap),
+        }));
+        // The detector's scorecard: every captured player whose casts gave a
+        // guess is a test of it against their Battle Info
+        const classChecks = { agree: 0, disagree: 0, untested: 0 };
+        for (const row of rows) {
+            const check = row.classCheck;
+            if (!check) continue;
+            if (check.agree === true) classChecks.agree += 1;
+            else if (check.agree === false) classChecks.disagree += 1;
+            else classChecks.untested += 1;
+        }
         const outstanding = rows.filter((row) => !row.captured);
         const capturedCount = rows.length - outstanding.length;
         const complete = rows.length > 0 && outstanding.length === 0;
@@ -762,6 +803,7 @@ class GuildTrialAbilities {
             .map(([, player]) => player);
 
         return {
+            classChecks,
             startedAt: session?.startedAt ?? null,
             lastActivityAt: session ? sessionLastActivity(session) : null,
             guildName: session?.guildName ?? this.guildName,

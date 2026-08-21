@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial Abilities: the class detector is scored against Battle Info
+
+Each captured player who has been seen casting gets a line under their kit — "detection ✓ Fire Mage" or "detection ✗ guessed Melee, Battle Info says Ranged" (tooltip names the evidence both ways) — and the header carries the scorecard: right / tested (%), plus how many are captured but untested because they have not cast yet.
+
 ### Trial Abilities: a session lives as long as the trial ticks
 
 The capture session's 65-minute clock now runs from the trial's last tick or capture, not from the session's start, and an explicit trial-start signal no longer wipes a session the ticks say is still running — a skilling hour straight into a combat hour is one trial, and a session begun at the skilling whistle was being blanked five minutes into combat, taking every Battle Info capture with it.

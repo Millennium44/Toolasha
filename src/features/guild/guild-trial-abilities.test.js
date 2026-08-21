@@ -751,6 +751,27 @@ describe('class tags from the ability stream', () => {
         expect(s.state(STREAM_GAME).participants[0].classTag).toBeNull();
     });
 
+    test('a captured player’s cast guess is checked against their Battle Info', () => {
+        const s = session(['Alice', 'Bob', 'Cara']);
+        s.noteTrialStart(NOW);
+        // Alice casts fire and carries fire: agree. Bob casts fire but his
+        // sheet is a healer's: disagree. Cara has cast nothing: untested
+        s.noteAbilityCast('Alice', '/abilities/fireball');
+        s.noteAbilityCast('Bob', '/abilities/fireball');
+        s.recordCapture(snap('Alice', 1, [{ hrid: '/abilities/fireball' }]), { at: NOW });
+        s.recordCapture(snap('Bob', 2, [{ hrid: '/abilities/bloom' }]), { at: NOW });
+        s.recordCapture(snap('Cara', 3, [{ hrid: '/abilities/fireball' }]), { at: NOW });
+
+        const state = s.state(STREAM_GAME);
+        const byName = Object.fromEntries(state.participants.map((row) => [row.name, row.classCheck]));
+        expect(byName.Alice.agree).toBe(true);
+        expect(byName.Bob.agree).toBe(false);
+        expect(byName.Bob.guess.key).toBe('fireMage');
+        expect(byName.Bob.actual.key).toBe('healer');
+        expect(byName.Cara.agree).toBeNull();
+        expect(state.classChecks).toEqual({ agree: 1, disagree: 1, untested: 1 });
+    });
+
     test('a cast for a name with no session in hand starts no session', () => {
         const s = new GuildTrialAbilities();
         s.guildName = 'Cats';
