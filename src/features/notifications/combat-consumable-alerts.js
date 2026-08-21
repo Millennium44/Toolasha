@@ -2,7 +2,7 @@
  * Combat Consumable Alerts
  *
  * Says so when the soonest combat consumable to run out — a food or a drink in
- * the current fight — falls under a configurable number of minutes. A fight
+ * the current fight — falls under a configurable number of hours. A fight
  * stops being a fight when its first slot empties, and the one person who
  * cannot see that coming is the one who is not at the screen.
  *
@@ -36,11 +36,11 @@ import { calculatePlayerStats } from '../combat-stats/combat-stats-calculator.js
 /** Master switch; nothing below it is consulted while this is off */
 export const MASTER_SETTING = 'notifications_combatConsumableLow';
 
-/** The threshold, in minutes */
-export const MINUTES_SETTING = 'notifications_combatConsumableLowMinutes';
+/** The threshold, in hours */
+export const HOURS_SETTING = 'notifications_combatConsumableLowHours';
 
 /** Default threshold when the setting is blank */
-export const DEFAULT_MINUTES = 30;
+export const DEFAULT_HOURS = 3;
 
 /** Event key for the notification service */
 const EVENT_KEY = 'combat-consumable-low';
@@ -122,8 +122,8 @@ class CombatConsumableAlerts {
      * @returns {number}
      */
     thresholdSeconds() {
-        const minutes = Number(config.getSettingValue?.(MINUTES_SETTING, DEFAULT_MINUTES));
-        return (Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_MINUTES) * 60;
+        const hours = Number(config.getSettingValue?.(HOURS_SETTING, DEFAULT_HOURS));
+        return (Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_HOURS) * 3600;
     }
 
     /**

@@ -63,7 +63,7 @@ import {
 } from '../../utils/consumable-forecast.js';
 import { dungeonEntryKey, heldInInventory, keyConsumableEntry } from '../../utils/dungeon-key-forecast.js';
 import { resolveSupplyHrids, readSupplyCounts, bestOwnedTier, SUPPLY_KINDS } from '../combat/labyrinth-supplies.js';
-import { rushFloorTable } from '../combat/labyrinth-run-ledger.js';
+import { rushFloorTable, preserveChance, observedUse } from '../combat/labyrinth-run-ledger.js';
 import storage from '../../core/storage.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { estimateFillSeconds } from '../../utils/order-book.js';
@@ -1089,12 +1089,25 @@ class ConsumablesPanel {
             beacon: cap('labyrinthBeaconCap', 5),
         };
         const needs = [];
+        const ledger = (this._ledgerRuns || []).slice(0, 5);
         for (const kind of SUPPLY_KINDS) {
             if (!(capacity[kind] > 0)) continue;
             // The tier the last run actually carried names the item; what is
             // held, then the basic tier, stand in before any run has said
             const hrid = lab?.[`${kind}ItemHrid`] || bestOwnedTier(counts, kind, hrids) || hrids[kind][0];
-            needs.push({ itemHrid: hrid, perRun: capacity[kind] });
+            // What recent runs actually spent beats the capacity, which is
+            // only what a run *can* spend: a rushed run, a preserving torch
+            // tier, a run that stops short — all of it is in the record and
+            // none of it is in the cap. The cap stands until a run has said
+            const used = observedUse(ledger, kind);
+            const perRun = used.length ? Math.ceil(used.reduce((sum, n) => sum + n, 0) / used.length) : capacity[kind];
+            needs.push({
+                itemHrid: hrid,
+                perRun,
+                kind,
+                observedRuns: used.length,
+                capacity: capacity[kind],
+            });
         }
         // One crate per selected slot per run — the slots the run itself names
         for (const slot of ['teaCrateItemHrid', 'coffeeCrateItemHrid', 'foodCrateItemHrid']) {
@@ -1165,8 +1178,8 @@ class ConsumablesPanel {
         heading.append(name, runsBtn);
         section.appendChild(heading);
 
-        for (const { itemHrid, perRun } of needs) {
-            section.appendChild(this._labRow(itemHrid, perRun, runs, inventory));
+        for (const need of needs) {
+            section.appendChild(this._labRow(need.itemHrid, need.perRun, runs, inventory, need));
         }
 
         // What recent runs actually left unspent, and what each rush-for-exit
@@ -1175,15 +1188,33 @@ class ConsumablesPanel {
         const ledger = (this._ledgerRuns || []).slice(0, 5);
         if (ledger.length) {
             const line = document.createElement('div');
-            line.style.cssText = 'margin-top:3px; font-size:0.9em;';
+            line.style.cssText =
+                'margin-top:3px; font-size:0.9em; display:flex; align-items:center; flex-wrap:wrap; gap:4px 6px;';
             line.style.color = COLORS.textDim;
-            const left = (kind) => ledger.map((run) => run.left?.[kind]).filter((n) => Number.isFinite(n));
-            const show = (kind, label) => {
-                const values = left(kind);
-                return values.length ? `${label} ${values.join(', ')}` : null;
-            };
-            const parts = [show('torch', '🔥'), show('shroud', '👘'), show('beacon', '🏮')].filter(Boolean);
-            line.textContent = `Left over after the last ${ledger.length} run${ledger.length === 1 ? '' : 's'} (newest first): ${parts.join(' · ')}`;
+            const lead = document.createElement('span');
+            lead.textContent = `Left over after the last ${ledger.length} run${ledger.length === 1 ? '' : 's'} (newest first):`;
+            line.appendChild(lead);
+
+            // The game's own icon for each supply — the tier the newest run
+            // carried, else whatever the row above names
+            const hridFor = (kind) =>
+                ledger.find((run) => run.itemHrids?.[kind])?.itemHrids?.[kind] ||
+                needs.find((need) => need.kind === kind)?.itemHrid ||
+                null;
+            for (const kind of SUPPLY_KINDS) {
+                const values = ledger.map((run) => run.left?.[kind]).filter((n) => Number.isFinite(n));
+                if (!values.length) continue;
+                const chip = document.createElement('span');
+                chip.style.cssText = 'display:inline-flex; align-items:center; gap:3px;';
+                const hrid = hridFor(kind);
+                if (hrid) chip.appendChild(itemIcon(hrid, 16));
+                const nums = document.createElement('span');
+                nums.textContent = values.join(', ');
+                chip.appendChild(nums);
+                chip.title = `${kind.charAt(0).toUpperCase() + kind.slice(1)}es left at the end of each run, newest first`;
+                if (kind === 'beacon') chip.title = 'Beacons left at the end of each run, newest first';
+                line.appendChild(chip);
+            }
 
             const info = dataManager.characterData?.characterInfo;
             const deepest = Math.max(
@@ -1192,15 +1223,24 @@ class ConsumablesPanel {
             );
             const torchCap = Number(info?.labyrinthTorchCap) || 0;
             if (deepest > 0 && torchCap > 0) {
-                const table = rushFloorTable(deepest, torchCap)
+                const torchHrid = hridFor('torch');
+                const keep = torchHrid ? preserveChance(torchHrid) : 0;
+                const table = rushFloorTable(deepest, torchCap, keep)
                     .map(
                         (row) => `rush ≤${row.rushFloor}: ~${row.torches} torches${row.fits ? '' : ' — over capacity'}`
                     )
                     .join('\n');
+                const preserveNote =
+                    keep > 0 ? ` Your torch preserves ${Math.round(keep * 100)}% of uses, which is taken off.` : '';
+                const used = observedUse(ledger, 'torch');
+                const observedNote = used.length
+                    ? `\n\nObserved — torches actually spent in the last ${used.length} run${used.length === 1 ? '' : 's'}, newest first: ${used.join(', ')}. That is the real figure (your actual rush floor, rooms entered and preserves); the table is the full-clear estimate.`
+                    : '';
                 line.title =
                     `Torches a run to floor ${deepest} costs, one per room entered (grid math from the game ` +
                     `guide: 4×4 on floor 1, +1 per floor to 8×8; rushed floors cross the shortest path, the ` +
-                    `rest are fully cleared), against your ${torchCap} capacity:\n${table}`;
+                    `rest are fully cleared — a room skipped on a cleared floor is not modelled).${preserveNote} ` +
+                    `Against your ${torchCap} capacity:\n${table}${observedNote}`;
                 line.style.textDecoration = 'underline dotted';
             }
             section.appendChild(line);
@@ -1218,7 +1258,7 @@ class ConsumablesPanel {
      * @param {Array<Object>} inventory - dataManager.getInventory() shape
      * @returns {HTMLElement}
      */
-    _labRow(itemHrid, perRun, runs, inventory) {
+    _labRow(itemHrid, perRun, runs, inventory, need = null) {
         const row = this._grid();
         row.style.padding = '2px 0';
 
@@ -1239,6 +1279,15 @@ class ConsumablesPanel {
 
         const perRunCell = this._cell(`${formatLargeNumber(perRun)}/run`);
         perRunCell.style.color = COLORS.textDim;
+        if (need?.observedRuns > 0) {
+            perRunCell.title =
+                `Average actually spent over your last ${need.observedRuns} recorded run${need.observedRuns === 1 ? '' : 's'} ` +
+                `(capacity ${formatLargeNumber(need.capacity)}).`;
+            perRunCell.style.textDecoration = 'underline dotted';
+        } else if (need?.capacity) {
+            perRunCell.title =
+                'Full capacity — what a run can spend; once a run has been recorded this becomes what runs actually spend.';
+        }
 
         const cost = this._cell(ask === null ? '—' : formatLargeNumber(Math.round(ask * perRun)));
         cost.style.color = COLORS.textDim;

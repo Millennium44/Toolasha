@@ -91,17 +91,17 @@ export function roomsRush(floor) {
 }
 
 /**
- * Torches a run costs, one per room entered: floors at or under the rush
- * floor are crossed by the shortest path, floors above it are fully cleared.
+ * Rooms a run enters: floors at or under the rush floor are crossed by the
+ * shortest path, floors above it are fully cleared.
  *
  * ("Rush for exit up to floor N" — the game's own setting — rushes the early
  * floors and clears the rest, which is the shape this sums.)
  *
  * @param {number} rushFloor - Floors 1..rushFloor are rushed; 0 rushes none
  * @param {number} deepestFloor - The last floor the run reaches
- * @returns {number} Rooms entered, i.e. torches spent
+ * @returns {number} Rooms entered
  */
-export function torchesForPlan(rushFloor, deepestFloor) {
+export function roomsForPlan(rushFloor, deepestFloor) {
     const deepest = Math.max(1, Math.floor(Number(deepestFloor) || 1));
     const rush = Math.max(0, Math.floor(Number(rushFloor) || 0));
     let rooms = 0;
@@ -112,23 +112,79 @@ export function torchesForPlan(rushFloor, deepestFloor) {
 }
 
 /**
+ * The chance a torch is handed back on use, read off the item's own text.
+ *
+ * The game states it in the description — "20% chance to preserve" on an
+ * expert torch — and nowhere else this codebase has found in the data, so the
+ * description is parsed. A torch with no such sentence preserves nothing.
+ *
+ * @param {string} itemHrid - The torch
+ * @param {Object} [itemDetailMap] - Game data; read from the client by default
+ * @returns {number} 0..1
+ */
+export function preserveChance(itemHrid, itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap) {
+    const text = String(itemDetailMap?.[itemHrid]?.description || '');
+    const match = text.match(/(\d+(?:\.\d+)?)\s*%\s*chance\s+to\s+preserve/i);
+    if (!match) return 0;
+    const pct = Number(match[1]);
+    return Number.isFinite(pct) ? Math.min(1, Math.max(0, pct / 100)) : 0;
+}
+
+/**
+ * Torches a run costs: one per room entered, less the share the torch tier
+ * hands back.
+ *
+ * @param {number} rushFloor - Floors 1..rushFloor are rushed; 0 rushes none
+ * @param {number} deepestFloor - The last floor the run reaches
+ * @param {number} [preserve=0] - Chance a use is preserved, 0..1
+ * @returns {number} Expected torches spent, whole
+ */
+export function torchesForPlan(rushFloor, deepestFloor, preserve = 0) {
+    const keep = Number.isFinite(preserve) ? Math.min(1, Math.max(0, preserve)) : 0;
+    return Math.ceil(roomsForPlan(rushFloor, deepestFloor) * (1 - keep));
+}
+
+/**
  * The advisor's table: what a run to `deepestFloor` costs in torches at each
  * candidate rush floor, beside the capacity, so "can I rush less?" is a read
  * rather than a calculation.
  *
  * @param {number} deepestFloor - The floor runs actually reach
  * @param {number} torchCap - What a run can carry
+ * @param {number} [preserve=0] - The torch tier's preserve chance, 0..1
  * @returns {Array<{rushFloor: number, torches: number, fits: boolean}>}
  */
-export function rushFloorTable(deepestFloor, torchCap) {
+export function rushFloorTable(deepestFloor, torchCap, preserve = 0) {
     const deepest = Math.max(1, Math.floor(Number(deepestFloor) || 1));
     const cap = Math.max(0, Math.floor(Number(torchCap) || 0));
     const rows = [];
     for (let rush = 0; rush <= deepest; rush++) {
-        const torches = torchesForPlan(rush, deepest);
+        const torches = torchesForPlan(rush, deepest, preserve);
         rows.push({ rushFloor: rush, torches, fits: cap > 0 ? torches <= cap : false });
     }
     return rows;
+}
+
+/**
+ * What recorded runs actually spent of one supply: start less what was left,
+ * for every run that knows both. Newest first, as the ledger is.
+ *
+ * This is the figure the grid math only estimates — it has the real rush
+ * floor, the rooms actually entered, and the preserves actually rolled in it.
+ *
+ * @param {Array<Object>} runs - Ledger records
+ * @param {string} kind - 'torch' | 'shroud' | 'beacon'
+ * @returns {number[]}
+ */
+export function observedUse(runs, kind) {
+    const out = [];
+    for (const run of runs || []) {
+        const start = Number(run?.start?.[kind]);
+        const left = Number(run?.left?.[kind]);
+        if (!Number.isFinite(start) || !Number.isFinite(left)) continue;
+        out.push(Math.max(0, start - left));
+    }
+    return out;
 }
 
 /**
@@ -153,17 +209,28 @@ export function foldSighting(state, labyrinth, nowMs) {
             const n = Number(labyrinth?.[field]);
             return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : (previous?.left?.[field] ?? null);
         };
+        const left = {
+            torch: count('torchCount'),
+            shroud: count('shroudCount'),
+            beacon: count('beaconCount'),
+        };
+        // The first counts a run was seen with stand as its start, so the
+        // ending can say what was spent. A run first seen mid-way (a reload)
+        // starts from wherever it was seen — the usage it reports is a floor,
+        // not an overstatement
+        const start = {
+            torch: previous?.start?.torch ?? left.torch,
+            shroud: previous?.start?.shroud ?? left.shroud,
+            beacon: previous?.start?.beacon ?? left.beacon,
+        };
         return {
             state: {
                 phase: 'active',
                 run: {
                     key,
                     floor: Math.max(previous?.floor ?? 0, Math.floor(Number(labyrinth?.currentFloor) || 0)),
-                    left: {
-                        torch: count('torchCount'),
-                        shroud: count('shroudCount'),
-                        beacon: count('beaconCount'),
-                    },
+                    left,
+                    start,
                     itemHrids: {
                         torch: labyrinth?.torchItemHrid || previous?.itemHrids?.torch || null,
                         shroud: labyrinth?.shroudItemHrid || previous?.itemHrids?.shroud || null,

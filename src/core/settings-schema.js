@@ -3284,14 +3284,14 @@ export const settingsGroups = {
                 label: 'Notify when a combat consumable is running low',
                 type: 'checkbox',
                 default: false,
-                help: "Fires when the soonest food or drink in your current fight to run out falls under the minutes below — the same 'stops in …' reading the Consumables panel shows for your character. Your own slots only. Once per crossing; restocking back above the threshold re-arms it.",
+                help: "Fires when the soonest food or drink in your current fight to run out falls under the hours below — the same 'stops in …' reading the Consumables panel shows for your character. Your own slots only. Once per crossing; restocking back above the threshold re-arms it.",
             },
-            notifications_combatConsumableLowMinutes: {
-                id: 'notifications_combatConsumableLowMinutes',
-                label: 'Combat consumable warning threshold (minutes)',
+            notifications_combatConsumableLowHours: {
+                id: 'notifications_combatConsumableLowHours',
+                label: 'Combat consumable warning threshold (hours)',
                 type: 'number',
-                default: 30,
-                help: 'How many minutes of supply are left when the alert above fires.',
+                default: 3,
+                help: 'How many hours of supply are left when the alert above fires. Decimals are fine (0.5 is half an hour).',
             },
             notifications_labyrinthEntryAvailable: {
                 id: 'notifications_labyrinthEntryAvailable',

@@ -1293,4 +1293,5 @@ export default {
     cleanup,
     openMissingMaterials,
     openMaterialsList,
+    openTesterShop,
 };

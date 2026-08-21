@@ -62,7 +62,7 @@ vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
 const {
     default: alerts,
     MASTER_SETTING,
-    MINUTES_SETTING,
+    HOURS_SETTING,
     soonestCombatConsumable,
 } = await import('./combat-consumable-alerts.js');
 
@@ -76,7 +76,7 @@ const eating = (itemHrid, itemName, held, perSecond) => ({
 
 beforeEach(() => {
     game.settings = { [MASTER_SETTING]: true };
-    game.values = { [MINUTES_SETTING]: 30 };
+    game.values = { [HOURS_SETTING]: 0.5 };
     game.latest = null;
     game.wsHandlers = {};
     game.dmHandlers = {};
@@ -124,7 +124,7 @@ describe('the crossing', () => {
         };
     };
 
-    test('fires once when the soonest falls under the configured minutes, and re-arms above', async () => {
+    test('fires once when the soonest falls under the configured hours, and re-arms above', async () => {
         await alerts.initialize();
         withSeconds(3600);
         game.wsHandlers.battle_updated({});
@@ -149,8 +149,8 @@ describe('the crossing', () => {
         expect(game.notified).toHaveLength(2);
     });
 
-    test('the threshold is the setting, in minutes', async () => {
-        game.values = { [MINUTES_SETTING]: 120 };
+    test('the threshold is the setting, in hours', async () => {
+        game.values = { [HOURS_SETTING]: 2 };
         await alerts.initialize();
         withSeconds(90 * 60);
         game.wsHandlers.battle_updated({});
@@ -158,12 +158,12 @@ describe('the crossing', () => {
     });
 
     test('a blank or nonsense threshold falls back to the default', async () => {
-        game.values = { [MINUTES_SETTING]: 'x' };
+        game.values = { [HOURS_SETTING]: 'x' };
         await alerts.initialize();
-        withSeconds(31 * 60);
+        withSeconds(3.1 * 3600);
         game.wsHandlers.battle_updated({});
         expect(game.notified).toEqual([]);
-        withSeconds(29 * 60);
+        withSeconds(2.9 * 3600);
         game.wsHandlers.battle_updated({});
         expect(game.notified).toHaveLength(1);
     });
@@ -176,8 +176,8 @@ describe('the crossing', () => {
 });
 
 describe('the settings', () => {
-    test('exist and default off, thirty minutes', () => {
+    test('exist and default off, three hours', () => {
         expect(getSettingDefinition(MASTER_SETTING)?.default).toBe(false);
-        expect(getSettingDefinition(MINUTES_SETTING)?.default).toBe(30);
+        expect(getSettingDefinition(HOURS_SETTING)?.default).toBe(3);
     });
 });

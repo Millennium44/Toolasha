@@ -62,6 +62,8 @@ const {
     torchesForPlan,
     rushFloorTable,
     foldSighting,
+    observedUse,
+    preserveChance,
 } = await import('./labyrinth-run-ledger.js');
 
 describe('the grid arithmetic, straight from the game guide', () => {
@@ -91,6 +93,18 @@ describe('the grid arithmetic, straight from the game guide', () => {
         const rows = rushFloorTable(3, 60);
         expect(rows).toHaveLength(4); // rush 0..3
         expect(rows[0]).toEqual({ rushFloor: 0, torches: 77, fits: false });
+        // A preserving tier hands a share back: the same rooms, fewer torches
+        expect(rushFloorTable(3, 50, 0.2)[0].torches).toBe(Math.ceil(77 * 0.8));
+        expect(
+            preserveChance('/items/expert_torch', {
+                '/items/expert_torch': {
+                    description: 'Used in the Labyrinth. Consumed when entering a room. 20% chance to preserve.',
+                },
+            })
+        ).toBe(0.2);
+        expect(
+            preserveChance('/items/basic_torch', { '/items/basic_torch': { description: 'Used in the Labyrinth.' } })
+        ).toBe(0);
         expect(rows[2].torches).toBe(52);
         expect(rows[2].fits).toBe(true);
     });
@@ -117,8 +131,20 @@ describe('foldSighting', () => {
         expect(s.run.itemHrids.torch).toBe('/items/expert_torch');
     });
 
+    test('the first counts seen are the start, so the ending can say what was spent', () => {
+        let s = foldSighting(start, active({ torchCount: 120, shroudCount: 4 }), 1000).state;
+        s = foldSighting(s, active({ currentFloor: 5, torchCount: 61, shroudCount: 1 }), 2000).state;
+        const { ended } = foldSighting(s, { isActive: false }, 3000);
+        expect(ended.start).toMatchObject({ torch: 120, shroud: 4 });
+        expect(ended.left).toMatchObject({ torch: 61, shroud: 1 });
+        expect(observedUse([ended], 'torch')).toEqual([59]);
+        expect(observedUse([ended], 'shroud')).toEqual([3]);
+        // A record with no start (an older ledger) reports nothing rather than a guess
+        expect(observedUse([{ left: { torch: 10 } }], 'torch')).toEqual([]);
+    });
+
     test('the ending records the run once, off the active→ended edge', () => {
-        let s = foldSighting(start, active({ torchCount: 61 }), 1000).state;
+        const s = foldSighting(start, active({ torchCount: 61 }), 1000).state;
         const { state, ended } = foldSighting(s, { isActive: false }, 2000);
         expect(ended).toMatchObject({ floor: 3, left: { torch: 61 }, endedAt: 2000 });
         // The server re-sends after a run ends; a second ended sighting records nothing

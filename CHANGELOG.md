@@ -6,10 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Consumables panel, Labyrinth block: observed use, preserve chance, game icons
+
+Per-run torch/shroud/beacon figures now come from what your recorded runs actually spent (start less leftover, averaged) instead of the full capacity, once a run has been recorded; the rush-floor torch table takes the torch tier's preserve chance off (read from the item's description) and notes that it cannot model rooms skipped on a cleared floor, with the observed per-run spend listed beside it; the leftover line draws the game's own supply icons. The house panel's material tabs also open the Tester shop when that pricing is on.
+
 ### Labyrinth stopped alert, combat consumable alert, lab summary trim
 
 - "Notify when the labyrinth stops" now keys on your current action leaving the labyrinth (queued rooms ran out, or the run ended) and moving on to the next queued action or nothing — read off the action queue, not the run's active flag — so it fires at the moment to queue more rooms; it names the floor reached and what the character is doing instead.
-- New "Notify when a combat consumable is running low" with a minutes threshold: fires when the soonest food or drink in your fight to run out falls under it — the Consumables panel's own "stops in …" reading for your character; re-arms on restock.
+- New "Notify when a combat consumable is running low" with an hours threshold: fires when the soonest food or drink in your fight to run out falls under it — the Consumables panel's own "stops in …" reading for your character; re-arms on restock.
 - The lab path/beacon summary no longer says "restock applies to your NEXT run" mid-run.
 
 ### Tester shop: missing-materials tabs open the shop; enhancing panel shows the mirror route
