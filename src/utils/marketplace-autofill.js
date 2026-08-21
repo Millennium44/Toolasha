@@ -13,7 +13,7 @@ import domObserver from '../core/dom-observer.js';
  * @param {HTMLElement} modal - Modal container element
  * @returns {HTMLInputElement|null} Quantity input element or null
  */
-function findQuantityInput(modal) {
+export function findQuantityInput(modal) {
     // The game's own quantity row settles it, and is the reliable path since the
     // 8/13/2026 marketplace update made the price and quantity fields typable —
     // they are `type="text"` now, so the old `input[type="number"]` selector

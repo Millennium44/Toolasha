@@ -14,7 +14,7 @@ import {
 } from '../../utils/material-calculator.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { createAutofillManager } from '../../utils/marketplace-autofill.js';
+import { createAutofillManager, findQuantityInput } from '../../utils/marketplace-autofill.js';
 import {
     createMaterialTab,
     removeMaterialTabs,
@@ -1036,13 +1036,19 @@ async function buyOneFromTesterShop(itemName, quantity) {
     }
     if (!modal) return { ok: false, reason: 'no buy dialog' };
 
-    const input = modal.querySelector('input');
+    // The Quantity box, not the Enhancement Level box an equipment dialog
+    // puts first — the same label-reading the marketplace autofill does
+    const input = findQuantityInput(modal);
     if (!input) return { ok: false, reason: 'no quantity box' };
     setReactInputValue(input, String(quantity), { dispatchInput: true, dispatchChange: true });
     await wait(150);
 
     const buy = Array.from(modal.querySelectorAll('button')).find((b) => /^\s*buy\s*$/i.test(b.textContent || ''));
     if (!buy) return { ok: false, reason: 'no Buy button' };
+    // Disabled is the dialog refusing the order (a level out of range, more
+    // than you can pay); pressing it would do nothing, so say why instead
+    for (let i = 0; i < 10 && buy.disabled; i++) await wait(100);
+    if (buy.disabled) return { ok: false, reason: 'Buy is disabled in the dialog' };
     // A plain .click() closes the dialog without buying — the game's handler
     // wants the real event path; React's own handler first, like the card
     clickThroughReact(buy, { reactFirst: true });
