@@ -45,7 +45,6 @@ import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import guildTrialPlan, { comparePlan } from './guild-trial-plan.js';
 import { inferClass, newCastLog, noteCast } from '../../utils/class-inference.js';
-import { ownWeaponHrid } from '../../utils/class-weapon.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
 
 /** Object store the session lives in — shared with the rest of the guild history */
@@ -633,15 +632,14 @@ class GuildTrialAbilities {
         const name = String(row?.name || row?.capture?.name || '')
             .trim()
             .toLowerCase();
-        const ownName = String(dataManager.getCurrentCharacterName?.() || '')
-            .trim()
-            .toLowerCase();
+        // Trial evidence only — never the weapon on the character's sheet: a
+        // trial runs on its own loadout while the same character may be in an
+        // ordinary fight with another weapon at the same time
         return inferClass(
             {
                 casts: name ? this.casts[name] || null : null,
                 kit: row?.capture?.abilities || null,
                 stats: row?.capture?.classStats || null,
-                weaponHrid: ownName && name === ownName ? ownWeaponHrid() : null,
             },
             abilityDetailMap
         );

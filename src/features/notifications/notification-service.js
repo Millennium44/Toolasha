@@ -71,6 +71,7 @@ export const NOTIFICATION_SETTING_KEYS = [
     'notifications_otherCharacterIdle',
     'notifications_communityBuffExpiring',
     'notifications_labyrinthRunFinished',
+    'notifications_combatConsumableLow',
     'notifications_labyrinthEntryAvailable',
     'notifications_combatDeath',
     'notifications_skillLevelUp',

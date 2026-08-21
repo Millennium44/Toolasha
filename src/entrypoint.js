@@ -1625,13 +1625,22 @@ function registerFeatures() {
         },
         {
             key: 'labyrinthRunAlerts',
-            name: 'Labyrinth Run Finished Alerts',
+            name: 'Labyrinth Stopped Alerts',
             category: 'Notifications',
             module: UI.labyrinthRunAlerts,
             async: true,
             // As above: no feature-map entry, so the schema setting is the only
             // gate and an unknown registry key would otherwise default to on
             customCheck: () => config.getSetting('notifications_labyrinthRunFinished'),
+        },
+        {
+            key: 'combatConsumableAlerts',
+            name: 'Combat Consumable Alerts',
+            category: 'Notifications',
+            module: UI.combatConsumableAlerts,
+            async: true,
+            // Schema setting is the only gate; no feature-map entry
+            customCheck: () => config.getSetting('notifications_combatConsumableLow'),
         },
         {
             key: 'labyrinthEntryAlerts',

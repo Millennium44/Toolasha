@@ -3524,11 +3524,9 @@ class LabyrinthClearRate {
             // up right now, so the price stands as it always has.
             let shroudNote = '';
             if (shrouds.over) {
-                if (supplies.runActive) {
-                    const nextRunBuy = this.nextRunRestockNote(supplies, 'shroud', path.shrouds, 'shroud');
-                    shroudNote =
-                        ' — restock applies to your NEXT run' + (nextRunBuy ? ` · for next run: ${nextRunBuy}` : '');
-                } else {
+                // Mid-run there is nothing to say: buying more cannot change
+                // this run, and the next run's bag is the next run's business
+                if (!supplies.runActive) {
                     const buyNote = this.shortfallRestockNote(supplies, 'shroud', shrouds.short);
                     shroudNote = buyNote ? ` · ${buyNote}` : '';
                 }
@@ -3704,11 +3702,7 @@ class LabyrinthClearRate {
             // Same rule as the shroud shortfall in the path summary: mid-run, a
             // price beside the run's own shortfall would be a price for
             // something buying more cannot fix right now
-            if (supplies.runActive) {
-                parts.push('restock applies to your NEXT run');
-                const nextRunBuy = this.nextRunRestockNote(supplies, 'beacon', plan.beacons.length, 'beacon');
-                if (nextRunBuy) parts.push(`for next run: ${nextRunBuy}`);
-            } else {
+            if (!supplies.runActive) {
                 const buyNote = this.shortfallRestockNote(supplies, 'beacon', needed.short);
                 if (buyNote) parts.push(buyNote);
             }

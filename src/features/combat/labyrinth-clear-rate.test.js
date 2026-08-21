@@ -1299,10 +1299,9 @@ describe('planning against the supplies actually held', () => {
         // "left this run" replaces "owned" here — the pile in view is the run's,
         // and mid-run nothing can be bought to grow it before the run ends.
         expect(status.textContent).toMatch(/\d+ shrouds needed · 2 left this run/);
-        expect(status.textContent).toContain('restock applies to your NEXT run');
-        // Market is unloaded in this fixture, so there is no price to quote for
-        // the next run either — the point of this test is the absent buy-now
-        // price, not the presence of a next-run one
+        // Mid-run there is no restock note at all: buying cannot change this
+        // run, and the next run's bag is not this summary's business
+        expect(status.textContent).not.toContain('restock');
         expect(status.textContent).not.toContain('at ask');
         expect(status.style.color).toBe('#ff8a80');
     });
@@ -1327,36 +1326,17 @@ describe('planning against the supplies actually held', () => {
         expect(status.textContent).toContain('assumed for unrevealed rooms');
     });
 
-    test('mid-run, a priced shortfall prices the NEXT run — and the tier actually held, not the cheapest one', async () => {
+    test('mid-run, a priced shortfall quotes nothing — not this run, not the next', async () => {
         const status = buildGrid(4);
         market.loaded = true;
-        // Both tiers are priced; expert is what the bag holds (see beforeEach),
-        // so the hint must reach for that price and not the cheaper basic one
         market.prices = { '/items/basic_shroud': { ask: 1000 }, '/items/expert_shroud': { ask: 5000 } };
 
         await labyrinthClearRate.runPathCalculation();
 
-        expect(status.textContent).toContain('restock applies to your NEXT run');
-        expect(status.textContent).toContain('for next run:');
-        expect(status.textContent).toContain('expert shroud');
-        expect(status.textContent).toContain('at ask');
-        expect(status.textContent).not.toContain('basic shroud');
-        // The price sits after the "NEXT run" marker, not attached to the run's
-        // own shortfall as a buy-now figure the way it used to
-        expect(status.textContent.indexOf('restock applies')).toBeLessThan(status.textContent.indexOf('at ask'));
-    });
-
-    test('mid-run with no price for the held tier, no cheaper tier is substituted', async () => {
-        const status = buildGrid(4);
-        market.loaded = true;
-        // Only the tier the bag does NOT hold has a price
-        market.prices = { '/items/basic_shroud': { ask: 1000 } };
-
-        await labyrinthClearRate.runPathCalculation();
-
-        expect(status.textContent).toContain('restock applies to your NEXT run');
+        expect(status.textContent).toMatch(/\d+ shrouds needed · 2 left this run/);
+        expect(status.textContent).not.toContain('restock');
+        expect(status.textContent).not.toContain('for next run');
         expect(status.textContent).not.toContain('at ask');
-        expect(status.textContent).not.toContain('basic shroud');
     });
 
     test('mid-run, what the bag already holds counts toward the NEXT run and can clear the shortfall entirely', async () => {
@@ -1375,7 +1355,7 @@ describe('planning against the supplies actually held', () => {
         await labyrinthClearRate.runPathCalculation();
 
         expect(status.textContent).toMatch(/\d+ shrouds needed · 0 left this run/);
-        expect(status.textContent).toContain('restock applies to your NEXT run');
+        expect(status.textContent).not.toContain('restock');
         expect(status.textContent).not.toContain('for next run');
         expect(status.textContent).not.toContain('at ask');
 

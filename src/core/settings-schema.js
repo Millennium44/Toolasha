@@ -3274,10 +3274,24 @@ export const settingsGroups = {
             },
             notifications_labyrinthRunFinished: {
                 id: 'notifications_labyrinthRunFinished',
-                label: 'Notify when a labyrinth run finishes',
+                label: 'Notify when the labyrinth stops',
                 type: 'checkbox',
                 default: false,
-                help: 'Keys on the run going from active to not active, as the server reports it — so it covers every ending: cleared out, ended on a lost fight, or exited on purpose. It does not say which, because the payload does not: there is no outcome or reason field on a labyrinth message, so the alert reports the deepest floor the run reached and leaves it at that. Once per run.',
+                help: "Keys on your current action leaving the labyrinth — the queued rooms ran out, or the run ended on a lost fight — and moving on to whatever was queued next, or to nothing. Read off the action queue rather than the run's active flag, because a run whose path has been walked stays active while you wander off, and that is the moment to queue more rooms. Reports the deepest floor reached and what the character is doing instead; it cannot say why, since the payload carries no reason. Once per stop; queuing the labyrinth again re-arms it.",
+            },
+            notifications_combatConsumableLow: {
+                id: 'notifications_combatConsumableLow',
+                label: 'Notify when a combat consumable is running low',
+                type: 'checkbox',
+                default: false,
+                help: "Fires when the soonest food or drink in your current fight to run out falls under the minutes below — the same 'stops in …' reading the Consumables panel shows for your character. Your own slots only. Once per crossing; restocking back above the threshold re-arms it.",
+            },
+            notifications_combatConsumableLowMinutes: {
+                id: 'notifications_combatConsumableLowMinutes',
+                label: 'Combat consumable warning threshold (minutes)',
+                type: 'number',
+                default: 30,
+                help: 'How many minutes of supply are left when the alert above fires.',
             },
             notifications_labyrinthEntryAvailable: {
                 id: 'notifications_labyrinthEntryAvailable',

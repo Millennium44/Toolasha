@@ -13,6 +13,7 @@ import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { timeReadable, formatLargeNumber } from '../../utils/formatters.js';
 import marketAPI from '../../api/marketplace.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
+import { testerShopEnabled, testerGearPrice, MIRROR_HRID } from '../../utils/tester-shop.js';
 
 /**
  * Format a number with thousands separator and 2 decimal places
@@ -495,6 +496,51 @@ export function getProtectFromLevelFromUI(panel) {
  * @param {string|null} protectionItemHrid - Protection item HRID (cached, avoid repeated DOM queries)
  * @returns {string} HTML string
  */
+/**
+ * The test server's way up, when the Tester shop is priced in: buy the item
+ * at the level the shop sells it and mirror it the rest of the way — a
+ * Philosopher's Mirror as protection guarantees the attempt and consumes a
+ * copy one level below, so every level is a mirror plus the level beneath.
+ * No dice, so no attempt counts: a price per target level, and how many
+ * mirrors it takes.
+ *
+ * @param {Object} itemDetails - The item being enhanced
+ * @returns {string} HTML, or '' when the shop is not a price source or does not sell this
+ */
+export function testerRouteHTML(itemDetails) {
+    try {
+        if (!testerShopEnabled()) return '';
+        const itemHrid = itemDetails?.hrid;
+        const at10 = itemHrid ? testerGearPrice(itemHrid, 10) : null;
+        if (!at10) return '';
+
+        const rows = [];
+        for (let level = Math.max(1, at10.shopLevel); level <= 20; level++) {
+            const route = testerGearPrice(itemHrid, level);
+            if (!route) continue;
+            const how =
+                route.route === 'shop'
+                    ? 'shop copy'
+                    : `${route.mirrors} mirror${route.mirrors === 1 ? '' : 's'} from +${route.shopLevel}`;
+            rows.push(
+                `<tr><td style="padding:1px 8px 1px 0; color:#ccc;">+${level}</td>` +
+                    `<td style="padding:1px 8px 1px 0; color:#ffd700; text-align:right;">${formatLargeNumber(Math.round(route.price))}</td>` +
+                    `<td style="padding:1px 0; color:#888;">${how}</td></tr>`
+            );
+        }
+        const mirrorName = dataManager.getItemDetails?.(MIRROR_HRID)?.name || "Philosopher's Mirror";
+        return (
+            '<div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; margin-bottom: 12px;">' +
+            '<div style="color: #9bd; font-weight: bold; margin-bottom: 4px; font-size: 0.95em;">Tester shop route</div>' +
+            `<div style="color:#888; font-size:0.8em; margin-bottom:4px;">Buy from the Tester shop at +${at10.shopLevel}, then ${mirrorName} each level (guaranteed, consumes a copy one level below — ${formatLargeNumber(at10.mirrorPrice)} each).</div>` +
+            `<table style="font-size:0.85em; border-collapse:collapse;">${rows.join('')}</table></div>`
+        );
+    } catch (error) {
+        console.error('[EnhancementDisplay] Building the tester route failed:', error);
+        return '';
+    }
+}
+
 function formatEnhancementDisplay(
     panel,
     params,
@@ -825,6 +871,7 @@ function formatEnhancementDisplay(
         perActionTime
     );
     lines.push(costsByLevelHTML);
+    lines.push(testerRouteHTML(itemDetails));
 
     // Materials cost section (if enhancement costs exist) - just show per-attempt materials
     if (enhancementCosts && enhancementCosts.length > 0) {

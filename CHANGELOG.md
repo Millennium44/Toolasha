@@ -6,6 +6,20 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth stopped alert, combat consumable alert, lab summary trim
+
+- "Notify when the labyrinth stops" now keys on your current action leaving the labyrinth (queued rooms ran out, or the run ended) and moving on to the next queued action or nothing — read off the action queue, not the run's active flag — so it fires at the moment to queue more rooms; it names the floor reached and what the character is doing instead.
+- New "Notify when a combat consumable is running low" with a minutes threshold: fires when the soonest food or drink in your fight to run out falls under it — the Consumables panel's own "stops in …" reading for your character; re-arms on restock.
+- The lab path/beacon summary no longer says "restock applies to your NEXT run" mid-run.
+
+### Tester shop: missing-materials tabs open the shop; enhancing panel shows the mirror route
+
+With Tester-shop pricing on, a missing-materials tab for an item the shop sells opens Shop → Tester filtered to it instead of the marketplace, and the Enhancing panel gains a "Tester shop route" table — shop copy at +10, then Philosopher's Mirrors per level (guaranteed, a copy one level below each) priced per target level.
+
+### Trial scoreboard class icons use trial evidence only
+
+Your own equipped weapon is no longer used to draw your class on the trial scoreboard — a trial runs on its own loadout while the same character can be in an ordinary fight with another weapon. The normal-combat panel still draws the equipped weapon.
+
 ### Test server: price purchases from the Tester shop (opt-in)
 
 A new Pricing & Profit setting, shown only on the test server, floors buy-side prices at the Tester tab's coin prices (house materials, ability books, enhancement materials) and has the simulators' Upgrade tabs price equipment as a shop copy at +10, mirrored up with Philosopher's Mirrors beyond that (guaranteed attempts, each consuming a copy one level below — doubling plus a mirror per level). Off, the Tester entries are ignored everywhere, as before.

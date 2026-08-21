@@ -28,6 +28,7 @@ import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
 import { setReactInputValue } from '../../utils/react-input.js';
+import { testerShopEnabled, testerShopCoinCost } from '../../utils/tester-shop.js';
 
 /**
  * Module-level state
@@ -762,6 +763,13 @@ async function waitForMarketplace() {
  */
 function makeMaterialClickHandler(tabRef) {
     return (_e, mat) => {
+        // On the test server with the Tester shop priced in, a material the
+        // shop sells is bought there, not on the market
+        if (testerShopEnabled() && testerShopCoinCost(mat.itemHrid) > 0) {
+            autofillManager.clearQuantity();
+            openTesterShop(mat.itemName || '');
+            return;
+        }
         // Read the current missing quantity from the tab's data attribute,
         // which is kept up-to-date by the inventory listener.
         autofillManager.setPendingCalculation(() => {
@@ -769,6 +777,58 @@ function makeMaterialClickHandler(tabRef) {
         });
         navigateToMarketplace(mat.itemHrid, 0);
     };
+}
+
+/**
+ * Open the Shop on its Tester tab, filtered to one item by name.
+ *
+ * Best-effort DOM walk: the shop's nav entry, then the tab that says Tester,
+ * then the item filter box. Each step that cannot be found is logged and the
+ * rest is skipped — the shop at least opens.
+ *
+ * @param {string} itemName - What to type into the filter
+ * @returns {Promise<boolean>} Whether the Tester tab was reached
+ */
+export async function openTesterShop(itemName) {
+    const navButtons = document.querySelectorAll('.NavigationBar_nav__3uuUl');
+    const shopButton = Array.from(navButtons).find((nav) => nav.querySelector('svg[aria-label="navigationBar.shop"]'));
+    if (!shopButton) {
+        console.error('[MissingMats] Shop navbar button not found');
+        return false;
+    }
+    shopButton.click();
+
+    const wait = (ms) =>
+        new Promise((resolve) => {
+            timerRegistry.registerTimeout(setTimeout(resolve, ms));
+        });
+
+    let testerTab = null;
+    for (let i = 0; i < 30 && !testerTab; i++) {
+        await wait(100);
+        for (const container of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
+            if (container.offsetParent === null) continue;
+            testerTab = Array.from(container.children).find((tab) => /^\s*tester\s*$/i.test(tab.textContent || ''));
+            if (testerTab) break;
+        }
+    }
+    if (!testerTab) {
+        console.error('[MissingMats] Tester shop tab not found');
+        return false;
+    }
+    testerTab.click();
+
+    for (let i = 0; i < 20; i++) {
+        await wait(100);
+        const input = Array.from(document.querySelectorAll('input')).find(
+            (el) => el.offsetParent !== null && /filter/i.test(el.placeholder || '')
+        );
+        if (input) {
+            setReactInputValue(input, itemName);
+            return true;
+        }
+    }
+    return true;
 }
 
 /**
