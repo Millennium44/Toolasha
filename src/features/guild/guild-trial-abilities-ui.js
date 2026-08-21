@@ -135,7 +135,12 @@ export function completionLine(state) {
  */
 export function staleSessionNote(state, now = Date.now()) {
     if (!Number.isFinite(state?.startedAt)) return null;
-    const age = now - state.startedAt;
+    // Age since the trial last touched the session, not since it began: a
+    // skilling-hour-into-combat-hour session is two hours old and current
+    const last = Number.isFinite(state?.lastActivityAt)
+        ? Math.max(state.lastActivityAt, state.startedAt)
+        : state.startedAt;
+    const age = now - last;
     if (age <= SESSION_MAX_AGE_MS) return null;
     return (
         `From the last trial — captured ${formatEta(age)} ago, and the trial has ended. ` +

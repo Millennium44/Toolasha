@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial Abilities: a session lives as long as the trial ticks
+
+The capture session's 65-minute clock now runs from the trial's last tick or capture, not from the session's start, and an explicit trial-start signal no longer wipes a session the ticks say is still running — a skilling hour straight into a combat hour is one trial, and a session begun at the skilling whistle was being blanked five minutes into combat, taking every Battle Info capture with it.
+
 ### Trial Abilities: utility coverage names wrap
 
 The Revive / Invincible / Insanity lines keep the count on the line and list the players underneath, wrapped, instead of running off the card.

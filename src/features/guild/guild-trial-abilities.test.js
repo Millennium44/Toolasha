@@ -178,6 +178,34 @@ describe('session reset rules', () => {
         expect(s.session.startedAt).toBe(nextTrial);
     });
 
+    test('a trial that runs past the hour — skilling hour into combat hour — keeps its session while it ticks', () => {
+        const s = session();
+        s.recordCapture(snap('Alice', 1, []), { at: NOW });
+
+        // Ticks every ten minutes for two and a half hours: a skilling hour and
+        // a combat hour back to back, with the session begun at the whistle
+        let t = NOW;
+        for (let i = 0; i < 15; i++) {
+            t += 10 * 60 * 1000;
+            s.noteTrialActivity(t);
+        }
+        expect(s.session.startedAt).toBe(NOW);
+        expect(Object.keys(s.session.players)).toHaveLength(1);
+
+        // A capture well past the old sixty-five-minute clock lands in the same session
+        s.recordCapture(snap('Bob', 2, []), { at: t, now: t });
+        expect(s.session.startedAt).toBe(NOW);
+        expect(Object.keys(s.session.players)).toHaveLength(2);
+
+        // And an explicit "trial start" while it is still ticking is not a new trial
+        s.noteTrialStart(t + 1000);
+        expect(s.session.startedAt).toBe(NOW);
+
+        // Silence for longer than a trial, then a tick: that is the next one
+        s.noteTrialActivity(t + SESSION_MAX_AGE_MS + 1);
+        expect(s.session.players).toEqual({});
+    });
+
     test('a trial tick with no session at all is a no-op', () => {
         const s = session();
         s.noteTrialActivity(NOW);

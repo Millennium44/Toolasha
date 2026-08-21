@@ -14,12 +14,19 @@
  * observed start, the same way `guild-trial-recorder.js` models one. The rule
  * is deliberately blunt: a session resets only when
  *
- * - a capture arrives more than {@link SESSION_MAX_AGE_MS} after the session
- *   started — a trial lasts an hour, so anything past ~65 minutes is the next
- *   trial;
+ * - a capture or a live tick arrives more than {@link SESSION_MAX_AGE_MS}
+ *   after the session was *last active* (its last tick or capture) — the
+ *   trial has been silent for longer than any trial is, so this is the next
+ *   one. Measured from the last activity and not from the start, because a
+ *   trial is a skilling hour and a combat hour back to back: a session that
+ *   began at the skilling whistle is two hours old and still this trial's,
+ *   and a clock run from its start wiped the combat roster five minutes in;
  * - {@link GuildTrialAbilities#noteTrialStart} is called for a session older
- *   than {@link TRIAL_START_GRACE_MS} — the explicit signal, debounced so the
- *   two auto-start signals arriving together cannot wipe a capture in progress;
+ *   than {@link TRIAL_START_GRACE_MS} that has also been quiet that long —
+ *   the explicit signal, debounced so the two auto-start signals arriving
+ *   together cannot wipe a capture in progress, and ignored while the ticks
+ *   say the trial it would wipe is still running (skilling hour into combat
+ *   hour is one trial, not two);
  * - {@link GuildTrialAbilities#recapture} is called — the button;
  * - the guild changes ({@link GuildTrialAbilities#setGuildName}) — another
  *   guild's captures say nothing about this one's trial.
@@ -53,8 +60,20 @@ export const SESSION_STORE = 'guildHistory';
 /** Key prefix; the guild name is appended, as the trial record's key is */
 export const SESSION_KEY_PREFIX = 'guildTrialAbilities';
 
-/** A session older than this belongs to the previous trial hour */
+/** A session silent for longer than this belongs to the previous trial */
 export const SESSION_MAX_AGE_MS = 65 * 60 * 1000;
+
+/**
+ * When a session was last touched by the trial: its last tick or capture, or
+ * its start. Older stored sessions predate the field and fall back to the start.
+ * @param {Object|null} session
+ * @returns {number} Epoch ms, or -Infinity for no session
+ */
+export function sessionLastActivity(session) {
+    if (!session) return -Infinity;
+    const last = Number(session.lastActivityAt);
+    return Number.isFinite(last) ? Math.max(last, Number(session.startedAt) || 0) : Number(session.startedAt) || 0;
+}
 
 /** An explicit trial-start signal younger than this is the same trial starting */
 export const TRIAL_START_GRACE_MS = 5 * 60 * 1000;
@@ -303,6 +322,7 @@ export function mergeSessions(stored, live) {
         ...stored,
         ...live,
         startedAt: Math.min(stored.startedAt, live.startedAt),
+        lastActivityAt: Math.max(sessionLastActivity(stored), sessionLastActivity(live)),
         captureTier: stored.captureTier ?? live.captureTier ?? null,
         capturedTiers: [...new Set([...(stored.capturedTiers || []), ...(live.capturedTiers || [])])],
         completedAt: stored.completedAt ?? live.completedAt ?? null,
@@ -482,6 +502,9 @@ class GuildTrialAbilities {
      */
     noteTrialStart(at = Date.now()) {
         if (this.session && at - this.session.startedAt <= TRIAL_START_GRACE_MS) return;
+        // A "start" while the session is being ticked is the same trial moving
+        // from its skilling hour into its combat hour, not a new one
+        if (this.session && at - sessionLastActivity(this.session) <= TRIAL_START_GRACE_MS) return;
         this._start(at);
         this._persist();
     }
@@ -498,9 +521,24 @@ class GuildTrialAbilities {
      */
     noteTrialActivity(at = Date.now()) {
         if (!this.session) return;
-        if (at - this.session.startedAt <= SESSION_MAX_AGE_MS) return;
+        if (at - sessionLastActivity(this.session) <= SESSION_MAX_AGE_MS) {
+            // This trial's own tick: the session is live for as long as the
+            // ticks keep coming, however long ago it began
+            this._touch(at);
+            return;
+        }
         this._start(at);
         this._persist();
+    }
+
+    /**
+     * Mark the session as touched by the trial just now. Persisted lazily —
+     * the next persist carries it — since a tick arrives twice a second.
+     * @param {number} at - Clock
+     */
+    _touch(at) {
+        if (!this.session) return;
+        if (!(Number(this.session.lastActivityAt) >= at)) this.session.lastActivityAt = at;
     }
 
     /**
@@ -544,8 +582,9 @@ class GuildTrialAbilities {
 
         const when = Number.isFinite(at) ? at : Number.isFinite(snapshot.at) ? snapshot.at : Date.now();
         const arrivedAt = Number.isFinite(now) ? now : when;
-        if (this.session && arrivedAt - this.session.startedAt > SESSION_MAX_AGE_MS) this._start(arrivedAt);
+        if (this.session && arrivedAt - sessionLastActivity(this.session) > SESSION_MAX_AGE_MS) this._start(arrivedAt);
         if (!this.session) this._start(arrivedAt);
+        this._touch(arrivedAt);
 
         const key = playerKey(snapshot);
         let existing = this.session.players[key] || null;
@@ -724,6 +763,7 @@ class GuildTrialAbilities {
 
         return {
             startedAt: session?.startedAt ?? null,
+            lastActivityAt: session ? sessionLastActivity(session) : null,
             guildName: session?.guildName ?? this.guildName,
             captureTier: session?.captureTier ?? null,
             capturedTiers: [...(session?.capturedTiers || [])],
@@ -817,6 +857,7 @@ class GuildTrialAbilities {
         this.casts = {};
         this.session = {
             startedAt: at,
+            lastActivityAt: at,
             guildName: this.guildName,
             captureTier: null,
             capturedTiers: [],
