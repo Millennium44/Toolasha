@@ -93,6 +93,21 @@ export function treasureTracker() {
 }
 
 /**
+ * The Risk of Ruin panel, for its last depth-cap context.
+ *
+ * Reached through the global rather than imported: the panel is a ui-bundle
+ * feature, and importing its module from the market bundle bundled a SECOND
+ * copy of the singleton there — whose module-level setting listener
+ * initialized alongside the real one and injected a second "Risk of Ruin"
+ * tab on every live (multi-bundle) install. Dev single-bundle builds never
+ * showed it.
+ * @returns {Object|null} The panel singleton, or null when the ui bundle is absent
+ */
+export function riskOfRuinUI() {
+    return toolashaRoot()?.UI?.riskOfRuinUI || null;
+}
+
+/**
  * The order-book cache behind the queue-length estimator.
  * @returns {Object|null} The estimator, or null when the market bundle is absent
  */

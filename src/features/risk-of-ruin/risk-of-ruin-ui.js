@@ -238,6 +238,16 @@ class RiskOfRuinUI {
         }
         this.tabButton?.remove();
 
+        // A tab with our id that is not ours means another copy of this module
+        // already put one there (two bundles carrying the singleton did exactly
+        // that on live installs). Adopt it rather than add a twin.
+        const existing = document.getElementById(TAB_ID);
+        if (existing && list.contains(existing)) {
+            this.tabButton = existing;
+            this._syncControls();
+            return;
+        }
+
         // Never one of ours, and never a hidden one — a clone of a tab the game
         // has set `display: none` on is a switch that is added and invisible.
         const model = [...list.querySelectorAll('[role="tab"]')].find(

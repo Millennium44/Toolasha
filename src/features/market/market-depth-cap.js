@@ -25,7 +25,10 @@ import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 import { GAME } from '../../utils/selectors.js';
-import riskOfRuinUI from '../risk-of-ruin/risk-of-ruin-ui.js';
+// Through the bridge, never a direct import: the panel lives in the ui bundle,
+// and importing its module here shipped a second copy of it in the market
+// bundle (see bundle-bridge.js `riskOfRuinUI`)
+import { riskOfRuinUI } from '../../utils/bundle-bridge.js';
 
 /**
  * Walk resting bid listings (sorted best-to-worst, as the game sends them) to find how many
@@ -125,7 +128,7 @@ class MarketDepthCap {
         const itemHrid = this.getCurrentItemHrid();
         if (!itemHrid) return;
 
-        const depthContext = riskOfRuinUI.getDepthCapContext();
+        const depthContext = riskOfRuinUI()?.getDepthCapContext?.() ?? null;
         const item = depthContext?.items.find((i) => i.itemHrid === itemHrid);
         const cached = this.orderBooksCache[itemHrid];
         if (!depthContext || !item || !cached) return;

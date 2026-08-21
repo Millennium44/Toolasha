@@ -4,7 +4,9 @@ import { describe, test, expect, vi } from 'vitest';
 vi.mock('../../core/data-manager.js', () => ({ default: { on: vi.fn(), off: vi.fn() } }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: vi.fn(() => () => {}) } }));
 vi.mock('../../core/config.js', () => ({ default: { getSetting: vi.fn(() => true) } }));
-vi.mock('../risk-of-ruin/risk-of-ruin-ui.js', () => ({ default: { getDepthCapContext: vi.fn(() => null) } }));
+// The panel is reached through the bundle bridge, never imported (a direct import
+// shipped a second copy of it in the market bundle)
+vi.mock('../../utils/bundle-bridge.js', () => ({ riskOfRuinUI: () => ({ getDepthCapContext: vi.fn(() => null) }) }));
 
 const { calculateDepthCap } = await import('./market-depth-cap.js');
 

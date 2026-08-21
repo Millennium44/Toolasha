@@ -261,3 +261,33 @@ describe('RiskOfRuinUI close and reopen', () => {
         documentAdd.mockRestore();
     });
 });
+
+describe('RiskOfRuinUI tab against a twin from another module copy', () => {
+    beforeEach(() => {
+        mocks.settings = { riskOfRuin: true, riskOfRuin_showLauncher: true };
+        mocks.openState = {};
+        document.body.innerHTML = '';
+        riskOfRuinUI.disable();
+    });
+
+    afterEach(() => {
+        riskOfRuinUI.disable();
+    });
+
+    test('a strip already carrying our tab id is adopted, never given a second tab', () => {
+        // Two bundles once both carried this singleton, and each injected its
+        // own tab: live installs showed "Risk of Ruin" twice. A tab with our id
+        // that is not ours is adopted instead of twinned.
+        const list = buildTabStrip();
+        const twin = document.createElement('button');
+        twin.setAttribute('role', 'tab');
+        twin.id = TAB_ID;
+        twin.textContent = '⧉ Risk of Ruin';
+        list.appendChild(twin);
+
+        riskOfRuinUI.initialize();
+
+        expect(document.querySelectorAll(`#${TAB_ID}`)).toHaveLength(1);
+        expect(document.getElementById(TAB_ID)).toBe(twin);
+    });
+});

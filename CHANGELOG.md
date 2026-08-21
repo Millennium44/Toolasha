@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### One Risk of Ruin tab on live installs
+
+The market bundle imported the Risk of Ruin panel module to read one value, shipping a second copy of the panel singleton whose setting listener initialized beside the real one and injected a second tab in the character tab strip — live (multi-bundle) installs only, never the single-bundle dev build. The market side now reaches the panel through the bundle bridge, and the tab injector adopts an existing tab instead of twinning it.
+
 ### The per-player combat panel's opener always arrives
 
 The Per-player button depended on the observer seeing the battle panel appear; a panel that existed before the feature came up, or that React rebuilt unseen, left it missing until a re-init. A slow idempotent re-inject now backs the observer, the same self-heal the unit badges use.
