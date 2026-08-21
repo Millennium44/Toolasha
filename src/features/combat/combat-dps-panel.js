@@ -65,6 +65,18 @@ import {
 } from '../../utils/damage-board.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
+import { createTimerRegistry } from '../../utils/timer-registry.js';
+
+/**
+ * How often the opener is re-offered when the observer missed the panel.
+ *
+ * The observer is the primary signal, but a battle panel that existed before
+ * initialize ran — or that React rebuilt in a way the observer's descendant
+ * scan did not see — left the button missing until a manual re-init. Every
+ * couple of seconds `inject` is asked again; it is a no-op while the button
+ * stands, so the cost is one getElementById.
+ */
+const REINJECT_MS = 2000;
 
 /** Geometry key and DOM id stem — `toolasha-combatDpsPanel-panel` */
 export const PANEL_ID = 'combatDpsPanel';
@@ -242,6 +254,9 @@ export function getPanel() {
 
 let unregister = null;
 
+/** The re-inject timer; cleared in cleanup */
+const timers = createTimerRegistry();
+
 /**
  * Put the opener on the battle panel, beside the party's tiles.
  *
@@ -292,11 +307,13 @@ export default {
             debounceMaxWait: 1000,
         });
         inject();
+        timers.registerInterval(setInterval(inject, REINJECT_MS));
     },
     cleanup: () => {
         try {
             unregister?.();
             unregister = null;
+            timers.clearAll();
             const button = typeof document === 'undefined' ? null : document.getElementById(BUTTON_ID);
             // The tile area was made a positioning context for the button's
             // sake; a game-owned element should not keep that once it is gone

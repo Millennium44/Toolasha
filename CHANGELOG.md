@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The per-player combat panel's opener always arrives
+
+The Per-player button depended on the observer seeing the battle panel appear; a panel that existed before the feature came up, or that React rebuilt unseen, left it missing until a re-init. A slow idempotent re-inject now backs the observer, the same self-heal the unit badges use.
+
 ### The foreign-hook bypass frame runs no scripts
 
 The hidden same-origin frame the websocket hook borrows a native getter from is now sandboxed without scripts and always removed, so no userscript can be booted into it as a second copy sharing storage for the moment it exists.

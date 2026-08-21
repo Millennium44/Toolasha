@@ -267,3 +267,33 @@ describe('the opener, and the lifecycle', () => {
         expect(button()).toBeNull();
     });
 });
+
+describe('a battle panel that the observer missed', () => {
+    test('gets its opener from the slow re-inject timer', () => {
+        vi.useFakeTimers();
+        try {
+            // No battle panel yet when the feature comes up — a page loaded
+            // before any fight, or a rebuild the observer's scan did not see
+            feature.initialize();
+            expect(button()).toBeNull();
+
+            battlePanel();
+            expect(button()).toBeNull();
+
+            vi.advanceTimersByTime(2500);
+            expect(button()).not.toBeNull();
+
+            // Idempotent: the timer keeps asking and never doubles it
+            vi.advanceTimersByTime(10_000);
+            expect(document.querySelectorAll(`#${BUTTON_ID}`)).toHaveLength(1);
+
+            feature.cleanup();
+            document.body.replaceChildren();
+            battlePanel();
+            vi.advanceTimersByTime(10_000);
+            expect(button()).toBeNull(); // cleanup stopped the timer
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
