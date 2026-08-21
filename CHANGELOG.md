@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Total Level rate ranks stay among the top 100
+
+Levels per day were ranked across the whole Total Level board, so a rank-1199 player took the gold medal simply because a lower level costs less XP. On level boards only the top 100 are ranked (and given a "Rank ↑ in" forecast); everyone else still sees their measured rate, marked with a dash instead of a place. XP boards are unchanged.
+
+### Compact unit badges keep off the mini units' names
+
+On the narrow MiniUnit tiles the two-value badge wrapped and covered the name along the top. Mini
+units now get a DPS-only badge, a point smaller and pinned to the bottom edge out of the tile's
+flow; the share moves to the tooltip. Full cards are unchanged.
+
 ### Unit badges and Portrait DPS stop stating the same run twice
 
 With both on, a full card carried the run's figure from two measurement windows. Run-sourced badges now leave the full cards to Portrait DPS and keep the mini units it never reaches; a trial-split badge is a different metric and still draws everywhere.

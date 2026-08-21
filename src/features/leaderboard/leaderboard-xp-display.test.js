@@ -15,9 +15,12 @@ vi.mock('./leaderboard-xp-tracker.js', () => ({
         getPreviousRank: () => null,
         getLastLeaderboardCategory: () => null,
     },
+    isLevelBoard: (category) => category === 'total_level',
+    isWeeklyBoard: (category) => typeof category === 'string' && category.includes('weekly'),
 }));
 
-const { xpPerDay, xpPerWeek, timeToOvertake, boardUnit } = await import('./leaderboard-xp-display.js');
+const { xpPerDay, xpPerWeek, timeToOvertake, boardUnit, assignRateRanks, rateRankEligible, LEVEL_RATE_RANK_CUTOFF } =
+    await import('./leaderboard-xp-display.js');
 
 describe('xpPerDay', () => {
     test('a measured day is the 24h-window rate scaled to a day', () => {
@@ -115,5 +118,59 @@ describe('boardUnit', () => {
         ours.textContent = 'Buildings/h';
         tr.appendChild(ours);
         expect(boardUnit(tr)).toBe('Buildings');
+    });
+});
+
+describe('rate ranks on a level board', () => {
+    const row = (rank, perDay) => ({
+        name: `p${rank}`,
+        rank,
+        lastXPH: perDay / 24,
+        perDay: { value: perDay, projected: true },
+        perWeek: { value: perDay * 7, projected: true },
+    });
+
+    test('a row outside the top 100 by level measures a rate but holds no rank', () => {
+        const rows = [row(1, 0.4), row(70, 0.5), row(1199, 3.6)];
+        assignRateRanks(rows, 'total_level');
+        const outside = rows[2];
+        expect(outside.rateRankEligible).toBe(false);
+        expect(outside.perDay.value).toBe(3.6); // the rate is still there
+        expect(outside.perDay_rank).toBeNull();
+        expect(outside.perWeek_rank).toBeNull();
+        expect(outside.lastXPH_rank).toBeNull();
+    });
+
+    test('the fastest of the top 100 takes #1, undisplaced by the faster row below', () => {
+        const rows = [row(1, 0.4), row(70, 0.5), row(1199, 3.6)];
+        assignRateRanks(rows, 'total_level');
+        expect(rows[1].perDay_rank).toBe(1);
+        expect(rows[0].perDay_rank).toBe(2);
+        expect(rows[1].perWeek_rank).toBe(1);
+    });
+
+    test('the cutoff is inclusive: rank 100 is ranked, rank 101 is not', () => {
+        expect(rateRankEligible('total_level', LEVEL_RATE_RANK_CUTOFF)).toBe(true);
+        expect(rateRankEligible('total_level', LEVEL_RATE_RANK_CUTOFF + 1)).toBe(false);
+        expect(rateRankEligible('total_level', null)).toBe(false);
+    });
+
+    test('XP boards rank everyone tracked, at any rank', () => {
+        const rows = [row(1, 1e6), row(1199, 5e6)];
+        assignRateRanks(rows, 'foraging');
+        expect(rows.map((s) => s.rateRankEligible)).toEqual([true, true]);
+        expect(rows[1].lastXPH_rank).toBe(1);
+        expect(rows[0].lastXPH_rank).toBe(2);
+        expect(rateRankEligible('cheesesmithing', 5000)).toBe(true);
+        expect(rateRankEligible('guild', 5000)).toBe(true);
+    });
+
+    test('an unranked row gets no overtake forecast either', () => {
+        const me = { rank: 1199, value: 1849, lastXPH: 1, rateRankEligible: false };
+        expect(timeToOvertake(me, { value: 1850, lastXPH: 0 })).toEqual({
+            hours: 0,
+            floor: false,
+            reason: 'unranked',
+        });
     });
 });

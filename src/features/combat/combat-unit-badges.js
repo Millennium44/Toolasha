@@ -28,6 +28,11 @@
  * spectated trial. A trial where only one of twenty-odd portraits could carry a
  * figure would be the feature's worst case, and the mini units are the twenty.
  *
+ * A mini unit is fifty pixels wide with its name along the top, so its badge is
+ * a **compact** one — the rate alone, a point smaller, pinned to the tile's
+ * bottom edge out of the flow so it cannot push the name anywhere. See
+ * {@link COMPACT_MARK}.
+ *
  * The join is the **name** on the tile, never its position. A slot is a
  * position in this fight; the moment somebody leaves, every index after them
  * means a different person, and a badge joined by index puts one player's
@@ -76,6 +81,26 @@ const PLAYERS_AREA = '[class*="BattlePanel_playersArea"]';
 
 /** Marks a badge as ours, so a rebuild cannot leave two */
 export const BADGE_MARK = 'data-toolasha-unit-badge';
+
+/**
+ * Marks the compact variant, the one a mini unit gets.
+ *
+ * A MiniUnit tile is about fifty pixels across and its name sits along the top.
+ * The full badge — rate, separator, share — is wider than the tile at any font
+ * a person can read, so in the tile's flow it wrapped onto a second line and
+ * shoved the name off the top of a box the battle panel then clipped. The name
+ * is the more valuable of the two: a figure on an unidentifiable portrait is
+ * worth nothing, and in a spectated trial the mini units *are* the twenty
+ * people being told apart.
+ *
+ * So the mini badge drops the share (the rate is the comparable half, and the
+ * share is the one that needs a wide tile to be legible), shrinks a point, and
+ * is taken out of the tile's flow entirely: absolutely positioned against the
+ * bottom edge of a tile made `position:relative`, so however tall the badge
+ * ends up it cannot push anything above it. Clipped at the tile's own width
+ * with an ellipsis rather than allowed to wrap.
+ */
+export const COMPACT_MARK = 'data-toolasha-unit-badge-compact';
 
 /** Slow enough not to fight the game's own redraw, fast enough to read as live */
 export const REFRESH_MS = 1000;
@@ -153,11 +178,16 @@ export function badgeRows(players) {
  * statement from a rate of nothing, and drawing the second reads as an
  * accusation.
  *
+ * On a mini unit only the rate is drawn (see {@link COMPACT_MARK}): the tile is
+ * too narrow for both, and a share that has to wrap is a share that covers the
+ * name. The tooltip still states it, so nothing is lost — only moved.
+ *
  * @param {Object} row - From {@link badgeRows}
  * @param {string} [source] - `'trial'` or `'run'`, for the tooltip's wording
+ * @param {boolean} [compact] - Whether this is a mini unit's badge
  * @returns {{text: string, color: string, title: string}}
  */
-export function badgeText(row, source = 'run') {
+export function badgeText(row, source = 'run', compact = false) {
     const rate = row?.dps === null || row?.dps === undefined ? null : Math.round(row.dps);
     const share = Number.isFinite(row?.share) ? row.share : null;
 
@@ -172,7 +202,7 @@ export function badgeText(row, source = 'run') {
             : 'Measured off this client’s own battle feed';
 
     return {
-        text: `${rateText} · ${shareText}`,
+        text: compact ? rateText : `${rateText} · ${shareText}`,
         color,
         title:
             `${row?.name || 'This player'}: ${formatLargeNumber(Math.round(row?.damage || 0))} damage` +
@@ -184,11 +214,51 @@ export function badgeText(row, source = 'run') {
 }
 
 /**
+ * How a badge is drawn, which differs by the tile it is drawn on.
+ *
+ * The full card's badge sits in the tile's flow as the last child, which is
+ * what keeps it inside the box the battle panel clips to. The mini unit's is
+ * lifted out of the flow and pinned to the bottom edge instead — see
+ * {@link COMPACT_MARK} for why. Exported so a test can assert the difference
+ * without measuring a layout happy-dom does not compute.
+ *
+ * @param {boolean} [compact] - Whether this is a mini unit's badge
+ * @returns {Object} Styles to assign
+ */
+export function badgeStyle(compact = false) {
+    const shared = {
+        textAlign: 'center',
+        fontWeight: 'bold',
+        lineHeight: '1.2',
+        pointerEvents: 'none',
+        textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        padding: '0 2px',
+    };
+    if (!compact) return { ...shared, fontSize: '10px' };
+
+    return {
+        ...shared,
+        fontSize: '9px',
+        position: 'absolute',
+        left: '0px',
+        right: '0px',
+        bottom: '0px',
+        // Never wider than the tile, so a four-digit rate ellipses rather than
+        // stretching the box and pushing the name out of it
+        maxWidth: '100%',
+        padding: '0 1px',
+    };
+}
+
+/**
  * Pair each tile with the row belonging to the player on it.
  *
- * @param {Array<HTMLElement>} tiles - `{el, name}` candidates, in DOM order
+ * @param {Array<HTMLElement>} tiles - `{el, name, fullCard}` candidates, in DOM order
  * @param {Map<string, Object>} rows - From {@link badgeRows}
- * @returns {Array<{el: HTMLElement, row: Object}>} Only the matches
+ * @returns {Array<{el: HTMLElement, row: Object, fullCard: boolean}>} Only the matches
  */
 export function matchTiles(tiles, rows) {
     const pairs = [];
@@ -200,7 +270,7 @@ export function matchTiles(tiles, rows) {
         );
         // No match is no badge. Falling back to position is what puts one
         // character's damage on another's face the moment somebody leaves
-        if (row && tile.el) pairs.push({ el: tile.el, row });
+        if (row && tile.el) pairs.push({ el: tile.el, row, fullCard: Boolean(tile.fullCard) });
     }
     return pairs;
 }
@@ -247,6 +317,21 @@ export function tilesForSource(tiles, source, portraitDpsOn) {
     return tiles.filter((tile) => !tile.fullCard);
 }
 
+/**
+ * Take a badge away, and the tile change it needed with it.
+ *
+ * A compact badge makes its tile a positioning context; leaving that behind on
+ * a game-owned element after the feature is switched off is a mutation nobody
+ * asked for and nothing would undo.
+ *
+ * @param {Element} badge - A badge node
+ */
+function removeBadge(badge) {
+    const tile = badge.parentElement;
+    if (badge.hasAttribute(COMPACT_MARK) && tile?.style?.position === 'relative') tile.style.position = '';
+    badge.remove();
+}
+
 class CombatUnitBadges {
     constructor() {
         this.isInitialized = false;
@@ -291,7 +376,7 @@ class CombatUnitBadges {
             this.drawScheduled = null;
         }
         if (typeof document !== 'undefined') {
-            for (const badge of document.querySelectorAll(`[${BADGE_MARK}]`)) badge.remove();
+            for (const badge of document.querySelectorAll(`[${BADGE_MARK}]`)) removeBadge(badge);
         }
         this.isInitialized = false;
     }
@@ -316,7 +401,10 @@ class CombatUnitBadges {
             const pairs = matchTiles(tiles, badgeRows(players));
 
             this._prune(area, new Set(pairs.map((pair) => pair.el)));
-            for (const { el, row } of pairs) this._badge(el, badgeText(row, source));
+            for (const { el, row, fullCard } of pairs) {
+                const compact = !fullCard;
+                this._badge(el, badgeText(row, source, compact), compact);
+            }
         } catch (error) {
             console.error('[CombatUnitBadges] Drawing the unit badges failed:', error);
         }
@@ -329,32 +417,37 @@ class CombatUnitBadges {
      */
     _prune(area, wanted) {
         for (const badge of area.querySelectorAll(`[${BADGE_MARK}]`)) {
-            if (!wanted.has(badge.parentElement)) badge.remove();
+            if (!wanted.has(badge.parentElement)) removeBadge(badge);
         }
     }
 
     /**
      * @param {HTMLElement} tile - The unit tile
      * @param {{text: string, color: string, title: string}} content - What it says
+     * @param {boolean} [compact] - Whether this is a mini unit's badge
      */
-    _badge(tile, content) {
+    _badge(tile, content, compact = false) {
         let badge = tile.querySelector(`:scope > [${BADGE_MARK}]`);
         if (!badge) {
             badge = document.createElement('div');
             badge.setAttribute(BADGE_MARK, '1');
-            Object.assign(badge.style, {
-                textAlign: 'center',
-                fontSize: '10px',
-                fontWeight: 'bold',
-                lineHeight: '1.2',
-                pointerEvents: 'none',
-                textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                padding: '0 2px',
-            });
+            Object.assign(badge.style, badgeStyle(compact));
+            if (compact) badge.setAttribute(COMPACT_MARK, '1');
         }
+
+        // A tile that changed shape between draws — the game swaps a mini unit
+        // for a full card when the fight view changes who is being watched —
+        // keeps its badge node and has to be restyled rather than left wrong
+        if (compact !== badge.hasAttribute(COMPACT_MARK)) {
+            Object.assign(badge.style, badgeStyle(compact));
+            if (compact) badge.setAttribute(COMPACT_MARK, '1');
+            else badge.removeAttribute(COMPACT_MARK);
+        }
+
+        // Absolute positioning needs something to be absolute *to*; without
+        // this the badge escapes to the nearest positioned ancestor, which is
+        // the battle panel, and lands on somebody else's tile
+        if (compact && tile.style.position !== 'relative') tile.style.position = 'relative';
 
         // Re-seated on every draw, because React puts its own children back in
         // whatever order it likes when it rebuilds a tile it kept our node in

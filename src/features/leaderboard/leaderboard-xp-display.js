@@ -127,6 +127,80 @@ export function xpPerWeek(stats) {
 }
 
 /**
+ * How far down a level board a row may sit and still hold a rate rank.
+ * @type {number}
+ */
+export const LEVEL_RATE_RANK_CUTOFF = 100;
+
+const INELIGIBLE_TITLE =
+    `Only the top ${LEVEL_RATE_RANK_CUTOFF} of this board are ranked on levels gained — a lower level costs far ` +
+    'less XP, so players further down gain levels faster and would win a levels-per-day ranking outright. ' +
+    'The rate is still measured, it just does not take a place.';
+
+/**
+ * Whether a row may hold a rate rank on this board.
+ *
+ * On XP-style boards everyone tracked may: XP per hour is comparable between
+ * any two players. On a level board it is not — each level costs more XP than
+ * the last, so a rank-1199 player out-gains the whole top of the board on
+ * levels per day. There, only the top {@link LEVEL_RATE_RANK_CUTOFF} by level
+ * are ranked against each other; the row's own board rank is the test.
+ * @param {string} category - `leaderboardCategory`
+ * @param {number|null} rank - The row's rank on the board, as the game gives it
+ * @returns {boolean}
+ */
+export function rateRankEligible(category, rank) {
+    if (!isLevelBoard(category)) return true;
+    return Number.isFinite(rank) && rank >= 1 && rank <= LEVEL_RATE_RANK_CUTOFF;
+}
+
+/**
+ * Number every row's rates against the rows eligible to be ranked, and mark
+ * each row with whether it is one of them.
+ *
+ * The ineligible rows are left without a rank rather than ranked and hidden:
+ * they must not displace an eligible row's place either.
+ * @param {Array<Object>} allStats - The page's rows, each with `rank`, `lastXPH`, `perDay`, `perWeek`
+ * @param {string} category - `leaderboardCategory`
+ * @returns {Array<Object>} The same array, marked
+ */
+export function assignRateRanks(allStats, category) {
+    const pool = [];
+    for (const s of allStats) {
+        s.rateRankEligible = rateRankEligible(category, s.rank);
+        s.lastXPH_rank = null;
+        s.perDay_rank = null;
+        s.perWeek_rank = null;
+        if (s.rateRankEligible) pool.push(s);
+    }
+    const rankBy = (valueOf, field) => {
+        pool.slice()
+            .sort((a, b) => valueOf(b) - valueOf(a))
+            .forEach((s, i) => {
+                s[field] = i + 1;
+            });
+    };
+    rankBy((s) => Number(s.lastXPH) || 0, 'lastXPH_rank');
+    rankBy((s) => Number(s.perDay?.value) || 0, 'perDay_rank');
+    rankBy((s) => Number(s.perWeek?.value) || 0, 'perWeek_rank');
+    return allStats;
+}
+
+/**
+ * The medal or place beside a rate — or a dim dash for a row that measures a
+ * rate but is not ranked on it.
+ * @param {Object} stats - The row, marked by {@link assignRateRanks}
+ * @param {number|null} rank - The row's place in that rate's ranking
+ * @returns {string} Markup
+ */
+function rateRankMark(stats, rank) {
+    if (stats?.rateRankEligible === false || !Number.isFinite(rank)) {
+        return `<span style="opacity:0.35;" title="${esc(INELIGIBLE_TITLE)}">—</span>`;
+    }
+    return rankBadge(rank);
+}
+
+/**
  * Why the week column has no figure.
  * @param {Object} stats - From the tracker
  * @returns {string} Markup
@@ -145,11 +219,16 @@ function unratedWeekCell(stats) {
  * The gap closes at (mine − theirs) per hour. When the row above has no rate
  * yet it is taken as standing still and the answer is marked as a floor — it
  * is the soonest it could be, not the likely figure.
- * @param {Object} me - Row stats: `value`, `lastXPH`
+ * A row that is not eligible to be ranked on its rate (see
+ * {@link rateRankEligible}) gets no forecast either — projecting a level board
+ * overtake from a rate that is only fast because the levels are cheap would be
+ * the same falsehood the ranking avoids.
+ * @param {Object} me - Row stats: `value`, `lastXPH`, `rateRankEligible`
  * @param {Object|null} above - The row one rank up, or null (top, or off the page)
  * @returns {{hours: number, floor: boolean, reason: string}} `hours` 0 when it is not happening
  */
 export function timeToOvertake(me, above) {
+    if (me?.rateRankEligible === false) return { hours: 0, floor: false, reason: 'unranked' };
     if (!above) return { hours: 0, floor: false, reason: me?.rank === 1 ? 'top' : 'unknown-above' };
     const gap = Number(above.value) - Number(me?.value);
     if (!(Number.isFinite(gap) && gap > 0)) return { hours: 0, floor: false, reason: 'no-gap' };
@@ -190,6 +269,8 @@ function catchUpCell(catchUp, stats) {
             return dim('—', 'No XP/h rate for this row yet.');
         case 'not-gaining':
             return dim('—', 'Not gaining on the row above at the current rates.');
+        case 'unranked':
+            return dim('—', INELIGIBLE_TITLE);
         default:
             return '';
     }
@@ -287,17 +368,17 @@ class LeaderboardXPDisplay {
         // Rank movement since the previous reading, in the game's own Rank cell
         for (let i = 0; i < rows.length; i++) markRankDelta(rows[i].children[0], allStats[i]);
 
-        const byLastXPH = allStats.slice().sort((a, b) => b.lastXPH - a.lastXPH);
-        const byPerDay = allStats.slice().sort((a, b) => b.perDay.value - a.perDay.value);
-        const byPerWeek = allStats.slice().sort((a, b) => b.perWeek.value - a.perWeek.value);
-        for (let i = 0; i < byLastXPH.length; i++) byLastXPH[i].lastXPH_rank = i + 1;
-        for (let i = 0; i < byPerDay.length; i++) byPerDay[i].perDay_rank = i + 1;
-        for (let i = 0; i < byPerWeek.length; i++) byPerWeek[i].perWeek_rank = i + 1;
+        // Ranked among the rows eligible to be ranked — everyone on an XP
+        // board, only the top of a level board
+        assignRateRanks(allStats, resolvedCategory);
 
         // Who each row is chasing: the row one rank above it, wherever it sits
-        // on the page (the personal row is drawn first, out of order)
+        // on the page (the personal row is drawn first, out of order). Only
+        // eligible rows are chased, for the same reason they are ranked.
         const byRank = new Map();
-        for (const s of allStats) if (s.rank !== null && !byRank.has(s.rank)) byRank.set(s.rank, s);
+        for (const s of allStats) {
+            if (s.rank !== null && s.rateRankEligible && !byRank.has(s.rank)) byRank.set(s.rank, s);
+        }
         const catchUps = allStats.map((s) => {
             const above = s.rank !== null && s.rank > 1 ? byRank.get(s.rank - 1) || null : null;
             return timeToOvertake(s, above);
@@ -317,7 +398,7 @@ class LeaderboardXPDisplay {
                     const s = allStats[i];
                     // The first rate column carries the explanation of an empty row
                     if (!v || v <= 0) return slow ? unratedCell(s) : unratedDayCell(s);
-                    const figure = `${s.perDay.projected ? '~' : ''}${fRate(v)} ${rankBadge(s.perDay_rank)}`;
+                    const figure = `${s.perDay.projected ? '~' : ''}${fRate(v)} ${rateRankMark(s, s.perDay_rank)}`;
                     return s.perDay.projected
                         ? figure +
                               ` <span style="opacity:0.55; font-size:0.85em;" title="${esc(
@@ -341,7 +422,7 @@ class LeaderboardXPDisplay {
                 format: (v, i) => {
                     const s = allStats[i];
                     if (!v || v <= 0) return unratedWeekCell(s);
-                    const figure = `${s.perWeek.projected ? '~' : ''}${fRate(v)} ${rankBadge(s.perWeek_rank)}`;
+                    const figure = `${s.perWeek.projected ? '~' : ''}${fRate(v)} ${rateRankMark(s, s.perWeek_rank)}`;
                     return s.perWeek.projected
                         ? figure +
                               ` <span style="opacity:0.55; font-size:0.85em;" title="${esc(
@@ -362,7 +443,7 @@ class LeaderboardXPDisplay {
                 format: (v, i) =>
                     !v || v <= 0
                         ? unratedCell(allStats[i])
-                        : `${fNum(v)} ${rankBadge(allStats[i].lastXPH_rank)}` +
+                        : `${fNum(v)} ${rateRankMark(allStats[i], allStats[i].lastXPH_rank)}` +
                           spanNote(allStats[i].lastSpanMs, 'between the last two readings'),
                 makeSortable: true,
                 sortId: 'lastXPH',

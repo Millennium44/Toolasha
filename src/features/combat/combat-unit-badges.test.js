@@ -53,6 +53,8 @@ vi.mock('../../utils/timer-registry.js', () => ({
 
 const {
     BADGE_MARK,
+    COMPACT_MARK,
+    badgeStyle,
     badgeRows,
     badgeSource,
     badgeText,
@@ -198,6 +200,78 @@ describe('what a badge says', () => {
     });
 });
 
+describe('the compact badge a mini unit gets', () => {
+    test('the share is dropped — the tile is too narrow to hold both', () => {
+        const badge = badgeText({ name: 'Alice', damage: 12_400, dps: 1240.4, share: 22.3 }, 'run', true);
+
+        expect(badge.text).toBe('1,240/s');
+        expect(badge.text).not.toContain('%');
+        expect(badge.text).not.toContain('·');
+        // Moved, not lost: the share is still one hover away
+        expect(badge.title).toContain('22.3% of the split');
+    });
+
+    test('the full card keeps both values', () => {
+        expect(badgeText({ name: 'Alice', damage: 12_400, dps: 1240.4, share: 22.3 }, 'run', false).text).toBe(
+            '1,240/s · 22%'
+        );
+    });
+
+    test('it is lifted out of the flow and pinned to the foot, smaller', () => {
+        // happy-dom computes no layout, so what is asserted is the rule that
+        // makes the overlap impossible: taken out of the flow entirely, so a
+        // badge of any height cannot push the name above it anywhere
+        const compact = badgeStyle(true);
+
+        expect(compact.position).toBe('absolute');
+        expect(compact.bottom).toBe('0px');
+        expect(compact.fontSize).toBe('9px');
+        expect(compact.maxWidth).toBe('100%');
+        expect(compact.textOverflow).toBe('ellipsis');
+        expect(badgeStyle(false).position).toBeUndefined();
+        expect(badgeStyle(false).fontSize).toBe('10px');
+    });
+
+    test('drawn on a mini unit: compact, marked, and its tile made a positioning context', () => {
+        const area = panel(card('Alice'), mini('Bob'));
+        opts.run = [
+            { name: 'Alice', damage: 750, dps: 75 },
+            { name: 'Bob', damage: 250, dps: 25 },
+        ];
+        opts.run = { players: opts.run };
+
+        feature.initialize();
+
+        const full = badgeOf(area.children[0]);
+        const small = badgeOf(area.children[1]);
+
+        expect(full.hasAttribute(COMPACT_MARK)).toBe(false);
+        expect(full.textContent).toBe('75/s · 75%');
+
+        expect(small.hasAttribute(COMPACT_MARK)).toBe(true);
+        expect(small.textContent).toBe('25/s');
+        expect(small.textContent).not.toContain('%');
+        expect(small.style.position).toBe('absolute');
+        expect(small.style.bottom).toBe('0px');
+        expect(small.style.fontSize).toBe('9px');
+        // Absolute to its own tile, or it escapes onto somebody else's
+        expect(area.children[1].style.position).toBe('relative');
+        // And never over the name, which is the first child of the mini tile
+        expect(area.children[1].firstElementChild.textContent).toBe('Bob');
+    });
+
+    test('cleanup gives the tile its own positioning back', () => {
+        const area = panel(mini('Bob'));
+        opts.run = { players: [{ name: 'Bob', damage: 250, dps: 25 }] };
+        feature.initialize();
+        expect(area.children[0].style.position).toBe('relative');
+
+        feature.cleanup();
+
+        expect(area.children[0].style.position).toBe('');
+    });
+});
+
 describe('finding the tiles and joining them to a table', () => {
     test('full cards and mini units are both party tiles', () => {
         const area = panel(card('Alice'), mini('Bob'));
@@ -210,6 +284,9 @@ describe('finding the tiles and joining them to a table', () => {
 
         expect(pairs).toHaveLength(1);
         expect(pairs[0].row.name).toBe('Alice');
+        // The tile's shape travels with the pair, because it decides which
+        // badge gets drawn on it
+        expect(pairs[0].fullCard).toBe(true);
     });
 
     test('the join survives a difference in case', () => {
@@ -231,7 +308,8 @@ describe('drawing, and coming back after a rebuild', () => {
         feature.initialize();
 
         expect(badgeOf(area.children[0]).textContent).toBe('75/s · 75%');
-        expect(badgeOf(area.children[1]).textContent).toBe('25/s · 25%');
+        // The mini unit's is compact — the share would cover the name
+        expect(badgeOf(area.children[1]).textContent).toBe('25/s');
         // The badge is the last child, in the tile's flow — the panel clips
         // anything hung outside the box
         expect(area.children[0].lastElementChild.hasAttribute(BADGE_MARK)).toBe(true);
