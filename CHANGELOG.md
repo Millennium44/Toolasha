@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial Abilities: utility coverage names wrap
+
+The Revive / Invincible / Insanity lines keep the count on the line and list the players underneath, wrapped, instead of running off the card.
+
 ### Enhancement path: a refined piece is mirrored with plain copies
 
 The Philosopher's Mirror plan now tells the primary lineage (the refined item being upgraded) from the copies consumed beside it — the game takes a copy of the *base* item one level below the primary, which need not be refined — so the breakdown lists and prices the consumed copies as the unrefined item at their levels, and the shopping list names one refined base plus the plain copies. Plain items are unchanged.

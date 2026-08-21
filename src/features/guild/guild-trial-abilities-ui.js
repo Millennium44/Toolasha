@@ -682,9 +682,26 @@ function drawUtilityCounts(body, state, abilityDetailMap) {
             .map((row) => row.name);
         const name = abilityName(hrid, abilityDetailMap);
         if (users.length) {
+            // The count on the line, the names under it — a figure stays on
+            // its line, a roster of nine names does not
             card.appendChild(
-                panelLine(name, `${users.length} — ${users.join(', ')}`, ROW_COLORS.good, 'Among captured players.')
+                panelLine(
+                    name,
+                    `${users.length} player${users.length === 1 ? '' : 's'}`,
+                    ROW_COLORS.good,
+                    'Among captured players.'
+                )
             );
+            const who = document.createElement('div');
+            who.textContent = users.join(', ');
+            Object.assign(who.style, {
+                color: 'rgba(232, 236, 245, 0.6)',
+                fontSize: '0.9em',
+                padding: '0 0 4px 12px',
+                whiteSpace: 'normal',
+                overflowWrap: 'anywhere',
+            });
+            card.appendChild(who);
         } else {
             card.appendChild(
                 panelLine(
