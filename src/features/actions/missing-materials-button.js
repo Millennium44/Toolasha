@@ -971,10 +971,11 @@ function findShopCard(itemName) {
         .trim()
         .toLowerCase();
     if (!wanted) return null;
-    const reads = (el) => {
-        const text = (el.textContent || '').trim().toLowerCase();
-        return text.startsWith(wanted) && text.includes('coin');
-    };
+    // The whole name, then straight into the price — "Lumber" must not read
+    // "Lumberjack's Top 3,500,000 Coin" as its card
+    const escaped = wanted.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const cardText = new RegExp(`^${escaped}\\s*[\\d,.]+\\s*coins?$`);
+    const reads = (el) => cardText.test((el.textContent || '').trim().toLowerCase());
     // The card class, not the `shopItems` container that also matches the
     // substring — the token is followed by its hash
     const card = Array.from(document.querySelectorAll('[class*="ShopPanel_shopItem"]')).find(
