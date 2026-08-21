@@ -856,10 +856,175 @@ function createTesterShopTabs(missingMaterials, testerTab) {
             : makeMaterialClickHandler(tabRef);
         const tab = createMaterialTab(material, testerTab, handler);
         tabRef.tab = tab;
+        tab.setAttribute('data-tester-sold', sold ? 'true' : 'false');
+        tab.setAttribute('data-item-name', material.itemName || '');
         if (!sold) tab.title = 'Not sold in the Tester shop — opens the marketplace';
         tabsContainer.appendChild(tab);
         currentMaterialsTabs.push(tab);
     }
+
+    // One press, one purchase: the next line still short, bought for what it
+    // is short of. Pressed again, the line after it
+    const control = createBuyNextControl();
+    tabsContainer.appendChild(control);
+    currentMaterialsTabs.push(control);
+}
+
+/**
+ * The "Buy next" control for the Tester strip.
+ *
+ * Each press buys exactly one thing: the first pinned line the shop sells
+ * that is still short, for the amount it is short of — the shop is filtered
+ * to it, its card opened, the quantity typed, Buy pressed. One press is one
+ * purchase, so holding the button down does nothing and a line that did not
+ * buy (no card, no dialog) is simply the next press's line again. The badges
+ * refresh off the inventory as the purchases land, which is what moves the
+ * press on to the next line.
+ *
+ * @returns {HTMLElement}
+ */
+function createBuyNextControl() {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.setAttribute('data-mwi-custom-tab', 'true');
+    button.setAttribute('data-mwi-buy-next', 'true');
+    button.style.cssText =
+        'display:inline-flex; align-items:center; gap:6px; margin:4px 8px; padding:4px 10px; font-size:12px; ' +
+        'border:1px solid #4caf50; border-radius:4px; background:rgba(76,175,80,0.12); color:#8bc34a; cursor:pointer; ' +
+        'font-family:inherit; white-space:nowrap;';
+    const label = document.createElement('span');
+    label.textContent = 'Buy next ▸';
+    const note = document.createElement('span');
+    note.style.cssText = 'color:#aaa; font-size:11px;';
+    button.append(label, note);
+    button.title =
+        'Buys the next pinned line the Tester shop sells, for what you are still short of — one purchase per press. ' +
+        'Press again for the line after it.';
+
+    let busy = false;
+    const refreshNote = () => {
+        const next = nextBuyableTab();
+        note.textContent = next
+            ? `${next.getAttribute('data-item-name')} × ${next.getAttribute('data-missing-quantity')}`
+            : 'nothing left to buy';
+    };
+    refreshNote();
+    button.addEventListener('mouseenter', refreshNote);
+
+    button.addEventListener('click', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (busy) return;
+        const tab = nextBuyableTab();
+        if (!tab) {
+            note.textContent = 'nothing left to buy';
+            return;
+        }
+        busy = true;
+        const name = tab.getAttribute('data-item-name') || '';
+        const quantity = parseInt(tab.getAttribute('data-missing-quantity') || '0', 10);
+        note.textContent = `buying ${name} × ${quantity}…`;
+        try {
+            const outcome = await buyOneFromTesterShop(name, quantity);
+            note.textContent = outcome.ok ? `bought ${name} × ${quantity}` : `${name}: ${outcome.reason}`;
+        } catch (error) {
+            console.error('[MissingMats] Buy next failed:', error);
+            note.textContent = `${name}: failed`;
+        } finally {
+            busy = false;
+            timerRegistry.registerTimeout(setTimeout(refreshNote, 1500));
+        }
+    });
+    return button;
+}
+
+/** The first pinned tab the shop sells that is still short */
+function nextBuyableTab() {
+    return (
+        currentMaterialsTabs.find(
+            (tab) =>
+                tab.getAttribute('data-tester-sold') === 'true' &&
+                parseInt(tab.getAttribute('data-missing-quantity') || '0', 10) > 0 &&
+                document.body.contains(tab)
+        ) || null
+    );
+}
+
+/** A visible element whose own text is exactly this, case-insensitively */
+function findShopCard(itemName) {
+    const wanted = String(itemName || '')
+        .trim()
+        .toLowerCase();
+    if (!wanted) return null;
+    let best = null;
+    for (const el of document.querySelectorAll('div, button, span')) {
+        if (el.offsetParent === null) continue;
+        const text = (el.textContent || '').trim().toLowerCase();
+        if (!text.startsWith(wanted) || !text.includes('coin')) continue;
+        // Inside a card the item name comes first and the price last; the
+        // smallest such element is the card rather than the panel around it
+        if (!best || text.length < (best.textContent || '').trim().length) best = el;
+    }
+    return best;
+}
+
+/**
+ * Buy one pinned line from the Tester shop: filter, open its card, type the
+ * quantity, press Buy. Resolves when the dialog is gone or a step could not be
+ * found.
+ *
+ * @param {string} itemName - The item, as the shop names it
+ * @param {number} quantity - How many
+ * @returns {Promise<{ok: boolean, reason?: string}>}
+ */
+async function buyOneFromTesterShop(itemName, quantity) {
+    const wait = (ms) =>
+        new Promise((resolve) => {
+            timerRegistry.registerTimeout(setTimeout(resolve, ms));
+        });
+    if (!(quantity > 0)) return { ok: false, reason: 'nothing short' };
+
+    // The quantity we are about to type is what any buy dialog should carry,
+    // including one the game opens from this card
+    autofillManager.setPendingCalculation(() => quantity);
+
+    findTesterTab()?.click();
+    await wait(100);
+    setShopFilter(itemName);
+
+    let card = null;
+    for (let i = 0; i < 20 && !card; i++) {
+        await wait(100);
+        card = findShopCard(itemName);
+    }
+    if (!card) return { ok: false, reason: 'not found in the shop' };
+    card.click();
+
+    let modal = null;
+    for (let i = 0; i < 20 && !modal; i++) {
+        await wait(100);
+        modal = Array.from(document.querySelectorAll('[class*="Modal_modalContainer"]')).find(
+            (el) => el.offsetParent !== null && /quantity/i.test(el.textContent || '')
+        );
+    }
+    if (!modal) return { ok: false, reason: 'no buy dialog' };
+
+    const input = modal.querySelector('input');
+    if (!input) return { ok: false, reason: 'no quantity box' };
+    setReactInputValue(input, String(quantity), { dispatchInput: true, dispatchChange: true });
+    await wait(150);
+
+    const buy = Array.from(modal.querySelectorAll('button')).find((b) => /^\s*buy\s*$/i.test(b.textContent || ''));
+    if (!buy) return { ok: false, reason: 'no Buy button' };
+    buy.click();
+
+    // The dialog closing is the purchase going through; the inventory update
+    // behind it is what moves the badge
+    for (let i = 0; i < 20; i++) {
+        await wait(100);
+        if (!document.body.contains(modal) || modal.offsetParent === null) break;
+    }
+    return { ok: true };
 }
 
 /**

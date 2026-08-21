@@ -148,9 +148,9 @@ function handleBuyModal(modal, activeQuantity, pendingCalculation) {
         quantityInput._valueTracker?.setValue?.(previous);
     }
 
-    // Trigger input event to notify React
-    const inputEvent = new Event('input', { bubbles: true });
-    quantityInput.dispatchEvent(inputEvent);
+    // Trigger input (and change, for a field that commits on blur) to notify React
+    quantityInput.dispatchEvent(new Event('input', { bubbles: true }));
+    quantityInput.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
 }
 

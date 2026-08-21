@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tester shop: a "Buy next" press per purchase
+
+The Tester strip gains a **Buy next ▸** control: each press buys the next pinned line the shop sells, for what you are still short of — filters the shop to it, opens its card, types the quantity, presses Buy — one purchase per press; press again for the next. The quantity fill also dispatches a change event so a field that commits on blur keeps it.
+
 ### Tester shop: missing-materials goes straight to the shop, with the quantity filled in
 
 With Tester-shop pricing on, every missing-materials hand-off — the action panel button, the enhancing panel button, the house panel's button, the simulators' house Market rows — opens Shop → Tester and pins the material tabs into the shop's own tab strip; clicking a tab filters the shop to that item and the shop's buy dialog is auto-filled with what is still missing. A line the shop does not sell keeps the marketplace as its click and says so. Replaces the interim marketplace-then-shop hop.
