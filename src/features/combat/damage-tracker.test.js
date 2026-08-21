@@ -280,6 +280,37 @@ describe('the class read off a run', () => {
         expect(alice?.classTag?.short).toBe('FIRE');
     });
 
+    test('an auto-attacker is read off the weapon on their sheet, before any cast', () => {
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players: {
+                0: {
+                    name: 'Alice',
+                    combatDetails: {
+                        combatAbilities: [],
+                        combatStats: {
+                            combatStyleHrids: ['/combat_styles/ranged'],
+                            damageType: '/damage_types/physical',
+                        },
+                    },
+                },
+                1: {
+                    name: 'Bob',
+                    combatDetails: {
+                        combatAbilities: [{ abilityHrid: '/abilities/heal' }],
+                        combatStats: { combatStyleHrids: ['/combat_styles/magic'], damageType: '/damage_types/nature' },
+                    },
+                },
+            },
+            monsters: { 0: { name: 'Eye' } },
+        });
+        tick({ 0: { isAutoAtk: true }, 1: { isAutoAtk: true } });
+
+        const classes = runClasses();
+        expect(classes['0']?.key).toBe('ranged');
+        expect(classes['1']?.key).toBe('healer');
+    });
+
     test('a new run starts with no evidence', () => {
         announce();
         tick({ 0: { preparingAbilityHrid: '/abilities/fireball' }, 1: {} });

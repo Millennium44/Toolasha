@@ -61,6 +61,14 @@ let names = {};
  */
 let castLogs = {};
 
+/**
+ * Player index → the kit and sheet `new_battle` stated for the slot: the
+ * equipped abilities and the combat stats (weapon style, element, threat).
+ * What answers before anyone has cast — an auto-attacker never will, and
+ * their weapon still says what they are. Reset with the run.
+ */
+let sheets = {};
+
 /** Who is fighting and since when; a change is a new run — see `sessionKeyFor` */
 let sessionKey = null;
 
@@ -173,6 +181,7 @@ export function resetDamageTracker() {
     sessionKey = null;
     tally = {};
     castLogs = {};
+    sheets = {};
     enemyTally = {};
     battle = { players: {}, enemies: {}, seconds: 0 };
     battleHP = {};
@@ -259,11 +268,29 @@ function noteCasts(players) {
  */
 export function runClasses(abilityDetailMap = dataManager.getInitClientData?.()?.abilityDetailMap || {}) {
     const out = {};
-    for (const [index, casts] of Object.entries(castLogs)) {
-        const verdict = inferClass({ casts }, abilityDetailMap);
+    for (const index of new Set([...Object.keys(sheets), ...Object.keys(castLogs)])) {
+        const verdict = inferClass(
+            { casts: castLogs[index] || null, kit: sheets[index]?.kit || null, stats: sheets[index]?.stats || null },
+            abilityDetailMap
+        );
         if (verdict) out[index] = verdict;
     }
     return out;
+}
+
+/**
+ * Keep what `new_battle` states about each slot's build.
+ * @param {Object} players - The `players` map from `new_battle`
+ */
+function noteSheets(players) {
+    for (const [index, player] of Object.entries(players || {})) {
+        const abilities = player?.combatDetails?.combatAbilities;
+        const kit = Array.isArray(abilities)
+            ? abilities.filter((entry) => entry?.abilityHrid).map((entry) => ({ hrid: entry.abilityHrid }))
+            : null;
+        const stats = player?.combatDetails?.combatStats || null;
+        if (kit?.length || stats) sheets[index] = { kit, stats };
+    }
 }
 
 export function damageBreakdown() {
@@ -275,9 +302,9 @@ export function damageBreakdown() {
         return {
             index,
             name: names[index] || `Player ${Number(index) + 1}`,
-            // The class guess, from what this slot was seen casting this run;
-            // null until the casts say something — the first few ticks of a
-            // fight usually do not
+            // The class guess, from what this slot was seen casting this run
+            // and the kit and weapon `new_battle` stated for it; null only
+            // when nothing supports one
             classTag: classes[index] || null,
             damage: entry.damage,
             // The part of `damage` no swing counter confirmed — a bleed
@@ -476,6 +503,7 @@ export default {
 
                 noteActions(state, players);
                 noteCasts(players);
+                noteSheets(players);
 
                 // Rebuilt rather than merged, for the same reason the monster map
                 // below is: an index is a slot in this fight. Every battle names
