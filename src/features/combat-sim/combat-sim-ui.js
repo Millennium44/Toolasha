@@ -7,12 +7,13 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
-import { expectedValueCalculator } from '../../utils/bundle-bridge.js';
+import { expectedValueCalculator, missingMaterialsButton } from '../../utils/bundle-bridge.js';
 import { watchTarget } from '../inventory/equipment-savings-row.js';
 import { watchItem } from '../inventory/watchlist.js';
 import { addAbilityGoal, addHouseGoal } from '../../utils/equipment-savings.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
+import { explainAbilityLevelUpCost } from '../../utils/ability-cost-calculator.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
@@ -976,17 +977,13 @@ function houseRowPurchase(candidate, result) {
  * @returns {string} Tooltip text
  */
 function houseMarketTitle(buy) {
-    const [first, ...rest] = buy.materials || [];
-    if (!first) return 'Open this in the marketplace';
-
-    const head =
-        `Opens ${first.name} with ${first.count.toLocaleString()} ready in the buy box — the largest single ` +
-        `line on this room’s bill.`;
-    if (!rest.length) return `${head} It is the only material this level needs.`;
+    const lines = buy.materials || [];
+    if (!lines.length) return 'Open this in the marketplace';
 
     return (
-        `${head} One click covers that one only; the level also needs ` +
-        rest.map((line) => `${line.count.toLocaleString()}× ${line.name}`).join(', ') +
+        'Opens the marketplace with a tab per material this level needs, each arming the buy box with what ' +
+        'you are still short of — ' +
+        lines.map((line) => `${line.count.toLocaleString()}× ${line.name}`).join(', ') +
         '.'
     );
 }
@@ -1005,8 +1002,28 @@ function houseMarketTitle(buy) {
  */
 export function abilityBookCount(result) {
     const books = result?.costDetail?.books?.books;
-    if (!Number.isFinite(books) || books <= 0) return 1;
-    return Math.max(1, Math.ceil(books));
+    if (Number.isFinite(books) && books > 0) return Math.max(1, Math.ceil(books));
+
+    // A row that never priced (no book on the market) still knows its levels:
+    // count the books from the character's own progress in the ability
+    try {
+        const candidate = result?.candidate;
+        const abilityHrid = candidate?.upgradeHrid;
+        const targetLevel = Math.floor(Number(candidate?.upgradeLevel) || 0);
+        if (abilityHrid && targetLevel > 0) {
+            const owned = (dataManager.getLearnedAbilities?.() || []).find(
+                (entry) => entry?.abilityHrid === abilityHrid
+            );
+            const level = Math.floor(Number(owned?.level) || 0);
+            const floorXp = dataManager.getInitClientData?.()?.levelExperienceTable?.[level] || 0;
+            const xp = Number.isFinite(Number(owned?.experience)) ? Number(owned.experience) : floorXp;
+            const fromLive = explainAbilityLevelUpCost(abilityHrid, level, xp, targetLevel)?.books;
+            if (Number.isFinite(fromLive) && fromLive > 0) return Math.max(1, Math.ceil(fromLive));
+        }
+    } catch (error) {
+        console.error('[CombatSimUI] Counting an ability row’s books failed:', error);
+    }
+    return 1;
 }
 
 /**
@@ -1076,7 +1093,12 @@ export function upgradeRowActionsHtml(result) {
             title="Save towards ${escapeAttribute(buy.house.label)} in Equipment Savings"
             style="${ROW_ACTION_STYLE}">Save for this</button>`;
         if (!buy.itemHrid) return saveHouse;
+        // The whole bill rides the button, so the click can open every line at
+        // once through the missing-materials tabs; the single-item attributes
+        // stay as the fallback when that module is not loaded
+        const bill = (buy.materials || []).map((line) => ({ itemHrid: line.itemHrid, count: line.count }));
         return `${saveHouse}<button type="button" ${attrs} data-buy-action="market"
+            data-buy-materials="${escapeAttribute(JSON.stringify(bill))}"
             title="${escapeAttribute(houseMarketTitle(buy))}" style="${ROW_ACTION_STYLE}">Market</button>`;
     }
 
@@ -1172,18 +1194,30 @@ export function wireUpgradeRowActions(container, logPrefix = 'CombatSimUI') {
                     });
                     button.textContent = 'Saving ✓';
                 } else if (action === 'market') {
-                    // An ability row buys a stack of books, so the buy box is
-                    // armed with the count before the marketplace opens; gear
-                    // buys one of a thing and clears any arming left over from
-                    // the last row, so a sword never inherits a book's quantity
-                    const quantity = Number(button.getAttribute('data-buy-quantity')) || 1;
-                    if (quantity > 1) {
-                        upgradeMarketAutofill().setPendingCalculation(() => quantity);
-                    } else {
+                    // A house level is a bill of several materials: hand the
+                    // whole of it to the missing-materials tabs, one per line,
+                    // each arming what is still short. Falls through to the
+                    // one-item open when that module is not around
+                    const rawBill = button.getAttribute('data-buy-materials');
+                    const openBill = missingMaterialsButton()?.openMaterialsList;
+                    if (rawBill && typeof openBill === 'function') {
                         marketAutofill?.clearQuantity();
+                        openBill(JSON.parse(rawBill));
+                        button.textContent = 'Opened ✓';
+                    } else {
+                        // An ability row buys a stack of books, so the buy box is
+                        // armed with the count before the marketplace opens; gear
+                        // buys one of a thing and clears any arming left over from
+                        // the last row, so a sword never inherits a book's quantity
+                        const quantity = Number(button.getAttribute('data-buy-quantity')) || 1;
+                        if (quantity > 1) {
+                            upgradeMarketAutofill().setPendingCalculation(() => quantity);
+                        } else {
+                            marketAutofill?.clearQuantity();
+                        }
+                        navigateToMarketplace(itemHrid, enhancementLevel);
+                        button.textContent = 'Opened ✓';
                     }
-                    navigateToMarketplace(itemHrid, enhancementLevel);
-                    button.textContent = 'Opened ✓';
                 } else {
                     watchItem(itemHrid);
                     button.textContent = 'Watching ✓';

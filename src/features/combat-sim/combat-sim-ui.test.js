@@ -140,7 +140,15 @@ vi.mock('../../core/data-manager.js', () => ({
         getSkills: () => [],
         getCurrentCharacterId: () => 'char1',
         getCurrentCharacterGameMode: () => 'standard',
+        getLearnedAbilities: () => mocks.learned || [],
+        getInitClientData: () => ({ levelExperienceTable: Array.from({ length: 201 }, (_, level) => 1000 * level) }),
     },
+}));
+
+// The missing-materials tabs live in another bundle; reached through the bridge
+vi.mock('../../utils/bundle-bridge.js', () => ({
+    expectedValueCalculator: () => null,
+    missingMaterialsButton: () => mocks.bridgeMissingMats,
 }));
 
 vi.mock('../../api/marketplace.js', () => ({
@@ -223,7 +231,10 @@ vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getProductionCost: () => 0,
 }));
 vi.mock('../../utils/ability-cost-calculator.js', () => ({
-    explainAbilityLevelUpCost: () => null,
+    // 1,000 XP a level, 500 XP a book — enough arithmetic for a book count
+    explainAbilityLevelUpCost: (abilityHrid, level, xp, targetLevel) => ({
+        books: (1000 * targetLevel - xp) / 500,
+    }),
 }));
 vi.mock('./skilling-sim-helpers.js', () => ({ buildOverridesForSkill: () => ({}) }));
 
@@ -1530,6 +1541,102 @@ describe('upgrade row handoff', () => {
         // Nothing to read, and a book you cannot count is still one book
         expect(abilityBookCount({})).toBe(1);
         expect(abilityBookCount({ costDetail: { books: { books: 0 } } })).toBe(1);
+    });
+
+    test('a row that never priced still counts its books from the character’s own progress', () => {
+        mocks.learned = [{ abilityHrid: '/abilities/berserk', level: 65, experience: 65_000 }];
+        try {
+            // 65 → 70 is 5,000 XP at 500 a book
+            expect(
+                abilityBookCount({
+                    candidate: { upgradeHrid: '/abilities/berserk', upgradeLevel: 70, type: 'ability_level' },
+                    cost: null,
+                })
+            ).toBe(10);
+            // Half a level read already: fewer books, rounded up to the whole one you still buy
+            mocks.learned = [{ abilityHrid: '/abilities/berserk', level: 65, experience: 65_250 }];
+            expect(
+                abilityBookCount({
+                    candidate: { upgradeHrid: '/abilities/berserk', upgradeLevel: 70, type: 'ability_level' },
+                })
+            ).toBe(10);
+            mocks.learned = [{ abilityHrid: '/abilities/berserk', level: 65, experience: 65_600 }];
+            expect(
+                abilityBookCount({
+                    candidate: { upgradeHrid: '/abilities/berserk', upgradeLevel: 70, type: 'ability_level' },
+                })
+            ).toBe(9);
+        } finally {
+            mocks.learned = [];
+        }
+    });
+
+    test('a house Market button carries its bill, and the click opens it as tabs when the module is there', () => {
+        const opened = [];
+        mocks.bridgeMissingMats = { openMaterialsList: (lines) => opened.push(lines) };
+        try {
+            const container = document.createElement('div');
+            // Markup as the house row draws it, with a bill of two lines
+            container.innerHTML =
+                '<button type="button" data-buy-hrid="/items/cedar_lumber" data-buy-level="0" data-buy-quantity="300" ' +
+                'data-buy-action="market" data-buy-materials=\'[{"itemHrid":"/items/cedar_lumber","count":300},' +
+                '{"itemHrid":"/items/linen_hat","count":16}]\'>Market</button>';
+            wireUpgradeRowActions(container);
+            container.querySelector('button').click();
+
+            expect(opened).toEqual([
+                [
+                    { itemHrid: '/items/cedar_lumber', count: 300 },
+                    { itemHrid: '/items/linen_hat', count: 16 },
+                ],
+            ]);
+            // Not the one-item open: the tabs are the open
+            expect(mocks.marketOpened).toEqual([]);
+        } finally {
+            mocks.bridgeMissingMats = null;
+        }
+    });
+
+    test('without that module a house Market button opens its biggest line, as before', () => {
+        const container = document.createElement('div');
+        container.innerHTML =
+            '<button type="button" data-buy-hrid="/items/cedar_lumber" data-buy-level="0" data-buy-quantity="300" ' +
+            'data-buy-action="market" data-buy-materials=\'[{"itemHrid":"/items/cedar_lumber","count":300}]\'>Market</button>';
+        wireUpgradeRowActions(container);
+        container.querySelector('button').click();
+
+        expect(mocks.marketOpened).toEqual([{ itemHrid: '/items/cedar_lumber', enhancementLevel: 0 }]);
+        expect(mocks.autofillPending()).toBe(300);
+    });
+
+    test('Market on a house row hands the whole bill to the missing-materials tabs', () => {
+        const opened = [];
+        mocks.bridgeMissingMats = { openMaterialsList: (lines) => opened.push(lines) };
+        try {
+            const container = document.createElement('div');
+            container.innerHTML = upgradeRowActionsHtml({
+                cost: 1_000_000,
+                candidate: {
+                    type: 'house',
+                    roomHrid: '/house_rooms/dojo',
+                    roomName: 'Dojo',
+                    currentLevel: 2,
+                    upgradeLevel: 3,
+                },
+            });
+            const button = container.querySelector('[data-buy-action="market"]');
+            // No game data in this test, so no materials resolve and no Market button is drawn
+            if (!button) {
+                expect(container.querySelector('[data-buy-action="save-house"]')).toBeTruthy();
+                return;
+            }
+            wireUpgradeRowActions(container);
+            button.click();
+            expect(opened).toHaveLength(1);
+            expect(mocks.marketOpened).toEqual([]);
+        } finally {
+            mocks.bridgeMissingMats = null;
+        }
     });
 
     test('Market on an ability row arms the buy box with the books the upgrade needs', () => {

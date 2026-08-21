@@ -43,6 +43,8 @@ let inventoryUpdateHandler = null;
 let storedActionHrid = null;
 let storedNumActions = 0;
 let storedEnhancementContext = null;
+/** A plain bill of materials opened from elsewhere (a house level), kept for live updates */
+let storedMaterialList = null;
 const timerRegistry = createTimerRegistry();
 const autofillManager = createAutofillManager('MissingMats-Actions');
 
@@ -670,6 +672,7 @@ async function handleMissingMaterialsClick(actionHrid, numActions) {
     storedActionHrid = actionHrid;
     storedNumActions = numActions;
     storedEnhancementContext = null;
+    storedMaterialList = null;
 
     // Navigate to marketplace
     const success = await openMarketplacePage();
@@ -1039,6 +1042,8 @@ function updateTabsOnInventoryChange() {
         const ignoreQueue = config.getSetting('actions_missingMaterialsButton_ignoreQueue') || false;
         const accountForQueue = !ignoreQueue;
         updatedMaterials = calculateMaterialRequirements(storedActionHrid, storedNumActions, accountForQueue);
+    } else if (storedMaterialList) {
+        updatedMaterials = materialsFromList(storedMaterialList.lines);
     } else {
         return;
     }
@@ -1133,7 +1138,78 @@ function handleMarketplaceCleanup() {
     storedActionHrid = null;
     storedNumActions = 0;
     storedEnhancementContext = null;
+    storedMaterialList = null;
     autofillManager.clearQuantity();
+}
+
+/**
+ * A bill of materials against the inventory, in the shape the tabs draw.
+ *
+ * Only unenhanced copies count as "have", as in the action calculator — an
+ * enhanced piece is not what a house level or a recipe consumes. Nothing is
+ * reserved for the action queue here: a house level is not an action.
+ *
+ * @param {Array<{itemHrid: string, count: number}>} lines - What is needed, in total
+ * @returns {Array<Object>} Material objects for `createMaterialTab`
+ */
+export function materialsFromList(lines) {
+    const inventory = dataManager.getInventory?.() || [];
+    const itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap || {};
+    const out = [];
+    for (const line of lines || []) {
+        const required = Math.max(0, Math.floor(Number(line?.count) || 0));
+        if (!line?.itemHrid || required <= 0) continue;
+        const details = itemDetailMap[line.itemHrid];
+        const have = inventory
+            .filter((i) => i.itemHrid === line.itemHrid && !i.enhancementLevel)
+            .reduce((sum, i) => sum + (i.count || 0), 0);
+        out.push({
+            itemHrid: line.itemHrid,
+            itemName: details?.name || line.itemHrid.split('/').pop().replace(/_/g, ' '),
+            required,
+            have,
+            queued: 0,
+            available: have,
+            missing: Math.max(0, required - have),
+            isTradeable: details?.isTradable === true,
+            isUpgradeItem: false,
+        });
+    }
+    return out;
+}
+
+/**
+ * Open the marketplace on a bill of materials that is not an action's — a
+ * house level's, from the simulators' Upgrade tab — one tab per item, each
+ * arming the buy box with what is still missing, kept live as the inventory
+ * changes. The same tabs the action panel button builds, from a list instead
+ * of a recipe.
+ *
+ * @param {Array<{itemHrid: string, count: number}>} lines - Totals needed
+ * @returns {Promise<boolean>} Whether the marketplace opened and the tabs were drawn
+ */
+export async function openMaterialsList(lines) {
+    const wanted = (lines || []).filter((line) => line?.itemHrid && Number(line.count) > 0);
+    if (!wanted.length) return false;
+
+    storedActionHrid = null;
+    storedNumActions = 0;
+    storedEnhancementContext = null;
+    storedMaterialList = { lines: wanted };
+
+    const success = await openMarketplacePage();
+    if (!success) {
+        console.error('[MissingMats] Failed to navigate to marketplace');
+        return false;
+    }
+    await new Promise((resolve) => {
+        const delayTimeout = setTimeout(resolve, 200);
+        timerRegistry.registerTimeout(delayTimeout);
+    });
+
+    createMissingMaterialTabs(materialsFromList(wanted));
+    setupInventoryListener();
+    return true;
 }
 
 /**
@@ -1156,4 +1232,5 @@ export default {
     initialize,
     cleanup,
     openMissingMaterials,
+    openMaterialsList,
 };

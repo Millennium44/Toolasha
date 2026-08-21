@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Upgrade-tab Market buttons: whole house bills, and book counts that always fill
+
+A house row's Market button now opens the marketplace with a tab per material the level needs (the missing-materials tabs, counts net of what you hold, kept live) instead of only the biggest line. An ability row that never priced still arms the buy box with the books it takes from the character's own progress in that ability. Both simulators, since they share the row buttons.
+
 ### Combat Levels planner: the weapon's own skill comes along
 
 Each combat-level row now also shows where the weapon's primary training skill lands by the time that grind is done (it takes 30% of all combat XP whatever charm is worn — defense for a bulwark, attack for a spear, melee/ranged/magic otherwise) and the Δ columns are simmed for both together, with the skill-alone figures in the tooltip. Replaces the "Main time" toggle. The charm picker gains an enhancement level (e.g. Expert +5); Auto keeps the equipped charm's tier and level.
