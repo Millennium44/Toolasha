@@ -913,6 +913,8 @@ function createBuyNextControl() {
     };
     refreshNote();
     button.addEventListener('mouseenter', refreshNote);
+    // The badges move as purchases land; the note follows them
+    button.addEventListener('mwi-tabs-updated', refreshNote);
 
     button.addEventListener('click', async (event) => {
         event.preventDefault();
@@ -1041,7 +1043,9 @@ async function buyOneFromTesterShop(itemName, quantity) {
 
     const buy = Array.from(modal.querySelectorAll('button')).find((b) => /^\s*buy\s*$/i.test(b.textContent || ''));
     if (!buy) return { ok: false, reason: 'no Buy button' };
-    buy.click();
+    // A plain .click() closes the dialog without buying — the game's handler
+    // wants the real event path; React's own handler first, like the card
+    clickThroughReact(buy, { reactFirst: true });
 
     // The dialog closing is the purchase going through; the inventory update
     // behind it is what moves the badge
@@ -1368,6 +1372,10 @@ function updateTabsOnInventoryChange() {
         if (material) {
             updateTabBadge(tab, material);
         }
+    });
+    // Controls pinned beside the tabs (Buy next) re-read the badges
+    currentMaterialsTabs.forEach((tab) => {
+        if (tab.hasAttribute('data-mwi-buy-next')) tab.dispatchEvent(new Event('mwi-tabs-updated'));
     });
 }
 
