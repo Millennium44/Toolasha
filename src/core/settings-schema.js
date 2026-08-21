@@ -4,6 +4,7 @@
  */
 
 import { loadoutSnapshot } from '../utils/bundle-bridge.js';
+import { isTestServer } from '../utils/game-server.js';
 
 export const settingsGroups = {
     ironCow: {
@@ -1523,6 +1524,14 @@ export const settingsGroups = {
                     { value: 'optimistic', label: 'Buy: Bid / Sell: Ask (Patient Buy / Patient Sell)' },
                     { value: 'patientBuy', label: 'Buy: Bid / Sell: Bid (Patient Buy / Instant Sell)' },
                 ],
+            },
+            pricing_testerShop: {
+                id: 'pricing_testerShop',
+                label: 'Test server: price purchases from the Tester shop',
+                type: 'checkbox',
+                default: false,
+                hidden: !isTestServer(),
+                help: "Test server only. Buy-side prices floor at the Tester shop's coin prices — house materials, ability books, enhancement materials — and the simulators' Upgrade tabs price equipment as bought from the shop at +10 and mirrored up with Philosopher's Mirrors (guaranteed, consuming a copy one level below) beyond that.",
             },
             profitCalc_pricingNaming: {
                 id: 'profitCalc_pricingNaming',

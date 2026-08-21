@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Test server: price purchases from the Tester shop (opt-in)
+
+A new Pricing & Profit setting, shown only on the test server, floors buy-side prices at the Tester tab's coin prices (house materials, ability books, enhancement materials) and has the simulators' Upgrade tabs price equipment as a shop copy at +10, mirrored up with Philosopher's Mirrors beyond that (guaranteed attempts, each consuming a copy one level below — doubling plus a mirror per level). Off, the Tester entries are ignored everywhere, as before.
+
 ### Class icons tell weapons apart inside a class
 
 Melee draws the spear, sword or flail of the sub-style seen (stab/slash/smash); ranged draws the Cursed Bow when a curse was ever seen in that player's stream and the Sundering Crossbow otherwise; your own character is drawn as the weapon actually equipped. Combat panel and trial scoreboard alike.

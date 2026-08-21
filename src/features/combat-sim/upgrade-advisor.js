@@ -23,6 +23,7 @@ import { deriveSeed, randomSeed } from './engine/rng.js';
 import bundledLabyrinthClearRate from '../combat/labyrinth-clear-rate.js';
 import { labyrinthClearRate } from '../../utils/bundle-bridge.js';
 import { resolveItemPrice } from '../../utils/profit-helpers.js';
+import { testerShopEnabled, testerGearPrice } from '../../utils/tester-shop.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { calculateEnhancement } from '../../utils/enhancement-calculator.js';
 import { getEnhancingParams, getAutoDetectedParams } from '../../utils/enhancement-config.js';
@@ -421,6 +422,13 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData, o
     // Genuine no-op: nothing to enhance
     if (targetLevel <= startLevel) {
         return 0;
+    }
+
+    // On the test server with the Tester shop priced in, nobody rolls the
+    // dice: the finished level is a shop copy mirrored up, guaranteed
+    if (testerShopEnabled()) {
+        const tester = testerGearPrice(itemHrid, targetLevel, { itemDetailMap: gameData?.itemDetailMap });
+        if (tester) return tester.price;
     }
 
     const itemDetails = gameData.itemDetailMap[itemHrid];
@@ -2829,6 +2837,15 @@ function weakestCostSource(sources) {
  * @returns {{price: number|null, source: string|null}} Buy price in gold and its basis
  */
 function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, slot, gameData) {
+    // Tester shop first, when it is a price source: the shop copy at its
+    // level, or that copy mirrored up — see tester-shop.js
+    if (testerShopEnabled()) {
+        const tester = testerGearPrice(itemHrid, enhancementLevel, { itemDetailMap: gameData?.itemDetailMap });
+        if (tester) {
+            return { price: tester.price, source: tester.route === 'mirror' ? 'tester shop + mirrors' : 'tester shop' };
+        }
+    }
+
     if (enhancementLevel > 0) {
         // Same method as enhancement candidates: use the market only when the
         // target level has an actual listing. resolveItemPrice cannot be used

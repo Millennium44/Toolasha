@@ -7,6 +7,7 @@
  */
 
 import dataManager from '../core/data-manager.js';
+import { isTesterShopEntry, testerShopEnabled } from './tester-shop.js';
 
 /**
  * Generate alternate display names to handle ★ ↔ (R) refined item naming.
@@ -96,7 +97,11 @@ export function getShopCoinCost(itemHrid) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.shopItemDetailMap) return 0;
 
-    for (const shopItem of Object.values(gameData.shopItemDetailMap)) {
+    // The test server's Tester tab is a price source only when asked for —
+    // see tester-shop.js — so its entries are skipped otherwise
+    const testerOn = testerShopEnabled();
+    for (const [key, shopItem] of Object.entries(gameData.shopItemDetailMap)) {
+        if (!testerOn && isTesterShopEntry(shopItem, key)) continue;
         if (shopItem.itemHrid === itemHrid) {
             if (shopItem.costs && shopItem.costs.length > 0) {
                 const coinCost = shopItem.costs.find((cost) => cost.itemHrid === '/items/coin');
