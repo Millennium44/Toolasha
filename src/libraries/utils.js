@@ -99,6 +99,7 @@ import * as battlePanelMonsters from '../utils/battle-panel-monsters.js';
 import * as characterKey from '../utils/character-key.js';
 import * as chestImport from '../utils/chest-import.js';
 import * as chunkedHistory from '../utils/chunked-history.js';
+import * as classWeapon from '../utils/class-weapon.js';
 import * as persistedRecord from '../utils/persisted-record.js';
 import * as syncMergeRegistry from '../utils/sync-merge-registry.js';
 import * as reactClick from '../utils/react-click.js';
@@ -221,6 +222,7 @@ toolashaRoot.Utils = {
     characterKey,
     chestImport,
     chunkedHistory,
+    classWeapon,
     persistedRecord,
     syncMergeRegistry,
     reactClick,

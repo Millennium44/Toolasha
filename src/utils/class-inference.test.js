@@ -131,9 +131,11 @@ describe('inferring a class', () => {
         expect(inferClass({ casts: log }, ABILITIES).key).toBe('fireMage');
     });
 
-    test('water and nature get their own tags', () => {
+    test('water is a damage mage; nature is the healer', () => {
         expect(inferClass({ casts: cast('/abilities/ice_spear') }, ABILITIES).key).toBe('waterMage');
-        expect(inferClass({ casts: cast('/abilities/entangle') }, ABILITIES).key).toBe('natureMage');
+        // Nature is the element the game's healing is written in, so a nature
+        // caster is what the party calls its healer — not a third mage bucket
+        expect(inferClass({ casts: cast('/abilities/entangle') }, ABILITIES).key).toBe('healer');
     });
 
     test('magic with no element stated is a plain Mage rather than a guess', () => {
@@ -165,7 +167,7 @@ describe('inferring a class', () => {
             ABILITIES
         );
 
-        expect(verdict.key).toBe('natureMage');
+        expect(verdict.key).toBe('healer');
         expect(verdict.basis).toContain('weapon style');
     });
 

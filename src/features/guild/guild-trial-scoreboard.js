@@ -52,6 +52,7 @@ import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import { guildTrialRecorder } from './guild-trial-recorder.js';
 import { buildGuildReport } from './guild-trial-report.js';
+import { classTagIconHTML } from '../../utils/class-weapon.js';
 
 /** Class every part of this panel carries, so teardown is one query */
 export const PANEL_CLASS = 'mwi-trial-scoreboard';
@@ -81,11 +82,19 @@ export const TYPE_COLORS = {
 };
 
 /**
- * A role chip beside a name on the board, or nothing.
+ * A role marker beside a name on the board, or nothing.
  *
- * The visible label comes from `class-inference.js`' own bucket table — a fixed
- * set of words this file controls — and is stripped to letters before it goes
- * into the string, so nothing off the wire can reach the markup through it.
+ * Drawn as the class's representative weapon where the game's item data can
+ * name one (`class-weapon.js`): a row here is a rank, a name, a figure and a
+ * bar inside 320 pixels, and a six-letter bordered chip was taking its width
+ * out of the name — "Estevao [WATER] 175.8K" with the name ellipsing to make
+ * room for a word.
+ *
+ * The chip is the fallback rather than the replacement, because it is what
+ * every client draws until the init payload lands. Its visible label comes from
+ * `class-inference.js`' own bucket table — a fixed set of words this file
+ * controls — and is stripped to letters before it goes into the string, so
+ * nothing off the wire can reach the markup through it.
  *
  * @param {Object|null} verdict - From `guildTrialAbilities.classes()`
  * @returns {string} HTML, or '' when nothing is known about this player
@@ -93,9 +102,15 @@ export const TYPE_COLORS = {
 export function classTagHTML(verdict) {
     const label = String(verdict?.short || '').replace(/[^A-Z]/g, '');
     if (!label) return '';
+
+    const title =
+        `${label} — inferred from what this player was seen casting this trial, ` + 'not from a Battle Info capture.';
+
+    const icon = classTagIconHTML(verdict, { title, size: 13 });
+    if (icon) return icon;
+
     return (
-        `<span title="${label} — inferred from what this player was seen casting this trial, ` +
-        `not from a Battle Info capture." style="color:${DIM}; font-size:9px; letter-spacing:0.5px; ` +
+        `<span title="${title}" style="color:${DIM}; font-size:9px; letter-spacing:0.5px; ` +
         `border:1px solid ${DIM}; border-radius:3px; padding:0 3px;">${label}</span>`
     );
 }

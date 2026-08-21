@@ -26,9 +26,14 @@
  * 2. **An ally heal is a healer.** An `/ability_effect_types/heal` effect
  *    pointed at an ally. Self-heals do not count: every build life-steals.
  * 3. **The modal damage style of what they actually cast.** Magic splits again
- *    by the modal `damageType` of those casts — fire, water, nature — because in
- *    this game "mage" without an element says nothing about what the party is
- *    weak to. Ranged and the three melee styles collapse to Ranged and Melee.
+ *    by the modal `damageType` of those casts, because in this game "mage"
+ *    without an element says nothing about what the party is weak to — and the
+ *    elements are not three peers. Fire and water are the damage elements and
+ *    get a bucket each; **nature is the healing element**, so nature casts land
+ *    in Healer rather than in a third mage bucket. That agrees with rule 2 by
+ *    construction: a nature caster and an ally-healer are the same player, and
+ *    the two rules must not be able to disagree about them. Ranged and the
+ *    three melee styles collapse to Ranged and Melee.
  * 4. **The sheet's own style**, when no damaging cast has been seen but a
  *    capture exists: `combatStats.combatStyleHrids[0]` and `combatStats.damageType`.
  * 5. **Nothing.** Null, and the caller draws no tag. Never a guess from party
@@ -73,17 +78,22 @@ export const CLASS_BUCKETS = {
     healer: { key: 'healer', label: 'Healer', short: 'HEAL' },
     fireMage: { key: 'fireMage', label: 'Fire Mage', short: 'FIRE' },
     waterMage: { key: 'waterMage', label: 'Water Mage', short: 'WATER' },
-    natureMage: { key: 'natureMage', label: 'Nature Mage', short: 'NATURE' },
     mage: { key: 'mage', label: 'Mage', short: 'MAGE' },
     ranged: { key: 'ranged', label: 'Ranged', short: 'RANGED' },
     melee: { key: 'melee', label: 'Melee', short: 'MELEE' },
 };
 
-/** Damage type hrid tail → the magic bucket it names */
+/**
+ * Damage type hrid tail → the bucket it names.
+ *
+ * Nature is not a mage bucket. The game's healing is written in nature, so a
+ * caster whose modal element is nature is the party's healer — the same verdict
+ * the ally-heal rule reaches, from the other direction.
+ */
 const MAGE_BY_ELEMENT = {
     fire: CLASS_BUCKETS.fireMage,
     water: CLASS_BUCKETS.waterMage,
-    nature: CLASS_BUCKETS.natureMage,
+    nature: CLASS_BUCKETS.healer,
 };
 
 /** Combat style hrid tail → the non-magic bucket it names */

@@ -22,6 +22,7 @@ import { formatEta } from '../../utils/progress-eta.js';
 import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
+import { classTagIcon } from '../../utils/class-weapon.js';
 import storage from '../../core/storage.js';
 
 const ACCENT = '#a8d6a0';
@@ -521,7 +522,6 @@ const CLASS_COLORS = {
     healer: ROW_COLORS.good,
     fireMage: ROW_COLORS.bad,
     waterMage: ROW_COLORS.accent,
-    natureMage: ROW_COLORS.good,
     mage: ROW_COLORS.violet,
     ranged: ROW_COLORS.gold,
     melee: ROW_COLORS.neutral,
@@ -568,6 +568,17 @@ function playerLine(row, value, color, title = '') {
     const line = panelLine(row.name, value, color, title);
     const tag = classTagText(row.classTag);
     if (!tag) return line;
+
+    // The weapon the game itself draws for this style, when the data can name
+    // one — one glyph where six letters and a border used to sit. The chip is
+    // the fallback, not the plan B nobody tested: it is what a client draws
+    // before the init payload lands, every time.
+    const icon = classTagIcon(row.classTag, { title: tag.title });
+    if (icon) {
+        icon.style.marginLeft = '5px';
+        line.firstChild?.after(icon);
+        return line;
+    }
 
     const chip = document.createElement('span');
     chip.textContent = tag.text;
