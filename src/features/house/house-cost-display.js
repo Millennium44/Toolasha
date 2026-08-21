@@ -9,7 +9,7 @@ import { coinFormatter, formatWithSeparator } from '../../utils/formatters.js';
 import dataManager from '../../core/data-manager.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
-import { testerShopEnabled, testerShopCoinCost } from '../../utils/tester-shop.js';
+import { testerShopEnabled } from '../../utils/tester-shop.js';
 import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
 import {
     createMaterialTab,
@@ -530,6 +530,7 @@ class HouseCostDisplay {
                     missing.push({
                         itemHrid: material.itemHrid,
                         itemName: itemDetails.name,
+                        required: material.count,
                         missing: missingAmount,
                         isTradeable: itemDetails.isTradable === true,
                     });
@@ -592,6 +593,18 @@ class HouseCostDisplay {
      * @param {Array} missingMaterials - Array of missing material objects
      */
     async handleMissingMaterialsClick(missingMaterials) {
+        // Tester shop priced in: hand the whole bill to the actions module,
+        // which opens the shop's Tester tab with a tab per line and arms the
+        // buy dialog — the same thing its own button does
+        const openBill = missingMaterialsButton()?.openMaterialsList;
+        if (testerShopEnabled() && typeof openBill === 'function') {
+            const lines = (missingMaterials || []).map((m) => ({
+                itemHrid: m.itemHrid,
+                count: Number(m.required) > 0 ? Number(m.required) : Number(m.missing) || 0,
+            }));
+            if (await openBill(lines)) return;
+        }
+
         // Navigate to marketplace
         const success = await this.navigateToMarketplace();
         if (!success) {
@@ -704,15 +717,6 @@ class HouseCostDisplay {
         for (const material of missingMaterials) {
             let tabEl = null;
             const tab = createMaterialTab(material, referenceTab, (_e, mat) => {
-                // On the test server with the Tester shop priced in, a material
-                // the shop sells is bought there — through the actions module's
-                // shop walk, reached over the bridge
-                const openShop = missingMaterialsButton()?.openTesterShop;
-                if (testerShopEnabled() && testerShopCoinCost(mat.itemHrid) > 0 && typeof openShop === 'function') {
-                    this.autofillManager.clearQuantity();
-                    openShop(mat.itemName || '');
-                    return;
-                }
                 // Read the current missing quantity from the tab's data attribute,
                 // which is kept up-to-date by the inventory listener.
                 this.autofillManager.setPendingCalculation(() => {

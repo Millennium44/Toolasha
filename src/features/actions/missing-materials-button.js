@@ -575,19 +575,6 @@ async function handleEnhancementMissingMaterialsClick(
     storedActionHrid = null;
     storedNumActions = 0;
 
-    // Navigate to marketplace
-    const success = await openMarketplacePage();
-    if (!success) {
-        console.error('[MissingMats] Failed to navigate to marketplace');
-        return;
-    }
-
-    // Wait a moment for marketplace to settle
-    await new Promise((resolve) => {
-        const delayTimeout = setTimeout(resolve, 200);
-        timerRegistry.registerTimeout(delayTimeout);
-    });
-
     // Recalculate materials fresh (inventory may have changed since button was rendered)
     const freshMaterials = calculateEnhancementMaterialRequirements(
         itemHrid,
@@ -598,8 +585,8 @@ async function handleEnhancementMissingMaterialsClick(
         repeatCount
     );
 
-    // Create custom tabs
-    createMissingMaterialTabs(freshMaterials, strategyInfo);
+    // Open the marketplace, or the Tester shop, with a tab per material
+    if (!(await openWhereBought(freshMaterials, strategyInfo))) return;
 
     // Setup inventory listener for live updates
     setupInventoryListener();
@@ -675,26 +662,12 @@ async function handleMissingMaterialsClick(actionHrid, numActions) {
     storedEnhancementContext = null;
     storedMaterialList = null;
 
-    // Navigate to marketplace
-    const success = await openMarketplacePage();
-    if (!success) {
-        console.error('[MissingMats] Failed to navigate to marketplace');
-        return;
-    }
-
-    // Wait a moment for marketplace to settle
-    await new Promise((resolve) => {
-        const delayTimeout = setTimeout(resolve, 200);
-        timerRegistry.registerTimeout(delayTimeout);
-    });
-
     // Recalculate materials fresh (inventory may have changed since button was rendered)
     const ignoreQueue = config.getSetting('actions_missingMaterialsButton_ignoreQueue') || false;
     const accountForQueue = !ignoreQueue;
     const freshMaterials = calculateMaterialRequirements(actionHrid, numActions, accountForQueue);
 
-    // Create custom tabs
-    createMissingMaterialTabs(freshMaterials);
+    if (!(await openWhereBought(freshMaterials))) return;
 
     // Setup inventory listener for live updates
     setupInventoryListener();
@@ -763,13 +736,6 @@ async function waitForMarketplace() {
  */
 function makeMaterialClickHandler(tabRef) {
     return (_e, mat) => {
-        // On the test server with the Tester shop priced in, a material the
-        // shop sells is bought there, not on the market
-        if (testerShopEnabled() && testerShopCoinCost(mat.itemHrid) > 0) {
-            autofillManager.clearQuantity();
-            openTesterShop(mat.itemName || '');
-            return;
-        }
         // Read the current missing quantity from the tab's data attribute,
         // which is kept up-to-date by the inventory listener.
         autofillManager.setPendingCalculation(() => {
@@ -780,21 +746,20 @@ function makeMaterialClickHandler(tabRef) {
 }
 
 /**
- * Open the Shop on its Tester tab, filtered to one item by name.
+ * Open the Shop on its Tester tab.
  *
- * Best-effort DOM walk: the shop's nav entry, then the tab that says Tester,
- * then the item filter box. Each step that cannot be found is logged and the
- * rest is skipped — the shop at least opens.
+ * The shop's nav entry, then the tab that says Tester. Each step that cannot
+ * be found is logged and reported as a failure, so the caller can fall back
+ * to the marketplace rather than leave the player nowhere.
  *
- * @param {string} itemName - What to type into the filter
- * @returns {Promise<boolean>} Whether the Tester tab was reached
+ * @returns {Promise<HTMLElement|null>} The Tester tab once selected, else null
  */
-export async function openTesterShop(itemName) {
+export async function openTesterShopPage() {
     const navButtons = document.querySelectorAll('.NavigationBar_nav__3uuUl');
     const shopButton = Array.from(navButtons).find((nav) => nav.querySelector('svg[aria-label="navigationBar.shop"]'));
     if (!shopButton) {
         console.error('[MissingMats] Shop navbar button not found');
-        return false;
+        return null;
     }
     shopButton.click();
 
@@ -803,31 +768,128 @@ export async function openTesterShop(itemName) {
             timerRegistry.registerTimeout(setTimeout(resolve, ms));
         });
 
-    let testerTab = null;
-    for (let i = 0; i < 30 && !testerTab; i++) {
+    for (let i = 0; i < 30; i++) {
         await wait(100);
-        for (const container of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
-            if (container.offsetParent === null) continue;
-            testerTab = Array.from(container.children).find((tab) => /^\s*tester\s*$/i.test(tab.textContent || ''));
-            if (testerTab) break;
+        const testerTab = findTesterTab();
+        if (testerTab) {
+            testerTab.click();
+            await wait(150);
+            return testerTab;
         }
     }
-    if (!testerTab) {
-        console.error('[MissingMats] Tester shop tab not found');
-        return false;
-    }
-    testerTab.click();
+    console.error('[MissingMats] Tester shop tab not found');
+    return null;
+}
 
-    for (let i = 0; i < 20; i++) {
-        await wait(100);
-        const input = Array.from(document.querySelectorAll('input')).find(
-            (el) => el.offsetParent !== null && /filter/i.test(el.placeholder || '')
-        );
-        if (input) {
-            setReactInputValue(input, itemName);
+/** The Shop's Tester tab, when its strip is on screen */
+function findTesterTab() {
+    for (const container of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
+        if (container.offsetParent === null) continue;
+        const tab = Array.from(container.children).find((el) => /^\s*tester\s*$/i.test(el.textContent || ''));
+        if (tab) return tab;
+    }
+    return null;
+}
+
+/** Type a name into the shop's item filter, when the box is on screen */
+function setShopFilter(itemName) {
+    const input = Array.from(document.querySelectorAll('input')).find(
+        (el) => el.offsetParent !== null && /filter/i.test(el.placeholder || '')
+    );
+    if (input) setReactInputValue(input, itemName || '');
+    return Boolean(input);
+}
+
+/**
+ * Whether a bill should be bought in the Tester shop: pricing is on, and the
+ * shop sells at least one line of it.
+ * @param {Array<{itemHrid: string}>} materials
+ * @returns {boolean}
+ */
+function wantsTesterShop(materials) {
+    if (!testerShopEnabled()) return false;
+    return (materials || []).some((material) => testerShopCoinCost(material?.itemHrid) > 0);
+}
+
+/**
+ * Pin the missing-material tabs into the Shop's Tester strip.
+ *
+ * Same tabs, same live badges, same dismiss — a click filters the shop to the
+ * item and arms the buy dialog with what is still missing. A line the shop
+ * does not sell keeps the marketplace as its click, and says so.
+ *
+ * @param {Array<Object>} missingMaterials - Material objects
+ * @param {HTMLElement} testerTab - The selected Tester tab, to clone
+ */
+function createTesterShopTabs(missingMaterials, testerTab) {
+    const tabsContainer = testerTab?.parentElement;
+    if (!tabsContainer) {
+        console.error('[MissingMats] Tester tab strip not found');
+        return;
+    }
+    removeMaterialTabs();
+    currentMaterialsTabs.length = 0;
+    tabsContainer.style.flexWrap = 'wrap';
+
+    if (!tabsContainer.hasAttribute('data-mwi-delegated-listener')) {
+        tabsContainer.setAttribute('data-mwi-delegated-listener', 'true');
+        tabsContainer.addEventListener('click', (e) => {
+            const clickedTab = e.target.closest('button');
+            if (clickedTab && !clickedTab.hasAttribute('data-mwi-custom-tab')) {
+                autofillManager.clearQuantity();
+            }
+        });
+    }
+
+    for (const material of missingMaterials) {
+        const sold = testerShopCoinCost(material.itemHrid) > 0;
+        const tabRef = { tab: null };
+        const handler = sold
+            ? (_e, mat) => {
+                  autofillManager.setPendingCalculation(() =>
+                      parseInt(tabRef.tab?.getAttribute('data-missing-quantity') || '0', 10)
+                  );
+                  // Stay in the Tester tab and narrow it to this item
+                  findTesterTab()?.click();
+                  setShopFilter(mat.itemName);
+              }
+            : makeMaterialClickHandler(tabRef);
+        const tab = createMaterialTab(material, testerTab, handler);
+        tabRef.tab = tab;
+        if (!sold) tab.title = 'Not sold in the Tester shop — opens the marketplace';
+        tabsContainer.appendChild(tab);
+        currentMaterialsTabs.push(tab);
+    }
+}
+
+/**
+ * Open whatever a bill is bought from: the Tester shop when it is priced in
+ * and sells some of it, the marketplace otherwise — and draw the tabs there.
+ *
+ * @param {Array<Object>} materials - Material objects for the tabs
+ * @param {Object|null} [strategyInfo] - Enhancement protection strategy, marketplace only
+ * @returns {Promise<boolean>} Whether a page opened and tabs were drawn
+ */
+async function openWhereBought(materials, strategyInfo = null) {
+    if (wantsTesterShop(materials)) {
+        const testerTab = await openTesterShopPage();
+        if (testerTab) {
+            createTesterShopTabs(materials, testerTab);
             return true;
         }
+        // The shop could not be reached: the marketplace is still a place to buy
     }
+
+    const success = await openMarketplacePage();
+    if (!success) {
+        console.error('[MissingMats] Failed to navigate to marketplace');
+        return false;
+    }
+    await new Promise((resolve) => {
+        const delayTimeout = setTimeout(resolve, 200);
+        timerRegistry.registerTimeout(delayTimeout);
+    });
+    createMissingMaterialTabs(materials, strategyInfo);
     return true;
 }
 
@@ -1257,17 +1319,7 @@ export async function openMaterialsList(lines) {
     storedEnhancementContext = null;
     storedMaterialList = { lines: wanted };
 
-    const success = await openMarketplacePage();
-    if (!success) {
-        console.error('[MissingMats] Failed to navigate to marketplace');
-        return false;
-    }
-    await new Promise((resolve) => {
-        const delayTimeout = setTimeout(resolve, 200);
-        timerRegistry.registerTimeout(delayTimeout);
-    });
-
-    createMissingMaterialTabs(materialsFromList(wanted));
+    if (!(await openWhereBought(materialsFromList(wanted)))) return false;
     setupInventoryListener();
     return true;
 }
@@ -1293,5 +1345,5 @@ export default {
     cleanup,
     openMissingMaterials,
     openMaterialsList,
-    openTesterShop,
+    openTesterShopPage,
 };

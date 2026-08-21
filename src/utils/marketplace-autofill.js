@@ -89,6 +89,19 @@ function findQuantityInput(modal) {
 }
 
 /**
+ * Whether a modal is the Shop's buy dialog: a Quantity field, a "You Pay"
+ * line and a Buy button, and nothing about selling.
+ * @param {HTMLElement} modal - Modal container element
+ * @returns {boolean}
+ */
+export function isShopBuyModal(modal) {
+    const text = String(modal?.textContent || '');
+    if (!/quantity/i.test(text) || !/you pay/i.test(text)) return false;
+    if (/sell/i.test(text)) return false;
+    return Array.from(modal.querySelectorAll('button')).some((button) => /^\s*buy\s*$/i.test(button.textContent || ''));
+}
+
+/**
  * Handle buy modal appearance and auto-fill quantity if available
  * @param {HTMLElement} modal - Modal container element
  * @param {number|null} activeQuantity - Static quantity to auto-fill (null if using pending fn)
@@ -103,14 +116,16 @@ function handleBuyModal(modal, activeQuantity, pendingCalculation) {
         return false;
     }
 
-    // Check if this is a "Buy Now" modal
+    // Check if this is a "Buy Now" modal — or the Shop's own buy modal, which
+    // has no marketplace header: an item name, a Quantity box, "You Pay" and a
+    // Buy button. The test server's Tester shop is bought through it
     const header = modal.querySelector('div[class*="MarketplacePanel_header"]');
-    if (!header) {
-        return false;
-    }
-
-    const headerText = header.textContent.trim();
-    if (!headerText.includes('Buy Now') && !headerText.includes('Buy Listing')) {
+    if (header) {
+        const headerText = header.textContent.trim();
+        if (!headerText.includes('Buy Now') && !headerText.includes('Buy Listing')) {
+            return false;
+        }
+    } else if (!isShopBuyModal(modal)) {
         return false;
     }
 

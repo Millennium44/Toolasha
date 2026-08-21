@@ -83,6 +83,30 @@ describe('createAutofillManager', () => {
         expect(modal.querySelector('input').value).toBe('');
     });
 
+    test('fills the Shop’s own buy dialog — Quantity, You Pay, a Buy button, no header', () => {
+        const manager = createAutofillManager('Test-Observer');
+        manager.setQuantity(8);
+        manager.initialize();
+        const modal = document.createElement('div');
+        modal.innerHTML =
+            '<div>Philosopher&#39;s Mirror</div><div>Quantity</div><input type="text">' +
+            '<div>You Pay: 10,000,000 Coin</div><button>Buy</button>';
+        document.body.appendChild(modal);
+        observerState.handlers['Test-Observer'](modal);
+        expect(modal.querySelector('input').value).toBe('8');
+    });
+
+    test('a headerless dialog about selling is left alone', () => {
+        const manager = createAutofillManager('Test-Observer');
+        manager.setQuantity(8);
+        manager.initialize();
+        const modal = document.createElement('div');
+        modal.innerHTML = '<div>Quantity</div><input type="text"><div>You Pay: 1</div><button>Sell</button>';
+        document.body.appendChild(modal);
+        observerState.handlers['Test-Observer'](modal);
+        expect(modal.querySelector('input').value).toBe('');
+    });
+
     test('ignores modals whose header is not a Buy Now/Buy Listing modal', () => {
         const manager = createAutofillManager('Test-Observer');
         manager.setQuantity(5);

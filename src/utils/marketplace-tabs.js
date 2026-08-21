@@ -363,10 +363,19 @@ export function setupMarketplaceCleanupObserver(onCleanup, tabsArray) {
             return;
         }
 
-        // If marketplace panel is hidden (navigated away), clean up
+        // If the panel the tabs sit in is hidden (navigated away), clean up.
+        // Read off the tabs themselves rather than the marketplace panel, so
+        // tabs pinned into the Shop's strip (the Tester shop hand-off) are
+        // governed the same way: out of view is out of play
+        const anyVisible = tabsArray.some((tab) => tab.offsetParent !== null);
+        if (!anyVisible) {
+            if (onCleanup) onCleanup();
+            return;
+        }
         const marketplacePanel = document.querySelector(GAME.MARKETPLACE_PANEL);
         const subPanelContainer = marketplacePanel?.closest(GAME.SUBPANEL_CONTAINER);
-        if (subPanelContainer && getComputedStyle(subPanelContainer).display === 'none') {
+        const inMarketplace = tabsArray.some((tab) => marketplacePanel?.contains(tab));
+        if (inMarketplace && subPanelContainer && getComputedStyle(subPanelContainer).display === 'none') {
             if (onCleanup) onCleanup();
         }
     }

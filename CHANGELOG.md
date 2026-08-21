@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tester shop: missing-materials goes straight to the shop, with the quantity filled in
+
+With Tester-shop pricing on, every missing-materials hand-off — the action panel button, the enhancing panel button, the house panel's button, the simulators' house Market rows — opens Shop → Tester and pins the material tabs into the shop's own tab strip; clicking a tab filters the shop to that item and the shop's buy dialog is auto-filled with what is still missing. A line the shop does not sell keeps the marketplace as its click and says so. Replaces the interim marketplace-then-shop hop.
+
 ### Consumables panel, Labyrinth block: observed use, preserve chance, game icons
 
 Per-run torch/shroud/beacon figures now come from what your recorded runs actually spent (start less leftover, averaged) instead of the full capacity, once a run has been recorded; the rush-floor torch table takes the torch tier's preserve chance off (read from the item's description) and notes that it cannot model rooms skipped on a cleared floor, with the observed per-run spend listed beside it; the leftover line draws the game's own supply icons. The house panel's material tabs also open the Tester shop when that pricing is on.
