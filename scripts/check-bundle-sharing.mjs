@@ -55,6 +55,14 @@ const projectRoot = join(__dirname, '..');
  */
 const ALLOWLIST = new Map([
     [
+        'src/utils/game-server.js',
+        // Pure hostname checks (isTestServer and friends), no module state.
+        // Imported by core/settings-schema.js to hide a test-server-only
+        // setting off the test server; core loads before utils so it cannot
+        // reach Toolasha.Utils.gameServer — the copy in core is harmless.
+        'stateless hostname predicates; core loads before utils and must carry its own copy',
+    ],
+    [
         'src/utils/market-listings.js',
         // One exported pure function (mergeMarketListings), no module state.
         // Imported by core/data-manager.js, and the core bundle loads before
