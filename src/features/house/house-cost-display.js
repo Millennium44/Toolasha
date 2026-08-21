@@ -11,6 +11,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
 import { testerShopEnabled } from '../../utils/tester-shop.js';
 import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
+import domObserver from '../../core/dom-observer.js';
 import {
     createMaterialTab,
     removeMaterialTabs,
@@ -80,6 +81,101 @@ class HouseCostDisplay {
         dataManager.on('house_rooms_updated', this._houseRoomsUpdatedHandler);
 
         this.autofillManager.initialize();
+
+        // The House tab's button row: a one-press "pin every room's bill" for
+        // the Tester shop, drawn only while that pricing is on
+        this._unregisterButtonRow = domObserver.onClass(
+            'HouseCostDisplay-ButtonRow',
+            'HousePanel_buttonContainer',
+            (row) => this.injectAllRoomsButton(row)
+        );
+    }
+
+    /**
+     * Every material every room still needs to reach `targetLevel`, summed.
+     *
+     * Coins are left out (the shop sells no coins), and so is a room already
+     * at or past the target. Inventory is not subtracted here — the tabs net
+     * it out themselves, live.
+     *
+     * @param {number} targetLevel - 1..8
+     * @returns {Array<{itemHrid: string, count: number}>}
+     */
+    allRoomsBill(targetLevel = 8) {
+        const map = dataManager.getInitClientData()?.houseRoomDetailMap || {};
+        const counts = new Map();
+        for (const [roomHrid, detail] of Object.entries(map)) {
+            const current = Number(dataManager.getHouseRoomLevel?.(roomHrid)) || 0;
+            const costs = detail?.upgradeCostsMap || {};
+            for (let level = current + 1; level <= targetLevel; level++) {
+                for (const entry of costs[level] ?? costs[String(level)] ?? []) {
+                    const count = Number(entry?.count) || 0;
+                    if (!entry?.itemHrid || count <= 0 || entry.itemHrid === '/items/coin') continue;
+                    counts.set(entry.itemHrid, (counts.get(entry.itemHrid) || 0) + count);
+                }
+            }
+        }
+        return [...counts.entries()].map(([itemHrid, count]) => ({ itemHrid, count }));
+    }
+
+    /**
+     * Add the "all rooms → Lv N" button beside the House tab's own buttons.
+     * @param {HTMLElement} row - `HousePanel_buttonContainer`
+     */
+    injectAllRoomsButton(row) {
+        if (!row || row.querySelector('.mwi-house-all-rooms')) return;
+        if (!testerShopEnabled()) return;
+
+        const wrap = document.createElement('span');
+        wrap.className = 'mwi-house-all-rooms';
+        wrap.style.cssText = 'display:inline-flex; align-items:center; gap:4px; margin-left:8px;';
+
+        const level = document.createElement('input');
+        level.type = 'number';
+        level.min = '1';
+        level.max = '8';
+        level.value = '8';
+        level.style.cssText =
+            'width:40px; text-align:center; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:12px;';
+        level.title = 'Target level for every room';
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = 'Tester: pin all rooms → Lv';
+        button.style.cssText =
+            'background:rgba(76,175,80,0.12); border:1px solid #4caf50; color:#8bc34a; border-radius:4px; padding:3px 8px; font-size:12px; cursor:pointer; font-family:inherit;';
+        button.title =
+            'Pins every material every room still needs to reach the level into the Tester shop strip — one tab per ' +
+            'material, counts net of what you hold — ready for Buy next, one press per material.';
+        button.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const target = Math.max(1, Math.min(8, parseInt(level.value, 10) || 8));
+            const lines = this.allRoomsBill(target);
+            const openBill = missingMaterialsButton()?.openMaterialsList;
+            if (!lines.length) {
+                button.textContent = 'Nothing left to buy';
+            } else if (typeof openBill === 'function') {
+                button.textContent = `Pinning ${lines.length} materials…`;
+                try {
+                    await openBill(lines);
+                    button.textContent = 'Pinned ✓';
+                } catch (error) {
+                    console.error('[HouseCostDisplay] Pinning the all-rooms bill failed:', error);
+                    button.textContent = 'Failed';
+                }
+            } else {
+                button.textContent = 'Missing-materials module not loaded';
+            }
+            this.timerRegistry.registerTimeout(
+                setTimeout(() => {
+                    button.textContent = 'Tester: pin all rooms → Lv';
+                }, 2500)
+            );
+        });
+
+        wrap.append(button, level);
+        row.appendChild(wrap);
     }
 
     /**
@@ -887,6 +983,9 @@ class HouseCostDisplay {
      * Disable the feature
      */
     disable() {
+        this._unregisterButtonRow?.();
+        this._unregisterButtonRow = null;
+        document.querySelectorAll('.mwi-house-all-rooms').forEach((el) => el.remove());
         // Remove all MWI-added elements
         document
             .querySelectorAll('.mwi-house-pricing, .mwi-house-pricing-empty, .mwi-house-total, .mwi-house-to-level')

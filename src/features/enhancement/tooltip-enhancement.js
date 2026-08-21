@@ -330,32 +330,58 @@ function calculateCostForStrategy(itemHrid, targetLevel, protectFrom, itemLevel,
  * @private
  */
 function expandMirrorPlan(targetLevel, usedMirror) {
-    const need = new Array(targetLevel + 1).fill(0);
-    need[targetLevel] = 1;
+    // Two demands, because a mirror step is not symmetric: the primary item —
+    // the one being upgraded, which for a refined piece is the refined one —
+    // carries on at level-1, and what is consumed beside it is a *copy of the
+    // base item* at level-2, which need not be refined. The primary lineage
+    // is one chain; everything it consumes, and everything those copies
+    // consume in turn, is a plain copy
+    const needPrimary = new Array(targetLevel + 1).fill(0);
+    const needCopy = new Array(targetLevel + 1).fill(0);
+    needPrimary[targetLevel] = 1;
 
     let mirrorCount = 0;
     let mirrorStartLevel = null;
 
     // High to low: a level is only expanded once every demand for it is known
     for (let level = targetLevel; level >= 2; level--) {
-        const quantity = need[level];
-        if (!quantity || !usedMirror[level]) continue;
+        if (!usedMirror[level]) continue;
+        const primary = needPrimary[level];
+        const copies = needCopy[level];
+        if (!primary && !copies) continue;
 
-        mirrorCount += quantity;
+        mirrorCount += primary + copies;
         mirrorStartLevel = level; // Lowest mirrored level reached, since we descend
-        need[level - 1] += quantity;
-        need[level - 2] += quantity;
-        need[level] = 0;
+        if (primary) {
+            needPrimary[level - 1] += primary;
+            needCopy[level - 2] += primary;
+            needPrimary[level] = 0;
+        }
+        if (copies) {
+            needCopy[level - 1] += copies;
+            needCopy[level - 2] += copies;
+            needCopy[level] = 0;
+        }
     }
 
     const leaves = [];
     for (let level = targetLevel; level >= 0; level--) {
-        if (need[level] > 0) {
-            leaves.push({ level, quantity: need[level] });
-        }
+        if (needPrimary[level] > 0) leaves.push({ level, quantity: needPrimary[level], primary: true });
+        if (needCopy[level] > 0) leaves.push({ level, quantity: needCopy[level], primary: false });
     }
 
     return { leaves, mirrorCount, mirrorStartLevel };
+}
+
+/**
+ * The unrefined item behind a refined one, when the data has it.
+ * @param {string} itemHrid - e.g. `/items/griffin_bulwark_refined`
+ * @returns {string|null} `/items/griffin_bulwark`, or null for anything else
+ */
+function unrefinedBaseOf(itemHrid) {
+    if (!String(itemHrid || '').endsWith('_refined')) return null;
+    const base = String(itemHrid).replace(/_refined$/, '');
+    return dataManager.getInitClientData()?.itemDetailMap?.[base] ? base : null;
 }
 
 /**
@@ -401,6 +427,9 @@ function buildMaterialBill({
     baseItemHrid = null,
     baseCount = 0,
     baseUnitPrice = 0,
+    copyItemHrid = null,
+    copyCount = 0,
+    copyUnitPrice = 0,
 } = {}) {
     const gameData = dataManager.getInitClientData();
     const nameOf = (hrid) => gameData?.itemDetailMap?.[hrid]?.name || hrid;
@@ -453,6 +482,18 @@ function buildMaterialBill({
         });
     }
 
+    // The plain copies a refined piece is mirrored with
+    if (copyItemHrid && copyCount > 0) {
+        bill.push({
+            itemHrid: copyItemHrid,
+            name: nameOf(copyItemHrid),
+            count: copyCount,
+            unitPrice: copyUnitPrice,
+            totalCost: copyUnitPrice * copyCount,
+            kind: 'base',
+        });
+    }
+
     return bill;
 }
 
@@ -484,12 +525,24 @@ function buildMirrorOptimizedResult(
 ) {
     const { leaves, mirrorCount, mirrorStartLevel } = plan;
 
+    // A refined piece is mirrored with plain copies: the primary lineage is
+    // the refined item, every consumed copy is the unrefined base at its
+    // level — the same enhancement bill on a far cheaper +0
+    const copyHrid = unrefinedBaseOf(itemHrid);
+    const copyBasePrice = copyHrid ? getRealisticBaseItemPrice(copyHrid) : null;
+    const costOf = (level, primary) => {
+        if (primary || !copyHrid || !(copyBasePrice > 0)) return traditionalCosts[level];
+        return Math.max(0, traditionalCosts[level] - traditionalCosts[0]) + copyBasePrice;
+    };
+
     // Every leaf is a level the plan buys outright, so it is priced at its traditional cost
-    const consumedItems = leaves.map(({ level, quantity }) => ({
+    const consumedItems = leaves.map(({ level, quantity, primary }) => ({
         level,
         quantity,
-        costEach: traditionalCosts[level],
-        totalCost: quantity * traditionalCosts[level],
+        itemHrid: primary || !copyHrid ? itemHrid : copyHrid,
+        primary: Boolean(primary),
+        costEach: costOf(level, primary),
+        totalCost: quantity * costOf(level, primary),
     }));
 
     const consumedItemsCost = consumedItems.reduce((sum, item) => sum + item.totalCost, 0);
@@ -504,8 +557,13 @@ function buildMirrorOptimizedResult(
     );
 
     // Every leaf starts from its own base copy — a mirror plan for +10 buys several items and
-    // combines them, which is the fact a totals-only answer hides and a shopping list cannot
+    // combines them, which is the fact a totals-only answer hides and a shopping list cannot.
+    // For a refined piece the primary leaf is the refined base and the rest are plain copies
     const totalBaseItems = leaves.reduce((sum, { quantity }) => sum + quantity, 0);
+    const primaryBaseItems = copyHrid
+        ? leaves.filter((leaf) => leaf.primary).reduce((sum, { quantity }) => sum + quantity, 0)
+        : totalBaseItems;
+    const copyBaseItems = copyHrid ? totalBaseItems - primaryBaseItems : 0;
 
     // The per-attempt material bill is the same at every level, so the target-level strategy's
     // breakdown (which is already multiplied by *its* attempts) scales to the plan's attempts
@@ -528,13 +586,21 @@ function buildMirrorOptimizedResult(
         protectionCount: 0,
         consumedItemsCost,
         philosopherMirrorCost: totalMirrorsCost,
-        totalCost: targetCosts[targetLevel], // Use recursive formula result for consistency
+        // The recursive formula, less what plain copies save a refined piece
+        totalCost:
+            targetCosts[targetLevel] -
+            leaves.reduce(
+                (sum, { level, quantity, primary }) =>
+                    sum + quantity * (traditionalCosts[level] - costOf(level, primary)),
+                0
+            ),
         mirrorStartLevel: mirrorStartLevel,
         usedMirror: true,
         traditionalCost: optimalTraditional.totalCost,
         consumedItems: consumedItems,
         mirrorCount: mirrorCount,
         consumedItemHrid: itemHrid,
+        copyItemHrid: copyHrid,
         materialBill: buildMaterialBill({
             materials: optimalTraditional.materialBreakdown,
             materialMultiplier,
@@ -545,8 +611,11 @@ function buildMirrorOptimizedResult(
             mirrorCount,
             mirrorPrice,
             baseItemHrid: itemHrid,
-            baseCount: totalBaseItems,
+            baseCount: primaryBaseItems,
             baseUnitPrice: traditionalCosts[0],
+            copyItemHrid: copyHrid,
+            copyCount: copyBaseItems,
+            copyUnitPrice: copyBasePrice || 0,
         }),
     };
 }
@@ -1024,16 +1093,18 @@ export function buildEnhancementTooltipHTML(enhancementData) {
 
         const gameData = dataManager.getInitClientData();
         const consumedHrid = optimalStrategy.consumedItemHrid ?? itemHrid;
-        const baseItemDetails = gameData?.itemDetailMap[consumedHrid];
-        const baseItemName = baseItemDetails?.name || consumedHrid;
 
         const consumedRows = sortedConsumed.map((item) => {
-            const prices = getItemPrices(consumedHrid, item.level);
+            // Each leaf names its own item: the refined primary, or the plain
+            // copy a refined piece is mirrored with
+            const hrid = item.itemHrid || consumedHrid;
+            const name = gameData?.itemDetailMap?.[hrid]?.name || hrid;
+            const prices = getItemPrices(hrid, item.level);
             const askPrice = prices?.ask > 0 ? prices.ask : item.costEach;
             const bidPrice = prices?.bid > 0 ? prices.bid : item.costEach;
             totalAsk += askPrice * item.quantity;
             totalBid += bidPrice * item.quantity;
-            return { name: baseItemName + ' +' + item.level, count: item.quantity, askPrice, bidPrice };
+            return { name: name + ' +' + item.level, count: item.quantity, askPrice, bidPrice };
         });
 
         // Philosopher's Mirror row

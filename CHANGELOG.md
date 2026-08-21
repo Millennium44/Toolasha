@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancement path: a refined piece is mirrored with plain copies
+
+The Philosopher's Mirror plan now tells the primary lineage (the refined item being upgraded) from the copies consumed beside it — the game takes a copy of the *base* item one level below the primary, which need not be refined — so the breakdown lists and prices the consumed copies as the unrefined item at their levels, and the shopping list names one refined base plus the plain copies. Plain items are unchanged.
+
+### House tab: pin every room's bill for the Tester shop
+
+With Tester-shop pricing on, the House tab's button row gains "Tester: pin all rooms → Lv N" (default 8): one press pins every material every room still needs to reach that level into the Tester strip — then Buy next, one press per material.
+
 ### Tester shop: a "Buy next" press per purchase
 
 The Tester strip gains a **Buy next ▸** control: each press buys the next pinned line the shop sells, for what you are still short of — filters the shop to it, opens its card, types the quantity, presses Buy — one purchase per press; press again for the next. Verified on the test server: the shop's buy dialog is recognised (it is not the marketplace's), the quantity lands in the Quantity box (an equipment dialog puts an Enhancement Level 0–10 box first), and the card and Buy are pressed through React, which a plain click does not reach.

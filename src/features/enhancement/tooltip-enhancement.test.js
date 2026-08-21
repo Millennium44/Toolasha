@@ -18,8 +18,12 @@ const PROTECTION = '/items/mirror_of_protection';
 
 // Prices the mocked market answers with. Tuned so mirroring is worth it: the base item and the
 // mirror are cheap while every enhancement attempt burns an expensive material.
+const REFINED = '/items/test_sword_refined';
+
 const prices = {
     [ITEM]: { ask: 100, bid: 90 },
+    // The refined piece: the same enhancement bill on a far dearer +0
+    [REFINED]: { ask: 400000, bid: 390000 },
     [MATERIAL]: { ask: 5000, bid: 4800 },
     [MIRROR]: { ask: 2000, bid: 1900 },
     [PROTECTION]: { ask: 900000, bid: 850000 },
@@ -35,6 +39,11 @@ const gameData = {
     itemDetailMap: {
         [ITEM]: {
             name: 'Test Sword',
+            itemLevel: 10,
+            enhancementCosts: [{ itemHrid: MATERIAL, count: 1 }],
+        },
+        [REFINED]: {
+            name: 'Test Sword (Refined)',
             itemLevel: 10,
             enhancementCosts: [{ itemHrid: MATERIAL, count: 1 }],
         },
@@ -439,5 +448,44 @@ describe('calculatePerAttemptMaterialCost', () => {
             hasCost: false,
             costPartial: false,
         });
+    });
+});
+
+describe('mirroring a refined piece', () => {
+    test('the primary lineage is the refined item; every consumed copy is the plain base', () => {
+        const data = calculateEnhancementPath(REFINED, 8, enhancingConfig);
+        const strategy = data.optimalStrategy;
+        expect(strategy.usedMirror).toBe(true);
+
+        const primary = strategy.consumedItems.filter((item) => item.primary);
+        const copies = strategy.consumedItems.filter((item) => !item.primary);
+        // One refined base is built up the spine; everything combined into it is a copy
+        expect(primary.reduce((sum, item) => sum + item.quantity, 0)).toBe(1);
+        expect(primary.every((item) => item.itemHrid === REFINED)).toBe(true);
+        expect(copies.length).toBeGreaterThan(0);
+        expect(copies.every((item) => item.itemHrid === ITEM)).toBe(true);
+
+        // A copy at a level costs the plain item's +0 plus the same climb, not the refined +0
+        for (const copy of copies) {
+            const refinedAtLevel = strategy.consumedItems.find((i) => i.primary && i.level === copy.level);
+            if (refinedAtLevel) expect(copy.costEach).toBeLessThan(refinedAtLevel.costEach);
+        }
+
+        // And the bill reconciles: consumed copies + mirrors is the quoted total
+        const consumed = strategy.consumedItems.reduce((sum, item) => sum + item.totalCost, 0);
+        expect(consumed + strategy.philosopherMirrorCost).toBeCloseTo(strategy.totalCost, 6);
+
+        // The shopping list names both: the one refined base and the plain copies
+        const bases = strategy.materialBill.filter((line) => line.kind === 'base');
+        expect(bases.find((line) => line.itemHrid === REFINED)?.count).toBe(1);
+        expect(bases.find((line) => line.itemHrid === ITEM)?.count).toBe(
+            copies.reduce((sum, item) => sum + item.quantity, 0)
+        );
+    });
+
+    test('a plain item is unchanged: one item, every leaf the same hrid', () => {
+        const data = calculateEnhancementPath(ITEM, 8, enhancingConfig);
+        expect(data.optimalStrategy.consumedItems.every((item) => item.itemHrid === ITEM)).toBe(true);
+        expect(data.optimalStrategy.materialBill.filter((line) => line.kind === 'base')).toHaveLength(1);
     });
 });
