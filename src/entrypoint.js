@@ -1112,6 +1112,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'combatDpsPanel',
+            name: 'Combat DPS Panel',
+            category: 'Combat',
+            module: Combat.combatDpsPanel,
+            async: false,
+        },
+        {
             key: 'partyProfileButton',
             name: 'Party Profile Button',
             category: 'Combat',

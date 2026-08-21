@@ -52,6 +52,7 @@ import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
 import { guildTrialRecorder } from './guild-trial-recorder.js';
 import { buildGuildReport } from './guild-trial-report.js';
+import { boardHeadHTML, boardRowHTML, boardTabsHTML, rankRows } from '../../utils/damage-board.js';
 import { classTagIconHTML } from '../../utils/class-weapon.js';
 
 /** Class every part of this panel carries, so teardown is one query */
@@ -103,8 +104,7 @@ export function classTagHTML(verdict) {
     const label = String(verdict?.short || '').replace(/[^A-Z]/g, '');
     if (!label) return '';
 
-    const title =
-        `${label} — inferred from what this player was seen casting this trial, ` + 'not from a Battle Info capture.';
+    const title = `${label} — inferred from what this player was seen casting this trial, not from a Battle Info capture.`;
 
     const icon = classTagIconHTML(verdict, { title, size: 13 });
     if (icon) return icon;
@@ -163,8 +163,14 @@ export function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
             name: member.name,
             value: Number(member[modalField]) || 0,
         }));
-        const rows = raw.filter((row) => row.value > 0).sort((a, b) => b.value - a.value);
-        const total = rows.reduce((sum, row) => sum + row.value, 0);
+        // Ranked by the shared board, so this table and the run-side one order
+        // and share out their rows by exactly one rule. No per-second: the
+        // modal states whole-trial totals, not a rate
+        const ranked = rankRows(
+            raw.map((row) => ({ ...row, perSecond: null })),
+            seconds
+        );
+        const { rows, total } = ranked;
 
         // The stream's own measurement of the same figure, so each authoritative
         // row can say how far the plugin's tick-by-tick estimate ran from it —
@@ -177,7 +183,7 @@ export function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
         );
 
         return {
-            rows: rows.map((row, position) => {
+            rows: rows.map((row) => {
                 const measuredValue = measuredByName.has(row.name) ? measuredByName.get(row.name) : null;
                 return {
                     ...row,
@@ -187,9 +193,6 @@ export function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
                         measuredValue !== null && row.value > 0
                             ? ((measuredValue - row.value) / row.value) * 100
                             : null,
-                    rank: position + 1,
-                    perSecond: null,
-                    share: total > 0 ? (row.value / total) * 100 : null,
                 };
             }),
             total,
@@ -208,21 +211,17 @@ export function scoreboardRows(breakdown, tab = 'damage', modalStats = null) {
               : (breakdown?.players || []).map((row) => ({ index: row.index, name: row.name, value: row.damage || 0 }));
 
     const measuredBy = new Map((breakdown?.players || []).map((row) => [row.index, row.measured]));
-    const rows = raw.filter((row) => row.value > 0).sort((a, b) => b.value - a.value);
-    const total = rows.reduce((sum, row) => sum + row.value, 0);
+    const ranked = rankRows(raw, seconds);
 
     return {
-        rows: rows.map((row, position) => ({
+        rows: ranked.rows.map((row) => ({
             ...row,
             // Per row, not per table: the game streams action counters for one
             // unit — yours — so one row can be measured while the rest are not
             measured: measuredBy.get(row.index) ?? null,
-            rank: position + 1,
-            perSecond: seconds > 0 ? row.value / seconds : null,
-            share: total > 0 ? (row.value / total) * 100 : null,
         })),
-        total,
-        perSecond: seconds > 0 ? total / seconds : null,
+        total: ranked.total,
+        perSecond: ranked.perSecond,
         seconds,
         source: breakdown?.source === 'spectated' ? 'stream' : null,
     };
@@ -679,42 +678,30 @@ class GuildTrialScoreboard {
         const estimated = Boolean(estimate?.players?.length);
 
         const head = estimated
-            ? `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
-              `<span style="font-size:20px; font-weight:700; color:${WARN};">` +
-              `~${formatKMB(Math.round(estimate.total))}</span>` +
-              `<span style="color:${DIM};">est. party dps</span>` +
-              `<span style="margin-left:auto; color:${DIM}; font-weight:600;">` +
-              `${estimate.covered}/${estimate.of} builds</span>` +
-              `</div>`
+            ? boardHeadHTML({
+                  value: estimate.total,
+                  prefix: '~',
+                  label: 'est. party dps',
+                  color: WARN,
+                  right: `${estimate.covered}/${estimate.of} builds`,
+                  rightColor: DIM,
+              })
             : fromGame
-              ? `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
-                `<span style="font-size:20px; font-weight:700; color:${GOOD};">${formatKMB(Math.round(total))}</span>` +
-                `<span style="color:${DIM};">trial ${taken ? 'damage taken' : healing ? 'healing' : 'damage'} · game stats</span>` +
-                `</div>`
-              : `<div style="display:flex; align-items:baseline; gap:10px; margin-bottom:2px;">` +
-                `<span style="font-size:20px; font-weight:700; color:${ACCENT};">` +
-                `${perSecond === null ? '—' : formatKMB(Math.round(perSecond))}</span>` +
-                `<span style="color:${DIM};">party ${unit}</span>` +
-                `<span style="margin-left:auto; color:${GOOD}; font-weight:600;">` +
-                `${formatKMB(Math.round(total))}</span>` +
-                `</div>`;
+              ? boardHeadHTML({
+                    value: total,
+                    label: `trial ${taken ? 'damage taken' : healing ? 'healing' : 'damage'} · game stats`,
+                    color: GOOD,
+                })
+              : boardHeadHTML({ value: perSecond, label: `party ${unit}`, color: ACCENT, right: total });
 
-        const tabs =
-            `<div style="display:flex; gap:6px; margin:6px 0;">` +
+        const tabs = boardTabsHTML(
             [
                 { key: 'damage', label: 'Damage' },
                 { key: 'healing', label: 'Healing' },
                 { key: 'taken', label: 'Taken' },
-            ]
-                .map(
-                    (entry) =>
-                        `<button data-tab="${entry.key}" style="flex:1; cursor:pointer; padding:3px 0;` +
-                        `border:1px solid ${this.tab === entry.key ? ACCENT : 'rgba(255,255,255,0.15)'};` +
-                        `border-radius:4px; background:${this.tab === entry.key ? 'rgba(143,211,255,0.15)' : 'transparent'};` +
-                        `color:${this.tab === entry.key ? ACCENT : DIM}; font-size:11px;">${entry.label}</button>`
-                )
-                .join('') +
-            `</div>`;
+            ],
+            this.tab
+        );
 
         // The headline of the section, not a caveat under it: a reader who takes
         // an estimate for the game's own figures has been misled by the panel,
@@ -898,54 +885,21 @@ class GuildTrialScoreboard {
      * @returns {string} HTML
      */
     _rowHTML(row, classes = {}) {
+        // Every part of the drawing is the shared board's; what stays here is
+        // the trial's own two facts about a row — the colour comes from the
+        // player's captured damage type, and the marker beside the name comes
+        // from what they were seen casting this trial
         const type = damageTypeOf(row.name);
-        const color = type ? TYPE_COLORS[type] : ACCENT;
-        const width = Math.max(2, Math.min(100, row.share ?? 0));
-        const rate = row.perSecond === null || row.perSecond === undefined ? '—' : formatKMB(Math.round(row.perSecond));
-
-        // An estimated row has no total to show, because there is no elapsed
-        // fight to have accumulated one — the rate is the whole figure, and it
-        // carries a tilde so it cannot be read as a measurement
-        const estimated = row.value === null || row.value === undefined;
-        const figure = estimated ? `~${rate}/s` : formatKMB(Math.round(row.value));
-        // A row the game streamed counters for is measured; one folded in
-        // beside it is not, and a table that does not say so is claiming both
-        const label = estimated ? 'estimated' : row.measured === false ? `${rate}/s · partial` : `${rate}/s`;
-
-        // On a game-reported row, the plugin's own live measurement next to how
-        // far it ran from the game's figure — both halves of the comparison, on
-        // screen, so the before-number is readable and not just its error.
-        // Omitted when nothing was measured for this player (the fight view was
-        // never open on them).
-        let comparison = '';
-        if (row.measuredValue !== null && row.measuredValue !== undefined) {
-            const measured = formatKMB(Math.round(row.measuredValue));
-            comparison =
-                row.measuredDeltaPct === null
-                    ? ` · meas ${measured}`
-                    : ` · meas ${measured} · ${row.measuredDeltaPct >= 0 ? '+' : '−'}${Math.abs(row.measuredDeltaPct).toFixed(0)}%`;
-        }
-
-        return (
-            `<div style="position:relative; margin:3px 0; padding:3px 6px; border-radius:3px;` +
-            `background:linear-gradient(to right, ${color}44 ${width}%, rgba(255,255,255,0.04) ${width}%);">` +
-            `<div style="display:flex; gap:6px; align-items:baseline;">` +
-            `<span style="color:${DIM}; width:14px;">${row.rank}</span>` +
-            `<span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${row.name}</span>` +
-            classTagHTML(
+        return boardRowHTML(row, {
+            color: type ? TYPE_COLORS[type] : ACCENT,
+            tagHTML: classTagHTML(
                 classes?.[
                     String(row.name || '')
                         .trim()
                         .toLowerCase()
                 ]
-            ) +
-            `<span style="margin-left:auto; color:${color}; font-weight:600;">${figure}</span>` +
-            `</div>` +
-            `<div style="display:flex; gap:6px; color:${DIM}; font-size:10px;">` +
-            `<span title="meas: what the plugin's own live stream measured for this player, and how far that ran from the game's reported figure">${label}${comparison}</span>` +
-            `<span style="margin-left:auto;">${row.share === null ? '—' : `${row.share.toFixed(1)}%`}</span>` +
-            `</div></div>`
-        );
+            ),
+        });
     }
 }
 

@@ -6,6 +6,17 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Per-player damage panel for normal combat
+
+- The guild trial's per-player board now exists for ordinary party and solo fights, off a new
+  Combat setting (`combatDpsPanel`, off by default): damage, damage taken and health restored per
+  member, ranked with shares, bars and rates. Opens from a "Per-player" button on the battle panel
+  and remembers where it was left.
+- The trial panel and this one draw with one shared renderer, so the two boards rank and share out
+  their rows by exactly the same rule. Trial behaviour is unchanged.
+- The third tab is health _received_, not healing done — the run feed carries no caster to credit a
+  rise to, and the panel says so rather than ranking a healer it cannot identify.
+
 ### Class tags draw the class's own T95 weapon
 
 - The `[WATER]` / `[HEAL]` / `[TANK]` text chips beside names in the Trial Abilities panel and the

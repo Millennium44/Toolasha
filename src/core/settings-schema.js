@@ -2231,6 +2231,13 @@ export const settingsGroups = {
                 default: true,
                 help: "Infers damage from health lost between combat ticks, since the game sends no damage figure. Overkill is not counted, and in a party it is the whole party's damage — nothing on the wire says who struck",
             },
+            combatDpsPanel: {
+                id: 'combatDpsPanel',
+                label: 'Per-player panel: Rank the party’s damage during normal combat',
+                type: 'checkbox',
+                default: false,
+                help: 'The guild trial’s per-player board, for ordinary party and solo fights: damage, damage taken and health restored per member, ranked with shares and rates. Opens from a “Per-player” button on the battle panel. Damage is inferred from health lost per tick and a tick two players both hit on is shared between them, so a share is an attribution rather than a measurement — the panel says so. Off by default',
+            },
             portraitDps: {
                 id: 'portraitDps',
                 label: 'Portrait DPS: Show each character’s damage on their battle portrait',
