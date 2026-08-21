@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Tester shop: a "Buy next" press per purchase
 
-The Tester strip gains a **Buy next ▸** control: each press buys the next pinned line the shop sells, for what you are still short of — filters the shop to it, opens its card, types the quantity, presses Buy — one purchase per press; press again for the next. The quantity fill also dispatches a change event so a field that commits on blur keeps it.
+The Tester strip gains a **Buy next ▸** control: each press buys the next pinned line the shop sells, for what you are still short of — filters the shop to it, opens its card, types the quantity, presses Buy — one purchase per press; press again for the next. Verified on the test server: the shop's buy dialog is recognised (it is not the marketplace's), the quantity lands in the Quantity box (an equipment dialog puts an Enhancement Level 0–10 box first), and the card and Buy are pressed through React, which a plain click does not reach.
 
 ### Tester shop: missing-materials goes straight to the shop, with the quantity filled in
 
