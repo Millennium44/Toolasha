@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat Levels planner: the weapon's own skill comes along
+
+Each combat-level row now also shows where the weapon's primary training skill lands by the time that grind is done (it takes 30% of all combat XP whatever charm is worn — defense for a bulwark, attack for a spear, melee/ranged/magic otherwise) and the Δ columns are simmed for both together, with the skill-alone figures in the tooltip. Replaces the "Main time" toggle. The charm picker gains an enhancement level (e.g. Expert +5); Auto keeps the equipped charm's tier and level.
+
 ### A reload mid-fight no longer restarts the per-player tally
 
 Ticks that arrived before the first `new_battle` after a reload were tallied under "Player 1", then wiped when the battle statement named the run — the panel visibly filled in the name and started from zero. An unnamed run now adopts the first roster it is given (when every slot seen so far is on it) and keeps what it tallied; a roster that actually changed still resets.

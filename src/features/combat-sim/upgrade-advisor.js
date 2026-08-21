@@ -97,21 +97,32 @@ const COMBAT_LEVEL_SKILLS = [
  * @param {Object} gameData - Game data
  * @param {string} [charmTier='auto'] - 'auto' (match the equipped charm's tier),
  *   'none' (no charm), or an explicit tier name prefix (e.g. 'Expert')
+ * @param {number|null} [charmEnhancement=null] - Enhancement level to sim the charm at;
+ *   null keeps the equipped charm's level (0 when nothing is equipped)
  * @returns {Object|null} Charm equipment entry or null
  */
-export function findMatchingCharmForSkill(currentCharm, skillKey, gameData, charmTier = 'auto') {
+export function findMatchingCharmForSkill(
+    currentCharm,
+    skillKey,
+    gameData,
+    charmTier = 'auto',
+    charmEnhancement = null
+) {
     if (charmTier === 'none') return null;
 
     const skillName = skillKey.replace('Level', '');
     const targetFocus = `/skills/${skillName}`;
-    const enhancementLevel = currentCharm?.enhancementLevel || 0;
+    const enhancementLevel =
+        Number.isFinite(charmEnhancement) && charmEnhancement >= 0
+            ? Math.min(20, Math.floor(charmEnhancement))
+            : currentCharm?.enhancementLevel || 0;
 
     const currentDetail = currentCharm ? gameData.itemDetailMap[currentCharm.hrid] : null;
     // Explicit tier selection overrides matching from the equipped charm
     const tierPrefix = charmTier && charmTier !== 'auto' ? charmTier : currentDetail?.name?.split(' ')[0] || null;
 
     if (charmTier === 'auto' && currentDetail?.equipmentDetail?.combatStats?.focusTraining === targetFocus) {
-        return { ...currentCharm };
+        return { ...currentCharm, enhancementLevel };
     }
 
     let fallback = null;
@@ -128,41 +139,36 @@ export function findMatchingCharmForSkill(currentCharm, skillKey, gameData, char
     return fallback;
 }
 
-/** Offensive combat skills a weapon can train — the "main" skills of a style */
-const OFFENSE_SKILLS = new Set(['attack', 'melee', 'ranged', 'magic']);
-
 /**
- * Main skills trained by the player's weapon: the weapon's primary training
- * skill plus the offensive skills in its combat style's XP map (a melee-only
- * weapon trains melee; a spear trains attack and melee). Stamina/Intelligence/
- * Defense appear in every style's XP map and are deliberately excluded — they
- * aren't what the weapon is "for".
+ * The skill the player's weapon trains on its own: `primaryTraining` on the
+ * weapon's combat stats, which the game credits 30% of all combat XP to no
+ * matter what charm is worn (the other 70% goes to the charm's focus skill).
+ * A bulwark names defense, a spear attack, other melee weapons melee, a bow
+ * ranged, a staff magic; unarmed is melee.
  * @param {Object} playerDTO
  * @param {Object} gameData
- * @returns {Array<string>} Skill names, e.g. ['attack', 'melee']
+ * @returns {string} Skill name, e.g. 'melee'
  */
-export function getMainTrainingSkills(playerDTO, gameData) {
+export function getPrimaryTrainingSkill(playerDTO, gameData) {
     const weapon =
         playerDTO.equipment?.['/equipment_types/main_hand'] || playerDTO.equipment?.['/equipment_types/two_hand'];
     const stats = weapon ? gameData.itemDetailMap[weapon.hrid]?.equipmentDetail?.combatStats : null;
-    const skills = new Set();
+    const primary = stats?.primaryTraining?.split('/').pop();
+    return primary || 'melee';
+}
 
-    const primary = stats?.primaryTraining;
-    if (primary) skills.add(primary.split('/').pop());
-
-    const styleHrid = stats?.combatStyleHrids?.[0];
-    const skillExpMap = styleHrid ? gameData.combatStyleDetailMap?.[styleHrid]?.skillExpMap : null;
-    if (skillExpMap) {
-        for (const skillHrid of Object.keys(skillExpMap)) {
-            const skillName = skillHrid.split('/').pop();
-            if (OFFENSE_SKILLS.has(skillName)) {
-                skills.add(skillName);
-            }
-        }
-    }
-
-    if (skills.size === 0) skills.add('melee');
-    return [...skills];
+/**
+ * Main skills trained by the player's weapon — just its primary training
+ * skill, kept as a list for callers that iterate. With a focus charm on, the
+ * weapon's 30% is the only XP that lands anywhere but the charm's skill, so
+ * the style's wider XP map (attack *and* melee for a spear) is not what a
+ * charm-wearing grinder actually trains.
+ * @param {Object} playerDTO
+ * @param {Object} gameData
+ * @returns {Array<string>} Skill names, e.g. ['attack']
+ */
+export function getMainTrainingSkills(playerDTO, gameData) {
+    return [getPrimaryTrainingSkill(playerDTO, gameData)];
 }
 
 /**
@@ -3083,7 +3089,7 @@ export function explainUpgradeCost(candidate, gameData) {
  * Run the full upgrade analysis: baseline sim + one sim per candidate.
  * @param {Object} params - { playerDTOs, playerIndex, zoneHrid, difficultyTier, hours, communityBuffs, upgradeModes,
  *   upgradeMode, abilityLevelType, abilityTargetLevel, skipBackSlot, combatLevelTargets, charmTier,
- *   houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets, optimizeFood, auraSwapsOnly }
+ *   charmEnhancement, houseTargetLevel, houseTargets, guildShrineTargetLevel, guildShrineTargets, optimizeFood, auraSwapsOnly }
  * @param {Function} onProgress - Called with { current, total, description }
  * @param {Object} [options] - { abortSignal: () => boolean }
  * @returns {Promise<Object>} { baseline, results: [{candidate, cost, metrics, deltas, goldPer}], food }
@@ -3105,6 +3111,7 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
         combatLevelTargets,
         abilityTargets,
         charmTier,
+        charmEnhancement = null,
         houseTargetLevel = 0,
         houseTargets = null,
         guildShrineTargetLevel = 0,
@@ -3171,8 +3178,9 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
 
     const combatLevelCount = candidatesWithCost.filter((c) => c.type === 'combat_level').length;
     const foodSimCount = optimizeFood ? estimateFoodSimCount(gameData, playerDTO.food) : 0;
-    // +1 baseline, + XP-rate sims for combat levels, + the food search
-    const total = candidatesWithCost.length + combatLevelCount + foodSimCount + 1;
+    // +1 baseline, + XP-rate sims for combat levels (and one more each for the
+    // primary skill's levels along the way), + the food search
+    const total = candidatesWithCost.length + combatLevelCount * 2 + foodSimCount + 1;
     let current = 0;
 
     // Run baseline sim
@@ -3340,7 +3348,13 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
             onProgress?.({ current: progress.current, total, description: `XP rate: ${candidate.description}` });
             const xpDTOs = JSON.parse(JSON.stringify(playerDTOs));
             const currentCharm = xpDTOs[playerIndex].equipment[CHARM_SLOT] || null;
-            const matchingCharm = findMatchingCharmForSkill(currentCharm, candidate.skillKey, gameData, charmTier);
+            const matchingCharm = findMatchingCharmForSkill(
+                currentCharm,
+                candidate.skillKey,
+                gameData,
+                charmTier,
+                charmEnhancement
+            );
             xpDTOs[playerIndex].equipment[CHARM_SLOT] = matchingCharm;
             const xpSimResult = await runSimulation(
                 { gameData, playerDTOs: xpDTOs, zoneHrid, difficultyTier, hours, communityBuffs, seed: simSeed },
@@ -3365,38 +3379,47 @@ export async function runUpgradeAnalysis(params, onProgress, options = {}) {
                 ? gameData.itemDetailMap[matchingCharm.hrid]?.name || 'matching charm'
                 : 'no charm';
 
-            // While a focus charm redirects XP to this skill, the weapon's main
-            // training skill(s) level slower — estimate how long each would take
-            // to reach its own target in this same leveling setup
-            const boost = Math.max(1, Math.floor(abilityTargetLevel) || 5);
-            const targets =
-                combatLevelTargets &&
-                typeof combatLevelTargets === 'object' &&
-                Object.keys(combatLevelTargets).length > 0
-                    ? combatLevelTargets
-                    : null;
-            const mainSkills = getMainTrainingSkills(playerDTO, gameData);
-            row.isMainSkill = mainSkills.includes(candidate.skillKey.replace('Level', ''));
-            row.mainSkillTimes = [];
-            for (const skillName of mainSkills) {
-                const skillKey = `${skillName}Level`;
-                if (skillKey === candidate.skillKey) continue;
-                const currentLevel = Math.max(1, Math.floor(playerDTO[skillKey] || 1));
-                const upgradeLevel = targets ? Math.min(200, Math.floor(targets[skillKey] || 0)) : currentLevel + boost;
-                if (upgradeLevel <= currentLevel) continue;
-                row.mainSkillTimes.push({
-                    skillKey,
-                    label: skillName.charAt(0).toUpperCase() + skillName.slice(1),
-                    currentLevel,
-                    upgradeLevel,
-                    hours: estimateCombatLevelTime(
-                        { skillKey, currentLevel, upgradeLevel },
-                        xpSimResult,
-                        gameData,
-                        playerHrid
-                    ),
-                });
+            // The weapon's primary skill takes 30% of the XP no matter what the
+            // charm focuses, so grinding this skill to its target levels that
+            // one too. Work out how far it gets in the same hours, and sim the
+            // pair — that is the build the grind actually ends with
+            const primary = getPrimaryTrainingSkill(playerDTO, gameData);
+            row.primarySkill = primary;
+            row.isMainSkill = candidate.skillKey === `${primary}Level`;
+            row.alongside = null;
+            if (!row.isMainSkill) {
+                const along = primaryLevelsAlongside(candidate, primary, xpSimResult, gameData, playerHrid, playerDTO);
+                if (along) {
+                    row.alongside = along;
+                    if (along.upgradeLevel > along.currentLevel && !abortSignal?.()) {
+                        onProgress?.({
+                            current: progress.current,
+                            total,
+                            description: `${candidate.description} + ${along.label} ${along.currentLevel} → ${along.upgradeLevel}`,
+                        });
+                        const bothDTOs = JSON.parse(JSON.stringify(modifiedDTOs));
+                        bothDTOs[playerIndex][along.skillKey] = along.upgradeLevel;
+                        const bothResult = await runSimulation(
+                            {
+                                gameData,
+                                playerDTOs: bothDTOs,
+                                zoneHrid,
+                                difficultyTier,
+                                hours,
+                                communityBuffs,
+                                seed: simSeed,
+                                isTaskFight: false,
+                            },
+                            null,
+                            { preempt: false, workers: 1 }
+                        );
+                        const bothMetrics = computeMetrics(bothResult, gameData, playerHrid, hours);
+                        row.alongside.metrics = bothMetrics;
+                        row.alongside.deltas = computeDeltas(baselineMetrics, bothMetrics);
+                    }
+                }
             }
+            progress.current++;
         }
         progress.current++;
         onProgress?.({ current: progress.current, total, description: candidate.description });
@@ -3545,6 +3568,62 @@ function estimateCombatLevelTime(candidate, baselineResult, gameData, playerHrid
         xpSoFar += gap;
     }
     return hours;
+}
+
+/**
+ * How far the weapon's primary training skill gets while another skill is
+ * ground to its target.
+ *
+ * Both skills earn at rates read off the same leveling-posture sim, and both
+ * rates scale together as the zone speeds up — so the primary skill's XP over
+ * the grind is the target skill's XP need times the ratio of their rates, no
+ * matter how the speedup plays out. Level found by walking the XP table.
+ *
+ * @param {Object} candidate - combat_level candidate for the skill being ground
+ * @param {string} primary - Primary training skill name, e.g. 'melee'
+ * @param {Object} xpSimResult - Sim in the leveling posture (matching charm on)
+ * @param {Object} gameData - Game data (levelExperienceTable)
+ * @param {string} playerHrid - Player HRID in the sim result
+ * @param {Object} playerDTO - The player's current DTO (for the primary level)
+ * @returns {{skillKey: string, label: string, currentLevel: number, upgradeLevel: number, xpGained: number}|null}
+ *   Null when the target skill earns no XP here (the grind never ends)
+ */
+export function primaryLevelsAlongside(candidate, primary, xpSimResult, gameData, playerHrid, playerDTO) {
+    const table = gameData.levelExperienceTable || [];
+    const xp = xpSimResult?.experienceGained?.[playerHrid] || {};
+    const targetSkill = candidate.skillKey.replace('Level', '');
+    const targetRate = xp[targetSkill] || 0;
+    const primaryRate = xp[primary] || 0;
+    if (!(targetRate > 0)) return null;
+
+    const currentXpOf = (skillName, level) => {
+        let current = table[level] || 0;
+        const live = dataManager.getSkills?.()?.find((sk) => sk.skillHrid === `/skills/${skillName}`);
+        if (live && live.level === level && Number.isFinite(live.experience)) current = live.experience;
+        return current;
+    };
+
+    const targetXp = table[candidate.upgradeLevel];
+    const need = Number.isFinite(targetXp)
+        ? Math.max(0, targetXp - currentXpOf(targetSkill, candidate.currentLevel))
+        : 0;
+    const xpGained = need * (primaryRate / targetRate);
+
+    const skillKey = `${primary}Level`;
+    const currentLevel = Math.max(1, Math.floor(playerDTO?.[skillKey] || 1));
+    const reached = currentXpOf(primary, currentLevel) + xpGained;
+    let upgradeLevel = currentLevel;
+    while (upgradeLevel < 200 && Number.isFinite(table[upgradeLevel + 1]) && table[upgradeLevel + 1] <= reached) {
+        upgradeLevel++;
+    }
+
+    return {
+        skillKey,
+        label: primary.charAt(0).toUpperCase() + primary.slice(1),
+        currentLevel,
+        upgradeLevel,
+        xpGained,
+    };
 }
 
 /**

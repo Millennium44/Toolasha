@@ -1278,12 +1278,11 @@ const MODE_OPTIONS = {
         <span id="mwi-csim-charm-group" data-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:#2a2a4a;">|</span>
             <label style="color:#888; font-size:12px;">Charm</label>
-            <select id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time" style="${CHIP_INPUT_STYLE}"></select>
+            <select id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time — Auto matches the equipped charm's tier" style="${CHIP_INPUT_STYLE}"></select>
+            <input id="mwi-csim-charm-enh" type="number" min="0" max="20" placeholder="+" style="
+                width:44px; text-align:center; ${CHIP_INPUT_STYLE}"
+                title="Enhancement level to sim the charm at (e.g. 5 for Expert +5). Leave blank to keep the equipped charm's level.">
             <button id="mwi-csim-combat-targets-toggle" title="Set a desired target level per skill instead of a uniform boost" style="${CHIP_BUTTON_STYLE}">Targets</button>
-            <label title="Also show how long the weapon's main training skill(s) would take to level while focusing each skill" style="display:flex; align-items:center; gap:4px; color:#888; font-size:12px; cursor:pointer;">
-                <input type="checkbox" id="mwi-csim-main-time" style="margin:0; cursor:pointer;">
-                Main time
-            </label>
         </span>`,
     house: `
         <span id="mwi-csim-house-group" data-mode-options="house" style="display:none; align-items:center; gap:4px;">
@@ -5970,10 +5969,13 @@ class CombatSimUI {
             parseInt(this.panel.querySelector('#mwi-csim-upgrade-target-level')?.value) || 0
         );
         let charmTier = null;
+        let charmEnhancement = null;
         if (upgradeModes.includes('combat_level')) {
             if (!abilityTargetLevel) abilityTargetLevel = 5;
             charmTier = this.panel.querySelector('#mwi-csim-charm-select')?.value || 'auto';
-            this._showMainSkillTimes = this.panel.querySelector('#mwi-csim-main-time')?.checked || false;
+            const enhRaw = this.panel.querySelector('#mwi-csim-charm-enh')?.value;
+            charmEnhancement =
+                enhRaw === '' || enhRaw === undefined ? null : Math.max(0, Math.min(20, parseInt(enhRaw) || 0));
         }
 
         if (!upgradeModes.length) {
@@ -6076,6 +6078,7 @@ class CombatSimUI {
                     combatLevelTargets,
                     abilityTargets,
                     charmTier,
+                    charmEnhancement,
                     houseTargetLevel,
                     houseTargets,
                     guildShrineTargetLevel,
@@ -6857,24 +6860,25 @@ class CombatSimUI {
     _renderUpgradeLevelTable(rows, baseline) {
         if (!this._upgradeLevelSort) this._upgradeLevelSort = { key: 'dps', asc: true };
         const { key: sortKey, asc: sortAsc } = this._upgradeLevelSort;
-        const showMainTimes = this._showMainSkillTimes;
+        // What the grind actually ends with: the skill at its target plus the
+        // weapon's primary skill wherever the same hours carried it. Rows with
+        // no primary gain (or the primary skill's own row) read off the solo sim
+        const effective = (r) => (r.alongside?.metrics ? r.alongside : r);
 
         const sortValue = (r) => {
+            const e = effective(r);
             // Negated deltas so ascending sort puts the biggest gain first
             switch (sortKey) {
                 case 'upgrade':
                     return r.candidate.description.toLowerCase();
                 case 'time':
                     return r.levelTimeHours ?? Infinity;
-                case 'main':
-                    // Focused main skills (no entries) sort first
-                    return r.mainSkillTimes?.length ? Math.min(...r.mainSkillTimes.map((t) => t.hours)) : -1;
                 case 'xp':
-                    return -(r.metrics.xpPerHour - baseline.xpPerHour);
+                    return -(e.metrics.xpPerHour - baseline.xpPerHour);
                 case 'profit':
-                    return -(r.metrics.profitPerHour - baseline.profitPerHour);
+                    return -(e.metrics.profitPerHour - baseline.profitPerHour);
                 default:
-                    return -(r.metrics.dps - baseline.dps);
+                    return -(e.metrics.dps - baseline.dps);
             }
         };
         const sorted = sortRowsBy(rows, sortValue, sortAsc);
@@ -6893,37 +6897,39 @@ class CombatSimUI {
         let bestXpDelta = -Infinity;
         let bestProfitDelta = -Infinity;
         for (const r of rows) {
-            bestDpsDelta = Math.max(bestDpsDelta, r.metrics.dps - baseline.dps);
-            bestXpDelta = Math.max(bestXpDelta, r.metrics.xpPerHour - baseline.xpPerHour);
-            bestProfitDelta = Math.max(bestProfitDelta, r.metrics.profitPerHour - baseline.profitPerHour);
+            const e = effective(r);
+            bestDpsDelta = Math.max(bestDpsDelta, e.metrics.dps - baseline.dps);
+            bestXpDelta = Math.max(bestXpDelta, e.metrics.xpPerHour - baseline.xpPerHour);
+            bestProfitDelta = Math.max(bestProfitDelta, e.metrics.profitPerHour - baseline.profitPerHour);
         }
 
-        const mainTimeHeader = showMainTimes
-            ? `<th style="${thStyle}" data-level-sort-key="main" title="Time for the weapon's main training skill(s) to reach their own targets while focused on this skill">Main Time${arrow('main')}</th>`
+        const detailColspan = 5;
+        const primaryName = rows.find((r) => r.primarySkill)?.primarySkill;
+        const primaryNote = primaryName
+            ? ` Your weapon trains ${primaryName.charAt(0).toUpperCase() + primaryName.slice(1)} with 30% of all combat XP whatever charm is worn, so each row also shows where that skill lands by the time the grind is done — the Δ columns are for both together.`
             : '';
-        const detailColspan = showMainTimes ? 6 : 5;
 
         let html = `<div style="margin-top:14px; padding:8px 10px; background:#0d0d1a; border:1px solid #2a2a4a; border-radius:6px;">
             <div style="color:${ACCENT}; font-size:12px; font-weight:600; margin-bottom:2px;">Combat levels</div>
             <div style="color:#666; font-size:10px; margin-bottom:6px;">
                 Levels can't be bought, so these are ranked by improvement and the grind time to earn them — not
-                against the gold costs above.
+                against the gold costs above.${primaryNote}
             </div>
             <table style="width:100%; border-collapse:collapse; font-size:11px;">
             <thead><tr>
                 <th style="${thStyle}" data-level-sort-key="upgrade">Skill${arrow('upgrade')}</th>
                 <th style="${thStyle}" data-level-sort-key="time">Level Time${arrow('time')}</th>
-                ${mainTimeHeader}
                 <th style="${thStyle}" data-level-sort-key="dps">ΔDPS${arrow('dps')}</th>
                 <th style="${thStyle}" data-level-sort-key="xp">ΔEXP/hr${arrow('xp')}</th>
                 <th style="${thStyle}" data-level-sort-key="profit">ΔProfit/hr${arrow('profit')}</th>
             </tr></thead><tbody>`;
 
         sorted.forEach((r, i) => {
-            const dpsDelta = r.metrics.dps - baseline.dps;
-            const xpDelta = r.metrics.xpPerHour - baseline.xpPerHour;
-            const profitDelta = r.metrics.profitPerHour - baseline.profitPerHour;
-            const rowColor = r.deltas.dps > 0 || r.deltas.profit > 0 ? '#e0e0e0' : '#888';
+            const e = effective(r);
+            const dpsDelta = e.metrics.dps - baseline.dps;
+            const xpDelta = e.metrics.xpPerHour - baseline.xpPerHour;
+            const profitDelta = e.metrics.profitPerHour - baseline.profitPerHour;
+            const rowColor = e.deltas.dps > 0 || e.deltas.profit > 0 ? '#e0e0e0' : '#888';
             const fmtCell = (delta, pct) => {
                 if (Math.abs(delta) < 1e-9) return '—';
                 const sign = delta >= 0 ? '+' : '';
@@ -6940,30 +6946,32 @@ class CombatSimUI {
                 ? `Grinding time at this zone’s XP rates to earn these levels${charmNote}`
                 : `No XP accrues in this skill at this zone${charmNote}`;
 
-            let mainTimeCell = '';
-            if (showMainTimes) {
-                if (r.mainSkillTimes?.length) {
-                    const mainText = r.mainSkillTimes.map((t) => `${t.label} ${fmtLevelTime(t.hours)}`).join(', ');
-                    const mainDetail = r.mainSkillTimes
-                        .map((t) => `${t.label} ${t.currentLevel} → ${t.upgradeLevel}`)
-                        .join(', ');
-                    const mainTitle = `Time to level the weapon's main training skill(s) — ${mainDetail} — while focused on this skill${charmNote}`;
-                    mainTimeCell = `<td style="padding:4px 6px; border-bottom:1px solid #1a1a2e;" title="${mainTitle}">${mainText}</td>`;
+            // Where the primary skill lands along the way, under the skill name
+            let alongLine = '';
+            let alongTitle = '';
+            if (r.alongside) {
+                const a = r.alongside;
+                if (a.upgradeLevel > a.currentLevel) {
+                    alongLine = `<div style="color:#777; font-size:10px;">+ ${a.label} ${a.currentLevel} → ${a.upgradeLevel} along the way</div>`;
+                    const solo = (delta, pct) => fmtCell(delta, pct);
+                    alongTitle =
+                        ` Δ columns are for both together; ${r.candidate.description} alone: DPS ${solo(r.metrics.dps - baseline.dps, r.deltas.dps)}, ` +
+                        `EXP/hr ${solo(r.metrics.xpPerHour - baseline.xpPerHour, r.deltas.xp)}, ` +
+                        `Profit/hr ${solo(r.metrics.profitPerHour - baseline.profitPerHour, r.deltas.profit)}.`;
                 } else {
-                    const mainTitle = r.isMainSkill
-                        ? 'This is a main training skill of your weapon'
-                        : 'No target set for the main training skill(s)';
-                    mainTimeCell = `<td style="${tdStyle} color:#666;" title="${mainTitle}">—</td>`;
+                    alongLine = `<div style="color:#555; font-size:10px;">${a.label} gains no level along the way</div>`;
                 }
+            } else if (r.isMainSkill) {
+                alongLine = `<div style="color:#555; font-size:10px;">your weapon's own skill</div>`;
             }
+            const deltaTitle = alongTitle ? `title="${alongTitle.trim()}"` : '';
 
             html += `<tr style="cursor:pointer; color:${rowColor};" data-level-row="${i}" data-row-key="${upgradeRowKey(r)}">
-                <td style="${tdStyle}">${r.candidate.description}</td>
+                <td style="${tdStyle}">${r.candidate.description}${alongLine}</td>
                 <td style="${tdStyle}" title="${timeTitle}">${fmtLevelTime(r.levelTimeHours)}</td>
-                ${mainTimeCell}
-                <td style="${tdStyle} ${deltaStyle(dpsDelta, bestDpsDelta)}">${fmtCell(dpsDelta, r.deltas.dps)}</td>
-                <td style="${tdStyle} ${deltaStyle(xpDelta, bestXpDelta)}">${fmtCell(xpDelta, r.deltas.xp)}</td>
-                <td style="${tdStyle} ${deltaStyle(profitDelta, bestProfitDelta)}">${fmtCell(profitDelta, r.deltas.profit)}</td>
+                <td style="${tdStyle} ${deltaStyle(dpsDelta, bestDpsDelta)}" ${deltaTitle}>${fmtCell(dpsDelta, e.deltas.dps)}</td>
+                <td style="${tdStyle} ${deltaStyle(xpDelta, bestXpDelta)}" ${deltaTitle}>${fmtCell(xpDelta, e.deltas.xp)}</td>
+                <td style="${tdStyle} ${deltaStyle(profitDelta, bestProfitDelta)}" ${deltaTitle}>${fmtCell(profitDelta, e.deltas.profit)}</td>
             </tr>
             <tr data-level-detail="${i}" data-row-key="${upgradeRowKey(r)}" style="display:none;">
                 <td colspan="${detailColspan}" style="padding:6px 12px; background:#0a0a14; border-bottom:1px solid #222;">

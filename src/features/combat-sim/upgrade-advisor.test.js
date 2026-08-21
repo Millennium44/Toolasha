@@ -147,6 +147,8 @@ const {
     calculateUpgradeCost,
     findMatchingCharmForSkill,
     getMainTrainingSkills,
+    getPrimaryTrainingSkill,
+    primaryLevelsAlongside,
     runLabyrinthAllFightsAnalysis,
     runLabyrinthCombinationCheck,
     labAllFightsTrialBudget,
@@ -676,10 +678,74 @@ describe('findMatchingCharmForSkill', () => {
         const result = findMatchingCharmForSkill(null, 'defenseLevel', charmGameData());
         expect(result).toEqual({ hrid: '/items/expert_defense_charm', enhancementLevel: 0 });
     });
+
+    test('an explicit enhancement level overrides the equipped one, on every path', () => {
+        expect(findMatchingCharmForSkill(equipped, 'defenseLevel', charmGameData(), 'Basic', 12)).toEqual({
+            hrid: '/items/basic_defense_charm',
+            enhancementLevel: 12,
+        });
+        expect(findMatchingCharmForSkill(equipped, 'meleeLevel', charmGameData(), 'auto', 3)).toEqual({
+            hrid: '/items/expert_melee_charm',
+            enhancementLevel: 3,
+        });
+        expect(findMatchingCharmForSkill(null, 'defenseLevel', charmGameData(), 'auto', 7)).toEqual({
+            hrid: '/items/expert_defense_charm',
+            enhancementLevel: 7,
+        });
+    });
+});
+
+describe('primaryLevelsAlongside', () => {
+    // XP table: level L needs 1000 * L XP
+    const gameData = { levelExperienceTable: Array.from({ length: 201 }, (_, level) => 1000 * level) };
+    const sim = (target, primary) => ({ experienceGained: { me: { defense: target, melee: primary } } });
+
+    test('the primary skill earns in proportion to its XP rate over the same grind', () => {
+        // Defense 150 → 155 needs 5000 XP at 70%; melee earns 30% → ~2143 XP → 2 levels
+        const along = primaryLevelsAlongside(
+            { skillKey: 'defenseLevel', currentLevel: 150, upgradeLevel: 155 },
+            'melee',
+            sim(700, 300),
+            gameData,
+            'me',
+            { meleeLevel: 150 }
+        );
+        expect(along.skillKey).toBe('meleeLevel');
+        expect(along.label).toBe('Melee');
+        expect(along.currentLevel).toBe(150);
+        expect(along.upgradeLevel).toBe(152);
+        expect(along.xpGained).toBeCloseTo(5000 * (300 / 700), 6);
+    });
+
+    test('no XP in the target skill means no estimate', () => {
+        expect(
+            primaryLevelsAlongside(
+                { skillKey: 'defenseLevel', currentLevel: 150, upgradeLevel: 155 },
+                'melee',
+                sim(0, 300),
+                gameData,
+                'me',
+                { meleeLevel: 150 }
+            )
+        ).toBeNull();
+    });
+
+    test('a bulwark with a defense charm leaves nothing for anybody else', () => {
+        // Primary is defense too — caller never asks; but a zero primary rate reads as no levels
+        const along = primaryLevelsAlongside(
+            { skillKey: 'staminaLevel', currentLevel: 150, upgradeLevel: 151 },
+            'defense',
+            { experienceGained: { me: { stamina: 700, defense: 0 } } },
+            gameData,
+            'me',
+            { defenseLevel: 150 }
+        );
+        expect(along.upgradeLevel).toBe(150);
+    });
 });
 
 describe('getMainTrainingSkills', () => {
-    test('unions the weapon primary training skill with its style offense skills', () => {
+    test('is the weapon primary training skill alone — a spear trains attack, the charm takes the rest', () => {
         const gameData = {
             itemDetailMap: {
                 '/items/spear': {
@@ -704,7 +770,24 @@ describe('getMainTrainingSkills', () => {
             },
         };
         const player = { equipment: { [MAIN_HAND]: { hrid: '/items/spear', enhancementLevel: 0 } } };
-        expect(getMainTrainingSkills(player, gameData).sort()).toEqual(['attack', 'melee']);
+        expect(getMainTrainingSkills(player, gameData)).toEqual(['attack']);
+        expect(getPrimaryTrainingSkill(player, gameData)).toBe('attack');
+    });
+
+    test('a bulwark names defense', () => {
+        const gameData = {
+            itemDetailMap: {
+                '/items/griffin_bulwark': {
+                    equipmentDetail: {
+                        type: MAIN_HAND,
+                        combatStats: { primaryTraining: '/skills/defense', combatStyleHrids: ['/combat_styles/smash'] },
+                    },
+                },
+            },
+            combatStyleDetailMap: {},
+        };
+        const player = { equipment: { [MAIN_HAND]: { hrid: '/items/griffin_bulwark', enhancementLevel: 0 } } };
+        expect(getPrimaryTrainingSkill(player, gameData)).toBe('defense');
     });
 
     test('defaults to melee with no weapon equipped', () => {
