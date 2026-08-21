@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Class icons tell weapons apart inside a class
+
+Melee draws the spear, sword or flail of the sub-style seen (stab/slash/smash); ranged draws the Cursed Bow when a curse was ever seen in that player's stream and the Sundering Crossbow otherwise; your own character is drawn as the weapon actually equipped. Combat panel and trial scoreboard alike.
+
 ### Upgrade-tab Market buttons: whole house bills, and book counts that always fill
 
 A house row's Market button now opens the marketplace with a tab per material the level needs (the missing-materials tabs, counts net of what you hold, kept live) instead of only the biggest line. An ability row that never priced still arms the buy box with the books it takes from the character's own progress in that ability. Both simulators, since they share the row buttons.

@@ -102,6 +102,30 @@ function candidate(hrid, item) {
     };
 }
 
+/** The melee sub-styles a verdict can name */
+const MELEE_STYLES = new Set(['stab', 'slash', 'smash']);
+
+/**
+ * Whether a ranged weapon entry is a crossbow — by name, which is how the game
+ * tells them apart; both are combat style `ranged`.
+ * @param {{name: string, hrid: string}} entry - A candidate
+ * @returns {boolean}
+ */
+function isCrossbow(entry) {
+    return /crossbow/i.test(entry.name) || /crossbow/i.test(entry.hrid);
+}
+
+/**
+ * Whether the ranged bucket should draw the crossbow, from the hints.
+ * A known weapon wins; otherwise a curse seen is the bow, none is the crossbow.
+ * @param {{curse?: boolean, weapon?: Object|null}} hints
+ * @returns {boolean}
+ */
+function wantsCrossbow(hints) {
+    if (hints.weapon) return isCrossbow(hints.weapon);
+    return !hints.curse;
+}
+
 /**
  * The rule each bucket is resolved by.
  *
@@ -110,8 +134,20 @@ function candidate(hrid, item) {
  * rather than to whatever the first entry happened to be.
  */
 const RULES = {
-    melee: { match: (entry) => ['stab', 'slash', 'smash'].includes(entry.style) },
-    ranged: { match: (entry) => entry.style === 'ranged' },
+    // Melee splits by the sub-style the verdict carries — stab is the spear,
+    // slash the sword, smash the flail — preferred at the tier rather than
+    // required, so a verdict with no sub-style still draws a melee weapon
+    melee: {
+        match: (entry) => MELEE_STYLES.has(entry.style),
+        score: (entry, hints) => (MELEE_STYLES.has(hints.style) && entry.style === hints.style ? 1 : 0),
+    },
+    // Ranged splits by what was seen: a curse is the Cursed Bow's own on-hit,
+    // so a curse ever seen is the bow and never seen is the crossbow. A known
+    // weapon settles it outright. Preferred, not required, for the same reason
+    ranged: {
+        match: (entry) => entry.style === 'ranged',
+        score: (entry, hints) => (isCrossbow(entry) === wantsCrossbow(hints) ? 1 : 0),
+    },
     mage: { match: (entry) => entry.style === 'magic' },
     fireMage: { match: (entry) => entry.style === 'magic' && entry.element === 'fire' },
     waterMage: { match: (entry) => entry.style === 'magic' && entry.element === 'water' },
@@ -132,9 +168,18 @@ const RULES = {
  * @returns {{hrid: string, name: string, itemLevel: number}|null} Null when the
  *   data is not loaded, the key is not a bucket, or nothing matches
  */
-export function classWeapon(bucketKey, itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap) {
+export function classWeapon(
+    bucketKey,
+    itemDetailMap = dataManager.getInitClientData?.()?.itemDetailMap,
+    { style = '', curse = false, weaponHrid = null } = {}
+) {
     const rule = RULES[bucketKey];
     if (!rule || !itemDetailMap) return null;
+
+    // The wielded weapon, when known, names the kind to draw: its own style
+    // for melee, bow or crossbow for ranged
+    const weapon = weaponHrid ? candidate(weaponHrid, itemDetailMap[weaponHrid]) : null;
+    const hints = { style: weapon?.style || tail(style), curse: Boolean(curse), weapon };
 
     const slots = rule.slots || WEAPON_SLOTS;
     const matched = [];
@@ -145,7 +190,7 @@ export function classWeapon(bucketKey, itemDetailMap = dataManager.getInitClient
 
         const entry = candidate(hrid, item);
         if (!entry || !slots.includes(entry.slot)) continue;
-        if (!rule.match(entry)) continue;
+        if (!rule.match(entry, hints)) continue;
         matched.push(entry);
     }
 
@@ -163,7 +208,7 @@ export function classWeapon(bucketKey, itemDetailMap = dataManager.getInitClient
     const score = rule.score || (() => 0);
     const [best] = pool
         .filter((entry) => entry.itemLevel === tier)
-        .sort((a, b) => score(b) - score(a) || a.hrid.localeCompare(b.hrid));
+        .sort((a, b) => score(b, hints) - score(a, hints) || a.hrid.localeCompare(b.hrid));
 
     return { hrid: best.hrid, name: best.name, itemLevel: best.itemLevel };
 }
@@ -186,7 +231,8 @@ export function classWeapon(bucketKey, itemDetailMap = dataManager.getInitClient
 export function classTagIcon(classTag, { title = '', size = 14, itemDetailMap } = {}) {
     const weapon = classWeapon(
         classTag?.key,
-        itemDetailMap === undefined ? dataManager.getInitClientData?.()?.itemDetailMap : itemDetailMap
+        itemDetailMap === undefined ? dataManager.getInitClientData?.()?.itemDetailMap : itemDetailMap,
+        hintsOf(classTag)
     );
     // No sprite sheet yet is the same answer as no weapon: a spacer where an
     // icon should be reads as a missing icon, and the chip says more
@@ -217,7 +263,8 @@ export function classTagIcon(classTag, { title = '', size = 14, itemDetailMap } 
 export function classTagIconHTML(classTag, { title = '', size = 14, itemDetailMap } = {}) {
     const weapon = classWeapon(
         classTag?.key,
-        itemDetailMap === undefined ? dataManager.getInitClientData?.()?.itemDetailMap : itemDetailMap
+        itemDetailMap === undefined ? dataManager.getInitClientData?.()?.itemDetailMap : itemDetailMap,
+        hintsOf(classTag)
     );
     const sprite = itemSpriteUrl();
     if (!weapon || !sprite) return '';
@@ -228,6 +275,40 @@ export function classTagIconHTML(classTag, { title = '', size = 14, itemDetailMa
         `<title>${escapeText(iconTitle(classTag, weapon, title))}</title>` +
         `<use href="${escapeText(href)}"></use></svg>`
     );
+}
+
+/**
+ * The drawing hints a verdict carries.
+ * @param {Object|null} classTag - From `class-inference.js`
+ * @returns {{style: string, curse: boolean, weaponHrid: string|null}}
+ */
+function hintsOf(classTag) {
+    return {
+        style: classTag?.style || '',
+        curse: Boolean(classTag?.curse),
+        weaponHrid: classTag?.weaponHrid || null,
+    };
+}
+
+/**
+ * The weapon this character is wielding, for the verdict about themself.
+ * The rest of a party is read off what they cast; the one player whose
+ * equipment is on hand need not be guessed at.
+ * @returns {string|null} Item hrid, or null when nothing is equipped or known
+ */
+export function ownWeaponHrid() {
+    try {
+        const equipment = dataManager.getEquipment?.();
+        if (!equipment) return null;
+        for (const slot of WEAPON_SLOTS) {
+            const item = equipment.get?.(slot) ?? equipment[slot];
+            if (item?.itemHrid) return item.itemHrid;
+            if (item?.hrid) return item.hrid;
+        }
+    } catch (error) {
+        console.error('[ClassWeapon] Reading the equipped weapon failed:', error);
+    }
+    return null;
 }
 
 /**

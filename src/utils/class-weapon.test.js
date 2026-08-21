@@ -101,6 +101,44 @@ describe('which weapon stands for which class', () => {
     });
 });
 
+describe('telling weapons apart inside a class', () => {
+    const KINDS = {
+        '/items/furious_spear': item('Furious Spear', { style: 'stab' }),
+        '/items/regal_sword': item('Regal Sword', { type: MAIN_HAND, style: 'slash' }),
+        '/items/chaotic_flail': item('Chaotic Flail', { type: MAIN_HAND, style: 'smash' }),
+        '/items/cursed_bow': item('Cursed Bow', { style: 'ranged' }),
+        '/items/sundering_crossbow': item('Sundering Crossbow', { style: 'ranged' }),
+    };
+
+    test('melee draws the weapon of the sub-style the verdict carries', () => {
+        expect(classWeapon('melee', KINDS, { style: 'stab' })?.name).toBe('Furious Spear');
+        expect(classWeapon('melee', KINDS, { style: 'slash' })?.name).toBe('Regal Sword');
+        expect(classWeapon('melee', KINDS, { style: 'smash' })?.name).toBe('Chaotic Flail');
+        // No sub-style: still a melee weapon, the same one every time
+        expect(classWeapon('melee', KINDS)?.name).toBe('Chaotic Flail');
+    });
+
+    test('ranged is the bow when a curse was ever seen, the crossbow when not', () => {
+        expect(classWeapon('ranged', KINDS, { curse: true })?.name).toBe('Cursed Bow');
+        expect(classWeapon('ranged', KINDS, { curse: false })?.name).toBe('Sundering Crossbow');
+        expect(classWeapon('ranged', KINDS)?.name).toBe('Sundering Crossbow');
+    });
+
+    test('a known weapon settles it, whatever else the hints say', () => {
+        expect(classWeapon('ranged', KINDS, { curse: false, weaponHrid: '/items/cursed_bow' })?.name).toBe(
+            'Cursed Bow'
+        );
+        expect(classWeapon('melee', KINDS, { style: 'smash', weaponHrid: '/items/furious_spear' })?.name).toBe(
+            'Furious Spear'
+        );
+    });
+
+    test('a preference the data cannot meet still draws something of the class', () => {
+        const bowsOnly = { '/items/cursed_bow': KINDS['/items/cursed_bow'] };
+        expect(classWeapon('ranged', bowsOnly, { curse: false })?.name).toBe('Cursed Bow');
+    });
+});
+
 describe('choosing the tier', () => {
     test('the highest at or below ninety-five, not an equality test', () => {
         const data = {

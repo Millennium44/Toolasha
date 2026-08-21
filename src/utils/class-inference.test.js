@@ -152,6 +152,32 @@ describe('inferring a class', () => {
         expect(inferClass({ casts: cast('/abilities/toughness') }, ABILITIES)).toBeNull();
     });
 
+    test('the verdict carries the melee sub-style, and whether a curse was seen', () => {
+        const stab = inferClass({ casts: cast('/abilities/steady_shot') }, ABILITIES);
+        expect(stab.key).toBe('ranged');
+        expect(stab.style).toBe('ranged');
+        expect(stab.curse).toBe(false);
+
+        const slash = inferClass({ casts: cast('/abilities/cleave') }, ABILITIES);
+        expect(slash.key).toBe('melee');
+        expect(slash.style).toBe('slash');
+
+        // A curse anywhere in the evidence, even one the ability map does not know
+        const cursed = inferClass({ casts: cast('/abilities/steady_shot', '/abilities/curse') }, ABILITIES);
+        expect(cursed.key).toBe('ranged');
+        expect(cursed.curse).toBe(true);
+
+        // The sheet's style when nothing damaging was cast
+        const sheet = inferClass({ stats: { combatStyleHrids: ['/combat_styles/stab'] } }, ABILITIES);
+        expect(sheet.key).toBe('melee');
+        expect(sheet.style).toBe('stab');
+
+        // A known weapon rides along
+        expect(
+            inferClass({ casts: cast('/abilities/cleave'), weaponHrid: '/items/regal_sword' }, ABILITIES).weaponHrid
+        ).toBe('/items/regal_sword');
+    });
+
     test('an ally heal outranks the damage a healer also does', () => {
         const verdict = inferClass({ casts: cast('/abilities/fireball', '/abilities/heal') }, ABILITIES);
 

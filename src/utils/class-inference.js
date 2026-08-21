@@ -257,11 +257,17 @@ export function bucketForStyle(style, element) {
  * @param {{order: string[], counts: Object}} [input.casts] - Observed casts, from {@link newCastLog}
  * @param {Array<{hrid: string}>} [input.kit] - An authoritative captured ability list
  * @param {Object} [input.stats] - `combatDetails.combatStats` from a captured loadout
+ * @param {string} [input.weaponHrid] - The weapon actually wielded, when known (own character,
+ *   a captured loadout) — carried on the verdict so the drawing can be the real weapon's kind
  * @param {Object} [abilityDetailMap] - Game data
- * @returns {{key: string, label: string, short: string, basis: string, evidence: string[]}|null}
- *   The verdict, or null when nothing supports one
+ * @returns {{key: string, label: string, short: string, basis: string, evidence: string[],
+ *   style: string, curse: boolean, weaponHrid: string|null}|null}
+ *   The verdict, or null when nothing supports one. `style` is the melee sub-style
+ *   (stab/slash/smash) or the sheet's style when one was read, else ''. `curse` says a
+ *   curse was ever seen in the evidence — the Cursed Bow's on-hit, which is what tells it
+ *   from the crossbow inside the ranged bucket.
  */
-export function inferClass({ casts = null, kit = null, stats = null } = {}, abilityDetailMap = {}) {
+export function inferClass({ casts = null, kit = null, stats = null, weaponHrid = null } = {}, abilityDetailMap = {}) {
     // The hrids the verdict may cite: what was watched first, and the captured
     // kit behind it. Deduplicated, because a captured ability that was also
     // cast is one piece of evidence rather than two
@@ -269,7 +275,15 @@ export function inferClass({ casts = null, kit = null, stats = null } = {}, abil
     const kitHrids = (kit || []).map((entry) => String(entry?.hrid || '')).filter(Boolean);
     const evidence = [...new Set([...observed, ...kitHrids])].slice(0, MAX_EVIDENCE);
 
-    const verdict = (bucket, basis) => (bucket ? { ...bucket, basis, evidence } : null);
+    // A curse anywhere in what was watched or carried. Evidence is bounded, so
+    // the whole watched order is checked too — an early curse must not fall out
+    const curse = [...observed, ...kitHrids, ...Object.keys(casts?.counts || {})].some((hrid) =>
+        /curse/i.test(String(hrid))
+    );
+    const sheetStyleTail = tail(stats?.combatStyleHrid || stats?.combatStyleHrids?.[0]);
+
+    const verdict = (bucket, basis, style = '') =>
+        bucket ? { ...bucket, basis, evidence, style: style || sheetStyleTail || '', curse, weaponHrid } : null;
 
     // 1. Threat is a stat carried on purpose, and only a tank carries it
     if (Number(stats?.threat) > 0) return verdict(CLASS_BUCKETS.tank, 'threat on the captured sheet');
@@ -309,14 +323,14 @@ export function inferClass({ casts = null, kit = null, stats = null } = {}, abil
     const style = modal(styleCounts);
     if (style) {
         const bucket = bucketForStyle(style, modal(elementCounts));
-        if (bucket) return verdict(bucket, 'the styles cast in this trial');
+        if (bucket) return verdict(bucket, 'the styles cast in this trial', style);
     }
 
     // 4. The sheet, when nothing damaging has been watched. A capture states
     //    the weapon's own style and element outright
     const sheetStyle = stats?.combatStyleHrid || stats?.combatStyleHrids?.[0];
     const sheetBucket = bucketForStyle(sheetStyle, stats?.damageType);
-    if (sheetBucket) return verdict(sheetBucket, 'the weapon style on the captured sheet');
+    if (sheetBucket) return verdict(sheetBucket, 'the weapon style on the captured sheet', tail(sheetStyle));
 
     // 5. Nothing. A column of blanks is honest; a column of guesses is not
     return null;

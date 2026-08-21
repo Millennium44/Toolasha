@@ -43,6 +43,7 @@ import combatStatsDataCollector from '../combat-stats/combat-stats-data-collecto
 import { pushManaSample } from './combat-estimates.js';
 import { recoverMonsterNames } from '../../utils/battle-panel-monsters.js';
 import { inferClass, newCastLog, noteCast } from '../../utils/class-inference.js';
+import { ownWeaponHrid } from '../../utils/class-weapon.js';
 
 /** The counters this tick is measured against */
 let state = newAttributionState();
@@ -268,9 +269,17 @@ function noteCasts(players) {
  */
 export function runClasses(abilityDetailMap = dataManager.getInitClientData?.()?.abilityDetailMap || {}) {
     const out = {};
+    // The one slot whose weapon need not be guessed: this character's own
+    const ownName = dataManager.getCurrentCharacterName?.() || null;
+    const ownWeapon = ownName ? ownWeaponHrid() : null;
     for (const index of new Set([...Object.keys(sheets), ...Object.keys(castLogs)])) {
         const verdict = inferClass(
-            { casts: castLogs[index] || null, kit: sheets[index]?.kit || null, stats: sheets[index]?.stats || null },
+            {
+                casts: castLogs[index] || null,
+                kit: sheets[index]?.kit || null,
+                stats: sheets[index]?.stats || null,
+                weaponHrid: ownWeapon && names[index] === ownName ? ownWeapon : null,
+            },
             abilityDetailMap
         );
         if (verdict) out[index] = verdict;
