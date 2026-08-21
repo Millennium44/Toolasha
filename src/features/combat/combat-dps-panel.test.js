@@ -43,6 +43,12 @@ vi.mock('../../core/dom-observer.js', () => ({
 }));
 vi.mock('./damage-tracker.js', () => ({ damageBreakdown: () => opts.dealt }));
 vi.mock('./damage-taken-tracker.js', () => ({ takenBreakdown: () => opts.taken }));
+// The weapon icon needs game data; what matters here is that a verdict becomes
+// a chip and no verdict becomes nothing
+vi.mock('../../utils/class-weapon.js', () => ({
+    classTagIconHTML: (tag, { title = '' } = {}) =>
+        tag?.key ? `<svg data-class="${tag.key}"><title>${title}</title></svg>` : '',
+}));
 // Geometry lives in IndexedDB and is never what a panel test is about
 vi.mock('../../utils/panel-geometry.js', () => ({
     restoreGeometry: () => {},
@@ -113,6 +119,21 @@ describe('which tracker feeds which tab', () => {
                 { name: 'Bob', damage: 1600, dps: 16, regen: 100, hps: 1 },
             ],
         };
+    });
+
+    test('a class verdict on the dealt row becomes a weapon chip, on every tab', () => {
+        opts.dealt.players[0].classTag = { key: 'fireMage', short: 'FIRE' };
+
+        expect(panelRows('damage').rows.find((row) => row.name === 'Alice')?.classTag?.key).toBe('fireMage');
+        // The taken tracker has no casts; the class is borrowed by name
+        expect(panelRows('taken').rows.find((row) => row.name === 'Alice')?.classTag?.key).toBe('fireMage');
+        expect(panelRows('healed').rows.find((row) => row.name === 'Bob')?.classTag).toBeNull();
+
+        const html = board().innerHTML;
+        expect(html).toContain('data-class="fireMage"');
+        expect(html).toContain('seen casting this run');
+        // One chip — Bob has no verdict and gets no placeholder
+        expect(html.match(/data-class=/g)).toHaveLength(1);
     });
 
     test('damage comes from the damage tracker, ranked', () => {

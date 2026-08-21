@@ -63,6 +63,7 @@ import {
     boardLines,
     rankRows,
 } from '../../utils/damage-board.js';
+import { classTagIconHTML } from '../../utils/class-weapon.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -113,21 +114,56 @@ let tab = 'damage';
  * @returns {{rows: Array<Object>, total: number, perSecond: number|null, seconds: number}}
  */
 export function panelRows(which, { dealt = damageBreakdown, taken = takenBreakdown } = {}) {
+    const dealtRun = dealt() || {};
     if (which === 'damage') {
-        const run = dealt() || {};
         return rankRows(
-            (run.players || []).map((row) => ({ name: row.name, value: row.damage || 0, perSecond: row.dps ?? null })),
-            run.seconds || 0
+            (dealtRun.players || []).map((row) => ({
+                name: row.name,
+                value: row.damage || 0,
+                perSecond: row.dps ?? null,
+                classTag: row.classTag || null,
+            })),
+            dealtRun.seconds || 0
         );
     }
 
+    // The taken tracker knows nothing about casts, so the class comes from the
+    // dealt side by name — the same party, keyed differently
+    const classByName = {};
+    for (const row of dealtRun.players || []) {
+        if (row?.name && row.classTag) classByName[row.name] = row.classTag;
+    }
+
     const run = taken() || {};
-    const rows = (run.players || []).map((row) =>
-        which === 'healed'
-            ? { name: row.name, value: row.regen || 0, perSecond: row.hps ?? null }
-            : { name: row.name, value: row.damage || 0, perSecond: row.dps ?? null }
-    );
+    const rows = (run.players || []).map((row) => ({
+        name: row.name,
+        value: (which === 'healed' ? row.regen : row.damage) || 0,
+        perSecond: (which === 'healed' ? row.hps : row.dps) ?? null,
+        classTag: classByName[row.name] || null,
+    }));
     return rankRows(rows, run.seconds || 0);
+}
+
+/**
+ * The class chip for one row: the T95 weapon of the inferred role, or a dim
+ * text chip when the icon cannot be resolved, or nothing when there is no
+ * verdict yet.
+ * @param {Object|null} verdict - A row's `classTag`, from `inferClass`
+ * @returns {string} HTML, possibly empty
+ */
+export function classTagHTML(verdict) {
+    const label = String(verdict?.short || '').replace(/[^A-Z]/g, '');
+    if (!label) return '';
+
+    const title = `${label} — inferred from what this player was seen casting this run.`;
+    const icon = classTagIconHTML(verdict, { title, size: 13 });
+    if (icon) return icon;
+
+    const { dim } = BOARD_COLORS;
+    return (
+        `<span title="${title}" style="color:${dim}; font-size:9px; letter-spacing:0.5px; ` +
+        `border:1px solid ${dim}; border-radius:3px; padding:0 3px;">${label}</span>`
+    );
 }
 
 /** What each tab's figures are, said once at the top rather than per row */
@@ -191,7 +227,7 @@ export function drawBoard(body, sources) {
     const unit = tab === 'healed' ? 'hps' : 'dps';
 
     const list = rows.length
-        ? rows.map((row) => boardRowHTML(row)).join('')
+        ? rows.map((row) => boardRowHTML(row, { tagHTML: classTagHTML(row.classTag) })).join('')
         : `<div style="color:${BOARD_COLORS.dim}; padding:6px 0; line-height:1.5;">` +
           'Nothing measured yet — the table fills in as the fight goes on. A run that has only just started has ' +
           'no seconds to divide by, which is why a rate can be dashed while a total is not.</div>';

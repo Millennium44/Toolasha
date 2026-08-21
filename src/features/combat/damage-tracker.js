@@ -42,6 +42,7 @@ import {
 import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { pushManaSample } from './combat-estimates.js';
 import { recoverMonsterNames } from '../../utils/battle-panel-monsters.js';
+import { inferClass, newCastLog, noteCast } from '../../utils/class-inference.js';
 
 /** The counters this tick is measured against */
 let state = newAttributionState();
@@ -51,6 +52,14 @@ let tally = {};
 
 /** Player index → display name, from `new_battle` */
 let names = {};
+
+/**
+ * Player index → what they have been seen preparing this run, for the class
+ * guess. The same evidence the trial scoreboard uses, gathered the same way:
+ * a tick says what each slot is casting, and the modal style of that is the
+ * role. Reset with the run, like the tally — a new party is new evidence.
+ */
+let castLogs = {};
 
 /** Who is fighting and since when; a change is a new run — see `sessionKeyFor` */
 let sessionKey = null;
@@ -163,6 +172,7 @@ export function resetDamageTracker() {
     state = newAttributionState();
     sessionKey = null;
     tally = {};
+    castLogs = {};
     enemyTally = {};
     battle = { players: {}, enemies: {}, seconds: 0 };
     battleHP = {};
@@ -229,14 +239,46 @@ export function battleBreakdown() {
  *   and an `abilities` list. `dps` is null until there is enough of a run to
  *   divide by.
  */
+/**
+ * Record what each slot was preparing on one tick, as evidence for its class.
+ * Auto-attacks and idling are not casts and `noteCast` drops them itself.
+ * @param {Object} players - `pMap` from a tick, or `players` from `new_battle`
+ */
+function noteCasts(players) {
+    for (const [index, player] of Object.entries(players || {})) {
+        const ability = player?.preparingAbilityHrid || player?.abilityHrid;
+        if (!ability) continue;
+        noteCast((castLogs[index] ||= newCastLog()), ability);
+    }
+}
+
+/**
+ * The role each slot appears to be playing, from its casts this run.
+ * @param {Object} [abilityDetailMap] - Game data; read from the client data by default
+ * @returns {Object} Player index → verdict from `inferClass`, absent where nothing supports one
+ */
+export function runClasses(abilityDetailMap = dataManager.getInitClientData?.()?.abilityDetailMap || {}) {
+    const out = {};
+    for (const [index, casts] of Object.entries(castLogs)) {
+        const verdict = inferClass({ casts }, abilityDetailMap);
+        if (verdict) out[index] = verdict;
+    }
+    return out;
+}
+
 export function damageBreakdown() {
     const measurable = seconds >= MIN_SECONDS;
+    const classes = runClasses();
 
     const players = Object.entries(tally).map(([index, entry]) => {
         const swings = entry.hits + entry.misses;
         return {
             index,
             name: names[index] || `Player ${Number(index) + 1}`,
+            // The class guess, from what this slot was seen casting this run;
+            // null until the casts say something — the first few ticks of a
+            // fight usually do not
+            classTag: classes[index] || null,
             damage: entry.damage,
             // The part of `damage` no swing counter confirmed — a bleed
             // ticking, thorns firing. Inside the total, named separately so a
@@ -433,6 +475,7 @@ export default {
                 sessionKey = key || sessionKey;
 
                 noteActions(state, players);
+                noteCasts(players);
 
                 // Rebuilt rather than merged, for the same reason the monster map
                 // below is: an index is a slot in this fight. Every battle names
@@ -566,6 +609,7 @@ export default {
                 // being prepared when the fight began, which credited the whole
                 // fight to one ability — and to the wrong one.
                 noteActions(state, data?.pMap);
+                noteCasts(data?.pMap);
 
                 // Only the gap between two ticks of one run is time spent
                 // fighting; the first tick after a break contributes none

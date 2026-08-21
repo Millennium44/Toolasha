@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Class icons on the normal-combat per-player panel
+
+The Per-player panel now shows the same T95-weapon class chip the trial scoreboard does, read off what each slot has been seen casting this run (fire/water/nature staff, bow, melee, bulwark). No chip until the casts say something; the Taken and Healed tabs borrow the verdict by name.
+
 ### One Risk of Ruin tab on live installs
 
 The market bundle imported the Risk of Ruin panel module to read one value, shipping a second copy of the panel singleton whose setting listener initialized beside the real one and injected a second tab in the character tab strip — live (multi-bundle) installs only, never the single-bundle dev build. The market side now reaches the panel through the bundle bridge, and the tab injector adopts an existing tab instead of twinning it.

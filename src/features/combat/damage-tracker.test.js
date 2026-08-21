@@ -14,7 +14,25 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const listeners = vi.hoisted(() => ({}));
 
-vi.mock('../../core/data-manager.js', () => ({ default: { getInitClientData: () => ({}) } }));
+/** Enough of the ability map for a class to be read off a cast */
+const ABILITIES = vi.hoisted(() => ({
+    '/abilities/fireball': {
+        abilityEffects: [
+            {
+                effectType: '/ability_effect_types/damage',
+                combatStyleHrid: '/combat_styles/magic',
+                damageType: '/damage_types/fire',
+            },
+        ],
+    },
+    '/abilities/heal': {
+        abilityEffects: [{ effectType: '/ability_effect_types/heal', targetType: 'ally' }],
+    },
+}));
+
+vi.mock('../../core/data-manager.js', () => ({
+    default: { getInitClientData: () => ({ abilityDetailMap: ABILITIES }) },
+}));
 vi.mock('../../core/websocket.js', () => ({
     default: {
         on: (type, handler) => (listeners[type] = handler),
@@ -26,7 +44,7 @@ vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
 }));
 
 const tracker = await import('./damage-tracker.js');
-const { sessionKeyFor, battleBreakdown, manaSamples } = tracker;
+const { sessionKeyFor, battleBreakdown, manaSamples, damageBreakdown, runClasses } = tracker;
 
 const battle = (names, combatStartTime = '2026-08-03T01:00:00Z') => ({
     combatStartTime,
@@ -200,5 +218,78 @@ describe('the fight on screen', () => {
         });
 
         expect(manaSamples()['0']).toBeUndefined();
+    });
+});
+
+describe('the class read off a run', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-03T01:00:00Z'));
+        tracker.default.initialize();
+    });
+
+    afterEach(() => {
+        tracker.default.cleanup();
+        vi.useRealTimers();
+    });
+
+    const announce = () =>
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players: { 0: { name: 'Alice' }, 1: { name: 'Bob' } },
+            monsters: { 0: { name: 'Eye', combatDetails: { maxHitpoints: 1000 }, currentHitpoints: 1000 } },
+        });
+
+    const tick = (pMap) => listeners.battle_updated({ battleId: 1, pMap, mMap: {} });
+
+    test('what each slot was seen preparing names its class', () => {
+        announce();
+        tick({ 0: { preparingAbilityHrid: '/abilities/fireball' }, 1: { preparingAbilityHrid: '/abilities/heal' } });
+        tick({ 0: { preparingAbilityHrid: '/abilities/fireball' }, 1: { isAutoAtk: true } });
+
+        const classes = runClasses();
+        expect(classes['0']?.key).toBe('fireMage');
+        expect(classes['1']?.key).toBe('healer');
+    });
+
+    test('the verdict rides the breakdown row, and is null before any cast', () => {
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players: { 0: { name: 'Alice' } },
+            monsters: { 0: { name: 'Eye', combatDetails: { maxHitpoints: 1000 }, currentHitpoints: 1000 } },
+        });
+        const swing = (atk, hp, dmg, ability) =>
+            listeners.battle_updated({
+                battleId: 1,
+                pMap: {
+                    0: { atkCounter: atk, ...(ability ? { preparingAbilityHrid: ability } : { isAutoAtk: true }) },
+                },
+                mMap: { 0: { cHP: hp, dmgCounter: dmg, mHP: 1000 } },
+            });
+
+        // Auto-attacks land, and say nothing about the build
+        swing(1, 1000, 0);
+        swing(2, 950, 1);
+        expect(damageBreakdown().players.find((row) => row.name === 'Alice')?.classTag).toBeNull();
+
+        swing(3, 900, 2, '/abilities/fireball');
+        swing(4, 850, 3, '/abilities/fireball');
+
+        const alice = damageBreakdown().players.find((row) => row.name === 'Alice');
+        expect(alice?.classTag?.key).toBe('fireMage');
+        expect(alice?.classTag?.short).toBe('FIRE');
+    });
+
+    test('a new run starts with no evidence', () => {
+        announce();
+        tick({ 0: { preparingAbilityHrid: '/abilities/fireball' }, 1: {} });
+        expect(runClasses()['0']?.key).toBe('fireMage');
+
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T02:00:00Z',
+            players: { 0: { name: 'SomebodyElse' } },
+            monsters: { 0: { name: 'Eye' } },
+        });
+        expect(runClasses()).toEqual({});
     });
 });
