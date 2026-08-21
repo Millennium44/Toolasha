@@ -187,8 +187,9 @@ export function describeMonsterPanel(root = document) {
  * @param {Document|HTMLElement} [root] - Where to read the panel from
  * @returns {Object<string, string>} Monster index → name
  */
-export function recoverMonsterNames(mMap, root = document) {
+export function recoverMonsterNames(mMap, root = globalThis.document) {
     try {
+        if (!root) return {};
         return matchMonsterNames(readMonsterUnits(root), mMap);
     } catch (error) {
         console.error('[BattlePanelMonsters] Reading the battle panel failed:', error);

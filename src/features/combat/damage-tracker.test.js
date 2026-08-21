@@ -206,6 +206,46 @@ describe('the fight on screen', () => {
         expect(samples[2].mana).toBe(180);
     });
 
+    test('a reload mid-fight keeps what it tallied once the battle is named', () => {
+        // Ticks first — the page came up mid-fight and nothing has named the run
+        tick({ battleId: 1, atk: 1, monsterHP: 1000, dmg: 0 });
+        tick({ battleId: 1, atk: 2, monsterHP: 900, dmg: 1 });
+        expect(tracker.damageBreakdown().players[0]?.name).toBe('Player 1');
+        expect(tracker.damageBreakdown().players[0]?.damage).toBe(100);
+
+        // The battle statement for the same fight: the name fills in, the tally stays
+        announce();
+        const row = tracker.damageBreakdown().players[0];
+        expect(row?.name).toBe('You');
+        expect(row?.damage).toBe(100);
+
+        // A later statement with a different roster is still a new run
+        listeners.new_battle({
+            combatStartTime: '2026-08-03T02:00:00Z',
+            players: { 0: { name: 'SomebodyElse' } },
+            monsters: { 0: { name: 'Eye' } },
+        });
+        expect(tracker.damageBreakdown().players).toEqual([]);
+    });
+
+    test('a reload whose slots outnumber the roster it is then given starts over', () => {
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 1 }, 1: { atkCounter: 1 } },
+            mMap: { 0: { cHP: 1000, dmgCounter: 0, mHP: 1000 } },
+        });
+        listeners.battle_updated({
+            battleId: 1,
+            pMap: { 0: { atkCounter: 2 }, 1: { atkCounter: 1 } },
+            mMap: { 0: { cHP: 900, dmgCounter: 1, mHP: 1000 } },
+        });
+        expect(tracker.damageBreakdown().players.length).toBeGreaterThan(0);
+
+        // Solo now — slot 1 is nobody, so the ticks before this were another party's
+        announce();
+        expect(tracker.damageBreakdown().players).toEqual([]);
+    });
+
     test('a new session forgets the mana series with everything else', () => {
         announce();
         tick({ mana: 300 });

@@ -494,10 +494,22 @@ export default {
                 // worse, your own name landed on two rows, because you were slot
                 // 3 in the party and slot 0 alone. The roster and the start time
                 // together are the session, which is how MCS names one too.
+                //
+                // Except the first statement after a reload: ticks arrived before
+                // anything named the run, and the damage they carried belongs to
+                // the fight still on screen. Wiping it here showed "Player 1"
+                // filling in, then a reset, then the same fight from zero. An
+                // unnamed run adopts the first name it is given — as long as the
+                // slots seen so far all belong to this roster, which is what a
+                // roster that changed while the page was away would fail.
                 const key = sessionKeyFor(data);
                 if (key && key !== sessionKey) {
-                    resetDamageTracker();
-                    names = {};
+                    const seenSlots = Object.keys(state.party || {});
+                    const adoptable = sessionKey === null && seenSlots.every((index) => index in (players || {}));
+                    if (!adoptable) {
+                        resetDamageTracker();
+                        names = {};
+                    }
                 }
                 sessionKey = key || sessionKey;
 
