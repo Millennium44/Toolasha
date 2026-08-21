@@ -242,9 +242,9 @@ export function createAutofillManager(observerId) {
         initialize() {
             if (observerUnregister) return observerUnregister;
 
-            observerUnregister = domObserver.onClass(observerId, 'Modal_modalContainer', (modal) => {
+            const attempt = (modal) => {
                 // Only the most recently set intent fills; see latestIntentOwner
-                if (latestIntentOwner !== self) return;
+                if (latestIntentOwner !== self) return false;
                 const filled = handleBuyModal(modal, activeQuantity, pendingCalculation);
                 // Clear static quantity once it has actually gone into a buy
                 // form (one-shot) — not on whatever modal happened to open
@@ -252,6 +252,17 @@ export function createAutofillManager(observerId) {
                 if (filled && activeQuantity !== null && !pendingCalculation) {
                     activeQuantity = null;
                     releaseIntent();
+                }
+                return filled;
+            };
+            observerUnregister = domObserver.onClass(observerId, 'Modal_modalContainer', (modal) => {
+                // The container can appear a beat before its content — the
+                // Shop's dialog renders its body after the frame — so a miss
+                // is tried once more shortly after
+                if (!attempt(modal)) {
+                    setTimeout(() => {
+                        if (document.body.contains(modal)) attempt(modal);
+                    }, 250);
                 }
             });
             return observerUnregister;

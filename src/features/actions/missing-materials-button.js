@@ -847,12 +847,14 @@ function createTesterShopTabs(missingMaterials, testerTab) {
         const tabRef = { tab: null };
         const handler = sold
             ? (_e, mat) => {
+                  // Stay in the Tester tab and narrow it to this item — and
+                  // only then arm the quantity: selecting a game tab is what
+                  // clears an armed quantity (the strip's own listener)
+                  findTesterTab()?.click();
+                  setShopFilter(mat.itemName);
                   autofillManager.setPendingCalculation(() =>
                       parseInt(tabRef.tab?.getAttribute('data-missing-quantity') || '0', 10)
                   );
-                  // Stay in the Tester tab and narrow it to this item
-                  findTesterTab()?.click();
-                  setShopFilter(mat.itemName);
               }
             : makeMaterialClickHandler(tabRef);
         const tab = createMaterialTab(material, testerTab, handler);
@@ -971,8 +973,10 @@ function findShopCard(itemName) {
         const text = (el.textContent || '').trim().toLowerCase();
         return text.startsWith(wanted) && text.includes('coin');
     };
+    // The card class, not the `shopItems` container that also matches the
+    // substring — the token is followed by its hash
     const card = Array.from(document.querySelectorAll('[class*="ShopPanel_shopItem"]')).find(
-        (el) => el.offsetParent !== null && reads(el)
+        (el) => /(^|\s)ShopPanel_shopItem__/.test(el.className || '') && el.offsetParent !== null && reads(el)
     );
     if (card) return card;
 
@@ -1001,13 +1005,13 @@ async function buyOneFromTesterShop(itemName, quantity) {
         });
     if (!(quantity > 0)) return { ok: false, reason: 'nothing short' };
 
-    // The quantity we are about to type is what any buy dialog should carry,
-    // including one the game opens from this card
-    autofillManager.setPendingCalculation(() => quantity);
-
     findTesterTab()?.click();
     await wait(100);
     setShopFilter(itemName);
+    // Armed after the tab click, which would have cleared it: the quantity we
+    // are about to type is what any buy dialog should carry, including one
+    // the game opens from this card
+    autofillManager.setPendingCalculation(() => quantity);
 
     let card = null;
     for (let i = 0; i < 20 && !card; i++) {
@@ -1022,8 +1026,10 @@ async function buyOneFromTesterShop(itemName, quantity) {
     let modal = null;
     for (let i = 0; i < 20 && !modal; i++) {
         await wait(100);
+        // Fixed-position: `offsetParent` is null even when shown, so the box
+        // on screen is the test
         modal = Array.from(document.querySelectorAll('[class*="Modal_modalContainer"]')).find(
-            (el) => el.offsetParent !== null && /quantity/i.test(el.textContent || '')
+            (el) => el.getClientRects().length > 0 && /quantity/i.test(el.textContent || '')
         );
     }
     if (!modal) return { ok: false, reason: 'no buy dialog' };
@@ -1041,7 +1047,7 @@ async function buyOneFromTesterShop(itemName, quantity) {
     // behind it is what moves the badge
     for (let i = 0; i < 20; i++) {
         await wait(100);
-        if (!document.body.contains(modal) || modal.offsetParent === null) break;
+        if (!document.body.contains(modal) || modal.getClientRects().length === 0) break;
     }
     return { ok: true };
 }
