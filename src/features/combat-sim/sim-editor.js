@@ -61,7 +61,41 @@ export class SimEditor {
     }
 
     getEditedDTOs() {
+        this._syncHouseRoomsFromGame();
         return this._editedDTOs;
+    }
+
+    /**
+     * Bring the self player's house rooms up to what the game says now.
+     *
+     * The DTO is built once, when the editor opens, and a room upgraded in
+     * the House tab afterwards was invisible to every run until the panel
+     * was reset — the Upgrade tab kept proposing the level already built. A
+     * room the user has edited by hand in the editor is theirs and is left
+     * alone; only rooms still at their opening value follow the game.
+     */
+    _syncHouseRoomsFromGame() {
+        const self = this._selfHrid;
+        const edited = this._editedDTOs?.[self];
+        const original = this._originalDTOs?.[self];
+        if (!edited || !original) return;
+        let live;
+        try {
+            live = dataManager.getHouseRooms?.();
+        } catch {
+            return;
+        }
+        if (!live || typeof live.forEach !== 'function') return;
+        edited.houseRooms = edited.houseRooms || {};
+        original.houseRooms = original.houseRooms || {};
+        live.forEach((room, hrid) => {
+            const level = Number(room?.level) || 0;
+            const was = original.houseRooms[hrid] || 0;
+            if ((edited.houseRooms[hrid] || 0) !== was) return; // hand-edited: theirs
+            if (level === was) return;
+            edited.houseRooms[hrid] = level;
+            original.houseRooms[hrid] = level;
+        });
     }
     getPlayerInfo() {
         return this._editedPlayerInfo;

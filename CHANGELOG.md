@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Simulators read a house room you built while the panel was open
+
+The player DTO is built when the simulator opens, so a room upgraded in the House tab afterwards kept being proposed by the Upgrade tab at its old level until the panel was reset. The editor now follows the game's house rooms on every read (a room you edited by hand in the editor stays yours), and the data manager refreshes the character's own room map on `house_rooms_updated` too.
+
 ### The action bar's profit line clears when the header leaves the action
 
 Moving from a crafting action to the labyrinth (or to any header the queue does not name) left "Profit: +…/hr vol-capped" standing under the new activity; every branch that blanks the time display now blanks the profit line too, and cancels a profit calculation still in flight for the old action.

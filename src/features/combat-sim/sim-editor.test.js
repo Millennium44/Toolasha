@@ -19,6 +19,8 @@ const game = vi.hoisted(() => ({
     characterData: { character: { id: 'me', name: 'Milkman' } },
     selfDTO: null,
     allPlayers: null,
+    /** What the game says the house is now: Map of room hrid → {level} */
+    houseRooms: null,
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -28,6 +30,7 @@ vi.mock('../../core/data-manager.js', () => ({
         },
         getInitClientData: () => ({ itemDetailMap: {}, abilityDetailMap: {} }),
         getItemDetails: () => null,
+        getHouseRooms: () => game.houseRooms,
     },
 }));
 
@@ -85,6 +88,7 @@ beforeEach(() => {
     bridge.snapshots = [];
     game.characterData = { character: { id: 'me', name: 'Milkman' } };
     game.selfDTO = { ...emptyDTO('player1'), attackLevel: 90, debuffOnLevelGap: 0.3 };
+    game.houseRooms = null;
     game.allPlayers = {
         players: [
             { ...emptyDTO('player1'), attackLevel: 90 },
@@ -97,6 +101,34 @@ beforeEach(() => {
         selfHrid: 'player1',
         missingMembers: [],
     };
+});
+
+describe('house rooms follow the game', () => {
+    test('a room built after the panel opened is read at the next run', () => {
+        const { editor } = editorWithStrangers();
+        game.selfDTO.houseRooms = { '/house_rooms/dojo': 2, '/house_rooms/garden': 8 };
+        editor.resetToSelf();
+        expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo']).toBe(2);
+
+        // The House tab builds Dojo 3 while the panel is open
+        game.houseRooms = new Map([
+            ['/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 3 }],
+            ['/house_rooms/garden', { houseRoomHrid: '/house_rooms/garden', level: 8 }],
+        ]);
+        expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo']).toBe(3);
+        expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/garden']).toBe(8);
+    });
+
+    test('a room the user edited by hand is theirs, whatever the game says', () => {
+        const { editor } = editorWithStrangers();
+        game.selfDTO.houseRooms = { '/house_rooms/dojo': 2 };
+        editor.resetToSelf();
+        // Hand-edited in the editor to a hypothetical 5
+        editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo'] = 5;
+
+        game.houseRooms = new Map([['/house_rooms/dojo', { houseRoomHrid: '/house_rooms/dojo', level: 3 }]]);
+        expect(editor.getEditedDTOs().player1.houseRooms['/house_rooms/dojo']).toBe(5);
+    });
 });
 
 describe('reset to me', () => {

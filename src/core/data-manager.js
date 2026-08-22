@@ -645,6 +645,14 @@ class DataManager {
         for (const [_hrid, room] of Object.entries(houseRoomMap)) {
             this.characterHouseRooms.set(room.houseRoomHrid, room);
         }
+        // The init snapshot too, so anything still reading the character's
+        // own map (the simulators' player DTO) sees the room it just built
+        if (this.characterData) {
+            this.characterData.characterHouseRoomMap = { ...(this.characterData.characterHouseRoomMap || {}) };
+            for (const [hrid, room] of Object.entries(houseRoomMap)) {
+                this.characterData.characterHouseRoomMap[hrid] = room;
+            }
+        }
     }
 
     /**
