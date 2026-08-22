@@ -58,13 +58,26 @@ class AbilityDictionaryButton {
      * @returns {string|null} Ability hrid
      */
     static abilityAt(target) {
-        const svg = target?.closest?.('svg');
-        if (!svg) return null;
-        const use = svg.querySelector('use');
-        const href = use?.getAttribute('href') || use?.getAttribute('xlink:href') || '';
-        if (!href.includes('abilities_sprite')) return null;
-        const tail = href.split('#')[1];
-        return tail ? `/abilities/${tail}` : null;
+        // The click rarely lands on the <svg> itself: the game lays the level
+        // label ("Lv.100") and the slot's own overlay over the icon. Walk up a
+        // few ancestors and take the one ability sprite beneath — and stop at
+        // the first ancestor holding several, which is the row, not an icon
+        const isAbilityUse = (use) => {
+            const href = use?.getAttribute('href') || use?.getAttribute('xlink:href') || '';
+            return href.includes('abilities_sprite') ? href : null;
+        };
+        let node = target;
+        for (let depth = 0; node && depth < 5; depth++) {
+            const uses = Array.from(node.querySelectorAll?.('use') || []).filter(isAbilityUse);
+            if (node.tagName === 'use' && isAbilityUse(node)) uses.unshift(node);
+            if (uses.length > 1) return null;
+            if (uses.length === 1) {
+                const tail = isAbilityUse(uses[0]).split('#')[1];
+                return tail ? `/abilities/${tail}` : null;
+            }
+            node = node.parentElement;
+        }
+        return null;
     }
 
     /**

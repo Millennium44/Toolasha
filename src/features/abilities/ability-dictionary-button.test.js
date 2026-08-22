@@ -58,6 +58,34 @@ describe('right-click on an ability icon', () => {
         expect(event.defaultPrevented).toBe(true);
     });
 
+    test('a click on the level label laid over the icon still finds the ability', () => {
+        // As the game lays it out: container > [svg, level label]; the label is on top
+        const container = document.createElement('div');
+        container.className = 'Ability_iconContainer__x';
+        const svg = icon('insanity');
+        container.appendChild(svg);
+        const label = document.createElement('div');
+        label.className = 'Ability_level__x';
+        label.textContent = 'Lv.100';
+        container.appendChild(label);
+        document.body.appendChild(container);
+
+        const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+        label.dispatchEvent(event);
+        expect(state.opened).toEqual(['/items/insanity']);
+    });
+
+    test('a row holding several abilities is not guessed at', () => {
+        const row = document.createElement('div');
+        row.appendChild(icon('insanity'));
+        row.appendChild(icon('precision'));
+        document.body.appendChild(row);
+        const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+        row.dispatchEvent(event);
+        expect(state.opened).toEqual([]);
+        expect(event.defaultPrevented).toBe(false);
+    });
+
     test('an item icon, or an ability with no book, is left to the game', () => {
         const item = icon('cheese', 'items_sprite');
         const e1 = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
