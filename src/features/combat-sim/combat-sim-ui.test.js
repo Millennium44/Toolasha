@@ -2910,10 +2910,13 @@ describe('the Bestiary route planner under the all-zones table', () => {
             [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())
         );
         expect(rows).toHaveLength(2);
-        expect(rows[0].slice(0, 4)).toEqual(['1', 'Farm T0', '0:30', '+3']);
-        expect(rows[0][4]).toContain('Fly 8 → 10');
-        expect(rows[0][4]).toContain('Rat 0 → 1');
-        expect(rows[1].slice(0, 4)).toEqual(['2', 'Hive T2', '0:30', '+0']);
+        // Time, then about how many fights that is at the zone's simulated rate, then points
+        expect(rows[0].slice(0, 5)).toEqual(['1', 'Farm T0', '0:30', '≈5', '+3']);
+        expect(rows[0][5]).toContain('Fly 8 → 10');
+        expect(rows[0][5]).toContain('Rat 0 → 1');
+        expect(rows[1].slice(0, 3)).toEqual(['2', 'Hive T2', '0:30']);
+        expect(rows[1][3]).toMatch(/^(≈[0-9,]+|—)$/);
+        expect(rows[1][4]).toBe('+0');
         expect(rows[1][4]).toContain('partial: Bee 0/1');
 
         const footer = ui.panel.querySelector('#mwi-csim-bestiary-plan-footer').textContent;
@@ -2935,6 +2938,25 @@ describe('the Bestiary route planner under the all-zones table', () => {
 
         expect(planText()).toContain('1 zone without a sim result skipped');
         expect(planText()).toContain('Farm T0');
+    });
+
+    test('the setting turns the column and the planner off together, and the Bestiary is not requested', async () => {
+        const { default: config } = await import('../../core/config.js');
+        const valueSpy = vi
+            .spyOn(config, 'getSettingValue')
+            .mockImplementation((key, fallback) => (key === 'combatSim_bestiary' ? false : fallback));
+        const request = vi.spyOn(ui, '_requestBestiary').mockImplementation(() => {});
+        try {
+            mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+            await ui._displayAllZonesResults([result('Farm', { '/monsters/fly': 10 })], 1, gameData);
+
+            expect(ui.panel.querySelector('#mwi-csim-bestiary-plan')).toBeNull();
+            const heads = [...ui.panel.querySelectorAll('#mwi-csim-results th')].map((th) => th.textContent.trim());
+            expect(heads.some((h) => /Bestiary/.test(h))).toBe(false);
+            expect(request).not.toHaveBeenCalled();
+        } finally {
+            valueSpy.mockRestore();
+        }
     });
 
     test('Copy puts the plain-text plan on the clipboard', async () => {
@@ -2961,8 +2983,8 @@ describe('the Bestiary route planner under the all-zones table', () => {
         expect(written).toHaveLength(1);
         const lines = written[0].split('\n');
         expect(lines[0]).toBe('Bestiary plan — 1:00 h, 2 points');
-        expect(lines[1]).toBe('1. Farm T0 — 0:12 — +2 — Fly 8→10');
-        expect(lines[2]).toBe('2. Hive T2 — 0:48 — +0 — (partial: Bee 0/1)');
+        expect(lines[1]).toBe('1. Farm T0 — 0:12 (≈2 fights) — +2 — Fly 8→10');
+        expect(lines[2]).toMatch(/^2\. Hive T2 — 0:48( \(≈[0-9]+ fights\))? — \+0 — \(partial: Bee 0\/1\)$/);
         expect(lines[3]).toBe('Best single zone: Farm T0 — 2 points');
         expect(copyBtn.textContent).toBe('Copied ✓');
     });

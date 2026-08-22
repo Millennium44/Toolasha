@@ -125,7 +125,7 @@ describe('planning a Bestiary route', () => {
             hours: 0.5,
         });
         // b alone: bee 9→14 (+2), wasp 99→104 (+3) = 5; a alone: fly 0→5 (+1)
-        expect(plan.bestSingle).toEqual({ zoneHrid: 'b', name: 'b', points: 5 });
+        expect(plan.bestSingle).toEqual({ zoneHrid: 'b', name: 'b', points: 5, encounters: null });
         // The route: fly (0.1 h), bee (0.1 h), wasp (0.1 h), then fly again … ≥ 6
         expect(plan.totalPoints).toBeGreaterThanOrEqual(plan.bestSingle.points);
     });
@@ -161,5 +161,23 @@ describe('plan text', () => {
         expect(text).toContain('2. Hive T1 — 0:48 — +0 — (partial: bee 0/1)');
         expect(text).toContain('Best single zone: Farm T0 — 2 points');
         expect(formatPlanText(null)).toBe('');
+    });
+});
+
+describe('fights per stay', () => {
+    test('a zone with a fight rate quotes each stay in fights, merged stays add up, unknown rates read null', () => {
+        const zones = [
+            { zoneHrid: 'a', name: 'a', killsPerHour: { fly: 10 }, encountersPerHour: 120 },
+            { zoneHrid: 'b', name: 'b', killsPerHour: { bee: 10 } },
+        ];
+        const plan = planBestiaryRoute({ zones, counts: { fly: 0, bee: 0 }, hours: 1 });
+        const a = plan.segments.filter((seg) => seg.zoneHrid === 'a');
+        const b = plan.segments.filter((seg) => seg.zoneHrid === 'b');
+        expect(a.length).toBeGreaterThan(0);
+        for (const seg of a) expect(seg.encounters).toBeCloseTo(120 * seg.hours, 6);
+        for (const seg of b) expect(seg.encounters).toBeNull();
+        expect(plan.bestSingle.encounters === null || plan.bestSingle.encounters > 0).toBe(true);
+        const text = formatPlanText(plan);
+        expect(text).toMatch(/≈\d+ fights/);
     });
 });

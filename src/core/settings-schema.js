@@ -2386,6 +2386,15 @@ export const settingsGroups = {
                 default: false,
                 help: 'Display avg completion time as "X.XX min" instead of "Xm Ys"',
             },
+            combatSim_bestiary: {
+                id: 'combatSim_bestiary',
+                label: 'Combat Simulator: Bestiary column and route planner in All Zones',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Adds the Bestiary points/day column to the All Zones table and the Bestiary route planner under it. ' +
+                    'Off: neither is drawn and the Bestiary is not requested from the game.',
+            },
             combatSim_defaultLoadout: {
                 id: 'combatSim_defaultLoadout',
                 label: 'Combat Simulator: Default loadout',

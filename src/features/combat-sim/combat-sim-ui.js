@@ -2606,12 +2606,15 @@ class CombatSimUI {
         const playerHrid = this._activePlayerTab || 'player1';
         // The Bestiary, when the Achievements tab has loaded it: what each zone's
         // kill rates are worth in points over the next day, from the counts held
-        const bestiaryRows = dataManager.getCharacterMonsters?.() || null;
+        // Off by the setting: no column, no planner, and the Bestiary is not
+        // asked for either
+        const bestiaryOn = config.getSettingValue('combatSim_bestiary', true) !== false;
+        const bestiaryRows = bestiaryOn ? dataManager.getCharacterMonsters?.() || null : null;
         const bestiaryCounts = bestiaryRows ? countsByMonster(bestiaryRows) : null;
         // Not loaded yet: ask the game for it the way the Bestiary tab does,
         // and redraw when it lands so the column fills in by itself
         this._allZonesRedrawArgs = { hours, gameData };
-        if (!bestiaryRows) this._requestBestiary();
+        if (bestiaryOn && !bestiaryRows) this._requestBestiary();
         const rows = zoneResults
             .filter((r) => r && r.simResult)
             .map((r) => {
@@ -2703,6 +2706,7 @@ class CombatSimUI {
             zoneHrid: `${row.zoneHrid || row.zone}|T${row.tier}`,
             name: `${row.zone} T${row.tier}`,
             killsPerHour: row._killsPerHour,
+            encountersPerHour: row.encounters,
         }));
         this._bestiaryPlanCounts = bestiaryCounts;
         this._bestiaryPlanSkipped = zoneResults.filter((r) => !r || !r.simResult).length;
@@ -2735,16 +2739,20 @@ class CombatSimUI {
                 // own mark on the cell
                 label: `Profit/hr${badgeHtml(calibrationBadgeFor('combat', { label: 'all-zones sim profit' }))}`,
             },
-            {
-                key: 'bestiary',
-                label: 'Bestiary pts/day',
-                title: bestiaryCounts
-                    ? 'Bestiary points a day of fighting here would earn — the simulated kills per monster against ' +
-                      'your defeated counts, points landing on each power of ten (1 at the first kill, +2 at 10, +3 ' +
-                      'at 100 …). Hover a cell for the monsters and when the first point lands.'
-                    : 'Open Achievements → Bestiary once (or press Refresh there) so the defeated counts are known; ' +
-                      'the column fills in on the next render.',
-            },
+            ...(bestiaryOn
+                ? [
+                      {
+                          key: 'bestiary',
+                          label: 'Bestiary pts/day',
+                          title: bestiaryCounts
+                              ? 'Bestiary points a day of fighting here would earn — the simulated kills per monster against ' +
+                                'your defeated counts, points landing on each power of ten (1 at the first kill, +2 at 10, +3 ' +
+                                'at 100 …). Hover a cell for the monsters and when the first point lands.'
+                              : 'Open Achievements → Bestiary once (or press Refresh there) so the defeated counts are known; ' +
+                                'the column fills in on the next render.',
+                      },
+                  ]
+                : []),
         ];
 
         // Sort
@@ -2929,7 +2937,7 @@ class CombatSimUI {
                 </table>
             </div>
         `;
-        this._renderBestiaryPlanner(container);
+        if (bestiaryOn) this._renderBestiaryPlanner(container);
 
         // A max-food run says so in the filename *and* in a column. The filename
         // is what you see in a folder six weeks later; the column is what
@@ -2960,7 +2968,7 @@ class CombatSimUI {
                 { key: 'expenses', label: 'Cost/hr' },
                 { key: 'profit', label: 'Profit/hr' },
                 { key: 'profitDay', label: 'Profit/day' },
-                { key: 'bestiary', label: 'Bestiary pts/day' },
+                ...(bestiaryOn ? [{ key: 'bestiary', label: 'Bestiary pts/day' }] : []),
             ],
             rows,
         }));
@@ -3157,6 +3165,8 @@ class CombatSimUI {
             `<th style="padding:3px 4px; white-space:nowrap; font-size:10px; font-weight:600; color:#888; ` +
             `border-bottom:1px solid #333; text-align:${align};">${label}</th>`;
         const tdStyle = 'padding:2px 4px; font-size:10px; white-space:nowrap;';
+        const fightsCell = (encounters) =>
+            encounters === null || encounters === undefined ? '—' : `≈${Math.round(encounters).toLocaleString()}`;
         const body = plan.segments
             .map((segment, index) => {
                 const crossings = segment.monsters.filter((m) => m.reached);
@@ -3181,6 +3191,7 @@ class CombatSimUI {
                     `<td style="${tdStyle} color:#888; text-align:right;">${index + 1}</td>` +
                     `<td style="${tdStyle} color:#e0e0e0; text-align:left;">${esc(segment.name)}</td>` +
                     `<td style="${tdStyle} color:#e0e0e0; text-align:right; font-variant-numeric:tabular-nums;">${formatPlanHours(segment.hours)}</td>` +
+                    `<td style="${tdStyle} color:#bbb; text-align:right; font-variant-numeric:tabular-nums;" title="About how many fights that stay is, at the fights per hour this run simulated for the zone">${fightsCell(segment.encounters)}</td>` +
                     `<td style="${tdStyle} color:${segment.points > 0 ? '#4caf50' : '#888'}; text-align:right; font-variant-numeric:tabular-nums;">+${segment.points}</td>` +
                     `<td style="${tdStyle} text-align:left; white-space:normal;">${detail || '—'}</td>` +
                     `</tr>`
@@ -3194,7 +3205,7 @@ class CombatSimUI {
             ${skippedNote}
             <div style="overflow-x:auto;">
                 <table style="width:100%; border-collapse:collapse; min-width:360px;">
-                    <thead><tr>${th('#')}${th('Zone', 'left')}${th('Time')}${th('Points')}${th('Thresholds crossed', 'left')}</tr></thead>
+                    <thead><tr>${th('#')}${th('Zone', 'left')}${th('Time')}${th('Fights')}${th('Points')}${th('Thresholds crossed', 'left')}</tr></thead>
                     <tbody>${body}</tbody>
                 </table>
             </div>

@@ -106,8 +106,9 @@ function singleZonePoints(killsPerHour, counts, hours) {
  * Plan a Bestiary route through `zones` for `hours`.
  *
  * @param {Object} input
- * @param {Array<{zoneHrid: string, name?: string, killsPerHour: Object}>} input.zones - Candidate zones
- *   with their simulated kills per hour by monster; earlier zones win ties
+ * @param {Array<{zoneHrid: string, name?: string, killsPerHour: Object, encountersPerHour?: number}>} input.zones -
+ *   Candidate zones with their simulated kills per hour by monster (and, when known, fights per hour, so a
+ *   stay can be quoted in fights as well as time); earlier zones win ties
  * @param {Object} input.counts - monsterHrid → kills so far (the Bestiary)
  * @param {number} input.hours - The time budget
  * @returns {{
@@ -115,9 +116,10 @@ function singleZonePoints(killsPerHour, counts, hours) {
  *   hoursUsed: number,
  *   totalPoints: number,
  *   pointsByZone: Object,
- *   segments: Array<{zoneHrid: string, name: string, hours: number, points: number, partial: boolean,
+ *   segments: Array<{zoneHrid: string, name: string, hours: number, encounters: number|null, points: number,
+ *     partial: boolean,
  *     monsters: Array<{monsterHrid: string, from: number, count: number, to: number, reached: boolean, points: number}>}>,
- *   bestSingle: {zoneHrid: string, name: string, points: number}|null,
+ *   bestSingle: {zoneHrid: string, name: string, points: number, encounters: number|null}|null,
  *   counts: Object,
  * }}
  */
@@ -140,10 +142,17 @@ export function planBestiaryRoute({ zones = [], counts = {}, hours = 24 } = {}) 
     let remaining = budget;
     let totalPoints = 0;
 
+    // Fights for a stay, when the zone's fight rate is known — null otherwise,
+    // so a table can say "—" rather than 0
+    const fightsFor = (zone, hoursSpent) =>
+        Number(zone.encountersPerHour) > 0 ? Number(zone.encountersPerHour) * hoursSpent : null;
+
     const record = (zone, hoursSpent, result, partial) => {
         const last = segments[segments.length - 1];
         if (last && last.zoneHrid === zone.zoneHrid && !last.partial) {
             last.hours += hoursSpent;
+            const more = fightsFor(zone, hoursSpent);
+            last.encounters = more === null ? last.encounters : (last.encounters || 0) + more;
             last.points += result.points;
             last.partial = partial;
             // A monster already listed keeps its original starting count
@@ -169,6 +178,7 @@ export function planBestiaryRoute({ zones = [], counts = {}, hours = 24 } = {}) 
                 zoneHrid: zone.zoneHrid,
                 name: zone.name || zone.zoneHrid,
                 hours: hoursSpent,
+                encounters: fightsFor(zone, hoursSpent),
                 points: result.points,
                 partial,
                 monsters: result.monsters.map((m) => ({ ...m })),
@@ -207,7 +217,12 @@ export function planBestiaryRoute({ zones = [], counts = {}, hours = 24 } = {}) 
     for (const zone of usable) {
         const points = singleZonePoints(zone.killsPerHour, counts, budget);
         if (!bestSingle || points > bestSingle.points) {
-            bestSingle = { zoneHrid: zone.zoneHrid, name: zone.name || zone.zoneHrid, points };
+            bestSingle = {
+                zoneHrid: zone.zoneHrid,
+                name: zone.name || zone.zoneHrid,
+                points,
+                encounters: fightsFor(zone, budget),
+            };
         }
     }
 
@@ -257,8 +272,12 @@ export function formatPlanText(plan, { monsterName = (hrid) => hrid } = {}) {
                   .join(', ')
             : '';
         const detail = [crossings, partial ? `(partial: ${partial})` : ''].filter(Boolean).join(' ');
+        const fights =
+            segment.encounters === null || segment.encounters === undefined
+                ? ''
+                : ` (≈${Math.round(segment.encounters)} fights)`;
         lines.push(
-            `${index + 1}. ${segment.name} — ${formatPlanHours(segment.hours)} — +${segment.points}` +
+            `${index + 1}. ${segment.name} — ${formatPlanHours(segment.hours)}${fights} — +${segment.points}` +
                 (detail ? ` — ${detail}` : '')
         );
     });

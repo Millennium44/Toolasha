@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bestiary additions can be switched off, and the planner counts fights
+
+New setting "Combat Simulator: Bestiary column and route planner in All Zones" (on by default): off, neither the Bestiary points/day column nor the route planner is drawn and the Bestiary is not requested from the game. The planner's table gains a Fights column — about how many fights each stay is at the zone's simulated fights per hour — and the copied text carries the same figure.
+
 ### Treasure popup opens beside the chest dialog, not in the corner first
 
 The chest popup was shown at its default top-right corner while its stored size was read back and the game's Opened Loot dialog finished rendering, then jumped beside the dialog. It now stays hidden until it has been placed — beside the dialog as soon as the dialog exists, or in the corner if no dialog ever appears — and is placed again once its width is restored.
