@@ -42,6 +42,7 @@ vi.mock('../../core/storage.js', () => ({
         get: async (key, _store, fallback) => stored.values[key] ?? fallback,
         set: async () => {},
         getJSON: async (key, _store, fallback) => stored.values[key] ?? fallback,
+        getMany: async (keys) => new Map(keys.map((key) => [key, stored.values[key] ?? null])),
         setJSON: async () => {},
         delete: async () => {},
     },

@@ -466,6 +466,31 @@ const devHeader =
         ? userscriptHeader.replace(/(@version\s+)(\S+)/, `$1$2.${buildStamp.replace(/\D/g, '').slice(0, 14)}`)
         : userscriptHeader;
 
+/**
+ * Terser settings shared by every minified bundle. Keep the function and class
+ * names — the codebase reads them at runtime (React-fiber traversal,
+ * feature-registry lookups, error labels) — and let terser only strip
+ * whitespace/comments and shorten the local scope.
+ *
+ * Comments: only `@license` / `@preserve` survive. The library banners carry an
+ * `@license` line for that reason. A userscript header is a run of `//` lines,
+ * each a comment of its own to terser, so one that is passed in as Rollup's
+ * `banner` comes out as just its `@license` line; it goes in as terser's
+ * `preamble` instead, which is emitted first and untouched.
+ * @param {string} [preamble] - Text to emit verbatim ahead of the minified code
+ * @returns {Object} Options for @rollup/plugin-terser
+ */
+function terserOptions(preamble) {
+    return {
+        keep_classnames: true,
+        keep_fnames: true,
+        format: {
+            comments: /@preserve|@license/,
+            ...(preamble ? { preamble } : {}),
+        },
+    };
+}
+
 // Development build configuration (single bundle for local testing)
 const devConfig = {
     input: 'src/dev-entrypoint.js',
@@ -473,7 +498,8 @@ const devConfig = {
         file: devOutputFile,
         format: 'iife',
         name: 'Toolasha',
-        banner: devHeader,
+        // A minified dev build gets the header from terser's preamble instead
+        ...(process.env.MINIFY ? {} : { banner: devHeader }),
         outro: `console.log('[Toolasha] dev build ${buildStamp}');`,
     },
     plugins: [
@@ -490,15 +516,7 @@ const devConfig = {
         // the same terser settings the production bundles use, so the minified
         // code can be smoke-tested in-game before a release ships it. Off by
         // default so ordinary dev builds stay readable.
-        ...(process.env.MINIFY
-            ? [
-                  terser({
-                      keep_classnames: true,
-                      keep_fnames: true,
-                      format: { comments: /License|@preserve|@license/i },
-                  }),
-              ]
-            : []),
+        ...(process.env.MINIFY ? [terser(terserOptions(devHeader))] : []),
     ],
 };
 
@@ -582,10 +600,12 @@ const prodEntrypoint = {
         file: 'dist/Toolasha.user.js',
         format: 'iife',
         name: 'ToolashaEntrypoint',
-        banner: entrypointHeader,
     },
-    // Entrypoint doesn't need any plugins - it just uses window.Toolasha
-    plugins: [],
+    // The entrypoint only uses window.Toolasha, so it needs no resolution
+    // plugins — just the same minification as the libraries. Its userscript
+    // header rides in as terser's preamble so the `// ==UserScript==` block
+    // stays first and intact (see terserOptions).
+    plugins: [terser(terserOptions(entrypointHeader))],
 };
 
 const sharedCoreGlobals = buildGlobals(coreExternalGlobals);
@@ -643,18 +663,9 @@ const prodConfig = [
                 commonjs(),
                 // Minify the @require library bundles. The Steam Extension
                 // Manager refuses to fetch a single @require larger than ~2 MB,
-                // which the unminified sim/combat/ui bundles exceeded. keep the
-                // function and class names — the codebase reads them at runtime
-                // (React-fiber traversal, feature-registry lookups, error labels)
-                // — and let terser only strip whitespace/comments and shorten the
-                // local scope.
-                terser({
-                    keep_classnames: true,
-                    keep_fnames: true,
-                    // Keep the library's own license/attribution banner (CC-BY-NC-SA),
-                    // drop every other comment.
-                    format: { comments: /License|@preserve|@license/i },
-                }),
+                // which the unminified sim/combat/ui bundles exceeded. The
+                // library's own banner survives on its @license line.
+                terser(terserOptions()),
             ],
         };
     }),

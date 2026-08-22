@@ -68,6 +68,7 @@ beforeAll(async () => {
                 initializeFeatures: async () => [],
             },
             performanceMonitor: { mark: () => {} },
+            marketAPI: { fetch: async () => null },
         },
         Utils: {
             dom: { setupScrollTooltipDismissal: () => {} },

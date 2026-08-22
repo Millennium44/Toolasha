@@ -73,7 +73,8 @@ class ExpectedValueCalculator {
 
         // Wait for market data to load
         if (!marketAPI.isLoaded()) {
-            await marketAPI.fetch(true); // Force fresh fetch on init
+            // Joins the startup fetch the entrypoint already began (or the cache)
+            await marketAPI.fetch();
         }
 
         // Calculate all containers with 4-iteration convergence for nesting (now async with workers)

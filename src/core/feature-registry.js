@@ -33,14 +33,17 @@ const featureRegistry = [];
  * costs what its slowest member costs.
  *
  * Why it is opt-in rather than the default. Serial initialization is load-bearing
- * in places that are not obvious from the registry: three features race to
- * `marketAPI.fetch()` behind an `isLoaded()` check that only holds because they
- * cannot run at once (and the game rate-limits that endpoint); tooltip sections
- * and the task panel's buttons appear in the order their observers were
- * registered, which for a post-`await` registration means the order the reads
- * happened to finish in. A feature is safe to mark only when what it awaits is
- * its own — its own storage record, its own panel — and nothing downstream is
- * ordered against what it does afterwards.
+ * in places that are not obvious from the registry: tooltip sections and the
+ * task panel's buttons appear in the order their observers were registered,
+ * which for a post-`await` registration means the order the reads happened to
+ * finish in; and a feature that populates a shared singleton after its await
+ * (loadout snapshots, the expected-value calculator) is read by later features
+ * that assume it is already full. A feature is safe to mark only when what it
+ * awaits is its own — its own storage record, its own panel — and nothing
+ * downstream is ordered against what it does afterwards. (The market data
+ * load is no longer a reason to serialize: the entrypoint starts the one
+ * startup fetch itself and `marketAPI.fetch()` folds concurrent callers onto
+ * the in-flight request.)
  *
  * @returns {Promise<Array<{key: string, name: string, reason: string}>>} Failures, in registry order
  */

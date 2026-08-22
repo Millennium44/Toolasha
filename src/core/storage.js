@@ -275,6 +275,62 @@ class Storage {
     }
 
     /**
+     * Read several keys from one store in a single readonly transaction.
+     *
+     * A feature that needs a handful of its own records at startup used to
+     * await them one after another, paying a round trip apiece; here every
+     * get is issued on the same transaction and the result arrives together.
+     * Semantics per key match `get` with a null default: a key that is absent,
+     * stored as null, or could not be read maps to null.
+     * @param {Array<string>} keys - Storage keys
+     * @param {string} storeName - Object store name (default: 'settings')
+     * @returns {Promise<Map<string, *>>} key → value, null where there was nothing to read
+     */
+    async getMany(keys, storeName = 'settings') {
+        const result = new Map();
+        for (const key of keys) result.set(key, null);
+        if (keys.length === 0) return result;
+
+        if (!this.db && !(await this._awaitConnection())) {
+            console.warn(
+                `[Storage] Database not available, returning defaults for ${keys.length} keys in ${storeName}`
+            );
+            return result;
+        }
+
+        return new Promise((resolve) => {
+            try {
+                const transaction = this.db.transaction([storeName], 'readonly');
+                const store = transaction.objectStore(storeName);
+                let remaining = keys.length;
+                const settleOne = () => {
+                    remaining -= 1;
+                    if (remaining === 0) resolve(result);
+                };
+                // An aborted transaction may leave some requests without an
+                // event of their own; whatever was read by then is the answer
+                transaction.onabort = () => resolve(result);
+                transaction.onerror = () => resolve(result);
+
+                for (const key of keys) {
+                    const request = store.get(key);
+                    request.onsuccess = () => {
+                        if (request.result != null) result.set(key, request.result);
+                        settleOne();
+                    };
+                    request.onerror = () => {
+                        console.error(`[Storage] Failed to get key ${key}:`, request.error);
+                        settleOne();
+                    };
+                }
+            } catch (error) {
+                console.error(`[Storage] getMany transaction failed for ${storeName}:`, error);
+                resolve(result);
+            }
+        });
+    }
+
+    /**
      * Read a key and say whether the read itself worked.
      *
      * `get` folds "the key is absent" and "the database could not be read"

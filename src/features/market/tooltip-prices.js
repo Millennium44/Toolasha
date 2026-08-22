@@ -153,7 +153,10 @@ class TooltipPrices {
         ).some((id) => config.getSetting(id));
 
         if (needsMarketData && !marketAPI.isLoaded()) {
-            await marketAPI.fetch(true); // Force fresh fetch on init
+            // Not forced: the entrypoint starts the startup fetch as soon as the
+            // character arrives, so this joins that in-flight load (or reads the
+            // 15-minute cache) instead of queuing a second network round trip
+            await marketAPI.fetch();
         }
 
         // Add CSS to prevent tooltip cutoff

@@ -103,6 +103,7 @@ class SettingsUI {
         this.settingsPanelCallbacks = []; // Callbacks to run when settings panel appears
         this.timerRegistry = createTimerRegistry();
         this.collapsedGroups = new Set();
+        this.panelStateReady = null; // Lazily started read of panel-only state (collapsed groups)
         this.searchQuery = '';
         this.changedOnly = false;
         this.restoreButton = null;
@@ -117,15 +118,15 @@ class SettingsUI {
             this.injectStyles();
         }
 
-        // Load custom price overrides cache
-        await initCustomPriceOverrides();
+        // Start the custom price overrides read first so it overlaps everything
+        // below; it is awaited at the end because the profit features that
+        // start next read the cache synchronously
+        const overridesReady = initCustomPriceOverrides();
 
-        // Load current settings
-        this.currentSettings = await settingsStorage.loadSettings();
-
-        // Load collapsed groups state
-        const savedCollapsed = await storage.get(COLLAPSED_GROUPS_KEY, 'settings', []);
-        this.collapsedGroups = new Set(Array.isArray(savedCollapsed) ? savedCollapsed : []);
+        // Current settings come from config's already-loaded map rather than a
+        // third storage read of the same record; the entries are copied so the
+        // panel's working copy stays its own, as a fresh load's would be
+        this.currentSettings = this.snapshotSettings();
 
         // The one moment the game says which mode this character plays. Nothing
         // else on the account can be asked, so it is written down when heard —
@@ -143,16 +144,50 @@ class SettingsUI {
 
         // Cross-device sync starts here rather than from the feature registry:
         // its only entry points are the buttons in this panel and its own
-        // schedule, and the panel is guaranteed to have loaded settings by now.
-        // It no-ops unless sync_enabled and a token are both present.
-        try {
-            await syncManager.initialize();
-        } catch (error) {
+        // schedule, and config has loaded this character's settings by now.
+        // It no-ops unless sync_enabled and a token are both present. Its
+        // initializer does not await anything, so nothing here waits on it.
+        syncManager.initialize().catch((error) => {
             console.error('[SettingsUI] Starting cross-device sync failed:', error);
-        }
+        });
 
         // Wait for game's settings panel to load
         this.observeSettingsPanel();
+
+        await overridesReady;
+    }
+
+    /**
+     * A working copy of config's loaded settings map — one object per entry,
+     * so the panel can edit its copy without reaching into config's.
+     * @returns {Object} settingId → entry
+     */
+    snapshotSettings() {
+        const snapshot = {};
+        for (const [id, entry] of Object.entries(config.settingsMap || {})) {
+            snapshot[id] = entry && typeof entry === 'object' ? { ...entry } : entry;
+        }
+        return snapshot;
+    }
+
+    /**
+     * Load the state only the panel itself needs (which groups are collapsed),
+     * the first time the panel is about to be drawn. The read is shared: a
+     * second caller joins the one in flight.
+     * @returns {Promise<void>}
+     */
+    loadPanelState() {
+        if (!this.panelStateReady) {
+            this.panelStateReady = (async () => {
+                try {
+                    const savedCollapsed = await storage.get(COLLAPSED_GROUPS_KEY, 'settings', []);
+                    this.collapsedGroups = new Set(Array.isArray(savedCollapsed) ? savedCollapsed : []);
+                } catch (error) {
+                    console.error('[SettingsUI] Reading collapsed groups failed:', error);
+                }
+            })();
+        }
+        return this.panelStateReady;
     }
 
     /**
@@ -337,8 +372,11 @@ class SettingsUI {
                 return;
             }
 
-            // Reload current settings from storage to ensure latest values
-            this.currentSettings = await settingsStorage.loadSettings();
+            // Reload current settings from storage to ensure latest values,
+            // alongside the panel-only state that is read on first open
+            // rather than at startup
+            const [currentSettings] = await Promise.all([settingsStorage.loadSettings(), this.loadPanelState()]);
+            this.currentSettings = currentSettings;
 
             // Get existing tabs for reference
             const existingTabs = Array.from(tabsContainer.querySelectorAll('button[role="tab"]'));

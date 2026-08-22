@@ -48,22 +48,31 @@ class TaskRerollProtection {
 
         this.isInitialized = true;
 
-        // Load protected list from storage
-        const saved = await storage.getJSON(getStorageKey(), 'settings', []);
-        this.protectedHrids = new Set(saved);
-
         // Cap settings are per character, falling back to the legacy global
-        // values so existing users keep their configuration
+        // values so existing users keep their configuration. The protected
+        // list and the six cap records are read together — one JSON read and
+        // one readonly transaction for the rest — instead of seven awaited
+        // round trips one after another.
         const charId = dataManager.getCurrentCharacterId() || 'default';
-        this.capProtectionEnabled =
-            (await storage.get(`taskCapProtection_${charId}`, 'settings', null)) ??
-            (await storage.get('taskCapProtection', 'settings', false));
-        this.coinThreshold =
-            (await storage.get(`taskCapCoinThreshold_${charId}`, 'settings', null)) ??
-            (await storage.get('taskCapCoinThreshold', 'settings', 320000));
+        const [saved, caps] = await Promise.all([
+            storage.getJSON(getStorageKey(), 'settings', []),
+            storage.getMany(
+                [
+                    `taskCapProtection_${charId}`,
+                    'taskCapProtection',
+                    `taskCapCoinThreshold_${charId}`,
+                    'taskCapCoinThreshold',
+                    `taskCapCowbellThreshold_${charId}`,
+                    'taskCapCowbellThreshold',
+                ],
+                'settings'
+            ),
+        ]);
+        this.protectedHrids = new Set(saved);
+        this.capProtectionEnabled = caps.get(`taskCapProtection_${charId}`) ?? caps.get('taskCapProtection') ?? false;
+        this.coinThreshold = caps.get(`taskCapCoinThreshold_${charId}`) ?? caps.get('taskCapCoinThreshold') ?? 320000;
         this.cowbellThreshold =
-            (await storage.get(`taskCapCowbellThreshold_${charId}`, 'settings', null)) ??
-            (await storage.get('taskCapCowbellThreshold', 'settings', 32));
+            caps.get(`taskCapCowbellThreshold_${charId}`) ?? caps.get('taskCapCowbellThreshold') ?? 32;
 
         // Watch for task cards appearing. Draw at once so the protected border
         // is there the instant the card is — the observer only ever fires for a

@@ -136,7 +136,8 @@ const Combat = toolashaNamespace.Combat;
 const UI = toolashaNamespace.UI;
 
 // Destructure core modules
-const { storage, config, webSocketHook, domObserver, dataManager, featureRegistry, performanceMonitor } = Core;
+const { storage, config, webSocketHook, domObserver, dataManager, featureRegistry, performanceMonitor, marketAPI } =
+    Core;
 
 const { setupScrollTooltipDismissal } = Utils.dom;
 const { showToast } = Utils.toast;
@@ -696,6 +697,9 @@ function registerFeatures() {
             category: 'Inventory',
             module: Market.treasureTracker,
             async: true,
+            // Waits only on its own ledger and settings record; the sole
+            // loot_opened listener, and consumers read it lazily at render time.
+            concurrent: true,
         },
         {
             key: 'combatText',
@@ -1175,6 +1179,9 @@ function registerFeatures() {
             category: 'Combat',
             module: Combat.labyrinthRoomLogs,
             async: true,
+            // Waits only on its own record; its tab re-asserts its place after
+            // the Lab Sim button itself, so registration order does not decide it.
+            concurrent: true,
         },
         {
             key: 'loadoutSnapshot',
@@ -1297,6 +1304,9 @@ function registerFeatures() {
             category: 'UI',
             module: UI.tabReorder,
             async: true,
+            // Waits only on its own stored order and applies it by CSS order
+            // with a deferred re-apply; nothing later shares the strip.
+            concurrent: true,
         },
         {
             key: 'overlayPanel',
@@ -1459,6 +1469,9 @@ function registerFeatures() {
             category: 'Tasks',
             module: UI.taskRerollWalk,
             async: true,
+            // Last of the task-panel features: waits only on its own records and
+            // nothing after it touches the task panel header.
+            concurrent: true,
         },
         {
             key: 'skillRemainingXP',
@@ -1540,6 +1553,9 @@ function registerFeatures() {
             category: 'Alchemy',
             module: UI.alchemyActionProtection,
             async: true,
+            // Waits only on its own protection map; the other users of its
+            // anchor are registered earlier and its click guard is its own.
+            concurrent: true,
         },
         {
             key: 'enhancementFeature',
@@ -1596,6 +1612,9 @@ function registerFeatures() {
             category: 'Guild',
             module: Combat.guildTrials,
             async: true,
+            // Registers every observer and handler before its first await by
+            // design; what it then waits on is its own trial record.
+            concurrent: true,
         },
         {
             key: 'insights_calibration',
@@ -1738,6 +1757,9 @@ function registerFeatures() {
             category: 'General',
             module: UI.accountView,
             async: true,
+            // Last in the registry and waits only on its own character record,
+            // so nothing is ordered after what it does.
+            concurrent: true,
             // No entry in settings-schema yet, so `getSetting`'s own default is
             // what decides — an unknown key returns whatever is passed here
             customCheck: () => config.getSetting('accountView', true),
@@ -1861,6 +1883,17 @@ if (isCombatSimulatorPage()) {
                 // On Steam, character data can arrive before IndexedDB is open
                 await storageReady;
 
+                // Start the one startup market load now, not awaited: the
+                // first market feature used to force a fresh fetch inside its
+                // initializer and every feature after it waited behind that
+                // network round trip. Kicked off here — storage is open and the
+                // socket is connected, the two things the fetch needs — it
+                // overlaps the settings load and the features that follow;
+                // callers that need it join the in-flight request.
+                marketAPI.fetch().catch((error) => {
+                    console.error('[Toolasha] Startup market fetch failed:', error);
+                });
+
                 // Reload config settings with character-specific data
                 await config.loadSettings();
                 config.applyColorSettings();
@@ -1871,15 +1904,23 @@ if (isCombatSimulatorPage()) {
                 // feature switched off after startup has already run once
                 await UI.whatsNew.applyPolicy();
 
+                // Start the Settings UI now and let it settle alongside the
+                // scroll-simulator read rather than ahead of it: its synchronous
+                // half (styles, the panel observer) runs at once, the custom
+                // price overrides read it still owes the features overlaps
+                // the read below, and its panel-only state loads on first
+                // panel open.
+                const settingsUIReady = UI.settingsUI.initialize().catch((error) => {
+                    console.error('[Toolasha] Settings UI initialization failed:', error);
+                });
+
                 // Initialize scroll simulator storage (character-specific)
                 await Combat.scrollSimulator.initialize().catch((error) => {
                     console.error('[Toolasha] Scroll simulator initialization failed:', error);
                 });
 
-                // Initialize Settings UI after character data is loaded
-                await UI.settingsUI.initialize().catch((error) => {
-                    console.error('[Toolasha] Settings UI initialization failed:', error);
-                });
+                // The overrides read is the one thing features expect settled
+                await settingsUIReady;
 
                 const initFailures = await featureRegistry.initializeFeatures();
                 performanceMonitor.mark('startup:complete');

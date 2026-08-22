@@ -30,6 +30,18 @@ function createFakeDb(storeNames, initialData = {}) {
             const txn = { oncomplete: null, onerror: null };
 
             const store = {
+                get(key) {
+                    const request = { onsuccess: null, onerror: null, result: undefined };
+                    pendingPuts.push(() => {
+                        if (storeData) {
+                            request.result = storeData.get(key);
+                            request.onsuccess?.();
+                        } else {
+                            request.onerror?.();
+                        }
+                    });
+                    return request;
+                },
                 put(value, key) {
                     const request = { onsuccess: null, onerror: null };
                     pendingPuts.push(() => {
@@ -124,6 +136,51 @@ describe('Storage.putAll', () => {
         const count = await storage.putAll('xpHistory', { a: 1 });
 
         expect(count).toBe(0);
+    });
+});
+
+describe('Storage.getMany', () => {
+    beforeEach(() => {
+        storage.db = null;
+    });
+
+    test('reads every key from one transaction, null where nothing is stored', async () => {
+        const { db } = createFakeDb(['settings'], { settings: { a: 1, b: 'two', c: null } });
+        storage.db = db;
+        const transactions = vi.spyOn(db, 'transaction');
+
+        const read = await storage.getMany(['a', 'b', 'c', 'missing'], 'settings');
+
+        expect(transactions).toHaveBeenCalledTimes(1);
+        expect(transactions).toHaveBeenCalledWith(['settings'], 'readonly');
+        expect([...read.entries()]).toEqual([
+            ['a', 1],
+            ['b', 'two'],
+            ['c', null],
+            ['missing', null],
+        ]);
+    });
+
+    test('returns null for every key when the database is unavailable', async () => {
+        storage.db = null;
+
+        const read = await storage.getMany(['a', 'b'], 'settings');
+
+        expect([...read.entries()]).toEqual([
+            ['a', null],
+            ['b', null],
+        ]);
+    });
+
+    test('an empty key list opens no transaction', async () => {
+        const { db } = createFakeDb(['settings']);
+        storage.db = db;
+        const transactions = vi.spyOn(db, 'transaction');
+
+        const read = await storage.getMany([], 'settings');
+
+        expect(read.size).toBe(0);
+        expect(transactions).not.toHaveBeenCalled();
     });
 });
 

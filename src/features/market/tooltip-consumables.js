@@ -38,7 +38,8 @@ class TooltipConsumables {
 
         // Wait for market data to load (needed for cost calculations)
         if (!marketAPI.isLoaded()) {
-            await marketAPI.fetch(true);
+            // Joins the startup fetch the entrypoint already began (or the cache)
+            await marketAPI.fetch();
         }
 
         // Add CSS to prevent tooltip cutoff (if not already added)
