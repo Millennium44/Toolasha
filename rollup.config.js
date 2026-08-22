@@ -104,6 +104,10 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/networth-worker-manager.js')), 'Toolasha.Utils.networthWorkerManager'],
     [normalize(join(__dirname, 'src/utils/panel-z-index.js')), 'Toolasha.Utils.panelZIndex'],
     [normalize(join(__dirname, 'src/utils/game-lookups.js')), 'Toolasha.Utils.gameLookups'],
+    // One reverse index of outputItem → actions, cached on the action map's
+    // identity; reached from market (profit calculator, tooltips) and actions
+    // (crafting plan), so a copy each would build and hold the index twice
+    [normalize(join(__dirname, 'src/utils/production-index.js')), 'Toolasha.Utils.productionIndex'],
     [normalize(join(__dirname, 'src/utils/item-navigation.js')), 'Toolasha.Utils.itemNavigation'],
     [normalize(join(__dirname, 'src/utils/marketplace-tabs.js')), 'Toolasha.Utils.marketplaceTabs'],
     [normalize(join(__dirname, 'src/utils/marketplace-autofill.js')), 'Toolasha.Utils.marketplaceAutofill'],

@@ -7,6 +7,7 @@
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { getShopCoinCost } from '../../utils/game-lookups.js';
+import { findProducingAction } from '../../utils/production-index.js';
 import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
@@ -19,18 +20,9 @@ const MAX_DEPTH = 15;
  * @returns {{ actionHrid: string, action: Object, outputCount: number } | null}
  */
 function findProductionAction(itemHrid) {
-    const gameData = dataManager.getInitClientData();
-    if (!gameData?.actionDetailMap) return null;
-
-    for (const [actionHrid, action] of Object.entries(gameData.actionDetailMap)) {
-        if (!action.outputItems) continue;
-        for (const output of action.outputItems) {
-            if (output.itemHrid === itemHrid) {
-                return { actionHrid, action, outputCount: output.count || 1 };
-            }
-        }
-    }
-    return null;
+    const producer = findProducingAction(itemHrid);
+    if (!producer) return null;
+    return { actionHrid: producer.actionHrid, action: producer.action, outputCount: producer.output.count || 1 };
 }
 
 /**

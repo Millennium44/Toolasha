@@ -26,34 +26,72 @@ function getRefinedNameVariants(name) {
 }
 
 /**
+ * Name → hrid memo for one detail map, keyed on the map's identity.
+ *
+ * These lookups run on per-panel and per-tooltip paths — a couple of dozen call
+ * sites — and each used to walk the whole detail map (twice more on a miss, once
+ * per refined-name variant). The map is built once per detail map and rebuilt
+ * only when a different map object is handed out (a character switch that
+ * replaces init_client_data); a re-read of the same object is a Map.get.
+ *
+ * Resolution order is unchanged: the first hrid in map order whose display name
+ * equals the query, then the first whose name equals a ★ ↔ (R) variant of it.
+ */
+class NameIndex {
+    constructor() {
+        this.sourceMap = null;
+        /** @type {Map<string, string>|null} display name → first hrid with that name */
+        this.byName = null;
+    }
+
+    /**
+     * Resolve a display name against a detail map.
+     * @param {Object|undefined} detailMap - hrid → { name } (action or item details)
+     * @param {string} name - Display name to resolve
+     * @returns {string|null} The hrid, or null
+     */
+    lookup(detailMap, name) {
+        if (!detailMap) return null;
+        if (detailMap !== this.sourceMap) {
+            this.byName = buildNameMap(detailMap);
+            this.sourceMap = detailMap;
+        }
+        const exact = this.byName.get(name);
+        if (exact !== undefined) return exact;
+        for (const variant of getRefinedNameVariants(name)) {
+            const hit = this.byName.get(variant);
+            if (hit !== undefined) return hit;
+        }
+        return null;
+    }
+}
+
+/**
+ * Build display name → first hrid for a detail map.
+ * @param {Object} detailMap - hrid → { name }
+ * @returns {Map<string, string>}
+ */
+function buildNameMap(detailMap) {
+    const byName = new Map();
+    for (const hrid in detailMap) {
+        const name = detailMap[hrid]?.name;
+        if (name === undefined || byName.has(name)) continue;
+        byName.set(name, hrid);
+    }
+    return byName;
+}
+
+const actionNames = new NameIndex();
+const itemNames = new NameIndex();
+
+/**
  * Find an action HRID from its display name.
  * Tries exact match first, then ★ ↔ (R) variants for refined items.
  * @param {string} actionName - Display name of the action
  * @returns {string|null} Action HRID or null if not found
  */
 export function getActionHridFromName(actionName) {
-    const gameData = dataManager.getInitClientData();
-    if (!gameData?.actionDetailMap) {
-        return null;
-    }
-
-    // Try exact match first
-    for (const [hrid, detail] of Object.entries(gameData.actionDetailMap)) {
-        if (detail.name === actionName) {
-            return hrid;
-        }
-    }
-
-    // Try ★ ↔ (R) variants for refined items
-    for (const variant of getRefinedNameVariants(actionName)) {
-        for (const [hrid, detail] of Object.entries(gameData.actionDetailMap)) {
-            if (detail.name === variant) {
-                return hrid;
-            }
-        }
-    }
-
-    return null;
+    return actionNames.lookup(dataManager.getInitClientData()?.actionDetailMap, actionName);
 }
 
 /**
@@ -63,28 +101,7 @@ export function getActionHridFromName(actionName) {
  * @returns {string|null} Item HRID or null if not found
  */
 export function getItemHridFromName(itemName) {
-    const gameData = dataManager.getInitClientData();
-    if (!gameData?.itemDetailMap) {
-        return null;
-    }
-
-    // Try exact match first
-    for (const [hrid, detail] of Object.entries(gameData.itemDetailMap)) {
-        if (detail.name === itemName) {
-            return hrid;
-        }
-    }
-
-    // Try ★ ↔ (R) variants for refined items
-    for (const variant of getRefinedNameVariants(itemName)) {
-        for (const [hrid, detail] of Object.entries(gameData.itemDetailMap)) {
-            if (detail.name === variant) {
-                return hrid;
-            }
-        }
-    }
-
-    return null;
+    return itemNames.lookup(dataManager.getInitClientData()?.itemDetailMap, itemName);
 }
 
 /**

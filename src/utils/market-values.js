@@ -47,6 +47,16 @@ let cache = { version: null, values: null };
 let lastRefresh = 0;
 
 /**
+ * Bands already computed for the current value map: itemHrid → band per
+ * enhancement level (array index), `null` where the item has no value.
+ * Every getItemPrice call goes through reconcileBook/clampToBand, and the band
+ * arithmetic allocates a couple of strings each time, so the result is kept per
+ * (item, level) and thrown away with the map it was derived from.
+ * @type {Map<string, Array<{min:number,max:number}|null>>}
+ */
+let bandCache = new Map();
+
+/**
  * Re-read the value map through the game util, throttled and version-guarded so
  * the decompress happens at most once per interval and only swaps the cache when
  * the map actually changed. A no-op until the patch is live. Cheap to call often.
@@ -64,6 +74,7 @@ export function refreshMarketValues(now = Date.now()) {
         const values = payload?.marketItemValues ?? null;
         if (values && version !== cache.version) {
             cache = { version, values };
+            bandCache = new Map();
         }
         return cache.values;
     } catch (error) {
@@ -127,6 +138,26 @@ export function bandFromValue(value) {
 }
 
 /**
+ * The tradable range of one item at one level, memoised per value map.
+ * @param {string} itemHrid - Item HRID
+ * @param {number} enhancementLevel - Enhancement level
+ * @returns {{min:number, max:number}|null}
+ */
+function bandFor(itemHrid, enhancementLevel) {
+    let perLevel = bandCache.get(itemHrid);
+    if (perLevel === undefined) {
+        perLevel = [];
+        bandCache.set(itemHrid, perLevel);
+    }
+    let band = perLevel[enhancementLevel];
+    if (band === undefined) {
+        band = bandFromValue(marketValueFor(itemHrid, enhancementLevel));
+        perLevel[enhancementLevel] = band;
+    }
+    return band;
+}
+
+/**
  * Clamp one price into the item's tradable range, when one is known.
  *
  * The single-price face of {@link reconcileBook}: a present price parked
@@ -147,7 +178,7 @@ export function clampToBand(price, itemHrid, enhancementLevel = 0) {
     // through getPrice, and a clamp against an empty cache would be a no-op.
     // The refresh is throttled and version-guarded, so this is cheap.
     refreshMarketValues();
-    const band = bandFromValue(marketValueFor(itemHrid, enhancementLevel));
+    const band = bandFor(itemHrid, enhancementLevel);
     if (!band) return price;
     return Math.min(Math.max(price, band.min), band.max);
 }
@@ -171,7 +202,7 @@ export function reconcileBook(ask, bid, itemHrid, enhancementLevel = 0) {
     if (!isMarketplacePatchLive()) return { ask, bid };
     const value = marketValueFor(itemHrid, enhancementLevel);
     if (value === null) return { ask, bid };
-    const band = bandFromValue(value);
+    const band = bandFor(itemHrid, enhancementLevel);
     const clamp = (x) => (typeof x === 'number' && x >= 0 ? Math.min(Math.max(x, band.min), band.max) : null);
     return {
         ask: typeof ask === 'number' && ask >= 0 ? clamp(ask) : value,
@@ -182,5 +213,6 @@ export function reconcileBook(ask, bid, itemHrid, enhancementLevel = 0) {
 /** Reset the cache and refresh throttle. Tests only. */
 export function _resetMarketValues() {
     cache = { version: null, values: null };
+    bandCache = new Map();
     lastRefresh = 0;
 }

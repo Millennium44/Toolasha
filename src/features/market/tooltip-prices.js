@@ -36,6 +36,7 @@ import { parseItemCount } from '../../utils/number-parser.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { calculateArtisanBonus } from '../../utils/material-calculator.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
+import { findProducingAction } from '../../utils/production-index.js';
 
 // Compiled regex patterns (created once, reused for performance)
 const REGEX_ENHANCEMENT_LEVEL = /\+(\d+)$/;
@@ -800,16 +801,7 @@ class TooltipPrices {
      * @returns {Array} Flat array of sub-row objects
      */
     _getUpgradeChainRows(itemHrid, depth) {
-        const gameData = dataManager.getInitClientData();
-        if (!gameData?.actionDetailMap) return [];
-
-        let action = null;
-        for (const act of Object.values(gameData.actionDetailMap)) {
-            if (act.outputItems?.[0]?.itemHrid === itemHrid) {
-                action = act;
-                break;
-            }
-        }
+        const action = findProducingAction(itemHrid, { primaryOnly: true })?.action;
         if (!action || !action.upgradeItemHrid) return [];
 
         const upgradeHrid = action.upgradeItemHrid;

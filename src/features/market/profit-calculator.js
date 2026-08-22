@@ -21,6 +21,7 @@ import {
     createPriceCache,
     resolveItemPrice,
 } from '../../utils/profit-helpers.js';
+import { findProducingAction, findProducingActions } from '../../utils/production-index.js';
 
 /**
  * ProfitCalculator class handles profit calculations for production actions
@@ -325,23 +326,19 @@ class ProfitCalculator {
      * @returns {number} Estimated price (0 if no crafting action found)
      */
     calculateCraftingCostFallback(itemHrid, getCachedPrice) {
-        const actionDetailMap = this.getActionDetailMap();
-        for (const action of Object.values(actionDetailMap)) {
-            if (!action.outputItems) continue;
-            const output = action.outputItems.find((o) => o.itemHrid === itemHrid);
-            if (!output) continue;
-            let totalCost = 0;
-            if (action.upgradeItemHrid) {
-                const price = getCachedPrice(action.upgradeItemHrid, { context: 'profit', side: 'buy' }) ?? 0;
-                totalCost += price;
-            }
-            for (const input of action.inputItems || []) {
-                const price = getCachedPrice(input.itemHrid, { context: 'profit', side: 'buy' }) ?? 0;
-                totalCost += price * (input.count || 1);
-            }
-            return totalCost / (output.count || 1);
+        const producer = findProducingAction(itemHrid, { actionDetailMap: this.getActionDetailMap() });
+        if (!producer) return 0;
+        const { action, output } = producer;
+        let totalCost = 0;
+        if (action.upgradeItemHrid) {
+            const price = getCachedPrice(action.upgradeItemHrid, { context: 'profit', side: 'buy' }) ?? 0;
+            totalCost += price;
         }
-        return 0;
+        for (const input of action.inputItems || []) {
+            const price = getCachedPrice(input.itemHrid, { context: 'profit', side: 'buy' }) ?? 0;
+            totalCost += price * (input.count || 1);
+        }
+        return totalCost / (output.count || 1);
     }
 
     /**
@@ -370,19 +367,9 @@ class ProfitCalculator {
      * @returns {Object|null} Action output data, plus `candidateActionHrids`, or null
      */
     findProductionAction(itemHrid, { actionHrid: wantedActionHrid } = {}) {
-        const actionDetailMap = this.getActionDetailMap();
-
-        // Search through all actions for ones that produce this item
-        const candidates = [];
-        for (const [actionHrid, action] of Object.entries(actionDetailMap)) {
-            if (!action.outputItems) continue;
-            for (const output of action.outputItems) {
-                if (output.itemHrid === itemHrid) {
-                    candidates.push({ actionHrid, action, output });
-                    break;
-                }
-            }
-        }
+        // Every action that produces this item, in map order, from the shared
+        // reverse index (rebuilt only when the action map itself is replaced)
+        const candidates = findProducingActions(itemHrid, { actionDetailMap: this.getActionDetailMap() });
 
         if (candidates.length === 0) {
             return null;

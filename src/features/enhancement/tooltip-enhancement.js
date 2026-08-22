@@ -28,17 +28,26 @@ import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
 import { parseItemCount } from '../../utils/number-parser.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { findProducingAction } from '../../utils/production-index.js';
 import marketAPI from '../../api/marketplace.js';
 
 /** What a mirror plan combines its leaves with */
 const MIRROR_HRID = '/items/philosophers_mirror';
 
+/**
+ * Production cost and chain time memos. Both depend on market prices, so an
+ * entry is only good for the price feed it was computed against: each entry
+ * carries the feed version it saw, and a price update just bumps the version —
+ * O(1) instead of emptying both maps — so every older entry misses on its next
+ * read and is recomputed (and overwritten) then. The maps stay bounded by the
+ * number of distinct keys, since a key is re-set rather than appended.
+ */
 const _costCache = new Map();
 const _chainTimeCache = new Map();
+let _priceVersion = 0;
 
 marketAPI.on(() => {
-    _costCache.clear();
-    _chainTimeCache.clear();
+    _priceVersion++;
 });
 
 /**
@@ -811,9 +820,10 @@ export function getRealisticBaseItemPrice(itemHrid) {
  */
 export function getProductionCost(itemHrid, mode = 'ask') {
     const cacheKey = `${itemHrid}|${mode}`;
-    if (_costCache.has(cacheKey)) return _costCache.get(cacheKey);
+    const cached = _costCache.get(cacheKey);
+    if (cached && cached.version === _priceVersion) return cached.value;
     const result = _computeProductionCost(itemHrid, mode);
-    _costCache.set(cacheKey, result);
+    _costCache.set(cacheKey, { version: _priceVersion, value: result });
     return result;
 }
 
@@ -825,25 +835,14 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
         return 0;
     }
 
-    // Find the action that produces this item
-    let actionHrid = null;
-    let outputCount = 1;
-    for (const [hrid, action] of Object.entries(gameData.actionDetailMap)) {
-        if (action.outputItems && action.outputItems.length > 0) {
-            const output = action.outputItems[0];
-            if (output.itemHrid === itemHrid) {
-                actionHrid = hrid;
-                outputCount = output.count || 1;
-                break;
-            }
-        }
-    }
-
-    if (!actionHrid) {
+    // Find the action whose primary output is this item
+    const producer = findProducingAction(itemHrid, { primaryOnly: true, actionDetailMap: gameData.actionDetailMap });
+    if (!producer) {
         return 0;
     }
 
-    const action = gameData.actionDetailMap[actionHrid];
+    const { action } = producer;
+    const outputCount = producer.output.count || 1;
     let totalPrice = 0;
 
     // Compute artisan tea reduction dynamically (same approach as material-calculator.js)
@@ -897,9 +896,10 @@ function _computeProductionCost(itemHrid, mode = 'ask') {
  * @returns {number} Total chain time in seconds (base times, no speed bonuses applied)
  */
 export function getProductionChainTime(itemHrid) {
-    if (_chainTimeCache.has(itemHrid)) return _chainTimeCache.get(itemHrid);
+    const cached = _chainTimeCache.get(itemHrid);
+    if (cached && cached.version === _priceVersion) return cached.value;
     const result = _computeProductionChainTime(itemHrid);
-    _chainTimeCache.set(itemHrid, result);
+    _chainTimeCache.set(itemHrid, { version: _priceVersion, value: result });
     return result;
 }
 
@@ -907,13 +907,10 @@ function _computeProductionChainTime(itemHrid) {
     const gameData = dataManager.getInitClientData();
     if (!gameData?.actionDetailMap) return 0;
 
-    let action = null;
-    for (const act of Object.values(gameData.actionDetailMap)) {
-        if (act.outputItems?.[0]?.itemHrid === itemHrid) {
-            action = act;
-            break;
-        }
-    }
+    const action = findProducingAction(itemHrid, {
+        primaryOnly: true,
+        actionDetailMap: gameData.actionDetailMap,
+    })?.action;
 
     if (!action || !action.baseTimeCost) return 0;
 

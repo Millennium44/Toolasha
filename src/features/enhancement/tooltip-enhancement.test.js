@@ -35,6 +35,9 @@ const settings = vi.hoisted(() => ({ checkboxes: {}, values: {} }));
 /** Market prices for enhanced levels, keyed `hrid::level`; empty unless a test sets one */
 const enhancedPrices = vi.hoisted(() => ({}));
 
+/** Price-update listeners the module registered with the mocked market API */
+const priceListeners = vi.hoisted(() => []);
+
 const gameData = {
     itemDetailMap: {
         [ITEM]: {
@@ -82,7 +85,7 @@ vi.mock('../../core/config.js', () => ({
 }));
 
 vi.mock('../../api/marketplace.js', () => ({
-    default: { on: () => {}, getPrice: (hrid) => prices[hrid] || null },
+    default: { on: (cb) => priceListeners.push(cb), getPrice: (hrid) => prices[hrid] || null },
 }));
 
 vi.mock('../../utils/market-data.js', () => ({
@@ -487,5 +490,42 @@ describe('mirroring a refined piece', () => {
         const data = calculateEnhancementPath(ITEM, 8, enhancingConfig);
         expect(data.optimalStrategy.consumedItems.every((item) => item.itemHrid === ITEM)).toBe(true);
         expect(data.optimalStrategy.materialBill.filter((line) => line.kind === 'base')).toHaveLength(1);
+    });
+});
+
+describe('production cost memo', () => {
+    const CRAFTED = '/items/test_crafted';
+
+    test('is served from cache until a price update, then recomputed against the new prices', async () => {
+        const { getProductionCost, getProductionChainTime } = await import('./tooltip-enhancement.js');
+        gameData.itemDetailMap[CRAFTED] = { name: 'Test Crafted' };
+        gameData.actionDetailMap = {
+            '/actions/crafting/test_crafted': {
+                type: '/action_types/crafting',
+                baseTimeCost: 20e9,
+                inputItems: [{ itemHrid: MATERIAL, count: 2 }],
+                outputItems: [{ itemHrid: CRAFTED, count: 1 }],
+            },
+        };
+        const originalAsk = prices[MATERIAL].ask;
+        try {
+            expect(getProductionCost(CRAFTED, 'ask')).toBe(2 * originalAsk);
+            expect(getProductionChainTime(CRAFTED)).toBe(20);
+
+            // The market moves but nobody has said so: the memo still answers
+            prices[MATERIAL].ask = originalAsk + 1000;
+            expect(getProductionCost(CRAFTED, 'ask')).toBe(2 * originalAsk);
+
+            // A price update invalidates every memo at once, without a sweep
+            expect(priceListeners.length).toBeGreaterThan(0);
+            for (const listener of priceListeners) listener();
+            expect(getProductionCost(CRAFTED, 'ask')).toBe(2 * (originalAsk + 1000));
+            expect(getProductionChainTime(CRAFTED)).toBe(20);
+        } finally {
+            prices[MATERIAL].ask = originalAsk;
+            for (const listener of priceListeners) listener();
+            delete gameData.itemDetailMap[CRAFTED];
+            gameData.actionDetailMap = {};
+        }
     });
 });

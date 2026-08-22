@@ -102,3 +102,50 @@ describe('getShopCoinCost', () => {
         expect(getShopCoinCost('/items/token_item')).toBe(0);
     });
 });
+
+describe('name lookups are memoised per detail map', () => {
+    test('the first hrid in map order wins a shared display name', () => {
+        state.gameData = {
+            itemDetailMap: {
+                '/items/first_plank': { name: 'Plank' },
+                '/items/second_plank': { name: 'Plank' },
+            },
+        };
+        expect(getItemHridFromName('Plank')).toBe('/items/first_plank');
+    });
+
+    test('an exact match beats a refined-name variant wherever it sits in the map', () => {
+        state.gameData = {
+            itemDetailMap: {
+                '/items/star_variant': { name: 'Bar ★' },
+                '/items/exact': { name: 'Bar (R)' },
+            },
+        };
+        expect(getItemHridFromName('Bar (R)')).toBe('/items/exact');
+        expect(getItemHridFromName('Bar ★')).toBe('/items/star_variant');
+    });
+
+    test('a replaced detail map is re-indexed; the same map is not rescanned', () => {
+        const first = { '/items/plank': { name: 'Plank' } };
+        state.gameData = { itemDetailMap: first };
+        expect(getItemHridFromName('Plank')).toBe('/items/plank');
+
+        // Same map object: the memo answers, so a name added in place is not seen yet
+        first['/items/board'] = { name: 'Board' };
+        expect(getItemHridFromName('Board')).toBeNull();
+
+        // A new map object (what a character switch hands out) is indexed afresh
+        state.gameData = { itemDetailMap: { '/items/board': { name: 'Board' } } };
+        expect(getItemHridFromName('Board')).toBe('/items/board');
+        expect(getItemHridFromName('Plank')).toBeNull();
+    });
+
+    test('actions and items keep separate memos', () => {
+        state.gameData = {
+            actionDetailMap: { '/actions/foraging/carrot': { name: 'Carrot' } },
+            itemDetailMap: { '/items/carrot': { name: 'Carrot' } },
+        };
+        expect(getActionHridFromName('Carrot')).toBe('/actions/foraging/carrot');
+        expect(getItemHridFromName('Carrot')).toBe('/items/carrot');
+    });
+});

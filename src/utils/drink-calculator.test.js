@@ -15,6 +15,8 @@ const game = vi.hoisted(() => ({
     initClientData: null,
     drinkSlots: [],
     inventory: [],
+    /** How many times the inventory has been read */
+    inventoryReads: 0,
     skills: [],
     currentActions: [],
     /** actionHrid → action details */
@@ -31,7 +33,10 @@ vi.mock('../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => game.initClientData,
         getActionDrinkSlots: () => game.drinkSlots,
-        getInventory: () => game.inventory,
+        getInventory: () => {
+            game.inventoryReads++;
+            return game.inventory;
+        },
         getSkills: () => game.skills,
         getCurrentActions: () => game.currentActions,
         getActionDetails: (hrid) => game.actions[hrid] || null,
@@ -70,6 +75,7 @@ beforeEach(() => {
     game.initClientData = { itemDetailMap: {} };
     game.drinkSlots = [];
     game.inventory = [];
+    game.inventoryReads = 0;
     game.skills = [{ skillHrid: '/skills/woodcutting', level: 50 }];
     game.currentActions = [];
     game.actions = {};
@@ -127,6 +133,32 @@ describe('calculateDrinkRemainingSeconds', () => {
         game.inventory = [{ itemHrid: '/items/mystery_tea', count: 4 }];
 
         expect(calculateDrinkRemainingSeconds(WOODCUTTING)[0].totalSeconds).toBeCloseTo(1200, 6);
+    });
+
+    test('the inventory is read once for all slots, and each slot gets its own count', () => {
+        game.drinkSlots = [
+            { itemHrid: '/items/wisdom_tea', isActive: false, duration: 0 },
+            { itemHrid: '/items/gathering_tea', isActive: false, duration: 0 },
+        ];
+        game.inventory = [
+            { itemHrid: '/items/wisdom_tea', count: 12 },
+            { itemHrid: '/items/unrelated', count: 50 },
+            { itemHrid: '/items/gathering_tea', count: 6 },
+        ];
+
+        const drinks = calculateDrinkRemainingSeconds(WOODCUTTING);
+        expect(game.inventoryReads).toBe(1);
+        expect(drinks.map((d) => [d.name, d.totalSeconds])).toEqual([
+            ['Wisdom Tea', 3600],
+            ['Gathering Tea', 1800],
+        ]);
+    });
+
+    test('a missing inventory counts as empty rather than throwing', () => {
+        game.drinkSlots = [{ itemHrid: '/items/wisdom_tea', isActive: true, duration: 2 * MINUTE_NS }];
+        game.inventory = null;
+
+        expect(calculateDrinkRemainingSeconds(WOODCUTTING)[0].totalSeconds).toBeCloseTo(120, 6);
     });
 
     test('inventory stacks of the same drink are summed', () => {

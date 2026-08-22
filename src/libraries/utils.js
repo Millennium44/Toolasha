@@ -73,6 +73,7 @@ import * as panelZIndex from '../utils/panel-z-index.js';
 // performance-monitor is deliberately absent: the initialized copy lives in the
 // core bundle (which loads first) and is shared as Toolasha.Core.performanceMonitor.
 import * as gameLookups from '../utils/game-lookups.js';
+import * as productionIndex from '../utils/production-index.js';
 import * as itemNavigation from '../utils/item-navigation.js';
 import * as marketplaceTabs from '../utils/marketplace-tabs.js';
 import * as marketplaceAutofill from '../utils/marketplace-autofill.js';
@@ -208,6 +209,7 @@ toolashaRoot.Utils = {
     networthWorkerManager,
     panelZIndex,
     gameLookups,
+    productionIndex,
     itemNavigation,
     marketplaceTabs,
     marketplaceAutofill,

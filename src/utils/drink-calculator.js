@@ -36,10 +36,17 @@ export function calculateDrinkRemainingSeconds(actionTypeHrid) {
     const slots = dataManager.getActionDrinkSlots(actionTypeHrid);
     if (!slots?.length) return [];
 
-    const inventory = dataManager.getInventory() || [];
     const { equipment } = resolveActionContext(actionTypeHrid);
     const itemDetailMap = gameData.itemDetailMap || {};
     const concentration = getDrinkConcentration(equipment, itemDetailMap);
+
+    // One pass over the inventory for every slotted drink at once, rather than
+    // a copy-and-filter per slot: this runs on every inventory update
+    const slotted = new Set();
+    for (const slot of slots) {
+        if (slot?.itemHrid) slotted.add(slot.itemHrid);
+    }
+    const inventoryCounts = countInventoryByHrid(dataManager.getInventory(), slotted);
 
     const results = [];
     const seen = new Set();
@@ -55,9 +62,7 @@ export function calculateDrinkRemainingSeconds(actionTypeHrid) {
         const buffDurationNs = itemDetails.consumableDetail?.buffs?.[0]?.duration ?? FALLBACK_BUFF_DURATION_NS;
         const effectiveDurationNs = buffDurationNs / (1 + concentration);
 
-        const inventoryCount = inventory
-            .filter((i) => i.itemHrid === slot.itemHrid)
-            .reduce((sum, i) => sum + (i.count || 0), 0);
+        const inventoryCount = inventoryCounts.get(slot.itemHrid) ?? 0;
 
         const currentActivationNs = slot.isActive ? slot.duration || 0 : 0;
         const totalNs = currentActivationNs + inventoryCount * effectiveDurationNs;
@@ -70,6 +75,22 @@ export function calculateDrinkRemainingSeconds(actionTypeHrid) {
     }
 
     return results;
+}
+
+/**
+ * Sum inventory counts per item hrid, for the hrids asked about only.
+ * @param {Array<{itemHrid: string, count: number}>|null} inventory - Character items
+ * @param {Set<string>} hrids - The item hrids worth counting
+ * @returns {Map<string, number>} hrid → total count (absent when none held)
+ */
+function countInventoryByHrid(inventory, hrids) {
+    const counts = new Map();
+    if (!inventory || hrids.size === 0) return counts;
+    for (const item of inventory) {
+        if (!hrids.has(item.itemHrid)) continue;
+        counts.set(item.itemHrid, (counts.get(item.itemHrid) ?? 0) + (item.count || 0));
+    }
+    return counts;
 }
 
 /**

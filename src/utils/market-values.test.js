@@ -201,3 +201,30 @@ describe('reconcileBook', () => {
         expect(reconcileBook(null, null, '/items/cheese')).toEqual({ ask: 1000, bid: 1000 });
     });
 });
+
+describe('band memo', () => {
+    test('reuses the band for an item and level while the value map stands, and recomputes when it swaps', () => {
+        mocks.payload = payload(1, { '/items/cheese': { 0: 1000, 2: 5000 } });
+        refreshMarketValues(0);
+        const band = bandFromValue(1000);
+        // Two clamps hit the same memo; the arithmetic is not run again
+        const spy = vi.spyOn(Math, 'ceil');
+        expect(clampToBand(band.max + 500, '/items/cheese', 0)).toBe(band.max);
+        const callsAfterFirst = spy.mock.calls.length;
+        expect(clampToBand(band.min - 500, '/items/cheese', 0)).toBe(band.min);
+        expect(reconcileBook(band.max + 500, null, '/items/cheese', 0)).toEqual({ ask: band.max, bid: 1000 });
+        expect(spy.mock.calls.length).toBe(callsAfterFirst);
+        // Another level is its own memo
+        expect(clampToBand(1, '/items/cheese', 2)).toBe(bandFromValue(5000).min);
+
+        // A new value map retires the memo: the band follows the new value
+        mocks.payload = payload(2, { '/items/cheese': { 0: 2000 } });
+        // clampToBand refreshed with the real clock, so step past the interval from there
+        refreshMarketValues(Date.now() + 40_000);
+        const next = bandFromValue(2000);
+        expect(clampToBand(next.max + 500, '/items/cheese', 0)).toBe(next.max);
+        expect(clampToBand(1, '/items/cheese', 0)).toBe(next.min);
+        // And a level the new map no longer prices is a pass-through again
+        expect(clampToBand(1, '/items/cheese', 2)).toBe(1);
+    });
+});

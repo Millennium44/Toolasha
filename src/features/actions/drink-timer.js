@@ -13,11 +13,28 @@ import { thresholdCrossing } from '../notifications/notification-predicates.js';
 import { calculateDrinkRemainingSeconds, calculateQueueTimeSeconds } from '../../utils/drink-calculator.js';
 
 const SECONDS_PER_HOUR = 3600;
+/** The consumables sections the timer lives in, for the one-time scan at start-up */
+const CONTAINER_SELECTOR = [
+    '[class*="GatheringProductionSkillPanel_consumablesContainer"]',
+    '[class*="AlchemyPanel_consumablesContainer"]',
+    '[class*="EnhancingPanel_consumablesContainer"]',
+].join(', ');
+/** Inventory updates arrive in bursts; one redraw per burst, like the sibling panel features */
+const UPDATE_DEBOUNCE_MS = 300;
 
 class DrinkTimer {
     constructor() {
         this.initialized = false;
         this.observers = [];
+        /**
+         * The consumables containers the DOM observer has handed over and that
+         * are still in the document. Inventory updates redraw these rather than
+         * re-querying the whole document for them; a container that has since
+         * been removed is dropped on the next pass.
+         * @type {Set<Element>}
+         */
+        this.containers = new Set();
+        this.updateDebounceTimer = null;
         /**
          * actionTypeHrid -> whether a dip below the threshold would be news.
          *
@@ -32,54 +49,73 @@ class DrinkTimer {
     initialize() {
         if (this.initialized) return;
 
+        const onContainer = (el) => this._trackPanel(el);
         const unregister = domObserver.onClass(
             'DrinkTimer',
             'GatheringProductionSkillPanel_consumablesContainer',
-            (el) => this._updatePanel(el)
+            onContainer
         );
         this.observers.push(unregister);
 
-        const unregisterAlchemy = domObserver.onClass('DrinkTimer-Alchemy', 'AlchemyPanel_consumablesContainer', (el) =>
-            this._updatePanel(el)
+        const unregisterAlchemy = domObserver.onClass(
+            'DrinkTimer-Alchemy',
+            'AlchemyPanel_consumablesContainer',
+            onContainer
         );
         this.observers.push(unregisterAlchemy);
 
         const unregisterEnhancing = domObserver.onClass(
             'DrinkTimer-Enhancing',
             'EnhancingPanel_consumablesContainer',
-            (el) => this._updatePanel(el)
+            onContainer
         );
         this.observers.push(unregisterEnhancing);
 
         const onUpdate = () => {
-            this._updateAllPanels();
-            // The panels only cover what is on screen, and the whole point of a
-            // notification is that you are not looking at the screen — so the
-            // skill actually being performed is checked whether or not its panel
-            // happens to be open
-            this._checkCurrentActionDrinks();
+            clearTimeout(this.updateDebounceTimer);
+            this.updateDebounceTimer = setTimeout(() => {
+                this.updateDebounceTimer = null;
+                this._updateAllPanels();
+                // The panels only cover what is on screen, and the whole point of a
+                // notification is that you are not looking at the screen — so the
+                // skill actually being performed is checked whether or not its panel
+                // happens to be open
+                this._checkCurrentActionDrinks();
+            }, UPDATE_DEBOUNCE_MS);
         };
         dataManager.on('consumables_updated', onUpdate);
         dataManager.on('items_updated', onUpdate);
         this.observers.push(() => {
             dataManager.off('consumables_updated', onUpdate);
             dataManager.off('items_updated', onUpdate);
+            clearTimeout(this.updateDebounceTimer);
+            this.updateDebounceTimer = null;
         });
 
-        this._updateAllPanels();
+        // Containers already on screen were inserted before the observer was
+        // listening, so they are picked up once here; everything after arrives
+        // through the observer
+        for (const el of document.querySelectorAll(CONTAINER_SELECTOR)) {
+            this._trackPanel(el);
+        }
         this.initialized = true;
     }
 
+    /** Remember a consumables container and draw it */
+    _trackPanel(consumablesContainer) {
+        this.containers.add(consumablesContainer);
+        this._updatePanel(consumablesContainer);
+    }
+
+    /** Redraw every tracked container that is still in the document */
     _updateAllPanels() {
-        document.querySelectorAll('[class*="GatheringProductionSkillPanel_consumablesContainer"]').forEach((el) => {
+        for (const el of this.containers) {
+            if (!el.isConnected) {
+                this.containers.delete(el);
+                continue;
+            }
             this._updatePanel(el);
-        });
-        document.querySelectorAll('[class*="AlchemyPanel_consumablesContainer"]').forEach((el) => {
-            this._updatePanel(el);
-        });
-        document.querySelectorAll('[class*="EnhancingPanel_consumablesContainer"]').forEach((el) => {
-            this._updatePanel(el);
-        });
+        }
     }
 
     _updatePanel(consumablesContainer) {
@@ -218,6 +254,9 @@ class DrinkTimer {
     cleanup() {
         this.observers.forEach((fn) => fn());
         this.observers = [];
+        clearTimeout(this.updateDebounceTimer);
+        this.updateDebounceTimer = null;
+        this.containers.clear();
         document.querySelectorAll('.mwi-drink-timer').forEach((el) => el.remove());
         this.drinkAlertArmed.clear();
         this.initialized = false;
