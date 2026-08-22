@@ -15,6 +15,8 @@ import marketAPI from '../../api/marketplace.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { testerShopEnabled, testerGearPrice, MIRROR_HRID } from '../../utils/tester-shop.js';
 import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
+import { resolveItemPrice } from '../../utils/profit-helpers.js';
+import { chooseProtectionOptions, sweepProtectFromMemo } from '../../utils/enhancement-protect-sweep.js';
 
 /**
  * Format a number with thousands separator and 2 decimal places
@@ -486,6 +488,23 @@ export function getProtectFromLevelFromUI(panel) {
 }
 
 /**
+ * Get Target Level from UI input
+ * @param {HTMLElement} panel - Enhancing panel
+ * @returns {number|null} Target level 1-20, or null when the input is absent or empty
+ */
+export function getTargetLevelFromUI(panel) {
+    const labels = Array.from(panel.querySelectorAll('*')).filter(
+        (el) => el.textContent.trim() === 'Target Level' && el.children.length === 0
+    );
+    if (labels.length === 0) return null;
+    const input = labels[0].parentElement?.querySelector('input[type="number"], input[type="text"]');
+    if (!input || !input.value) return null;
+    const value = parseInt(input.value, 10);
+    if (Number.isNaN(value)) return null;
+    return Math.max(1, Math.min(20, value));
+}
+
+/**
  * Format enhancement display HTML
  * @param {HTMLElement} panel - Enhancement action panel element (for reading protection slot)
  * @param {Object} params - Auto-detected parameters
@@ -546,6 +565,181 @@ export function testerRouteHTML(itemDetails) {
         );
     } catch (error) {
         console.error('[EnhancementDisplay] Building the tester route failed:', error);
+        return '';
+    }
+}
+
+/**
+ * Buy-side price for a material or protection item, the way the rest of the
+ * panel's buy-side maths wants it: the profit pricing mode, floored at the
+ * shop — the Tester shop included when that pricing is on — then production
+ * cost. Coins are coins.
+ * @param {string} itemHrid - Item hrid
+ * @returns {number} Price in coins, 0 when nothing knows one
+ */
+function sweepBuyPrice(itemHrid) {
+    if (itemHrid === '/items/coin') return 1;
+    try {
+        return resolveItemPrice(itemHrid, { context: 'profit', side: 'buy' })?.price || 0;
+    } catch {
+        return 0;
+    }
+}
+
+/**
+ * The protect-from sweep: every protect-from level from 2 to the panel's
+ * target, plus no protection, each priced with the protection item in the slot
+ * and with the cheapest other item that would work — so the protect-from box
+ * can be filled in from the table rather than by feel. Collapsed by default;
+ * the toggle keeps its state across the panel's re-renders like the stat
+ * breakdowns above it.
+ *
+ * @param {Object} args - Inputs, all already read off the panel by the caller
+ * @param {Object} args.params - Enhancing parameters (getEnhancingParams)
+ * @param {Object} args.itemDetails - The item being enhanced
+ * @param {number|null} args.targetLevel - The panel's Target Level, null when unreadable
+ * @param {number} args.protectFromLevel - The panel's Protect From Level (0 = none)
+ * @param {Array} args.enhancementCosts - Per-attempt materials {itemHrid, count}
+ * @param {string|null} args.protectionItemHrid - What the protection slot holds
+ * @param {number} args.perActionTime - Seconds per attempt from the buff maps
+ * @returns {string} HTML, or '' when there is nothing to sweep
+ */
+export function protectSweepHTML({
+    params,
+    itemDetails,
+    targetLevel,
+    protectFromLevel,
+    enhancementCosts,
+    protectionItemHrid,
+    perActionTime,
+}) {
+    try {
+        if (!itemDetails?.hrid || !targetLevel || targetLevel < 1) return '';
+
+        const nameOf = (hrid) => dataManager.getItemDetails?.(hrid)?.name || null;
+        const { options, selectedIsMirror } = chooseProtectionOptions({
+            itemHrid: itemDetails.hrid,
+            itemDetails,
+            selectedHrid: protectionItemHrid,
+            priceOf: sweepBuyPrice,
+            nameOf,
+        });
+
+        let materialCostPerAttempt = 0;
+        let materialsUnpriced = false;
+        for (const cost of enhancementCosts || []) {
+            const price = sweepBuyPrice(cost.itemHrid);
+            if (price > 0) materialCostPerAttempt += (cost.count || 0) * price;
+            else materialsUnpriced = true;
+        }
+
+        const xpBaseLevel = itemDetails.level || itemDetails.equipmentDetail?.levelRequirements?.[0]?.level || 0;
+        const sweep = sweepProtectFromMemo({
+            chain: {
+                enhancingLevel: params.enhancingLevel,
+                toolBonus: params.toolBonus,
+                speedBonus: params.speedBonus,
+                itemLevel: itemDetails.itemLevel || 1,
+                blessedTea: Boolean(params.teas?.blessed),
+                guzzlingBonus: params.guzzlingBonus,
+            },
+            targetLevel,
+            materialCostPerAttempt,
+            protectionOptions: options,
+            perActionTime,
+            xpBaseLevel,
+            wisdomDecimal: (params.experienceBonus || 0) / 100,
+        });
+
+        const selectedHrid = options.find((option) => option.selected)?.itemHrid || null;
+        const currentProtect = protectFromLevel >= 2 ? protectFromLevel : 0;
+        const isCurrentRow = (row) =>
+            row.protectFrom === currentProtect && (currentProtect === 0 || row.itemHrid === selectedHrid);
+
+        const coins = (value) => formatLargeNumber(Math.round(value));
+        const cell = (text, color = '#ccc', extra = '') =>
+            `<td style="padding:2px 8px 2px 0; text-align:right; color:${color}; white-space:nowrap; ${extra}">${text}</td>`;
+
+        const rows = [];
+        let lastItem;
+        sweep.rows.forEach((row, index) => {
+            if (row.itemHrid !== lastItem && row.itemHrid) {
+                const label = row.selected ? 'in the slot' : 'cheapest alternative';
+                const priceNote = row.protectionPrice > 0 ? `@${coins(row.protectionPrice)}` : 'no price';
+                rows.push(
+                    `<tr><td colspan="9" style="padding:6px 0 2px; color:#9bd; font-weight:bold;">${row.name} ` +
+                        `<span style="color:#888; font-weight:normal;">(${label}, ${priceNote})</span></td></tr>`
+                );
+            }
+            lastItem = row.itemHrid;
+
+            const cheapest = index === sweep.cheapestIndex;
+            const bestXp = index === sweep.bestGoldPerXpIndex;
+            const current = isCurrentRow(row);
+            const marks = [];
+            if (cheapest) marks.push('<span title="Cheapest expected cost" style="color:#88ff88;">★</span>');
+            if (bestXp) marks.push(`<span title="Best gold per XP" style="color:${config.COLOR_XP_RATE};">✦</span>`);
+            if (current) marks.push('<span title="The panel\'s current setting" style="color:#ffa500;">◂</span>');
+            let rowStyle = 'border-bottom:1px solid #333;';
+            if (cheapest) rowStyle += ' background:rgba(136,255,136,0.08);';
+            else if (bestXp) rowStyle += ' background:rgba(255,215,0,0.06);';
+            if (current) rowStyle += ' outline:1px solid rgba(255,165,0,0.6);';
+
+            const level = row.protectFrom === 0 ? 'none' : `+${row.protectFrom}`;
+            rows.push(
+                `<tr class="mwi-protsweep-row" data-protect-from="${row.protectFrom}" data-item="${row.itemHrid || ''}" ` +
+                    `style="${rowStyle}">` +
+                    `<td style="padding:2px 8px 2px 0; color:#fff; font-weight:bold; white-space:nowrap;">${level}</td>` +
+                    cell(
+                        coins(row.expectedCost),
+                        cheapest ? '#88ff88' : '#ffd700',
+                        cheapest ? 'font-weight:bold;' : ''
+                    ) +
+                    cell(`${coins(row.p10)} – ${coins(row.p90)}`, '#999') +
+                    cell(formatAttempts(row.attempts)) +
+                    cell(
+                        row.protections > 0 ? formatAttempts(row.protections) : '-',
+                        row.protections > 0 ? '#ffa500' : '#888'
+                    ) +
+                    cell(timeReadable(row.time)) +
+                    cell(row.xp > 0 ? formatLargeNumber(Math.round(row.xp)) : '-', config.COLOR_XP_RATE) +
+                    cell(
+                        row.goldPerXp !== null ? row.goldPerXp.toFixed(2) : '-',
+                        bestXp ? config.COLOR_XP_RATE : '#ccc',
+                        bestXp ? 'font-weight:bold;' : ''
+                    ) +
+                    `<td style="padding:2px 0; white-space:nowrap;">${marks.join(' ')}</td></tr>`
+            );
+        });
+
+        const th = (text, align = 'right') =>
+            `<th style="text-align:${align}; padding:2px 8px 2px 0; color:#888; font-weight:normal;">${text}</th>`;
+        const notes = [];
+        if (selectedIsMirror) {
+            notes.push(
+                "The slot holds a Philosopher's Mirror, which guarantees the attempt rather than softening the fall — the sweep prices the cheapest protect-from item instead."
+            );
+        } else if (!selectedHrid) {
+            notes.push('Nothing in the protection slot — priced with the cheapest item that would work.');
+        }
+        if (materialsUnpriced) notes.push('Some materials have no price; costs are understated.');
+        if (testerShopEnabled()) notes.push('Tester shop prices floor the materials and protection.');
+        notes.push(
+            "p10–p90 is the spread a run can land in; ★ cheapest expected, ✦ best gold per XP, ◂ the panel's current setting. From +0."
+        );
+
+        return (
+            '<div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; margin-bottom: 12px;">' +
+            '<div class="mwi-enh-toggle" data-target="mwi-enh-protsweep" style="color: #9bd; font-weight: bold; font-size: 0.95em; cursor: pointer;">' +
+            `Protect-from sweep to +${targetLevel} <span class="mwi-enh-arrow" style="color: #666; font-size: 0.8em;">▸</span></div>` +
+            '<div id="mwi-enh-protsweep" style="display: none;">' +
+            `<div style="color:#888; font-size:0.8em; margin:4px 0;">${notes.join(' ')}</div>` +
+            '<div style="overflow-x:auto;"><table id="mwi-protsweep-table" style="font-size:0.85em; border-collapse:collapse; width:100%;">' +
+            `<tr style="border-bottom:1px solid #444;">${th('Protect from', 'left')}${th('Expected cost')}${th('p10 – p90')}${th('Attempts')}${th('Protections')}${th('Time')}${th('XP')}${th('Gold/XP')}${th('', 'left')}</tr>` +
+            `${rows.join('')}</table></div></div></div>`
+        );
+    } catch (error) {
+        console.error('[EnhancementDisplay] Building the protect-from sweep failed:', error);
         return '';
     }
 }
@@ -881,6 +1075,17 @@ function formatEnhancementDisplay(
     );
     lines.push(costsByLevelHTML);
     lines.push(testerRouteHTML(itemDetails));
+    lines.push(
+        protectSweepHTML({
+            params,
+            itemDetails,
+            targetLevel: getTargetLevelFromUI(panel),
+            protectFromLevel,
+            enhancementCosts,
+            protectionItemHrid,
+            perActionTime,
+        })
+    );
 
     // Materials cost section (if enhancement costs exist) - just show per-attempt materials
     if (enhancementCosts && enhancementCosts.length > 0) {
