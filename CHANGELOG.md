@@ -6,6 +6,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Production Arbitrage Board
+
+An "Arbitrage" button on the cheesesmithing, crafting, tailoring, cooking and brewing pages opens one ranked table of every production recipe — your material cost per unit, sale value after tax, margin per unit/action/hour and a per-day margin bounded by what the market absorbs, with level requirement and a data-quality flag. Sort by margin/day, /hr or /unit, filter by skill, text or "only craftable now", click a row to open the action. Figures come from the same profit calculator the action panel uses, computed in the background and memoised until prices, levels, drinks or gear change.
+
+### Enhancing panel: protect-from sweep
+
+A collapsible "Protect-from sweep" under the costs table lists no protection and every protect-from level up to the target, priced with the protection item in the slot and with the cheapest alternative — expected cost, p10–p90 spread, attempts, protections, time, XP and gold/XP, with the cheapest plan, the best gold/XP and the panel's current setting marked. Follows the profit pricing mode and the Tester shop floor when that pricing is on.
+
+### Dungeon ROI board
+
+The dungeon tracker gains an ROI Board: every dungeon and tier side by side with recorded runs, median clear time and waves/min (or the combat sim's figure, marked "sim"), key cost, tokens and chest EV per run, consumables, net gold per run and per hour, XP/hr and a confidence tag; sortable, with tier and party-size filters. Live-tracked runs now remember their tier, and the All Zones snapshot records per-dungeon completions and consumable cost so the board can quote simulated clear times for tiers you have not run.
+
+### Calibration badges on forecasts
+
+Profit forecasts on the action panel, action bar, alchemy profit/Best Items and the All Zones table carry a small marker of how that forecast has fared against finished runs — "−12% over 40 runs" when it ran hot, "on target" otherwise — with a tooltip explaining the gap and sample window; nothing shows until enough runs are measured. Setting under Insights (default on).
+
 ### Diagnostics section in settings
 
 At the bottom of the Toolasha settings tab: script version/build, server, character, features on, and every error the script's own code has logged this session (newest first, repeat count, stack on click). "Run checks" runs the health report, selector and schema canaries and the selector audit on demand with a green all-clear when nothing is wrong; "Copy report" puts a pasteable summary on the clipboard. Console: `Toolasha.debug.errors()`.
