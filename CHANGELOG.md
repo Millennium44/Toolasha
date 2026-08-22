@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Diagnostics section in settings
+
+At the bottom of the Toolasha settings tab: script version/build, server, character, features on, and every error the script's own code has logged this session (newest first, repeat count, stack on click). "Run checks" runs the health report, selector and schema canaries and the selector audit on demand with a green all-clear when nothing is wrong; "Copy report" puts a pasteable summary on the clipboard. Console: `Toolasha.debug.errors()`.
+
+### Bestiary route planner
+
+Under the combat sim's All Zones results: enter a time budget, press Plan, and get the ordered list of zones that earns the most Bestiary points in that time — hopping to whichever zone's next point lands soonest — with time per zone, points gained, thresholds crossed, and the total against the best single zone; Copy gives a plain-text version. Uses the run's simulated kill rates and your current defeated counts, waits for the Bestiary if not loaded, remembers the hours.
+
+### Tooltips and action panels dispatched once
+
+Tooltip features (prices, consumables, token values, sell queue, alt-click, collection navigation) share one tooltip observer that classifies each popper once, instead of seven handlers each re-probing every hovered tooltip; the observer is a single shared instance across bundles. Action detail panels and skill tiles are resolved once and handed to every feature through one subscriber in `action-panel-helper` instead of eleven separate observers each re-deriving the action from the title. The personal market listing log is bounded (90 days from the newest listing, at most 5000, active listings always kept) instead of growing for life.
+
 ### Performance pass: observers, timers, lookups, storage, startup
 
 A sweep over what the script does per message, per mutation and per tick in a long session:
