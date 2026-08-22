@@ -81,14 +81,6 @@ export function currentCharacter() {
     };
 }
 
-/**
- * Appends closer together than this are one burst — a chat backfill writing
- * dozens of runs in a loop — and are coalesced into one debounced write. An
- * append on its own (a run just completed) is written at once, because the
- * panel reads the stored list straight after to show it.
- */
-const APPEND_BURST_MS = 2000;
-
 class DungeonTrackerStorage {
     constructor() {
         this.unifiedStoreName = 'unifiedRuns'; // Unified storage for all runs
@@ -107,7 +99,6 @@ class DungeonTrackerStorage {
         /** teamKey → that team's runs (the same objects), for the duplicate check */
         this._byTeam = new Map();
         /** When the last run was appended, to tell a burst from a lone run */
-        this._lastAppendAt = 0;
     }
 
     /**
@@ -173,7 +164,6 @@ class DungeonTrackerStorage {
     _resetCache() {
         this._runs = null;
         this._byTeam = new Map();
-        this._lastAppendAt = 0;
     }
 
     /**
@@ -324,12 +314,10 @@ class DungeonTrackerStorage {
             allRuns.unshift(unifiedRun);
             this._indexRun(unifiedRun);
 
-            // A lone run is written now; a burst of them (backfill) is
-            // coalesced into one write once the burst is over
-            const now = Date.now();
-            const burst = now - this._lastAppendAt < APPEND_BURST_MS;
-            this._lastAppendAt = now;
-            await this._persist(!burst);
+            // Memory is authoritative and every reader goes through it, so the
+            // write takes the normal debounce — a backfill of dozens of runs
+            // lands as one write
+            await this._persist(false);
 
             return true;
         }

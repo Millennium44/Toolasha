@@ -227,7 +227,7 @@ describe('saveTeamRun', () => {
         expect(game.saved.unifiedRuns.allRuns.map((r) => r.teamKey)).toEqual(['C,D', 'A,B']);
     });
 
-    test('a lone run is written at once; a burst of them is coalesced into a debounced write', async () => {
+    test('every append takes the write debounce; memory is what readers see meanwhile', async () => {
         vi.useFakeTimers();
         try {
             vi.setSystemTime(new Date('2026-01-05T00:00:00Z'));
@@ -235,11 +235,12 @@ describe('saveTeamRun', () => {
             await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T00:00:00Z', duration: 500 });
             await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T01:00:00Z', duration: 500 });
             await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T02:00:00Z', duration: 500 });
-            expect(game.writes.map(([, immediate]) => immediate)).toEqual([true, false, false]);
+            expect(game.writes.map(([, immediate]) => immediate)).toEqual([false, false, false]);
 
             vi.setSystemTime(new Date('2026-01-05T00:01:00Z'));
             await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T03:00:00Z', duration: 500 });
-            expect(game.writes.at(-1)[1]).toBe(true);
+            expect(game.writes.at(-1)[1]).toBe(false);
+            expect(await dungeonTrackerStorage.getAllRuns()).toHaveLength(4);
             expect(game.saved.unifiedRuns.allRuns).toHaveLength(4);
         } finally {
             vi.useRealTimers();

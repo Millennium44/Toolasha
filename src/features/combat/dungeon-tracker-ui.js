@@ -10,10 +10,9 @@ import dungeonTrackerUIState from './dungeon-tracker-ui-state.js';
 import DungeonTrackerUIChart from './dungeon-tracker-ui-chart.js';
 import DungeonTrackerUIHistory from './dungeon-tracker-ui-history.js';
 import DungeonTrackerUIInteractions from './dungeon-tracker-ui-interactions.js';
-import { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
+import dungeonTrackerStorage, { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
 import { historyAvgWaveMs, pacePercent, paceChip } from './dungeon-pace.js';
 import dataManager from '../../core/data-manager.js';
-import storage from '../../core/storage.js';
 import config from '../../core/config.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel } from '../../utils/panel-z-index.js';
@@ -533,7 +532,9 @@ class DungeonTrackerUI {
         let stats, runHistory, lastRunTime;
 
         // Get all runs and apply filters (EXACT SAME LOGIC as chart)
-        const allRuns = await storage.getJSON('allRuns', 'unifiedRuns', []);
+        // Through the store's memory, which a run just completed has already
+        // joined — the write behind it is debounced
+        const allRuns = await dungeonTrackerStorage.getAllRuns();
         // The run store is shared across characters on purpose (see
         // dungeon-tracker-storage.js); this is where "how am I doing" narrows
         // it back to the character asking
