@@ -1054,6 +1054,29 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.20.0](https://github.com/Millennium44/Toolasha/compare/v3.19.0...v3.20.0) (2026-08-22)
+
+### Features
+
+- decimal Combat Level in the sidebar; level-gap debuff needs a ten-level gap too ([54d132f](https://github.com/Millennium44/Toolasha/commit/54d132facdc43021979a903604f9cad19736e116))
+- guild panel shows ETA to the next level-earned member slot ([ceec2f6](https://github.com/Millennium44/Toolasha/commit/ceec2f6e11b88cf97a41e43405f7e4c38ed0a2cf))
+- right-clicking any ability icon opens its book in the Item Dictionary ([7c010d7](https://github.com/Millennium44/Toolasha/commit/7c010d7e507eb2ca458aacf5f56a27aad523efdc))
+- track Blessed Tea double-level successes in the enhancement tracker ([d483f2e](https://github.com/Millennium44/Toolasha/commit/d483f2ebab9886073c0d31776718eb5d3dc75927))
+- trial support tracks low mana and a stalled rotation (mana under the cheapest cast), with a live marker on the board ([be7b273](https://github.com/Millennium44/Toolasha/commit/be7b273108db62cf43d188886eaf926278a1eabc))
+
+### Bug Fixes
+
+- action bar profit line clears when the header moves to the labyrinth or an unqueued name, and cancels the in-flight calculation ([15b3f29](https://github.com/Millennium44/Toolasha/commit/15b3f29e4cd1c2b71ac585cf3cd2496bcac9d730))
+- All Zones bestiary sort breaks equal points by time to the first point ([2527b11](https://github.com/Millennium44/Toolasha/commit/2527b11fe3109b8cfe6b477154d29f72ae5cda6e))
+- port upstream fixes through 2.94.0 ([0302903](https://github.com/Millennium44/Toolasha/commit/0302903b84709d003e7046dc74816b88bf90ace7))
+- right-click on an ability resolves the icon under the level label and slot overlay, not only on the svg itself ([3908a7d](https://github.com/Millennium44/Toolasha/commit/3908a7d12febbb2e38d7cda4b793ea7109e45bf4))
+- simulator editor follows live house rooms, so a room built mid-session is not proposed again; data manager refreshes the character room map on house_rooms_updated ([63e38be](https://github.com/Millennium44/Toolasha/commit/63e38be2d56c5a766630e9acb2ee7ff17ffa0111))
+- tester route counts the whole tree — 2^k shop copies and 2^k−1 mirrors — shows the bill per level and pins it into the Tester strip ([7232d7b](https://github.com/Millennium44/Toolasha/commit/7232d7bd913c7681882a92e115b26b63a88efef9))
+
+### Documentation
+
+- changelog for the ported upstream features ([b91ee28](https://github.com/Millennium44/Toolasha/commit/b91ee28dc82432114038040194e0e7ae4ef09409))
+
 ## [3.19.0](https://github.com/Millennium44/Toolasha/compare/v3.18.0...v3.19.0) (2026-08-22)
 
 ### Features
