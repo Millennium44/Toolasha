@@ -3,6 +3,13 @@
  * Single MutationObserver that dispatches to registered handlers
  * Replaces 15 separate observers watching document.body
  * Supports optional debouncing to reduce CPU usage during bulk DOM changes
+ *
+ * Class handlers (`onClass`) share one subtree query. Some 150 features
+ * watch for a class substring, and an inserted container used to be walked
+ * once per watched class — a chat message, which is a container, cost ~150
+ * attribute-substring `querySelectorAll` calls, none of which could match.
+ * Now every inserted container is walked once with a combined selector and
+ * each match is handed to the handlers whose class it carries.
  */
 
 import performanceMonitor from '../utils/performance-monitor.js';
@@ -16,6 +23,7 @@ class DOMObserver {
         this.debouncedLatest = new Map(); // Latest {node, mutation} per handler — O(1) retention
         this.debounceMaxStart = new Map(); // When the oldest un-fired mutation arrived, for maxWait
         this.DEFAULT_DEBOUNCE_DELAY = 50; // 50ms default delay
+        this._combinedSelector = undefined; // Built on demand from the class handlers; undefined = stale
     }
 
     /**
@@ -36,23 +44,7 @@ class DOMObserver {
                 for (const mutation of mutations) {
                     for (const node of mutation.addedNodes) {
                         if (node.nodeType !== Node.ELEMENT_NODE) continue;
-
-                        // Dispatch to all registered handlers
-                        this.handlers.forEach((handler) => {
-                            try {
-                                if (handler.debounce) {
-                                    this.debouncedCallback(handler, node, mutation);
-                                } else if (performanceMonitor.enabled) {
-                                    const start = performance.now();
-                                    handler.callback(node, mutation);
-                                    performanceMonitor.record(`dom:${handler.name}`, performance.now() - start);
-                                } else {
-                                    handler.callback(node, mutation);
-                                }
-                            } catch (error) {
-                                console.error(`[DOM Observer] Handler error (${handler.name}):`, error);
-                            }
-                        });
+                        this.dispatch(node, mutation);
                     }
                 }
             });
@@ -69,38 +61,130 @@ class DOMObserver {
     }
 
     /**
+     * Hand an added element to every handler it concerns.
+     *
+     * Generic handlers see every node. Class handlers see the node when its
+     * own class matches, and otherwise its matching descendants — found with
+     * one combined query over the subtree rather than one per handler.
+     * @param {Element} node - The added element
+     * @param {MutationRecord} mutation - The record it arrived in
+     */
+    dispatch(node, mutation) {
+        const className = typeof node.className === 'string' ? node.className : '';
+        // Class handlers satisfied by the node itself do not also get its
+        // descendants: one call per node per handler, as before
+        let directMatched = null;
+
+        for (const handler of this.handlers) {
+            if (!handler.classes) {
+                this._run(handler, handler.callback, node, mutation);
+                continue;
+            }
+            if (classMatches(handler.classes, className)) {
+                (directMatched ??= new Set()).add(handler);
+                // A debounced class handler is handed the container and matches
+                // for itself when it fires, as it always did; an immediate one
+                // gets the match straight away
+                this._run(handler, handler.debounce ? handler.callback : handler.onMatch, node, mutation);
+            }
+        }
+
+        // Descendants, when a container subtree is inserted. Leaf nodes are
+        // skipped, which is the bulk of React's init burst
+        if (node.childElementCount === 0) return;
+        const selector = this._selector();
+        if (!selector) return;
+        const matches = node.querySelectorAll(selector);
+        for (const match of matches) {
+            const matchClass = typeof match.className === 'string' ? match.className : '';
+            for (const handler of this.handlers) {
+                if (!handler.classes || directMatched?.has(handler)) continue;
+                if (!classMatches(handler.classes, matchClass)) continue;
+                if (handler.debounce) {
+                    // Once per container: the matcher finds every match when it fires
+                    (directMatched ??= new Set()).add(handler);
+                    this._run(handler, handler.callback, node, mutation);
+                } else {
+                    this._run(handler, handler.onMatch, match, mutation);
+                }
+            }
+        }
+    }
+
+    /**
+     * Run one handler for one node — debounced, timed or plain
+     * @private
+     */
+    _run(handler, fn, node, mutation) {
+        try {
+            if (handler.debounce) {
+                this.debouncedCallback(handler, node, mutation);
+            } else if (performanceMonitor.enabled) {
+                const start = performance.now();
+                fn(node, mutation);
+                performanceMonitor.record(`dom:${handler.name}`, performance.now() - start);
+            } else {
+                fn(node, mutation);
+            }
+        } catch (error) {
+            console.error(`[DOM Observer] Handler error (${handler.name}):`, error);
+        }
+    }
+
+    /**
+     * The combined descendant selector over every watched class, rebuilt
+     * after a registration change. Null when no class handler is registered.
+     * @private
+     */
+    _selector() {
+        if (this._combinedSelector !== undefined) return this._combinedSelector;
+        const classes = new Set();
+        for (const handler of this.handlers) {
+            for (const cls of handler.classes || []) {
+                // A class token never carries a quote or backslash; one that did
+                // would break the selector, so it is left to the direct match only
+                if (cls && !/["\\]/.test(cls)) classes.add(cls);
+            }
+        }
+        this._combinedSelector = classes.size ? [...classes].map((cls) => `[class*="${cls}"]`).join(',') : null;
+        return this._combinedSelector;
+    }
+
+    /**
      * Debounced callback handler
      * Collects elements and fires callback after delay
      * @private
      */
     debouncedCallback(handler, node, mutation) {
-        const handlerName = handler.name;
         const delay = handler.debounceDelay || this.DEFAULT_DEBOUNCE_DELAY;
         const maxWait = handler.debounceMaxWait || 0;
+        const fn = handler.callback;
 
         // Only the newest node/mutation is ever handed to the callback, so overwrite
         // rather than append: under churn faster than the debounce delay the timer never
         // fires, and an array would retain every intermediate node and MutationRecord.
-        this.debouncedLatest.set(handlerName, { node, mutation });
+        // Keyed by the handler itself — two handlers registered under one name
+        // (a feature watching several classes) must not share a record.
+        this.debouncedLatest.set(handler, { node, mutation });
 
         const invoke = () => {
-            if (this.debounceTimers.has(handlerName)) {
-                clearTimeout(this.debounceTimers.get(handlerName));
-                this.debounceTimers.delete(handlerName);
+            if (this.debounceTimers.has(handler)) {
+                clearTimeout(this.debounceTimers.get(handler));
+                this.debounceTimers.delete(handler);
             }
-            this.debounceMaxStart.delete(handlerName);
+            this.debounceMaxStart.delete(handler);
 
-            const latest = this.debouncedLatest.get(handlerName);
-            this.debouncedLatest.delete(handlerName);
+            const latest = this.debouncedLatest.get(handler);
+            this.debouncedLatest.delete(handler);
 
             // Only the final state matters (e.g. a task list rewritten several times)
             if (!latest) return;
             if (performanceMonitor.enabled) {
                 const start = performance.now();
-                handler.callback(latest.node, latest.mutation);
+                fn(latest.node, latest.mutation);
                 performanceMonitor.record(`dom:${handler.name}`, performance.now() - start);
             } else {
-                handler.callback(latest.node, latest.mutation);
+                fn(latest.node, latest.mutation);
             }
         };
 
@@ -112,9 +196,9 @@ class DOMObserver {
         // it again, so first paint still happens under continuous churn. Opt-in:
         // maxWait 0 (the default) is the exact prior trailing-only behaviour.
         if (maxWait > 0) {
-            const startedAt = this.debounceMaxStart.get(handlerName);
+            const startedAt = this.debounceMaxStart.get(handler);
             if (startedAt === undefined) {
-                this.debounceMaxStart.set(handlerName, Date.now());
+                this.debounceMaxStart.set(handler, Date.now());
             } else if (Date.now() - startedAt >= maxWait) {
                 invoke();
                 return;
@@ -122,10 +206,10 @@ class DOMObserver {
         }
 
         // Clear existing timer and set a new one
-        if (this.debounceTimers.has(handlerName)) {
-            clearTimeout(this.debounceTimers.get(handlerName));
+        if (this.debounceTimers.has(handler)) {
+            clearTimeout(this.debounceTimers.get(handler));
         }
-        this.debounceTimers.set(handlerName, setTimeout(invoke, delay));
+        this.debounceTimers.set(handler, setTimeout(invoke, delay));
     }
 
     /**
@@ -157,28 +241,37 @@ class DOMObserver {
      * @returns {Function} Unregister function
      */
     register(name, callback, options = {}) {
-        const handler = {
+        return this._add({
             name,
             callback,
             debounce: options.debounce || false,
             debounceDelay: options.debounceDelay,
             debounceMaxWait: options.debounceMaxWait,
-        };
+        });
+    }
+
+    /**
+     * Add a handler and hand back its unregister function
+     * @private
+     */
+    _add(handler) {
         this.handlers.push(handler);
+        this._combinedSelector = undefined;
 
         // Return unregister function
         return () => {
             const index = this.handlers.indexOf(handler);
             if (index > -1) {
                 this.handlers.splice(index, 1);
+                this._combinedSelector = undefined;
 
                 // Clean up any pending debounced callbacks
-                if (this.debounceTimers.has(name)) {
-                    clearTimeout(this.debounceTimers.get(name));
-                    this.debounceTimers.delete(name);
-                    this.debouncedLatest.delete(name);
+                if (this.debounceTimers.has(handler)) {
+                    clearTimeout(this.debounceTimers.get(handler));
+                    this.debounceTimers.delete(handler);
                 }
-                this.debounceMaxStart.delete(name);
+                this.debouncedLatest.delete(handler);
+                this.debounceMaxStart.delete(handler);
             }
         };
     }
@@ -196,33 +289,31 @@ class DOMObserver {
     onClass(name, classNames, callback, options = {}) {
         const classArray = Array.isArray(classNames) ? classNames : [classNames];
 
-        return this.register(
-            name,
-            (node) => {
-                // Safely get className as string (handles SVG elements)
-                const className = typeof node.className === 'string' ? node.className : '';
-
-                // Check if node matches any of the target classes
+        // `callback` stays a self-contained matcher so the handler can be driven
+        // directly (tests, manual re-scans); the observer itself dispatches
+        // through `onMatch` and the shared subtree query instead
+        const matcher = (node) => {
+            const className = typeof node.className === 'string' ? node.className : '';
+            if (classMatches(classArray, className)) {
+                callback(node);
+                return; // Only call once per node
+            }
+            if (node.childElementCount > 0) {
                 for (const targetClass of classArray) {
-                    if (className.includes(targetClass)) {
-                        callback(node);
-                        return; // Only call once per node
-                    }
+                    node.querySelectorAll(`[class*="${targetClass}"]`).forEach((match) => callback(match));
                 }
+            }
+        };
 
-                // Also check descendants when a container subtree is inserted.
-                // Only applies when the node has children — leaf nodes are skipped,
-                // which eliminates the bulk of querySelectorAll cost during React's
-                // init burst (thousands of individual leaf additions).
-                if (node.childElementCount > 0) {
-                    for (const targetClass of classArray) {
-                        const matches = node.querySelectorAll(`[class*="${targetClass}"]`);
-                        matches.forEach((match) => callback(match));
-                    }
-                }
-            },
-            options
-        );
+        return this._add({
+            name,
+            callback: matcher,
+            onMatch: callback,
+            classes: classArray,
+            debounce: options.debounce || false,
+            debounceDelay: options.debounceDelay,
+            debounceMaxWait: options.debounceMaxWait,
+        });
     }
 
     /**
@@ -239,6 +330,20 @@ class DOMObserver {
             pendingCallbacks: this.debounceTimers.size,
         };
     }
+}
+
+/**
+ * Whether a class string carries any of the watched substrings
+ * @param {string[]} classes
+ * @param {string} className
+ * @returns {boolean}
+ */
+function classMatches(classes, className) {
+    if (!className) return false;
+    for (const cls of classes) {
+        if (className.includes(cls)) return true;
+    }
+    return false;
 }
 
 const domObserver = new DOMObserver();

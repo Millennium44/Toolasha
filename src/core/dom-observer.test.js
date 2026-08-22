@@ -143,7 +143,7 @@ describe('debouncedCallback', () => {
         }
 
         expect(domObserver.debouncedLatest.size).toBe(1);
-        expect(domObserver.debouncedLatest.get('Churn')).toEqual({ node: last, mutation: { i: 9999 } });
+        expect(domObserver.debouncedLatest.get(handler)).toEqual({ node: last, mutation: { i: 9999 } });
 
         vi.advanceTimersByTime(50);
         expect(callback).toHaveBeenCalledTimes(1);
@@ -196,7 +196,7 @@ describe('debouncedCallback', () => {
 
         unregister();
 
-        expect(domObserver.debouncedLatest.has('Dropped')).toBe(false);
+        expect(domObserver.debouncedLatest.has(handler)).toBe(false);
         vi.advanceTimersByTime(100);
         expect(callback).not.toHaveBeenCalled();
         vi.useRealTimers();
@@ -258,5 +258,60 @@ describe('getStats', () => {
         expect(stats.handlerCount).toBe(2);
         expect(stats.handlers.map((h) => h.name)).toEqual(['A', 'B']);
         expect(stats.handlers[1].debounced).toBe(true);
+    });
+});
+
+describe('dispatch', () => {
+    test('an inserted container reaches every class handler whose class it holds, through one query', () => {
+        const seenA = [];
+        const seenB = [];
+        const generic = vi.fn();
+        domObserver.onClass('A', 'Foo_item', (el) => seenA.push(el));
+        domObserver.onClass('B', ['Bar_row', 'Baz_x'], (el) => seenB.push(el));
+        domObserver.register('G', generic);
+
+        const container = document.createElement('div');
+        container.innerHTML =
+            '<div class="Foo_item__1"></div><span class="Bar_row__2"><i class="Foo_item__3"></i></span><b class="Other"></b>';
+        const qsa = vi.spyOn(container, 'querySelectorAll');
+
+        domObserver.dispatch(container, {});
+
+        expect(qsa).toHaveBeenCalledTimes(1);
+        expect(qsa.mock.calls[0][0]).toBe('[class*="Foo_item"],[class*="Bar_row"],[class*="Baz_x"]');
+        expect(seenA.map((e) => e.className)).toEqual(['Foo_item__1', 'Foo_item__3']);
+        expect(seenB.map((e) => e.className)).toEqual(['Bar_row__2']);
+        expect(generic).toHaveBeenCalledWith(container, {});
+    });
+
+    test('a node that matches itself is not also searched for that handler, and the selector follows registrations', () => {
+        const seen = [];
+        const unregister = domObserver.onClass('A', 'Foo_item', (el) => seen.push(el));
+        const node = document.createElement('div');
+        node.className = 'Foo_item__outer';
+        node.innerHTML = '<div class="Foo_item__inner"></div>';
+
+        domObserver.dispatch(node, {});
+        expect(seen.map((e) => e.className)).toEqual(['Foo_item__outer']);
+
+        unregister();
+        seen.length = 0;
+        domObserver.dispatch(node, {});
+        expect(seen).toEqual([]);
+        expect(domObserver._selector()).toBeNull();
+    });
+
+    test('a debounced class handler is handed the container and matches for itself when it fires', () => {
+        vi.useFakeTimers();
+        const seen = [];
+        domObserver.onClass('D', 'Foo_item', (el) => seen.push(el.className), { debounce: true, debounceDelay: 20 });
+        const container = document.createElement('div');
+        container.innerHTML = '<div class="Foo_item__1"></div><div class="Foo_item__2"></div>';
+
+        domObserver.dispatch(container, {});
+        expect(seen).toEqual([]);
+        vi.advanceTimersByTime(20);
+        expect(seen).toEqual(['Foo_item__1', 'Foo_item__2']);
+        vi.useRealTimers();
     });
 });

@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### One subtree query per DOM insertion instead of ~150
+
+The central DOM observer used to walk every inserted container once per watched class — some 150 `[class*=…]` queries per chat message, panel swap or React re-render, nearly all of which could never match. It now runs one combined query per container and hands each match to the handlers whose class it carries; debounce bookkeeping is keyed by handler rather than by name, so two registrations under one name no longer share a record.
+
 ### Enhancement tracker picks up a run already going
 
 Loading the page in the middle of an enhancing run left the tracker on "Begin enhancing to populate data" for the rest of it: only a first attempt (count 1) or a queue change started a session. An enhance attempt with no session now starts one on the spot; that first attempt is costed but not scored, since its starting level is unknown.
