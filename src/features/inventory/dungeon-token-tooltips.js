@@ -6,7 +6,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import domObserver from '../../core/dom-observer.js';
+import tooltipObserver from '../../core/tooltip-observer.js';
 import dom from '../../utils/dom.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { getItemPrices } from '../../utils/market-data.js';
@@ -79,9 +79,13 @@ class DungeonTokenTooltips {
      * Set up observer to watch for tooltip elements
      */
     setupObserver() {
-        this.unregisterObserver = domObserver.onClass('DungeonTokenTooltips', 'MuiTooltip-popper', (tooltipElement) => {
-            this.handleTooltip(tooltipElement);
+        // Subscribe to the shared tooltip observer, which classifies each
+        // popper once and hands every tooltip feature the result
+        tooltipObserver.subscribe('DungeonTokenTooltips', (tooltipElement, eventType, info) => {
+            if (eventType !== 'opened' || !info?.isTooltipPopper) return;
+            this.handleTooltip(tooltipElement, info);
         });
+        this.unregisterObserver = () => tooltipObserver.unsubscribe('DungeonTokenTooltips');
 
         this.isActive = true;
     }
@@ -89,8 +93,10 @@ class DungeonTokenTooltips {
     /**
      * Handle a tooltip element
      * @param {Element} tooltipElement - The tooltip popper element
+     * @param {import('../../core/tooltip-observer.js').TooltipInfo} [info] - Its classification
+     *   (probed here when a caller has none)
      */
-    async handleTooltip(tooltipElement) {
+    async handleTooltip(tooltipElement, info = tooltipObserver.classify(tooltipElement)) {
         if (!config.isFeatureEnabled('dungeonTokenTooltips')) {
             return;
         }
@@ -100,11 +106,8 @@ class DungeonTokenTooltips {
         }
         tooltipElement.dataset.dungeonProcessed = 'true';
 
-        const collectionContent = tooltipElement.querySelector('div[class*="Collection_tooltipContent"]');
-        const isCollectionTooltip = !!collectionContent;
-
-        const nameElement = tooltipElement.querySelector('div[class*="ItemTooltipText_name"]');
-        const isItemTooltip = !!nameElement;
+        const isCollectionTooltip = info.isCollectionTooltip;
+        const isItemTooltip = info.isItemTooltip;
 
         if (!isCollectionTooltip && !isItemTooltip) {
             return;
@@ -112,13 +115,13 @@ class DungeonTokenTooltips {
 
         let itemName;
         if (isCollectionTooltip) {
-            const collectionNameElement = tooltipElement.querySelector('div[class*="Collection_name"]');
+            const collectionNameElement = info.collectionNameEl;
             if (!collectionNameElement) {
                 return;
             }
             itemName = collectionNameElement.textContent.trim();
         } else {
-            itemName = nameElement.textContent.trim();
+            itemName = info.itemName;
         }
 
         const itemHrid = this.extractItemHridFromName(itemName);

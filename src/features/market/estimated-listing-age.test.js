@@ -94,6 +94,9 @@ vi.mock('../../api/marketplace.js', () => ({ default: marketMock }));
 const {
     default: estimatedListingAge,
     ANCHOR_POOL_MAX,
+    LISTING_RETENTION_MS,
+    LISTING_RETENTION_MAX,
+    applyListingRetention,
     ORDER_BOOK_CACHE_MAX_ITEMS,
     ORDER_BOOK_PERSISTED_ROWS,
     LISTING_SAVE_DEBOUNCE_MS,
@@ -435,7 +438,13 @@ describe('splitting the old shared key', () => {
 
         dataManagerMock.characterId = 'iron456';
         dataManagerMock.gameMode = 'ironcow';
-        estimatedListingAge.recordListing({ id: 99, createdTimestamp: '2026-01-01T00:00:00Z', itemHrid: '/items/c' });
+        // Dated alongside the legacy rows: a listing months newer would let
+        // retention drop the filled one (id 10) from the log it is compared to
+        estimatedListingAge.recordListing({
+            id: 99,
+            createdTimestamp: new Date(4000).toISOString(),
+            itemHrid: '/items/c',
+        });
         await estimatedListingAge.saveHistoricalData();
 
         expect(
@@ -961,5 +970,123 @@ describe('order-book messages — stash now, repaint and persist once per burst'
 
         expect(Object.keys(estimatedListingAge.orderBooksCache)).toEqual(['/items/fresh']);
         expect(estimatedListingAge.orderBooksCache['/items/fresh'].data.orderBooks[0].asks).toHaveLength(20);
+    });
+});
+
+describe('listing log retention — the personal log no longer grows for life', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const NEWEST = Date.UTC(2026, 5, 1);
+    /** A listing `daysBack` days before the newest one, id descending with age */
+    const aged = (daysBack, extra = {}) => {
+        const timestamp = NEWEST - daysBack * DAY;
+        return {
+            id: 1_000_000 - daysBack,
+            timestamp,
+            createdTimestamp: new Date(timestamp).toISOString(),
+            itemHrid: '/items/a',
+            status: 'filled',
+            ...extra,
+        };
+    };
+    const byId = (listings) => [...listings].sort((a, b) => a.id - b.id);
+    const storedLog = () => storageMock.storeFor('marketListings').get(LOG_KEY);
+
+    test('listings older than the window before the newest are dropped; the rest are kept as-is', () => {
+        const log = byId([aged(0), aged(89), aged(91), aged(400)]);
+        const kept = applyListingRetention(log);
+        expect(kept.map((l) => l.id)).toEqual(byId([aged(0), aged(89)]).map((l) => l.id));
+        // Same objects, untouched: what estimation reads is unchanged
+        expect(kept[1]).toBe(log.find((l) => l.id === aged(0).id));
+    });
+
+    test('the window is measured from the newest listing, not the clock', () => {
+        // A log last written long ago keeps its 90 days of history
+        const log = byId([aged(800), aged(850), aged(880)]);
+        expect(applyListingRetention(log)).toBe(log);
+    });
+
+    test('a still-active listing is never dropped, however old', () => {
+        const log = byId([aged(0), aged(500, { status: 'active' }), aged(600)]);
+        expect(applyListingRetention(log).map((l) => l.status)).toEqual(['active', 'filled']);
+    });
+
+    test('beyond the cap only the newest are kept, active ones aside', () => {
+        const listings = [];
+        for (let i = 0; i < LISTING_RETENTION_MAX + 10; i++) {
+            const timestamp = NEWEST - i * 1000;
+            listings.push({ id: 2_000_000 - i, timestamp, itemHrid: '/items/a', status: 'filled' });
+        }
+        // The oldest of all is active, so it stays while newer filled ones go
+        listings[listings.length - 1].status = 'active';
+        const kept = applyListingRetention(byId(listings));
+
+        expect(kept).toHaveLength(LISTING_RETENTION_MAX);
+        expect(kept.some((l) => l.status === 'active')).toBe(true);
+        const filledKept = kept.filter((l) => l.status === 'filled');
+        const newestFilled = listings.filter((l) => l.status === 'filled').slice(0, LISTING_RETENTION_MAX - 1);
+        expect(filledKept.map((l) => l.id)).toEqual(byId(newestFilled).map((l) => l.id));
+        // Still sorted by id
+        expect(kept.map((l) => l.id)).toEqual(byId(kept).map((l) => l.id));
+    });
+
+    test('a log with nothing to drop is returned as-is', () => {
+        const log = byId([aged(0), aged(10)]);
+        expect(applyListingRetention(log)).toBe(log);
+        expect(applyListingRetention([])).toEqual([]);
+    });
+
+    test('retention is applied on load, and the trimmed log is written back', async () => {
+        storageMock.storeFor('marketListings').set(LOG_KEY, byId([aged(0), aged(50), aged(200)]));
+
+        await estimatedListingAge.loadHistoricalData();
+
+        expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual(byId([aged(0), aged(50)]).map((l) => l.id));
+        expect(storedLog().map((l) => l.id)).toEqual(byId([aged(0), aged(50)]).map((l) => l.id));
+        // And the estimation points (personal log over the shared anchors)
+        // carry what remains and not what went
+        const pointIds = estimatedListingAge.estimationPoints.map((l) => l.id);
+        expect(pointIds).toContain(aged(0).id);
+        expect(pointIds).toContain(aged(50).id);
+        expect(pointIds).not.toContain(aged(200).id);
+    });
+
+    test('recording a batch lets the newest listing in it push old history out', async () => {
+        storageMock.storeFor('marketListings').set(LOG_KEY, []);
+        knownAs(byId([aged(100), aged(120)]));
+        // Both within 90 days of each other: nothing pruned yet
+        expect(estimatedListingAge.knownListings).toHaveLength(2);
+
+        estimatedListingAge.recordListings([aged(0)]);
+
+        expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([aged(0).id]);
+        // The save lands the trimmed log; what is stored does not resurrect the rest
+        await estimatedListingAge.flushPendingSave();
+        expect(storedLog().map((l) => l.id)).toEqual([aged(0).id]);
+    });
+
+    test('a save does not bring trimmed rows back from storage', async () => {
+        storageMock.storeFor('marketListings').set(LOG_KEY, byId([aged(0), aged(200)]));
+        knownAs(byId([aged(0)]));
+
+        await estimatedListingAge.saveHistoricalData();
+
+        expect(storedLog().map((l) => l.id)).toEqual([aged(0).id]);
+        expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([aged(0).id]);
+    });
+
+    test('your own active listing survives load, record and save', async () => {
+        storageMock.storeFor('marketListings').set(LOG_KEY, byId([aged(300, { status: 'active' }), aged(250)]));
+        await estimatedListingAge.loadHistoricalData();
+        estimatedListingAge.recordListings([aged(0)]);
+        await estimatedListingAge.flushPendingSave();
+
+        const ids = (list) => list.map((l) => l.id);
+        expect(ids(estimatedListingAge.knownListings)).toEqual(byId([aged(300), aged(0)]).map((l) => l.id));
+        expect(ids(storedLog())).toEqual(byId([aged(300), aged(0)]).map((l) => l.id));
+    });
+
+    test('the window is 90 days and the cap 5000', () => {
+        expect(LISTING_RETENTION_MS).toBe(90 * DAY);
+        expect(LISTING_RETENTION_MAX).toBe(5000);
     });
 });

@@ -8,7 +8,7 @@ import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import { numberFormatter } from '../../utils/formatters.js';
 import dom from '../../utils/dom.js';
-import domObserver from '../../core/dom-observer.js';
+import tooltipObserver from '../../core/tooltip-observer.js';
 
 /**
  * TooltipConsumables class handles injecting consumable stats into item tooltips
@@ -101,10 +101,13 @@ class TooltipConsumables {
      * Set up observer to watch for tooltip elements
      */
     setupObserver() {
-        // Register with centralized DOM observer to watch for tooltip poppers
-        this.unregisterObserver = domObserver.onClass('TooltipConsumables', 'MuiTooltip-popper', (tooltipElement) => {
-            this.handleTooltip(tooltipElement);
+        // Subscribe to the shared tooltip observer, which classifies each
+        // popper once and hands every tooltip feature the result
+        tooltipObserver.subscribe('TooltipConsumables', (tooltipElement, eventType, info) => {
+            if (eventType !== 'opened' || !info?.isTooltipPopper) return;
+            this.handleTooltip(tooltipElement, info);
         });
+        this.unregisterObserver = () => tooltipObserver.unsubscribe('TooltipConsumables');
 
         this.isActive = true;
     }
@@ -112,16 +115,16 @@ class TooltipConsumables {
     /**
      * Handle a tooltip element
      * @param {Element} tooltipElement - The tooltip popper element
+     * @param {import('../../core/tooltip-observer.js').TooltipInfo} [info] - Its classification
+     *   (probed here when a caller has none)
      */
-    async handleTooltip(tooltipElement) {
+    async handleTooltip(tooltipElement, info = tooltipObserver.classify(tooltipElement)) {
         // Check if it's an item tooltip
-        const nameElement = tooltipElement.querySelector('div[class*="ItemTooltipText_name"]');
-
-        if (!nameElement) {
+        if (!info.isItemTooltip) {
             return; // Not an item tooltip
         }
 
-        const itemName = nameElement.textContent.trim();
+        const itemName = info.itemName;
 
         // Guard against duplicate processing, keyed on the item name so a reused
         // MUI popper showing a different item is re-processed (mirrors tooltip-prices)
@@ -137,7 +140,7 @@ class TooltipConsumables {
         tooltipElement.dataset.consumablesProcessedItem = itemName;
 
         // Get the item HRID from the tooltip
-        const itemHrid = this.extractItemHrid(tooltipElement);
+        const itemHrid = this.extractItemHrid(tooltipElement, info);
 
         if (!itemHrid) {
             return;
@@ -167,15 +170,15 @@ class TooltipConsumables {
     /**
      * Extract item HRID from tooltip
      * @param {Element} tooltipElement - Tooltip element
+     * @param {import('../../core/tooltip-observer.js').TooltipInfo} [info] - Its classification
      * @returns {string|null} Item HRID or null
      */
-    extractItemHrid(tooltipElement) {
-        const nameElement = tooltipElement.querySelector('div[class*="ItemTooltipText_name"]');
-        if (!nameElement) {
+    extractItemHrid(tooltipElement, info = tooltipObserver.classify(tooltipElement)) {
+        if (!info.isItemTooltip) {
             return null;
         }
 
-        const itemName = nameElement.textContent.trim();
+        const itemName = info.itemName;
 
         const initData = dataManager.getInitClientData();
         if (!initData || !initData.itemDetailMap) {

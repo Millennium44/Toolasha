@@ -6,7 +6,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import domObserver from '../../core/dom-observer.js';
+import tooltipObserver from '../../core/tooltip-observer.js';
 import webSocketHook from '../../core/websocket.js';
 import {
     createMaterialTab,
@@ -252,29 +252,18 @@ async function addToQueue(itemHrid, itemName) {
 /**
  * Track the hovered item HRID via tooltip observer (same strategy as alt-click-navigation).
  * @param {HTMLElement} tooltipElement
+ * @param {import('../../core/tooltip-observer.js').TooltipInfo} [info] - The popper's classification
+ *   (probed here when a caller has none)
  */
-function handleTooltipAppear(tooltipElement) {
+function handleTooltipAppear(tooltipElement, info = tooltipObserver.classify(tooltipElement)) {
     currentItemHrid = null;
     try {
-        const itemLink = tooltipElement.querySelector('a[href*="/items/"]');
-        if (itemLink) {
-            const match = itemLink.getAttribute('href').match(/\/items\/(.+?)(?:\/|$)/);
-            if (match) {
-                currentItemHrid = `/items/${match[1]}`;
-                return;
-            }
+        // An item link or sprite reference, as read once by the observer
+        if (info.itemHrid) {
+            currentItemHrid = info.itemHrid;
+            return;
         }
-        const svgUse = tooltipElement.querySelector('use[href*="items_sprite"]');
-        if (svgUse) {
-            const match = svgUse.getAttribute('href').match(/#(.+)$/);
-            if (match) {
-                currentItemHrid = `/items/${match[1]}`;
-                return;
-            }
-        }
-        const nameEl = tooltipElement.querySelector(
-            '[class*="ItemTooltipText_name"] span, .ItemTooltipText_name__2JAHA span'
-        );
+        const nameEl = info.nameEl?.querySelector('span');
         if (nameEl) {
             const itemName = nameEl.textContent.trim();
             currentItemHrid = `/items/${itemName.toLowerCase().replace(/\s+/g, '_')}`;
@@ -288,9 +277,11 @@ function initialize() {
     if (isActive) return;
     if (!config.getSetting('sellQueue')) return;
 
-    tooltipObserverUnregister = domObserver.onClass('SellQueue-Tooltip', 'MuiTooltip-popper', (el) =>
-        handleTooltipAppear(el)
-    );
+    tooltipObserver.subscribe('SellQueue-Tooltip', (el, eventType, info) => {
+        if (eventType !== 'opened' || !info?.isTooltipPopper) return;
+        handleTooltipAppear(el, info);
+    });
+    tooltipObserverUnregister = () => tooltipObserver.unsubscribe('SellQueue-Tooltip');
 
     contextMenuHandler = (event) => {
         if (!event.shiftKey) return;

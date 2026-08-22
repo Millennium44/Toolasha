@@ -49,6 +49,22 @@ const ANCHORS_KEY = 'marketListingAnchors';
  */
 const ANCHOR_POOL_MAX = 3000;
 
+/**
+ * How far back the personal listing log reaches, measured from the newest
+ * listing in it.
+ *
+ * The log used to keep every listing for life: every batch re-sorted it and
+ * rebuilt the estimation points over it, and a busy trader's grew without
+ * bound. Measured from the newest listing rather than from the clock so a
+ * character that has not listed in a while keeps the history it has until it
+ * lists again. Your own still-active listings are never dropped, whatever
+ * their age.
+ */
+const LISTING_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** At most this many personal listings are kept — the newest; active ones are never dropped */
+const LISTING_RETENTION_MAX = 5000;
+
 /** An order book older than this is dropped from the cache, in memory and as stored */
 const ORDER_BOOK_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -113,6 +129,51 @@ function mergeListingLogs(base, fresh) {
         if (listing && typeof listing.id === 'number') byId.set(listing.id, listing);
     }
     return [...byId.values()].sort((a, b) => a.id - b.id);
+}
+
+/**
+ * When a listing was created, for retention: its recorded `timestamp`, else
+ * its `createdTimestamp`, else 0 (undatable rows sort as the oldest).
+ * @param {Object} listing
+ * @returns {number} Epoch ms
+ */
+function listingTime(listing) {
+    if (Number.isFinite(listing.timestamp)) return listing.timestamp;
+    const parsed = Date.parse(listing.createdTimestamp);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * The personal log with its retention applied: listings older than
+ * LISTING_RETENTION_MS before the newest one go, then, if more than
+ * LISTING_RETENTION_MAX remain, the oldest beyond that cap go too. A listing
+ * whose status is 'active' is kept regardless — it is still on the market,
+ * still highlighted in the book, still matched by id. What is kept is kept
+ * as-is, so estimation over the remaining points is unchanged.
+ * @param {Array<Object>} listings - Sorted by id
+ * @returns {Array<Object>} The same array when nothing is dropped, else a new one sorted by id
+ */
+function applyListingRetention(listings) {
+    if (!Array.isArray(listings) || listings.length === 0) return listings;
+
+    let newest = -Infinity;
+    for (const listing of listings) {
+        const time = listingTime(listing);
+        if (time > newest) newest = time;
+    }
+    const cutoff = newest - LISTING_RETENTION_MS;
+    const kept = listings.filter((listing) => listing.status === 'active' || listingTime(listing) >= cutoff);
+
+    if (kept.length > LISTING_RETENTION_MAX) {
+        const active = kept.filter((listing) => listing.status === 'active');
+        const rest = kept
+            .filter((listing) => listing.status !== 'active')
+            .sort((a, b) => listingTime(b) - listingTime(a))
+            .slice(0, Math.max(0, LISTING_RETENTION_MAX - active.length));
+        return [...active, ...rest].sort((a, b) => a.id - b.id);
+    }
+
+    return kept.length === listings.length ? listings : kept;
 }
 
 class EstimatedListingAge {
@@ -269,11 +330,13 @@ class EstimatedListingAge {
             // Stored is the truth, but anything recorded in memory that storage
             // has not seen yet (another tab's write landed in between, or a save
             // is still in flight) is kept rather than dropped on the floor
-            this.knownListings = this._mergeListings(personal, this.knownListings);
+            const merged = this._mergeListings(personal, this.knownListings);
+            this.knownListings = applyListingRetention(merged);
 
             // An array adopted from before the split still carries its anchor
-            // half; drop it now rather than re-filtering it on every read
-            if (personal.length !== stored.length) {
+            // half; drop it now rather than re-filtering it on every read. A log
+            // that retention just trimmed is written back for the same reason
+            if (personal.length !== stored.length || this.knownListings.length !== merged.length) {
                 await this.saveHistoricalData();
             }
         } catch (error) {
@@ -455,7 +518,9 @@ class EstimatedListingAge {
                     }
                     const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
                     const personal = stored.filter((entry) => entry && entry.itemHrid);
-                    const merged = this._mergeListings(personal, this.knownListings);
+                    // Retention again over the fold, or rows the log had already
+                    // let go of would come back from storage on every save
+                    const merged = applyListingRetention(this._mergeListings(personal, this.knownListings));
                     if (merged.length !== this.knownListings.length) {
                         this.knownListings = merged;
                         this.rebuildEstimationPoints();
@@ -495,7 +560,7 @@ class EstimatedListingAge {
      * @param {Array<Object>} listings - Full listing records, as the log stores them
      */
     async importListings(listings) {
-        this.knownListings = this._mergeListings(this.knownListings, listings);
+        this.knownListings = applyListingRetention(this._mergeListings(this.knownListings, listings));
         this.rebuildEstimationPoints();
         await this.saveHistoricalData();
     }
@@ -900,8 +965,9 @@ class EstimatedListingAge {
             return;
         }
 
-        // Re-sort by ID
+        // Re-sort by ID, then let retention go over the log, the batch included
         this.knownListings.sort((a, b) => a.id - b.id);
+        this.knownListings = applyListingRetention(this.knownListings);
         this.rebuildEstimationPoints();
 
         // Save to storage (debounced)
@@ -1664,6 +1730,9 @@ registerSyncMerge({
 export default estimatedListingAge;
 export {
     ANCHOR_POOL_MAX,
+    LISTING_RETENTION_MS,
+    LISTING_RETENTION_MAX,
+    applyListingRetention,
     ORDER_BOOK_CACHE_MAX_ITEMS,
     ORDER_BOOK_PERSISTED_ROWS,
     LISTING_SAVE_DEBOUNCE_MS,

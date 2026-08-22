@@ -5,7 +5,7 @@
 
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import domObserver from '../../core/dom-observer.js';
+import tooltipObserver from '../../core/tooltip-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import profitCalculator from './profit-calculator.js';
 import alchemyProfitCalculator from './alchemy-profit-calculator.js';
@@ -39,7 +39,6 @@ import { getActionHridFromName } from '../../utils/game-lookups.js';
 import { findProducingAction } from '../../utils/production-index.js';
 
 // Compiled regex patterns (created once, reused for performance)
-const REGEX_ENHANCEMENT_LEVEL = /\+(\d+)$/;
 const REGEX_ENHANCEMENT_STRIP = /\s*\+\d+$/;
 const REGEX_REFINED_STAR = /\s*★/g;
 
@@ -221,10 +220,13 @@ class TooltipPrices {
      * Set up observer to watch for tooltip elements
      */
     setupObserver() {
-        // Register with centralized DOM observer to watch for tooltip poppers
-        this.unregisterObserver = domObserver.onClass('TooltipPrices', 'MuiTooltip-popper', (tooltipElement) => {
-            this.handleTooltip(tooltipElement);
+        // Subscribe to the shared tooltip observer, which classifies each
+        // popper once and hands every tooltip feature the result
+        tooltipObserver.subscribe('TooltipPrices', (tooltipElement, eventType, info) => {
+            if (eventType !== 'opened' || !info?.isTooltipPopper) return;
+            this.handleTooltip(tooltipElement, info);
         });
+        this.unregisterObserver = () => tooltipObserver.unsubscribe('TooltipPrices');
 
         this.isActive = true;
     }
@@ -232,15 +234,13 @@ class TooltipPrices {
     /**
      * Handle a tooltip element
      * @param {Element} tooltipElement - The tooltip popper element
+     * @param {import('../../core/tooltip-observer.js').TooltipInfo} [info] - Its classification
+     *   (probed here when a caller has none)
      */
-    async handleTooltip(tooltipElement) {
-        // Check if it's a collection tooltip
-        const collectionContent = tooltipElement.querySelector('div[class*="Collection_tooltipContent"]');
-        const isCollectionTooltip = !!collectionContent;
-
-        // Check if it's a regular item tooltip
-        const nameElement = tooltipElement.querySelector('div[class*="ItemTooltipText_name"]');
-        const isItemTooltip = !!nameElement;
+    async handleTooltip(tooltipElement, info = tooltipObserver.classify(tooltipElement)) {
+        // Collection tooltip / regular item tooltip, as classified once on arrival
+        const isCollectionTooltip = info.isCollectionTooltip;
+        const isItemTooltip = info.isItemTooltip;
 
         // Drift canary: the popper carries item-tooltip (or collection-tooltip)
         // content, but the class this file keys everything on did not match — a
@@ -267,7 +267,7 @@ class TooltipPrices {
         // it uses THEIR level, not yours. The ability tooltip is text-only, so it
         // is identified by its container class and the name it prints. Opt-in via
         // its own setting, independent of the item-price gates below.
-        const abilityTooltip = tooltipElement.querySelector('[class*="Ability_abilityTooltip"]');
+        const abilityTooltip = info.abilityTooltip;
         if (
             !isCollectionTooltip &&
             !isItemTooltip &&
@@ -320,13 +320,13 @@ class TooltipPrices {
         // Extract item name from appropriate element
         let itemName;
         if (isCollectionTooltip) {
-            const collectionNameElement = tooltipElement.querySelector('div[class*="Collection_name"]');
+            const collectionNameElement = info.collectionNameEl;
             if (!collectionNameElement) {
                 return; // No name element in collection tooltip
             }
             itemName = collectionNameElement.textContent.trim();
         } else {
-            itemName = nameElement.textContent.trim();
+            itemName = info.itemName;
         }
 
         // Guard against duplicate processing for the same item.
@@ -405,7 +405,7 @@ class TooltipPrices {
         // Only check enhancement level for regular item tooltips (not collection tooltips)
         let enhancementLevel = 0;
         if (isItemTooltip && !isCollectionTooltip) {
-            enhancementLevel = this.extractEnhancementLevel(tooltipElement);
+            enhancementLevel = info.enhancementLevel;
         }
 
         // Get market price for the specific enhancement level (0 for base items, 1-20 for enhanced)
@@ -500,20 +500,7 @@ class TooltipPrices {
      * @returns {number} Enhancement level (0 if not enhanced)
      */
     extractEnhancementLevel(tooltipElement) {
-        const nameElement = tooltipElement.querySelector('div[class*="ItemTooltipText_name"]');
-        if (!nameElement) {
-            return 0;
-        }
-
-        const itemName = nameElement.textContent.trim();
-
-        // Match "+X" at end of name
-        const match = itemName.match(REGEX_ENHANCEMENT_LEVEL);
-        if (match) {
-            return parseInt(match[1], 10);
-        }
-
-        return 0;
+        return tooltipObserver.classify(tooltipElement).enhancementLevel;
     }
 
     /**

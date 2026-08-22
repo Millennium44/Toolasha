@@ -4,7 +4,7 @@
  */
 
 import config from '../../core/config.js';
-import domObserver from '../../core/dom-observer.js';
+import tooltipObserver from '../../core/tooltip-observer.js';
 import { navigateToItem } from '../../utils/item-navigation.js';
 
 class AltClickNavigation {
@@ -41,9 +41,11 @@ class AltClickNavigation {
         }
 
         // Watch for tooltip poppers to track current hovered item
-        this.unregisterObserver = domObserver.onClass('AltClickNav', 'MuiTooltip-popper', (tooltipElement) => {
-            this.handleTooltipAppear(tooltipElement);
+        tooltipObserver.subscribe('AltClickNav', (tooltipElement, eventType, info) => {
+            if (eventType !== 'opened' || !info?.isTooltipPopper) return;
+            this.handleTooltipAppear(tooltipElement, info);
         });
+        this.unregisterObserver = () => tooltipObserver.unsubscribe('AltClickNav');
 
         // Create global click handler for Alt+click
         this.clickHandler = (event) => {
@@ -114,44 +116,23 @@ class AltClickNavigation {
     /**
      * Handle tooltip appearance - extract item HRID
      * @param {HTMLElement} tooltipElement - Tooltip popper element
+     * @param {import('../../core/tooltip-observer.js').TooltipInfo} [info] - Its classification
+     *   (probed here when a caller has none)
      */
-    handleTooltipAppear(tooltipElement) {
+    handleTooltipAppear(tooltipElement, info = tooltipObserver.classify(tooltipElement)) {
         // Reset current item
         this.currentItemHrid = null;
 
         try {
-            // Look for item link in tooltip content
-            const itemLink = tooltipElement.querySelector('a[href*="/items/"]');
-
-            if (itemLink) {
-                const href = itemLink.getAttribute('href');
-
-                const match = href.match(/\/items\/(.+?)(?:\/|$)/);
-                if (match) {
-                    this.currentItemHrid = `/items/${match[1]}`;
-                    return;
-                }
-            }
-
-            // Try to find item from SVG icon href
-            const svgUse = tooltipElement.querySelector('use[href*="items_sprite"]');
-            if (svgUse) {
-                const svgHref = svgUse.getAttribute('href');
-
-                // Extract item name from sprite reference: /static/media/items_sprite.hash.svg#item_name
-                const match = svgHref.match(/#(.+)$/);
-                if (match) {
-                    const itemName = match[1];
-                    // Convert sprite item name to HRID format
-                    this.currentItemHrid = `/items/${itemName}`;
-                    return;
-                }
+            // An item link or sprite reference in the tooltip content names the
+            // item outright — read once by the observer
+            if (info.itemHrid) {
+                this.currentItemHrid = info.itemHrid;
+                return;
             }
 
             // Try to extract from ItemTooltipText_name div
-            const nameElement = tooltipElement.querySelector(
-                '.ItemTooltipText_name__2JAHA span, [class*="ItemTooltipText_name"] span'
-            );
+            const nameElement = info.nameEl?.querySelector('span');
             if (nameElement) {
                 const itemName = nameElement.textContent.trim();
 

@@ -8,6 +8,7 @@
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
+import tooltipObserver from '../../core/tooltip-observer.js';
 import { navigateToItem } from '../../utils/item-navigation.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 
@@ -81,11 +82,13 @@ class CollectionNavigation {
             this.attachPanelObserver(existingPanel);
         }
 
-        // Watch for collected item popovers (MuiTooltip containing Collection_actionMenu)
-        const unregisterTooltips = domObserver.onClass('CollectionNavigation', 'MuiTooltip-popper', (tooltipEl) => {
+        // Watch for collected item popovers (MuiTooltip containing Collection_actionMenu),
+        // through the shared tooltip observer rather than a class handler of our own
+        tooltipObserver.subscribe('CollectionNavigation', (tooltipEl, eventType, info) => {
+            if (eventType !== 'opened' || !info?.isTooltipPopper) return;
             this.handleTooltip(tooltipEl);
         });
-        this.unregisterHandlers.push(unregisterTooltips);
+        this.unregisterHandlers.push(() => tooltipObserver.unsubscribe('CollectionNavigation'));
 
         // Process any tiles already in the DOM
         document.querySelectorAll('[class*="Collection_tierGray"]').forEach((tile) => {
