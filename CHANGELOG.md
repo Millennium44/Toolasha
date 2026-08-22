@@ -6,6 +6,16 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Performance pass: observers, timers, lookups, storage, startup
+
+A sweep over what the script does per message, per mutation and per tick in a long session:
+
+- **Observers and timers** that ran all session now run only while they have something to watch — drag-size memory, the labyrinth preview watchdog, the action countdown loop, the tooltip close-watcher; portrait DPS, the marketplace badge, the price-history tab watcher and the guild exchange advisor watch a far smaller slice of the page. Recurring ticks skip hidden tabs and unchanged work (overlay panel, combat DPS opener; consumable alerts throttled to 10 s from battle ticks); bursty handlers coalesce (task cards, alchemy protection, one shared debounced refresh for Cost Summary / Required Materials / Missing Mats); websocket dedup, mention matching and the combat-level sidebar do less per message.
+- **Market order-book bursts**: opening an item no longer re-notifies every price listener, redraws the age/queue/depth displays or rewrites the cached order-book blob once per enhancement level — prices are patched in one batch, listeners hear once, repaint and cache write run once after the burst. Listing events are recorded as a batch with one debounced save; the persisted order-book cache is bounded (top rows, 200 items, 7 days).
+- **Lookups**: name→hrid and "which action makes this item" are memoised indexes rebuilt only when game data is replaced; enhancement production-cost memos survive price updates via versioning instead of being wiped; the drink timer debounces inventory updates and redraws only its known panels; tradable bands are cached per item/level.
+- **Storage traffic**: trade-ledger fills are stored one record per day (migrated once from the old single array) so a fill writes only its day; the dungeon run list is read once and held in memory with backfill bursts coalesced; the combat-stats readability probe is cached and party trackers saved once per wave; lab-sim results are mirrored once per quiet second or at the end of a search.
+- **Startup**: the market-data load starts as soon as the character arrives and overlaps settings and feature startup instead of every feature waiting behind a forced fetch; seven independent features initialise concurrently; the settings panel no longer re-reads its record at startup; task reroll protection reads its records in one batched `storage.getMany`. Bundles are ~160 KB smaller (only `@license`/`@preserve` comments kept, the entrypoint minified with its header intact, mathjs from the minified CDN build).
+
 ### One subtree query per DOM insertion instead of ~150
 
 The central DOM observer used to walk every inserted container once per watched class — some 150 `[class*=…]` queries per chat message, panel swap or React re-render, nearly all of which could never match. It now runs one combined query per container and hands each match to the handlers whose class it carries; debounce bookkeeping is keyed by handler rather than by name, so two registrations under one name no longer share a record.
