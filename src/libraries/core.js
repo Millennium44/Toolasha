@@ -12,6 +12,9 @@ import webSocketHook from '../core/websocket.js';
 import domObserver from '../core/dom-observer.js';
 import dataManager from '../core/data-manager.js';
 import featureRegistry from '../core/feature-registry.js';
+// The error ring buffer the Diagnostics section reads. Namespace-imported so
+// its functions arrive as one object other bundles reach through Core.
+import * as errorLog from '../core/error-log.js';
 import settingsStorage from '../core/settings-storage.js';
 import { settingsGroups, getAllSettingIds, getSettingDefinition } from '../core/settings-schema.js';
 import { setCurrentProfile, getCurrentProfile, clearCurrentProfile } from '../core/profile-manager.js';
@@ -36,6 +39,7 @@ toolashaRoot.Core = {
     domObserver,
     dataManager,
     featureRegistry,
+    errorLog,
     settingsStorage,
     settingsGroups,
     getAllSettingIds,

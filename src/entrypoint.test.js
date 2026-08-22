@@ -69,6 +69,7 @@ beforeAll(async () => {
             },
             performanceMonitor: { mark: () => {} },
             marketAPI: { fetch: async () => null },
+            errorLog: { install: () => true, getEntries: () => [], clear: () => {} },
         },
         Utils: {
             dom: { setupScrollTooltipDismissal: () => {} },

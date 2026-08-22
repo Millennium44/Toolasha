@@ -136,8 +136,23 @@ const Combat = toolashaNamespace.Combat;
 const UI = toolashaNamespace.UI;
 
 // Destructure core modules
-const { storage, config, webSocketHook, domObserver, dataManager, featureRegistry, performanceMonitor, marketAPI } =
-    Core;
+const {
+    storage,
+    config,
+    webSocketHook,
+    domObserver,
+    dataManager,
+    featureRegistry,
+    performanceMonitor,
+    marketAPI,
+    errorLog,
+} = Core;
+
+// Start catching our own errors before anything below can produce one. The
+// hooks only ever record and never throw, so nothing here is made riskier by
+// installing them first; a Core bundle without the module (a stale cache of an
+// older library) just leaves the Diagnostics section's error list empty.
+errorLog?.install?.();
 
 const { setupScrollTooltipDismissal } = Utils.dom;
 const { showToast } = Utils.toast;
@@ -2053,6 +2068,10 @@ if (isCombatSimulatorPage()) {
             console.log('Active timers:', diag.activeTimers);
             return diag;
         },
+        // The errors this script's own code has logged or thrown this session,
+        // newest first — what the settings panel's Diagnostics section shows
+        errors: () => errorLog?.getEntries?.() || [],
+        clearErrors: () => errorLog?.clear?.(),
         // The selector canary, callable directly for a spot-check without
         // waiting for the delayed health pass to run it on its own.
         canary: checkAnchorCanaries,

@@ -29,6 +29,9 @@ const coreExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/core/dom-observer.js')), 'Toolasha.Core.domObserver'],
     [normalize(join(__dirname, 'src/core/data-manager.js')), 'Toolasha.Core.dataManager'],
     [normalize(join(__dirname, 'src/core/feature-registry.js')), 'Toolasha.Core.featureRegistry'],
+    // One ring buffer: the core bundle installs the hooks, the ui bundle's
+    // Diagnostics section reads what they caught
+    [normalize(join(__dirname, 'src/core/error-log.js')), 'Toolasha.Core.errorLog'],
     [normalize(join(__dirname, 'src/core/settings-storage.js')), 'Toolasha.Core.settingsStorage'],
     [normalize(join(__dirname, 'src/core/settings-schema.js')), 'Toolasha.Core'],
     [normalize(join(__dirname, 'src/core/profile-manager.js')), 'Toolasha.Core.profileManager'],

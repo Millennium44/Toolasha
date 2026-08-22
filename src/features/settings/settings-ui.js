@@ -50,6 +50,7 @@ import {
     recordCurrentCharacterGameMode,
     selectIronCowTargets,
 } from './character-modes.js';
+import { createDiagnosticsSection } from './diagnostics-section.js';
 import { exportEverythingJSON, importEverything } from '../../utils/full-backup.js';
 import { downloadFile } from '../../utils/csv-export.js';
 import { askChoice } from '../../utils/choice-dialog.js';
@@ -107,6 +108,7 @@ class SettingsUI {
         this.searchQuery = '';
         this.changedOnly = false;
         this.restoreButton = null;
+        this.diagnosticsSection = null; // The Diagnostics group, built lazily on open
     }
 
     /**
@@ -243,6 +245,9 @@ class SettingsUI {
         if (panel) {
             panel.remove();
         }
+
+        this.diagnosticsSection?.destroy();
+        this.diagnosticsSection = null;
 
         // Clear state
         this.settingsPanel = null;
@@ -553,6 +558,13 @@ class SettingsUI {
 
             container.appendChild(groupContainer);
         }
+
+        // Diagnostics last: not a setting, but the place to look when one of
+        // the settings above stops doing anything. Starts collapsed and draws
+        // nothing until opened.
+        this.diagnosticsSection?.destroy();
+        this.diagnosticsSection = createDiagnosticsSection();
+        container.appendChild(this.diagnosticsSection.element);
     }
 
     /**
@@ -1088,6 +1100,9 @@ class SettingsUI {
             if (collapsed) this.collapsedGroups.add(key);
             else this.collapsedGroups.delete(key);
         }
+        // Diagnostics draws its body on first open, so expand-all has to open it
+        // rather than merely un-collapse it
+        if (!collapsed) this.diagnosticsSection?.open();
         storage.set(COLLAPSED_GROUPS_KEY, [...this.collapsedGroups], 'settings');
     }
 
