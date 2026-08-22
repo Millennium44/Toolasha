@@ -13,7 +13,23 @@
  * completes, a zone_tier_result message is sent to the main thread. The main thread
  * compares XP/hr and profit/hr and responds with zone_tier_decision { skip }. If skip
  * is false, the next tier is enqueued; if true, remaining tiers for that zone are skipped.
+ *
+ * Two things keep a sweep from stalling:
+ *
+ * - A pool slot does not retire while work can still arrive. With early exit the
+ *   queue holds only the lowest tiers at first; the higher ones are pushed later,
+ *   after the main thread's go/skip answer. A slot that left the moment the queue
+ *   was momentarily empty never came back, and the last slot standing ground every
+ *   remaining tier of every zone one at a time — the "94%, a few seconds left" that
+ *   sat there for minutes.
+ * - A child that goes quiet is given up on. A sim worker the browser kills for
+ *   memory posts neither result nor error, and a slot awaiting it would wait for
+ *   ever; after STALL_MS without a message the child is terminated and its zone
+ *   recorded as failed (null), and the sweep carries on.
  */
+
+/** Silence from a child sim worker before it is presumed dead, in ms */
+const STALL_MS = 120_000;
 
 let simWorkerBlobURL = null;
 let taskIdCounter = 0;
@@ -73,97 +89,152 @@ onmessage = async function (event) {
 
         const poolSize = Math.min(maxWorkers, taskQueue.length);
 
-        // Each pool slot processes tasks sequentially, one fresh worker per task
+        // Tasks in flight — running, or awaiting the main thread's go/skip — which
+        // may still push more tasks. Idle slots wait on `wake` rather than leaving
+        // while this is above zero.
+        let inFlight = 0;
+        let wakeWaiters = [];
+        const wake = () => {
+            const waiters = wakeWaiters;
+            wakeWaiters = [];
+            for (const resolve of waiters) resolve();
+        };
+        const waitForWake = () => new Promise((resolve) => wakeWaiters.push(resolve));
+        const enqueue = (task) => {
+            taskQueue.push(task);
+            wake();
+        };
+
+        // With early exit, a zone whose tier failed (or was skipped) has its
+        // remaining tiers written off as null and counted as done, so the bar
+        // reaches 100 and the chain ends cleanly
+        const retireZone = (zoneInfo) => {
+            for (let i = zoneInfo.nextIdx; i < zoneInfo.tiers.length; i++) {
+                results[zoneInfo.tiers[i].index] = null;
+                zoneProgress[zoneInfo.tiers[i].index] = 100;
+            }
+            zoneInfo.nextIdx = zoneInfo.tiers.length;
+            reportProgress();
+        };
+
+        // Run one zone/tier on a fresh child worker; null when it fails or stalls
+        const runTask = (task) => {
+            const taskId = ++taskIdCounter;
+            return new Promise((resolve, reject) => {
+                const worker = new Worker(workerURL);
+                let stallTimer = null;
+                const settle = (fn, value) => {
+                    clearTimeout(stallTimer);
+                    worker.terminate();
+                    fn(value);
+                };
+                const armStall = () => {
+                    clearTimeout(stallTimer);
+                    stallTimer = setTimeout(() => {
+                        settle(
+                            reject,
+                            new Error(`no word from the sim worker for ${Math.round(STALL_MS / 1000)}s — presumed dead`)
+                        );
+                    }, STALL_MS);
+                };
+
+                worker.onmessage = (e) => {
+                    const msg = e.data;
+                    if (msg.taskId !== taskId) return;
+                    armStall();
+
+                    if (msg.type === 'progress') {
+                        zoneProgress[task.index] = msg.progress;
+                        reportProgress();
+                    } else if (msg.type === 'result') {
+                        settle(resolve, msg.simResult);
+                    } else if (msg.type === 'error') {
+                        settle(reject, new Error(msg.error));
+                    }
+                };
+
+                worker.onerror = (error) => {
+                    settle(reject, new Error(error.message || 'Worker error'));
+                };
+
+                armStall();
+                worker.postMessage({
+                    type: 'start_simulation',
+                    taskId,
+                    gameData,
+                    playerDTOs,
+                    zoneHrid: task.zoneHrid,
+                    difficultyTier: task.difficultyTier,
+                    simulationTimeLimit,
+                    extraBuffs,
+                    // An all-zones sweep is a survey of generic fights,
+                    // never one task's monster — so taskDamage stays off
+                    // and task gear does not inflate the zone rankings
+                    isTaskFight: false,
+                });
+            });
+        };
+
+        // Each pool slot takes tasks until the queue is empty AND nothing in
+        // flight can add to it
         const processQueue = async () => {
-            while (taskQueue.length > 0) {
+            for (;;) {
+                if (taskQueue.length === 0) {
+                    if (inFlight === 0) return;
+                    await waitForWake();
+                    continue;
+                }
                 const task = taskQueue.shift();
                 if (!task) continue;
-                const taskId = ++taskIdCounter;
+                inFlight++;
 
-                let simResult = null;
                 try {
-                    simResult = await new Promise((resolve, reject) => {
-                        const worker = new Worker(workerURL);
-
-                        worker.onmessage = (e) => {
-                            const msg = e.data;
-                            if (msg.taskId !== taskId) return;
-
-                            if (msg.type === 'progress') {
-                                zoneProgress[task.index] = msg.progress;
-                                reportProgress();
-                            } else if (msg.type === 'result') {
-                                worker.terminate();
-                                resolve(msg.simResult);
-                            } else if (msg.type === 'error') {
-                                worker.terminate();
-                                reject(new Error(msg.error));
-                            }
-                        };
-
-                        worker.onerror = (error) => {
-                            worker.terminate();
-                            reject(new Error(error.message || 'Worker error'));
-                        };
-
-                        worker.postMessage({
-                            type: 'start_simulation',
-                            taskId,
-                            gameData,
-                            playerDTOs,
-                            zoneHrid: task.zoneHrid,
-                            difficultyTier: task.difficultyTier,
-                            simulationTimeLimit,
-                            extraBuffs,
-                            // An all-zones sweep is a survey of generic fights,
-                            // never one task's monster — so taskDamage stays off
-                            // and task gear does not inflate the zone rankings
-                            isTaskFight: false,
-                        });
-                    });
-                } catch (error) {
-                    console.error(`[MultiWorker] Zone ${task.zoneHrid} T${task.difficultyTier} failed:`, error);
-                }
-
-                results[task.index] = simResult;
-                zoneProgress[task.index] = 100;
-                reportProgress();
-
-                // Early exit: send tier result to main thread and await go/skip decision
-                if (useEarlyExit && simResult) {
-                    const zoneInfo = zoneInfoMap.get(task.zoneHrid);
-                    if (zoneInfo && zoneInfo.nextIdx < zoneInfo.tiers.length) {
-                        postMessage({
-                            type: 'zone_tier_result',
-                            zoneHrid: task.zoneHrid,
-                            tier: task.difficultyTier,
-                            index: task.index,
-                            simResult,
-                        });
-
-                        const skip = await new Promise((resolve) => {
-                            pendingDecisions.set(task.zoneHrid, resolve);
-                        });
-
-                        if (skip) {
-                            // Mark remaining tiers for this zone as skipped (null result)
-                            for (let i = zoneInfo.nextIdx; i < zoneInfo.tiers.length; i++) {
-                                results[zoneInfo.tiers[i].index] = null;
-                                zoneProgress[zoneInfo.tiers[i].index] = 100;
-                            }
-                            zoneInfo.nextIdx = zoneInfo.tiers.length;
-                            reportProgress();
-                        } else {
-                            // Enqueue the next tier
-                            const next = zoneInfo.tiers[zoneInfo.nextIdx];
-                            zoneInfo.nextIdx++;
-                            taskQueue.push({
-                                zoneHrid: task.zoneHrid,
-                                difficultyTier: next.tier,
-                                index: next.index,
-                            });
-                        }
+                    let simResult = null;
+                    try {
+                        simResult = await runTask(task);
+                    } catch (error) {
+                        console.error(`[MultiWorker] Zone ${task.zoneHrid} T${task.difficultyTier} failed:`, error);
                     }
+
+                    results[task.index] = simResult;
+                    zoneProgress[task.index] = 100;
+                    reportProgress();
+
+                    if (!useEarlyExit) continue;
+                    const zoneInfo = zoneInfoMap.get(task.zoneHrid);
+                    if (!zoneInfo || zoneInfo.nextIdx >= zoneInfo.tiers.length) continue;
+
+                    if (!simResult) {
+                        // Nothing to compare the next tier against: the zone is done
+                        retireZone(zoneInfo);
+                        continue;
+                    }
+
+                    // Early exit: send tier result to main thread and await go/skip decision
+                    postMessage({
+                        type: 'zone_tier_result',
+                        zoneHrid: task.zoneHrid,
+                        tier: task.difficultyTier,
+                        index: task.index,
+                        simResult,
+                    });
+                    const skip = await new Promise((resolve) => {
+                        pendingDecisions.set(task.zoneHrid, resolve);
+                    });
+
+                    if (skip) {
+                        retireZone(zoneInfo);
+                    } else {
+                        // Enqueue the next tier
+                        const next = zoneInfo.tiers[zoneInfo.nextIdx];
+                        zoneInfo.nextIdx++;
+                        enqueue({ zoneHrid: task.zoneHrid, difficultyTier: next.tier, index: next.index });
+                    }
+                } finally {
+                    inFlight--;
+                    // Let idle slots re-check: either there is new work, or the
+                    // last chain just ended and they can retire
+                    wake();
                 }
             }
         };

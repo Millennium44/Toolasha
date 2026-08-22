@@ -72,8 +72,38 @@ export async function runAllZonesSimulation(params, onProgress) {
             if (msg.type === 'progress') {
                 if (onProgress) onProgress(Math.round(msg.progress));
             } else if (msg.type === 'zone_tier_result') {
-                // Calculate XP/hr and profit/hr for this tier and decide whether to skip the next
+                // Calculate XP/hr and profit/hr for this tier and decide whether to skip the next.
+                // Whatever happens in here, a decision must go back: a chain in the
+                // coordinator is parked on it, and a missing answer is a sweep that never ends
                 const { zoneHrid, simResult } = msg;
+                let skip = false;
+                try {
+                    skip = decideSkip(zoneHrid, simResult);
+                } catch (error) {
+                    console.error('[AllZones] Tier comparison failed; simming the next tier anyway:', error);
+                }
+                worker.postMessage({ type: 'zone_tier_decision', zoneHrid, skip });
+            } else if (msg.type === 'all_zones_result') {
+                worker.terminate();
+                cleanup();
+                if (onProgress) onProgress(100);
+                resolve(msg.results);
+            } else if (msg.type === 'error') {
+                worker.terminate();
+                cleanup();
+                reject(new Error(msg.error));
+            }
+        };
+
+        /**
+         * Whether the next tier of a zone is worth simming: not when both XP/hr
+         * and profit/hr fell against the tier before it
+         * @param {string} zoneHrid
+         * @param {Object} simResult
+         * @returns {boolean}
+         */
+        const decideSkip = (zoneHrid, simResult) => {
+            {
                 const simHours = (simResult.simulatedTime || 0) / (3600 * 1e9) || hours;
 
                 // Sum XP across all players and all skills
@@ -106,17 +136,7 @@ export async function runAllZonesSimulation(params, onProgress) {
 
                 prevResults.push(currMetrics);
                 tierResultsByZone.set(zoneHrid, prevResults);
-
-                worker.postMessage({ type: 'zone_tier_decision', zoneHrid, skip });
-            } else if (msg.type === 'all_zones_result') {
-                worker.terminate();
-                cleanup();
-                if (onProgress) onProgress(100);
-                resolve(msg.results);
-            } else if (msg.type === 'error') {
-                worker.terminate();
-                cleanup();
-                reject(new Error(msg.error));
+                return skip;
             }
         };
 
