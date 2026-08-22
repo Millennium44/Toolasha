@@ -121,10 +121,6 @@ The hidden same-origin frame the websocket hook borrows a native getter from is 
 
 Levels per day were ranked across the whole Total Level board, so a rank-1199 player took the gold medal simply because a lower level costs less XP. On level boards only the top 100 are ranked (and given a "Rank ↑ in" forecast); everyone else still sees their measured rate, marked with a dash instead of a place. XP boards are unchanged.
 
-### Total Level rate ranks stay among the top 100
-
-Levels per day were ranked across the whole Total Level board, so a rank-1199 player took the gold medal simply because a lower level costs less XP. On level boards only the top 100 are ranked (and given a "Rank ↑ in" forecast); everyone else still sees their measured rate, marked with a dash instead of a place. XP boards are unchanged.
-
 ### Compact unit badges keep off the mini units' names
 
 On the narrow MiniUnit tiles the two-value badge wrapped and covered the name along the top. Mini
