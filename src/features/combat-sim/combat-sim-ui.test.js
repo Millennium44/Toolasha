@@ -2917,7 +2917,7 @@ describe('the Bestiary route planner under the all-zones table', () => {
         expect(rows[1].slice(0, 3)).toEqual(['2', 'Hive T2', '0:30']);
         expect(rows[1][3]).toMatch(/^(≈[0-9,]+|—)$/);
         expect(rows[1][4]).toBe('+0');
-        expect(rows[1][4]).toContain('partial: Bee 0/1');
+        expect(rows[1][5]).toContain('partial: Bee 0/1');
 
         const footer = ui.panel.querySelector('#mwi-csim-bestiary-plan-footer').textContent;
         expect(footer).toContain('3 points');
