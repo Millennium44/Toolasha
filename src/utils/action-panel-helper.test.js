@@ -3,7 +3,12 @@
  * Tests for Action Panel Display Helper
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { findActionInput, attachInputListeners, performInitialUpdate } from './action-panel-helper.js';
+import {
+    findActionInput,
+    attachInputListeners,
+    performInitialUpdate,
+    refreshActionPanels,
+} from './action-panel-helper.js';
 
 beforeEach(() => {
     document.body.innerHTML = '';
@@ -20,6 +25,28 @@ function buildPanel() {
     document.body.appendChild(panel);
     return { panel, input };
 }
+
+describe('refreshActionPanels', () => {
+    test('re-runs the callback for every mounted panel with its current input value', () => {
+        const a = buildPanel();
+        a.panel.className = 'SkillActionDetail_skillActionDetail__x';
+        a.input.value = '12';
+        const b = buildPanel();
+        b.panel.className = 'SkillActionDetail_skillActionDetail__x';
+        b.input.value = '7';
+        // A panel with no input is skipped rather than called with undefined
+        const bare = document.createElement('div');
+        bare.className = 'SkillActionDetail_skillActionDetail__x';
+        document.body.appendChild(bare);
+
+        const calls = [];
+        refreshActionPanels((panel, value) => calls.push([panel, value]));
+        expect(calls).toEqual([
+            [a.panel, '12'],
+            [b.panel, '7'],
+        ]);
+    });
+});
 
 describe('findActionInput', () => {
     test('finds the input nested inside the maxActionCountInput container', () => {

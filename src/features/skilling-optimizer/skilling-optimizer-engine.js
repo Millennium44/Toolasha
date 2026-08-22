@@ -368,9 +368,12 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
         for (const bp of sortedBreakpoints) {
             let bestItem = null;
             let bestScore = baseline;
+            let bestEffectiveLevel = bp;
 
             for (const candidate of candidates) {
-                // Refined items can't be enhanced below +10
+                // Refined items are never worth enhancing below +10, so they are
+                // scored at +10 even in lower buckets — bestEffectiveLevel keeps
+                // what was actually scored, since it can differ from the bucket
                 const effectiveLevel = candidate.hrid.includes('_refined') ? Math.max(bp, 10) : bp;
                 const score = scoreCandidate(
                     candidate.hrid,
@@ -385,24 +388,25 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
                 if (score > bestScore) {
                     bestScore = score;
                     bestItem = candidate;
+                    bestEffectiveLevel = effectiveLevel;
                 }
             }
 
             progression.push({
                 breakpoint: bp,
+                enhancementLevel: bestItem ? bestEffectiveLevel : bp,
                 itemHrid: bestItem?.hrid ?? null,
                 itemName: bestItem?.name ?? null,
                 score: bestScore,
                 xpScore: (() => {
                     if (!bestItem) return xpBaseline;
                     if (goal === 'xp') return bestScore;
-                    const eBp = bestItem.hrid.includes('_refined') ? Math.max(bp, 10) : bp;
                     return scoreCandidate(
                         bestItem.hrid,
                         locationHrid,
                         skillName,
                         'xp',
-                        eBp,
+                        bestEffectiveLevel,
                         playerLevel,
                         selectedActionHrids
                     );
@@ -410,13 +414,12 @@ export function optimizeSkill(skillName, playerLevel, selectedActionHrids = null
                 goldScore: (() => {
                     if (!bestItem) return goldBaseline;
                     if (goal === 'gold') return bestScore;
-                    const eBp = bestItem.hrid.includes('_refined') ? Math.max(bp, 10) : bp;
                     return scoreCandidate(
                         bestItem.hrid,
                         locationHrid,
                         skillName,
                         'gold',
-                        eBp,
+                        bestEffectiveLevel,
                         playerLevel,
                         selectedActionHrids
                     );

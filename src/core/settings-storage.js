@@ -56,6 +56,11 @@ const DEFAULT_REWRITES = [
 /** Bump the suffix when a new batch is added to DEFAULT_REWRITES */
 const DEFAULT_REWRITE_FLAG_KEY = 'settings_default_rewrites_v1';
 
+// Task data stored per character under a `_<charId>` suffix, outside the
+// settings map (task-reroll-protection.js / task-auto-reroll.js) — copied along
+// with the map so "make this alt like my main" carries the task lists too
+const TASK_CHARACTER_SCOPED_PREFIXES = ['taskProtectedHrids', 'taskAutoRerollHrids'];
+
 class SettingsStorage {
     constructor() {
         this.storageKey = 'script_settingsMap'; // Legacy global key (used as template)
@@ -446,10 +451,22 @@ class SettingsStorage {
             ? knownCharacters.filter((c) => targetIds.includes(c.id))
             : knownCharacters.filter((c) => c.id !== this.currentCharacterId);
 
+        const taskScopedValues = await Promise.all(
+            TASK_CHARACTER_SCOPED_PREFIXES.map((prefix) =>
+                storage.getJSON(`${prefix}_${this.currentCharacterId}`, this.storageArea, null)
+            )
+        );
+
         for (const character of targets) {
             if (character.id === this.currentCharacterId) continue;
             const characterKey = `${this.storageKey}_${character.id}`;
             await storage.setJSON(characterKey, settings, this.storageArea, true);
+
+            for (let i = 0; i < TASK_CHARACTER_SCOPED_PREFIXES.length; i++) {
+                if (taskScopedValues[i] === null) continue;
+                const targetKey = `${TASK_CHARACTER_SCOPED_PREFIXES[i]}_${character.id}`;
+                await storage.setJSON(targetKey, taskScopedValues[i], this.storageArea, true);
+            }
             syncedCount++;
         }
 

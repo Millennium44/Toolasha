@@ -4,10 +4,16 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import { numberFormatter } from '../../utils/formatters.js';
 import { calculateMaterialRequirements, isArtisanTeaOutOfStock } from '../../utils/material-calculator.js';
-import { findActionInput, attachInputListeners, performInitialUpdate } from '../../utils/action-panel-helper.js';
+import {
+    findActionInput,
+    attachInputListeners,
+    performInitialUpdate,
+    refreshActionPanels,
+} from '../../utils/action-panel-helper.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
 
 class RequiredMaterials {
@@ -15,6 +21,7 @@ class RequiredMaterials {
         this.initialized = false;
         this.observers = [];
         this.processedPanels = new WeakSet();
+        this.actionsUpdatedHandler = null;
     }
 
     initialize() {
@@ -27,6 +34,12 @@ class RequiredMaterials {
             () => this.processActionPanels()
         );
         this.observers.push(unregister);
+
+        // The Q'd/Missing figures read the action queue; a finite queue change
+        // must redraw a panel already on screen
+        this.actionsUpdatedHandler = () =>
+            refreshActionPanels((panel, value) => this.updateRequiredMaterials(panel, value));
+        dataManager.on('actions_updated', this.actionsUpdatedHandler);
 
         // Process existing panels
         this.processActionPanels();
@@ -246,6 +259,11 @@ class RequiredMaterials {
         this.observers.forEach((unregister) => unregister());
         this.observers = [];
         this.processedPanels = new WeakSet();
+
+        if (this.actionsUpdatedHandler) {
+            dataManager.off('actions_updated', this.actionsUpdatedHandler);
+            this.actionsUpdatedHandler = null;
+        }
 
         document.querySelectorAll('.mwi-required-materials').forEach((el) => el.remove());
 

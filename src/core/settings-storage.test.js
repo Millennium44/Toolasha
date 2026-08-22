@@ -160,6 +160,22 @@ describe('SettingsStorage copy-from-character', () => {
         settingsStorage.currentCharacterName = 'Alice';
     });
 
+    test('syncing to other characters carries the per-character task lists along', async () => {
+        stored.set('json:known_character_ids', [
+            { id: 'alice', name: 'Alice' },
+            { id: 'bob', name: 'Bob' },
+        ]);
+        stored.set('json:taskProtectedHrids_alice', ['/actions/a']);
+        // No auto-reroll list for alice: bob's stays untouched
+
+        const count = await settingsStorage.syncSettingsToAllCharacters({ featureX: { isTrue: true } });
+
+        expect(count).toBe(1);
+        expect(stored.get('json:script_settingsMap_bob')).toEqual({ featureX: { isTrue: true } });
+        expect(stored.get('json:taskProtectedHrids_bob')).toEqual(['/actions/a']);
+        expect(stored.has('json:taskAutoRerollHrids_bob')).toBe(false);
+    });
+
     test('copies a source character map onto the current character', async () => {
         const bobMap = { featureX: { isTrue: true }, mode: { value: 'fast' } };
         stored.set('json:script_settingsMap_bob', bobMap);

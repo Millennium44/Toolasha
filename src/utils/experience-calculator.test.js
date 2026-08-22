@@ -34,7 +34,35 @@ vi.mock('./action-context.js', () => ({
 
 // Use the real efficiency + profit-helpers modules — they're small, pure, and already
 // covered elsewhere, so composing through them keeps this test honest about the formula.
-const { calculateExpPerHour, calculateMultiLevelProgress } = await import('./experience-calculator.js');
+const { calculateExpPerHour, calculateMultiLevelProgress, calculateLevelFromActions } =
+    await import('./experience-calculator.js');
+
+describe('calculateLevelFromActions', () => {
+    const table = { 1: 0, 2: 100, 3: 300, 4: 700, 5: 1500 };
+
+    test('feeding actionsNeeded back in lands exactly on the target level', () => {
+        const forward = calculateMultiLevelProgress(1, 0, 4, 10, 6, 25, table);
+        const back = calculateLevelFromActions(1, 0, forward.actionsNeeded, 10, 6, 25, table);
+        expect(back.finalLevel).toBe(4);
+        expect(back.percentToNext).toBe(0);
+        expect(back.timeElapsed).toBeCloseTo(forward.timeNeeded, 6);
+    });
+
+    test('a budget that stops mid-level reports the fraction through it', () => {
+        // Level 1→2 needs 100 xp at 25 xp/action and 0% efficiency: 4 actions. Two in: halfway
+        const r = calculateLevelFromActions(1, 0, 2, 0, 6, 25, table);
+        expect(r.finalLevel).toBe(1);
+        expect(r.percentToNext).toBeCloseTo(50);
+        expect(r.xpGained).toBeCloseTo(50);
+        expect(r.timeElapsed).toBeCloseTo(12);
+    });
+
+    test('running off the end of the table stops at the last level', () => {
+        const r = calculateLevelFromActions(4, 700, 1_000_000, 0, 6, 25, table);
+        expect(r.finalLevel).toBe(5);
+        expect(r.percentToNext).toBe(100);
+    });
+});
 
 beforeEach(() => {
     state.actionDetails = null;

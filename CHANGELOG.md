@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Upstream fixes through 2.94.0
+
+Ported from Celasha/Toolasha: the marketplace Age column skips the "Outside current tradable range" separator row instead of shifting every age after it; `guild_updated` is exempt from the websocket dedup so back-to-back guild changes are not dropped; Missing Mats, Required Materials and Cost Summary redraw when the action queue changes; dragged modals are clamped on-screen (a saved off-screen offset is healed); "Copy settings to other characters" also carries the per-character task protection and auto-reroll lists; typing a quantity into the queue input shows the level it would reach; the Skilling Optimizer labels refined items at the +10 they were scored at; the Combat Summary setting says what it does (rates in Battle Info, not "on return").
+
 ### All Zones: Bestiary ties sort by the first point
 
 Sorting the Bestiary column orders equal points — the long tail of 0.0 rows — by how soon the first point lands, soonest first.

@@ -271,6 +271,17 @@ describe('content-hash deduplication', () => {
         expect(handler).toHaveBeenCalledTimes(2);
     });
 
+    test('guild_updated repeats with identical openings are processed every time', () => {
+        const handler = vi.fn();
+        webSocketHook.on('guild_updated', handler);
+        const message = msg('guild_updated', { guild: { id: 'same-guild', name: 'Same Name', xp: 1 } });
+
+        webSocketHook.processMessage(message);
+        webSocketHook.processMessage(message);
+
+        expect(handler).toHaveBeenCalledTimes(2);
+    });
+
     test('cleanupProcessedMessages trims down to the newest 50 entries once the cap is crossed', () => {
         // Cleanup triggers the instant size exceeds 100 (each message here has unique
         // content, so every one is added); the 101st push crosses the threshold and

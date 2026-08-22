@@ -1200,7 +1200,12 @@ class SkillingSimulatorUI {
                 const bpSpan = document.createElement('span');
                 bpSpan.style.cssText =
                     'font-size: 10px; color: rgba(255,255,255,0.35); flex-shrink: 0; min-width: 32px;';
-                bpSpan.textContent = `+${entry.breakpoint}`;
+                // A refined item is scored at +10 however low the bucket; say the level it was scored at
+                bpSpan.textContent = `+${entry.enhancementLevel ?? entry.breakpoint}`;
+                if ((entry.enhancementLevel ?? entry.breakpoint) !== entry.breakpoint) {
+                    bpSpan.title =
+                        'Refined equipment is scored at +10 at least — below that it is never worth enhancing';
+                }
                 entryRow.appendChild(bpSpan);
 
                 const isRepeat = entry.itemHrid === prevItemHrid;

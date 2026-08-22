@@ -403,6 +403,11 @@ class WebSocketHook {
             // count — so the content hash would drop the second and the treasure
             // ledger would undercount every repeat opening
             messageType === 'loot_opened' ||
+            // Guild updates open with the same guild id and name every time;
+            // what changed (xp, level, member counts) sits past the hash
+            // window, so a quick pair would drop the second and leave the
+            // guild panels a step behind
+            messageType === 'guild_updated' ||
             messageType === 'leaderboard_updated';
 
         if (!skipDedup) {

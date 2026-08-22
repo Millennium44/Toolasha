@@ -7,7 +7,12 @@ import dataManager from '../../core/data-manager.js';
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import webSocketHook from '../../core/websocket.js';
-import { findActionInput, attachInputListeners, performInitialUpdate } from '../../utils/action-panel-helper.js';
+import {
+    findActionInput,
+    attachInputListeners,
+    performInitialUpdate,
+    refreshActionPanels,
+} from '../../utils/action-panel-helper.js';
 import {
     calculateMaterialRequirements,
     calculateEnhancementMaterialRequirements,
@@ -38,6 +43,7 @@ let cleanupObserver = null;
 const currentMaterialsTabs = [];
 let domObserverUnregister = null;
 let enhancementDomObserverUnregister = null;
+let actionsUpdatedHandler = null;
 let processedPanels = new WeakSet();
 let processedEnhancingPanels = new WeakSet();
 let enhancingPanelWatchers = [];
@@ -87,6 +93,11 @@ export function initialize() {
         (panel) => processEnhancingPanel(panel)
     );
 
+    // The button's missing list reads the action queue; a finite queue change
+    // must redraw a panel already on screen
+    actionsUpdatedHandler = () => refreshActionPanels((panel, value) => updateButtonForPanel(panel, value));
+    dataManager.on('actions_updated', actionsUpdatedHandler);
+
     // Process existing panels
     processActionPanels();
     processExistingEnhancingPanels();
@@ -99,6 +110,10 @@ export function cleanup() {
     if (domObserverUnregister) {
         domObserverUnregister();
         domObserverUnregister = null;
+    }
+    if (actionsUpdatedHandler) {
+        dataManager.off('actions_updated', actionsUpdatedHandler);
+        actionsUpdatedHandler = null;
     }
 
     if (enhancementDomObserverUnregister) {

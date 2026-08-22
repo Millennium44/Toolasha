@@ -77,3 +77,19 @@ export function performInitialUpdate(input, updateCallback) {
     }
     return false;
 }
+
+/**
+ * Re-run updateCallback for every mounted action panel with its current input
+ * value. For data events (dataManager's 'actions_updated') that invalidate a
+ * panel's queue-aware figures without the input changing, so the display does
+ * not wait for an incidental click, edit or remount to catch up.
+ * @param {Function} updateCallback - (panel, value) => void, the shape attachInputListeners takes
+ */
+export function refreshActionPanels(updateCallback) {
+    const panels = document.querySelectorAll('[class*="SkillActionDetail_skillActionDetail"]');
+    panels.forEach((panel) => {
+        const inputField = findActionInput(panel);
+        if (!inputField) return;
+        updateCallback(panel, inputField.value);
+    });
+}

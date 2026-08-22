@@ -139,7 +139,76 @@ export function calculateMultiLevelProgress(
     return { actionsNeeded: totalActions, timeNeeded: totalTime };
 }
 
+/**
+ * The level and xp reached after a number of actions — the reverse of
+ * calculateMultiLevelProgress, walking the same per-level progressive
+ * efficiency forward against a fixed action budget so the two agree (its
+ * actionsNeeded fed back in lands exactly on its target level).
+ * @param {number} currentLevel - Current skill level
+ * @param {number} currentXP - Current experience points
+ * @param {number} actionCount - Actions to spend
+ * @param {number} baseEfficiency - Starting efficiency percentage
+ * @param {number} actionTime - Seconds per action
+ * @param {number} xpPerAction - Modified XP per action
+ * @param {Object} levelExperienceTable - XP requirements per level
+ * @returns {{finalLevel: number, finalXP: number, xpGained: number, timeElapsed: number, percentToNext: number}}
+ */
+export function calculateLevelFromActions(
+    currentLevel,
+    currentXP,
+    actionCount,
+    baseEfficiency,
+    actionTime,
+    xpPerAction,
+    levelExperienceTable
+) {
+    let remainingActions = actionCount;
+    let level = currentLevel;
+    let xp = currentXP;
+    let timeElapsed = 0;
+
+    while (remainingActions > 0 && levelExperienceTable[level + 1] !== undefined) {
+        const xpForNextLevel = levelExperienceTable[level + 1];
+        const xpNeeded = xpForNextLevel - xp;
+
+        // Progressive efficiency: +1% per level gained during the grind
+        const levelsGained = level - currentLevel;
+        const progressiveEfficiency = baseEfficiency + levelsGained;
+        const efficiencyMultiplier = 1 + progressiveEfficiency / 100;
+
+        const xpPerPerformedAction = xpPerAction * efficiencyMultiplier;
+        const baseActionsForLevel = Math.ceil(xpNeeded / xpPerPerformedAction);
+        const actionsToClearLevel = Math.round(baseActionsForLevel * efficiencyMultiplier);
+
+        if (actionsToClearLevel <= remainingActions) {
+            remainingActions -= actionsToClearLevel;
+            timeElapsed += baseActionsForLevel * actionTime;
+            level += 1;
+            xp = xpForNextLevel;
+        } else {
+            const fractionUsed = remainingActions / actionsToClearLevel;
+            xp += xpNeeded * fractionUsed;
+            timeElapsed += baseActionsForLevel * actionTime * fractionUsed;
+            remainingActions = 0;
+        }
+    }
+
+    const xpForLevel = levelExperienceTable[level] || 0;
+    const xpForNextLevel = levelExperienceTable[level + 1];
+    const percentToNext =
+        xpForNextLevel !== undefined ? ((xp - xpForLevel) / (xpForNextLevel - xpForLevel)) * 100 : 100;
+
+    return {
+        finalLevel: level,
+        finalXP: xp,
+        xpGained: xp - currentXP,
+        timeElapsed,
+        percentToNext,
+    };
+}
+
 export default {
     calculateExpPerHour,
     calculateMultiLevelProgress,
+    calculateLevelFromActions,
 };
