@@ -28,7 +28,7 @@ The Revive / Invincible / Insanity lines keep the count on the line and list the
 
 ### Enhancement path: a refined piece is mirrored with plain copies
 
-The Philosopher's Mirror plan now tells the primary lineage (the refined item being upgraded) from the copies consumed beside it — the game takes a copy of the *base* item one level below the primary, which need not be refined — so the breakdown lists and prices the consumed copies as the unrefined item at their levels, and the shopping list names one refined base plus the plain copies. Plain items are unchanged.
+The Philosopher's Mirror plan now tells the primary lineage (the refined item being upgraded) from the copies consumed beside it — the game takes a copy of the _base_ item one level below the primary, which need not be refined — so the breakdown lists and prices the consumed copies as the unrefined item at their levels, and the shopping list names one refined base plus the plain copies. Plain items are unchanged.
 
 ### House tab: pin every room's bill for the Tester shop
 
