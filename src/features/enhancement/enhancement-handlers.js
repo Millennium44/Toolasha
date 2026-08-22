@@ -305,8 +305,11 @@ async function handleEnhancementResult(action, _data) {
         // Track protection cost if protection item exists in action data
         // Protection items are consumed when:
         // 1. Level would have decreased (Mirror of Protection prevents decrease, level stays same)
+        // A session started from the attempt in hand has no baseline: the first
+        // attempt cannot tell a protected failure from a success, so it is not
+        // charged a protection either
         const protectionItemHrid = getProtectionItemHrid(action);
-        if (protectionItemHrid) {
+        if (protectionItemHrid && !justCreatedNewSession) {
             // Only track if we're at a level where protection might be used
             const protectFrom = currentSession.protectFrom || 0;
             const shouldTrack = previousLevel >= Math.max(2, protectFrom);

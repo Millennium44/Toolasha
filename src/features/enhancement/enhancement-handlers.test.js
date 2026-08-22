@@ -53,7 +53,7 @@ vi.mock('./enhancement-tracker.js', () => ({
         recordFailure: vi.fn(async (...a) => state.calls.push(['failure', ...a])),
         trackCoinCost: async () => {},
         trackMaterialCost: async () => {},
-        trackProtectionCost: async () => {},
+        trackProtectionCost: vi.fn(async (...a) => state.calls.push(['prot', ...a])),
         finalizeCurrentSession: async () => {},
     },
 }));
@@ -82,6 +82,8 @@ describe('a run already going when the script comes up', () => {
     test('gets a session from the attempt in hand, and records from the next one on', async () => {
         // Count 78 with no session and no pending start: the page loaded mid-run
         await state.handlers.action_completed(attempt(5, 78));
+        // Started, and not charged a protection: level 5 → 5 on the first attempt is
+        // only the baseline, not a protected failure
         expect(state.calls).toEqual([['start', '/items/enchanted_cloak_refined', 5, 15, 2]]);
 
         // The next attempt has a baseline and is recorded
