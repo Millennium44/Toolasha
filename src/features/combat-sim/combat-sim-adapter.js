@@ -15,6 +15,7 @@ import marketAPI from '../../api/marketplace.js';
 import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
 import { DUNGEON_CHEST_ENTRY_KEYS, DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import { partyLevelGaps } from '../../utils/dungeon-level-gap.js';
+import { combatLevel } from '../../utils/combat-level.js';
 import { COMBAT_SCROLL_BUFF_TYPES } from '../../utils/combat-scroll-buffs.js';
 import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
@@ -744,19 +745,24 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
 
 /**
  * Calculate combat level for level gap debuff.
+ *
+ * A simulated party has no native `combatDetails.combatLevel`, so it is derived
+ * from the same formula the game uses (utils/combat-level.js) and floored the
+ * same way — the debuff compares the integer Combat Levels the game shows, not
+ * the unfloored figure.
  * @param {Object} dto - Player DTO
  * @returns {number} Combat level
  */
 function calcCombatLevel(dto) {
-    return Math.floor(
-        0.1 *
-            (dto.staminaLevel +
-                dto.intelligenceLevel +
-                dto.attackLevel +
-                dto.defenseLevel +
-                Math.max(dto.meleeLevel, dto.rangedLevel, dto.magicLevel)) +
-            0.5 * Math.max(dto.attackLevel, dto.defenseLevel, dto.meleeLevel, dto.rangedLevel, dto.magicLevel)
-    );
+    return combatLevel({
+        stamina: dto.staminaLevel,
+        intelligence: dto.intelligenceLevel,
+        attack: dto.attackLevel,
+        defense: dto.defenseLevel,
+        melee: dto.meleeLevel,
+        ranged: dto.rangedLevel,
+        magic: dto.magicLevel,
+    }).level;
 }
 
 /**

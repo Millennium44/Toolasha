@@ -1233,6 +1233,18 @@ function registerFeatures() {
             healthCheck: () =>
                 injectedInto('[class*="NavigationBar_currentExperience"][style*="width"]', '.mwi-exp-percentage'),
         },
+        {
+            key: 'combatLevelProgress',
+            name: 'Decimal Combat Level',
+            category: 'UI',
+            module: UI.combatLevelProgress,
+            async: false,
+            healthCheck: () =>
+                injectedInto(
+                    '[class*="NavigationBar_nav__"]:has(svg[aria-label="navigationBar.combat"]) [class*="NavigationBar_level"]',
+                    '.mwi-combat-level-precise'
+                ),
+        },
         { key: 'externalLinks', name: 'External Links', category: 'UI', module: UI.externalLinks, async: false },
         {
             key: 'hideLabyrinthBadge',

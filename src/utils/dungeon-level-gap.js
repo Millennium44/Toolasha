@@ -2,9 +2,16 @@
  * The level gap debuff
  *
  * A character fighting alongside people far above their level takes a penalty to
- * what drops for them. It starts once somebody in the party is 20% above them
- * and deepens fast: three points of penalty for every point of ratio past that,
- * capped at 90%.
+ * what drops for them. It starts once somebody in the party is both 20% above
+ * them *and* at least ten combat levels above them — the Game Guide states both
+ * conditions, and at low levels they disagree: 40 against 49 is a ratio of 1.225
+ * but a gap of only nine, and draws no penalty. Past that it deepens fast: three
+ * points of penalty for every point of ratio past the fifth, capped at 90%.
+ *
+ * The levels compared are the game's own floored Combat Levels — the integer it
+ * shows in the sidebar and sends as `combatDetails.combatLevel` — which is the
+ * only Combat Level the client defines anywhere; there is no evidence of an
+ * unfloored variant feeding this check.
  *
  * ## Why this is its own file
  *
@@ -35,6 +42,9 @@
 /** Below this ratio between the party's top level and yours there is no penalty */
 export const LEVEL_GAP_RATIO = 1.2;
 
+/** And fewer whole levels than this below the top is no penalty either, whatever the ratio */
+export const LEVEL_GAP_MIN_LEVELS = 10;
+
 /** However far below the party you are, the penalty stops here */
 export const MAX_LEVEL_GAP_DEBUFF = 0.9;
 
@@ -51,7 +61,7 @@ export function levelGapDebuff(level, topLevel) {
     if (!(level > 0) || !(topLevel > 0)) return null;
 
     const ratio = topLevel / level;
-    if (ratio <= LEVEL_GAP_RATIO) return 0;
+    if (ratio <= LEVEL_GAP_RATIO || topLevel - level < LEVEL_GAP_MIN_LEVELS) return 0;
 
     // Floored to whole percent before scaling, matching the game's own rounding —
     // an unfloored version drifts by a fraction of a percent at every ratio

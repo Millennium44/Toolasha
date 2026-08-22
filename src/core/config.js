@@ -292,6 +292,13 @@ class Config {
                 description: 'Shows XP progress percentage in left sidebar',
                 settingKey: 'expPercentage',
             },
+            combatLevelProgress: {
+                enabled: true,
+                name: 'Decimal Combat Level',
+                category: 'UI',
+                description: 'Shows the unfloored Combat Level formula value in the left sidebar',
+                settingKey: 'combatLevelProgress',
+            },
             largeNumberFormatting: {
                 enabled: true,
                 name: 'Use K/M/B Number Formatting',

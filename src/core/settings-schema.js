@@ -2858,6 +2858,13 @@ export const settingsGroups = {
                 type: 'checkbox',
                 default: true,
             },
+            combatLevelProgress: {
+                id: 'combatLevelProgress',
+                label: 'Left sidebar: Show decimal Combat Level',
+                type: 'checkbox',
+                default: true,
+                help: "Shows the unrounded Combat Level formula value from current whole skill levels (e.g. 133.2). MWI's native sidebar floors it to an integer for display. The XP-weighted progress toward the next Combat Level lives in the Combat Level panel.",
+            },
             itemIconLevel: {
                 id: 'itemIconLevel',
                 label: 'Bottom left corner of icons: Show equipment level',

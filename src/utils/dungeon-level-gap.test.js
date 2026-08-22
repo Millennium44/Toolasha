@@ -20,6 +20,15 @@ describe('one character against the party', () => {
         expect(levelGapDebuff(100, 130)).toBeCloseTo(-0.3, 6);
     });
 
+    test('but not until the gap is ten whole levels, however the ratio reads at low levels', () => {
+        // 40 against 49 is a ratio of 1.225 — past the fifth — but only nine levels
+        expect(levelGapDebuff(40, 49)).toBe(0);
+        // one more level and both conditions hold: ratio 1.25, 0.05 past the threshold
+        expect(levelGapDebuff(40, 50)).toBeCloseTo(-0.15, 6);
+        // and a ten-level gap that is not a fifth is still nothing
+        expect(levelGapDebuff(100, 110)).toBe(0);
+    });
+
     test('and it stops at ninety percent rather than reaching everything', () => {
         expect(levelGapDebuff(100, 160)).toBe(-MAX_LEVEL_GAP_DEBUFF);
         expect(levelGapDebuff(10, 1000)).toBe(-MAX_LEVEL_GAP_DEBUFF);

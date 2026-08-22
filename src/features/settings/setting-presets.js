@@ -103,6 +103,7 @@ const ESSENTIALS = [
     'panelSizeMemory',
     'tabReorder',
     'expPercentage',
+    'combatLevelProgress',
     'itemIconLevel',
     'showsKeyInfoInIcon',
     'mapIndex',
