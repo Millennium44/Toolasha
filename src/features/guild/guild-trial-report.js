@@ -112,6 +112,14 @@ export function playerLine(player, support, rank) {
         const empty = support?.emptyManaMs || 0;
         parts.push(`ran dry ${outs}×${empty > 0 ? ` (~${shortTime(empty)})` : ''}`);
     }
+    const starved = support?.starvedOuts || 0;
+    if (starved > 0) {
+        const ms = support?.starvedMs || 0;
+        parts.push(`couldn’t afford a cast ${starved}×${ms > 0 ? ` (~${shortTime(ms)})` : ''}`);
+    } else {
+        const low = support?.lowManaOuts || 0;
+        if (low > 0) parts.push(`ran low on mana ${low}×`);
+    }
 
     return parts.join(' · ');
 }

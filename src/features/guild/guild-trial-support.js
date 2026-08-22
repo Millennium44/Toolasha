@@ -165,6 +165,8 @@ export function newSupportState() {
         lastMP: {},
         lastAtk: {},
         emptySince: {},
+        lowSince: {},
+        starvedSince: {},
         unattributedHealing: 0,
         regenHealing: 0,
         // Health that came back with a player, rather than to one. See the
@@ -200,7 +202,51 @@ function emptyRow() {
         manaOuts: 0,
         emptyManaMs: 0,
         outOfMana: false,
+        // Low before empty: the bar under a fifth of its maximum, and the bar
+        // under the cheapest ability this player has been seen casting — the
+        // moment the rotation actually stalls, which for a 400-mana caster is
+        // long before zero. Same shape as the dry spell: spells, time, live flag
+        lowManaOuts: 0,
+        lowManaMs: 0,
+        lowMana: false,
+        starvedOuts: 0,
+        starvedMs: 0,
+        starved: false,
+        /** Cheapest mana cost among the non-aura abilities seen cast; null until one is */
+        castFloor: null,
     };
+}
+
+/** Under this fraction of maximum mana is "low" */
+export const LOW_MANA_FRACTION = 0.2;
+
+/**
+ * Advance one spell-shaped counter: a transition into `active` counts once,
+ * time accrues while active, and leaving it closes the spell.
+ * @param {Object} row - Support row
+ * @param {Object} sinceMap - Per-index start stamps for this spell kind
+ * @param {string} index - Player slot
+ * @param {boolean} active - Whether the condition holds this tick
+ * @param {number|null} at - Tick time
+ * @param {{flag: string, outs: string, ms: string}} keys - Row field names
+ */
+function foldSpell(row, sinceMap, index, active, at, keys) {
+    if (active && !row[keys.flag]) {
+        row[keys.outs] += 1;
+        row[keys.flag] = true;
+        sinceMap[index] = at;
+    } else if (!active && row[keys.flag]) {
+        const since = sinceMap[index];
+        if (Number.isFinite(since) && Number.isFinite(at)) row[keys.ms] += Math.max(0, at - since);
+        row[keys.flag] = false;
+        delete sinceMap[index];
+    } else if (active && Number.isFinite(at)) {
+        const since = sinceMap[index];
+        if (Number.isFinite(since)) {
+            row[keys.ms] += Math.max(0, at - since);
+            sinceMap[index] = at;
+        }
+    }
 }
 
 /**
@@ -225,8 +271,12 @@ export function foldSupportRow(target, row) {
                 merged.lowestHealthFraction =
                     merged.lowestHealthFraction === null ? value : Math.min(merged.lowestHealthFraction, value);
             }
-        } else if (key === 'outOfMana') {
-            merged.outOfMana = Boolean(value);
+        } else if (key === 'outOfMana' || key === 'lowMana' || key === 'starved') {
+            merged[key] = Boolean(value);
+        } else if (key === 'castFloor') {
+            if (value !== null && Number.isFinite(value)) {
+                merged.castFloor = merged.castFloor === null ? value : Math.min(merged.castFloor, value);
+            }
         } else if (key === 'castsByAbility') {
             merged.castsByAbility = { ...merged.castsByAbility };
             for (const [ability, casts] of Object.entries(value || {})) {
@@ -314,22 +364,25 @@ export function foldSupportTick(state, pMap, actions = {}, detailMap, at = null)
             // A dry spell begins when the bar reaches zero and ends when it
             // leaves; the time between is charged to whoever was empty
             const empty = mana <= 0;
-            if (empty && !row.outOfMana) {
-                row.manaOuts += 1;
-                row.outOfMana = true;
-                state.emptySince[index] = at;
-            } else if (!empty && row.outOfMana) {
-                const since = state.emptySince[index];
-                if (Number.isFinite(since) && Number.isFinite(at)) row.emptyManaMs += Math.max(0, at - since);
-                row.outOfMana = false;
-                delete state.emptySince[index];
-            } else if (empty && Number.isFinite(at)) {
-                const since = state.emptySince[index];
-                if (Number.isFinite(since)) {
-                    row.emptyManaMs += Math.max(0, at - since);
-                    state.emptySince[index] = at;
-                }
-            }
+            foldSpell(row, state.emptySince, index, empty, at, {
+                flag: 'outOfMana',
+                outs: 'manaOuts',
+                ms: 'emptyManaMs',
+            });
+
+            // Low: under a fifth of the bar. Starved: under the cheapest
+            // ability this player casts, which is when the rotation stalls —
+            // only once a cast has been seen, so an auto-attacker is never
+            // "starved" of a spell they do not use
+            const maxMana = Number(player?.mMP);
+            const low = Number.isFinite(maxMana) && maxMana > 0 && mana / maxMana < LOW_MANA_FRACTION;
+            foldSpell(row, state.lowSince, index, low, at, { flag: 'lowMana', outs: 'lowManaOuts', ms: 'lowManaMs' });
+            const starved = row.castFloor !== null && row.castFloor > 0 && mana < row.castFloor;
+            foldSpell(row, state.starvedSince, index, starved, at, {
+                flag: 'starved',
+                outs: 'starvedOuts',
+                ms: 'starvedMs',
+            });
         }
 
         const attacks = Number(player?.atkCounter);
@@ -343,6 +396,14 @@ export function foldSupportTick(state, pMap, actions = {}, detailMap, at = null)
                 row.casts += 1;
                 if (action && action !== 'idle' && action !== 'auto') {
                     row.castsByAbility[action] = (row.castsByAbility[action] || 0) + 1;
+                    // The cheapest thing they actually cast sets the starvation
+                    // line. Auras are cast once and cost a lot; they are not
+                    // the rotation and would put the line far too high
+                    const map = detailMap || dataManager.getInitClientData?.()?.abilityDetailMap || {};
+                    const cost = Number(map?.[action]?.manaCost);
+                    if (Number.isFinite(cost) && cost > 0 && !/_aura$/.test(action)) {
+                        row.castFloor = row.castFloor === null ? cost : Math.min(row.castFloor, cost);
+                    }
                     // A real ability, whatever it does — the on-cast proc rung
                     // below wants the actor, and procs fire "on ability cast"
                     casters.push(index);
@@ -480,6 +541,8 @@ export function summariseSupport(state, names = {}, deaths = {}) {
             manaSpent: sum('manaSpent'),
             casts: sum('casts'),
             manaOuts: sum('manaOuts'),
+            lowManaOuts: sum('lowManaOuts'),
+            starvedOuts: sum('starvedOuts'),
             revives: sum('revives'),
         },
         unattributedHealing: state?.unattributedHealing || 0,
@@ -530,6 +593,12 @@ export function supportCoverage() {
         manaOuts:
             'measured — the mana bar reaching zero, counted per dry spell rather than per tick, ' +
             'with the time spent empty between the tick it emptied on and the tick it recovered on',
+        lowManaOuts:
+            'measured — the mana bar under a fifth of its maximum, counted per spell with the time spent there',
+        starvedOuts:
+            'measured — the mana bar under the cheapest non-aura ability this player has been seen casting ' +
+            '(its manaCost in the game data), counted per spell with the time spent there; nothing until a ' +
+            'cast has been seen',
         damageMitigated:
             'not carried: no payload states a hit before armour, resistance or parry. ' +
             'The mitigation ratings are on each loadout instead, and damage actually taken is above',

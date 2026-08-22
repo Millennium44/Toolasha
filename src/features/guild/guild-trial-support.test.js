@@ -338,6 +338,72 @@ describe('running out of mana', () => {
     });
 });
 
+describe('low mana and a stalled rotation', () => {
+    const costed = {
+        ...detailMap,
+        '/abilities/entangle': { abilityEffects: [{ effectType: '/ability_effect_types/damage' }], manaCost: 120 },
+        '/abilities/rejuvenate': { abilityEffects: [{ effectType: '/ability_effect_types/heal' }], manaCost: 200 },
+        '/abilities/fierce_aura': {
+            abilityEffects: [{ effectType: '/ability_effect_types/buff', buffs: [{ typeHrid: '/x' }] }],
+            manaCost: 1000,
+        },
+    };
+
+    test('low is under a fifth of the bar, counted per spell with its time', () => {
+        const state = newSupportState();
+        foldSupportTick(state, { 0: unit({ cMP: 500, mMP: 500 }) }, {}, costed, 0);
+        foldSupportTick(state, { 0: unit({ cMP: 90, mMP: 500 }) }, {}, costed, 1000);
+        foldSupportTick(state, { 0: unit({ cMP: 80, mMP: 500 }) }, {}, costed, 2000);
+        foldSupportTick(state, { 0: unit({ cMP: 300, mMP: 500 }) }, {}, costed, 3000);
+        foldSupportTick(state, { 0: unit({ cMP: 50, mMP: 500 }) }, {}, costed, 4000);
+        const row = state.players[0];
+        expect(row.lowManaOuts).toBe(2);
+        expect(row.lowManaMs).toBe(2000);
+        expect(row.lowMana).toBe(true);
+        // Never empty, so no dry spell
+        expect(row.manaOuts).toBe(0);
+    });
+
+    test('starved is under the cheapest non-aura ability seen cast', () => {
+        const state = newSupportState();
+        // Casts: an aura (ignored for the floor), entangle (120), rejuvenate (200) → floor 120
+        foldSupportTick(state, { 0: unit({ cMP: 500, atkCounter: 1 }) }, { 0: '/abilities/fierce_aura' }, costed, 0);
+        foldSupportTick(state, { 0: unit({ cMP: 500, atkCounter: 2 }) }, { 0: '/abilities/fierce_aura' }, costed, 500);
+        foldSupportTick(state, { 0: unit({ cMP: 480, atkCounter: 3 }) }, { 0: '/abilities/rejuvenate' }, costed, 1000);
+        foldSupportTick(state, { 0: unit({ cMP: 460, atkCounter: 4 }) }, { 0: '/abilities/entangle' }, costed, 1500);
+        expect(state.players[0].castFloor).toBe(120);
+
+        // 119 is under the floor: starved, though not low (500 max → low is <100) and not empty
+        foldSupportTick(state, { 0: unit({ cMP: 119, atkCounter: 4 }) }, {}, costed, 2000);
+        expect(state.players[0].starved).toBe(true);
+        expect(state.players[0].starvedOuts).toBe(1);
+        expect(state.players[0].lowMana).toBe(false);
+        foldSupportTick(state, { 0: unit({ cMP: 300, atkCounter: 4 }) }, {}, costed, 2500);
+        expect(state.players[0].starved).toBe(false);
+        expect(state.players[0].starvedMs).toBe(500);
+    });
+
+    test('no cast seen means no starvation line, however low the bar', () => {
+        const state = newSupportState();
+        foldSupportTick(state, { 0: unit({ cMP: 500 }) }, {}, costed, 0);
+        foldSupportTick(state, { 0: unit({ cMP: 5 }) }, {}, costed, 1000);
+        expect(state.players[0].castFloor).toBeNull();
+        expect(state.players[0].starvedOuts).toBe(0);
+        expect(state.players[0].lowManaOuts).toBe(1);
+    });
+
+    test('the totals and the coverage carry both', () => {
+        const state = newSupportState();
+        foldSupportTick(state, { 0: unit({ cMP: 500 }) }, {}, costed, 0);
+        foldSupportTick(state, { 0: unit({ cMP: 5 }) }, {}, costed, 1000);
+        const summary = summariseSupport(state);
+        expect(summary.totals.lowManaOuts).toBe(1);
+        expect(summary.totals.starvedOuts).toBe(0);
+        expect(supportCoverage().starvedOuts).toMatch(/cheapest/);
+        expect(supportCoverage().lowManaOuts).toMatch(/fifth/);
+    });
+});
+
 describe('summariseSupport', () => {
     test('rows carry names and the totals add up', () => {
         const state = newSupportState();

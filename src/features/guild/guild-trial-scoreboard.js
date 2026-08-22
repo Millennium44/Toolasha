@@ -116,6 +116,28 @@ export function classTagHTML(verdict) {
 }
 
 /**
+ * A live mana marker for a row: dry, starved of their cheapest cast, or low.
+ * @param {Object|null|undefined} support - The player's support row
+ * @returns {string} HTML, or '' when their mana is fine or unknown
+ */
+export function manaMarkerHTML(support) {
+    if (!support) return '';
+    const chip = (text, color, title) =>
+        `<span title="${title}" style="color:${color}; font-size:9px; letter-spacing:0.3px; border:1px solid ${color}; ` +
+        `border-radius:3px; padding:0 3px; margin-left:4px; opacity:0.9; white-space:nowrap;">${text}</span>`;
+    if (support.outOfMana) return chip('⚡ dry', '#f87171', 'Mana is at zero right now.');
+    if (support.starved) {
+        return chip(
+            '⚡ can’t cast',
+            WARN,
+            `Mana is under the cheapest ability they cast (${support.castFloor}) — the rotation has stalled.`
+        );
+    }
+    if (support.lowMana) return chip('⚡ low', DIM, 'Mana is under a fifth of the bar.');
+    return '';
+}
+
+/**
  * The damage type a player fights with, from their captured loadout.
  * @param {string} name - Player name
  * @param {Object} [capture] - The loadout store, injectable for tests
@@ -800,9 +822,19 @@ class GuildTrialScoreboard {
         // off the roster, and rebuilding it forty times a redraw would be forty
         // passes over the same participants
         const classes = guildTrialAbilities.classes?.() || {};
+        // Live mana state by name, for the marker beside a caster who is dry,
+        // starved or low right now
+        const manaByName = new Map(
+            (breakdown?.support?.players || []).map((row) => [
+                String(row.name || '')
+                    .trim()
+                    .toLowerCase(),
+                row,
+            ])
+        );
 
         const list = rows.length
-            ? rows.map((row) => this._rowHTML(row, classes)).join('')
+            ? rows.map((row) => this._rowHTML(row, classes, manaByName)).join('')
             : estimated
               ? estimate.players
                     .map((row, position) =>
@@ -853,14 +885,30 @@ class GuildTrialScoreboard {
 
         // One line rather than a tab of its own: running dry is worth knowing
         // and is not worth a page
-        const dry = (breakdown?.support?.players || []).filter((row) => row.manaOuts > 0);
-        const manaLine = dry.length
-            ? `<div style="color:${DIM}; font-size:10px; margin-top:4px;">Ran out of mana: ` +
-              dry
-                  .map((row) => `${row.name} ${row.manaOuts}×`)
-                  .slice(0, 4)
-                  .join(', ') +
-              '</div>'
+        const supportRows = breakdown?.support?.players || [];
+        const nameList = (rows, field) =>
+            rows
+                .sort((a, b) => (b[field] || 0) - (a[field] || 0))
+                .slice(0, 4)
+                .map((row) => `${row.name} ${row[field]}×`)
+                .join(', ');
+        const dry = supportRows.filter((row) => row.manaOuts > 0);
+        const starvedRows = supportRows.filter((row) => row.starvedOuts > 0);
+        const lowRows = supportRows.filter((row) => row.lowManaOuts > 0);
+        const manaBits = [];
+        if (dry.length) manaBits.push(`Ran out of mana: ${nameList([...dry], 'manaOuts')}`);
+        if (starvedRows.length) {
+            manaBits.push(
+                `<span title="Mana under the cheapest ability they have been seen casting — the rotation stalls there, before the bar is empty.">Couldn’t afford a cast: ${nameList([...starvedRows], 'starvedOuts')}</span>`
+            );
+        }
+        if (lowRows.length) {
+            manaBits.push(
+                `<span title="Mana under a fifth of the bar.">Low on mana: ${nameList([...lowRows], 'lowManaOuts')}</span>`
+            );
+        }
+        const manaLine = manaBits.length
+            ? `<div style="color:${DIM}; font-size:10px; margin-top:4px;">${manaBits.join(' · ')}</div>`
             : '';
 
         const buttons =
@@ -884,21 +932,19 @@ class GuildTrialScoreboard {
      * @param {Object} [classes] - Lowercased name → verdict, from `guildTrialAbilities.classes()`
      * @returns {string} HTML
      */
-    _rowHTML(row, classes = {}) {
+    _rowHTML(row, classes = {}, manaByName = null) {
         // Every part of the drawing is the shared board's; what stays here is
-        // the trial's own two facts about a row — the colour comes from the
-        // player's captured damage type, and the marker beside the name comes
-        // from what they were seen casting this trial
+        // the trial's own facts about a row — the colour comes from the
+        // player's captured damage type, the marker beside the name comes
+        // from what they were seen casting this trial, and a mana marker says
+        // when their bar is empty, under their cheapest cast, or low right now
         const type = damageTypeOf(row.name);
+        const key = String(row.name || '')
+            .trim()
+            .toLowerCase();
         return boardRowHTML(row, {
             color: type ? TYPE_COLORS[type] : ACCENT,
-            tagHTML: classTagHTML(
-                classes?.[
-                    String(row.name || '')
-                        .trim()
-                        .toLowerCase()
-                ]
-            ),
+            tagHTML: classTagHTML(classes?.[key]) + manaMarkerHTML(manaByName?.get?.(key)),
         });
     }
 }

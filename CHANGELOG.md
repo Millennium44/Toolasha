@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial per-player board: low mana and a stalled rotation
+
+Beyond "ran out of mana", each trial caster now gets two more mana readings off the tick stream: **low** (under a fifth of the bar) and **starved** (under the cheapest non-aura ability they have been seen casting — where the rotation actually stalls, long before zero), each counted per spell with the time spent there. The board's footnote lists who, a live ⚡ marker beside a name says dry / can't cast / low right now, the pasted report says "couldn't afford a cast 3×", and the recorder and exports carry the fields.
+
 ### All Zones sim: a Bestiary column
 
 The All Zones results table gains **Bestiary pts/day**: the simulated kills per monster in each zone against your Bestiary's defeated counts, scored on the game's own formula (1 point at the first kill, +2 at 10, +3 at 100 …), with when the first point lands and a hover listing each monster's count, rate and next threshold; the best zone is badged and the column sorts and exports. The Bestiary is fetched the way its own tab fetches it when the table is drawn without it, and the column fills in when it lands; the data manager keeps `monsters_updated`.
