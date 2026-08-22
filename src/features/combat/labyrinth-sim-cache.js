@@ -122,6 +122,8 @@ const COMBAT_CACHE_STORAGE_VERSION = 1;
 const COMBAT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** Newest entries kept when the persisted set is written back out */
 const COMBAT_CACHE_MAX_ENTRIES = 200;
+/** Quiet time after a sim result before the persisted mirror is rebuilt and written */
+const COMBAT_CACHE_FLUSH_MS = 1000;
 const DECISION_MIN_TRIALS = 40;
 /** A room sitting exactly on the bar never decides; this is where it gives up */
 const DECISION_MAX_TRIALS = 4000;
@@ -714,16 +716,15 @@ export const simCacheMethods = {
     },
 
     /**
-     * Write combatCache's contents back out to the 'labyrinth' store, capped to
-     * the most recent `COMBAT_CACHE_MAX_ENTRIES`.
+     * Note that a combat sim result is ready to be mirrored to storage.
      *
-     * Called after every completed sim rather than read-modify-written from
-     * storage: `_combatCacheMeta` plus `combatCache` are already the full
-     * in-memory state, loaded entries included, so a fresh read is never
-     * needed and there is nothing for two quick sims to race over.
-     *
-     * Not awaited by callers — `storage.set` is itself debounced, so a burst
-     * of sims collapses into one write a few seconds after the last of them.
+     * A search sims a room at a time and used to rebuild and hand the whole
+     * list — up to `COMBAT_CACHE_MAX_ENTRIES` results — to the store after every
+     * one of them; `storage.set` debounced the actual writes, but the list was
+     * serialised per result regardless. Now the entry only marks the mirror
+     * dirty, and `_flushCombatCache` builds the list once per quiet window
+     * (`COMBAT_CACHE_FLUSH_MS` after the last result) or when a sim queue
+     * drains, whichever comes first.
      * @param {string} cacheKey - As built by buildCombatCacheKey
      * @param {Object} _result - The sim result just cached (already sitting in
      *   combatCache under cacheKey by the time this runs; read from there
@@ -735,6 +736,36 @@ export const simCacheMethods = {
             computedAt: Date.now(),
             snapshotFingerprint: this._snapshotContentFingerprint(),
         });
+
+        this._combatCacheDirty = true;
+        if (this._combatCacheFlushTimer) return;
+        this._combatCacheFlushTimer = setTimeout(() => {
+            this._combatCacheFlushTimer = null;
+            this._flushCombatCache();
+        }, COMBAT_CACHE_FLUSH_MS);
+    },
+
+    /**
+     * Write combatCache's contents out to the 'labyrinth' store, capped to the
+     * most recent `COMBAT_CACHE_MAX_ENTRIES`, if anything changed since the
+     * last write.
+     *
+     * Built from memory rather than read-modify-written from storage:
+     * `_combatCacheMeta` plus `combatCache` are already the full in-memory
+     * state, loaded entries included, so a fresh read is never needed and
+     * there is nothing for two quick sims to race over.
+     *
+     * Not awaited by callers — `storage.set` is itself debounced, so the write
+     * lands a few seconds after the flush.
+     * @returns {boolean} Whether a write was issued
+     */
+    _flushCombatCache() {
+        if (this._combatCacheFlushTimer) {
+            clearTimeout(this._combatCacheFlushTimer);
+            this._combatCacheFlushTimer = null;
+        }
+        if (!this._combatCacheDirty) return false;
+        this._combatCacheDirty = false;
 
         const entries = [];
         for (const [key, meta] of this._combatCacheMeta) {
@@ -758,6 +789,7 @@ export const simCacheMethods = {
         }
 
         writeScoped(COMBAT_CACHE_STORAGE_KEY, { version: COMBAT_CACHE_STORAGE_VERSION, entries }, COMBAT_CACHE_STORE);
+        return true;
     },
 
     /**
@@ -774,6 +806,13 @@ export const simCacheMethods = {
      */
     _clearPersistedCombatCache() {
         this._combatCacheMeta.clear();
+        // A flush still pending would rebuild the list from whatever the Map
+        // holds and write it over the empty file
+        if (this._combatCacheFlushTimer) {
+            clearTimeout(this._combatCacheFlushTimer);
+            this._combatCacheFlushTimer = null;
+        }
+        this._combatCacheDirty = false;
         writeScoped(
             COMBAT_CACHE_STORAGE_KEY,
             { version: COMBAT_CACHE_STORAGE_VERSION, entries: [] },
@@ -979,6 +1018,9 @@ export const simCacheMethods = {
             }
         } finally {
             this.simRunning = false;
+            // The queue draining is the end of a search; land its results now
+            // rather than a flush window later
+            this._flushCombatCache();
             this.refreshAutomationRunningState?.();
         }
     },

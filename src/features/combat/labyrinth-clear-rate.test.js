@@ -305,6 +305,10 @@ describe('persisted combat cache', () => {
         labyrinthClearRate._combatCacheMeta.clear();
         labyrinthClearRate._combatCacheLoaded = false;
         labyrinthClearRate._snapshotFingerprint = null;
+        // A flush left pending by an earlier test must not fire into this one
+        clearTimeout(labyrinthClearRate._combatCacheFlushTimer);
+        labyrinthClearRate._combatCacheFlushTimer = null;
+        labyrinthClearRate._combatCacheDirty = false;
     });
 
     afterEach(() => {
@@ -316,6 +320,8 @@ describe('persisted combat cache', () => {
         const result = simResult();
         labyrinthClearRate.combatCache.set(key, result);
         labyrinthClearRate._persistCombatCacheEntry(key, result);
+        // What the end of a search does; a lone entry otherwise lands a second later
+        labyrinthClearRate._flushCombatCache();
 
         // Simulate a reload: the in-memory Map starts empty again
         labyrinthClearRate.combatCache.clear();
@@ -334,6 +340,8 @@ describe('persisted combat cache', () => {
         const result = simResult();
         labyrinthClearRate.combatCache.set(key, result);
         labyrinthClearRate._persistCombatCacheEntry(key, result);
+        // What the end of a search does; a lone entry otherwise lands a second later
+        labyrinthClearRate._flushCombatCache();
         labyrinthClearRate.combatCache.clear();
         labyrinthClearRate._combatCacheLoaded = false;
 
@@ -393,6 +401,8 @@ describe('persisted combat cache', () => {
         labyrinthClearRate._invalidateIfInputsChanged();
         labyrinthClearRate.combatCache.set(key, result);
         labyrinthClearRate._persistCombatCacheEntry(key, result);
+        // What the end of a search does; a lone entry otherwise lands a second later
+        labyrinthClearRate._flushCombatCache();
         expect(db.map.get('labyrinth:labyrinthCombatSimCache_me').entries).toHaveLength(1);
 
         // Swap gear and re-check — this is the same path a real loadout
@@ -411,6 +421,8 @@ describe('persisted combat cache', () => {
         labyrinthClearRate._invalidateIfInputsChanged();
         labyrinthClearRate.combatCache.set(key, result);
         labyrinthClearRate._persistCombatCacheEntry(key, result);
+        // What the end of a search does; a lone entry otherwise lands a second later
+        labyrinthClearRate._flushCombatCache();
 
         // Mirrors what the precision-input handler does: only the in-memory
         // Map is wiped, because a different mode simply uses a different key
@@ -429,6 +441,7 @@ describe('persisted combat cache', () => {
             const result = simResult({ roomLevel: i });
             labyrinthClearRate.combatCache.set(key, result);
             labyrinthClearRate._persistCombatCacheEntry(key, result);
+            // Each second of quiet flushes the entries so far, as a real search would
             vi.advanceTimersByTime(1000);
         }
 

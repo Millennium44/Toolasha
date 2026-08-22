@@ -8,6 +8,8 @@ import { describe, test, expect, afterEach, vi } from 'vitest';
 
 /** Backing store for the mocked config's settings */
 const settings = vi.hoisted(() => ({ map: new Map() }));
+/** Every write the mocked storage was handed, as `[key, value]` */
+const storageWrites = vi.hoisted(() => ({ list: [] }));
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -16,11 +18,24 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getSkills: () => null, characterData: null, getInitClientData: () => null },
+    default: {
+        getSkills: () => null,
+        characterData: null,
+        getInitClientData: () => null,
+        getCurrentCharacterId: () => 'me',
+    },
 }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {}, onSocketEvent: () => {} } }));
 vi.mock('../../core/storage.js', () => ({
-    default: { get: async () => null, getJSON: async () => null, set: async () => true, setJSON: async () => true },
+    default: {
+        get: async () => null,
+        getJSON: async () => null,
+        set: async (key, value) => {
+            storageWrites.list.push([key, value]);
+            return true;
+        },
+        setJSON: async () => true,
+    },
 }));
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
     buildGameDataPayload: () => ({}),
@@ -48,7 +63,79 @@ const {
 } = await import('./labyrinth-sim-cache.js');
 const { buildAccuracyExport } = await import('./labyrinth-accuracy-export.js');
 
-afterEach(() => settings.map.clear());
+afterEach(() => {
+    settings.map.clear();
+    storageWrites.list = [];
+});
+
+describe('the persisted combat cache mirror', () => {
+    /** A stand-in for the clear-rate module's state, the mixin's `this` */
+    const context = () => ({
+        combatCache: new Map(),
+        _combatCacheMeta: new Map(),
+        _snapshotContentFingerprint: () => 'fp',
+        ...simCacheMethods,
+    });
+
+    test('a burst of sim results is written once, after the quiet window', () => {
+        vi.useFakeTimers();
+        try {
+            const ctx = context();
+            for (const key of ['a', 'b', 'c']) {
+                ctx.combatCache.set(key, { clearChance: 0.5, computedAt: 1, fromPersistedCache: true });
+                ctx._persistCombatCacheEntry(key, ctx.combatCache.get(key));
+            }
+            expect(storageWrites.list).toHaveLength(0);
+
+            vi.advanceTimersByTime(999);
+            expect(storageWrites.list).toHaveLength(0);
+            vi.advanceTimersByTime(1);
+
+            expect(storageWrites.list).toHaveLength(1);
+            const [, stored] = storageWrites.list[0];
+            expect(stored.entries.map((entry) => entry.key).sort()).toEqual(['a', 'b', 'c']);
+            // Display-only fields are stripped before the record is written
+            expect(stored.entries[0].result).toEqual({ clearChance: 0.5 });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a flush at the end of a search lands the results at once, and a clean flush writes nothing', () => {
+        vi.useFakeTimers();
+        try {
+            const ctx = context();
+            ctx.combatCache.set('a', { clearChance: 0.5 });
+            ctx._persistCombatCacheEntry('a', ctx.combatCache.get('a'));
+
+            expect(ctx._flushCombatCache()).toBe(true);
+            expect(storageWrites.list).toHaveLength(1);
+
+            // The pending timer was consumed by the flush; nothing is written twice
+            vi.advanceTimersByTime(5000);
+            expect(storageWrites.list).toHaveLength(1);
+            expect(ctx._flushCombatCache()).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('clearing the mirror cancels a pending flush so it cannot overwrite the empty file', () => {
+        vi.useFakeTimers();
+        try {
+            const ctx = context();
+            ctx.combatCache.set('a', { clearChance: 0.5 });
+            ctx._persistCombatCacheEntry('a', ctx.combatCache.get('a'));
+            ctx._clearPersistedCombatCache();
+
+            vi.advanceTimersByTime(5000);
+            expect(storageWrites.list).toHaveLength(1);
+            expect(storageWrites.list[0][1].entries).toEqual([]);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
 
 describe('the sim stop rule', () => {
     test('defaults to one percentage point either side, bounded in trials', () => {

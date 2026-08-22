@@ -10,7 +10,14 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const store = vi.hoisted(() => ({ saved: null, tracking: null, actions: [], writes: [], unavailable: false }));
+const store = vi.hoisted(() => ({
+    saved: null,
+    tracking: null,
+    actions: [],
+    writes: [],
+    probes: 0,
+    unavailable: false,
+}));
 
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../../core/data-manager.js', () => ({
@@ -34,6 +41,7 @@ vi.mock('../../core/storage.js', () => ({
         get: read,
         getJSON: read,
         tryGet: async (key) => {
+            store.probes++;
             if (store.unavailable) return null;
             const value = await read(key);
             return value == null ? { found: false, value: null } : { found: true, value };
@@ -48,7 +56,7 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 
-const { default: collector } = await import('./combat-stats-data-collector.js');
+const { default: collector, _resetReadProbe } = await import('./combat-stats-data-collector.js');
 
 const ZONE = '/actions/combat/enchanted_fortress';
 const MINUTES = 60 * 1000;
@@ -76,7 +84,9 @@ beforeEach(() => {
     store.tracking = null;
     store.actions = [];
     store.writes = [];
+    store.probes = 0;
     store.unavailable = false;
+    _resetReadProbe();
     collector.isInitialized = false;
     collector.latestCombatData = null;
 });
@@ -124,6 +134,44 @@ describe('the trackers are not written over on the strength of a failed read', (
         await collector.saveConsumableTracking();
 
         expect(store.writes[0][1].actualConsumed).toEqual({ '/items/tea': 4 });
+    });
+
+    test('a probe that succeeded stands in for the next few seconds of saves', async () => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(new Date('2026-08-03T01:00:00Z'));
+            await collector.saveConsumableTracking();
+            await collector.saveConsumableTracking();
+            expect(store.probes).toBe(1);
+            expect(store.writes).toHaveLength(6);
+
+            vi.setSystemTime(new Date('2026-08-03T01:00:06Z'));
+            await collector.saveConsumableTracking();
+            expect(store.probes).toBe(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a failed probe is not cached, so the very next save asks again', async () => {
+        store.unavailable = true;
+        await collector.saveConsumableTracking();
+        await collector.saveConsumableTracking();
+        expect(store.probes).toBe(2);
+        expect(store.writes).toEqual([]);
+    });
+
+    test('a wave writes the trackers once, not once per tracker group', async () => {
+        fighting(ZONE);
+        await collector.onNewBattle({
+            battleId: 1,
+            combatStartTime: '2026-08-03T01:00:00Z',
+            players: [{ character: { id: 'me' }, name: 'Millennium44', loot: {}, consumables: [] }],
+        });
+
+        const trackerWrites = store.writes.filter(([key]) => key.startsWith('consumableTracker_'));
+        expect(trackerWrites).toHaveLength(1);
+        expect(store.probes).toBe(1);
     });
 });
 

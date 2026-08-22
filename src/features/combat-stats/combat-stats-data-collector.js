@@ -46,16 +46,44 @@ const LATEST_RUN_KEY = 'latestCombatRun';
  * them. So every write probes first and stands down when the probe cannot
  * be made. (The loads already keep memory on a failed read: `readScoped`
  * answers null there and null is never adopted.)
+ *
+ * The probe is a real IndexedDB read, and `onNewBattle` used to make it
+ * several times per wave — once per tracker write — which on a party dungeon
+ * was more reads than the data being protected was worth. A probe that
+ * succeeded is trusted for a few seconds (`READ_PROBE_TTL_MS`): a connection
+ * that drops inside that window costs at most one write landing on a database
+ * the next probe will find unreadable, and a failed probe is never cached, so
+ * the next save asks again.
  * @param {string} base - The unscoped key
  * @returns {Promise<boolean>}
  */
 async function storeReadable(base) {
+    const now = Date.now();
+    if (readProbe.ok && now - readProbe.at < READ_PROBE_TTL_MS) return true;
+
     const probed = await storage.tryGet(characterKey(base), COMBAT_STORE);
     if (probed === null) {
+        readProbe.ok = false;
         console.warn(`[Combat Stats] ${base} not saved: storage could not be read first`);
         return false;
     }
+    readProbe.ok = true;
+    readProbe.at = now;
     return true;
+}
+
+/** How long one successful readability probe stands in for the next ones */
+const READ_PROBE_TTL_MS = 5000;
+/** The last successful probe: when it was made, and whether it is still trusted */
+const readProbe = { ok: false, at: 0 };
+
+/**
+ * Test-only: forget the cached readability probe, so the next save probes again.
+ * @returns {void}
+ */
+export function _resetReadProbe() {
+    readProbe.ok = false;
+    readProbe.at = 0;
 }
 const COMBAT_STORE = 'combatStats';
 const DISCARD_LEGACY = { migrate: 'discard' };
@@ -610,8 +638,8 @@ class CombatStatsDataCollector {
                 }
             });
 
-            // Persist party tracking data
-            await this.saveConsumableTracking();
+            // The party trackers are persisted once, at the end of this handler,
+            // together with the player's own — one write per wave, not two
 
             // Extract combat data
             const combatData = {
@@ -752,7 +780,7 @@ class CombatStatsDataCollector {
                 await writeScoped(LATEST_RUN_KEY, combatData, COMBAT_STORE);
             }
 
-            // Also save tracking state periodically
+            // Save the tracking state (player and party alike) once per wave
             await this.saveConsumableTracking();
         } catch (error) {
             console.error('[Combat Stats] Error collecting combat data:', error);

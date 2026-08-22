@@ -81,9 +81,99 @@ export function currentCharacter() {
     };
 }
 
+/**
+ * Appends closer together than this are one burst — a chat backfill writing
+ * dozens of runs in a loop — and are coalesced into one debounced write. An
+ * append on its own (a run just completed) is written at once, because the
+ * panel reads the stored list straight after to show it.
+ */
+const APPEND_BURST_MS = 2000;
+
 class DungeonTrackerStorage {
     constructor() {
         this.unifiedStoreName = 'unifiedRuns'; // Unified storage for all runs
+
+        /**
+         * The stored list, newest first, once it has been read.
+         *
+         * Every run used to be saved by reading the whole list back from
+         * IndexedDB, scanning it for a duplicate and writing it back, and every
+         * panel refresh read it again; with a few hundred runs kept that was
+         * most of the store's traffic. Memory is the truth between writes now:
+         * every read and write goes through here, so the list is read once per
+         * session and written only when it changes.
+         */
+        this._runs = null;
+        /** teamKey → that team's runs (the same objects), for the duplicate check */
+        this._byTeam = new Map();
+        /** When the last run was appended, to tell a burst from a lone run */
+        this._lastAppendAt = 0;
+    }
+
+    /**
+     * The stored list, read on first use and held afterwards.
+     *
+     * A read that could not be made is not an empty history: the list stays
+     * unloaded, this call answers empty, and a save will not write over
+     * whatever is stored until a read has succeeded.
+     * @returns {Promise<Array<Object>|null>} The live list, or null when storage could not be read
+     * @private
+     */
+    async _loadRuns() {
+        if (this._runs) return this._runs;
+
+        const probe = await storage.tryGet('allRuns', this.unifiedStoreName);
+        if (probe === null) {
+            console.warn('[DungeonTrackerStorage] Run history could not be read');
+            return null;
+        }
+        this._index(Array.isArray(probe.value) ? probe.value : []);
+        return this._runs;
+    }
+
+    /**
+     * Take a list as the in-memory truth and rebuild the per-team index.
+     * @param {Array<Object>} runs - Runs, newest first
+     * @private
+     */
+    _index(runs) {
+        this._runs = runs;
+        this._byTeam = new Map();
+        for (const run of runs) this._indexRun(run);
+    }
+
+    /**
+     * @param {Object} run - A run now in the list
+     * @private
+     */
+    _indexRun(run) {
+        if (!run || typeof run.teamKey !== 'string') return;
+        const list = this._byTeam.get(run.teamKey);
+        if (list) list.push(run);
+        else this._byTeam.set(run.teamKey, [run]);
+    }
+
+    /**
+     * Write the in-memory list out.
+     * @param {boolean} immediate - Skip the write debounce
+     * @returns {Promise<boolean>|boolean} The write's outcome when immediate; true when queued
+     * @private
+     */
+    _persist(immediate) {
+        const write = storage.setJSON('allRuns', this._runs, this.unifiedStoreName, immediate);
+        // A debounced write resolves when its timer fires; awaiting it would
+        // stall a backfill loop for the debounce delay on every run
+        return immediate ? write : true;
+    }
+
+    /**
+     * Test-only: forget the in-memory list, so the next call reads storage again.
+     * @returns {void}
+     */
+    _resetCache() {
+        this._runs = null;
+        this._byTeam = new Map();
+        this._lastAppendAt = 0;
     }
 
     /**
@@ -134,7 +224,7 @@ class DungeonTrackerStorage {
      * @returns {Promise<Object>} Statistics
      */
     async getStatsByName(dungeonName) {
-        const allRuns = await storage.getJSON('allRuns', this.unifiedStoreName, []);
+        const allRuns = await this.getAllRuns();
         const runs = allRuns.filter((r) => r.dungeonName === dungeonName);
 
         if (runs.length === 0) {
@@ -184,14 +274,18 @@ class DungeonTrackerStorage {
      * @returns {Promise<boolean>} Success status
      */
     async saveTeamRun(teamKey, run) {
-        // Get all runs from unified storage
-        const allRuns = await storage.getJSON('allRuns', this.unifiedStoreName, []);
+        const allRuns = await this._loadRuns();
+        if (!allRuns) {
+            console.warn('[DungeonTrackerStorage] Run not saved: the stored history could not be read first');
+            return false;
+        }
 
         // Parse incoming timestamp
         const newTimestamp = new Date(run.timestamp).getTime();
 
-        // Check for duplicates (same time window, team, and duration)
-        const isDuplicate = allRuns.some((r) => {
+        // Check for duplicates (same time window, team, and duration). Only
+        // this team's runs can match, so only they are looked at.
+        const isDuplicate = (this._byTeam.get(teamKey) || []).some((r) => {
             const existingTimestamp = new Date(r.timestamp).getTime();
             const timeDiff = Math.abs(existingTimestamp - newTimestamp);
             const durationDiff = Math.abs(r.duration - run.duration);
@@ -200,7 +294,7 @@ class DungeonTrackerStorage {
             // - Within 10 seconds of each other (handles timestamp precision differences)
             // - Same team
             // - Duration within 2 seconds (handles minor timing differences)
-            return timeDiff < 10000 && r.teamKey === teamKey && durationDiff < 2000;
+            return timeDiff < 10000 && durationDiff < 2000;
         });
 
         if (!isDuplicate) {
@@ -228,9 +322,14 @@ class DungeonTrackerStorage {
 
             // Add to front of list (most recent first)
             allRuns.unshift(unifiedRun);
+            this._indexRun(unifiedRun);
 
-            // Save to unified storage
-            await storage.setJSON('allRuns', allRuns, this.unifiedStoreName, true);
+            // A lone run is written now; a burst of them (backfill) is
+            // coalesced into one write once the burst is over
+            const now = Date.now();
+            const burst = now - this._lastAppendAt < APPEND_BURST_MS;
+            this._lastAppendAt = now;
+            await this._persist(!burst);
 
             return true;
         }
@@ -243,7 +342,31 @@ class DungeonTrackerStorage {
      * @returns {Promise<Array>} All runs
      */
     async getAllRuns() {
-        return storage.getJSON('allRuns', this.unifiedStoreName, []);
+        const runs = await this._loadRuns();
+        // A copy: the list held here is what the next save appends to, and a
+        // caller that sorted or spliced the live one would reorder the store
+        return runs ? [...runs] : [];
+    }
+
+    /**
+     * Remove the run(s) recorded at a timestamp.
+     * @param {string} timestamp - The run's ISO timestamp, as stored
+     * @returns {Promise<boolean>} Whether the write landed
+     */
+    async deleteRun(timestamp) {
+        const allRuns = await this._loadRuns();
+        if (!allRuns) return false;
+        this._index(allRuns.filter((r) => r.timestamp !== timestamp));
+        return this._persist(true);
+    }
+
+    /**
+     * Forget every stored run.
+     * @returns {Promise<boolean>} Whether the write landed
+     */
+    async clearAllRuns() {
+        this._index([]);
+        return this._persist(true);
     }
 
     /**
@@ -306,7 +429,8 @@ class DungeonTrackerStorage {
         if (outlierIndices.size === 0) return 0;
 
         const cleaned = allRuns.filter((_, i) => !outlierIndices.has(i));
-        await storage.setJSON('allRuns', cleaned, this.unifiedStoreName, true);
+        this._index(cleaned);
+        await this._persist(true);
         console.log(`[DungeonTrackerStorage] Scrubbed ${outlierIndices.size} outlier run(s) from storage`);
         return outlierIndices.size;
     }
@@ -339,8 +463,7 @@ class DungeonTrackerStorage {
      * @returns {Promise<Array>} Array of {teamKey, runCount, avgTime, bestTime, worstTime}
      */
     async getAllTeamStats() {
-        // Get all runs from unified storage
-        const allRuns = await storage.getJSON('allRuns', this.unifiedStoreName, []);
+        const allRuns = await this.getAllRuns();
 
         // Group by teamKey
         const teamGroups = {};

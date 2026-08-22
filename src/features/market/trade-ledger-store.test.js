@@ -3,8 +3,10 @@
  *
  * The diffing itself is covered in `src/utils/trade-ledger.test.js`; this is
  * about the store not losing what it has recorded: a failed read must not
- * blank the ledger, a save must not overwrite another writer's rows, and a
- * save that cannot read first must not write at all.
+ * blank the ledger, a save must not overwrite another writer's rows, a save
+ * that cannot read first must not write at all — and, since the fills moved
+ * from one array to one record per day, a fill must write only its own day,
+ * and the single key must be split once and folded back in if it reappears.
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
@@ -23,7 +25,7 @@ const storageMock = vi.hoisted(() => {
         },
         get: vi.fn(async (key, store = 'settings', fallback = null) => {
             const map = storeFor(store);
-            return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
+            return map.has(key) && map.get(key) != null ? structuredClone(map.get(key)) : fallback;
         }),
         // A read that says whether it worked; tests flip `unavailable` to
         // stand in for a dropped IndexedDB connection
@@ -36,6 +38,7 @@ const storageMock = vi.hoisted(() => {
                 : { found: false, value: null };
         }),
         set: vi.fn(async (key, value, store = 'settings') => {
+            if (storageMock.unavailable) return false;
             storeFor(store).set(key, structuredClone(value));
             return true;
         }),
@@ -44,6 +47,12 @@ const storageMock = vi.hoisted(() => {
             return true;
         }),
         getAllKeys: vi.fn(async (store = 'settings') => Array.from(storeFor(store).keys())),
+        putAll: vi.fn(async (store, entries) => {
+            if (storageMock.unavailable) return 0;
+            for (const [key, value] of Object.entries(entries)) storeFor(store).set(key, structuredClone(value));
+            return Object.keys(entries).length;
+        }),
+        isQuotaExceeded: vi.fn(() => false),
         getJSON: vi.fn(async (key, store = 'settings', fallback = null) => {
             const map = storeFor(store);
             return map.has(key) && map.get(key) != null ? map.get(key) : fallback;
@@ -75,13 +84,31 @@ vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true, onSettingChange: () => {} },
 }));
 
-const { default: tradeLedgerStore, fillKey, mergeRecords, mergeStates } = await import('./trade-ledger-store.js');
+const {
+    default: tradeLedgerStore,
+    fillKey,
+    mergeRecords,
+    mergeStates,
+    bucketOf,
+    recordKey,
+} = await import('./trade-ledger-store.js');
 const { _resetAdoptionCache } = await import('../../utils/character-key.js');
 const { LEDGER_RECORD_CAP } = await import('../../utils/trade-ledger.js');
+const { mergeForKey } = await import('../../utils/sync-merge-registry.js');
 
 const RECORDS_KEY = 'tradeLedgerRecords_market123';
+const MARKER_KEY = 'tradeLedgerRecordsSplit_market123';
 const STATE_KEY = 'tradeLedgerState_market123';
 const LEDGER = () => storageMock.storeFor('marketListings');
+/** The day record a fill at `t` lives in */
+const REC = (t) => recordKey('market123', bucketOf({ t }));
+/** Every day-record key in the store, sorted */
+const recordKeys = () => [...LEDGER().keys()].filter((key) => key.startsWith('tradeLedgerRec_')).sort();
+
+/** Midnight UTC of three distinct days, so fills fall in three day records */
+const DAY1 = Date.UTC(2026, 0, 1);
+const DAY2 = Date.UTC(2026, 0, 2);
+const DAY3 = Date.UTC(2026, 0, 3);
 
 /**
  * A fill record of listing `listingId` at time `t`.
@@ -120,6 +147,11 @@ const listing = (id, filledQuantity, extra = {}) => ({
     ...extra,
 });
 
+/** A baseline for listing 3 at zero filled, so its next update is a fill */
+const baseline3 = () => ({
+    3: { filledQuantity: 0, itemHrid: '/items/a', enhancementLevel: 0, price: 100, isSell: true },
+});
+
 /** Set the in-memory ledger directly. */
 const memory = (records, states) => {
     tradeLedgerStore.records = records;
@@ -127,9 +159,27 @@ const memory = (records, states) => {
     tradeLedgerStore.isLoaded = true;
 };
 
+/** Seed the store as it looks after the split: day records plus the marker */
+const seedSplit = (records) => {
+    const byKey = new Map();
+    for (const record of records) {
+        const key = REC(record.t);
+        if (!byKey.has(key)) byKey.set(key, []);
+        byKey.get(key).push(record);
+    }
+    for (const [key, bucket] of byKey) LEDGER().set(key, bucket);
+    LEDGER().set(MARKER_KEY, { at: 1, records: records.length });
+};
+
 const awaitSaves = async () => {
     await tradeLedgerStore._recordsChain;
     await tradeLedgerStore._statesChain;
+};
+
+/** A fill of listing 3 by `quantity` at `now`, through the wire path */
+const fillNow = (now, filledQuantity = 4) => {
+    vi.setSystemTime(now);
+    tradeLedgerStore.processListings([listing(3, filledQuantity)], false);
 };
 
 beforeEach(() => {
@@ -140,10 +190,21 @@ beforeEach(() => {
     tradeLedgerStore.records = [];
     tradeLedgerStore.states = {};
     tradeLedgerStore.isLoaded = false;
+    tradeLedgerStore._legacy = false;
     tradeLedgerStore._recordsChain = null;
     tradeLedgerStore._statesChain = null;
-    for (const fn of [storageMock.get, storageMock.set, storageMock.getJSON, storageMock.setJSON, storageMock.tryGet])
+    for (const fn of [
+        storageMock.get,
+        storageMock.set,
+        storageMock.getJSON,
+        storageMock.setJSON,
+        storageMock.tryGet,
+        storageMock.putAll,
+        storageMock.delete,
+    ])
         fn.mockClear();
+    vi.useFakeTimers();
+    vi.setSystemTime(DAY3);
 });
 
 describe('fill record identity', () => {
@@ -169,11 +230,144 @@ describe('fill record identity', () => {
         ).toEqual({ 1: { filledQuantity: 1 }, 2: { filledQuantity: 9 } });
         expect(mergeStates(null, undefined)).toEqual({});
     });
+
+    test('a fill belongs to its UTC day', () => {
+        expect(bucketOf(fill(1, DAY2 + 5 * 60 * 60 * 1000))).toBe('2026-01-02');
+        expect(recordKey('market123', '2026-01-02')).toBe('tradeLedgerRec_market123_2026-01-02');
+    });
+
+    test('both the single key and the day records are registered as merges for a sync pull', () => {
+        expect(mergeForKey('marketListings', RECORDS_KEY)?.merge).toBe(mergeRecords);
+        expect(mergeForKey('marketListings', REC(DAY1))?.merge).toBe(mergeRecords);
+    });
+});
+
+describe('splitting the single key into day records', () => {
+    test('the first load splits the single key by day, writes the marker and removes the key', async () => {
+        LEDGER().set(RECORDS_KEY, [fill(1, DAY1), fill(2, DAY2 + 1000), fill(3, DAY2 + 2000)]);
+
+        await tradeLedgerStore.load();
+
+        expect(tradeLedgerStore.records.map((r) => r.listingId)).toEqual([1, 2, 3]);
+        expect(recordKeys()).toEqual([REC(DAY1), REC(DAY2)]);
+        expect(
+            LEDGER()
+                .get(REC(DAY2))
+                .map((r) => r.listingId)
+        ).toEqual([2, 3]);
+        expect(LEDGER().get(MARKER_KEY)).toMatchObject({ records: 3 });
+        expect(LEDGER().has(RECORDS_KEY)).toBe(false);
+    });
+
+    test('a character with nothing stored gets the marker and no records', async () => {
+        await tradeLedgerStore.load();
+
+        expect(tradeLedgerStore.records).toEqual([]);
+        expect(LEDGER().has(MARKER_KEY)).toBe(true);
+        expect(recordKeys()).toEqual([]);
+    });
+
+    test('a split that cannot be written leaves the single key as the record', async () => {
+        LEDGER().set(RECORDS_KEY, [fill(1, DAY1)]);
+        storageMock.putAll.mockImplementationOnce(async () => 0);
+
+        await tradeLedgerStore.load();
+
+        expect(tradeLedgerStore.records.map((r) => r.listingId)).toEqual([1]);
+        expect(LEDGER().has(RECORDS_KEY)).toBe(true);
+        expect(LEDGER().has(MARKER_KEY)).toBe(false);
+
+        // Saves keep going to the single key, read-merge-written as before
+        memory(tradeLedgerStore.records, baseline3());
+        fillNow(DAY3);
+        await awaitSaves();
+        expect(
+            LEDGER()
+                .get(RECORDS_KEY)
+                .map((r) => r.listingId)
+        ).toEqual([1, 3]);
+        expect(recordKeys()).toEqual([]);
+    });
+
+    test('a later load reads the day records and does not look for a legacy value to adopt', async () => {
+        seedSplit([fill(1, DAY1), fill(2, DAY2)]);
+        // The pre-scoping bare key: without the marker this would be offered for adoption
+        LEDGER().set('tradeLedgerRecords', [fill(9, DAY1)]);
+
+        await tradeLedgerStore.load();
+
+        expect(tradeLedgerStore.records.map((r) => r.listingId)).toEqual([1, 2]);
+        expect(LEDGER().has('tradeLedgerRecords')).toBe(true);
+    });
+
+    test('a single key that comes back after the split is folded into the day records and removed', async () => {
+        seedSplit([fill(1, DAY1), fill(2, DAY2)]);
+        // An older tab, or a sync pull from a device on the old layout, wrote it again
+        LEDGER().set(RECORDS_KEY, [fill(1, DAY1), fill(5, DAY2 + 500)]);
+
+        await tradeLedgerStore.load();
+
+        expect(tradeLedgerStore.records.map((r) => r.listingId)).toEqual([1, 2, 5]);
+        expect(
+            LEDGER()
+                .get(REC(DAY2))
+                .map((r) => r.listingId)
+        ).toEqual([2, 5]);
+        expect(LEDGER().has(RECORDS_KEY)).toBe(false);
+    });
+});
+
+describe('a fill writes its own day and nothing else', () => {
+    test("a fill today writes today's record only", async () => {
+        seedSplit([fill(1, DAY1), fill(2, DAY2)]);
+        await tradeLedgerStore.load();
+        tradeLedgerStore.states = baseline3();
+        storageMock.set.mockClear();
+
+        fillNow(DAY3);
+        await awaitSaves();
+
+        const written = storageMock.set.mock.calls
+            .map(([key]) => key)
+            .filter((key) => key.startsWith('tradeLedgerRec_'));
+        expect(written).toEqual([REC(DAY3)]);
+        expect(
+            LEDGER()
+                .get(REC(DAY3))
+                .map((r) => r.listingId)
+        ).toEqual([3]);
+        expect(LEDGER().get(REC(DAY1))).toHaveLength(1);
+        // Not immediate: the debounce is what coalesces a burst of fills
+        expect(storageMock.set.mock.calls.find(([key]) => key === REC(DAY3))[3]).not.toBe(true);
+    });
+
+    test('the cap shrinks the oldest day record and then removes it', async () => {
+        const older = [fill(1, DAY1 + 1000), fill(2, DAY1 + 2000)];
+        const day2 = Array.from({ length: LEDGER_RECORD_CAP - 2 }, (_, i) => fill(100 + i, DAY2 + i));
+        seedSplit([...older, ...day2]);
+        await tradeLedgerStore.load();
+        expect(tradeLedgerStore.records).toHaveLength(LEDGER_RECORD_CAP);
+        tradeLedgerStore.states = baseline3();
+
+        fillNow(DAY3, 4);
+        await awaitSaves();
+        expect(tradeLedgerStore.records).toHaveLength(LEDGER_RECORD_CAP);
+        expect(
+            LEDGER()
+                .get(REC(DAY1))
+                .map((r) => r.listingId)
+        ).toEqual([2]);
+
+        fillNow(DAY3 + 1000, 6);
+        await awaitSaves();
+        expect(LEDGER().has(REC(DAY1))).toBe(false);
+        expect(LEDGER().get(REC(DAY3))).toHaveLength(2);
+    });
 });
 
 describe('the ledger cannot be wiped by a failed read or a stale copy', () => {
     test('a load while storage is unavailable keeps the in-memory ledger rather than blanking it', async () => {
-        memory([fill(1, 1000)], { 1: { filledQuantity: 5 } });
+        memory([fill(1, DAY1)], { 1: { filledQuantity: 5 } });
         storageMock.unavailable = true;
 
         await tradeLedgerStore.load();
@@ -184,9 +378,9 @@ describe('the ledger cannot be wiped by a failed read or a stale copy', () => {
     });
 
     test('a load folds what is stored under what is in memory', async () => {
-        LEDGER().set(RECORDS_KEY, [fill(1, 1000)]);
+        seedSplit([fill(1, DAY1)]);
         LEDGER().set(STATE_KEY, { 1: { filledQuantity: 5 }, 2: { filledQuantity: 1 } });
-        memory([fill(2, 2000)], { 2: { filledQuantity: 3 } });
+        memory([fill(2, DAY2)], { 2: { filledQuantity: 3 } });
 
         await tradeLedgerStore.load();
 
@@ -195,66 +389,70 @@ describe('the ledger cannot be wiped by a failed read or a stale copy', () => {
     });
 
     test('a save while storage cannot be read is skipped, not written blind over the stored ledger', async () => {
-        LEDGER().set(RECORDS_KEY, [fill(1, 1000), fill(2, 2000)]);
+        seedSplit([fill(1, DAY1), fill(2, DAY3)]);
         LEDGER().set(STATE_KEY, { 1: { filledQuantity: 5 } });
         // The failure mode that used to wipe ledgers: memory emptied by a
         // failed load, then a fill saves that emptiness back
-        memory([], { 3: { filledQuantity: 0, itemHrid: '/items/a', enhancementLevel: 0, price: 100, isSell: true } });
+        memory([], baseline3());
         storageMock.unavailable = true;
 
-        tradeLedgerStore.processListings([listing(3, 4)], false);
+        fillNow(DAY3 + 1000);
         await awaitSaves();
 
         expect(tradeLedgerStore.records).toHaveLength(1);
         expect(
             LEDGER()
-                .get(RECORDS_KEY)
+                .get(REC(DAY3))
                 .map((r) => r.listingId)
-        ).toEqual([1, 2]);
+        ).toEqual([2]);
         expect(LEDGER().get(STATE_KEY)).toEqual({ 1: { filledQuantity: 5 } });
         expect(storageMock.set).not.toHaveBeenCalled();
     });
 
-    test('a save merges what is stored under what is in memory, so rows from another writer survive', async () => {
-        LEDGER().set(RECORDS_KEY, [fill(1, 1000), fill(2, 2000, { price: 1 })]);
+    test("a save merges what is stored under what is in memory, so another writer's rows in that day survive", async () => {
+        seedSplit([fill(1, DAY1), fill(2, DAY3, { price: 1 })]);
         LEDGER().set(STATE_KEY, { 9: { filledQuantity: 2 } });
-        memory([fill(2, 2000, { price: 2 })], {
-            3: { filledQuantity: 0, itemHrid: '/items/a', enhancementLevel: 0, price: 100, isSell: true },
-        });
+        memory([fill(2, DAY3, { price: 2 })], baseline3());
 
-        tradeLedgerStore.processListings([listing(3, 4)], false);
+        fillNow(DAY3 + 1000);
         await awaitSaves();
 
-        const stored = LEDGER().get(RECORDS_KEY);
-        expect(stored.map((r) => r.listingId)).toEqual([1, 2, 3]);
+        const stored = LEDGER().get(REC(DAY3));
+        expect(stored.map((r) => r.listingId)).toEqual([2, 3]);
         // Memory's copy wins on the clash
         expect(stored.find((r) => r.listingId === 2).price).toBe(2);
-        expect(tradeLedgerStore.records.map((r) => r.listingId)).toEqual([1, 2, 3]);
+        // A row this tab never loaded is still only on the other day's record; it is not touched
+        expect(LEDGER().get(REC(DAY1))).toHaveLength(1);
+        expect(tradeLedgerStore.records.map((r) => r.listingId)).toEqual([2, 3]);
         expect(Object.keys(LEDGER().get(STATE_KEY)).sort()).toEqual(['3', '9']);
         expect(LEDGER().get(STATE_KEY)[3].filledQuantity).toBe(4);
     });
 
-    test('once storage is back, the next save lands everything recorded meanwhile', async () => {
-        LEDGER().set(RECORDS_KEY, [fill(1, 1000)]);
-        memory([], {
-            3: { filledQuantity: 0, itemHrid: '/items/a', enhancementLevel: 0, price: 100, isSell: true },
-        });
-        storageMock.unavailable = true;
-        tradeLedgerStore.processListings([listing(3, 4)], false);
+    test('rows only storage knew in the day written come into memory', async () => {
+        seedSplit([fill(7, DAY3 + 10)]);
+        memory([], baseline3());
+
+        fillNow(DAY3 + 1000);
         await awaitSaves();
-        expect(
-            LEDGER()
-                .get(RECORDS_KEY)
-                .map((r) => r.listingId)
-        ).toEqual([1]);
+
+        expect(tradeLedgerStore.records.map((r) => r.listingId)).toEqual([7, 3]);
+    });
+
+    test('once storage is back, the next save lands everything recorded meanwhile', async () => {
+        seedSplit([fill(1, DAY1)]);
+        memory([], baseline3());
+        storageMock.unavailable = true;
+        fillNow(DAY3 + 1000, 4);
+        await awaitSaves();
+        expect(LEDGER().has(REC(DAY3))).toBe(false);
 
         storageMock.unavailable = false;
-        tradeLedgerStore.processListings([listing(3, 6)], false);
+        fillNow(DAY3 + 2000, 6);
         await awaitSaves();
 
-        const stored = LEDGER().get(RECORDS_KEY);
-        expect(stored.map((r) => r.listingId)).toEqual([1, 3, 3]);
-        expect(stored.filter((r) => r.listingId === 3).map((r) => r.quantity)).toEqual([4, 2]);
+        const stored = LEDGER().get(REC(DAY3));
+        expect(stored.map((r) => r.listingId)).toEqual([3, 3]);
+        expect(stored.map((r) => r.quantity)).toEqual([4, 2]);
         expect(LEDGER().get(STATE_KEY)[3].filledQuantity).toBe(6);
     });
 

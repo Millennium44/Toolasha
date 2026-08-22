@@ -4,7 +4,6 @@
  */
 
 import dungeonTrackerStorage, { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
-import storage from '../../core/storage.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { formatDateTime } from '../../utils/formatters.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
@@ -432,10 +431,8 @@ class DungeonTrackerUIHistory {
             btn.addEventListener('click', async (e) => {
                 const runTimestamp = e.target.closest('[data-run-timestamp]').dataset.runTimestamp;
 
-                // Find and delete the run from unified storage
-                const allRuns = await dungeonTrackerStorage.getAllRuns();
-                const filteredRuns = allRuns.filter((r) => r.timestamp !== runTimestamp);
-                await storage.setJSON('allRuns', filteredRuns, 'unifiedRuns', true);
+                // Delete the run from unified storage
+                await dungeonTrackerStorage.deleteRun(runTimestamp);
 
                 // Trigger refresh via callback
                 if (this.onDeleteCallback) {

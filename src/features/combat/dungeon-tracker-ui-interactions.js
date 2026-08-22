@@ -5,8 +5,8 @@
 
 import dungeonTracker from './dungeon-tracker.js';
 import dungeonTrackerChatAnnotations from './dungeon-tracker-chat-annotations.js';
+import dungeonTrackerStorage from './dungeon-tracker-storage.js';
 import config from '../../core/config.js';
-import storage from '../../core/storage.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { bringPanelToFront } from '../../utils/panel-z-index.js';
 import { askChoice } from '../../utils/choice-dialog.js';
@@ -276,7 +276,7 @@ class DungeonTrackerUIInteractions {
             if (confirmed) {
                 try {
                     // Clear unified storage completely
-                    await storage.setJSON('allRuns', [], 'unifiedRuns', true);
+                    await dungeonTrackerStorage.clearAllRuns();
                     alert('All run history cleared.');
 
                     // Refresh both history and chart display

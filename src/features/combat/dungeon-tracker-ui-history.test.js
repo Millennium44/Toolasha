@@ -12,11 +12,14 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('./dungeon-tracker-storage.js', () => ({
-    default: { getAllRuns: async () => [], getTeamKey: (names) => [...names].sort().join(',') },
+    default: {
+        getAllRuns: async () => [],
+        deleteRun: async () => true,
+        getTeamKey: (names) => [...names].sort().join(','),
+    },
     filterRunsForCharacter: (runs) => runs,
     currentCharacter: () => 'me',
 }));
-vi.mock('../../core/storage.js', () => ({ default: { setJSON: vi.fn(async () => true) } }));
 vi.mock('../../utils/formatters.js', () => ({ formatDateTime: () => '04/08 10:00' }));
 
 const {

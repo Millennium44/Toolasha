@@ -17,12 +17,12 @@ const askChoiceMock = vi.fn();
 vi.mock('./dungeon-tracker.js', () => ({ default: { backfillFromChatHistory: vi.fn() } }));
 vi.mock('./dungeon-tracker-chat-annotations.js', () => ({ default: { refreshRunCounts: vi.fn() } }));
 vi.mock('../../core/config.js', () => ({ default: { Z_NOTIFICATION: 9999 } }));
-vi.mock('../../core/storage.js', () => ({ default: { setJSON: vi.fn(), getJSON: vi.fn() } }));
+vi.mock('./dungeon-tracker-storage.js', () => ({ default: { clearAllRuns: vi.fn(async () => true) } }));
 vi.mock('../../utils/panel-z-index.js', () => ({ bringPanelToFront: vi.fn() }));
 vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: (...args) => askChoiceMock(...args) }));
 
 const { default: DungeonTrackerUIInteractions } = await import('./dungeon-tracker-ui-interactions.js');
-const { default: storage } = await import('../../core/storage.js');
+const { default: dungeonTrackerStorage } = await import('./dungeon-tracker-storage.js');
 
 /**
  * Build a minimal DOM container plus a fake state object. Only the elements
@@ -57,7 +57,7 @@ function makeState(overrides = {}) {
 beforeEach(() => {
     document.body.innerHTML = '';
     askChoiceMock.mockReset();
-    storage.setJSON.mockReset();
+    dungeonTrackerStorage.clearAllRuns.mockClear();
 });
 
 describe('filter indicator', () => {
@@ -164,7 +164,7 @@ describe('clear-history confirmation', () => {
 
         const [call] = askChoiceMock.mock.calls[0];
         expect(call.choices.some((c) => c.tone === 'danger')).toBe(true);
-        expect(storage.setJSON).not.toHaveBeenCalled();
+        expect(dungeonTrackerStorage.clearAllRuns).not.toHaveBeenCalled();
     });
 
     test('deletes all history once the danger choice is confirmed', async () => {
@@ -180,7 +180,7 @@ describe('clear-history confirmation', () => {
 
         interactions.setupClearAll();
         container.querySelector('#mwi-dt-clear-all').click();
-        await vi.waitFor(() => expect(storage.setJSON).toHaveBeenCalledWith('allRuns', [], 'unifiedRuns', true));
+        await vi.waitFor(() => expect(dungeonTrackerStorage.clearAllRuns).toHaveBeenCalledTimes(1));
 
         expect(onUpdateHistory).toHaveBeenCalled();
         vi.unstubAllGlobals();

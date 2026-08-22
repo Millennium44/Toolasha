@@ -5,14 +5,26 @@ const game = vi.hoisted(() => ({
     actionDetails: {},
     characterId: 'market123',
     characterName: 'MarketCow',
+    // Flipped to stand in for a dropped IndexedDB connection
+    unreadable: false,
+    // Every write, as [key, immediate]
+    writes: [],
 }));
 
 vi.mock('../../core/storage.js', () => ({
     default: {
+        tryGet: async (key, storeName) => {
+            if (game.unreadable) return null;
+            const value = game.saved[storeName]?.[key];
+            return value == null ? { found: false, value: null } : { found: true, value };
+        },
         getJSON: async (key, storeName, defaultValue) => game.saved[storeName]?.[key] ?? defaultValue,
-        setJSON: async (key, value, storeName) => {
+        setJSON: async (key, value, storeName, immediate = false) => {
+            game.writes.push([key, immediate]);
             game.saved[storeName] = game.saved[storeName] || {};
-            game.saved[storeName][key] = value;
+            // What IndexedDB would hold: a copy, not the live array
+            game.saved[storeName][key] = structuredClone(value);
+            return true;
         },
     },
 }));
@@ -32,7 +44,14 @@ const {
 
 function seedRuns(runs) {
     game.saved.unifiedRuns = { allRuns: runs };
+    dungeonTrackerStorage._resetCache();
 }
+
+beforeEach(() => {
+    game.unreadable = false;
+    game.writes = [];
+    dungeonTrackerStorage._resetCache();
+});
 
 describe('getDungeonKey', () => {
     test('combines dungeon hrid and tier', () => {
@@ -194,6 +213,96 @@ describe('saveTeamRun', () => {
         await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T00:00:00Z', duration: 500 });
 
         expect(game.saved.unifiedRuns.allRuns[0].dungeonName).toBe('Unknown');
+    });
+
+    test('the stored list is read once; later saves and reads work from memory', async () => {
+        seedRuns([{ timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 }]);
+        await dungeonTrackerStorage.getAllRuns();
+
+        // Storage changing behind memory's back is not seen — memory is the truth
+        game.saved.unifiedRuns.allRuns = [];
+        await dungeonTrackerStorage.saveTeamRun('C,D', { timestamp: '2026-01-02T00:00:00Z', duration: 700 });
+
+        expect((await dungeonTrackerStorage.getAllRuns()).map((r) => r.teamKey)).toEqual(['C,D', 'A,B']);
+        expect(game.saved.unifiedRuns.allRuns.map((r) => r.teamKey)).toEqual(['C,D', 'A,B']);
+    });
+
+    test('a lone run is written at once; a burst of them is coalesced into a debounced write', async () => {
+        vi.useFakeTimers();
+        try {
+            vi.setSystemTime(new Date('2026-01-05T00:00:00Z'));
+            seedRuns([]);
+            await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T00:00:00Z', duration: 500 });
+            await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T01:00:00Z', duration: 500 });
+            await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T02:00:00Z', duration: 500 });
+            expect(game.writes.map(([, immediate]) => immediate)).toEqual([true, false, false]);
+
+            vi.setSystemTime(new Date('2026-01-05T00:01:00Z'));
+            await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T03:00:00Z', duration: 500 });
+            expect(game.writes.at(-1)[1]).toBe(true);
+            expect(game.saved.unifiedRuns.allRuns).toHaveLength(4);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a run is not written over a history that could not be read first', async () => {
+        seedRuns([{ timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 }]);
+        game.unreadable = true;
+
+        const saved = await dungeonTrackerStorage.saveTeamRun('C,D', {
+            timestamp: '2026-01-02T00:00:00Z',
+            duration: 700,
+        });
+
+        expect(saved).toBe(false);
+        expect(game.writes).toEqual([]);
+        expect(await dungeonTrackerStorage.getAllRuns()).toEqual([]);
+
+        // Once storage reads again the history is there and the save lands
+        game.unreadable = false;
+        expect(
+            await dungeonTrackerStorage.saveTeamRun('C,D', { timestamp: '2026-01-02T00:00:00Z', duration: 700 })
+        ).toBe(true);
+        expect(game.saved.unifiedRuns.allRuns).toHaveLength(2);
+    });
+
+    test('getAllRuns hands out a copy, so a caller sorting it cannot reorder the store', async () => {
+        seedRuns([
+            { timestamp: '2026-01-02T00:00:00Z', teamKey: 'A,B', duration: 500 },
+            { timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 },
+        ]);
+        const runs = await dungeonTrackerStorage.getAllRuns();
+        runs.reverse();
+        expect((await dungeonTrackerStorage.getAllRuns())[0].timestamp).toBe('2026-01-02T00:00:00Z');
+    });
+});
+
+describe('deleting runs', () => {
+    test('deleteRun drops the run at a timestamp and writes at once', async () => {
+        seedRuns([
+            { timestamp: '2026-01-02T00:00:00Z', teamKey: 'A,B', duration: 500 },
+            { timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 },
+        ]);
+
+        await dungeonTrackerStorage.deleteRun('2026-01-01T00:00:00Z');
+
+        expect(game.writes).toEqual([['allRuns', true]]);
+        expect(game.saved.unifiedRuns.allRuns.map((r) => r.timestamp)).toEqual(['2026-01-02T00:00:00Z']);
+        // The duplicate check no longer sees the deleted run either
+        expect(
+            await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T00:00:00Z', duration: 500 })
+        ).toBe(true);
+    });
+
+    test('clearAllRuns empties the list and writes at once', async () => {
+        seedRuns([{ timestamp: '2026-01-02T00:00:00Z', teamKey: 'A,B', duration: 500 }]);
+
+        await dungeonTrackerStorage.clearAllRuns();
+
+        expect(game.writes).toEqual([['allRuns', true]]);
+        expect(game.saved.unifiedRuns.allRuns).toEqual([]);
+        expect(await dungeonTrackerStorage.getAllRuns()).toEqual([]);
     });
 });
 
@@ -423,7 +532,7 @@ describe('filterRunsForCharacter', () => {
     });
 
     test('the storage accessor applies the same rule', async () => {
-        game.saved = { unifiedRuns: { allRuns: runs } };
+        seedRuns(runs);
         const kept = await dungeonTrackerStorage.getRunsForCharacter('mine');
         expect(kept.map((run) => run.id)).toEqual(['mine', 'legacy-mine']);
         expect(await dungeonTrackerStorage.getRunsForCharacter('all')).toHaveLength(4);

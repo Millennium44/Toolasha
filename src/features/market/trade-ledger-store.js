@@ -10,6 +10,26 @@
  * The diffing itself (what counts as a fill, what a baseline is, how the state
  * map stays bounded) lives in `src/utils/trade-ledger.js`; this module owns the
  * wiring: WebSocket events in, per-character IndexedDB persistence out.
+ *
+ * ## How the fills are stored
+ *
+ * One record per UTC day, keyed `tradeLedgerRec_<charId>_<YYYY-MM-DD>`, rather
+ * than one array per character. The single array was read back, merged and
+ * rewritten in full — up to `LEDGER_RECORD_CAP` records — immediately on every
+ * fill, so recording one fill cost the size of every fill ever recorded. A fill
+ * now touches its own day's record and nothing else (see `utils/chunked-history.js`
+ * for the reasoning behind chunking; this store keeps its own read-merge-write
+ * per bucket instead of that helper's diff, because two tabs may both be
+ * appending to today's record).
+ *
+ * The pre-split single key is migrated on the first load after the upgrade:
+ * split into day records, then replaced by a per-character marker that says the
+ * split has happened. The marker is what stops every later load from treating
+ * the absent single key as a legacy value to adopt, and it makes a single key
+ * that comes back — an older tab still writing it, a sync pull from a device
+ * on the old layout — something to fold into the day records rather than a
+ * history to migrate over them. A split that cannot be written (a full disk)
+ * leaves the single key in place and the store keeps using it as before.
  */
 
 import dataManager from '../../core/data-manager.js';
@@ -17,13 +37,23 @@ import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import { registerSyncMerge } from '../../utils/sync-merge-registry.js';
 import { readScoped, writeScoped, characterKey } from '../../utils/character-key.js';
+import { timeChunkId, recordKeysFor } from '../../utils/chunked-history.js';
 import { detectFills, trimLedger, LEDGER_RECORD_CAP } from '../../utils/trade-ledger.js';
 
 /** Same store the other market trackers live in. */
 const LEDGER_STORE = 'marketListings';
 
-/** Per-character fill records, capped at LEDGER_RECORD_CAP oldest-out. */
+/** Per-character fill records, capped at LEDGER_RECORD_CAP oldest-out — the pre-split single key. */
 const RECORDS_BASE = 'tradeLedgerRecords';
+
+/** Per-character, per-day fill records: `tradeLedgerRec_<charId>_<YYYY-MM-DD>`. */
+const RECORD_PREFIX = 'tradeLedgerRec';
+
+/**
+ * Per-character marker written once the single key has been split into day
+ * records. `{at, records}` — when, and how many fills were carried over.
+ */
+const SPLIT_MARKER_BASE = 'tradeLedgerRecordsSplit';
 
 /**
  * Per-character listing-state baselines (id → last observed fill progress).
@@ -83,13 +113,65 @@ export function mergeStates(base, fresh) {
     return { ...safe(base), ...safe(fresh) };
 }
 
+/**
+ * Which day record a fill belongs in.
+ * @param {Object} record - Fill record
+ * @returns {string} `YYYY-MM-DD`, in UTC
+ */
+export function bucketOf(record) {
+    return timeChunkId(record?.t, 'day');
+}
+
+/**
+ * The character id the ledger keys carry — the same one `characterKey` uses,
+ * so a day record and the single key it replaced agree on whose they are.
+ * @returns {string} Character id, or `default` before login
+ */
+function ledgerCharId() {
+    return dataManager.getCurrentCharacterId() || 'default';
+}
+
+/**
+ * @param {string} charId - Whose record
+ * @param {string} bucket - Which day
+ * @returns {string} The key that day's fills live under
+ */
+export function recordKey(charId, bucket) {
+    return `${RECORD_PREFIX}_${charId}_${bucket}`;
+}
+
+/**
+ * Fills grouped by day record.
+ * @param {Array<Object>} records - Fill records
+ * @returns {Map<string, Array<Object>>} bucket → its records, in input order
+ */
+function groupByBucket(records) {
+    const grouped = new Map();
+    for (const record of records || []) {
+        if (!record) continue;
+        const bucket = bucketOf(record);
+        const list = grouped.get(bucket);
+        if (list) list.push(record);
+        else grouped.set(bucket, [record]);
+    }
+    return grouped;
+}
+
 /*
- * Registered so a cross-device sync PULL combines this record instead of
- * overwriting it. Registration runs at import time, which is long before the
- * earliest pull (the staggered startup pull, 20s+ after load), so the registry
- * is complete by the time sync consults it. See utils/sync-merge-registry.js.
+ * Registered so a cross-device sync PULL combines these records instead of
+ * overwriting them — the single key for devices still on the old layout, the
+ * day records for devices on this one. Registration runs at import time, which
+ * is long before the earliest pull (the staggered startup pull, 20s+ after
+ * load), so the registry is complete by the time sync consults it. See
+ * utils/sync-merge-registry.js.
  */
 registerSyncMerge({ store: LEDGER_STORE, base: RECORDS_BASE, merge: mergeRecords, label: 'Trade ledger fills' });
+registerSyncMerge({
+    store: LEDGER_STORE,
+    prefix: `${RECORD_PREFIX}_`,
+    merge: mergeRecords,
+    label: 'Trade ledger fills (daily)',
+});
 registerSyncMerge({ store: LEDGER_STORE, base: STATE_BASE, merge: mergeStates, label: 'Trade ledger baselines' });
 
 class TradeLedgerStore {
@@ -102,6 +184,13 @@ class TradeLedgerStore {
         this.updateHandler = null;
         this._recordsChain = null;
         this._statesChain = null;
+        /**
+         * Whether the single key is still the record.
+         *
+         * Set when the split could not be written; reads and writes then go
+         * to the single key as they always did, and the next load tries again.
+         */
+        this._legacy = false;
     }
 
     /**
@@ -166,17 +255,38 @@ class TradeLedgerStore {
      * back on the next fill, is how a whole ledger would vanish. What is stored
      * is folded under what is in memory, so a fill this tab recorded while a
      * save was in flight is kept.
+     *
+     * The first load after the upgrade splits the single key into day records
+     * (see the module doc); every later load reads the day records and folds in
+     * a single key that has come back from somewhere.
      */
     async load() {
         try {
-            const recordsProbe = await storage.tryGet(characterKey(RECORDS_BASE), LEDGER_STORE);
-            if (recordsProbe === null) {
+            const charId = ledgerCharId();
+            const markerProbe = await storage.tryGet(characterKey(SPLIT_MARKER_BASE), LEDGER_STORE);
+            if (markerProbe === null) {
                 console.warn('[TradeLedger] Records could not be read; keeping the in-memory copy');
-            } else {
-                const stored = recordsProbe.found
-                    ? recordsProbe.value
-                    : (await readScoped(RECORDS_BASE, LEDGER_STORE, [])) || [];
+            } else if (markerProbe.found) {
+                this._legacy = false;
+                let stored = await this._readBuckets(charId);
+                const legacyProbe = await storage.tryGet(characterKey(RECORDS_BASE), LEDGER_STORE);
+                if (legacyProbe?.found && Array.isArray(legacyProbe.value)) {
+                    stored = mergeRecords(stored, legacyProbe.value);
+                    await this._absorbLegacy(charId, legacyProbe.value);
+                }
                 this.records = mergeRecords(stored, this.records);
+            } else {
+                const recordsProbe = await storage.tryGet(characterKey(RECORDS_BASE), LEDGER_STORE);
+                if (recordsProbe === null) {
+                    console.warn('[TradeLedger] Records could not be read; keeping the in-memory copy');
+                } else {
+                    const stored = recordsProbe.found
+                        ? recordsProbe.value
+                        : (await readScoped(RECORDS_BASE, LEDGER_STORE, [])) || [];
+                    const split = await this._split(charId, Array.isArray(stored) ? stored : []);
+                    this._legacy = !split;
+                    this.records = mergeRecords(stored, this.records);
+                }
             }
 
             const statesProbe = await storage.tryGet(characterKey(STATE_BASE), LEDGER_STORE);
@@ -194,6 +304,103 @@ class TradeLedgerStore {
             // back over the stored one by the next fill
         }
         this.isLoaded = true;
+    }
+
+    /**
+     * Every day record of one character, as one ledger.
+     *
+     * One key at a time rather than a whole-store read: the store holds the
+     * other market trackers too.
+     * @param {string} charId - Whose records
+     * @returns {Promise<Array<Object>>} Oldest first, capped
+     * @private
+     */
+    async _readBuckets(charId) {
+        const keys = await storage.getAllKeys(LEDGER_STORE);
+        const records = [];
+        for (const key of recordKeysFor(keys, RECORD_PREFIX, charId)) {
+            const bucket = await storage.get(key, LEDGER_STORE, null);
+            if (Array.isArray(bucket)) records.push(...bucket);
+        }
+        return mergeRecords([], records);
+    }
+
+    /**
+     * Split the single key into day records and replace it with the marker.
+     *
+     * Day records that already exist — an earlier attempt that got as far as
+     * writing some of them — are merged, not overwritten. The marker is written
+     * only once every record has landed, so a split that stalls is simply
+     * retried by the next load; a single key that outlives its marker is
+     * absorbed by that load (see {@link _absorbLegacy}).
+     * @param {string} charId - Whose ledger
+     * @param {Array<Object>} legacy - The single-key value, possibly empty
+     * @returns {Promise<boolean>} True when the day records are now the record
+     * @private
+     */
+    async _split(charId, legacy) {
+        const grouped = groupByBucket(legacy);
+        if (grouped.size > 0) {
+            const entries = {};
+            for (const [bucket, records] of grouped) {
+                const key = recordKey(charId, bucket);
+                const existing = await storage.get(key, LEDGER_STORE, null);
+                entries[key] = Array.isArray(existing) ? mergeRecords(existing, records) : records;
+            }
+            const written = await storage.putAll(LEDGER_STORE, entries);
+            if (written !== grouped.size || storage.isQuotaExceeded()) {
+                console.warn(
+                    `[TradeLedger] Splitting the stored ledger stalled (${written}/${grouped.size} days) — ` +
+                        'keeping the single key and reading from it'
+                );
+                return false;
+            }
+        }
+
+        const marked = await storage.set(
+            characterKey(SPLIT_MARKER_BASE),
+            { at: Date.now(), records: legacy.length },
+            LEDGER_STORE,
+            true
+        );
+        if (!marked) {
+            console.warn('[TradeLedger] The split marker could not be written — keeping the single key');
+            return false;
+        }
+
+        // A delete that fails here is not a problem: the next load finds the
+        // marker, folds the single key back into the day records and tries
+        // the delete again
+        await storage.delete(characterKey(RECORDS_BASE), LEDGER_STORE);
+        return true;
+    }
+
+    /**
+     * Fold a single key that reappeared after the split into the day records,
+     * then remove it.
+     *
+     * Merge, never overwrite: the day records may hold fills the single key
+     * never saw, and the single key may hold fills (from the device or tab
+     * that wrote it) the day records never saw.
+     * @param {string} charId - Whose ledger
+     * @param {Array<Object>} legacy - The single-key value
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _absorbLegacy(charId, legacy) {
+        const grouped = groupByBucket(legacy);
+        const entries = {};
+        for (const [bucket, records] of grouped) {
+            const key = recordKey(charId, bucket);
+            const existing = await storage.get(key, LEDGER_STORE, null);
+            entries[key] = Array.isArray(existing) ? mergeRecords(existing, records) : records;
+        }
+        const written = grouped.size > 0 ? await storage.putAll(LEDGER_STORE, entries) : 0;
+        if (written !== grouped.size) {
+            console.warn('[TradeLedger] A returned single key could not be folded into the day records; leaving it');
+            return;
+        }
+        await storage.delete(characterKey(RECORDS_BASE), LEDGER_STORE);
     }
 
     /**
@@ -240,8 +447,21 @@ class TradeLedgerStore {
         this.states = states;
 
         if (fills.length > 0) {
-            this.records = trimLedger([...this.records, ...fills], LEDGER_RECORD_CAP);
-            this.saveRecords();
+            const before = this.records;
+            const after = trimLedger([...before, ...fills], LEDGER_RECORD_CAP);
+
+            // The day records to write: the new fills' days, plus the days of
+            // any records the cap just pushed out (those records shrink or go)
+            const dirty = new Set(fills.map(bucketOf));
+            if (after.length < before.length + fills.length) {
+                const kept = new Set(after);
+                for (const record of before) {
+                    if (!kept.has(record)) dirty.add(bucketOf(record));
+                }
+            }
+
+            this.records = after;
+            this.saveRecords(dirty);
         }
         if (changed) {
             this.saveStates();
@@ -249,28 +469,78 @@ class TradeLedgerStore {
     }
 
     /**
-     * Persist fill records (immediate — fills are the whole point of the ledger).
+     * Persist fill records.
      *
-     * Read-merge-write, serialized: the stored ledger is re-read and folded
-     * under the in-memory one before the write, so another tab's fills, or
-     * records this tab never loaded, are carried forward rather than
-     * overwritten. When the pre-write read cannot be made the write is skipped
-     * outright — the ledger in memory is kept and the next save retries —
-     * because a blind overwrite from a possibly-empty copy is exactly the
-     * accident this exists to prevent.
-     * @returns {Promise<boolean>} Whether a write landed
+     * Only the day records named in `buckets` are written — a fill touches its
+     * own day, not the whole ledger. Each one is read-merge-written, serialized:
+     * the stored day record is re-read and folded under the in-memory one
+     * before the write, so another tab's fills in that day, or records this
+     * tab never loaded, are carried forward rather than overwritten. When the
+     * pre-write read cannot be made the write is skipped outright — the ledger
+     * in memory is kept and the next save retries — because a blind overwrite
+     * from a possibly-empty copy is exactly the accident this exists to
+     * prevent. Writes go through the debounce, so a burst of fills in one
+     * event lands as one write per day touched.
+     *
+     * With the cap reached, the oldest records in memory are the floor: stored
+     * records older than that are dropped from the day record as they are from
+     * memory, which is how the cap shrinks storage and not just memory.
+     *
+     * While the single key is still the record (a split that could not be
+     * written), the whole ledger is read-merge-written to it as it always was.
+     * @param {Iterable<string>} [buckets] - Day ids to write; every day in memory when omitted
+     * @returns {Promise<boolean>} Whether every write was issued
      */
-    async saveRecords() {
+    async saveRecords(buckets) {
+        const wanted = buckets ? new Set(buckets) : null;
         const run = async () => {
             try {
-                const probe = await storage.tryGet(characterKey(RECORDS_BASE), LEDGER_STORE);
-                if (probe === null) {
-                    console.warn('[TradeLedger] Records not saved: storage could not be read first');
-                    return false;
+                if (this._legacy) {
+                    const probe = await storage.tryGet(characterKey(RECORDS_BASE), LEDGER_STORE);
+                    if (probe === null) {
+                        console.warn('[TradeLedger] Records not saved: storage could not be read first');
+                        return false;
+                    }
+                    const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
+                    this.records = mergeRecords(stored, this.records);
+                    return await writeScoped(RECORDS_BASE, this.records, LEDGER_STORE);
                 }
-                const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
-                this.records = mergeRecords(stored, this.records);
-                return await writeScoped(RECORDS_BASE, this.records, LEDGER_STORE, true);
+
+                const charId = ledgerCharId();
+                const grouped = groupByBucket(this.records);
+                const days = wanted || new Set(grouped.keys());
+                let floorT = -Infinity;
+                if (this.records.length >= LEDGER_RECORD_CAP) {
+                    floorT = Infinity;
+                    for (const record of this.records) if (record.t < floorT) floorT = record.t;
+                }
+
+                let issued = true;
+                const carried = [];
+                for (const bucket of days) {
+                    const key = recordKey(charId, bucket);
+                    const probe = await storage.tryGet(key, LEDGER_STORE);
+                    if (probe === null) {
+                        console.warn(`[TradeLedger] ${bucket} not saved: storage could not be read first`);
+                        issued = false;
+                        continue;
+                    }
+                    const stored = probe.found && Array.isArray(probe.value) ? probe.value : [];
+                    const memory = grouped.get(bucket) || [];
+                    const merged = mergeRecords(stored, memory).filter((record) => record.t >= floorT);
+
+                    if (merged.length === 0) {
+                        if (probe.found) await storage.delete(key, LEDGER_STORE);
+                        continue;
+                    }
+                    if (merged.length > memory.length) carried.push(...merged);
+                    storage.set(key, merged, LEDGER_STORE);
+                }
+
+                // Rows only storage knew come into memory too, as they did
+                // when the whole ledger was merged on every save
+                if (carried.length > 0) this.records = mergeRecords(this.records, carried);
+                return issued;
             } catch (error) {
                 console.error('[TradeLedger] Failed to save records:', error);
                 return false;
@@ -356,6 +626,7 @@ class TradeLedgerStore {
         this.records = [];
         this.states = {};
         this.isLoaded = false;
+        this._legacy = false;
         await this.initialize();
     }
 }
