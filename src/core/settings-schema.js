@@ -481,6 +481,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Compact 4-line cost comparison for the selected produce quantity: direct recipe cost, missing direct mats, best crafting plan, and finished item market price.',
             },
+            actions_arbitrageBoard: {
+                id: 'actions_arbitrageBoard',
+                label: 'Skill pages: Production arbitrage board',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds an "Arbitrage" button to the cheesesmithing, crafting, tailoring, cooking and brewing pages that opens one ranked table of every recipe: your material cost per unit, sale value after tax, margin per unit, action, hour and day (bounded by what the market absorbs), level requirement and a data-quality flag. Click a row to open the action.',
+            },
             actionPanel_bestCraftingPlan: {
                 id: 'actionPanel_bestCraftingPlan',
                 label: 'Action panel: Show best crafting plan',

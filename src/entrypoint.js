@@ -889,6 +889,24 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'productionArbitrageBoard',
+            name: 'Production Arbitrage Board',
+            category: 'Actions',
+            module: Actions.productionArbitrageBoard,
+            async: false,
+            customCheck: () => config.getSetting('actions_arbitrageBoard'),
+            // The button only belongs on a production skill page, so a gathering
+            // page (which shares the title class) is not a verdict either way
+            healthCheck: () =>
+                whenSetting('actions_arbitrageBoard', () => {
+                    const title = document.querySelector('[class*="GatheringProductionSkillPanel_title"]');
+                    if (!title) return null;
+                    const production = ['Cheesesmithing', 'Crafting', 'Tailoring', 'Cooking', 'Brewing'];
+                    if (!production.some((name) => title.textContent.includes(name))) return null;
+                    return Boolean(title.querySelector('.mwi-arbitrage-open'));
+                }),
+        },
+        {
             key: 'alchemyProfitDisplay',
             name: 'Alchemy Profit Display',
             category: 'Alchemy',
