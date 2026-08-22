@@ -2708,7 +2708,16 @@ class CombatSimUI {
                 const va = a[col] ?? 0;
                 const vb = b[col] ?? 0;
                 if (typeof va === 'string') return asc ? va.localeCompare(vb) : vb.localeCompare(va);
-                return asc ? va - vb : vb - va;
+                if (va !== vb) return asc ? va - vb : vb - va;
+                // Equal Bestiary points — most rows at 0.0 — order by how soon
+                // the first point lands, soonest first whichever way the
+                // column sorts; a zone with no first point at all goes last
+                if (col === 'bestiary') {
+                    const fa = a._bestiary?.firstPointHours ?? Infinity;
+                    const fb = b._bestiary?.firstPointHours ?? Infinity;
+                    return fa - fb;
+                }
+                return 0;
             });
         }
 
