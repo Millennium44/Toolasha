@@ -58,6 +58,8 @@ class MarketPriceStore {
         this.saveTimer = null;
         this.dirty = false;
         this.loaded = false;
+        /** The marketplace.json object last folded in, so the same one is not re-walked */
+        this.lastSnapshot = null;
     }
 
     /** @returns {Object} key → entry, the live in-memory cache */
@@ -96,6 +98,7 @@ class MarketPriceStore {
         }
         this.flush();
         this.listeners.clear();
+        this.lastSnapshot = null;
     }
 
     /**
@@ -140,6 +143,12 @@ class MarketPriceStore {
      */
     ingestSnapshot(marketData, timestamp) {
         if (!marketData) return;
+        // The feed's listeners also hear about every order-book price patch,
+        // and the snapshot has not moved for those: it is a new object only
+        // when marketplace.json is fetched again. Re-walking the whole table
+        // for the same one changes nothing.
+        if (marketData === this.lastSnapshot) return;
+        this.lastSnapshot = marketData;
         const changed = [];
 
         for (const [itemHrid, levels] of Object.entries(marketData)) {

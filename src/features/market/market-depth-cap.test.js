@@ -8,7 +8,39 @@ vi.mock('../../core/config.js', () => ({ default: { getSetting: vi.fn(() => true
 // shipped a second copy of it in the market bundle)
 vi.mock('../../utils/bundle-bridge.js', () => ({ riskOfRuinUI: () => ({ getDepthCapContext: vi.fn(() => null) }) }));
 
-const { calculateDepthCap } = await import('./market-depth-cap.js');
+const { calculateDepthCap, default: marketDepthCap } = await import('./market-depth-cap.js');
+const { default: dataManager } = await import('../../core/data-manager.js');
+
+describe('order-book messages', () => {
+    test('a burst of books is stashed at once and the widget repainted once, after the last', () => {
+        vi.useFakeTimers();
+        try {
+            const container = document.createElement('div');
+            container.className = 'MarketplacePanel_orderBooksContainer__abc';
+            document.body.appendChild(container);
+            const processed = vi.spyOn(marketDepthCap, 'processOrderBook').mockImplementation(() => {});
+
+            marketDepthCap.setupWebSocketListener();
+            const handler = dataManager.on.mock.calls.at(-1)[1];
+            for (let i = 0; i < 20; i++) {
+                handler({ marketItemOrderBooks: { itemHrid: `/items/item_${i}`, orderBooks: [{ bids: [] }] } });
+            }
+
+            expect(Object.keys(marketDepthCap.orderBooksCache)).toHaveLength(20);
+            expect(processed).not.toHaveBeenCalled();
+
+            vi.advanceTimersByTime(50);
+            expect(processed).toHaveBeenCalledTimes(1);
+            expect(processed).toHaveBeenCalledWith(container);
+
+            processed.mockRestore();
+            marketDepthCap.cleanupRegistry.cleanupAll();
+            container.remove();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
 
 describe('calculateDepthCap', () => {
     test('sums quantity across bid levels that still clear the cost threshold', () => {

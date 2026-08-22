@@ -15,6 +15,15 @@ import { formatKMB } from '../../utils/formatters.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { GAME } from '../../utils/selectors.js';
 
+/**
+ * How long order-book messages are gathered before the display is redrawn.
+ *
+ * Opening an item sends one message per enhancement level — about twenty in
+ * a row — and each used to clear and rebuild the display. The book is stashed
+ * the moment it arrives; only the DOM pass waits for the burst to end.
+ */
+const REPAINT_DEBOUNCE_MS = 50;
+
 class QueueLengthEstimator {
     constructor() {
         this.unregisterWebSocket = null;
@@ -22,6 +31,7 @@ class QueueLengthEstimator {
         this.isInitialized = false;
         this.cleanupRegistry = createCleanupRegistry();
         this.orderBooksCache = {}; // itemHrid → { data: marketItemOrderBooks, lastUpdated }
+        this._repaintTimer = null;
     }
 
     /**
@@ -56,16 +66,7 @@ class QueueLengthEstimator {
                     };
                 }
 
-                // Clear processed flags to re-render with new data
-                document.querySelectorAll('.mwi-queue-length-set').forEach((container) => {
-                    container.classList.remove('mwi-queue-length-set');
-                });
-
-                // Manually re-process any existing containers
-                const existingContainers = document.querySelectorAll('[class*="MarketplacePanel_orderBooksContainer"]');
-                existingContainers.forEach((container) => {
-                    this.processOrderBook(container);
-                });
+                this.scheduleRepaint();
             }
         };
 
@@ -73,6 +74,8 @@ class QueueLengthEstimator {
 
         this.unregisterWebSocket = () => {
             dataManager.off('market_item_order_books_updated', orderBookHandler);
+            clearTimeout(this._repaintTimer);
+            this._repaintTimer = null;
         };
 
         this.cleanupRegistry.registerCleanup(() => {
@@ -80,6 +83,37 @@ class QueueLengthEstimator {
                 this.unregisterWebSocket();
                 this.unregisterWebSocket = null;
             }
+        });
+    }
+
+    /**
+     * Redraw the queue lengths once the current run of order-book messages
+     * has ended.
+     */
+    scheduleRepaint() {
+        if (this._repaintTimer) {
+            return;
+        }
+        this._repaintTimer = setTimeout(() => {
+            this._repaintTimer = null;
+            this.repaint();
+        }, REPAINT_DEBOUNCE_MS);
+    }
+
+    /**
+     * Clear the processed flags and re-process every order book container on
+     * the page with the books now in hand.
+     */
+    repaint() {
+        // Clear processed flags to re-render with new data
+        document.querySelectorAll('.mwi-queue-length-set').forEach((container) => {
+            container.classList.remove('mwi-queue-length-set');
+        });
+
+        // Manually re-process any existing containers
+        const existingContainers = document.querySelectorAll('[class*="MarketplacePanel_orderBooksContainer"]');
+        existingContainers.forEach((container) => {
+            this.processOrderBook(container);
         });
     }
 

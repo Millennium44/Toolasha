@@ -7,13 +7,70 @@
 
 import { describe, test, expect, vi } from 'vitest';
 
-vi.mock('../../core/data-manager.js', () => ({ default: { on: () => {}, off: () => {} } }));
+const dataManagerMock = vi.hoisted(() => ({
+    handlers: {},
+    on: (event, handler) => {
+        dataManagerMock.handlers[event] = handler;
+    },
+    off: () => {},
+}));
+vi.mock('../../core/data-manager.js', () => ({ default: dataManagerMock }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true, getSettingValue: (key, fallback) => fallback },
 }));
 
 const { default: queueLengthEstimator } = await import('./queue-length-estimator.js');
+
+describe('order-book messages', () => {
+    test('a burst of books is stashed at once and the page repainted once, after the last', () => {
+        vi.useFakeTimers();
+        try {
+            const container = document.createElement('div');
+            container.className = 'MarketplacePanel_orderBooksContainer__abc';
+            document.body.appendChild(container);
+            const processed = vi.spyOn(queueLengthEstimator, 'processOrderBook').mockImplementation(() => {});
+
+            queueLengthEstimator.setupWebSocketListeners();
+            const handler = dataManagerMock.handlers.market_item_order_books_updated;
+            for (let i = 0; i < 20; i++) {
+                handler({
+                    marketItemOrderBooks: { itemHrid: `/items/item_${i}`, orderBooks: [{ asks: [], bids: [] }] },
+                });
+            }
+
+            expect(Object.keys(queueLengthEstimator.orderBooksCache)).toHaveLength(20);
+            expect(processed).not.toHaveBeenCalled();
+
+            vi.advanceTimersByTime(49);
+            expect(processed).not.toHaveBeenCalled();
+            vi.advanceTimersByTime(1);
+            expect(processed).toHaveBeenCalledTimes(1);
+            expect(processed).toHaveBeenCalledWith(container);
+
+            processed.mockRestore();
+            queueLengthEstimator.unregisterWebSocket();
+            container.remove();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a message without a book is ignored', () => {
+        vi.useFakeTimers();
+        try {
+            const processed = vi.spyOn(queueLengthEstimator, 'processOrderBook').mockImplementation(() => {});
+            queueLengthEstimator.setupWebSocketListeners();
+            dataManagerMock.handlers.market_item_order_books_updated({});
+            vi.advanceTimersByTime(100);
+            expect(processed).not.toHaveBeenCalled();
+            processed.mockRestore();
+            queueLengthEstimator.unregisterWebSocket();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
 
 /** A button container shaped like the game's order-book action row */
 function buttonContainer() {

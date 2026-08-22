@@ -65,7 +65,10 @@ const storageMock = vi.hoisted(() => {
 const dataManagerMock = vi.hoisted(() => ({
     characterId: 'market123',
     gameMode: 'standard',
-    on: () => {},
+    handlers: {},
+    on: (event, handler) => {
+        dataManagerMock.handlers[event] = handler;
+    },
     off: () => {},
     getMarketListings: () => [],
     getCurrentCharacterId: () => dataManagerMock.characterId,
@@ -85,9 +88,17 @@ vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => false, getSettingValue: (key, fallback) => fallback },
 }));
-vi.mock('../../api/marketplace.js', () => ({ default: { updatePrice: vi.fn() } }));
+const marketMock = vi.hoisted(() => ({ updatePrice: vi.fn(), updatePrices: vi.fn() }));
+vi.mock('../../api/marketplace.js', () => ({ default: marketMock }));
 
-const { default: estimatedListingAge, ANCHOR_POOL_MAX } = await import('./estimated-listing-age.js');
+const {
+    default: estimatedListingAge,
+    ANCHOR_POOL_MAX,
+    ORDER_BOOK_CACHE_MAX_ITEMS,
+    ORDER_BOOK_PERSISTED_ROWS,
+    LISTING_SAVE_DEBOUNCE_MS,
+    ORDER_BOOK_REPAINT_MS,
+} = await import('./estimated-listing-age.js');
 const { _resetAdoptionCache } = await import('../../utils/character-key.js');
 
 /** The key this character's listing log lives under */
@@ -120,6 +131,16 @@ beforeEach(() => {
     estimatedListingAge.estimationPoints = [];
     estimatedListingAge.anchorsLoaded = false;
     estimatedListingAge._saveChain = null;
+    // A save left waiting by the last test must not land in this one
+    clearTimeout(estimatedListingAge._saveTimer);
+    estimatedListingAge._saveTimer = null;
+    estimatedListingAge._pendingSave = null;
+    estimatedListingAge._resolvePendingSave = null;
+    clearTimeout(estimatedListingAge._repaintTimer);
+    estimatedListingAge._repaintTimer = null;
+    estimatedListingAge.orderBooksCache = {};
+    marketMock.updatePrice.mockClear();
+    marketMock.updatePrices.mockClear();
     storageMock.unavailable = false;
     for (const fn of [
         storageMock.get,
@@ -693,7 +714,7 @@ describe('the listing log cannot be wiped by a failed read or a stale copy', () 
         storageMock.unavailable = true;
 
         estimatedListingAge.recordListing(row(4));
-        await estimatedListingAge._saveChain;
+        await estimatedListingAge.flushPendingSave();
 
         expect(storedLog().map((l) => l.id)).toEqual([1, 2, 3]);
         expect(storageMock.set).not.toHaveBeenCalled();
@@ -706,7 +727,7 @@ describe('the listing log cannot be wiped by a failed read or a stale copy', () 
         knownAs([row(2, { status: 'filled' })]);
 
         estimatedListingAge.recordListing(row(3));
-        await estimatedListingAge._saveChain;
+        await estimatedListingAge.flushPendingSave();
 
         expect(storedLog().map((l) => l.id)).toEqual([1, 2, 3]);
         // Memory's fresher status wins on the clash
@@ -719,12 +740,12 @@ describe('the listing log cannot be wiped by a failed read or a stale copy', () 
         knownAs([]);
         storageMock.unavailable = true;
         estimatedListingAge.recordListing(row(2));
-        await estimatedListingAge._saveChain;
+        await estimatedListingAge.flushPendingSave();
         expect(storedLog().map((l) => l.id)).toEqual([1]);
 
         storageMock.unavailable = false;
         estimatedListingAge.recordListing(row(3));
-        await estimatedListingAge._saveChain;
+        await estimatedListingAge.flushPendingSave();
 
         expect(storedLog().map((l) => l.id)).toEqual([1, 2, 3]);
     });
@@ -736,7 +757,7 @@ describe('the listing log cannot be wiped by a failed read or a stale copy', () 
         await estimatedListingAge.importListings([row(1), row(9)]);
         // A later listing event must not undo the import
         estimatedListingAge.recordListing(row(10));
-        await estimatedListingAge._saveChain;
+        await estimatedListingAge.flushPendingSave();
 
         expect(storedLog().map((l) => l.id)).toEqual([1, 9, 10]);
     });
@@ -749,7 +770,7 @@ describe('the listing log cannot be wiped by a failed read or a stale copy', () 
         expect(storedLog()).toEqual([]);
 
         estimatedListingAge.recordListing(row(3));
-        await estimatedListingAge._saveChain;
+        await estimatedListingAge.flushPendingSave();
         expect(storedLog().map((l) => l.id)).toEqual([3]);
     });
 
@@ -761,5 +782,184 @@ describe('the listing log cannot be wiped by a failed read or a stale copy', () 
 
         expect(storedLog().map((l) => l.id)).toEqual([2]);
         expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([2]);
+    });
+});
+
+describe('recordListings — one pass for a batch', () => {
+    const listing = (id, extra = {}) => ({
+        id,
+        createdTimestamp: new Date(id * 1000).toISOString(),
+        itemHrid: '/items/a',
+        ...extra,
+    });
+
+    test('records every listing, sorted by id, with one debounced save and one anchor growth', async () => {
+        storageMock.storeFor('marketListings').set(LOG_KEY, []);
+        const addAnchors = vi.spyOn(estimatedListingAge, 'addAnchors');
+        const save = vi.spyOn(estimatedListingAge, 'saveHistoricalData');
+
+        estimatedListingAge.recordListings([listing(300), listing(100), listing(200)]);
+
+        expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([100, 200, 300]);
+        expect(addAnchors).toHaveBeenCalledTimes(1);
+        expect(estimatedListingAge.anchors.map((a) => a.id)).toEqual([100, 200, 300]);
+        // Nothing written yet: the save waits for the run of events to end
+        expect(save).not.toHaveBeenCalled();
+
+        await estimatedListingAge.flushPendingSave();
+        expect(save).toHaveBeenCalledTimes(1);
+        expect(
+            storageMock
+                .storeFor('marketListings')
+                .get(LOG_KEY)
+                .map((l) => l.id)
+        ).toEqual([100, 200, 300]);
+
+        addAnchors.mockRestore();
+        save.mockRestore();
+    });
+
+    test('the debounce fires on its own once the window closes', async () => {
+        vi.useFakeTimers();
+        try {
+            storageMock.storeFor('marketListings').set(LOG_KEY, []);
+            const save = vi.spyOn(estimatedListingAge, 'saveHistoricalData');
+
+            estimatedListingAge.recordListings([listing(1)]);
+            estimatedListingAge.recordListings([listing(2)]);
+            estimatedListingAge.recordListing(listing(3));
+            expect(save).not.toHaveBeenCalled();
+
+            vi.advanceTimersByTime(LISTING_SAVE_DEBOUNCE_MS);
+            expect(save).toHaveBeenCalledTimes(1);
+            expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([1, 2, 3]);
+            save.mockRestore();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a status update in the same batch as the listing it updates lands in order', () => {
+        estimatedListingAge.recordListings([
+            listing(1),
+            listing(1, { _toolashaStatus: 'filled' }),
+            listing(2, { _toolashaStatus: 'canceled' }),
+        ]);
+
+        expect(estimatedListingAge.knownListings).toHaveLength(2);
+        expect(estimatedListingAge.knownListings.find((l) => l.id === 1).status).toBe('filled');
+        expect(estimatedListingAge.knownListings.find((l) => l.id === 2).status).toBe('canceled');
+    });
+
+    test('a batch with nothing datable changes nothing and schedules no save', () => {
+        const save = vi.spyOn(estimatedListingAge, '_scheduleSave');
+        estimatedListingAge.recordListings([{ id: 1 }, null]);
+        expect(estimatedListingAge.knownListings).toEqual([]);
+        expect(save).not.toHaveBeenCalled();
+        save.mockRestore();
+    });
+
+    test('the listing handlers record a whole message as one batch', () => {
+        estimatedListingAge.setupWebSocketListeners();
+        const batches = vi.spyOn(estimatedListingAge, 'recordListings');
+
+        dataManagerMock.handlers.market_listings_updated({
+            newMarketListings: [listing(5), listing(6)],
+            endMarketListings: [listing(7, { status: '/market_listing_status/filled' })],
+        });
+
+        expect(batches).toHaveBeenCalledTimes(2);
+        expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([5, 6, 7]);
+        expect(estimatedListingAge.knownListings.find((l) => l.id === 7).status).toBe('filled');
+
+        batches.mockRestore();
+        estimatedListingAge.unregisterWebSocket();
+    });
+});
+
+describe('order-book messages — stash now, repaint and persist once per burst', () => {
+    const row = (listingId) => ({ listingId, price: 100, quantity: 1 });
+    const book = (itemHrid, levels = 1, rows = 20) => ({
+        marketItemOrderBooks: {
+            itemHrid,
+            orderBooks: Array.from({ length: levels }, () => ({
+                asks: Array.from({ length: rows }, (_, i) => row(1000 + i)),
+                bids: Array.from({ length: rows }, (_, i) => row(2000 + i)),
+            })),
+        },
+    });
+
+    test('a burst of books is cached at once but persisted and patched once per book', () => {
+        vi.useFakeTimers();
+        try {
+            estimatedListingAge.setupWebSocketListeners();
+            const handler = dataManagerMock.handlers.market_item_order_books_updated;
+            const persist = vi.spyOn(estimatedListingAge, 'saveOrderBooksCache');
+
+            for (let i = 0; i < 20; i++) handler(book(`/items/item_${i}`, 21));
+
+            // Every book is in hand the moment it arrives
+            expect(Object.keys(estimatedListingAge.orderBooksCache)).toHaveLength(20);
+            expect(estimatedListingAge.currentItemHrid).toBe('/items/item_19');
+            // One price patch call per book, carrying every level
+            expect(marketMock.updatePrices).toHaveBeenCalledTimes(20);
+            expect(marketMock.updatePrices.mock.calls[0][0]).toHaveLength(21);
+            expect(marketMock.updatePrice).not.toHaveBeenCalled();
+            // The write waits for the burst to end, then happens once
+            expect(persist).not.toHaveBeenCalled();
+            vi.advanceTimersByTime(ORDER_BOOK_REPAINT_MS);
+            expect(persist).toHaveBeenCalledTimes(1);
+
+            persist.mockRestore();
+            estimatedListingAge.unregisterWebSocket();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('what is written out keeps only the head of each side, in the same shape', async () => {
+        estimatedListingAge._cacheOrderBook('/items/a', book('/items/a', 2).marketItemOrderBooks);
+        await estimatedListingAge.saveOrderBooksCache();
+
+        const stored = storageMock.storeFor('marketListings').get('marketOrderBooksCache');
+        const entry = stored['/items/a'];
+        expect(entry.lastUpdated).toBe(estimatedListingAge.orderBooksCache['/items/a'].lastUpdated);
+        expect(entry.data.itemHrid).toBe('/items/a');
+        expect(entry.data.orderBooks).toHaveLength(2);
+        expect(entry.data.orderBooks[0].asks).toHaveLength(ORDER_BOOK_PERSISTED_ROWS);
+        expect(entry.data.orderBooks[0].asks[0]).toEqual(row(1000));
+        expect(entry.data.orderBooks[1].bids).toHaveLength(ORDER_BOOK_PERSISTED_ROWS);
+        // The in-memory book is untouched: the open item's table reads all of it
+        expect(estimatedListingAge.orderBooksCache['/items/a'].data.orderBooks[0].asks).toHaveLength(20);
+    });
+
+    test('the cache is bounded by count, the least recently seen going first', () => {
+        vi.useFakeTimers();
+        try {
+            for (let i = 0; i <= ORDER_BOOK_CACHE_MAX_ITEMS; i++) {
+                vi.setSystemTime(1_000_000 + i * 1000);
+                estimatedListingAge._cacheOrderBook(`/items/item_${i}`, book(`/items/item_${i}`).marketItemOrderBooks);
+            }
+            expect(Object.keys(estimatedListingAge.orderBooksCache)).toHaveLength(ORDER_BOOK_CACHE_MAX_ITEMS);
+            expect(estimatedListingAge.orderBooksCache['/items/item_0']).toBeUndefined();
+            expect(estimatedListingAge.orderBooksCache[`/items/item_${ORDER_BOOK_CACHE_MAX_ITEMS}`]).toBeDefined();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('an older stored blob with whole books loads as it always did, aged and bounded', async () => {
+        const now = Date.now();
+        const weekAgo = now - 8 * 24 * 60 * 60 * 1000;
+        storageMock.storeFor('marketListings').set('marketOrderBooksCache', {
+            '/items/fresh': { lastUpdated: now - 1000, data: book('/items/fresh').marketItemOrderBooks },
+            '/items/stale': { lastUpdated: weekAgo, data: book('/items/stale').marketItemOrderBooks },
+            '/items/broken': null,
+        });
+
+        await estimatedListingAge.loadOrderBooksCache();
+
+        expect(Object.keys(estimatedListingAge.orderBooksCache)).toEqual(['/items/fresh']);
+        expect(estimatedListingAge.orderBooksCache['/items/fresh'].data.orderBooks[0].asks).toHaveLength(20);
     });
 });

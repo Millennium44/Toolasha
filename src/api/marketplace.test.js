@@ -322,3 +322,90 @@ describe('MarketAPI getPriceTimestamp', () => {
         expect(marketAPI.getPriceTimestamp('/items/x', 0)).toBeNull();
     });
 });
+
+describe('MarketAPI price patch notifications', () => {
+    beforeEach(() => {
+        vi.resetModules();
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('a single updatePrice still notifies, once the coalescing window closes', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        const listener = vi.fn();
+        marketAPI.on(listener);
+
+        marketAPI.updatePrice('/items/plank', 0, 50, 40);
+
+        expect(listener).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(marketAPI.NOTIFY_COALESCE_MS);
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(marketAPI.getPrice('/items/plank', 0)).toMatchObject({ ask: 50, bid: 40 });
+    });
+
+    test('a burst of updatePrice calls notifies once', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        const listener = vi.fn();
+        marketAPI.on(listener);
+
+        for (let level = 0; level <= 20; level++) {
+            marketAPI.updatePrice('/items/sword', level, 100 + level, 90 + level);
+        }
+        vi.advanceTimersByTime(marketAPI.NOTIFY_COALESCE_MS);
+
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(marketAPI.getPrice('/items/sword', 20)).toMatchObject({ ask: 120, bid: 110 });
+    });
+
+    test('updatePrices writes every patch, saves once and notifies once', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        const { default: storage } = await import('../core/storage.js');
+        const listener = vi.fn();
+        marketAPI.on(listener);
+
+        marketAPI.updatePrices([
+            { itemHrid: '/items/sword', enhancementLevel: 0, ask: 100, bid: 90 },
+            { itemHrid: '/items/sword', enhancementLevel: 1, ask: 110, bid: null },
+            null,
+        ]);
+        vi.advanceTimersByTime(marketAPI.NOTIFY_COALESCE_MS);
+
+        expect(storage.setJSON).toHaveBeenCalledTimes(1);
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(marketAPI.getPrice('/items/sword', 0)).toMatchObject({ ask: 100, bid: 90 });
+        expect(marketAPI.getPrice('/items/sword', 1)).toMatchObject({ ask: 110 });
+    });
+
+    test('an empty updatePrices neither saves nor notifies', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        const { default: storage } = await import('../core/storage.js');
+        const listener = vi.fn();
+        marketAPI.on(listener);
+
+        marketAPI.updatePrices([]);
+        vi.advanceTimersByTime(marketAPI.NOTIFY_COALESCE_MS);
+
+        expect(storage.setJSON).not.toHaveBeenCalled();
+        expect(listener).not.toHaveBeenCalled();
+    });
+
+    test('a direct notification absorbs a pending coalesced one', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        const listener = vi.fn();
+        marketAPI.on(listener);
+
+        marketAPI.updatePrice('/items/plank', 0, 50, 40);
+        marketAPI.notifyListeners();
+        vi.advanceTimersByTime(marketAPI.NOTIFY_COALESCE_MS);
+
+        expect(listener).toHaveBeenCalledTimes(1);
+    });
+});

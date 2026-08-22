@@ -46,6 +46,9 @@ class MarketAPI {
 
         // Event listeners for price updates
         this.listeners = [];
+        /** How long a burst of price patches is gathered before the listeners hear once */
+        this.NOTIFY_COALESCE_MS = 100;
+        this._notifyTimer = null;
 
         /** The fetch currently running, shared by every concurrent caller */
         this._inFlightFetch = null;
@@ -433,19 +436,64 @@ class MarketAPI {
      * @param {number|null} bid - Top bid price (null if no bids)
      */
     updatePrice(itemHrid, enhancementLevel, ask, bid) {
-        const key = `${itemHrid}:${enhancementLevel}`;
+        this.updatePrices([{ itemHrid, enhancementLevel, ask, bid }]);
+    }
 
-        this.pricePatchs[key] = {
-            a: ask,
-            b: bid,
-            timestamp: Date.now(),
-        };
+    /**
+     * Update several prices from order book data in one go.
+     *
+     * One order book response carries every enhancement level of an item — up
+     * to twenty-one of them — and patching each separately used to notify the
+     * listeners that many times, each re-ingesting the whole price table. The
+     * patches are written together and the listeners told once.
+     * @param {Array<{itemHrid: string, enhancementLevel: number, ask: number|null, bid: number|null}>} entries
+     */
+    updatePrices(entries) {
+        if (!Array.isArray(entries) || entries.length === 0) {
+            return;
+        }
+
+        const timestamp = Date.now();
+        let changed = false;
+        for (const entry of entries) {
+            if (!entry || !entry.itemHrid) continue;
+            const key = `${entry.itemHrid}:${entry.enhancementLevel}`;
+            this.pricePatchs[key] = {
+                a: entry.ask,
+                b: entry.bid,
+                timestamp,
+            };
+            changed = true;
+        }
+
+        if (!changed) {
+            return;
+        }
 
         // Save patches to storage (debounced via storage module)
         this.savePatches();
 
-        // Notify listeners of price update
-        this.notifyListeners();
+        // Notify listeners of price update, coalesced across a burst
+        this.scheduleNotify();
+    }
+
+    /**
+     * Notify the listeners once for a burst of price patches.
+     *
+     * Patches arrive in runs — an order book per enhancement level, a
+     * per-listing refresh — and the listeners are not cheap (one re-ingests
+     * the whole price table, another drops its production-cost caches). A
+     * trailing timer folds a run into one notification; a lone patch still
+     * notifies, just that much later.
+     */
+    scheduleNotify() {
+        if (this._notifyTimer) {
+            return;
+        }
+        this._notifyTimer = setTimeout(() => {
+            this._notifyTimer = null;
+            this.notifyListeners();
+        }, this.NOTIFY_COALESCE_MS);
     }
 
     /**
@@ -557,6 +605,12 @@ class MarketAPI {
      * Notify all listeners that prices have been updated
      */
     notifyListeners() {
+        // A direct notification (a fetch landing) covers any patch still waiting
+        // on the coalescing timer
+        if (this._notifyTimer) {
+            clearTimeout(this._notifyTimer);
+            this._notifyTimer = null;
+        }
         for (const callback of this.listeners) {
             try {
                 callback();

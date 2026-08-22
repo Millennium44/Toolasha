@@ -31,6 +31,13 @@ import { GAME } from '../../utils/selectors.js';
 import { riskOfRuinUI } from '../../utils/bundle-bridge.js';
 
 /**
+ * How long order-book messages are gathered before the widget is redrawn.
+ * Opening an item sends one message per enhancement level — about twenty in
+ * a row; the book is stashed at once and the DOM pass waits for the last.
+ */
+const REPAINT_DEBOUNCE_MS = 50;
+
+/**
  * Walk resting bid listings (sorted best-to-worst, as the game sends them) to find how many
  * actions' worth of one item's expected output the visible book can absorb before the marginal
  * unit's price drops below the threshold needed to still clear costPerAction.
@@ -76,6 +83,7 @@ class MarketDepthCap {
         this.isInitialized = false;
         this.cleanupRegistry = createCleanupRegistry();
         this.orderBooksCache = {}; // itemHrid -> { data: marketItemOrderBooks, lastUpdated }
+        this._repaintTimer = null;
     }
 
     initialize() {
@@ -95,14 +103,37 @@ class MarketDepthCap {
                 this.orderBooksCache[itemHrid] = { data: data.marketItemOrderBooks, lastUpdated: Date.now() };
             }
 
-            document.querySelectorAll('.mwi-depth-cap-set').forEach((el) => el.classList.remove('mwi-depth-cap-set'));
-            document
-                .querySelectorAll('[class*="MarketplacePanel_orderBooksContainer"]')
-                .forEach((container) => this.processOrderBook(container));
+            this.scheduleRepaint();
         };
 
         dataManager.on('market_item_order_books_updated', handler);
-        this.cleanupRegistry.registerCleanup(() => dataManager.off('market_item_order_books_updated', handler));
+        this.cleanupRegistry.registerCleanup(() => {
+            dataManager.off('market_item_order_books_updated', handler);
+            clearTimeout(this._repaintTimer);
+            this._repaintTimer = null;
+        });
+    }
+
+    /**
+     * Redraw the widget once the current run of order-book messages has ended.
+     */
+    scheduleRepaint() {
+        if (this._repaintTimer) return;
+        this._repaintTimer = setTimeout(() => {
+            this._repaintTimer = null;
+            this.repaint();
+        }, REPAINT_DEBOUNCE_MS);
+    }
+
+    /**
+     * Clear the processed flags and re-process every order book container on
+     * the page with the books now in hand.
+     */
+    repaint() {
+        document.querySelectorAll('.mwi-depth-cap-set').forEach((el) => el.classList.remove('mwi-depth-cap-set'));
+        document
+            .querySelectorAll('[class*="MarketplacePanel_orderBooksContainer"]')
+            .forEach((container) => this.processOrderBook(container));
     }
 
     setupObserver() {

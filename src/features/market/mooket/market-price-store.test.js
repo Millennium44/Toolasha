@@ -120,6 +120,29 @@ describe('ingestSnapshot', () => {
         expect(entry.ask).toBe(61);
     });
 
+    test('the same snapshot object offered twice is folded in once', () => {
+        const listener = vi.fn();
+        marketPriceStore.onChange(listener);
+        const snapshot = { '/items/plank': { 0: { a: 50, b: 40 } } };
+
+        marketPriceStore.ingestSnapshot(snapshot, 1000);
+        marketPriceStore.ingestSnapshot(snapshot, 2000);
+
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(marketPriceStore.get('/items/plank').at).toBe(1000);
+    });
+
+    test('a new snapshot object is folded in even when its prices match the last one', () => {
+        const listener = vi.fn();
+        marketPriceStore.onChange(listener);
+
+        marketPriceStore.ingestSnapshot({ '/items/plank': { 0: { a: 50, b: 40 } } }, 1000);
+        marketPriceStore.ingestSnapshot({ '/items/plank': { 0: { a: 50, b: 40 } } }, 2000);
+
+        expect(listener).toHaveBeenCalledTimes(2);
+        expect(marketPriceStore.get('/items/plank').at).toBe(2000);
+    });
+
     test('a null/undefined snapshot is a no-op rather than a throw', () => {
         expect(() => marketPriceStore.ingestSnapshot(null, Date.now())).not.toThrow();
     });

@@ -49,6 +49,36 @@ const ANCHORS_KEY = 'marketListingAnchors';
  */
 const ANCHOR_POOL_MAX = 3000;
 
+/** An order book older than this is dropped from the cache, in memory and as stored */
+const ORDER_BOOK_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** How many items' order books the cache holds; the least recently seen go first */
+const ORDER_BOOK_CACHE_MAX_ITEMS = 200;
+
+/**
+ * How many rows a side keeps when the cache is written out.
+ *
+ * What is read back from a stored book is its top: the top competing order
+ * of each side for the My Listings price/age columns, the top ask for the
+ * marketplace dropdown. The full twenty rows the game sends per side are
+ * only ever read for the book currently open, which arrives fresh over the
+ * socket before its table is even drawn — so the whole book is kept in
+ * memory and only its head is persisted.
+ */
+const ORDER_BOOK_PERSISTED_ROWS = 10;
+
+/** How long listing events are gathered before the log is saved once */
+const LISTING_SAVE_DEBOUNCE_MS = 250;
+
+/**
+ * How long order-book messages are gathered before the age column is redrawn.
+ *
+ * Opening an item sends one message per enhancement level — about twenty in
+ * a row — and each used to clear and rebuild every age column on the page.
+ * The book is stashed the moment it arrives; only the DOM pass waits.
+ */
+const ORDER_BOOK_REPAINT_MS = 50;
+
 /**
  * Anchor points from the RWI script author's data, for a fresh install that has
  * no listings of its own to interpolate between.
@@ -99,6 +129,11 @@ class EstimatedListingAge {
         this.anchorsKey = ANCHORS_KEY;
         this.orderBooksCacheKey = 'marketOrderBooksCache';
         this.isInitialized = false;
+        this._saveTimer = null;
+        this._pendingSave = null;
+        this._resolvePendingSave = null;
+        this._repaintTimer = null;
+        this._pageHideHandler = null;
     }
 
     /**
@@ -141,6 +176,13 @@ class EstimatedListingAge {
         // Setup WebSocket listeners to collect your listing IDs
         this.setupWebSocketListeners();
 
+        // A listing save waits out a short debounce; a tab closing inside that
+        // window still gets its write
+        if (typeof window !== 'undefined' && !this._pageHideHandler) {
+            this._pageHideHandler = () => this.flushPendingSave();
+            window.addEventListener('pagehide', this._pageHideHandler);
+        }
+
         // Display-only features: DOM observers for age columns
         if (config.getSetting('market_showEstimatedListingAge')) {
             // Setup DOM observer for order book table
@@ -156,12 +198,7 @@ class EstimatedListingAge {
      */
     loadInitialListings() {
         const listings = dataManager.getMarketListings();
-
-        for (const listing of listings) {
-            if (listing.id && listing.createdTimestamp) {
-                this.recordListing(listing);
-            }
-        }
+        this.recordListings(listings.filter((listing) => listing.id && listing.createdTimestamp));
     }
 
     /**
@@ -381,11 +418,9 @@ class EstimatedListingAge {
     async loadOrderBooksCache() {
         try {
             const stored = await storage.getJSON(this.orderBooksCacheKey, 'marketListings', {});
-            const raw = stored || {};
-            const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days
-            this.orderBooksCache = Object.fromEntries(
-                Object.entries(raw).filter(([, entry]) => entry.lastUpdated && entry.lastUpdated >= cutoff)
-            );
+            // Older blobs hold whole books; they load the same, and are trimmed
+            // on the next write
+            this.orderBooksCache = this._pruneOrderBooksCache(stored || {});
         } catch (error) {
             console.error('[EstimatedListingAge] Failed to load order books cache:', error);
             this.orderBooksCache = {};
@@ -501,10 +536,83 @@ class EstimatedListingAge {
      */
     async saveOrderBooksCache() {
         try {
-            await storage.setJSON(this.orderBooksCacheKey, this.orderBooksCache, 'marketListings');
+            await storage.setJSON(this.orderBooksCacheKey, this._orderBooksForStorage(), 'marketListings');
         } catch (error) {
             console.error('[EstimatedListingAge] Failed to save order books cache:', error);
         }
+    }
+
+    /**
+     * The cache with what has aged out or overflowed dropped.
+     *
+     * Age first, then count: the books seen least recently go, so what stays
+     * is what the My Listings table is most likely to look up.
+     * @param {Object} cache - itemHrid → { data, lastUpdated }
+     * @param {number} [now=Date.now()] - The moment to age against
+     * @returns {Object} A new object, bounded
+     */
+    _pruneOrderBooksCache(cache, now = Date.now()) {
+        const cutoff = now - ORDER_BOOK_CACHE_MAX_AGE_MS;
+        const kept = Object.entries(cache || {}).filter(
+            ([, entry]) => entry && typeof entry === 'object' && entry.lastUpdated && entry.lastUpdated >= cutoff
+        );
+        if (kept.length > ORDER_BOOK_CACHE_MAX_ITEMS) {
+            kept.sort((a, b) => b[1].lastUpdated - a[1].lastUpdated);
+            kept.length = ORDER_BOOK_CACHE_MAX_ITEMS;
+        }
+        return Object.fromEntries(kept);
+    }
+
+    /**
+     * Stash one item's order book and keep the cache within bounds.
+     * @param {string} itemHrid - Item the book is for
+     * @param {Object} orderBooksData - The marketItemOrderBooks payload
+     */
+    _cacheOrderBook(itemHrid, orderBooksData) {
+        this.orderBooksCache[itemHrid] = {
+            data: orderBooksData,
+            lastUpdated: Date.now(),
+        };
+        // Only a cache that has outgrown its bound is walked; the age cut
+        // rides along with the count cut
+        if (Object.keys(this.orderBooksCache).length > ORDER_BOOK_CACHE_MAX_ITEMS) {
+            this.orderBooksCache = this._pruneOrderBooksCache(this.orderBooksCache);
+        }
+    }
+
+    /**
+     * The cache as it is written out: every item the in-memory cache holds,
+     * each side of each level cut to its top rows. Same shape as the cache,
+     * so an older blob and a newer one load the same way.
+     * @returns {Object} itemHrid → { data, lastUpdated }
+     */
+    _orderBooksForStorage() {
+        const trimSide = (rows) => (Array.isArray(rows) ? rows.slice(0, ORDER_BOOK_PERSISTED_ROWS) : rows);
+        const trimBook = (book) => {
+            if (!book || typeof book !== 'object') return book;
+            const trimmed = { ...book };
+            if ('asks' in book) trimmed.asks = trimSide(book.asks);
+            if ('bids' in book) trimmed.bids = trimSide(book.bids);
+            return trimmed;
+        };
+        const trimLevels = (orderBooks) => {
+            if (Array.isArray(orderBooks)) return orderBooks.map(trimBook);
+            if (orderBooks && typeof orderBooks === 'object') {
+                return Object.fromEntries(Object.entries(orderBooks).map(([level, book]) => [level, trimBook(book)]));
+            }
+            return orderBooks;
+        };
+
+        const out = {};
+        for (const [itemHrid, entry] of Object.entries(this._pruneOrderBooksCache(this.orderBooksCache))) {
+            // Support both old format (direct data) and new format ({data, lastUpdated})
+            const data = entry.data || entry;
+            out[itemHrid] = {
+                lastUpdated: entry.lastUpdated,
+                data: data && typeof data === 'object' ? { ...data, orderBooks: trimLevels(data.orderBooks) } : data,
+            };
+        }
+        return out;
     }
 
     /**
@@ -514,9 +622,7 @@ class EstimatedListingAge {
         // Handle initial character data
         const initHandler = (data) => {
             if (data.myMarketListings) {
-                for (const listing of data.myMarketListings) {
-                    this.recordListing(listing);
-                }
+                this.recordListings(data.myMarketListings);
                 // Reconcile: any previously-active listing absent from this snapshot is no longer active
                 this._reconcileActiveListings(data.myMarketListings);
             }
@@ -529,16 +635,14 @@ class EstimatedListingAge {
                 for (const listing of data.newMarketListings) {
                     // New listings should start as 'unknown' (will be marked 'active' by history viewer)
                     listing._toolashaStatus = 'unknown';
-                    this.recordListing(listing);
                 }
+                this.recordListings(data.newMarketListings);
             }
 
             // Update all active listings (if provided)
             if (data.myMarketListings) {
-                for (const listing of data.myMarketListings) {
-                    // Active listings - record them but don't set status (let history viewer handle it)
-                    this.recordListing(listing);
-                }
+                // Active listings - record them but don't set status (let history viewer handle it)
+                this.recordListings(data.myMarketListings);
                 // Reconcile: any previously-active listing absent from this snapshot is no longer active
                 this._reconcileActiveListings(data.myMarketListings);
             }
@@ -571,9 +675,8 @@ class EstimatedListingAge {
                     } else {
                         listing._toolashaStatus = 'canceled';
                     }
-
-                    this.recordListing(listing);
                 }
+                this.recordListings(data.endMarketListings);
             }
         };
 
@@ -642,70 +745,41 @@ class EstimatedListingAge {
                 }
 
                 // Store with timestamp for staleness tracking
-                this.orderBooksCache[itemHrid] = {
-                    data: data.marketItemOrderBooks,
-                    lastUpdated: Date.now(),
-                };
+                this._cacheOrderBook(itemHrid, data.marketItemOrderBooks);
 
                 this.currentItemHrid = itemHrid; // Track current item
 
-                // Update market API with fresh prices from order book
+                // Update market API with fresh prices from order book — every
+                // level in one call, so the price listeners hear once per book
                 if (orderBooks) {
-                    // Handle both array and object format for orderBooks
+                    const patches = [];
+                    const collect = (orderBook, enhancementLevel) => {
+                        if (!orderBook) return; // Skip empty slots in sparse array
+                        const topAsk = orderBook.asks?.[0]?.price ?? null;
+                        const bids = orderBook.bids;
+                        const topBid = bids?.length > 0 ? bids[0].price : null;
+
+                        // Only update if we have at least one price
+                        if (topAsk !== null || topBid !== null) {
+                            patches.push({ itemHrid, enhancementLevel, ask: topAsk, bid: topBid });
+                        }
+                    };
                     if (Array.isArray(orderBooks)) {
                         // Enhancement level is the ARRAY INDEX
-                        orderBooks.forEach((orderBook, enhancementLevel) => {
-                            if (!orderBook) return; // Skip empty slots in sparse array
-                            const topAsk = orderBook.asks?.[0]?.price ?? null;
-                            const bids = orderBook.bids;
-                            const topBid = bids?.length > 0 ? bids[0].price : null;
-
-                            // Only update if we have at least one price
-                            if (topAsk !== null || topBid !== null) {
-                                marketAPI.updatePrice(itemHrid, enhancementLevel, topAsk, topBid);
-                            }
-                        });
+                        orderBooks.forEach(collect);
                     } else {
                         // Fallback: Handle object format { "0": {...}, "5": {...} }
                         for (const [level, orderBook] of Object.entries(orderBooks)) {
-                            if (!orderBook) continue;
-                            const enhancementLevel = parseInt(level, 10);
-                            const topAsk = orderBook.asks?.[0]?.price ?? null;
-                            const bids = orderBook.bids;
-                            const topBid = bids?.length > 0 ? bids[0].price : null;
-
-                            if (topAsk !== null || topBid !== null) {
-                                marketAPI.updatePrice(itemHrid, enhancementLevel, topAsk, topBid);
-                            }
+                            collect(orderBook, parseInt(level, 10));
                         }
+                    }
+                    if (patches.length > 0) {
+                        marketAPI.updatePrices(patches);
                     }
                 }
 
-                // Save to storage (debounced)
-                this.saveOrderBooksCache();
-
-                // Re-render display elements only if the listing age display is enabled
-                if (config.getSetting('market_showEstimatedListingAge')) {
-                    // Clear processed flags to re-render with new data
-                    const containers = document.querySelectorAll('.mwi-estimated-age-set');
-                    containers.forEach((container) => {
-                        container.classList.remove('mwi-estimated-age-set');
-                    });
-
-                    // Also clear listing price display flags so Top Order Age updates
-                    document.querySelectorAll('.mwi-listing-prices-set').forEach((table) => {
-                        table.classList.remove('mwi-listing-prices-set');
-                    });
-
-                    // Manually re-process any existing containers (handles race condition where
-                    // container appeared before WebSocket data arrived)
-                    const existingContainers = document.querySelectorAll(
-                        '[class*="MarketplacePanel_orderBooksContainer"]'
-                    );
-                    existingContainers.forEach((container) => {
-                        this.processOrderBook(container);
-                    });
-                }
+                // The save and the repaint wait for the burst to end
+                this._scheduleOrderBookRepaint();
             }
         };
 
@@ -737,7 +811,7 @@ class EstimatedListingAge {
             }
         }
         if (changed) {
-            this.saveHistoricalData();
+            this._scheduleSave();
         }
     }
 
@@ -746,50 +820,84 @@ class EstimatedListingAge {
      * @param {Object} listing - Full listing object from WebSocket
      */
     recordListing(listing) {
-        if (!listing.createdTimestamp) {
+        this.recordListings([listing]);
+    }
+
+    /**
+     * Record a batch of listings — a whole snapshot or status update — in one
+     * pass: one sort, one rebuild of the estimation points, one (debounced)
+     * save, one growth of the anchor pool, however many listings came in.
+     * @param {Array<Object>} listings - Full listing objects from WebSocket
+     */
+    recordListings(listings) {
+        if (!Array.isArray(listings) || listings.length === 0) {
             return;
         }
 
-        const timestamp = new Date(listing.createdTimestamp).getTime();
+        // One index over the log rather than a scan per listing
+        const indexById = new Map();
+        this.knownListings.forEach((entry, index) => indexById.set(entry.id, index));
 
-        // Check if we already have this listing
-        const existingIndex = this.knownListings.findIndex((entry) => entry.id === listing.id);
+        const newAnchors = [];
+        let changed = false;
 
-        // Determine status (NEVER use listing.status from game data - it's an HRID like "/market_listing_status/active")
-        // Priority: new status update from WebSocket > existing status > default unknown
-        let status;
-        if (listing._toolashaStatus) {
-            // Use explicitly set status from updateHandler (canceled/filled detection)
-            // This takes priority over existing status (allows status updates)
-            status = listing._toolashaStatus;
-        } else if (existingIndex !== -1 && this.knownListings[existingIndex].status) {
-            // Preserve existing tracked status if no new update
-            status = this.knownListings[existingIndex].status;
-        } else {
-            // Default to unknown for new listings
-            status = 'unknown';
+        for (const listing of listings) {
+            if (!listing || !listing.createdTimestamp) {
+                continue;
+            }
+
+            const timestamp = new Date(listing.createdTimestamp).getTime();
+
+            // Check if we already have this listing
+            const existingIndex = indexById.has(listing.id) ? indexById.get(listing.id) : -1;
+
+            // Determine status (NEVER use listing.status from game data - it's an HRID like "/market_listing_status/active")
+            // Priority: new status update from WebSocket > existing status > default unknown
+            let status;
+            if (listing._toolashaStatus) {
+                // Use explicitly set status from updateHandler (canceled/filled detection)
+                // This takes priority over existing status (allows status updates)
+                status = listing._toolashaStatus;
+            } else if (existingIndex !== -1 && this.knownListings[existingIndex].status) {
+                // Preserve existing tracked status if no new update
+                status = this.knownListings[existingIndex].status;
+            } else {
+                // Default to unknown for new listings
+                status = 'unknown';
+            }
+
+            // Add new entry with full data
+            const entry = {
+                id: listing.id,
+                timestamp: timestamp,
+                createdTimestamp: listing.createdTimestamp, // ISO string for display
+                itemHrid: listing.itemHrid,
+                enhancementLevel: listing.enhancementLevel || 0, // For accurate row matching
+                price: listing.price,
+                orderQuantity: listing.orderQuantity,
+                filledQuantity: listing.filledQuantity,
+                isSell: listing.isSell,
+                status: status,
+            };
+
+            if (existingIndex !== -1) {
+                // Update existing entry (in case it had incomplete data)
+                this.knownListings[existingIndex] = entry;
+            } else {
+                // Add new entry
+                indexById.set(entry.id, this.knownListings.length);
+                this.knownListings.push(entry);
+            }
+            changed = true;
+
+            // Growth: this id↔time pair is exact, so mirror it into the shared
+            // anchor pool too — dedup means re-recording the same id on a later
+            // status update is a no-op there.
+            newAnchors.push({ id: entry.id, timestamp: entry.timestamp });
         }
 
-        // Add new entry with full data
-        const entry = {
-            id: listing.id,
-            timestamp: timestamp,
-            createdTimestamp: listing.createdTimestamp, // ISO string for display
-            itemHrid: listing.itemHrid,
-            enhancementLevel: listing.enhancementLevel || 0, // For accurate row matching
-            price: listing.price,
-            orderQuantity: listing.orderQuantity,
-            filledQuantity: listing.filledQuantity,
-            isSell: listing.isSell,
-            status: status,
-        };
-
-        if (existingIndex !== -1) {
-            // Update existing entry (in case it had incomplete data)
-            this.knownListings[existingIndex] = entry;
-        } else {
-            // Add new entry
-            this.knownListings.push(entry);
+        if (!changed) {
+            return;
         }
 
         // Re-sort by ID
@@ -797,12 +905,94 @@ class EstimatedListingAge {
         this.rebuildEstimationPoints();
 
         // Save to storage (debounced)
-        this.saveHistoricalData();
+        this._scheduleSave();
 
-        // Growth: this id↔time pair is exact, so mirror it into the shared
-        // anchor pool too — dedup means re-recording the same id on a later
-        // status update is a no-op here.
-        this.addAnchors([{ id: entry.id, timestamp: entry.timestamp }]);
+        this.addAnchors(newAnchors);
+    }
+
+    /**
+     * Save the listing log once the current run of listing events has ended.
+     *
+     * Listing events arrive in runs — a bulk sell is one message per listing,
+     * a snapshot carries them all — and each save is a read-merge-write of the
+     * whole log. A trailing timer folds a run into one save.
+     * @returns {Promise<boolean>} Whether that save landed
+     */
+    _scheduleSave() {
+        if (!this._pendingSave) {
+            this._pendingSave = new Promise((resolve) => {
+                this._resolvePendingSave = resolve;
+                this._saveTimer = setTimeout(() => this._runPendingSave(), LISTING_SAVE_DEBOUNCE_MS);
+            });
+        }
+        return this._pendingSave;
+    }
+
+    /**
+     * Run the save a scheduled debounce is waiting on, now rather than later.
+     * @returns {Promise<boolean>} Whether a save landed (true when none was pending)
+     */
+    flushPendingSave() {
+        if (!this._pendingSave) {
+            return this._saveChain || Promise.resolve(true);
+        }
+        clearTimeout(this._saveTimer);
+        const pending = this._pendingSave;
+        this._runPendingSave();
+        return pending;
+    }
+
+    /** @private */
+    _runPendingSave() {
+        const resolve = this._resolvePendingSave;
+        this._saveTimer = null;
+        this._pendingSave = null;
+        this._resolvePendingSave = null;
+        resolve(this.saveHistoricalData());
+    }
+
+    /**
+     * Redraw the age columns once the current run of order-book messages has
+     * ended, and write the cache out once for the lot.
+     */
+    _scheduleOrderBookRepaint() {
+        if (this._repaintTimer) {
+            return;
+        }
+        this._repaintTimer = setTimeout(() => {
+            this._repaintTimer = null;
+            this._repaintOrderBooks();
+        }, ORDER_BOOK_REPAINT_MS);
+    }
+
+    /**
+     * The deferred half of an order-book message: persist the cache and, when
+     * the age column is on, clear and redraw it with the fresh books.
+     */
+    _repaintOrderBooks() {
+        // Save to storage (debounced)
+        this.saveOrderBooksCache();
+
+        // Re-render display elements only if the listing age display is enabled
+        if (!config.getSetting('market_showEstimatedListingAge')) {
+            return;
+        }
+
+        // Clear processed flags to re-render with new data
+        document.querySelectorAll('.mwi-estimated-age-set').forEach((container) => {
+            container.classList.remove('mwi-estimated-age-set');
+        });
+
+        // Also clear listing price display flags so Top Order Age updates
+        document.querySelectorAll('.mwi-listing-prices-set').forEach((table) => {
+            table.classList.remove('mwi-listing-prices-set');
+        });
+
+        // Manually re-process any existing containers (handles race condition where
+        // container appeared before WebSocket data arrived)
+        document.querySelectorAll('[class*="MarketplacePanel_orderBooksContainer"]').forEach((container) => {
+            this.processOrderBook(container);
+        });
     }
 
     /**
@@ -1435,6 +1625,17 @@ class EstimatedListingAge {
                 this.unregisterMyListingsObserver = null;
             }
 
+            if (this._repaintTimer) {
+                clearTimeout(this._repaintTimer);
+                this._repaintTimer = null;
+            }
+            if (this._pageHideHandler && typeof window !== 'undefined') {
+                window.removeEventListener('pagehide', this._pageHideHandler);
+                this._pageHideHandler = null;
+            }
+            // A save still waiting on its debounce goes out now
+            this.flushPendingSave();
+
             this.clearDisplays();
             this.isInitialized = false;
         } catch (error) {
@@ -1461,4 +1662,11 @@ registerSyncMerge({
 });
 
 export default estimatedListingAge;
-export { ANCHOR_POOL_MAX, mergeListingLogs };
+export {
+    ANCHOR_POOL_MAX,
+    ORDER_BOOK_CACHE_MAX_ITEMS,
+    ORDER_BOOK_PERSISTED_ROWS,
+    LISTING_SAVE_DEBOUNCE_MS,
+    ORDER_BOOK_REPAINT_MS,
+    mergeListingLogs,
+};
