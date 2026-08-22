@@ -2550,7 +2550,7 @@ class CombatSimUI {
                     console.error('[CombatSimUI] Redrawing All Zones on the Bestiary failed:', error);
                 }
             };
-            dataManager.on('monsters_updated', this._bestiaryListener);
+            dataManager.on?.('monsters_updated', this._bestiaryListener);
         }
         try {
             const rootEl = document.getElementById('root');
