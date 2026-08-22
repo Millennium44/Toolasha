@@ -2530,6 +2530,44 @@ class CombatSimUI {
      * @param {Object} gameData - Game data maps
      * @private
      */
+    /**
+     * Ask the game for the Bestiary (`get_monsters`), as its own tab does on
+     * open, at most once a minute; the data manager keeps the answer and the
+     * All Zones table redraws on it. A data fetch, not a game action.
+     */
+    _requestBestiary() {
+        const now = Date.now();
+        if (this._bestiaryRequestedAt && now - this._bestiaryRequestedAt < 60_000) return;
+        this._bestiaryRequestedAt = now;
+        if (!this._bestiaryListener) {
+            this._bestiaryListener = () => {
+                try {
+                    const args = this._allZonesRedrawArgs;
+                    if (this._allZonesResults && args) {
+                        this._displayAllZonesResults(this._allZonesResults, args.hours, args.gameData);
+                    }
+                } catch (error) {
+                    console.error('[CombatSimUI] Redrawing All Zones on the Bestiary failed:', error);
+                }
+            };
+            dataManager.on('monsters_updated', this._bestiaryListener);
+        }
+        try {
+            const rootEl = document.getElementById('root');
+            const rootFiber =
+                rootEl?._reactRootContainer?.current || rootEl?._reactRootContainer?._internalRoot?.current;
+            const find = (fiber, depth = 0) => {
+                if (!fiber || depth > 4000) return null;
+                if (typeof fiber.stateNode?.handleGetMonsters === 'function') return fiber.stateNode;
+                return find(fiber.child, depth + 1) || find(fiber.sibling, depth + 1);
+            };
+            const game = find(rootFiber);
+            game?.handleGetMonsters?.();
+        } catch (error) {
+            console.error('[CombatSimUI] Requesting the Bestiary failed:', error);
+        }
+    }
+
     async _displayAllZonesResults(zoneResults, hours, gameData) {
         const container = this.panel?.querySelector('#mwi-csim-results');
         if (!container) return;
@@ -2543,6 +2581,10 @@ class CombatSimUI {
         // kill rates are worth in points over the next day, from the counts held
         const bestiaryRows = dataManager.getCharacterMonsters?.() || null;
         const bestiaryCounts = bestiaryRows ? countsByMonster(bestiaryRows) : null;
+        // Not loaded yet: ask the game for it the way the Bestiary tab does,
+        // and redraw when it lands so the column fills in by itself
+        this._allZonesRedrawArgs = { hours, gameData };
+        if (!bestiaryRows) this._requestBestiary();
         const rows = zoneResults
             .filter((r) => r && r.simResult)
             .map((r) => {
@@ -5553,6 +5595,10 @@ class CombatSimUI {
         this._allZonesMaxTierFood = false;
         this._allZonesFoodSwaps = [];
         this._seekResults = null;
+        if (this._bestiaryListener) {
+            dataManager.off?.('monsters_updated', this._bestiaryListener);
+            this._bestiaryListener = null;
+        }
     }
 
     /**
