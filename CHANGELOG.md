@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Decimal Combat Level in the sidebar, and a stricter level-gap debuff
+
+Ported from upstream: the left sidebar shows the decimal Combat Level (e.g. 133.2) next to the game's whole number — setting "Show decimal Combat Level". The party level-gap debuff (Combat Sim and the live drop/luck model) now also requires a ten-level gap, not just a 20% ratio, matching the Game Guide; low-level parties were being penalised when the game would not.
+
+### Enhancement tracker counts Blessed Tea double-level successes
+
+Ported from upstream: the session summary reads Attempts · Successes · Blessed · Failures, and the per-level table marks blessed procs with a ✦ count next to successes. Older stored sessions load with the counter at zero; merged sessions sum it.
+
+### Guild panel: ETA to the next member slot
+
+Ported from upstream: a "Next Guild Level Slot (+1)" line under Exp to Next Level shows the target level, XP remaining and an ETA from a stable 24h (or 1h) guild XP rate — "collecting data" / "no recent gains" rather than an invented one. Also fixes time-to-next-level going blank when guild XP sat exactly on a level threshold.
+
 ### Upstream fixes through 2.94.0
 
 Ported from Celasha/Toolasha: the marketplace Age column skips the "Outside current tradable range" separator row instead of shifting every age after it; `guild_updated` is exempt from the websocket dedup so back-to-back guild changes are not dropped; Missing Mats, Required Materials and Cost Summary redraw when the action queue changes; dragged modals are clamped on-screen (a saved off-screen offset is healed); "Copy settings to other characters" also carries the per-character task protection and auto-reroll lists; typing a quantity into the queue input shows the level it would reach; the Skilling Optimizer labels refined items at the +10 they were scored at; the Combat Summary setting says what it does (rates in Battle Info, not "on return").
