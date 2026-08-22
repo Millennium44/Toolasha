@@ -308,8 +308,14 @@ function inGuildPanel(element) {
     return Boolean(element?.closest?.('[class*="GuildPanel"]'));
 }
 
+/** The button last injected, so the re-inject timer can tell "still there" cheaply */
+let injected = null;
+
 function inject() {
     if (typeof document === 'undefined') return;
+    // The button already placed is the common case for the slow timer below;
+    // it is answered off the cached element before any document query
+    if (injected?.isConnected && !inGuildPanel(injected)) return;
     const existing = document.getElementById(BUTTON_ID);
     if (existing) {
         // A button that landed in the trial's battle panel (In Progress tab)
@@ -342,6 +348,13 @@ function inject() {
     // positioned ancestor happens to be
     if (!area.style.position) area.style.position = 'relative';
     area.appendChild(button);
+    injected = button;
+}
+
+/** The timer's inject: nothing to do for a hidden tab */
+function reinject() {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    inject();
 }
 
 export default {
@@ -358,7 +371,7 @@ export default {
             debounceMaxWait: 1000,
         });
         inject();
-        timers.registerInterval(setInterval(inject, REINJECT_MS));
+        timers.registerInterval(setInterval(reinject, REINJECT_MS));
     },
     cleanup: () => {
         try {
@@ -366,6 +379,7 @@ export default {
             unregister = null;
             timers.clearAll();
             const button = typeof document === 'undefined' ? null : document.getElementById(BUTTON_ID);
+            injected = null;
             // The tile area was made a positioning context for the button's
             // sake; a game-owned element should not keep that once it is gone
             const area = button?.parentElement;

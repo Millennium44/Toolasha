@@ -8,6 +8,109 @@
 import { setCurrentProfile } from './profile-manager.js';
 import storage from './storage.js';
 
+/**
+ * Message types that bypass the content-hash deduplication.
+ *
+ * Events where consecutive messages have similar first 100 chars but contain
+ * different data (counts, timestamps, etc. beyond the 100-char hash window),
+ * or events that should always trigger UI updates (profile_shared,
+ * battle_unit_fetched).
+ *
+ * - `abilities_updated`: equipping and unequipping the same ability produce
+ *   messages whose first 100 characters are identical — type, character id and
+ *   the opening ability hrid fill the window, and the slotNumber that says
+ *   which way it went sits past it. Hashing them would drop the second and
+ *   leave the equipped kit stuck on the first.
+ * - `battle_updated`: consecutive combat ticks can open with identical text —
+ *   same type, same battle, same unit ids — and differ only in hitpoints
+ *   further in, so the 100-char hash would drop the update that matters.
+ * - `new_battle`: the message every baseline is seeded from, and it opens with
+ *   its type, its battle id and the first monster's hrid — a hundred
+ *   characters two consecutive waves of the same zone fill identically. The
+ *   `processedMessages` map evicts at a hundred entries, so a hash that
+ *   collided minutes ago can be gone and back again; the one that is dropped
+ *   is the one that re-baselines the fight, and everything diffed afterwards
+ *   is against the wrong units.
+ * - `guild_battle_updated`: the guild trial's spectator stream, and the worst
+ *   hash collision of the lot: every tick opens `{"type":"guild_battle_updated",
+ *   "battleId":1,"tier":2,"pMap":{"1":{"cHP":…` — type, battle and tier fill
+ *   the window on their own, so consecutive ticks are identical for far more
+ *   than a hundred characters and only the health past it differs. Hashed, a
+ *   whole trial collapses to one tick.
+ * - `guild_skilling_updated` and the guild-trial lifecycle four: the rest of
+ *   the guild-trial family, for the same reason and worse.
+ *   `guild_skilling_updated` opens `{"type":"guild_skilling_updated",
+ *   "trialHrid":"/guild_skilling/crafting","tier":10,"currentProgress":` — a
+ *   hundred characters exactly, so every tick of an hour's skilling trial
+ *   hashes identically and only `actionCounter`, right at the end, ever
+ *   changes. The lifecycle four are short enough to fit inside the window
+ *   whole, so a second trial of the same skill would silently drop its own
+ *   start or end.
+ * - `community_buffs_updated`: two donations to the same buff in a row produce
+ *   messages whose first 100 characters are identical — type, buff id and hrid
+ *   fill the window, and the changed expireTime/level sit past it — so the
+ *   content hash would drop the extension and expiry alerts would fire against
+ *   a stale clock.
+ * - `loot_opened`: opening the same chest twice in a row produces two messages
+ *   whose first 100 characters are identical — same type, same chest, same
+ *   count — so the content hash would drop the second and the treasure ledger
+ *   would undercount every repeat opening.
+ * - `guild_updated`: guild updates open with the same guild id and name every
+ *   time; what changed (xp, level, member counts) sits past the hash window,
+ *   so a quick pair would drop the second and leave the guild panels a step
+ *   behind.
+ *
+ * One Set lookup per message, rather than a chain of string comparisons on
+ * every frame the socket delivers.
+ */
+const SKIP_DEDUP_TYPES = new Set([
+    'quests_updated',
+    'action_completed',
+    'actions_updated',
+    'items_updated',
+    'market_item_order_books_updated',
+    'market_listings_updated',
+    'profile_shared',
+    'battle_consumable_ability_updated',
+    'abilities_updated',
+    'battle_unit_fetched',
+    'battle_updated',
+    'new_battle',
+    'guild_battle_updated',
+    'guild_skilling_updated',
+    'new_guild_battle',
+    'new_guild_skilling',
+    'end_guild_battle',
+    'end_guild_skilling',
+    'action_type_consumable_slots_updated',
+    'consumable_buffs_updated',
+    'community_buffs_updated',
+    'character_info_updated',
+    'labyrinth_updated',
+    'loadouts_updated',
+    'setting_updated',
+    'labyrinth_room_progress',
+    'loot_opened',
+    'guild_updated',
+    'leaderboard_updated',
+]);
+
+/** How many characters from each end of a message go into the TTL dedup key */
+const TTL_KEY_EDGE = 64;
+
+/**
+ * A cheap key for the short-TTL duplicate check: length plus the first and
+ * last characters. Two messages of the same type that agree on all three
+ * within 50 ms are a re-delivery, not two events — and keying the map on the
+ * whole payload meant hashing several kilobytes of combat state per message.
+ * @param {string} message - Raw message text
+ * @returns {string}
+ */
+function ttlDedupKey(message) {
+    if (message.length <= TTL_KEY_EDGE * 2) return `${message.length}:${message}`;
+    return `${message.length}:${message.slice(0, TTL_KEY_EDGE)}${message.slice(-TTL_KEY_EDGE)}`;
+}
+
 class WebSocketHook {
     constructor() {
         this.isHooked = false;
@@ -29,7 +132,7 @@ class WebSocketHook {
          * Uses message content (first 100 chars) as key since same message can have different event objects
          */
         this.processedMessages = new Map(); // message hash -> timestamp
-        this.recentActionCompleted = new Map(); // message content -> timestamp (50ms TTL dedup)
+        this.recentActionCompleted = new Map(); // ttlDedupKey(message) -> timestamp (50ms TTL dedup)
 
         /** Pristine MessageEvent.data getter, fetched lazily when a foreign hook breaks (null = unobtainable) */
         this.nativeDataGet = undefined;
@@ -334,81 +437,7 @@ class WebSocketHook {
             messageType = null;
         }
 
-        // Skip deduplication for events where consecutive messages have similar first 100 chars
-        // but contain different data (counts, timestamps, etc. beyond the 100-char hash window)
-        // OR events that should always trigger UI updates (profile_shared, battle_unit_fetched)
-        const skipDedup =
-            messageType === 'quests_updated' ||
-            messageType === 'action_completed' ||
-            messageType === 'actions_updated' ||
-            messageType === 'items_updated' ||
-            messageType === 'market_item_order_books_updated' ||
-            messageType === 'market_listings_updated' ||
-            messageType === 'profile_shared' ||
-            messageType === 'battle_consumable_ability_updated' ||
-            // Equipping and unequipping the same ability produce messages whose
-            // first 100 characters are identical — type, character id and the
-            // opening ability hrid fill the window, and the slotNumber that says
-            // which way it went sits past it. Hashing them would drop the second
-            // and leave the equipped kit stuck on the first.
-            messageType === 'abilities_updated' ||
-            messageType === 'battle_unit_fetched' ||
-            // Consecutive combat ticks can open with identical text — same type,
-            // same battle, same unit ids — and differ only in hitpoints further
-            // in, so the 100-char hash would drop the update that matters
-            messageType === 'battle_updated' ||
-            // The message every baseline is seeded from, and it opens with its
-            // type, its battle id and the first monster's hrid — a hundred
-            // characters two consecutive waves of the same zone fill
-            // identically. The `processedMessages` map evicts at a hundred
-            // entries, so a hash that collided minutes ago can be gone and back
-            // again; the one that is dropped is the one that re-baselines the
-            // fight, and everything diffed afterwards is against the wrong units
-            messageType === 'new_battle' ||
-            // The guild trial's spectator stream, and the worst hash collision
-            // of the lot: every tick opens `{"type":"guild_battle_updated",
-            // "battleId":1,"tier":2,"pMap":{"1":{"cHP":…` — type, battle and
-            // tier fill the window on their own, so consecutive ticks are
-            // identical for far more than a hundred characters and only the
-            // health past it differs. Hashed, a whole trial collapses to one tick
-            messageType === 'guild_battle_updated' ||
-            // The rest of the guild-trial family, for the same reason and worse.
-            // `guild_skilling_updated` opens `{"type":"guild_skilling_updated",
-            // "trialHrid":"/guild_skilling/crafting","tier":10,"currentProgress":`
-            // — a hundred characters exactly, so every tick of an hour's
-            // skilling trial hashes identically and only `actionCounter`, right
-            // at the end, ever changes. The lifecycle four are short enough to
-            // fit inside the window whole, so a second trial of the same skill
-            // would silently drop its own start or end
-            messageType === 'guild_skilling_updated' ||
-            messageType === 'new_guild_battle' ||
-            messageType === 'new_guild_skilling' ||
-            messageType === 'end_guild_battle' ||
-            messageType === 'end_guild_skilling' ||
-            messageType === 'action_type_consumable_slots_updated' ||
-            messageType === 'consumable_buffs_updated' ||
-            // Two donations to the same buff in a row produce messages whose
-            // first 100 characters are identical — type, buff id and hrid fill
-            // the window, and the changed expireTime/level sit past it — so the
-            // content hash would drop the extension and expiry alerts would
-            // fire against a stale clock
-            messageType === 'community_buffs_updated' ||
-            messageType === 'character_info_updated' ||
-            messageType === 'labyrinth_updated' ||
-            messageType === 'loadouts_updated' ||
-            messageType === 'setting_updated' ||
-            messageType === 'labyrinth_room_progress' ||
-            // Opening the same chest twice in a row produces two messages whose
-            // first 100 characters are identical — same type, same chest, same
-            // count — so the content hash would drop the second and the treasure
-            // ledger would undercount every repeat opening
-            messageType === 'loot_opened' ||
-            // Guild updates open with the same guild id and name every time;
-            // what changed (xp, level, member counts) sits past the hash
-            // window, so a quick pair would drop the second and leave the
-            // guild panels a step behind
-            messageType === 'guild_updated' ||
-            messageType === 'leaderboard_updated';
+        const skipDedup = SKIP_DEDUP_TYPES.has(messageType);
 
         if (!skipDedup) {
             // Deduplicate by message content to prevent 4x JSON.parse on same message
@@ -432,14 +461,16 @@ class WebSocketHook {
             // distinct MessageEvents wrapping the same payload (e.g. another userscript
             // re-dispatching, or a game reconnect replay) would both pass the WeakSet check and
             // call processMessage twice.
-            // Use a short 50ms TTL keyed on full message content to collapse these duplicates.
-            // Two genuine consecutive messages of either type are far enough apart that a
-            // byte-identical repeat inside 50ms is a duplicate rather than a second event.
+            // Use a short 50ms TTL keyed on the message's length and edges (see
+            // `ttlDedupKey`) to collapse these duplicates. Two genuine consecutive
+            // messages of either type are far enough apart that a repeat inside 50ms
+            // is a duplicate rather than a second event.
             const now = Date.now();
-            if (this.recentActionCompleted.has(message)) {
+            const key = ttlDedupKey(message);
+            if (this.recentActionCompleted.has(key)) {
                 return; // Duplicate from second listener — skip
             }
-            this.recentActionCompleted.set(message, now);
+            this.recentActionCompleted.set(key, now);
             // Prune entries older than 50ms to keep memory bounded
             for (const [key, ts] of this.recentActionCompleted) {
                 if (now - ts > 50) {

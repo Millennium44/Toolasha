@@ -47,6 +47,8 @@ const {
     portraitName,
     meterText,
     enemyMeterText,
+    drawSignature,
+    _instance: instance,
     default: portraitDps,
 } = await import('./portrait-dps.js');
 
@@ -458,5 +460,49 @@ describe('drawing the optional lines on the panel', () => {
 
         expect(meterLines(tiles.players[0])).toHaveLength(2);
         expect(meterLines(tiles.players[1])).toHaveLength(2);
+    });
+});
+
+describe('observer-driven redraws', () => {
+    const panel = () => {
+        document.body.innerHTML = '';
+        const players = document.createElement('div');
+        players.className = 'BattlePanel_playersArea__9xk2j';
+        players.appendChild(portrait('Millennium44'));
+        document.body.appendChild(players);
+        return players;
+    };
+
+    afterEach(() => portraitDps.cleanup());
+
+    test('the signature moves with damage and the line-up, not with the clock', () => {
+        const run = { players: [{ name: 'A', damage: 10, hits: 1, misses: 0, dps: 5 }] };
+        const fight = { players: {}, enemies: { 0: { name: 'V', damage: 3, hp: 90, dps: 1 } } };
+        const same = drawSignature(run, fight);
+        expect(drawSignature({ players: [{ ...run.players[0], dps: 2 }] }, fight)).toBe(same);
+        expect(drawSignature({ players: [{ ...run.players[0], damage: 11 }] }, fight)).not.toBe(same);
+        expect(drawSignature(run, { ...fight, enemies: { 0: { ...fight.enemies[0], hp: 80 } } })).not.toBe(same);
+    });
+
+    test('a mutation that changed nothing the meter shows does not redraw', () => {
+        const players = panel();
+        opts.players = [{ name: 'Millennium44', damage: 100, dps: 10, hits: 1, misses: 0 }];
+        portraitDps.initialize();
+        expect(players.querySelectorAll('[data-toolasha-portrait-dps]')).toHaveLength(1);
+
+        const spy = vi.spyOn(instance, '_draw');
+        instance._drawIfChanged();
+        expect(spy).not.toHaveBeenCalled();
+
+        // A rebuild that lost the meter is drawn again even with the same data
+        players.querySelector('[data-toolasha-portrait-dps]').remove();
+        instance._drawIfChanged();
+        expect(spy).toHaveBeenCalledTimes(1);
+
+        // And so is new damage
+        opts.players = [{ name: 'Millennium44', damage: 120, dps: 10, hits: 2, misses: 0 }];
+        instance._drawIfChanged();
+        expect(spy).toHaveBeenCalledTimes(2);
+        spy.mockRestore();
     });
 });

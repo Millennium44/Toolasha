@@ -26,9 +26,9 @@
 import config from '../../../core/config.js';
 import storage from '../../../core/storage.js';
 import dataManager from '../../../core/data-manager.js';
+import domObserver from '../../../core/dom-observer.js';
 import marketAPI from '../../../api/marketplace.js';
 import { createCleanupRegistry } from '../../../utils/cleanup-registry.js';
-import { createMutationWatcher } from '../../../utils/dom-observer-helpers.js';
 import { formatKMB, formatWithSeparator } from '../../../utils/formatters.js';
 import { navigateToMarketplace } from '../../../utils/marketplace-tabs.js';
 import { hasCoarsePointer } from '../../../utils/mobile.js';
@@ -59,7 +59,7 @@ const PREFS_KEY = 'mooketPanelPrefs';
  * character's list of forty pushed onto it every time either of them saved.
  */
 const WATCHLIST_BASE = 'mooketWatchlist';
-const POLL_MS = 500;
+const POLL_MS = 1000;
 
 /**
  * The watched items, per character, through a curated persisted record
@@ -134,6 +134,8 @@ class MarketHistoryPanel {
         };
         this.tabButton = null;
         this.tabWatcher = null;
+        this.tabBar = null; // The marketplace tab bar last found, reused while it stays in the DOM
+        this.marketplace = null; // The visible marketplace panel last found, likewise
         this.watchlist = [];
         /** Whose list `watchlist` holds, so a switch never shows another's */
         this.watchlistOwner = null;
@@ -170,12 +172,19 @@ class MarketHistoryPanel {
         this.buildOverlay();
 
         // The tab bar is rebuilt whenever the marketplace re-renders, so the
-        // button has to be put back rather than added once
-        this.tabWatcher = createMutationWatcher(document.body, () => this.ensureTabButton(), {
-            childList: true,
-            subtree: true,
+        // button has to be put back rather than added once. Through the shared
+        // observer, debounced: a private observer over the whole body ran the
+        // tab-bar search (layout reads included) on every mutation on the page.
+        this.tabWatcher = domObserver.register('MarketHistoryTab', () => this.ensureTabButton(), {
+            debounce: true,
+            debounceDelay: 200,
         });
-        this.cleanupRegistry.registerCleanup(() => this.tabWatcher?.());
+        this.cleanupRegistry.registerCleanup(() => {
+            this.tabWatcher?.();
+            this.tabWatcher = null;
+            this.tabBar = null;
+            this.marketplace = null;
+        });
         this.ensureTabButton();
 
         const poll = setInterval(() => this.followMarketplace(), POLL_MS);
@@ -367,13 +376,21 @@ class MarketHistoryPanel {
 
     /** @returns {HTMLElement|null} The marketplace's own tab bar */
     findMarketTabBar() {
+        // The one found last time, while it is still in the DOM — saves the
+        // layout read below on every call that finds nothing changed
+        if (this.tabBar?.isConnected) return this.tabBar;
+        this.tabBar = null;
+
         // The visible one, when there is more than one marketplace in the DOM
         // (see followMarketplace) — a tab put into a hidden bar is a tab nobody
         // can click
         let hidden = null;
         for (const tabBar of document.querySelectorAll('.MuiTabs-flexContainer[role="tablist"]')) {
             if (![...tabBar.children].some((tab) => tab.textContent.includes('Market Listings'))) continue;
-            if (tabBar.getClientRects().length) return tabBar;
+            if (tabBar.getClientRects().length) {
+                this.tabBar = tabBar;
+                return tabBar;
+            }
             hidden = hidden || tabBar;
         }
         return hidden;
@@ -795,9 +812,16 @@ class MarketHistoryPanel {
         // reading only the first match then saw "not visible" and this poll
         // hid the panel half a second after every click on the History tab —
         // the tab "stopped working" until a refresh cleared the stray panel.
-        const marketplace = [...document.querySelectorAll('[class*="MarketplacePanel_marketplacePanel"]')].find(
-            (el) => el.getClientRects().length
-        );
+        //
+        // The one found last time is reused while it is still in the DOM, so a
+        // tick that finds nothing changed is one layout read, not a scan
+        if (!this.marketplace?.isConnected || !this.marketplace.getClientRects().length) {
+            this.marketplace =
+                [...document.querySelectorAll('[class*="MarketplacePanel_marketplacePanel"]')].find(
+                    (el) => el.getClientRects().length
+                ) || null;
+        }
+        const marketplace = this.marketplace;
         const visible = !!marketplace;
 
         // Off the marketplace there is no item to chart and nowhere to put the

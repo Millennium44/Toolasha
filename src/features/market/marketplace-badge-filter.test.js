@@ -284,6 +284,26 @@ describe('what number the badge shows', () => {
         expect(marketBadge().textContent).toBe('2');
     });
 
+    test('the text watcher is scoped to the badge, and the badge is looked up once', () => {
+        game.listings = [listing({ id: 1 })];
+        badgeFilter.initialize();
+
+        expect(badgeFilter.watchedHolder).toBe(marketBadge());
+        const spy = vi.spyOn(document, 'querySelector');
+        badgeFilter._paint();
+        badgeFilter._attach();
+        expect(spy).not.toHaveBeenCalled();
+        spy.mockRestore();
+
+        // A rebuilt sidebar item is found again
+        const old = marketBadge();
+        const fresh = old.cloneNode(true);
+        old.replaceWith(fresh);
+        badgeFilter._attach();
+        expect(badgeFilter.badge).toBe(fresh);
+        expect(badgeFilter.watchedHolder).toBe(fresh);
+    });
+
     test('none finished hides it outright rather than showing a zero', () => {
         game.listings = [listing({ filledQuantity: 30, unclaimedItemCount: 30 })];
         badgeFilter.initialize();

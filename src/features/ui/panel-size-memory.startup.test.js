@@ -35,7 +35,9 @@ vi.mock('../../core/dom-observer.js', () => ({ default: { register: vi.fn(() => 
 const SAVED = { path: 'div:nth-of-type(1)', signature: 'div|Panel', styles: { width: '420px' } };
 
 const domObserver = (await import('../../core/dom-observer.js')).default;
-const panelSizeMemory = (await import('./panel-size-memory.js')).default;
+const panelSizeMemoryModule = await import('./panel-size-memory.js');
+const panelSizeMemory = panelSizeMemoryModule.default;
+const instance = panelSizeMemoryModule._instance;
 
 beforeEach(() => {
     state.release = null;
@@ -74,5 +76,18 @@ describe('initialize does not wait on storage', () => {
         await Promise.resolve();
         await Promise.resolve();
         expect(panel.style.width).toBe('');
+    });
+});
+
+describe('the inline-style observer only runs during a drag', () => {
+    test('no observer is attached before pointerdown, and it is released on pointerup', () => {
+        panelSizeMemory.initialize();
+        expect(instance.observer).toBeNull();
+
+        document.dispatchEvent(new Event('pointerdown'));
+        expect(instance.observer).toBeInstanceOf(MutationObserver);
+
+        document.dispatchEvent(new Event('pointerup'));
+        expect(instance.observer).toBeNull();
     });
 });

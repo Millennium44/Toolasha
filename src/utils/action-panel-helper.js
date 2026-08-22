@@ -3,6 +3,14 @@
  * Utilities for working with action detail panels (gathering, production, enhancement)
  */
 
+import dataManager from '../core/data-manager.js';
+
+/** The action detail panels currently mounted */
+const PANEL_SELECTOR = '[class*="SkillActionDetail_skillActionDetail"]';
+
+/** How long after the last `actions_updated` the shared refresh runs */
+const REFRESH_DEBOUNCE_MS = 200;
+
 /**
  * Find the action count input field within a panel
  * @param {HTMLElement} panel - The action detail panel
@@ -86,10 +94,70 @@ export function performInitialUpdate(input, updateCallback) {
  * @param {Function} updateCallback - (panel, value) => void, the shape attachInputListeners takes
  */
 export function refreshActionPanels(updateCallback) {
-    const panels = document.querySelectorAll('[class*="SkillActionDetail_skillActionDetail"]');
+    const panels = document.querySelectorAll(PANEL_SELECTOR);
     panels.forEach((panel) => {
         const inputField = findActionInput(panel);
         if (!inputField) return;
         updateCallback(panel, inputField.value);
     });
+}
+
+/** Callbacks for the shared `actions_updated` refresh, in registration order */
+const refreshCallbacks = new Set();
+let refreshTimer = null;
+let actionsUpdatedHandler = null;
+
+/**
+ * One scan of the mounted panels, fanned out to every registered callback.
+ * @private
+ */
+function runSharedRefresh() {
+    refreshTimer = null;
+    if (refreshCallbacks.size === 0) return;
+    const panels = document.querySelectorAll(PANEL_SELECTOR);
+    panels.forEach((panel) => {
+        const inputField = findActionInput(panel);
+        if (!inputField) return;
+        const value = inputField.value;
+        for (const callback of refreshCallbacks) {
+            try {
+                callback(panel, value);
+            } catch (error) {
+                console.error('[ActionPanelHelper] Refresh callback failed:', error);
+            }
+        }
+    });
+}
+
+/**
+ * Re-run `callback` for every mounted action panel whenever the action queue
+ * changes — through one debounced `actions_updated` subscription and one
+ * document scan shared by every feature that asks, rather than a subscription
+ * and a scan apiece. The queue changes arrive in bursts (an action finishing
+ * sends several), and each subscriber used to rescan the document for each.
+ *
+ * @param {Function} callback - (panel, value) => void, the shape `refreshActionPanels` takes
+ * @returns {Function} Unsubscribe
+ */
+export function onActionPanelsRefresh(callback) {
+    refreshCallbacks.add(callback);
+    if (!actionsUpdatedHandler) {
+        actionsUpdatedHandler = () => {
+            if (refreshTimer) clearTimeout(refreshTimer);
+            refreshTimer = setTimeout(runSharedRefresh, REFRESH_DEBOUNCE_MS);
+        };
+        dataManager.on('actions_updated', actionsUpdatedHandler);
+    }
+    return () => {
+        refreshCallbacks.delete(callback);
+        if (refreshCallbacks.size > 0) return;
+        if (actionsUpdatedHandler) {
+            dataManager.off('actions_updated', actionsUpdatedHandler);
+            actionsUpdatedHandler = null;
+        }
+        if (refreshTimer) {
+            clearTimeout(refreshTimer);
+            refreshTimer = null;
+        }
+    };
 }

@@ -14,6 +14,7 @@ class MentionTracker {
         this.initialized = false;
         this.mentionLog = new Map(); // channel -> Array<{ sName, m, t }>
         this.characterName = null;
+        this.mentionPattern = null; // @name matcher, built once per character
         this.handlers = {};
         this.unregisterObserver = null;
     }
@@ -35,10 +36,18 @@ class MentionTracker {
         }
 
         this.initialized = true;
+        this.buildMentionPattern();
 
         // Listen for chat messages
         this.handlers.chatMessage = (data) => this.onChatMessage(data);
         webSocketHook.on('chat_message_received', this.handlers.chatMessage);
+
+        // The name the pattern matches follows the character
+        this.handlers.characterSwitched = () => {
+            this.characterName = dataManager.getCurrentCharacterName();
+            this.buildMentionPattern();
+        };
+        dataManager.on('character_switched', this.handlers.characterSwitched);
 
         // Observe chat tabs to inject badges and add click handlers
         this.unregisterObserver = domObserver.onClass(
@@ -85,11 +94,21 @@ class MentionTracker {
      */
     isMentioned(text) {
         if (!text || !this.characterName) return false;
+        if (!this.mentionPattern) this.buildMentionPattern();
+        return this.mentionPattern ? this.mentionPattern.test(text) : false;
+    }
 
-        // Check for @CharacterName (case insensitive)
+    /**
+     * Build the @CharacterName matcher (case insensitive) once, rather than
+     * compiling a RegExp for every chat message that comes in.
+     */
+    buildMentionPattern() {
+        if (!this.characterName) {
+            this.mentionPattern = null;
+            return;
+        }
         const escapedName = this.escapeRegex(this.characterName);
-        const mentionPattern = new RegExp(`@${escapedName}\\b`, 'i');
-        return mentionPattern.test(text);
+        this.mentionPattern = new RegExp(`@${escapedName}\\b`, 'i');
     }
 
     /**
@@ -269,6 +288,11 @@ class MentionTracker {
                 webSocketHook.off('chat_message_received', this.handlers.chatMessage);
                 this.handlers.chatMessage = null;
             }
+            if (this.handlers.characterSwitched) {
+                dataManager.off('character_switched', this.handlers.characterSwitched);
+                this.handlers.characterSwitched = null;
+            }
+            this.mentionPattern = null;
 
             if (this.unregisterObserver) {
                 this.unregisterObserver();

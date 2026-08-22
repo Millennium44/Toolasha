@@ -19,6 +19,7 @@ class ActionCountdown {
         this.actionCompletedHandler = null;
         this.lastCompletedAt = null;
         this.settingChangeHandler = null;
+        this.cachedDuration = null;
     }
 
     initialize() {
@@ -56,6 +57,7 @@ class ActionCountdown {
     _onProgressBarText(textEl) {
         this.textEl = textEl;
         this.fillBar = null;
+        this.cachedDuration = null;
         this._parseTotalTime();
         this._startLoop();
     }
@@ -72,6 +74,9 @@ class ActionCountdown {
 
     _onActionCompleted() {
         this.lastCompletedAt = Date.now();
+        // The bar's `--duration` only changes when a new action starts, so it is
+        // re-read once here rather than on every tick
+        this.cachedDuration = null;
         setTimeout(() => this._parseTotalTime(), 50);
     }
 
@@ -110,6 +115,14 @@ class ActionCountdown {
     }
 
     _tick() {
+        // No bar to drive: let the loop end. The ProgressBar_text class watcher
+        // restarts it when the game renders a new one, so there is no point
+        // paying for a frame callback (and two style reads) in the meantime.
+        if (!this.textEl || !this.textEl.isConnected) {
+            this.rafId = null;
+            return;
+        }
+
         this.rafId = requestAnimationFrame(() => this._tick());
 
         // The readout shows tenths of a second, so ~10 redraws a second is all
@@ -119,13 +132,14 @@ class ActionCountdown {
         if (this._lastTickAt && now - this._lastTickAt < 100) return;
         this._lastTickAt = now;
 
-        if (!this.textEl || !this.textEl.isConnected || !this.totalTime) return;
+        if (!this.totalTime) return;
 
         const span = this.textEl.querySelector('span');
         if (!span) return;
 
         if (!this.fillBar || !this.fillBar.isConnected) {
             this.fillBar = this._findFillBar();
+            this.cachedDuration = null;
         }
 
         let remaining;
@@ -135,10 +149,7 @@ class ActionCountdown {
                 const match = transform.match(/matrix\(([^)]+)\)/);
                 if (match) {
                     const scaleX = parseFloat(match[1]);
-                    const progressBar = this.fillBar.parentElement?.parentElement;
-                    const duration = progressBar
-                        ? parseFloat(getComputedStyle(progressBar).getPropertyValue('--duration'))
-                        : this.totalTime;
+                    const duration = this._readDuration();
                     if (duration > 0) {
                         this.totalTime = duration;
                         remaining = duration * (1 - scaleX);
@@ -156,6 +167,22 @@ class ActionCountdown {
             remaining = Math.max(0, remaining);
             span.textContent = remaining.toFixed(1) + 's / ' + this.totalTime.toFixed(1) + 's';
         }
+    }
+
+    /**
+     * The bar's `--duration`, cached per action.
+     * @returns {number} Seconds, or NaN when the bar has none
+     */
+    _readDuration() {
+        if (this.cachedDuration !== null) return this.cachedDuration;
+        const progressBar = this.fillBar?.parentElement?.parentElement;
+        const duration = progressBar
+            ? parseFloat(getComputedStyle(progressBar).getPropertyValue('--duration'))
+            : this.totalTime;
+        if (duration > 0) {
+            this.cachedDuration = duration;
+        }
+        return duration;
     }
 
     disable() {
@@ -178,6 +205,7 @@ class ActionCountdown {
             this.textEl = null;
             this.fillBar = null;
             this.totalTime = null;
+            this.cachedDuration = null;
             this.lastCompletedAt = null;
             this.initialized = false;
         } catch (error) {

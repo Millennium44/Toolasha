@@ -3,13 +3,27 @@
  */
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ setting: true, characterName: 'Millennium44', wsHandlers: {}, observers: {} }));
+const game = vi.hoisted(() => ({
+    setting: true,
+    characterName: 'Millennium44',
+    wsHandlers: {},
+    dmHandlers: {},
+    observers: {},
+}));
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => game.setting },
 }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getCurrentCharacterName: () => game.characterName },
+    default: {
+        getCurrentCharacterName: () => game.characterName,
+        on: (event, handler) => {
+            game.dmHandlers[event] = handler;
+        },
+        off: (event, handler) => {
+            if (game.dmHandlers[event] === handler) delete game.dmHandlers[event];
+        },
+    },
 }));
 vi.mock('../../core/websocket.js', () => ({
     default: {
@@ -107,6 +121,25 @@ describe('mention tracker — detection', () => {
 
     test('a null message payload does not throw', () => {
         expect(() => game.wsHandlers.chat_message_received({})).not.toThrow();
+    });
+
+    test('the matcher is built once and reused across messages', () => {
+        const pattern = mentionTracker.mentionPattern;
+        expect(pattern).toBeInstanceOf(RegExp);
+        game.wsHandlers.chat_message_received(chatMessage({ m: '@Millennium44 hi' }));
+        game.wsHandlers.chat_message_received(chatMessage({ m: 'nothing' }));
+        expect(mentionTracker.mentionPattern).toBe(pattern);
+    });
+
+    test('a character switch rebuilds the matcher for the new name', () => {
+        game.characterName = 'Gold999';
+        game.dmHandlers.character_switched({});
+        game.wsHandlers.chat_message_received(chatMessage({ m: '@Gold999 hi' }));
+        expect(mentionTracker.mentionLog.get('/chat_channel_types/general')).toHaveLength(1);
+        game.wsHandlers.chat_message_received(
+            chatMessage({ m: '@Millennium44 hi', chan: '/chat_channel_types/party' })
+        );
+        expect(mentionTracker.mentionLog.get('/chat_channel_types/party')).toBeUndefined();
     });
 
     test('a character name with regex metacharacters is escaped safely', () => {

@@ -104,6 +104,8 @@ class GuildCreditValue {
         this.unregisterObservers = [];
         this.autofillManager = createAutofillManager('GuildCreditValue-MissingMats');
         this._shrineTabCleanup = null;
+        this._advisorObserver = null; // Re-renders the exchange advisor when the selected item changes
+        this._advisorTimer = null;
     }
 
     initialize() {
@@ -333,16 +335,41 @@ class GuildCreditValue {
 
             const itemSelector = modalEl.querySelector('[class*="ItemSelector_itemContainer"]');
             if (itemSelector) {
-                const observer = new MutationObserver(() => {
-                    this._renderExchangeAdvisor(modalEl, creditHrid, rows);
+                // One observer at a time, released with the feature: a modal
+                // reopened a few times used to leave each one's observer behind.
+                // Debounced, since a selection change lands as a burst of
+                // mutations and the advisor is a full re-render.
+                this._disconnectAdvisorObserver();
+                this._advisorObserver = new MutationObserver(() => {
+                    if (this._advisorTimer) clearTimeout(this._advisorTimer);
+                    this._advisorTimer = setTimeout(() => {
+                        this._advisorTimer = null;
+                        if (!modalEl.isConnected) return;
+                        this._renderExchangeAdvisor(modalEl, creditHrid, rows);
+                    }, 50);
                 });
-                observer.observe(itemSelector, { subtree: true, childList: true, attributes: true });
+                this._advisorObserver.observe(itemSelector, {
+                    subtree: true,
+                    childList: true,
+                    attributes: true,
+                    attributeFilter: ['href', 'aria-label', 'class'],
+                });
             }
         }
 
         // Shrine upgrade planner
         if (config.getSetting('guildShrineUpgradePlanner', true)) {
             this._renderShrinePlanner(modalEl);
+        }
+    }
+
+    /** Release the exchange advisor's selection observer and any pending re-render */
+    _disconnectAdvisorObserver() {
+        this._advisorObserver?.disconnect();
+        this._advisorObserver = null;
+        if (this._advisorTimer) {
+            clearTimeout(this._advisorTimer);
+            this._advisorTimer = null;
         }
     }
 
@@ -1021,7 +1048,12 @@ class GuildCreditValue {
                     )
                         return;
 
-                    const inventory = dataManager.getInventory();
+                    // One pass over the inventory for every tab, not one per tab
+                    const haveByHrid = new Map();
+                    for (const i of dataManager.getInventory() || []) {
+                        if (i.itemLocationHrid !== '/item_locations/inventory') continue;
+                        haveByHrid.set(i.itemHrid, (haveByHrid.get(i.itemHrid) || 0) + (i.count || 0));
+                    }
                     let anyRemaining = false;
 
                     for (const tab of shrineTabs) {
@@ -1029,11 +1061,7 @@ class GuildCreditValue {
                         const itemHrid = tab.getAttribute('data-item-hrid');
                         const required = parseInt(tab.getAttribute('data-required-quantity') || '0', 10);
                         const itemName = tab.getAttribute('data-item-name') || '';
-                        const have = inventory
-                            .filter(
-                                (i) => i.itemHrid === itemHrid && i.itemLocationHrid === '/item_locations/inventory'
-                            )
-                            .reduce((sum, i) => sum + (i.count || 0), 0);
+                        const have = haveByHrid.get(itemHrid) || 0;
                         const missing = Math.max(0, required - have);
 
                         if (missing === 0) {
@@ -1099,6 +1127,7 @@ class GuildCreditValue {
     cleanup() {
         this.unregisterObservers.forEach((fn) => fn());
         this.unregisterObservers = [];
+        this._disconnectAdvisorObserver();
         if (this._shrineTabCleanup) {
             this._shrineTabCleanup();
             this._shrineTabCleanup = null;

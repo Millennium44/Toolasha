@@ -145,9 +145,11 @@ class PanelSizeMemory {
         this.onPointerDown = () => {
             this.dragging = true;
             this.pending = null;
+            this.watchInlineStyles();
         };
         this.onPointerUp = () => {
             this.dragging = false;
+            this.unwatchInlineStyles();
             if (this.pending) {
                 this.persist(this.pending);
                 this.pending = null;
@@ -155,8 +157,6 @@ class PanelSizeMemory {
         };
         document.addEventListener('pointerdown', this.onPointerDown, true);
         document.addEventListener('pointerup', this.onPointerUp, true);
-
-        this.watchInlineStyles();
 
         // The game re-renders panels on navigation, which drops inline styles;
         // reapply whenever the DOM settles
@@ -191,9 +191,14 @@ class PanelSizeMemory {
 
     /**
      * Record inline size styles written during a drag.
+     *
+     * Only observed between pointerdown and pointerup: a subtree attribute
+     * observer over the whole game root costs a callback for every inline
+     * style the game writes, and outside a drag the callback would only bail.
      * @private
      */
     watchInlineStyles() {
+        if (this.observer) return;
         const root = document.getElementById('root');
         if (!root) return;
 
@@ -210,6 +215,16 @@ class PanelSizeMemory {
             }
         });
         this.observer.observe(root, { attributes: true, attributeFilter: ['style'], subtree: true });
+    }
+
+    /**
+     * Stop watching inline styles once the drag has ended.
+     * @private
+     */
+    unwatchInlineStyles() {
+        if (!this.observer) return;
+        this.observer.disconnect();
+        this.observer = null;
     }
 
     /**
@@ -288,6 +303,9 @@ class PanelSizeMemory {
 }
 
 const panelSizeMemory = new PanelSizeMemory();
+
+/** The singleton, exposed for tests. */
+export { panelSizeMemory as _instance };
 
 export default {
     name: 'Panel Size Memory',

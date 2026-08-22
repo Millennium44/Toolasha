@@ -12,7 +12,7 @@ import {
     findActionInput,
     attachInputListeners,
     performInitialUpdate,
-    refreshActionPanels,
+    onActionPanelsRefresh,
 } from '../../utils/action-panel-helper.js';
 import { calculateMaterialRequirements } from '../../utils/material-calculator.js';
 import { getItemPrice, formatPrice } from '../../utils/market-data.js';
@@ -31,7 +31,7 @@ const PRODUCTION_TYPES = [
 
 let domObserverUnregister = null;
 let processedPanels = new WeakSet();
-let actionsUpdatedHandler = null;
+let unsubscribeRefresh = null;
 
 export function initialize() {
     domObserverUnregister = domObserver.onClass('CostSummary-ActionPanel', 'SkillActionDetail_skillActionDetail', () =>
@@ -39,8 +39,7 @@ export function initialize() {
     );
     // The missing-mats cost reads the action queue; a finite queue change must
     // redraw a panel already on screen
-    actionsUpdatedHandler = () => refreshActionPanels((panel, value) => updatePanel(panel, value));
-    dataManager.on('actions_updated', actionsUpdatedHandler);
+    unsubscribeRefresh = onActionPanelsRefresh((panel, value) => updatePanel(panel, value));
     processActionPanels();
 }
 
@@ -49,9 +48,9 @@ export function cleanup() {
         domObserverUnregister();
         domObserverUnregister = null;
     }
-    if (actionsUpdatedHandler) {
-        dataManager.off('actions_updated', actionsUpdatedHandler);
-        actionsUpdatedHandler = null;
+    if (unsubscribeRefresh) {
+        unsubscribeRefresh();
+        unsubscribeRefresh = null;
     }
     document.querySelectorAll(`#${UI_ID}`).forEach((el) => el.remove());
     processedPanels = new WeakSet();

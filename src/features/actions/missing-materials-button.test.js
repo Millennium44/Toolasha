@@ -30,6 +30,7 @@ vi.mock('../../utils/action-panel-helper.js', () => ({
     findActionInput: () => null,
     attachInputListeners: () => {},
     performInitialUpdate: () => {},
+    onActionPanelsRefresh: () => () => {},
 }));
 vi.mock('../../utils/material-calculator.js', () => ({
     calculateMaterialRequirements: () => [],

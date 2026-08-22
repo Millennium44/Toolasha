@@ -49,6 +49,13 @@ const EVENT_KEY = 'combat-consumable-low';
 export const CHECK_INTERVAL_MS = 60 * 1000;
 
 /**
+ * How often a battle tick is allowed to run the check. The ticks come three
+ * a second and the check re-derives the current player's full stats; a
+ * threshold measured in hours does not need to be re-read more than this.
+ */
+export const TICK_THROTTLE_MS = 10 * 1000;
+
+/**
  * The current character's consumable forecasts, soonest first.
  *
  * Pure given its inputs, so the crossing can be tested without a fight.
@@ -89,6 +96,7 @@ class CombatConsumableAlerts {
         this.timers = createTimerRegistry();
         this.unregisterHandlers = [];
         this.characterSwitchingHandler = null;
+        this.lastTickAt = 0;
     }
 
     /**
@@ -107,8 +115,15 @@ class CombatConsumableAlerts {
                 console.error('[CombatConsumableAlerts] Checking consumables failed:', error);
             }
         };
-        webSocketHook.on('battle_updated', onTick);
-        this.unregisterHandlers.push(() => webSocketHook.off('battle_updated', onTick));
+        this.lastTickAt = 0;
+        const onBattleTick = () => {
+            const now = Date.now();
+            if (now - this.lastTickAt < TICK_THROTTLE_MS) return;
+            this.lastTickAt = now;
+            onTick();
+        };
+        webSocketHook.on('battle_updated', onBattleTick);
+        this.unregisterHandlers.push(() => webSocketHook.off('battle_updated', onBattleTick));
         this.timers.registerInterval(setInterval(onTick, CHECK_INTERVAL_MS));
 
         this.characterSwitchingHandler = () => {

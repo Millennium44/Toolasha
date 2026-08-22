@@ -3008,7 +3008,11 @@ class OverlayPanel {
     _startRefreshing() {
         if (this.refreshId) return;
         this.refreshId = setInterval(() => {
+            // A background tab draws nothing anyone sees, and a docked panel
+            // whose column is gone has nothing to draw into until it is back
+            if (document.hidden) return;
             this._ensureDocked();
+            if (!this.panel?.isConnected) return;
             this._renderBody();
             this._fitDock();
             this._followActivity();

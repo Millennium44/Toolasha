@@ -3,15 +3,25 @@
  * Tests for Action Panel Display Helper
  */
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import {
-    findActionInput,
-    attachInputListeners,
-    performInitialUpdate,
-    refreshActionPanels,
-} from './action-panel-helper.js';
+
+const game = vi.hoisted(() => ({ handlers: {} }));
+vi.mock('../core/data-manager.js', () => ({
+    default: {
+        on: (event, handler) => {
+            game.handlers[event] = handler;
+        },
+        off: (event, handler) => {
+            if (game.handlers[event] === handler) delete game.handlers[event];
+        },
+    },
+}));
+
+const { findActionInput, attachInputListeners, performInitialUpdate, refreshActionPanels, onActionPanelsRefresh } =
+    await import('./action-panel-helper.js');
 
 beforeEach(() => {
     document.body.innerHTML = '';
+    game.handlers = {};
     vi.useRealTimers();
 });
 
@@ -45,6 +55,60 @@ describe('refreshActionPanels', () => {
             [a.panel, '12'],
             [b.panel, '7'],
         ]);
+    });
+});
+
+describe('onActionPanelsRefresh', () => {
+    test('one subscription and one scan serve every callback, debounced over a burst', () => {
+        vi.useFakeTimers();
+        const a = buildPanel();
+        a.panel.className = 'SkillActionDetail_skillActionDetail__x';
+        a.input.value = '3';
+
+        const first = vi.fn();
+        const second = vi.fn();
+        const offFirst = onActionPanelsRefresh(first);
+        const offSecond = onActionPanelsRefresh(second);
+        expect(game.handlers.actions_updated).toBeTypeOf('function');
+
+        const querySpy = vi.spyOn(document, 'querySelectorAll');
+        game.handlers.actions_updated();
+        game.handlers.actions_updated();
+        game.handlers.actions_updated();
+        expect(first).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(200);
+        expect(first).toHaveBeenCalledTimes(1);
+        expect(first).toHaveBeenCalledWith(a.panel, '3');
+        expect(second).toHaveBeenCalledTimes(1);
+        expect(querySpy).toHaveBeenCalledTimes(1);
+        querySpy.mockRestore();
+
+        // The subscription outlives the first unsubscribe and ends with the last
+        offFirst();
+        expect(game.handlers.actions_updated).toBeTypeOf('function');
+        offSecond();
+        expect(game.handlers.actions_updated).toBeUndefined();
+    });
+
+    test('a callback that throws does not stop the others', () => {
+        vi.useFakeTimers();
+        const a = buildPanel();
+        a.panel.className = 'SkillActionDetail_skillActionDetail__x';
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const after = vi.fn();
+        const offThrower = onActionPanelsRefresh(() => {
+            throw new Error('boom');
+        });
+        const offAfter = onActionPanelsRefresh(after);
+
+        game.handlers.actions_updated();
+        vi.advanceTimersByTime(200);
+        expect(after).toHaveBeenCalledTimes(1);
+
+        offThrower();
+        offAfter();
+        errorSpy.mockRestore();
     });
 });
 

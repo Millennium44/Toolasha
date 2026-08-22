@@ -2231,6 +2231,19 @@ describe('the hover preview does not outlive its anchor', () => {
         expect(isShown()).toBe(true);
     });
 
+    test('the watchdog interval runs only while a preview is showing', () => {
+        const badge = document.createElement('span');
+        document.body.appendChild(badge);
+        labyrinthClearRate.bindPreview(badge, skillResult());
+        expect(labyrinthClearRate._previewWatchdog).toBeNull();
+
+        hover(badge);
+        expect(labyrinthClearRate._previewWatchdog).not.toBeNull();
+
+        badge.dispatchEvent(new MouseEvent('mouseleave'));
+        expect(labyrinthClearRate._previewWatchdog).toBeNull();
+    });
+
     test('a watchdog tick with no preview showing does nothing (no anchor, no crash)', () => {
         expect(() => labyrinthClearRate._previewWatchdogTick()).not.toThrow();
         expect(isShown()).toBe(false);

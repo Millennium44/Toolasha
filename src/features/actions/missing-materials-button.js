@@ -11,7 +11,7 @@ import {
     findActionInput,
     attachInputListeners,
     performInitialUpdate,
-    refreshActionPanels,
+    onActionPanelsRefresh,
 } from '../../utils/action-panel-helper.js';
 import {
     calculateMaterialRequirements,
@@ -43,7 +43,7 @@ let cleanupObserver = null;
 const currentMaterialsTabs = [];
 let domObserverUnregister = null;
 let enhancementDomObserverUnregister = null;
-let actionsUpdatedHandler = null;
+let unsubscribeRefresh = null;
 let processedPanels = new WeakSet();
 let processedEnhancingPanels = new WeakSet();
 let enhancingPanelWatchers = [];
@@ -95,8 +95,7 @@ export function initialize() {
 
     // The button's missing list reads the action queue; a finite queue change
     // must redraw a panel already on screen
-    actionsUpdatedHandler = () => refreshActionPanels((panel, value) => updateButtonForPanel(panel, value));
-    dataManager.on('actions_updated', actionsUpdatedHandler);
+    unsubscribeRefresh = onActionPanelsRefresh((panel, value) => updateButtonForPanel(panel, value));
 
     // Process existing panels
     processActionPanels();
@@ -111,9 +110,9 @@ export function cleanup() {
         domObserverUnregister();
         domObserverUnregister = null;
     }
-    if (actionsUpdatedHandler) {
-        dataManager.off('actions_updated', actionsUpdatedHandler);
-        actionsUpdatedHandler = null;
+    if (unsubscribeRefresh) {
+        unsubscribeRefresh();
+        unsubscribeRefresh = null;
     }
 
     if (enhancementDomObserverUnregister) {

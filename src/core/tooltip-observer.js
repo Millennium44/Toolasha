@@ -11,6 +11,10 @@ class TooltipObserver {
         this.subscribers = new Map(); // name -> callback
         this.unregisterObserver = null;
         this.isInitialized = false;
+        /** Tooltips told "opened" whose "closed" is still owed */
+        this.open = new Set();
+        /** One observer for every open tooltip, attached only while any is open */
+        this.removalObserver = null;
     }
 
     /**
@@ -61,31 +65,15 @@ class TooltipObserver {
      * @private
      */
     notifySubscribers(element) {
-        // Set up observer to detect when this specific tooltip is removed
-        const removalObserver = new MutationObserver((mutations) => {
-            for (const mutation of mutations) {
-                for (const removedNode of mutation.removedNodes) {
-                    if (removedNode === element) {
-                        // Notify subscribers that tooltip closed
-                        for (const [name, callback] of this.subscribers.entries()) {
-                            try {
-                                callback(element, 'closed');
-                            } catch (error) {
-                                console.error(`[TooltipObserver] Error in subscriber "${name}" (close):`, error);
-                            }
-                        }
-                        removalObserver.disconnect();
-                        return;
-                    }
-                }
-            }
-        });
-
-        // Watch the parent for removal of this tooltip
-        if (element.parentNode) {
-            removalObserver.observe(element.parentNode, {
-                childList: true,
-            });
+        // Watch for this tooltip leaving the document, so "closed" follows
+        // "opened". One observer serves every open tooltip and is dropped once
+        // the last one closes. It used to be one observer per tooltip on the
+        // tooltip's parent, disconnected only when the tooltip itself was a
+        // removed child — an ancestor torn down around it left that observer
+        // attached for good, and a long session opened thousands.
+        if (element.isConnected) {
+            this.open.add(element);
+            this._watchRemovals();
         }
 
         // Notify subscribers that tooltip opened
@@ -99,6 +87,45 @@ class TooltipObserver {
     }
 
     /**
+     * Attach the shared removal observer, if it is not already up.
+     * @private
+     */
+    _watchRemovals() {
+        if (this.removalObserver) return;
+        this.removalObserver = new MutationObserver((mutations) => {
+            if (!mutations.some((mutation) => mutation.removedNodes.length > 0)) return;
+            this._settleRemoved();
+        });
+        this.removalObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    /**
+     * Tell subscribers about every open tooltip that has left the document,
+     * and let the observer go once none are left.
+     * @private
+     */
+    _settleRemoved() {
+        for (const element of this.open) {
+            if (element.isConnected) continue;
+            this.open.delete(element);
+            for (const [name, callback] of this.subscribers.entries()) {
+                try {
+                    callback(element, 'closed');
+                } catch (error) {
+                    console.error(`[TooltipObserver] Error in subscriber "${name}" (close):`, error);
+                }
+            }
+        }
+        if (this.open.size === 0) this._unwatchRemovals();
+    }
+
+    /** @private */
+    _unwatchRemovals() {
+        this.removalObserver?.disconnect();
+        this.removalObserver = null;
+    }
+
+    /**
      * Cleanup and disable
      */
     disable() {
@@ -106,6 +133,8 @@ class TooltipObserver {
             this.unregisterObserver();
             this.unregisterObserver = null;
         }
+        this._unwatchRemovals();
+        this.open.clear();
         this.subscribers.clear();
         this.isInitialized = false;
     }

@@ -287,11 +287,9 @@ class LabyrinthClearRate {
         this._previewScrollHandler = () => this.hidePreview();
         window.addEventListener('scroll', this._previewScrollHandler, { capture: true, passive: true });
 
-        // Catches what the two direct hidePreview() calls above cannot: the
-        // grid disappearing with no further labyrinth_updated message to
-        // react to at all, e.g. navigating from the grid to the Labyrinth
-        // info tab mid-run. See `_previewWatchdogTick`.
-        this._previewWatchdog = setInterval(() => this._previewWatchdogTick(), PREVIEW_WATCHDOG_MS);
+        // The orphan watchdog (`_previewWatchdogTick`) is started by
+        // showPreview() and stopped by hidePreview(), so it only ticks while
+        // there is a preview on screen to orphan.
 
         this.isInitialized = true;
     }
@@ -4180,6 +4178,7 @@ class LabyrinthClearRate {
             this._previewFor = result;
         }
         this._previewAnchor = anchor || null;
+        this._startPreviewWatchdog();
         // Interactive only on touch, where it holds the open-in-sim action; a
         // hover tooltip that catches the pointer would fire mouseleave on the
         // badge under it and dismiss itself
@@ -4207,6 +4206,7 @@ class LabyrinthClearRate {
         if (el) el.style.display = 'none';
         this._previewFor = null;
         this._previewAnchor = null;
+        this._stopPreviewWatchdog();
         if (this._previewDismiss) {
             document.removeEventListener('pointerdown', this._previewDismiss, true);
             this._previewDismiss = null;
@@ -4230,6 +4230,23 @@ class LabyrinthClearRate {
         const el = document.getElementById(PREVIEW_ID);
         if (!el || el.style.display === 'none') return;
         if (this._previewAnchor && !this._previewAnchor.isConnected) this.hidePreview();
+    }
+
+    /**
+     * Catches what the direct hidePreview() calls cannot: the grid
+     * disappearing with no further labyrinth_updated message to react to at
+     * all, e.g. navigating from the grid to the Labyrinth info tab mid-run.
+     * Runs only while a preview is showing — see `_previewWatchdogTick`.
+     */
+    _startPreviewWatchdog() {
+        if (this._previewWatchdog) return;
+        this._previewWatchdog = setInterval(() => this._previewWatchdogTick(), PREVIEW_WATCHDOG_MS);
+    }
+
+    _stopPreviewWatchdog() {
+        if (!this._previewWatchdog) return;
+        clearInterval(this._previewWatchdog);
+        this._previewWatchdog = null;
     }
 
     /**

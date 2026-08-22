@@ -35,6 +35,7 @@
  */
 
 import config from '../../core/config.js';
+import domObserver from '../../core/dom-observer.js';
 import { damageBreakdown, battleBreakdown, manaSamples } from './damage-tracker.js';
 import { takenBreakdown, battleTakenBreakdown } from './damage-taken-tracker.js';
 import {
@@ -265,11 +266,43 @@ export function enemyMeterText(enemy, extras = null) {
     return { text: first, lines, title };
 }
 
+/**
+ * A cheap fingerprint of what the meters would be drawn from.
+ *
+ * Rates move with the clock, so they are left out on purpose: the interval
+ * redraw keeps those ticking. This only has to tell "something landed or the
+ * line-up changed" from "the panel mutated for a reason of its own", so the
+ * frame-rate observer can skip the draws that would have written nothing.
+ *
+ * @param {Object} run - From `damageBreakdown`
+ * @param {Object} fight - From `battleBreakdown`
+ * @returns {string}
+ */
+export function drawSignature(run, fight) {
+    let text = '';
+    for (const player of run?.players || []) {
+        text += `${player.name}:${player.damage}:${player.hits}:${player.misses};`;
+    }
+    text += '|';
+    for (const [slot, entry] of Object.entries(fight?.players || {})) {
+        text += `${slot}:${entry?.name}:${entry?.damage};`;
+    }
+    text += '|';
+    for (const [slot, enemy] of Object.entries(fight?.enemies || {})) {
+        text += `${slot}:${enemy?.name}:${enemy?.damage}:${enemy?.hp}:${enemy?.enrageAt};`;
+    }
+    return text;
+}
+
 class PortraitDps {
     constructor() {
         this.isInitialized = false;
         this.observer = null;
+        this.panel = null;
+        this.unregisterClass = null;
         this.timers = createTimerRegistry();
+        this._lastSignature = null;
+        this._lastMeterCount = 0;
     }
 
     initialize() {
@@ -281,12 +314,13 @@ class PortraitDps {
         // being rebuilt — which is when the meters are lost — and the timer
         // keeps the figures moving between rebuilds.
         //
-        // Coalesced to one draw per frame: the observer watches the whole app
-        // (the battle panel comes and goes, so there is no stable element to
-        // scope to), and a busy game tick fires it dozens of times over.
-        this.observer = new MutationObserver(() => this._scheduleDraw());
-        const root = document.getElementById('root') || document.body;
-        this.observer.observe(root, { childList: true, subtree: true });
+        // The observer is scoped to the battle panel rather than the whole app,
+        // so the rest of the page writing text (which other features do ten
+        // times a second) does not ask for a redraw here. The panel comes and
+        // goes with the fight, so the shared DOM observer re-acquires it each
+        // time the players area is rendered.
+        this.unregisterClass = domObserver.onClass('PortraitDps', 'BattlePanel_playersArea', () => this._attach());
+        this._attach();
 
         this.timers.registerInterval(
             setInterval(() => {
@@ -300,13 +334,32 @@ class PortraitDps {
     disable() {
         this.observer?.disconnect();
         this.observer = null;
+        this.panel = null;
+        this.unregisterClass?.();
+        this.unregisterClass = null;
         this.timers.clearAll();
         if (this._drawScheduled) {
             cancelAnimationFrame(this._drawScheduled);
             this._drawScheduled = null;
         }
         for (const meter of document.querySelectorAll(`[${MARK}]`)) meter.remove();
+        this._lastSignature = null;
+        this._lastMeterCount = 0;
         this.isInitialized = false;
+    }
+
+    /** Watch the battle panel that currently holds the portraits, if any */
+    _attach() {
+        const area = document.querySelector(PLAYERS_AREA);
+        if (!area) return;
+        const panel = area.closest('[class*="BattlePanel_battlePanel"]') || area.parentElement || area;
+        if (panel === this.panel && this.observer) return;
+
+        this.observer?.disconnect();
+        this.panel = panel;
+        this.observer = new MutationObserver(() => this._scheduleDraw());
+        this.observer.observe(panel, { childList: true, subtree: true });
+        this._scheduleDraw();
     }
 
     /** At most one redraw per frame, however many mutations asked for it */
@@ -314,8 +367,33 @@ class PortraitDps {
         if (this._drawScheduled) return;
         this._drawScheduled = requestAnimationFrame(() => {
             this._drawScheduled = null;
-            this._draw();
+            this._drawIfChanged();
         });
+    }
+
+    /**
+     * The observer's draw: skipped when nothing it would write has changed and
+     * every meter from the last draw is still in place. The panel mutates at
+     * frame rate in a fight (health bars, effects), and most of those frames
+     * would have re-derived the same lines only to find them already there.
+     */
+    _drawIfChanged() {
+        const run = damageBreakdown();
+        const fight = battleBreakdown();
+        const signature = drawSignature(run, fight);
+        if (signature === this._lastSignature && this._metersIntact()) return;
+        this._draw(run, fight);
+    }
+
+    /**
+     * Whether every meter drawn last time is still in the panel. Nothing drawn
+     * yet never counts as intact: tiles may have just appeared for a tally
+     * that has not changed, and those want their meters now, not next tick.
+     */
+    _metersIntact() {
+        if (this._lastMeterCount === 0) return false;
+        const panel = this.panel?.isConnected ? this.panel : document;
+        return panel.querySelectorAll(`[${MARK}]`).length === this._lastMeterCount;
     }
 
     /** Which of the optional lines are on, read fresh so a toggle takes hold next draw */
@@ -331,14 +409,18 @@ class PortraitDps {
         };
     }
 
-    /** Put a meter on every portrait, and a rate on every monster */
-    _draw() {
+    /**
+     * Put a meter on every portrait, and a rate on every monster.
+     * @param {Object} [run] - From `damageBreakdown`, read fresh when omitted
+     * @param {Object} [fight] - From `battleBreakdown`, read fresh when omitted
+     */
+    _draw(run = damageBreakdown(), fight = battleBreakdown()) {
         try {
-            const run = damageBreakdown();
-            const fight = battleBreakdown();
             const settings = this._settings();
+            this._lastMeterCount = 0;
             this._drawPlayers(run, fight, settings);
             this._drawEnemies(fight, settings);
+            this._lastSignature = drawSignature(run, fight);
         } catch (error) {
             console.error('[PortraitDps] Drawing the portrait meters failed:', error);
         }
@@ -450,6 +532,7 @@ class PortraitDps {
         const below = atBottom || config.getSettingValue('portraitDpsPosition', 'above') === 'below';
         const lines = content.lines || [content.text];
 
+        this._lastMeterCount += 1;
         let meter = unit.querySelector(`:scope > [${MARK}]`);
         if (!meter) {
             meter = document.createElement('div');
@@ -502,6 +585,9 @@ class PortraitDps {
 }
 
 const portraitDps = new PortraitDps();
+
+/** The singleton, exposed for tests. */
+export { portraitDps as _instance };
 
 export default {
     name: 'Portrait DPS',

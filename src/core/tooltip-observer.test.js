@@ -67,6 +67,42 @@ describe('subscribe / notify', () => {
         expect(callback).toHaveBeenCalledWith(tooltip, 'closed');
     });
 
+    test('a tooltip torn down with its ancestor is still reported closed, and the observer is let go', async () => {
+        const callback = vi.fn();
+        tooltipObserver.subscribe('A', callback);
+
+        const ancestor = document.createElement('div');
+        const parent = document.createElement('div');
+        const tooltip = document.createElement('div');
+        parent.appendChild(tooltip);
+        ancestor.appendChild(parent);
+        document.body.appendChild(ancestor);
+
+        observerState.handler(tooltip);
+        callback.mockClear();
+        expect(tooltipObserver.removalObserver).not.toBeNull();
+
+        ancestor.remove();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(callback).toHaveBeenCalledWith(tooltip, 'closed');
+        expect(tooltipObserver.open.size).toBe(0);
+        expect(tooltipObserver.removalObserver).toBeNull();
+    });
+
+    test('two open tooltips share one observer', () => {
+        tooltipObserver.subscribe('A', vi.fn());
+        const first = document.createElement('div');
+        const second = document.createElement('div');
+        document.body.append(first, second);
+        observerState.handler(first);
+        const observer = tooltipObserver.removalObserver;
+        observerState.handler(second);
+        expect(tooltipObserver.removalObserver).toBe(observer);
+        expect(tooltipObserver.open.size).toBe(2);
+    });
+
     test('multiple subscribers are all notified', () => {
         const a = vi.fn();
         const b = vi.fn();

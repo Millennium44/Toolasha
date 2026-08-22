@@ -46,6 +46,10 @@ class CombatLevelProgress {
         this.isInitialized = false;
         this.unregisterHandlers = [];
         this.boundUpdate = null;
+        // The sidebar row and its level span, re-resolved only when the
+        // sidebar has been rebuilt — this runs on every action completed
+        this.navRow = null;
+        this.levelSpan = null;
     }
 
     /**
@@ -102,24 +106,29 @@ class CombatLevelProgress {
      * Recompute and render (or clear) the decimal Combat Level companion span
      */
     update() {
-        const navRow = this.findCombatNavRow();
-        if (!navRow) {
-            return;
-        }
-
-        const textContainer = navRow.querySelector('[class*="NavigationBar_textContainer"]');
-        if (!textContainer) {
-            return;
+        if (!this.navRow?.isConnected || !this.levelSpan?.isConnected) {
+            this.navRow = null;
+            this.levelSpan = null;
+            const navRow = this.findCombatNavRow();
+            if (!navRow) {
+                return;
+            }
+            const textContainer = navRow.querySelector('[class*="NavigationBar_textContainer"]');
+            if (!textContainer) {
+                return;
+            }
+            this.navRow = navRow;
+            this.levelSpan = textContainer.querySelector('[class*="NavigationBar_level"]') || null;
         }
 
         const rawCombatLevel = decimalCombatLevel(dataManager.getSkills());
 
         if (rawCombatLevel === null) {
-            textContainer.querySelector(`.${CSS_CLASS}`)?.remove();
+            this.navRow.querySelector(`.${CSS_CLASS}`)?.remove();
             return;
         }
 
-        const levelSpan = textContainer.querySelector('[class*="NavigationBar_level"]');
+        const levelSpan = this.levelSpan;
         if (!levelSpan) {
             return;
         }
@@ -135,7 +144,9 @@ class CombatLevelProgress {
         }
 
         const decimalText = rawCombatLevel.toFixed(1).split('.')[1];
-        span.textContent = `.${decimalText}`;
+        const text = `.${decimalText}`;
+        if (span.textContent === text) return;
+        span.textContent = text;
         span.title = `Combat Level from current whole skill levels · native display: ${Math.floor(rawCombatLevel)}`;
     }
 
@@ -154,6 +165,8 @@ class CombatLevelProgress {
         }
 
         document.querySelectorAll(`.${CSS_CLASS}`).forEach((el) => el.remove());
+        this.navRow = null;
+        this.levelSpan = null;
         this.isInitialized = false;
     }
 }

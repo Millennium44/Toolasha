@@ -114,7 +114,8 @@ class MarketplaceBadgeFilter {
         this.unwatchAdded = null;
         /** Watches the sidebar item's own text, since React rewrites it */
         this.textWatcher = null;
-        this.watchedNav = null;
+        this.watchedHolder = null;
+        this.badge = null;
         /**
          * Finished count at the previous observation, for the notification.
          *
@@ -295,7 +296,7 @@ class MarketplaceBadgeFilter {
      * @returns {boolean} Whether there was a badge to write into
      */
     _paint() {
-        const badge = document.querySelector(BADGE);
+        const badge = this._badge();
         if (!badge || this.showing === null || this.showing === 0) return false;
 
         const holder = countHolder(badge);
@@ -319,17 +320,30 @@ class MarketplaceBadgeFilter {
         this._attach();
     }
 
-    /** Point the scoped observer at the sidebar item currently on screen */
-    _attach() {
-        const badge = document.querySelector(BADGE);
-        const nav = badge?.closest('[class*="NavigationBar_nav__"]');
-        if (!nav) return;
+    /**
+     * The badge element, looked up once and kept until the sidebar rebuilds it.
+     * @returns {HTMLElement|null}
+     */
+    _badge() {
+        if (!this.badge?.isConnected) {
+            this.badge = document.querySelector(BADGE);
+        }
+        return this.badge;
+    }
 
-        if (this.watchedNav !== nav) {
+    /** Point the scoped observer at the badge currently on screen */
+    _attach() {
+        const badge = this._badge();
+        if (!badge) return;
+
+        // Scoped to the badge's own box rather than the whole sidebar: every
+        // other sidebar item's text churn would otherwise call `_paint`
+        const holder = countHolder(badge);
+        if (this.watchedHolder !== holder) {
             this.textWatcher?.disconnect();
             this.textWatcher = new MutationObserver(() => this._paint());
-            this.textWatcher.observe(nav, { childList: true, subtree: true, characterData: true });
-            this.watchedNav = nav;
+            this.textWatcher.observe(holder, { childList: true, subtree: true, characterData: true });
+            this.watchedHolder = holder;
         }
         this._paint();
     }
@@ -339,7 +353,8 @@ class MarketplaceBadgeFilter {
         this.unwatchAdded = null;
         this.textWatcher?.disconnect();
         this.textWatcher = null;
-        this.watchedNav = null;
+        this.watchedHolder = null;
+        this.badge = null;
     }
 
     disable() {

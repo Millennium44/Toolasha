@@ -39,6 +39,7 @@ class AlchemyActionProtection {
         this.confirmTimer = null;
         this.lockdownTimer = null;
         this._updatingGold = false;
+        this._inventoryTotals = null; // Coin balance and per-item counts, rebuilt on items_updated
     }
 
     async initialize() {
@@ -253,14 +254,27 @@ class AlchemyActionProtection {
             panelCleanups.push(() => observer.disconnect());
         }
 
-        // Watch item selection changes to update pin state and gold summary
+        // Watch item selection changes to update pin state and gold summary.
+        // Debounced: React rebuilds the panel in bursts of many mutations, and
+        // each pass re-reads the tab, the selected item and the inventory.
+        let updateAllTimer = null;
         const updateAll = () => {
-            updatePinIcon();
-            this._updateGoldSummary(alchemyComponent);
+            if (updateAllTimer) clearTimeout(updateAllTimer);
+            updateAllTimer = setTimeout(() => {
+                updateAllTimer = null;
+                updatePinIcon();
+                this._updateGoldSummary(alchemyComponent);
+            }, 50);
         };
         const itemObserver = new MutationObserver(updateAll);
         itemObserver.observe(alchemyComponent, { childList: true, subtree: true });
-        panelCleanups.push(() => itemObserver.disconnect());
+        panelCleanups.push(() => {
+            itemObserver.disconnect();
+            if (updateAllTimer) {
+                clearTimeout(updateAllTimer);
+                updateAllTimer = null;
+            }
+        });
 
         // Watch action count input changes for gold summary
         const onInputChange = (e) => {
@@ -282,10 +296,17 @@ class AlchemyActionProtection {
             panelCleanups.push(() => tabGoldObserver.disconnect());
         }
 
-        // Update gold summary on inventory changes
-        const onItemsUpdated = () => this._updateGoldSummary(alchemyComponent);
+        // Update gold summary on inventory changes. The coin and item totals
+        // are tallied once per inventory update, not once per panel mutation.
+        const onItemsUpdated = () => {
+            this._inventoryTotals = null;
+            this._updateGoldSummary(alchemyComponent);
+        };
         dataManager.on('items_updated', onItemsUpdated);
-        panelCleanups.push(() => dataManager.off('items_updated', onItemsUpdated));
+        panelCleanups.push(() => {
+            dataManager.off('items_updated', onItemsUpdated);
+            this._inventoryTotals = null;
+        });
 
         this._panelCleanup = () => {
             for (const fn of panelCleanups) fn();
@@ -332,6 +353,28 @@ class AlchemyActionProtection {
         return itemId ? `/items/${itemId}` : null;
     }
 
+    /**
+     * Inventory-location counts by item hrid, plus the coin balance, tallied
+     * once and kept until the next `items_updated`.
+     * @returns {{counts: Map<string, number>, coins: number}}
+     */
+    _getInventoryTotals() {
+        if (this._inventoryTotals) return this._inventoryTotals;
+        const counts = new Map();
+        let coins = 0;
+        const inventory = dataManager.getInventory();
+        if (inventory) {
+            for (const item of inventory) {
+                if (item.itemLocationHrid !== '/item_locations/inventory') continue;
+                const count = item.count || 0;
+                if (item.itemHrid === '/items/coin') coins += count;
+                counts.set(item.itemHrid, (counts.get(item.itemHrid) || 0) + count);
+            }
+        }
+        this._inventoryTotals = { counts, coins };
+        return this._inventoryTotals;
+    }
+
     _updateGoldSummary(alchemyComponent) {
         if (this._updatingGold) return;
         this._updatingGold = true;
@@ -368,16 +411,9 @@ class AlchemyActionProtection {
 
         const coinCost = getAlchemyCoinCost(itemDetails, alchemyType);
 
-        const inventory = dataManager.getInventory();
-        let itemCount = 0;
-        let goldBalance = 0;
-        if (inventory) {
-            for (const item of inventory) {
-                if (item.itemLocationHrid !== '/item_locations/inventory') continue;
-                if (item.itemHrid === itemHrid) itemCount += item.count || 0;
-                if (item.itemHrid === '/items/coin') goldBalance += item.count || 0;
-            }
-        }
+        const totals = this._getInventoryTotals();
+        const itemCount = totals.counts.get(itemHrid) || 0;
+        const goldBalance = totals.coins;
 
         const actions = dataManager.getCurrentActions();
         const activeAction = actions?.find((a) => a.actionHrid === actionHrid && a.primaryItemHash?.includes(itemHrid));

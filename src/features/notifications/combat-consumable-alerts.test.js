@@ -63,6 +63,7 @@ const {
     default: alerts,
     MASTER_SETTING,
     HOURS_SETTING,
+    TICK_THROTTLE_MS,
     soonestCombatConsumable,
 } = await import('./combat-consumable-alerts.js');
 
@@ -74,7 +75,14 @@ const eating = (itemHrid, itemName, held, perSecond) => ({
     consumptionRate: perSecond,
 });
 
+/** A battle tick, far enough after the last one for the throttle to let it through */
+const battleTick = () => {
+    vi.advanceTimersByTime(TICK_THROTTLE_MS);
+    game.wsHandlers.battle_updated({});
+};
+
 beforeEach(() => {
+    vi.useFakeTimers();
     game.settings = { [MASTER_SETTING]: true };
     game.values = { [HOURS_SETTING]: 0.5 };
     game.latest = null;
@@ -85,6 +93,7 @@ beforeEach(() => {
 
 afterEach(() => {
     alerts.disable();
+    vi.useRealTimers();
 });
 
 describe('the reading', () => {
@@ -127,25 +136,46 @@ describe('the crossing', () => {
     test('fires once when the soonest falls under the configured hours, and re-arms above', async () => {
         await alerts.initialize();
         withSeconds(3600);
-        game.wsHandlers.battle_updated({});
+        battleTick();
         expect(game.notified).toEqual([]);
 
         withSeconds(25 * 60);
-        game.wsHandlers.battle_updated({});
+        battleTick();
         expect(game.notified).toHaveLength(1);
         expect(game.notified[0].message).toContain('Dragon Fruit Yogurt');
         expect(game.notified[0].message).toContain('25m');
 
         // Still under: quiet
         withSeconds(20 * 60);
-        game.wsHandlers.battle_updated({});
+        battleTick();
         expect(game.notified).toHaveLength(1);
 
         // Restocked above, then under again: fires again
         withSeconds(2 * 3600);
+        battleTick();
+        withSeconds(10 * 60);
+        battleTick();
+        expect(game.notified).toHaveLength(2);
+    });
+
+    test('battle ticks are throttled: a burst runs the check once, and the backstop interval still runs', async () => {
+        await alerts.initialize();
+        withSeconds(25 * 60);
+        game.wsHandlers.battle_updated({});
+        expect(game.notified).toHaveLength(1);
+
+        // Restocked, then under again within the throttle window: not re-read yet
+        withSeconds(2 * 3600);
         game.wsHandlers.battle_updated({});
         withSeconds(10 * 60);
         game.wsHandlers.battle_updated({});
+        expect(game.notified).toHaveLength(1);
+
+        // The slow interval reads it regardless of the throttle
+        withSeconds(2 * 3600);
+        vi.advanceTimersByTime(60 * 1000);
+        withSeconds(10 * 60);
+        vi.advanceTimersByTime(60 * 1000);
         expect(game.notified).toHaveLength(2);
     });
 
@@ -153,7 +183,7 @@ describe('the crossing', () => {
         game.values = { [HOURS_SETTING]: 2 };
         await alerts.initialize();
         withSeconds(90 * 60);
-        game.wsHandlers.battle_updated({});
+        battleTick();
         expect(game.notified).toHaveLength(1);
     });
 
@@ -161,10 +191,10 @@ describe('the crossing', () => {
         game.values = { [HOURS_SETTING]: 'x' };
         await alerts.initialize();
         withSeconds(3.1 * 3600);
-        game.wsHandlers.battle_updated({});
+        battleTick();
         expect(game.notified).toEqual([]);
         withSeconds(2.9 * 3600);
-        game.wsHandlers.battle_updated({});
+        battleTick();
         expect(game.notified).toHaveLength(1);
     });
 

@@ -301,8 +301,10 @@ function buildMaterialsBadge(profitData) {
     container.className = 'mwi-task-materials';
     container.style.cssText = 'margin-top: 2px; font-size: 0.7rem;';
 
-    // Store data for live inventory updates
+    // Store data for live inventory updates. The parsed list is kept on the
+    // element too, so a refresh does not re-parse it for every card
     container.dataset.materials = JSON.stringify(materialsJson);
+    container._mwiMaterials = materialsJson;
     container.dataset.remaining = remaining;
 
     // Clickable summary line
@@ -360,11 +362,14 @@ function refreshMaterialsBadges() {
     const invMap = buildInventoryMap();
 
     for (const container of containers) {
-        let materials;
-        try {
-            materials = JSON.parse(container.dataset.materials);
-        } catch {
-            continue;
+        let materials = container._mwiMaterials;
+        if (!materials) {
+            try {
+                materials = JSON.parse(container.dataset.materials);
+                container._mwiMaterials = materials;
+            } catch {
+                continue;
+            }
         }
 
         // Derive remaining live from the task card's progress text — the stored
@@ -494,6 +499,10 @@ class TaskProfitDisplay {
         this._estimateMode = 'solo'; // Last-used Solo/Zone choice (persisted)
         this.marketDataInitPromise = null; // Guard against duplicate market data inits
         this._simQueue = Promise.resolve();
+        // One pending refresh per source, so a burst of messages runs it once
+        this._questsTimer = null;
+        this._actionsTimer = null;
+        this._materialsTimer = null;
     }
 
     /**
@@ -618,43 +627,56 @@ class TaskProfitDisplay {
         const questsHandler = (data) => {
             if (!data.endCharacterQuests) return;
 
-            // Wait for game to update DOM before recalculating profits
-            const updateTimeout = setTimeout(() => {
+            // Wait for game to update DOM before recalculating profits; a
+            // burst of updates reschedules rather than stacking passes
+            if (this._questsTimer) clearTimeout(this._questsTimer);
+            this._questsTimer = setTimeout(() => {
+                this._questsTimer = null;
                 this.updateTaskProfits();
             }, 250);
-            this.timerRegistry.registerTimeout(updateTimeout);
         };
 
         webSocketHook.on('quests_updated', questsHandler);
 
         this.unregisterHandlers.push(() => {
             webSocketHook.off('quests_updated', questsHandler);
+            if (this._questsTimer) clearTimeout(this._questsTimer);
+            this._questsTimer = null;
         });
 
         // Listen for action queue changes to update queued indicators
         const actionsHandler = () => {
-            const indicatorTimeout = setTimeout(() => {
+            if (this._actionsTimer) clearTimeout(this._actionsTimer);
+            this._actionsTimer = setTimeout(() => {
+                this._actionsTimer = null;
                 this.updateQueuedIndicators();
             }, 250);
-            this.timerRegistry.registerTimeout(indicatorTimeout);
         };
 
         dataManager.on('actions_updated', actionsHandler);
 
         this.unregisterHandlers.push(() => {
             dataManager.off('actions_updated', actionsHandler);
+            if (this._actionsTimer) clearTimeout(this._actionsTimer);
+            this._actionsTimer = null;
         });
 
-        // Refresh materials badges when inventory changes
+        // Refresh materials badges when inventory changes. Inventory updates
+        // arrive several to the second while crafting; one pass per burst.
         const materialsHandler = () => {
-            const materialsTimeout = setTimeout(() => refreshMaterialsBadges(), 250);
-            this.timerRegistry.registerTimeout(materialsTimeout);
+            if (this._materialsTimer) clearTimeout(this._materialsTimer);
+            this._materialsTimer = setTimeout(() => {
+                this._materialsTimer = null;
+                refreshMaterialsBadges();
+            }, 250);
         };
 
         dataManager.on('items_updated', materialsHandler);
 
         this.unregisterHandlers.push(() => {
             dataManager.off('items_updated', materialsHandler);
+            if (this._materialsTimer) clearTimeout(this._materialsTimer);
+            this._materialsTimer = null;
         });
 
         // Refresh combat estimate loadout dropdowns when snapshots arrive
