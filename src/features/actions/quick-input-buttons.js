@@ -15,7 +15,6 @@
 import dataManager from '../../core/data-manager.js';
 import storage from '../../core/storage.js';
 import config from '../../core/config.js';
-import domObserver from '../../core/dom-observer.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { parseEquipmentSpeedBonuses, debugEquipmentSpeedBonuses } from '../../utils/equipment-parser.js';
 import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
@@ -30,6 +29,7 @@ import {
 import { createCollapsibleSection } from '../../utils/ui-components.js';
 import { calculateActionsPerHour, calculateEffectiveActionsPerHour } from '../../utils/profit-helpers.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
+import { onDetailPanel, resolveDetailPanel } from '../../utils/action-panel-helper.js';
 import { MIN_ACTION_TIME_SECONDS } from '../../utils/profit-constants.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -315,14 +315,10 @@ class QuickInputButtons {
      * Start observing for action panels using centralized observer
      */
     startObserving() {
-        // Register with centralized DOM observer
-        this.unregisterObserver = domObserver.onClass(
-            'QuickInputButtons',
-            'SkillActionDetail_skillActionDetail',
-            (panel) => {
-                this.injectButtons(panel);
-            }
-        );
+        // Subscribe to the shared action-panel dispatcher
+        this.unregisterObserver = onDetailPanel((context) => {
+            this.injectButtons(context.panel, context);
+        });
 
         this.cleanupRegistry.registerCleanup(() => {
             if (this.unregisterObserver) {
@@ -341,13 +337,15 @@ class QuickInputButtons {
     /**
      * Inject quick input buttons into action panel
      * @param {HTMLElement} panel - Action panel element
+     * @param {import('../../utils/action-panel-helper.js').ActionPanelContext} [context] - The panel's
+     *   resolved action, when the dispatcher supplies it; resolved here otherwise
      */
-    injectButtons(panel) {
+    injectButtons(panel, context = resolveDetailPanel(panel)) {
         let actionDetails = null;
         try {
             // Check if already injected for this same action
-            const actionNameElement = panel.querySelector('[class*="SkillActionDetail_name"]');
-            const currentActionName = actionNameElement?.textContent?.trim() || '';
+            const actionNameElement = context.nameElement;
+            const currentActionName = context.actionName;
             const previousActionName = panel.dataset.mwiInjectedAction || '';
 
             if (panel.querySelector('.mwi-collapsible-section') || panel.querySelector('.mwi-quick-input-btn')) {
@@ -389,7 +387,8 @@ class QuickInputButtons {
             }
 
             const actionName = currentActionName;
-            actionDetails = this.getActionDetailsByName(actionName, gameData);
+            // Include hrid in the details object for task detection
+            actionDetails = context.actionDetails ? { ...context.actionDetails, hrid: context.actionHrid } : null;
             if (!actionDetails) {
                 console.warn('[Quick Input Buttons] No action details found for:', actionName);
                 return;

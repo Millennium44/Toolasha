@@ -10,12 +10,16 @@
  * - Module shows: "130.0 - 390.0" below the per-action output
  */
 
-import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
-import { findActionInput, attachInputListeners, performInitialUpdate } from '../../utils/action-panel-helper.js';
+import {
+    findActionInput,
+    attachInputListeners,
+    performInitialUpdate,
+    onDetailPanel,
+    resolveDetailPanel,
+} from '../../utils/action-panel-helper.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
-import { getActionHridFromName } from '../../utils/game-lookups.js';
 
 class OutputTotals {
     constructor() {
@@ -46,13 +50,9 @@ class OutputTotals {
     setupObserver() {
         // Watch for action detail panels appearing
         // The game shows action details when you click an action
-        this.unregisterObserver = domObserver.onClass(
-            'OutputTotals',
-            'SkillActionDetail_skillActionDetail',
-            (detailPanel) => {
-                this.attachToActionPanel(detailPanel);
-            }
-        );
+        this.unregisterObserver = onDetailPanel((context) => {
+            this.attachToActionPanel(context.panel);
+        });
     }
 
     /**
@@ -306,16 +306,7 @@ class OutputTotals {
      * @returns {string|null} Action HRID or null
      */
     getActionHridFromPanel(detailPanel) {
-        // Find action name element
-        const nameElement = detailPanel.querySelector('[class*="SkillActionDetail_name"]');
-
-        if (!nameElement) {
-            return null;
-        }
-
-        const actionName = nameElement.textContent.trim();
-
-        return getActionHridFromName(actionName);
+        return resolveDetailPanel(detailPanel).actionHrid;
     }
 
     /**

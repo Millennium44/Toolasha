@@ -10,7 +10,6 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import marketAPI from '../../api/marketplace.js';
 import actionPanelSort from './action-panel-sort.js';
@@ -21,6 +20,7 @@ import { formatKMB } from '../../utils/formatters.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
 import { getDrinkConcentration, parseArtisanBonus } from '../../utils/tea-parser.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
+import { onActionTile, resolveActionTile } from '../../utils/action-panel-helper.js';
 
 /**
  * Action type constants for classification
@@ -59,7 +59,6 @@ class MaxProduceable {
         this.characterSwitchingHandler = null; // Handler for character switch cleanup
         this.pricingModeHandler = null; // Handler for pricing mode changes
         this.profitCalcTimeout = null; // Debounce timer for deferred profit calculations
-        this.actionNameToHridCache = null; // Cached reverse lookup map (name → hrid)
         this.isInitialized = false;
         this.itemsUpdatedDebounceTimer = null; // Debounce timer for items_updated events
         this.DEBOUNCE_DELAY = 300; // 300ms debounce for event handlers
@@ -118,9 +117,10 @@ class MaxProduceable {
      */
     setupObserver() {
         // Watch for skill action panels (in skill screen, not detail modal)
-        this.unregisterObserver = domObserver.onClass('MaxProduceable', 'SkillAction_skillAction', (actionPanel) => {
+        this.unregisterObserver = onActionTile((context) => {
+            const actionPanel = context.panel;
             const isNew = !this.actionElements.has(actionPanel);
-            this.injectMaxProduceable(actionPanel);
+            this.injectMaxProduceable(actionPanel, context);
 
             // Only schedule a profit recalculation for genuinely new panels.
             // Panels that are already registered are being re-added by the sort
@@ -157,16 +157,16 @@ class MaxProduceable {
     /**
      * Inject max produceable display and pin icon into an action panel
      * @param {HTMLElement} actionPanel - The action panel element
+     * @param {import('../../utils/action-panel-helper.js').ActionPanelContext} [context] - The tile's
+     *   resolved action, when the dispatcher supplies it; resolved here otherwise
      */
-    injectMaxProduceable(actionPanel) {
-        // Extract action HRID from panel
-        const actionHrid = this.getActionHridFromPanel(actionPanel);
+    injectMaxProduceable(actionPanel, context = resolveActionTile(actionPanel)) {
+        const { actionHrid, actionDetails } = context;
 
         if (!actionHrid) {
             return;
         }
 
-        const actionDetails = dataManager.getActionDetails(actionHrid);
         if (!actionDetails) {
             return;
         }
@@ -315,48 +315,6 @@ class MaxProduceable {
 
         // Trigger debounced sort after panels are loaded
         actionPanelSort.triggerSort();
-    }
-
-    /**
-     * Extract action HRID from action panel
-     * @param {HTMLElement} actionPanel - The action panel element
-     * @returns {string|null} Action HRID or null
-     */
-    getActionHridFromPanel(actionPanel) {
-        // Try to find action name from panel
-        const nameElement = actionPanel.querySelector('div[class*="SkillAction_name"]');
-
-        if (!nameElement) {
-            return null;
-        }
-
-        const actionName = Array.from(nameElement.childNodes)
-            .filter((n) => n.nodeType === Node.TEXT_NODE)
-            .map((n) => n.textContent)
-            .join('')
-            .trim();
-
-        // Build reverse lookup cache on first use (name → hrid)
-        if (!this.actionNameToHridCache) {
-            const initData = dataManager.getInitClientData();
-            if (!initData) {
-                return null;
-            }
-
-            this.actionNameToHridCache = new Map();
-            for (const [hrid, action] of Object.entries(initData.actionDetailMap)) {
-                this.actionNameToHridCache.set(action.name, hrid);
-                // Add ★ ↔ (R) variants so both display formats resolve
-                if (action.name.includes('(R)')) {
-                    this.actionNameToHridCache.set(action.name.replace(/\s*\(R\)/, ' ★'), hrid);
-                } else if (action.name.includes('★')) {
-                    this.actionNameToHridCache.set(action.name.replace(/\s*★/, ' (R)'), hrid);
-                }
-            }
-        }
-
-        // O(1) lookup instead of O(n) iteration
-        return this.actionNameToHridCache.get(actionName) || null;
     }
 
     /**
@@ -945,12 +903,6 @@ class MaxProduceable {
 
         // Clear all action element references (prevents detached DOM memory leak)
         this.actionElements.clear();
-
-        // Clear action name cache
-        if (this.actionNameToHridCache) {
-            this.actionNameToHridCache.clear();
-            this.actionNameToHridCache = null;
-        }
 
         // Clear shared sort manager's panel references
         actionPanelSort.clearAllPanels();

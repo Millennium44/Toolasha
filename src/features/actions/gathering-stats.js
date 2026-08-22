@@ -6,14 +6,13 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import actionPanelSort from './action-panel-sort.js';
 import actionFilter from './action-filter.js';
 import { calculateGatheringProfit } from './gathering-profit.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { calculateExpPerHour } from '../../utils/experience-calculator.js';
-import { getActionHridFromName } from '../../utils/game-lookups.js';
+import { onActionTile, resolveActionTile } from '../../utils/action-panel-helper.js';
 
 class GatheringStats {
     constructor() {
@@ -90,8 +89,8 @@ class GatheringStats {
      */
     setupObserver() {
         // Watch for skill action panels (in skill screen, not detail modal)
-        this.unregisterObserver = domObserver.onClass('GatheringStats', 'SkillAction_skillAction', (actionPanel) => {
-            this.injectGatheringStats(actionPanel);
+        this.unregisterObserver = onActionTile((context) => {
+            this.injectGatheringStats(context.panel, context);
         });
 
         // Check for existing action panels that may already be open
@@ -104,16 +103,15 @@ class GatheringStats {
     /**
      * Inject gathering stats display into an action panel
      * @param {HTMLElement} actionPanel - The action panel element
+     * @param {import('../../utils/action-panel-helper.js').ActionPanelContext} [context] - The tile's
+     *   resolved action, when the dispatcher supplies it; resolved here otherwise
      */
-    injectGatheringStats(actionPanel) {
-        // Extract action HRID from panel
-        const actionHrid = this.getActionHridFromPanel(actionPanel);
+    injectGatheringStats(actionPanel, context = resolveActionTile(actionPanel)) {
+        const { actionHrid, actionDetails } = context;
 
         if (!actionHrid) {
             return;
         }
-
-        const actionDetails = dataManager.getActionDetails(actionHrid);
 
         // Only show for gathering actions (no inputItems)
         const gatheringTypes = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
@@ -208,28 +206,6 @@ class GatheringStats {
 
         // Trigger sort
         actionPanelSort.triggerSort();
-    }
-
-    /**
-     * Extract action HRID from action panel
-     * @param {HTMLElement} actionPanel - The action panel element
-     * @returns {string|null} Action HRID or null
-     */
-    getActionHridFromPanel(actionPanel) {
-        // Try to find action name from panel
-        const nameElement = actionPanel.querySelector('div[class*="SkillAction_name"]');
-
-        if (!nameElement) {
-            return null;
-        }
-
-        const actionName = Array.from(nameElement.childNodes)
-            .filter((n) => n.nodeType === Node.TEXT_NODE)
-            .map((n) => n.textContent)
-            .join('')
-            .trim();
-
-        return getActionHridFromName(actionName);
     }
 
     /**

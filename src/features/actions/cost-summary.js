@@ -6,18 +6,17 @@
  */
 
 import config from '../../core/config.js';
-import dataManager from '../../core/data-manager.js';
-import domObserver from '../../core/dom-observer.js';
 import {
     findActionInput,
     attachInputListeners,
     performInitialUpdate,
     onActionPanelsRefresh,
+    onDetailPanel,
+    resolveDetailPanel,
 } from '../../utils/action-panel-helper.js';
 import { calculateMaterialRequirements } from '../../utils/material-calculator.js';
 import { getItemPrice, formatPrice } from '../../utils/market-data.js';
 import { computeBestCraftingPlan } from '../../features/crafting-plan/crafting-plan-calculator.js';
-import { getActionHridFromName } from '../../utils/game-lookups.js';
 
 const UI_ID = 'mwi-cost-summary';
 
@@ -34,9 +33,7 @@ let processedPanels = new WeakSet();
 let unsubscribeRefresh = null;
 
 export function initialize() {
-    domObserverUnregister = domObserver.onClass('CostSummary-ActionPanel', 'SkillActionDetail_skillActionDetail', () =>
-        processActionPanels()
-    );
+    domObserverUnregister = onDetailPanel((context) => processActionPanel(context.panel));
     // The missing-mats cost reads the action queue; a finite queue change must
     // redraw a panel already on screen
     unsubscribeRefresh = onActionPanelsRefresh((panel, value) => updatePanel(panel, value));
@@ -58,25 +55,20 @@ export function cleanup() {
 
 function processActionPanels() {
     const panels = document.querySelectorAll('[class*="SkillActionDetail_skillActionDetail"]');
-    panels.forEach((panel) => {
-        if (processedPanels.has(panel)) return;
-        const inputField = findActionInput(panel);
-        if (!inputField) return;
-        processedPanels.add(panel);
-        attachInputListeners(panel, inputField, (value) => updatePanel(panel, value));
-        performInitialUpdate(inputField, (value) => updatePanel(panel, value));
-    });
+    panels.forEach((panel) => processActionPanel(panel));
 }
 
-function getActionHridFromPanel(panel) {
-    const nameEl = panel.querySelector('[class*="SkillActionDetail_name"]');
-    if (!nameEl) return null;
-    const actionName = Array.from(nameEl.childNodes)
-        .filter((n) => n.nodeType === Node.TEXT_NODE)
-        .map((n) => n.textContent)
-        .join('')
-        .trim();
-    return getActionHridFromName(actionName);
+/**
+ * Attach to one action panel, once
+ * @param {HTMLElement} panel
+ */
+function processActionPanel(panel) {
+    if (processedPanels.has(panel)) return;
+    const inputField = findActionInput(panel);
+    if (!inputField) return;
+    processedPanels.add(panel);
+    attachInputListeners(panel, inputField, (value) => updatePanel(panel, value));
+    performInitialUpdate(inputField, (value) => updatePanel(panel, value));
 }
 
 function updatePanel(panel, value) {
@@ -88,11 +80,8 @@ function updatePanel(panel, value) {
     const numActions = parseInt(value) || 0;
     if (numActions <= 0) return;
 
-    const actionHrid = getActionHridFromPanel(panel);
+    const { actionHrid, actionDetails: actionDetail } = resolveDetailPanel(panel);
     if (!actionHrid) return;
-
-    const gameData = dataManager.getInitClientData();
-    const actionDetail = gameData?.actionDetailMap?.[actionHrid];
     if (!actionDetail) return;
     if (!PRODUCTION_TYPES.includes(actionDetail.type)) return;
     if (!actionDetail.inputItems || actionDetail.inputItems.length === 0) return;

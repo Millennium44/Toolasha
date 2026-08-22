@@ -5,13 +5,11 @@
  */
 
 import config from '../../core/config.js';
-import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import { computeBestCraftingPlan } from './crafting-plan-calculator.js';
 import { createCollapsibleSection } from '../../utils/ui-components.js';
 import { formatKMB, formatWithSeparator, timeReadable } from '../../utils/formatters.js';
-import { getActionHridFromName } from '../../utils/game-lookups.js';
-import { findActionInput } from '../../utils/action-panel-helper.js';
+import { findActionInput, onDetailPanel } from '../../utils/action-panel-helper.js';
 import {
     createMaterialTab,
     removeMaterialTabs,
@@ -43,22 +41,6 @@ const PRODUCTION_TYPES = [
     '/action_types/crafting',
     '/action_types/tailoring',
 ];
-
-/**
- * Get action HRID from panel element.
- * @param {HTMLElement} panel
- * @returns {string|null}
- */
-function getActionHridFromPanel(panel) {
-    const nameEl = panel.querySelector('[class*="SkillActionDetail_name"]');
-    if (!nameEl) return null;
-    const actionName = Array.from(nameEl.childNodes)
-        .filter((n) => n.nodeType === Node.TEXT_NODE)
-        .map((n) => n.textContent)
-        .join('')
-        .trim();
-    return getActionHridFromName(actionName);
-}
 
 /**
  * Get the primary output item for an action.
@@ -629,22 +611,20 @@ class CraftingPlanDisplay {
         this.isInitialized = true;
         autofillManager.initialize();
 
-        const unregister = domObserver.onClass('CraftingPlan', 'SkillActionDetail_skillActionDetail', () =>
-            this._processActionPanels()
-        );
+        const unregister = onDetailPanel((context) => this._processPanel(context));
         this.unregisterHandlers.push(unregister);
     }
 
-    _processActionPanels() {
-        document.querySelectorAll('[class*="SkillActionDetail_skillActionDetail"]').forEach((panel) => {
-            if (this.processedPanels.has(panel)) return;
+    /**
+     * Attach to one action panel, once
+     * @param {import('../../utils/action-panel-helper.js').ActionPanelContext} context
+     */
+    _processPanel({ panel, actionHrid }) {
+        if (this.processedPanels.has(panel)) return;
+        if (!actionHrid) return;
 
-            const actionHrid = getActionHridFromPanel(panel);
-            if (!actionHrid) return;
-
-            this.processedPanels.add(panel);
-            this._attachToPanel(panel, actionHrid);
-        });
+        this.processedPanels.add(panel);
+        this._attachToPanel(panel, actionHrid);
     }
 
     _attachToPanel(panel, actionHrid) {

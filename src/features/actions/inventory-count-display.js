@@ -10,6 +10,7 @@ import domObserver from '../../core/dom-observer.js';
 import config from '../../core/config.js';
 import { formatKMB } from '../../utils/formatters.js';
 import { getActionHridFromName } from '../../utils/game-lookups.js';
+import { onActionTile, resolveActionTile } from '../../utils/action-panel-helper.js';
 
 const GATHERING_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
 const PRODUCTION_TYPES = [
@@ -134,9 +135,7 @@ class InventoryCountDisplay {
     // ─── Tile observer ────────────────────────────────────────────────────────
 
     _setupTileObserver() {
-        const unregister = domObserver.onClass('InventoryCountDisplay-Tile', 'SkillAction_skillAction', (actionPanel) =>
-            this._injectTile(actionPanel)
-        );
+        const unregister = onActionTile((context) => this._injectTile(context.panel, context));
         this.unregisterObservers.push(unregister);
 
         document.querySelectorAll('[class*="SkillAction_skillAction"]').forEach((panel) => {
@@ -149,12 +148,13 @@ class InventoryCountDisplay {
      * gathering-stats / max-produceable: position absolute at top:100% with
      * marginBottom on the panel so the grid row makes room for it.
      * @param {HTMLElement} actionPanel
+     * @param {import('../../utils/action-panel-helper.js').ActionPanelContext} [context] - The tile's
+     *   resolved action, when the dispatcher supplies it; resolved here otherwise
      */
-    _injectTile(actionPanel) {
-        const actionHrid = this._getActionHridFromTile(actionPanel);
+    _injectTile(actionPanel, context = resolveActionTile(actionPanel)) {
+        const { actionHrid, actionDetails } = context;
         if (!actionHrid) return;
 
-        const actionDetails = dataManager.getActionDetails(actionHrid);
         const outputHrid = getPrimaryOutputHrid(actionDetails);
         if (!outputHrid) return;
 
@@ -303,17 +303,6 @@ class InventoryCountDisplay {
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
-
-    _getActionHridFromTile(actionPanel) {
-        const nameEl = actionPanel.querySelector('[class*="SkillAction_name"]');
-        if (!nameEl) return null;
-        const name = Array.from(nameEl.childNodes)
-            .filter((n) => n.nodeType === Node.TEXT_NODE)
-            .map((n) => n.textContent)
-            .join('')
-            .trim();
-        return getActionHridFromName(name);
-    }
 
     disable() {
         this._disable();

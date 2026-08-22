@@ -12,6 +12,8 @@ import {
     attachInputListeners,
     performInitialUpdate,
     onActionPanelsRefresh,
+    onDetailPanel,
+    resolveDetailPanel,
 } from '../../utils/action-panel-helper.js';
 import {
     calculateMaterialRequirements,
@@ -31,7 +33,6 @@ import { getProtectionItemFromUI, getProtectFromLevelFromUI } from './enhancemen
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
-import { getActionHridFromName } from '../../utils/game-lookups.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { clickThroughReact } from '../../utils/react-click.js';
 import { testerShopEnabled, testerShopCoinCost } from '../../utils/tester-shop.js';
@@ -80,11 +81,7 @@ export function initialize() {
     autofillManager.initialize();
 
     // Watch for production action panels appearing
-    domObserverUnregister = domObserver.onClass(
-        'MissingMaterialsButton-ActionPanel',
-        'SkillActionDetail_skillActionDetail',
-        () => processActionPanels()
-    );
+    domObserverUnregister = onDetailPanel((context) => processActionPanel(context.panel));
 
     // Watch for enhancement panels appearing
     enhancementDomObserverUnregister = domObserver.onClass(
@@ -153,30 +150,35 @@ export function cleanup() {
  */
 function processActionPanels() {
     const panels = document.querySelectorAll('[class*="SkillActionDetail_skillActionDetail"]');
+    panels.forEach((panel) => processActionPanel(panel));
+}
 
-    panels.forEach((panel) => {
-        if (processedPanels.has(panel)) {
-            return;
-        }
+/**
+ * Attach to one action panel, once
+ * @param {HTMLElement} panel - Action panel element
+ */
+function processActionPanel(panel) {
+    if (processedPanels.has(panel)) {
+        return;
+    }
 
-        // Find the input box using utility
-        const inputField = findActionInput(panel);
-        if (!inputField) {
-            return;
-        }
+    // Find the input box using utility
+    const inputField = findActionInput(panel);
+    if (!inputField) {
+        return;
+    }
 
-        // Mark as processed
-        processedPanels.add(panel);
+    // Mark as processed
+    processedPanels.add(panel);
 
-        // Attach input listeners using utility
-        attachInputListeners(panel, inputField, (value) => {
-            updateButtonForPanel(panel, value);
-        });
+    // Attach input listeners using utility
+    attachInputListeners(panel, inputField, (value) => {
+        updateButtonForPanel(panel, value);
+    });
 
-        // Initial update if there's already a value
-        performInitialUpdate(inputField, (value) => {
-            updateButtonForPanel(panel, value);
-        });
+    // Initial update if there's already a value
+    performInitialUpdate(inputField, (value) => {
+        updateButtonForPanel(panel, value);
     });
 }
 
@@ -259,20 +261,7 @@ function updateButtonForPanel(panel, value) {
  * @returns {string|null} Action HRID or null
  */
 function getActionHridFromPanel(panel) {
-    // Get action name from panel
-    const actionNameElement = panel.querySelector('[class*="SkillActionDetail_name"]');
-    if (!actionNameElement) {
-        return null;
-    }
-
-    // Read only direct text nodes to avoid picking up injected child spans
-    // (e.g. inventory count display appends "(20 in inventory)" as a child span)
-    const actionName = Array.from(actionNameElement.childNodes)
-        .filter((node) => node.nodeType === Node.TEXT_NODE)
-        .map((node) => node.textContent)
-        .join('')
-        .trim();
-    return getActionHridFromName(actionName);
+    return resolveDetailPanel(panel).actionHrid;
 }
 
 /**

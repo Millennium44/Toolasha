@@ -19,6 +19,7 @@ import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import actionFilter from './action-filter.js';
 import { getActionHridFromName, getItemHridFromName } from '../../utils/game-lookups.js';
+import { onActionTile } from '../../utils/action-panel-helper.js';
 import { getEnhancingParams } from '../../utils/enhancement-config.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
 
@@ -143,14 +144,11 @@ function setupMutationObserver() {
         }
     );
 
-    // NEW: Observe for skill action grid tiles (the clickable action tiles on gathering/production pages)
-    const unregisterSkillActionObserver = domObserver.onClass(
-        'ActionPanelObserver-SkillAction',
-        'SkillAction_skillAction__1esCp',
-        (actionTile) => {
-            handleSkillActionTile(actionTile);
-        }
-    );
+    // Skill action grid tiles (the clickable action tiles on gathering/production pages),
+    // through the dispatcher shared with the other tile features
+    const unregisterSkillActionObserver = onActionTile((context) => {
+        handleSkillActionTile(context);
+    });
 
     unregisterHandlers = [unregisterModalObserver, unregisterEnhancingObserver, unregisterSkillActionObserver];
 }
@@ -305,13 +303,12 @@ function handleEnhancingPanelMutations(panel, mutations) {
 
 /**
  * Handle skill action tile appearance (the clickable tiles on gathering/production pages)
- * @param {HTMLElement} actionTile - Skill action tile element
+ * @param {import('../../utils/action-panel-helper.js').ActionPanelContext} context - The tile and its title
  */
-function handleSkillActionTile(actionTile) {
+function handleSkillActionTile({ panel: actionTile, nameElement }) {
     if (!actionTile) return;
 
-    // Get action name from the tile
-    const nameElement = actionTile.querySelector('[class*="name"]');
+    // The tile's name, as the filter matches it
     if (!nameElement) {
         return;
     }

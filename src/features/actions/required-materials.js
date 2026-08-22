@@ -4,7 +4,6 @@
  */
 
 import config from '../../core/config.js';
-import domObserver from '../../core/dom-observer.js';
 import { numberFormatter } from '../../utils/formatters.js';
 import { calculateMaterialRequirements, isArtisanTeaOutOfStock } from '../../utils/material-calculator.js';
 import {
@@ -12,8 +11,9 @@ import {
     attachInputListeners,
     performInitialUpdate,
     onActionPanelsRefresh,
+    onDetailPanel,
+    resolveDetailPanel,
 } from '../../utils/action-panel-helper.js';
-import { getActionHridFromName } from '../../utils/game-lookups.js';
 
 class RequiredMaterials {
     constructor() {
@@ -27,11 +27,7 @@ class RequiredMaterials {
         if (this.initialized) return;
 
         // Watch for action panels appearing
-        const unregister = domObserver.onClass(
-            'RequiredMaterials-ActionPanel',
-            'SkillActionDetail_skillActionDetail',
-            () => this.processActionPanels()
-        );
+        const unregister = onDetailPanel((context) => this.processPanel(context.panel));
         this.observers.push(unregister);
 
         // The Q'd/Missing figures read the action queue; a finite queue change
@@ -46,30 +42,35 @@ class RequiredMaterials {
 
     processActionPanels() {
         const panels = document.querySelectorAll('[class*="SkillActionDetail_skillActionDetail"]');
+        panels.forEach((panel) => this.processPanel(panel));
+    }
 
-        panels.forEach((panel) => {
-            if (this.processedPanels.has(panel)) {
-                return;
-            }
+    /**
+     * Attach to one action panel, once
+     * @param {HTMLElement} panel
+     */
+    processPanel(panel) {
+        if (this.processedPanels.has(panel)) {
+            return;
+        }
 
-            // Find the input box using utility
-            const inputField = findActionInput(panel);
-            if (!inputField) {
-                return;
-            }
+        // Find the input box using utility
+        const inputField = findActionInput(panel);
+        if (!inputField) {
+            return;
+        }
 
-            // Mark as processed
-            this.processedPanels.add(panel);
+        // Mark as processed
+        this.processedPanels.add(panel);
 
-            // Attach input listeners using utility
-            attachInputListeners(panel, inputField, (value) => {
-                this.updateRequiredMaterials(panel, value);
-            });
+        // Attach input listeners using utility
+        attachInputListeners(panel, inputField, (value) => {
+            this.updateRequiredMaterials(panel, value);
+        });
 
-            // Initial update if there's already a value
-            performInitialUpdate(inputField, (value) => {
-                this.updateRequiredMaterials(panel, value);
-            });
+        // Initial update if there's already a value
+        performInitialUpdate(inputField, (value) => {
+            this.updateRequiredMaterials(panel, value);
         });
     }
 
@@ -236,20 +237,7 @@ class RequiredMaterials {
      * @returns {string|null} Action HRID or null
      */
     getActionHridFromPanel(panel) {
-        // Get action name from panel
-        const actionNameElement = panel.querySelector('[class*="SkillActionDetail_name"]');
-        if (!actionNameElement) {
-            return null;
-        }
-
-        // Read only direct text nodes to avoid picking up injected child spans
-        // (e.g. inventory count display appends "(20 in inventory)" as a child span)
-        const actionName = Array.from(actionNameElement.childNodes)
-            .filter((node) => node.nodeType === Node.TEXT_NODE)
-            .map((node) => node.textContent)
-            .join('')
-            .trim();
-        return getActionHridFromName(actionName);
+        return resolveDetailPanel(panel).actionHrid;
     }
 
     cleanup() {

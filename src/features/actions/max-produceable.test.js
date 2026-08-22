@@ -242,7 +242,6 @@ describe('injectMaxProduceable — re-insertion guard', () => {
 
     afterEach(() => {
         maxProduceable.actionElements.clear();
-        maxProduceable.actionNameToHridCache = null;
         maxProduceable.resizeObserver = null;
         document.body.innerHTML = '';
     });

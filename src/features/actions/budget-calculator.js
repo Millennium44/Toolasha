@@ -5,14 +5,13 @@
  */
 
 import config from '../../core/config.js';
-import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateMaterialRequirements } from '../../utils/material-calculator.js';
 import { formatKMB, formatWithSeparator, parseKMB } from '../../utils/formatters.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { getActionHridFromName } from '../../utils/game-lookups.js';
+import { onDetailPanel, resolveDetailPanel } from '../../utils/action-panel-helper.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
 const PRODUCTION_TYPES = [
@@ -31,14 +30,7 @@ const UI_ID = 'mwi-budget-calculator';
  * @returns {string|null}
  */
 function getActionHridFromPanel(panel) {
-    const nameEl = panel.querySelector('[class*="SkillActionDetail_name"]');
-    if (!nameEl) return null;
-    const actionName = Array.from(nameEl.childNodes)
-        .filter((n) => n.nodeType === Node.TEXT_NODE)
-        .map((n) => n.textContent)
-        .join('')
-        .trim();
-    return getActionHridFromName(actionName);
+    return resolveDetailPanel(panel).actionHrid;
 }
 
 /**
@@ -275,9 +267,7 @@ class BudgetCalculator {
 
         this.isInitialized = true;
 
-        const unregister = domObserver.onClass('BudgetCalculator', 'SkillActionDetail_skillActionDetail', () =>
-            this._processActionPanels()
-        );
+        const unregister = onDetailPanel((context) => this._processPanel(context));
         this.unregisterHandlers.push(unregister);
 
         this._processActionPanels();
@@ -285,19 +275,23 @@ class BudgetCalculator {
 
     _processActionPanels() {
         document.querySelectorAll('[class*="SkillActionDetail_skillActionDetail"]').forEach((panel) => {
-            if (this.processedPanels.has(panel)) return;
-
-            const actionHrid = getActionHridFromPanel(panel);
-            if (!actionHrid) return;
-
-            const gameData = dataManager.getInitClientData();
-            const actionDetail = gameData?.actionDetailMap[actionHrid];
-            if (!actionDetail || !PRODUCTION_TYPES.includes(actionDetail.type)) return;
-            if (!actionDetail.inputItems?.length) return;
-
-            this.processedPanels.add(panel);
-            this._attachToPanel(panel);
+            this._processPanel(resolveDetailPanel(panel));
         });
+    }
+
+    /**
+     * Attach to one production panel, once
+     * @param {import('../../utils/action-panel-helper.js').ActionPanelContext} context
+     */
+    _processPanel({ panel, actionHrid, actionDetails }) {
+        if (this.processedPanels.has(panel)) return;
+        if (!actionHrid) return;
+
+        if (!actionDetails || !PRODUCTION_TYPES.includes(actionDetails.type)) return;
+        if (!actionDetails.inputItems?.length) return;
+
+        this.processedPanels.add(panel);
+        this._attachToPanel(panel);
     }
 
     /**
