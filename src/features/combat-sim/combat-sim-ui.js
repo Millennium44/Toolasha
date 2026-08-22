@@ -3025,13 +3025,28 @@ class CombatSimUI {
                     copyBtn.textContent = 'Copy';
                 }, 1600);
             };
+            let copied = false;
             try {
                 await navigator.clipboard.writeText(text);
-                flash('Copied ✓');
-            } catch (error) {
-                console.error('[CombatSimUI] Copying the Bestiary plan failed:', error);
-                flash('Failed');
+                copied = true;
+            } catch {
+                // The async clipboard refuses an unfocused document; the
+                // selection-based copy still works there
+                const area = document.createElement('textarea');
+                area.value = text;
+                area.setAttribute('readonly', '');
+                area.style.cssText = 'position:fixed; top:-1000px; left:-1000px; opacity:0;';
+                document.body.appendChild(area);
+                area.select();
+                try {
+                    copied = Boolean(document.execCommand && document.execCommand('copy'));
+                } catch {
+                    copied = false;
+                }
+                area.remove();
             }
+            if (!copied) console.error('[CombatSimUI] Copying the Bestiary plan failed');
+            flash(copied ? 'Copied ✓' : 'Failed');
         });
 
         if (this._bestiaryPlanActive) this._drawBestiaryPlan();
