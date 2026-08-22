@@ -481,8 +481,10 @@ class TreasureTracker {
                 return;
             }
             // The width just landed, so the edge it was placed against may have
-            // moved: place once more, without starting a second round of retries
-            this._placeBesideDialog(DIALOG_TRIES);
+            // moved: place once more — quietly, because the first round of
+            // retries may still be waiting on the dialog and this pass must
+            // neither start a second round nor reveal the popup in the corner
+            this._placeBesideDialog(DIALOG_TRIES, { quiet: true });
         });
     }
 
@@ -500,14 +502,19 @@ class TreasureTracker {
      * is what happens when a chest is opened by a route that raises no dialog.
      *
      * @param {number} tries - How many attempts have been made
+     * @param {Object} [options]
+     * @param {boolean} [options.quiet=false] - A re-placement after the size
+     *   came back: never retries and never reveals the popup itself, since
+     *   the original round of retries is still the one deciding when it shows
      */
-    _placeBesideDialog(tries) {
+    _placeBesideDialog(tries, { quiet = false } = {}) {
         if (!this.popup) return;
 
         const dialog = document.querySelector(LOOT_DIALOG_SELECTOR);
         // Not up yet — the message that told us about the loot is the same one
         // React is still rendering the dialog from
         if (!dialog || !dialog.getBoundingClientRect().width) {
+            if (quiet) return;
             if (tries >= DIALOG_TRIES) {
                 // No dialog to sit beside: the default corner it is, and shown
                 this.popup.style.visibility = '';
@@ -521,7 +528,7 @@ class TreasureTracker {
         const anchor = dialog.getBoundingClientRect();
         const self = this.popup.getBoundingClientRect();
         if (!self.width) {
-            this.popup.style.visibility = '';
+            if (!quiet) this.popup.style.visibility = '';
             return;
         }
 

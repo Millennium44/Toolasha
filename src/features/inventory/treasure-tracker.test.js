@@ -665,6 +665,17 @@ describe('the popup is shown only once it has somewhere to be', () => {
         expect(treasureTracker.popup.style.visibility).toBe('');
     });
 
+    test('a quiet re-placement while the dialog is still rendering neither retries nor reveals', () => {
+        vi.useFakeTimers();
+        treasureTracker.popup = fakePopup();
+
+        treasureTracker._placeBesideDialog(12, { quiet: true });
+        vi.advanceTimersByTime(60 * 20);
+
+        expect(treasureTracker.popup.style.visibility).toBe('hidden');
+        expect(treasureTracker.popup.style.left).toBeUndefined();
+    });
+
     test('stays hidden while the dialog is still rendering, then shows in the corner when it never comes', () => {
         vi.useFakeTimers();
         treasureTracker.popup = fakePopup();
