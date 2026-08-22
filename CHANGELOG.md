@@ -1014,6 +1014,61 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.19.0](https://github.com/Millennium44/Toolasha/compare/v3.18.0...v3.19.0) (2026-08-22)
+
+
+### Features
+
+* All Zones sim scores each zone for the Bestiary — points a day of its simulated kills would earn against your defeated counts ([0b00eb2](https://github.com/Millennium44/Toolasha/commit/0b00eb25e8af363b2e309691324b58e723346de9))
+* Buy next control in the Tester shop strip — one press, one purchase of the next short line; quantity fill also fires change ([a3a6d13](https://github.com/Millennium44/Toolasha/commit/a3a6d130eb45397acd301ddd5e1b99c4da096987))
+* class icons pick the weapon kind inside a class — melee sub-style, bow vs crossbow by curse, own equipped weapon ([c56ae92](https://github.com/Millennium44/Toolasha/commit/c56ae92b99c4a9ce62f69447b71687a81a4ca577))
+* class inference reads taunt, thorns and retaliation abilities as tank ([7b0b18b](https://github.com/Millennium44/Toolasha/commit/7b0b18b3afbda36fec7c7b0f62ac56f1bdeeaab6))
+* class tags draw the class's T95 weapon icon ([a0a62f9](https://github.com/Millennium44/Toolasha/commit/a0a62f9d62dc5e2d9d259b7d347ff12f1d6b05dd))
+* class weapon icons on the normal-combat per-player panel ([0f0bf29](https://github.com/Millennium44/Toolasha/commit/0f0bf292f4ac400ee76287a4efc3494284edd8e8))
+* combat levels planner sims the weapon's primary skill along the way and takes a charm enhancement level ([1e7f7aa](https://github.com/Millennium44/Toolasha/commit/1e7f7aa3cd61e1bf0299d5cd200945fa9c428b4d))
+* house upgrade rows open every material as missing-materials tabs; ability book count falls back to live progress ([4aaf294](https://github.com/Millennium44/Toolasha/commit/4aaf294da00c470bdbdb2f0cb3457aec04d1fa32))
+* lab block uses observed per-run supply spend, preserve-aware torch table and game icons; consumable alert threshold in hours; house tabs open the Tester shop ([d7e23ca](https://github.com/Millennium44/Toolasha/commit/d7e23cad84ab0f90c34ef1a00d7f6126fa25f11d))
+* labyrinth-stopped alert keys on the action queue; combat consumable low alert; tester shop in missing-materials and enhancing panel ([a47e551](https://github.com/Millennium44/Toolasha/commit/a47e551bc0f3b413ea6ce263e27dbdffe8b1d768))
+* mirror plans consume plain copies of a refined piece; House tab pins every room's bill for the Tester shop ([7b299b6](https://github.com/Millennium44/Toolasha/commit/7b299b68f75b4321f3f0c69e01ffc043334ab522))
+* opt-in Tester shop pricing on the test server ([9d661dc](https://github.com/Millennium44/Toolasha/commit/9d661dc69f38e78125c20c3cedf203320e302f55))
+* per-player damage panel for normal combat ([6138fbd](https://github.com/Millennium44/Toolasha/commit/6138fbddd374bc44524677fdb05ad1732cb90e5f))
+* tester-shop pricing routes missing-materials straight to Shop &gt; Tester with tabs pinned there and the buy dialog auto-filled ([83af014](https://github.com/Millennium44/Toolasha/commit/83af0140ce453afc2971c3e617dec655812509d1))
+* trial abilities scores the cast-stream class guess against each player's Battle Info, per player and in the header ([741ab0b](https://github.com/Millennium44/Toolasha/commit/741ab0b0170605e9cc42e64ff8680e42f10b7017))
+
+
+### Bug Fixes
+
+* All Zones asks the game for the Bestiary when it is not loaded and redraws when it lands ([812cede](https://github.com/Millennium44/Toolasha/commit/812cede3c92010d563be1babee4f7f16d56f6e51))
+* All Zones bestiary request tolerates a data manager without on() ([bf02f97](https://github.com/Millennium44/Toolasha/commit/bf02f978b882f1a6b6f3a3044b783ee4f2a580bc))
+* arm the shop quantity after the Tester tab click (which clears it), find the fixed-position buy dialog by its box, retry a modal whose body renders late ([5d4ea8c](https://github.com/Millennium44/Toolasha/commit/5d4ea8c55edff2e8deec96db61681b88ec91b42e))
+* Buy next fills the Quantity box, not an equipment dialog's Enhancement Level box, and reports a disabled Buy ([c49df33](https://github.com/Millennium44/Toolasha/commit/c49df33ddb26a0cbcdef4b9023e4f2d2bb420f21))
+* Buy next finds the shop card by the game's own class and clicks it through React ([e1ea31f](https://github.com/Millennium44/Toolasha/commit/e1ea31f6e7b1aa683131391bf2af41b62ea0b662))
+* Buy next matches the shop card by its whole name, not a prefix (Lumber was buying Lumberjack's Top) ([14f56c1](https://github.com/Millennium44/Toolasha/commit/14f56c1e2c6ead06f891a5c316ba7b97067d9dcf))
+* Buy next presses the shop's Buy through React (a plain click only closed the dialog) and its note follows the badges ([8429011](https://github.com/Millennium44/Toolasha/commit/84290119f04da3579a6343b0843883ecd8eda1d5))
+* combat panel class chip reads the slot's kit and weapon from new_battle ([9acd048](https://github.com/Millennium44/Toolasha/commit/9acd04841128c9e18e21d2e9359708002cabbf87))
+* compact unit badges keep off the mini units' names ([b37ac46](https://github.com/Millennium44/Toolasha/commit/b37ac4621fd601d574f4f0c0f29c62ac00043fca))
+* damage tracker keeps the pre-announce tally when a reload's first new_battle names the run ([acf59b4](https://github.com/Millennium44/Toolasha/commit/acf59b4b929ec6cc033124f37401c42ac935b8e5))
+* level-board rate ranks only among the top 100 by level ([eb292b8](https://github.com/Millennium44/Toolasha/commit/eb292b882a9555d036212d6276db2497da563ac6))
+* normal-combat Per-player opener skips the guild trial's battle panel ([5081a02](https://github.com/Millennium44/Toolasha/commit/5081a02cfb5ff4fdadbd2978f372d525c38b428d))
+* one Risk of Ruin tab on multi-bundle installs ([7a880a2](https://github.com/Millennium44/Toolasha/commit/7a880a263b78d5fcb8e34073339b9e48e3ebf6c9))
+* sandbox the native-getter helper frame so nothing boots inside it ([b576a6c](https://github.com/Millennium44/Toolasha/commit/b576a6c401670b165888c07108925d96cb543448))
+* the per-player combat panel's opener re-injects on a timer, not only on the observer ([0f4ee91](https://github.com/Millennium44/Toolasha/commit/0f4ee914f724b564deba47480c2284fe979920c5))
+* trial abilities session ages from its last tick or capture, not its start; a trial-start signal cannot wipe a session still being ticked ([e5f6550](https://github.com/Millennium44/Toolasha/commit/e5f6550a84f574e23649d146eb6c8766e7039c26))
+* trial abilities utility coverage lists players under the count, wrapped, instead of overflowing the card ([9a8b6f0](https://github.com/Millennium44/Toolasha/commit/9a8b6f0f5c87cd91ab97ee3ce56db361ccf2e299))
+
+
+### Documentation
+
+* changelog — the All Zones bestiary column loads its data itself ([b74ea05](https://github.com/Millennium44/Toolasha/commit/b74ea05769ad9f7fa1fe45fe58a8dc68dbf3483b))
+* changelog notes the Buy next verification ([b5ea60d](https://github.com/Millennium44/Toolasha/commit/b5ea60da783f0c01e81f1cd203b37a619aaa9c52))
+* drop a duplicated fork changelog section ([b5131b8](https://github.com/Millennium44/Toolasha/commit/b5131b83ce95768311b9ed3ce91f003d7394ec11))
+
+
+### Miscellaneous Chores
+
+* allowlist game-server.js in the bundle-sharing check (stateless, imported by settings-schema) ([608eb2b](https://github.com/Millennium44/Toolasha/commit/608eb2be51ec766209b0652a340abcfa568b89d3))
+* format changelog ([989ba86](https://github.com/Millennium44/Toolasha/commit/989ba869be14f14c555ac72d24faca75c4fed6b6))
+
 ## [3.18.0](https://github.com/Millennium44/Toolasha/compare/v3.17.0...v3.18.0) (2026-08-20)
 
 ### Features
