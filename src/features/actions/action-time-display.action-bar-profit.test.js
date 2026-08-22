@@ -158,6 +158,21 @@ describe('action bar profit line — idempotent injection', () => {
     });
 });
 
+describe('action bar profit line — leaving a profitable action', () => {
+    test('clearBarProfit blanks the line and disowns a calculation still in flight', () => {
+        actionTimeDisplay.profitElement = document.createElement('div');
+        actionTimeDisplay.profitElement.innerHTML = 'Profit: +1,751/hr';
+        actionTimeDisplay.activeBarProfitId = 42;
+
+        actionTimeDisplay.clearBarProfit();
+
+        expect(actionTimeDisplay.profitElement.innerHTML).toBe('');
+        // A calculation started for the previous action compares its id against
+        // this and must find it gone rather than write over the blank
+        expect(actionTimeDisplay.activeBarProfitId).toBeNull();
+    });
+});
+
 describe('action bar profit line — "remaining" basis', () => {
     const action = {
         actionHrid: '/actions/alchemy/coinify',

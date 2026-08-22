@@ -788,6 +788,7 @@ class ActionTimeDisplay {
 
         if (!actionNameElement || !actionNameElement.textContent) {
             this.displayElement.innerHTML = '';
+            this.clearBarProfit();
             // Clear any appended stats from the game's div
             this.clearAppendedStats(actionNameElement);
             // Reconnect observer
@@ -803,7 +804,7 @@ class ActionTimeDisplay {
         // Check if no action is running ("Doing nothing...")
         if (actionNameText.includes('Doing nothing')) {
             this.displayElement.innerHTML = '';
-            if (this.profitElement) this.profitElement.innerHTML = '';
+            this.clearBarProfit();
             this.clearAppendedStats(actionNameElement);
             // Reconnect observer
             this.reconnectActionNameObserver(actionNameElement);
@@ -827,6 +828,10 @@ class ActionTimeDisplay {
 
         if (!action) {
             this.displayElement.innerHTML = '';
+            // The profit line too: it was the previous action's, and this
+            // header is the labyrinth's (or a name nothing queued matches), so
+            // it had been left standing under the wrong activity
+            this.clearBarProfit();
             this.clearAppendedStats(actionNameElement);
             // The name matched nothing queued, which the labyrinth does every
             // time — its header reads "Labyrinth - Mimic Lv.252" and no action
@@ -848,6 +853,7 @@ class ActionTimeDisplay {
         const actionDetails = dataManager.getActionDetails(action.actionHrid);
         if (!actionDetails) {
             this.displayElement.innerHTML = '';
+            this.clearBarProfit();
             this.clearAppendedStats(actionNameElement);
             // Reconnect observer
             this.reconnectActionNameObserver(actionNameElement);
@@ -857,7 +863,7 @@ class ActionTimeDisplay {
         // Skip combat actions - no time display for combat
         if (actionDetails.type === '/action_types/combat') {
             this.displayElement.innerHTML = '';
-            if (this.profitElement) this.profitElement.innerHTML = '';
+            this.clearBarProfit();
             this.clearAppendedStats(actionNameElement);
 
             this.applyActionBarWidth(actionNameElement, true);
@@ -868,7 +874,7 @@ class ActionTimeDisplay {
 
         // Handle enhancing actions with specialized display
         if (actionDetails.type === '/action_types/enhancing') {
-            if (this.profitElement) this.profitElement.innerHTML = '';
+            this.clearBarProfit();
             this.buildEnhancingDisplay(action, actionDetails, actionNameElement);
             this.reconnectActionNameObserver(actionNameElement);
             return;
@@ -2687,6 +2693,17 @@ class ActionTimeDisplay {
      * @param {Object} action - Current action object from dataManager
      * @param {number} remainingActions - Remaining queued actions (Infinity if unlimited)
      */
+    /**
+     * Blank the bar's profit line and cancel any calculation still in flight
+     * for it — the header has moved to an action that has no profit to show
+     * (the labyrinth, combat, nothing queued), and a calculation that started
+     * for the previous one must not land on it.
+     */
+    clearBarProfit() {
+        this.activeBarProfitId = null;
+        if (this.profitElement) this.profitElement.innerHTML = '';
+    }
+
     async updateActionBarProfit(action, remainingActions) {
         if (!this.profitElement) return;
         if (!config.getSetting('actionBar_showProfit')) {

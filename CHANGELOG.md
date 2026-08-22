@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The action bar's profit line clears when the header leaves the action
+
+Moving from a crafting action to the labyrinth (or to any header the queue does not name) left "Profit: +…/hr vol-capped" standing under the new activity; every branch that blanks the time display now blanks the profit line too, and cancels a profit calculation still in flight for the old action.
+
 ### Trial per-player board: low mana and a stalled rotation
 
 Beyond "ran out of mana", each trial caster now gets two more mana readings off the tick stream: **low** (under a fifth of the bar) and **starved** (under the cheapest non-aura ability they have been seen casting — where the rotation actually stalls, long before zero), each counted per spell with the time spent there. The board's footnote lists who, a live ⚡ marker beside a name says dry / can't cast / low right now, the pasted report says "couldn't afford a cast 3×", and the recorder and exports carry the fields.
