@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancing panel: the Tester route says what to buy, and pins it
+
+Each row of the "Tester shop route" table now reads as a bill — "4 shop copies (+10) + 3 mirrors" for +12, 1,024 copies and 1,023 mirrors for +20 — since every level up doubles the tree (the mirror count was previously counted per level, which understated it); a **Pin** button per row puts that bill into the Tester shop strip for Buy next.
+
 ### Right-click an ability to open its book in the Item Dictionary
 
 Any ability icon the game draws — a slot in Abilities, Equipment or Loadouts, a learned ability, the combat bar — opens the ability's book entry on right-click; rides the existing "Open Item Dictionary" ability-menu setting.

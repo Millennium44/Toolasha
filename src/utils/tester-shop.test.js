@@ -88,13 +88,19 @@ describe('what the shop charges', () => {
         const at3 = testerGearPrice('/items/philosophers_necklace', 3, { shopMap: SHOP, itemDetailMap: ITEMS });
         expect(at3.price).toBe(12_000_000);
 
-        // +11: a +10 copy consumed plus a mirror, on top of the +10 being made
+        // +11: two +10 copies and a mirror
         const at11 = testerGearPrice('/items/philosophers_necklace', 11, { shopMap: SHOP, itemDetailMap: ITEMS });
-        expect(at11).toMatchObject({ price: 2 * 12_000_000 + 10_000_000, route: 'mirror', mirrors: 1 });
-        // +12: the +11 doubled plus a mirror
+        expect(at11).toMatchObject({ price: 2 * 12_000_000 + 10_000_000, route: 'mirror', copies: 2, mirrors: 1 });
+        // +12: two +11s (four copies, two mirrors) combined by a third mirror
         const at12 = testerGearPrice('/items/philosophers_necklace', 12, { shopMap: SHOP, itemDetailMap: ITEMS });
         expect(at12.price).toBe(2 * at11.price + 10_000_000);
-        expect(at12.mirrors).toBe(2);
+        expect(at12.copies).toBe(4);
+        expect(at12.mirrors).toBe(3);
+        expect(at12.price).toBe(4 * 12_000_000 + 3 * 10_000_000);
+        // +20 from +10: 1,024 copies, 1,023 mirrors
+        const at20 = testerGearPrice('/items/philosophers_necklace', 20, { shopMap: SHOP, itemDetailMap: ITEMS });
+        expect(at20.copies).toBe(1024);
+        expect(at20.mirrors).toBe(1023);
     });
 
     test('an entry that states its own level is sold at that level', () => {

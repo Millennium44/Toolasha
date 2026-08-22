@@ -14,6 +14,7 @@ import { timeReadable, formatLargeNumber } from '../../utils/formatters.js';
 import marketAPI from '../../api/marketplace.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { testerShopEnabled, testerGearPrice, MIRROR_HRID } from '../../utils/tester-shop.js';
+import { missingMaterialsButton } from '../../utils/bundle-bridge.js';
 
 /**
  * Format a number with thousands separator and 2 decimal places
@@ -515,24 +516,32 @@ export function testerRouteHTML(itemDetails) {
         if (!at10) return '';
 
         const rows = [];
+        const pinStyle =
+            'margin-left:6px; padding:0 5px; font-size:0.8em; border:1px solid #4caf50; border-radius:3px; ' +
+            'background:rgba(76,175,80,0.12); color:#8bc34a; cursor:pointer; font-family:inherit;';
         for (let level = Math.max(1, at10.shopLevel); level <= 20; level++) {
             const route = testerGearPrice(itemHrid, level);
             if (!route) continue;
             const how =
                 route.route === 'shop'
-                    ? 'shop copy'
-                    : `${route.mirrors} mirror${route.mirrors === 1 ? '' : 's'} from +${route.shopLevel}`;
+                    ? '1 shop copy'
+                    : `${route.copies.toLocaleString()} shop copies (+${route.shopLevel}) + ` +
+                      `${route.mirrors.toLocaleString()} mirror${route.mirrors === 1 ? '' : 's'}`;
+            const pin =
+                `<button type="button" class="mwi-tester-pin" data-item="${itemHrid}" data-copies="${route.copies}" ` +
+                `data-mirrors="${route.mirrors}" data-level="${level}" style="${pinStyle}" ` +
+                `title="Pin ${route.copies.toLocaleString()}× this item and ${route.mirrors.toLocaleString()}× mirror into the Tester shop strip, ready for Buy next">Pin</button>`;
             rows.push(
                 `<tr><td style="padding:1px 8px 1px 0; color:#ccc;">+${level}</td>` +
                     `<td style="padding:1px 8px 1px 0; color:#ffd700; text-align:right;">${formatLargeNumber(Math.round(route.price))}</td>` +
-                    `<td style="padding:1px 0; color:#888;">${how}</td></tr>`
+                    `<td style="padding:1px 0; color:#888;">${how}${pin}</td></tr>`
             );
         }
         const mirrorName = dataManager.getItemDetails?.(MIRROR_HRID)?.name || "Philosopher's Mirror";
         return (
             '<div style="background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; margin-bottom: 12px;">' +
             '<div style="color: #9bd; font-weight: bold; margin-bottom: 4px; font-size: 0.95em;">Tester shop route</div>' +
-            `<div style="color:#888; font-size:0.8em; margin-bottom:4px;">Buy from the Tester shop at +${at10.shopLevel}, then ${mirrorName} each level (guaranteed, consumes a copy one level below — ${formatLargeNumber(at10.mirrorPrice)} each).</div>` +
+            `<div style="color:#888; font-size:0.8em; margin-bottom:4px;">Buy from the Tester shop at +${at10.shopLevel}, then ${mirrorName} each level (guaranteed, consumes a copy one level below — ${formatLargeNumber(at10.mirrorPrice)} each). Each level up doubles the copies: the bill is what the whole tree consumes. Pin puts it in the Tester strip.</div>` +
             `<table style="font-size:0.85em; border-collapse:collapse;">${rows.join('')}</table></div>`
         );
     } catch (error) {
@@ -1060,6 +1069,29 @@ function injectDisplay(panel, html) {
     }
 
     // Attach click-to-expand handlers for stat breakdowns
+    container.querySelectorAll('.mwi-tester-pin').forEach((btn) => {
+        btn.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const openBill = missingMaterialsButton()?.openMaterialsList;
+            const lines = [
+                { itemHrid: btn.dataset.item, count: Number(btn.dataset.copies) || 0 },
+                { itemHrid: MIRROR_HRID, count: Number(btn.dataset.mirrors) || 0 },
+            ].filter((line) => line.count > 0);
+            if (typeof openBill !== 'function') {
+                btn.textContent = 'n/a';
+                return;
+            }
+            btn.textContent = 'Pinning…';
+            try {
+                const ok = await openBill(lines);
+                btn.textContent = ok ? 'Pinned ✓' : 'Failed';
+            } catch (error) {
+                console.error('[EnhancementDisplay] Pinning the tester route failed:', error);
+                btn.textContent = 'Failed';
+            }
+        });
+    });
     container.querySelectorAll('.mwi-enh-toggle').forEach((toggle) => {
         toggle.addEventListener('click', () => {
             const target = container.querySelector(`#${toggle.dataset.target}`);

@@ -107,8 +107,10 @@ export function testerShopCoinCost(itemHrid, shopMap) {
  * @param {Object} [options]
  * @param {Object} [options.shopMap] - `shopItemDetailMap`
  * @param {Object} [options.itemDetailMap] - `itemDetailMap`, to tell equipment from a material
- * @returns {{price: number, route: 'shop'|'mirror', shopLevel: number, mirrors: number, mirrorPrice: number}|null}
- *   Null when the shop does not sell the item
+ * @returns {{price: number, route: 'shop'|'mirror', shopLevel: number, copies: number, mirrors: number,
+ *   mirrorPrice: number}|null} Null when the shop does not sell the item. `copies` is how many
+ *   shop copies the whole tree consumes (2 per level above the shop's: 2^k), `mirrors` how many
+ *   mirrors combine them (one per combination: 2^k − 1)
  */
 export function testerGearPrice(itemHrid, level, { shopMap, itemDetailMap } = {}) {
     const map = shopMap === undefined ? dataManager.getInitClientData?.()?.shopItemDetailMap : shopMap;
@@ -122,16 +124,19 @@ export function testerGearPrice(itemHrid, level, { shopMap, itemDetailMap } = {}
     const mirrorPrice = testerShopCoinCost(MIRROR_HRID, map) || MIRROR_FALLBACK_PRICE;
 
     if (target <= shopLevel) {
-        return { price: entry.coinCost, route: 'shop', shopLevel, mirrors: 0, mirrorPrice };
+        return { price: entry.coinCost, route: 'shop', shopLevel, copies: 1, mirrors: 0, mirrorPrice };
     }
 
     // Each level above the shop's: a mirror, plus a copy of the level below —
-    // which is itself a mirror plus a copy of the level below that
+    // which is itself a mirror plus a copy of the level below that. The tree
+    // doubles: k levels up is 2^k shop copies combined by 2^k − 1 mirrors
     let price = entry.coinCost;
+    let copies = 1;
     let mirrors = 0;
     for (let step = shopLevel; step < target; step++) {
         price = price * 2 + mirrorPrice;
-        mirrors += 1;
+        mirrors = mirrors * 2 + 1;
+        copies *= 2;
     }
-    return { price, route: 'mirror', shopLevel, mirrors, mirrorPrice };
+    return { price, route: 'mirror', shopLevel, copies, mirrors, mirrorPrice };
 }
