@@ -1110,62 +1110,57 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.20.0](https://github.com/Millennium44/Toolasha/compare/v3.19.0...v3.20.0) (2026-08-22)
 
-
 ### Features
 
-* bestiary route planner under the All Zones table ([3533767](https://github.com/Millennium44/Toolasha/commit/3533767f187e7c509db732cf1ae9abd968579fe3))
-* calibration badges beside profit forecasts (action panel, action bar, alchemy, all-zones sim) ([df269e0](https://github.com/Millennium44/Toolasha/commit/df269e05ec03c8f5f9ebdc9850c854c3668ce643))
-* decimal Combat Level in the sidebar; level-gap debuff needs a ten-level gap too ([54d132f](https://github.com/Millennium44/Toolasha/commit/54d132facdc43021979a903604f9cad19736e116))
-* diagnostics section in settings — error log, on-demand checks, copyable report ([fb5f9d0](https://github.com/Millennium44/Toolasha/commit/fb5f9d09004a29869b6f211ebd9b4d053494492b))
-* dungeon ROI board in the dungeon tracker panel ([f69ff87](https://github.com/Millennium44/Toolasha/commit/f69ff874768e1b6da3439712e54a0b54d6e10e36))
-* guild panel shows ETA to the next level-earned member slot ([ceec2f6](https://github.com/Millennium44/Toolasha/commit/ceec2f6e11b88cf97a41e43405f7e4c38ed0a2cf))
-* production arbitrage board — every production recipe ranked by margin per day, hour and unit ([9f7a821](https://github.com/Millennium44/Toolasha/commit/9f7a82181c859886eb5620a0e314b5afedf48631))
-* protect-from sweep in the enhancing panel — every protect-from level priced for the slot item and the cheapest alternative ([70481d1](https://github.com/Millennium44/Toolasha/commit/70481d14d30460b917dece2e6e86bdcc29d15d65))
-* right-clicking any ability icon opens its book in the Item Dictionary ([7c010d7](https://github.com/Millennium44/Toolasha/commit/7c010d7e507eb2ca458aacf5f56a27aad523efdc))
-* setting to switch the All Zones Bestiary column and route planner off; planner quotes each stay in fights ([ba1efac](https://github.com/Millennium44/Toolasha/commit/ba1efac48c5f2c7de4fec22b0759fe9e66e0dba8))
-* track Blessed Tea double-level successes in the enhancement tracker ([d483f2e](https://github.com/Millennium44/Toolasha/commit/d483f2ebab9886073c0d31776718eb5d3dc75927))
-* trial support tracks low mana and a stalled rotation (mana under the cheapest cast), with a live marker on the board ([be7b273](https://github.com/Millennium44/Toolasha/commit/be7b273108db62cf43d188886eaf926278a1eabc))
-
+- bestiary route planner under the All Zones table ([3533767](https://github.com/Millennium44/Toolasha/commit/3533767f187e7c509db732cf1ae9abd968579fe3))
+- calibration badges beside profit forecasts (action panel, action bar, alchemy, all-zones sim) ([df269e0](https://github.com/Millennium44/Toolasha/commit/df269e05ec03c8f5f9ebdc9850c854c3668ce643))
+- decimal Combat Level in the sidebar; level-gap debuff needs a ten-level gap too ([54d132f](https://github.com/Millennium44/Toolasha/commit/54d132facdc43021979a903604f9cad19736e116))
+- diagnostics section in settings — error log, on-demand checks, copyable report ([fb5f9d0](https://github.com/Millennium44/Toolasha/commit/fb5f9d09004a29869b6f211ebd9b4d053494492b))
+- dungeon ROI board in the dungeon tracker panel ([f69ff87](https://github.com/Millennium44/Toolasha/commit/f69ff874768e1b6da3439712e54a0b54d6e10e36))
+- guild panel shows ETA to the next level-earned member slot ([ceec2f6](https://github.com/Millennium44/Toolasha/commit/ceec2f6e11b88cf97a41e43405f7e4c38ed0a2cf))
+- production arbitrage board — every production recipe ranked by margin per day, hour and unit ([9f7a821](https://github.com/Millennium44/Toolasha/commit/9f7a82181c859886eb5620a0e314b5afedf48631))
+- protect-from sweep in the enhancing panel — every protect-from level priced for the slot item and the cheapest alternative ([70481d1](https://github.com/Millennium44/Toolasha/commit/70481d14d30460b917dece2e6e86bdcc29d15d65))
+- right-clicking any ability icon opens its book in the Item Dictionary ([7c010d7](https://github.com/Millennium44/Toolasha/commit/7c010d7e507eb2ca458aacf5f56a27aad523efdc))
+- setting to switch the All Zones Bestiary column and route planner off; planner quotes each stay in fights ([ba1efac](https://github.com/Millennium44/Toolasha/commit/ba1efac48c5f2c7de4fec22b0759fe9e66e0dba8))
+- track Blessed Tea double-level successes in the enhancement tracker ([d483f2e](https://github.com/Millennium44/Toolasha/commit/d483f2ebab9886073c0d31776718eb5d3dc75927))
+- trial support tracks low mana and a stalled rotation (mana under the cheapest cast), with a live marker on the board ([be7b273](https://github.com/Millennium44/Toolasha/commit/be7b273108db62cf43d188886eaf926278a1eabc))
 
 ### Bug Fixes
 
-* a mid-run pickup attempt is not charged a protection ([29ca5d3](https://github.com/Millennium44/Toolasha/commit/29ca5d3053feead1eb567aecc817ebb2433f5815))
-* action bar profit line clears when the header moves to the labyrinth or an unqueued name, and cancels the in-flight calculation ([15b3f29](https://github.com/Millennium44/Toolasha/commit/15b3f29e4cd1c2b71ac585cf3cd2496bcac9d730))
-* All Zones bestiary sort breaks equal points by time to the first point ([2527b11](https://github.com/Millennium44/Toolasha/commit/2527b11fe3109b8cfe6b477154d29f72ae5cda6e))
-* bestiary plan Copy falls back to a selection copy when the async clipboard refuses ([6856601](https://github.com/Millennium44/Toolasha/commit/6856601eaa3f10891b46a1a4224d31cb14acc741))
-* enhancement tracker starts a session for a run already going when the page loads ([9882064](https://github.com/Millennium44/Toolasha/commit/98820642deacaa3ac16d097d96b910fb7e9796a2))
-* port upstream fixes through 2.94.0 ([0302903](https://github.com/Millennium44/Toolasha/commit/0302903b84709d003e7046dc74816b88bf90ace7))
-* right-click on an ability resolves the icon under the level label and slot overlay, not only on the svg itself ([3908a7d](https://github.com/Millennium44/Toolasha/commit/3908a7d12febbb2e38d7cda4b793ea7109e45bf4))
-* simulator editor follows live house rooms, so a room built mid-session is not proposed again; data manager refreshes the character room map on house_rooms_updated ([63e38be](https://github.com/Millennium44/Toolasha/commit/63e38be2d56c5a766630e9acb2ee7ff17ffa0111))
-* tester route counts the whole tree — 2^k shop copies and 2^k−1 mirrors — shows the bill per level and pins it into the Tester strip ([7232d7b](https://github.com/Millennium44/Toolasha/commit/7232d7bd913c7681882a92e115b26b63a88efef9))
-* the treasure popup's re-placement after its width restores no longer reveals it in the corner while the dialog is still rendering ([51b5455](https://github.com/Millennium44/Toolasha/commit/51b545562fe7dc156c596dcd79010ed1636fe616))
-* treasure popup stays hidden until placed beside the chest dialog instead of opening in the corner and jumping ([54ed6f1](https://github.com/Millennium44/Toolasha/commit/54ed6f10fb654b064987be6a0eba237fe5a7664b))
-
+- a mid-run pickup attempt is not charged a protection ([29ca5d3](https://github.com/Millennium44/Toolasha/commit/29ca5d3053feead1eb567aecc817ebb2433f5815))
+- action bar profit line clears when the header moves to the labyrinth or an unqueued name, and cancels the in-flight calculation ([15b3f29](https://github.com/Millennium44/Toolasha/commit/15b3f29e4cd1c2b71ac585cf3cd2496bcac9d730))
+- All Zones bestiary sort breaks equal points by time to the first point ([2527b11](https://github.com/Millennium44/Toolasha/commit/2527b11fe3109b8cfe6b477154d29f72ae5cda6e))
+- bestiary plan Copy falls back to a selection copy when the async clipboard refuses ([6856601](https://github.com/Millennium44/Toolasha/commit/6856601eaa3f10891b46a1a4224d31cb14acc741))
+- enhancement tracker starts a session for a run already going when the page loads ([9882064](https://github.com/Millennium44/Toolasha/commit/98820642deacaa3ac16d097d96b910fb7e9796a2))
+- port upstream fixes through 2.94.0 ([0302903](https://github.com/Millennium44/Toolasha/commit/0302903b84709d003e7046dc74816b88bf90ace7))
+- right-click on an ability resolves the icon under the level label and slot overlay, not only on the svg itself ([3908a7d](https://github.com/Millennium44/Toolasha/commit/3908a7d12febbb2e38d7cda4b793ea7109e45bf4))
+- simulator editor follows live house rooms, so a room built mid-session is not proposed again; data manager refreshes the character room map on house_rooms_updated ([63e38be](https://github.com/Millennium44/Toolasha/commit/63e38be2d56c5a766630e9acb2ee7ff17ffa0111))
+- tester route counts the whole tree — 2^k shop copies and 2^k−1 mirrors — shows the bill per level and pins it into the Tester strip ([7232d7b](https://github.com/Millennium44/Toolasha/commit/7232d7bd913c7681882a92e115b26b63a88efef9))
+- the treasure popup's re-placement after its width restores no longer reveals it in the corner while the dialog is still rendering ([51b5455](https://github.com/Millennium44/Toolasha/commit/51b545562fe7dc156c596dcd79010ed1636fe616))
+- treasure popup stays hidden until placed beside the chest dialog instead of opening in the corner and jumping ([54ed6f1](https://github.com/Millennium44/Toolasha/commit/54ed6f10fb654b064987be6a0eba237fe5a7664b))
 
 ### Performance Improvements
 
-* classify tooltips once in the shared observer; bound the personal listing log ([dbe76aa](https://github.com/Millennium44/Toolasha/commit/dbe76aaf89619388dfc6e5c2f8b468d7f80181a7))
-* cut idle observers, timers and per-message work across 20 features ([1044809](https://github.com/Millennium44/Toolasha/commit/1044809e66891f63cf99423971f72d21673ff41b))
-* cut per-event storage traffic in the trade ledger, dungeon tracker, combat stats and lab sim cache ([9b510a0](https://github.com/Millennium44/Toolasha/commit/9b510a02cf29dd87032edb28c670e29dfdacd3d9))
-* dispatch action panels and tiles once to every feature ([2082edd](https://github.com/Millennium44/Toolasha/commit/2082edd78da0d3576e949e273bae45fb42734bd4))
-* DOM observer walks an inserted subtree once with a combined selector instead of once per watched class ([9a1e3cf](https://github.com/Millennium44/Toolasha/commit/9a1e3cfa3f51375da339255189e60e2966f0e489))
-* dungeon panel reads runs from the store's memory, so every run append is a debounced write ([4268c92](https://github.com/Millennium44/Toolasha/commit/4268c928099c903d7a622de667c8d31f52e701b0))
-* market order-book bursts patch prices, save listings and repaint once instead of per message ([60c5f58](https://github.com/Millennium44/Toolasha/commit/60c5f58a447603eee2e26c999885167792b362db))
-* memoise game-data lookups and debounce drink timer updates ([cba1c53](https://github.com/Millennium44/Toolasha/commit/cba1c5323f5279e0705118d2f952c43efada0653))
-* share the tooltip observer across bundles; changelog for diagnostics, bestiary planner and dispatch perf ([db8c716](https://github.com/Millennium44/Toolasha/commit/db8c7162508fd436af43c643c792f714c01303a1))
-* startup no longer waits behind a forced market fetch, settings reads, and one-at-a-time storage gets; production entrypoint is minified ([39b8f82](https://github.com/Millennium44/Toolasha/commit/39b8f82424bdd55ad340554e6266916b3a605699))
-
+- classify tooltips once in the shared observer; bound the personal listing log ([dbe76aa](https://github.com/Millennium44/Toolasha/commit/dbe76aaf89619388dfc6e5c2f8b468d7f80181a7))
+- cut idle observers, timers and per-message work across 20 features ([1044809](https://github.com/Millennium44/Toolasha/commit/1044809e66891f63cf99423971f72d21673ff41b))
+- cut per-event storage traffic in the trade ledger, dungeon tracker, combat stats and lab sim cache ([9b510a0](https://github.com/Millennium44/Toolasha/commit/9b510a02cf29dd87032edb28c670e29dfdacd3d9))
+- dispatch action panels and tiles once to every feature ([2082edd](https://github.com/Millennium44/Toolasha/commit/2082edd78da0d3576e949e273bae45fb42734bd4))
+- DOM observer walks an inserted subtree once with a combined selector instead of once per watched class ([9a1e3cf](https://github.com/Millennium44/Toolasha/commit/9a1e3cfa3f51375da339255189e60e2966f0e489))
+- dungeon panel reads runs from the store's memory, so every run append is a debounced write ([4268c92](https://github.com/Millennium44/Toolasha/commit/4268c928099c903d7a622de667c8d31f52e701b0))
+- market order-book bursts patch prices, save listings and repaint once instead of per message ([60c5f58](https://github.com/Millennium44/Toolasha/commit/60c5f58a447603eee2e26c999885167792b362db))
+- memoise game-data lookups and debounce drink timer updates ([cba1c53](https://github.com/Millennium44/Toolasha/commit/cba1c5323f5279e0705118d2f952c43efada0653))
+- share the tooltip observer across bundles; changelog for diagnostics, bestiary planner and dispatch perf ([db8c716](https://github.com/Millennium44/Toolasha/commit/db8c7162508fd436af43c643c792f714c01303a1))
+- startup no longer waits behind a forced market fetch, settings reads, and one-at-a-time storage gets; production entrypoint is minified ([39b8f82](https://github.com/Millennium44/Toolasha/commit/39b8f82424bdd55ad340554e6266916b3a605699))
 
 ### Documentation
 
-* changelog for the arbitrage board, protect-from sweep, dungeon ROI board and calibration badges ([9778ec3](https://github.com/Millennium44/Toolasha/commit/9778ec3240205d484ccc7e3df275aa17fa7b480f))
-* changelog for the performance pass ([5638e42](https://github.com/Millennium44/Toolasha/commit/5638e42744c799f5fbb963114391f67772becf42))
-* changelog for the ported upstream features ([b91ee28](https://github.com/Millennium44/Toolasha/commit/b91ee28dc82432114038040194e0e7ae4ef09409))
-
+- changelog for the arbitrage board, protect-from sweep, dungeon ROI board and calibration badges ([9778ec3](https://github.com/Millennium44/Toolasha/commit/9778ec3240205d484ccc7e3df275aa17fa7b480f))
+- changelog for the performance pass ([5638e42](https://github.com/Millennium44/Toolasha/commit/5638e42744c799f5fbb963114391f67772becf42))
+- changelog for the ported upstream features ([b91ee28](https://github.com/Millennium44/Toolasha/commit/b91ee28dc82432114038040194e0e7ae4ef09409))
 
 ### Tests
 
-* planner row index after the Fights column ([7f11986](https://github.com/Millennium44/Toolasha/commit/7f11986a2c81258702b183d5ae1e3783c84c19ad))
+- planner row index after the Fights column ([7f11986](https://github.com/Millennium44/Toolasha/commit/7f11986a2c81258702b183d5ae1e3783c84c19ad))
 
 ## [3.19.0](https://github.com/Millennium44/Toolasha/compare/v3.18.0...v3.19.0) (2026-08-22)
 
