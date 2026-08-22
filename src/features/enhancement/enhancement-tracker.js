@@ -16,6 +16,7 @@ import {
     canExtendSession,
     extendSession,
     validateSession,
+    normalizeSession,
     SessionState,
 } from './enhancement-session.js';
 import enhancementCalibration from '../insights/enhancement-calibration.js';
@@ -70,6 +71,8 @@ class EnhancementTracker {
             for (const [sessionId, session] of Object.entries(this.sessions)) {
                 if (!validateSession(session)) {
                     delete this.sessions[sessionId];
+                } else {
+                    normalizeSession(session);
                 }
             }
 
@@ -204,15 +207,16 @@ class EnhancementTracker {
      * Record a successful enhancement attempt
      * @param {number} previousLevel - Level before success
      * @param {number} newLevel - New level after success
+     * @param {boolean} wasBlessed - Whether this success jumped +2 or more levels (Blessed Tea)
      * @returns {Promise<void>}
      */
-    async recordSuccess(previousLevel, newLevel) {
+    async recordSuccess(previousLevel, newLevel, wasBlessed = false) {
         const session = this.getCurrentSession();
         if (!session) {
             return;
         }
 
-        recordSuccess(session, previousLevel, newLevel);
+        recordSuccess(session, previousLevel, newLevel, wasBlessed);
         await saveSessions(this.sessions);
 
         // Check if target reached
