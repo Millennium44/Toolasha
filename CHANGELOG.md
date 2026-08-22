@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Treasure popup opens beside the chest dialog, not in the corner first
+
+The chest popup was shown at its default top-right corner while its stored size was read back and the game's Opened Loot dialog finished rendering, then jumped beside the dialog. It now stays hidden until it has been placed — beside the dialog as soon as the dialog exists, or in the corner if no dialog ever appears — and is placed again once its width is restored.
+
 ### Production Arbitrage Board
 
 An "Arbitrage" button on the cheesesmithing, crafting, tailoring, cooking and brewing pages opens one ranked table of every production recipe — your material cost per unit, sale value after tax, margin per unit/action/hour and a per-day margin bounded by what the market absorbs, with level requirement and a data-quality flag. Sort by margin/day, /hr or /unit, filter by skill, text or "only craftable now", click a row to open the action. Figures come from the same profit calculator the action panel uses, computed in the background and memoised until prices, levels, drinks or gear change.

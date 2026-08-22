@@ -638,3 +638,44 @@ describe('the ledger survives a read that cannot be made', async () => {
         expect(stored()).toEqual({});
     });
 });
+
+describe('the popup is shown only once it has somewhere to be', () => {
+    const fakePopup = () => ({
+        style: { visibility: 'hidden' },
+        getBoundingClientRect: () => ({ width: 260, height: 120 }),
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        treasureTracker.popup = null;
+        document.body.innerHTML = '';
+    });
+
+    test('beside the dialog, and visible, as soon as the dialog is there', () => {
+        const dialog = document.createElement('div');
+        dialog.className = 'Modal_modal__1';
+        dialog.getBoundingClientRect = () => ({ left: 300, right: 700, top: 100, width: 400, height: 300 });
+        document.body.appendChild(dialog);
+        treasureTracker.popup = fakePopup();
+
+        treasureTracker._placeBesideDialog(0);
+
+        expect(treasureTracker.popup.style.left).toBe('712px');
+        expect(treasureTracker.popup.style.top).toBe('100px');
+        expect(treasureTracker.popup.style.visibility).toBe('');
+    });
+
+    test('stays hidden while the dialog is still rendering, then shows in the corner when it never comes', () => {
+        vi.useFakeTimers();
+        treasureTracker.popup = fakePopup();
+
+        treasureTracker._placeBesideDialog(0);
+        expect(treasureTracker.popup.style.visibility).toBe('hidden');
+        vi.advanceTimersByTime(60 * 5);
+        expect(treasureTracker.popup.style.visibility).toBe('hidden');
+
+        vi.advanceTimersByTime(60 * 20);
+        expect(treasureTracker.popup.style.visibility).toBe('');
+        expect(treasureTracker.popup.style.left).toBeUndefined();
+    });
+});

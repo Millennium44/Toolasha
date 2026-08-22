@@ -460,6 +460,12 @@ class TreasureTracker {
         // measures the popup and a width applied afterwards would move the edge
         // it was measured against.
         const pinned = this.settings.popupPinned;
+        // Kept out of sight until it has somewhere to be. The stored size is an
+        // IndexedDB read away and the game's dialog a few frames away; showing
+        // the popup at its default corner meanwhile and then jumping it beside
+        // the dialog read as the popup opening in the wrong place
+        this.popup.style.visibility = 'hidden';
+        if (!pinned) this._placeBesideDialog(0);
         restoreGeometry(this.popup, POPUP_GEOMETRY_KEY, { width: 260, height: 120 }, { position: pinned }).then(() => {
             // The height fits the chest being shown, not the chest the popup was
             // once resized on. capHeightToWindow already sized it to its content
@@ -467,11 +473,16 @@ class TreasureTracker {
             // chest with more rows than the one the resize happened on. Width is
             // the half of a resize worth keeping, and it changes how rows wrap —
             // so the height is re-fitted after the width lands.
-            if (this.popup) {
-                this.popup.style.height = '';
-                capHeightToWindow(this.popup);
+            if (!this.popup) return;
+            this.popup.style.height = '';
+            capHeightToWindow(this.popup);
+            if (pinned) {
+                this.popup.style.visibility = '';
+                return;
             }
-            if (!pinned) this._placeBesideDialog(0);
+            // The width just landed, so the edge it was placed against may have
+            // moved: place once more, without starting a second round of retries
+            this._placeBesideDialog(DIALOG_TRIES);
         });
     }
 
@@ -497,7 +508,11 @@ class TreasureTracker {
         // Not up yet — the message that told us about the loot is the same one
         // React is still rendering the dialog from
         if (!dialog || !dialog.getBoundingClientRect().width) {
-            if (tries >= DIALOG_TRIES) return;
+            if (tries >= DIALOG_TRIES) {
+                // No dialog to sit beside: the default corner it is, and shown
+                this.popup.style.visibility = '';
+                return;
+            }
             const retry = setTimeout(() => this._placeBesideDialog(tries + 1), DIALOG_RETRY_MS);
             this._dialogRetry = retry;
             return;
@@ -505,7 +520,10 @@ class TreasureTracker {
 
         const anchor = dialog.getBoundingClientRect();
         const self = this.popup.getBoundingClientRect();
-        if (!self.width) return;
+        if (!self.width) {
+            this.popup.style.visibility = '';
+            return;
+        }
 
         // To the right of the dialog, unless that would run off screen, in which
         // case the left side has the room
@@ -519,7 +537,7 @@ class TreasureTracker {
         const maxTop = window.innerHeight - self.height - EDGE_MARGIN;
         const top = Math.max(EDGE_MARGIN, Math.min(anchor.top, maxTop));
 
-        Object.assign(this.popup.style, { left: `${left}px`, top: `${top}px`, right: 'auto' });
+        Object.assign(this.popup.style, { left: `${left}px`, top: `${top}px`, right: 'auto', visibility: '' });
     }
 
     /**
