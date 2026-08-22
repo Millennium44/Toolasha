@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Enhancement tracker picks up a run already going
+
+Loading the page in the middle of an enhancing run left the tracker on "Begin enhancing to populate data" for the rest of it: only a first attempt (count 1) or a queue change started a session. An enhance attempt with no session now starts one on the spot; that first attempt is costed but not scored, since its starting level is unknown.
+
 ### Decimal Combat Level in the sidebar, and a stricter level-gap debuff
 
 Ported from upstream: the left sidebar shows the decimal Combat Level (e.g. 133.2) next to the game's whole number — setting "Show decimal Combat Level". The party level-gap debuff (Combat Sim and the live drop/luck model) now also requires a ten-level gap, not just a 20% ratio, matching the Game Guide; low-level parties were being penalised when the game would not.

@@ -274,7 +274,21 @@ async function handleEnhancementResult(action, _data) {
                 enhancementUI.switchToSession(extendableSessionId);
                 enhancementUI.scheduleUpdate();
             } else {
-                return;
+                // Mid-run pickup: the script came up after the queue started (a
+                // page load during a run), so no count-1 attempt was seen and no
+                // actions_updated flagged a pending start. Start a session here —
+                // the first attempt has no baseline, so it is costed, not recorded
+                enhancementTracker.pendingSessionStart = false;
+                const protectFrom = action.enhancingProtectionMinLevel || 0;
+                const targetLevel = action.enhancingMaxLevel || Math.min(newLevel + 5, 20);
+                const sessionId = await enhancementTracker.startSession(itemHrid, newLevel, targetLevel, protectFrom);
+                currentSession = enhancementTracker.getCurrentSession();
+                enhancementUI.switchToSession(sessionId);
+                enhancementUI.scheduleUpdate();
+                if (!currentSession) {
+                    return;
+                }
+                justCreatedNewSession = true;
             }
         }
 
