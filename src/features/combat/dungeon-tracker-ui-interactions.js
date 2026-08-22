@@ -42,6 +42,7 @@ class DungeonTrackerUIInteractions {
         this.setupClearAll();
         this.setupChartToggle();
         this.setupChartPopout();
+        this.setupRoiToggle();
         this.setupResetPositionButton();
         this.setupFilterIndicator();
     }
@@ -309,6 +310,18 @@ class DungeonTrackerUIInteractions {
     }
 
     /**
+     * Setup the ROI board toggle
+     */
+    setupRoiToggle() {
+        const roiHeader = this.container.querySelector('#mwi-dt-roi-header');
+        if (!roiHeader) return;
+
+        roiHeader.addEventListener('click', () => {
+            this.toggleRoi();
+        });
+    }
+
+    /**
      * Setup chart pop-out button
      */
     setupChartPopout() {
@@ -532,6 +545,47 @@ class DungeonTrackerUIInteractions {
     }
 
     /**
+     * Toggle the ROI board open or closed
+     */
+    toggleRoi() {
+        this.state.isRoiExpanded = !this.state.isRoiExpanded;
+
+        if (this.state.isRoiExpanded) {
+            this.applyRoiExpandedState();
+        } else {
+            this.applyRoiCollapsedState();
+        }
+
+        this.state.save();
+    }
+
+    /**
+     * Apply ROI board expanded state: show it and draw it, since a collapsed
+     * board is never drawn
+     */
+    applyRoiExpandedState() {
+        const roiContainer = this.container.querySelector('#mwi-dt-roi-container');
+        const toggle = this.container.querySelector('#mwi-dt-roi-toggle');
+
+        if (roiContainer) {
+            roiContainer.style.display = 'block';
+            if (this.callbacks.onUpdateRoi) this.callbacks.onUpdateRoi();
+        }
+        if (toggle) toggle.textContent = '▼';
+    }
+
+    /**
+     * Apply ROI board collapsed state
+     */
+    applyRoiCollapsedState() {
+        const roiContainer = this.container.querySelector('#mwi-dt-roi-container');
+        const toggle = this.container.querySelector('#mwi-dt-roi-toggle');
+
+        if (roiContainer) roiContainer.style.display = 'none';
+        if (toggle) toggle.textContent = '▶';
+    }
+
+    /**
      * Apply initial states
      */
     applyInitialStates() {
@@ -553,6 +607,11 @@ class DungeonTrackerUIInteractions {
         // Apply initial chart expanded state
         if (this.state.isChartExpanded) {
             this.applyChartExpandedState();
+        }
+
+        // The ROI board starts closed unless it was left open
+        if (this.state.isRoiExpanded) {
+            this.applyRoiExpandedState();
         }
     }
 

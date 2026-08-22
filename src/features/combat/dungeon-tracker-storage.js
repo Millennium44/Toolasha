@@ -261,6 +261,8 @@ class DungeonTrackerStorage {
      * @param {string} run.timestamp - Run start timestamp (ISO string)
      * @param {number} run.duration - Run duration (ms)
      * @param {string} run.dungeonName - Dungeon name (from Phase 2)
+     * @param {string|null} [run.dungeonHrid] - Dungeon action, where the recording route knew it
+     * @param {number|null} [run.tier] - Difficulty tier, where the recording route knew it
      * @returns {Promise<boolean>} Success status
      */
     async saveTeamRun(teamKey, run) {
@@ -275,7 +277,7 @@ class DungeonTrackerStorage {
 
         // Check for duplicates (same time window, team, and duration). Only
         // this team's runs can match, so only they are looked at.
-        const isDuplicate = (this._byTeam.get(teamKey) || []).some((r) => {
+        const existing = (this._byTeam.get(teamKey) || []).find((r) => {
             const existingTimestamp = new Date(r.timestamp).getTime();
             const timeDiff = Math.abs(existingTimestamp - newTimestamp);
             const durationDiff = Math.abs(r.duration - run.duration);
@@ -286,6 +288,15 @@ class DungeonTrackerStorage {
             // - Duration within 2 seconds (handles minor timing differences)
             return timeDiff < 10000 && durationDiff < 2000;
         });
+        const isDuplicate = Boolean(existing);
+
+        // A chat backfill never sees a tier; the live tracker does. When the two
+        // routes record the same run, the one that knew the tier fills it in
+        if (existing && existing.tier == null && Number.isInteger(run.tier)) {
+            existing.tier = run.tier;
+            if (!existing.dungeonHrid && run.dungeonHrid) existing.dungeonHrid = run.dungeonHrid;
+            await this._persist(false);
+        }
 
         if (!isDuplicate) {
             // Create unified format run
@@ -298,8 +309,8 @@ class DungeonTrackerStorage {
                 recordedByName: recorder.name,
                 timestamp: run.timestamp,
                 dungeonName: run.dungeonName || 'Unknown',
-                dungeonHrid: null,
-                tier: null,
+                dungeonHrid: run.dungeonHrid || null,
+                tier: Number.isInteger(run.tier) ? run.tier : null,
                 team: team,
                 teamKey: teamKey,
                 duration: run.duration,

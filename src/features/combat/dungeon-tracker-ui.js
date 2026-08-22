@@ -10,6 +10,7 @@ import dungeonTrackerUIState from './dungeon-tracker-ui-state.js';
 import DungeonTrackerUIChart from './dungeon-tracker-ui-chart.js';
 import DungeonTrackerUIHistory from './dungeon-tracker-ui-history.js';
 import DungeonTrackerUIInteractions from './dungeon-tracker-ui-interactions.js';
+import DungeonRoiBoardUI from './dungeon-roi-board-ui.js';
 import dungeonTrackerStorage, { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
 import { historyAvgWaveMs, pacePercent, paceChip } from './dungeon-pace.js';
 import dataManager from '../../core/data-manager.js';
@@ -29,6 +30,7 @@ class DungeonTrackerUI {
         this.chart = null;
         this.history = null;
         this.interactions = null;
+        this.roiBoard = null;
 
         // Callback references for cleanup
         this.dungeonUpdateHandler = null;
@@ -53,6 +55,7 @@ class DungeonTrackerUI {
         this.chart = new DungeonTrackerUIChart(this.state, this.formatTime.bind(this));
         this.history = new DungeonTrackerUIHistory(this.state, this.formatTime.bind(this));
         this.interactions = new DungeonTrackerUIInteractions(this.state, this.chart, this.history);
+        this.roiBoard = new DungeonRoiBoardUI(this.state);
 
         // Set up history delete callback
         this.history.onDelete(() => this.refreshHistoryAndStats());
@@ -387,6 +390,23 @@ class DungeonTrackerUI {
                     </div>
                 </div>
 
+                <!-- ROI board section (collapsible): every dungeon × tier, in gold/hr -->
+                <div style="padding-top: 8px; border-top: 1px solid #444;">
+                    <div id="mwi-dt-roi-header" style="
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        cursor: pointer;
+                        padding: 4px 0;
+                        margin-bottom: 8px;
+                    " title="Every dungeon and tier side by side: measured clear times where you have runs, the combat sim where you do not, keys, tokens, chest EV and gold per hour">
+                        <span style="font-size: 12px; font-weight: bold; color: #ccc;">💰 ROI Board <span id="mwi-dt-roi-toggle" style="font-size: 10px;">▶</span></span>
+                    </div>
+                    <div id="mwi-dt-roi-container" style="display: none; font-size: 11px; color: #ccc;">
+                        <!-- Board populated when opened -->
+                    </div>
+                </div>
+
                 <!-- Run Chart section (collapsible) -->
                 <div style="padding-top: 8px; border-top: 1px solid #444;">
                     <div id="mwi-dt-chart-header" style="
@@ -432,6 +452,7 @@ class DungeonTrackerUI {
             },
             onUpdateChart: () => this.updateChart(),
             onUpdateHistory: () => this.refreshHistoryAndStats(),
+            onUpdateRoi: () => this.updateRoiBoard(),
         });
 
         // Apply initial states
@@ -616,6 +637,9 @@ class DungeonTrackerUI {
 
         // Update run history list
         await this.updateRunHistory();
+
+        // The board reads the same runs; a completed run moves its row
+        await this.updateRoiBoard();
     }
 
     /**
@@ -738,6 +762,20 @@ class DungeonTrackerUI {
     }
 
     /**
+     * Redraw the ROI board, when it is open. A closed board is not drawn: it
+     * prices four reward tables and costs eight keys each time, which is cheap
+     * but not free on a one-second panel.
+     */
+    async updateRoiBoard() {
+        if (!this.state.isRoiExpanded || !this.roiBoard || !this.container) return;
+        try {
+            await this.roiBoard.render(this.container);
+        } catch (error) {
+            console.error('[Toolasha Dungeon Tracker UI] ROI board failed to draw:', error);
+        }
+    }
+
+    /**
      * Update chart display
      */
     async updateChart() {
@@ -849,6 +887,7 @@ class DungeonTrackerUI {
             if (this.interactions) {
                 this.interactions = null;
             }
+            this.roiBoard = null;
 
             // Reset initialization flag
             this.isInitialized = false;

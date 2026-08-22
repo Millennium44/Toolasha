@@ -684,6 +684,11 @@ export async function currentGearFingerprint() {
  * @param {string|null} [options.fingerprint] - Gear signature of the run
  * @param {number} [options.savedAt] - When it finished
  * @param {boolean} [options.maxTierFood] - Whether the run substituted max-tier food
+ * Dungeon rows additionally carry `dungeon` — completions, party size,
+ * consumable cost and deaths per simulated hour — which is what the dungeon
+ * ROI board needs to quote a simulated clear time for a tier nobody has run.
+ * Additive, so a reader that predates it sees the same row it always did.
+ *
  * @returns {Object} `{version, savedAt, hours, fingerprint, maxTierFood, zones}`
  */
 export function buildAllZonesSnapshot(zoneResults, options = {}) {
@@ -704,10 +709,25 @@ export function buildAllZonesSnapshot(zoneResults, options = {}) {
             const xp = result.simResult.experienceGained?.[playerHrid] || {};
             const totalXp = Object.values(xp).reduce((sum, value) => sum + (value || 0), 0);
 
+            const sim = result.simResult;
+            const dungeon = sim.isDungeon
+                ? {
+                      completions: sim.dungeonsCompleted || 0,
+                      failed: sim.dungeonsFailed || 0,
+                      simHours,
+                      partySize: sim.numberOfPlayers || 1,
+                      consumableCostPerHour: Number.isFinite(result.revenue?.costPerHour)
+                          ? result.revenue.costPerHour
+                          : null,
+                      deathsPerHour: (sim.deaths?.[playerHrid] || 0) / simHours,
+                  }
+                : null;
+
             return {
                 zoneHrid: result.zone.zoneHrid || result.zone.hrid || '',
                 zoneName: result.zone.name || '',
                 difficultyTier: result.zone.difficultyTier ?? 0,
+                ...(dungeon ? { dungeon } : {}),
                 // Deliberately the sim's raw, uncapped claim: the calibration
                 // surfaces that compare sim-vs-measured read this figure, and a
                 // market-volume cap is a display truth, not a sim truth. The

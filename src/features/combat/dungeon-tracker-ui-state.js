@@ -27,6 +27,7 @@ class DungeonTrackerUIState {
         this.isKeysExpanded = false;
         this.isRunHistoryExpanded = false;
         this.isChartExpanded = true; // Default: expanded
+        this.isRoiExpanded = false; // The ROI board is a table of everything; opened on purpose
 
         // Position state
         this.position = null; // { x, y } or null for default
@@ -56,6 +57,7 @@ class DungeonTrackerUIState {
             this.isCollapsed = savedState.isCollapsed || false;
             this.isKeysExpanded = savedState.isKeysExpanded || false;
             this.isRunHistoryExpanded = savedState.isRunHistoryExpanded || false;
+            this.isRoiExpanded = savedState.isRoiExpanded || false;
             this.position = savedState.position || null;
 
             // Load grouping/filtering state
@@ -81,6 +83,7 @@ class DungeonTrackerUIState {
                 isCollapsed: this.isCollapsed,
                 isKeysExpanded: this.isKeysExpanded,
                 isRunHistoryExpanded: this.isRunHistoryExpanded,
+                isRoiExpanded: this.isRoiExpanded,
                 position: this.position,
                 groupBy: this.groupBy,
                 filterDungeon: this.filterDungeon,

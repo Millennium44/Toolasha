@@ -1253,6 +1253,8 @@ class DungeonTracker {
                     timestamp: new Date(firstTimestamp).toISOString(), // Use party message timestamp
                     duration: partyMessageDuration, // Server-validated duration
                     dungeonName: dungeonName,
+                    dungeonHrid: completedRunData.dungeonHrid,
+                    tier: completedRunData.tier,
                     keyCountsMap: completedRunData.keyCountsMap, // Include key counts
                 };
 

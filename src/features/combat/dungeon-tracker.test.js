@@ -812,6 +812,8 @@ describe('finishing a run', () => {
             timestamp: '2026-08-04T10:00:00.000Z',
             duration: 272_000,
             dungeonName: 'Chimerical Den',
+            dungeonHrid: '/actions/combat/chimerical_den',
+            tier: 0,
             keyCountsMap: { Alice: 11, Bob: 7 },
         });
     });
