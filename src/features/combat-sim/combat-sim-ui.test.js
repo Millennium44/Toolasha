@@ -42,6 +42,8 @@ const mocks = vi.hoisted(() => ({
     allZonesArgs: null,
     /** itemHrid → unit price, what `resolveItemPrice` answers with */
     itemPrices: {},
+    /** The Bestiary as `getCharacterMonsters` hands it back; null until the tab has loaded it */
+    monsters: null,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -142,6 +144,9 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterGameMode: () => 'standard',
         getLearnedAbilities: () => mocks.learned || [],
         getInitClientData: () => ({ levelExperienceTable: Array.from({ length: 201 }, (_, level) => 1000 * level) }),
+        getCharacterMonsters: () => mocks.monsters,
+        on: () => {},
+        off: () => {},
     },
 }));
 
@@ -2820,5 +2825,145 @@ describe('the Aura-only swap option', () => {
         expect(title).toContain('Fierce Aura');
         // Interpolated into a title attribute: a double quote would end it early
         expect(title).not.toContain('"');
+    });
+});
+
+describe('the Bestiary route planner under the all-zones table', () => {
+    const HOUR_NS = 3600 * 1e9;
+    /** A zone result whose monsters died `deaths` times in a one-hour sim */
+    const result = (name, deaths, tier = 0) => ({
+        zone: { name, difficultyTier: tier, zoneHrid: `/actions/combat/${name.toLowerCase()}` },
+        simResult: {
+            simulatedTime: HOUR_NS,
+            encounters: 10,
+            deaths: { player1: 0, ...deaths },
+            experienceGained: { player1: { defense: 100 } },
+        },
+        revenue: { netPerHour: 1, revenuePerHour: 1, costPerHour: 0, dropEntries: [] },
+    });
+    const gameData = {
+        combatMonsterDetailMap: {
+            '/monsters/fly': { name: 'Fly' },
+            '/monsters/rat': { name: 'Rat' },
+            '/monsters/bee': { name: 'Bee' },
+        },
+    };
+    const click = (selector) =>
+        ui.panel.querySelector(selector).dispatchEvent(new window.Event('click', { bubbles: true }));
+    const planText = () => ui.panel.querySelector('#mwi-csim-bestiary-plan-out').textContent;
+
+    beforeEach(() => {
+        ui.buildPanel();
+        ui._allZonesSortCol = null;
+        ui._bestiaryPlanHours = undefined;
+        mocks.monsters = null;
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        mocks.monsters = null;
+        vi.restoreAllMocks();
+    });
+
+    test('the control is drawn with the table, defaults to 24 hours, and waits for the Bestiary', async () => {
+        const request = vi.spyOn(ui, '_requestBestiary').mockImplementation(() => {});
+        await ui._displayAllZonesResults([result('Farm', { '/monsters/fly': 10 })], 1, gameData);
+
+        const input = ui.panel.querySelector('#mwi-csim-bestiary-plan-hours');
+        expect(input.value).toBe('24');
+        expect(planText()).toBe('');
+
+        click('#mwi-csim-bestiary-plan-btn');
+        expect(planText()).toContain('waiting for bestiary');
+        expect(request).toHaveBeenCalled();
+        expect(ui.panel.querySelector('#mwi-csim-bestiary-plan-copy').style.display).toBe('none');
+    });
+
+    test('a plan asked for before the Bestiary loaded fills in on the redraw', async () => {
+        vi.spyOn(ui, '_requestBestiary').mockImplementation(() => {});
+        const results = [result('Farm', { '/monsters/fly': 10 })];
+        await ui._displayAllZonesResults(results, 1, gameData);
+        click('#mwi-csim-bestiary-plan-btn');
+        expect(planText()).toContain('waiting for bestiary');
+
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults(results, 1, gameData);
+
+        expect(planText()).not.toContain('waiting');
+        expect(planText()).toContain('Farm T0');
+    });
+
+    test('plans the route from the sim rates and the counts, in order, with the thresholds crossed', async () => {
+        // Farm: fly 10/hr at 8 kills (12 min to 10), rat 2/hr unmet (30 min to 1);
+        // Hive: bee 1/hr unmet (1 h to 1). One hour: Farm 0:30 (+3), Hive 0:30 partial.
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults(
+            [result('Farm', { '/monsters/fly': 10, '/monsters/rat': 2 }), result('Hive', { '/monsters/bee': 1 }, 2)],
+            1,
+            gameData
+        );
+        const input = ui.panel.querySelector('#mwi-csim-bestiary-plan-hours');
+        input.value = '1';
+        click('#mwi-csim-bestiary-plan-btn');
+
+        const rows = [...ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr')].map((tr) =>
+            [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())
+        );
+        expect(rows).toHaveLength(2);
+        expect(rows[0].slice(0, 4)).toEqual(['1', 'Farm T0', '0:30', '+3']);
+        expect(rows[0][4]).toContain('Fly 8 → 10');
+        expect(rows[0][4]).toContain('Rat 0 → 1');
+        expect(rows[1].slice(0, 4)).toEqual(['2', 'Hive T2', '0:30', '+0']);
+        expect(rows[1][4]).toContain('partial: Bee 0/1');
+
+        const footer = ui.panel.querySelector('#mwi-csim-bestiary-plan-footer').textContent;
+        expect(footer).toContain('3 points');
+        expect(footer).toContain('best single zone Farm T0: 3');
+
+        // The budget is remembered for next time
+        expect(mocks.store.get('settings:combatSimBestiaryPlanHours')).toBe(1);
+    });
+
+    test('zones without a sim result are skipped with a note', async () => {
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults(
+            [result('Farm', { '/monsters/fly': 10 }), { zone: { name: 'Broken' }, simResult: null }],
+            1,
+            gameData
+        );
+        click('#mwi-csim-bestiary-plan-btn');
+
+        expect(planText()).toContain('1 zone without a sim result skipped');
+        expect(planText()).toContain('Farm T0');
+    });
+
+    test('Copy puts the plain-text plan on the clipboard', async () => {
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults(
+            [result('Farm', { '/monsters/fly': 10 }), result('Hive', { '/monsters/bee': 1 }, 2)],
+            1,
+            gameData
+        );
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-hours').value = '1';
+        click('#mwi-csim-bestiary-plan-btn');
+
+        const written = [];
+        Object.defineProperty(navigator, 'clipboard', {
+            value: { writeText: async (text) => written.push(text) },
+            configurable: true,
+        });
+        const copyBtn = ui.panel.querySelector('#mwi-csim-bestiary-plan-copy');
+        expect(copyBtn.style.display).not.toBe('none');
+        click('#mwi-csim-bestiary-plan-copy');
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(written).toHaveLength(1);
+        const lines = written[0].split('\n');
+        expect(lines[0]).toBe('Bestiary plan — 1:00 h, 2 points');
+        expect(lines[1]).toBe('1. Farm T0 — 0:12 — +2 — Fly 8→10');
+        expect(lines[2]).toBe('2. Hive T2 — 0:48 — +0 — (partial: Bee 0/1)');
+        expect(lines[3]).toBe('Best single zone: Farm T0 — 2 points');
+        expect(copyBtn.textContent).toBe('Copied ✓');
     });
 });

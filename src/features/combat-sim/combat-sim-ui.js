@@ -28,6 +28,7 @@ import {
 } from '../../utils/all-zones-snapshot.js';
 import { formatWithSeparator, formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
 import { monsterKillsPerHour, countsByMonster, zoneBestiaryOutlook } from '../../utils/bestiary.js';
+import { planBestiaryRoute, formatPlanHours, formatPlanText } from '../../utils/bestiary-plan.js';
 import { capProfitRate, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import {
     isSkillingGearItem,
@@ -107,6 +108,10 @@ const SWAP_AURA_ONLY_KEY = 'combatSimSwapAuraOnly';
  * every time they open the ranking.
  */
 const ALL_ZONES_MAX_FOOD_KEY = 'combatSimAllZonesMaxTierFood';
+
+/** The Bestiary planner's time budget, remembered across sessions */
+const BESTIARY_PLAN_HOURS_KEY = 'combatSimBestiaryPlanHours';
+const BESTIARY_PLAN_DEFAULT_HOURS = 24;
 
 /**
  * What the Max-tier Food checkbox promises, in one hover.
@@ -2059,6 +2064,7 @@ class CombatSimUI {
         this._restoreSwapAuraOnly();
         this._loadUpgradeColumnPrefs();
         this._loadMaxTierFoodPref();
+        this._loadBestiaryPlanHoursPref();
         this._restoreUpgradeResults();
         this._restorePanelGeometry();
         this.panel.querySelector('#mwi-csim-ability-targets-toggle').addEventListener('click', () => {
@@ -2595,9 +2601,10 @@ class CombatSimUI {
                 const totalXP = Object.values(xp).reduce((s, v) => s + v, 0) / simHours;
                 const playerDeaths = (sim.deaths?.[playerHrid] || 0) / simHours;
                 const encounters = (sim.encounters || 0) / simHours;
+                const killsPerHour = monsterKillsPerHour(sim, simHours);
                 const bestiary = bestiaryCounts
                     ? zoneBestiaryOutlook({
-                          killsPerHour: monsterKillsPerHour(sim, simHours),
+                          killsPerHour,
                           counts: bestiaryCounts,
                           hours: 24,
                       })
@@ -2612,6 +2619,7 @@ class CombatSimUI {
                     totalXP,
                     bestiary: bestiary ? bestiary.pointsPerDay : null,
                     _bestiary: bestiary,
+                    _killsPerHour: killsPerHour,
                     stamina: (xp.stamina || 0) / simHours,
                     intelligence: (xp.intelligence || 0) / simHours,
                     attack: (xp.attack || 0) / simHours,
@@ -2666,6 +2674,18 @@ class CombatSimUI {
                       : top;
               }, null)
             : null;
+
+        // What the route planner works from: every simulated zone in run order
+        // (ties in the plan go to the earlier one), the counts, and how many
+        // zones had no result to plan with
+        this._bestiaryPlanZones = rows.map((row) => ({
+            zoneHrid: `${row.zoneHrid || row.zone}|T${row.tier}`,
+            name: `${row.zone} T${row.tier}`,
+            killsPerHour: row._killsPerHour,
+        }));
+        this._bestiaryPlanCounts = bestiaryCounts;
+        this._bestiaryPlanSkipped = zoneResults.filter((r) => !r || !r.simResult).length;
+        this._bestiaryPlanGameData = gameData;
 
         // Six columns of zeros is what a single-style build normally produces,
         // and it is why the table needed a horizontal scrollbar
@@ -2869,6 +2889,7 @@ class CombatSimUI {
                 </table>
             </div>
         `;
+        this._renderBestiaryPlanner(container);
 
         // A max-food run says so in the filename *and* in a column. The filename
         // is what you see in a folder six weeks later; the column is what
@@ -2926,6 +2947,206 @@ class CombatSimUI {
                 this._targetZoneFromResults(btn.dataset.hrid, parseInt(btn.dataset.tier, 10) || 0);
             });
         });
+    }
+
+    /** @private */
+    async _loadBestiaryPlanHoursPref() {
+        try {
+            const saved = await storage.get(BESTIARY_PLAN_HOURS_KEY, 'settings', null);
+            const hours = Number(saved);
+            if (hours > 0) this._bestiaryPlanHours = hours;
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to read the Bestiary plan hours:', error);
+        }
+    }
+
+    /** @private */
+    async _persistBestiaryPlanHoursPref() {
+        try {
+            await storage.set(BESTIARY_PLAN_HOURS_KEY, this._bestiaryPlanHours, 'settings');
+        } catch (error) {
+            console.error('[CombatSimUI] Failed to save the Bestiary plan hours:', error);
+        }
+    }
+
+    /**
+     * The Bestiary route planner under the All Zones table: an hours budget,
+     * a Plan button, and — once planned — the ordered list of zones that earns
+     * the most points in that time, against the best single zone.
+     *
+     * Lives inside the results container like the CSV bar, so a re-sort or a
+     * Bestiary refresh rebuilds it along with the table; `_bestiaryPlanActive`
+     * is what survives the rebuild, so a plan once asked for is redrawn — and
+     * a plan asked for before the Bestiary had loaded fills in when it lands.
+     *
+     * @param {HTMLElement} container - The results container, table already drawn
+     * @private
+     */
+    _renderBestiaryPlanner(container) {
+        if (!container) return;
+        container.querySelector('#mwi-csim-bestiary-plan')?.remove();
+
+        const box = document.createElement('div');
+        box.id = 'mwi-csim-bestiary-plan';
+        box.style.cssText = 'margin-top:8px; padding-top:6px; border-top:1px solid #333;';
+        const hours = this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS;
+        box.innerHTML = `
+            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11px;">
+                <span style="color:#ffb74d; font-weight:600;" title="Which zones, in which order, earn the most Bestiary points in the time given: fight wherever the next point lands soonest, then move on. Uses the kills per hour this run simulated and your current defeated counts.">Bestiary plan</span>
+                <label style="color:#888; display:flex; align-items:center; gap:4px;">Hours
+                    <input id="mwi-csim-bestiary-plan-hours" type="number" min="0.1" max="10000" step="any" value="${hours}" style="width:56px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; text-align:center;">
+                </label>
+                <button id="mwi-csim-bestiary-plan-btn" style="background:${ACCENT_BTN_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:#8ab4f8; border-radius:4px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;">Plan</button>
+                <button id="mwi-csim-bestiary-plan-copy" style="display:none; background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;">Copy</button>
+            </div>
+            <div id="mwi-csim-bestiary-plan-out" style="margin-top:6px;"></div>
+        `;
+        container.appendChild(box);
+
+        const input = box.querySelector('#mwi-csim-bestiary-plan-hours');
+        box.querySelector('#mwi-csim-bestiary-plan-btn').addEventListener('click', (event) => {
+            event.stopPropagation();
+            const value = parseFloat(input.value);
+            this._bestiaryPlanHours = value > 0 ? value : BESTIARY_PLAN_DEFAULT_HOURS;
+            input.value = String(this._bestiaryPlanHours);
+            this._persistBestiaryPlanHoursPref();
+            this._bestiaryPlanActive = true;
+            this._drawBestiaryPlan();
+        });
+        const copyBtn = box.querySelector('#mwi-csim-bestiary-plan-copy');
+        copyBtn.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            const text = this._bestiaryPlanText();
+            if (!text) return;
+            const flash = (label) => {
+                copyBtn.textContent = label;
+                clearTimeout(this._bestiaryPlanCopyFlash);
+                this._bestiaryPlanCopyFlash = setTimeout(() => {
+                    copyBtn.textContent = 'Copy';
+                }, 1600);
+            };
+            try {
+                await navigator.clipboard.writeText(text);
+                flash('Copied ✓');
+            } catch (error) {
+                console.error('[CombatSimUI] Copying the Bestiary plan failed:', error);
+                flash('Failed');
+            }
+        });
+
+        if (this._bestiaryPlanActive) this._drawBestiaryPlan();
+    }
+
+    /**
+     * The plan the planner would draw now, or null without the Bestiary.
+     * @returns {Object|null}
+     * @private
+     */
+    _currentBestiaryPlan() {
+        if (!this._bestiaryPlanCounts || !this._bestiaryPlanZones) return null;
+        return planBestiaryRoute({
+            zones: this._bestiaryPlanZones,
+            counts: this._bestiaryPlanCounts,
+            hours: this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS,
+        });
+    }
+
+    /** @private */
+    _bestiaryMonsterName(hrid) {
+        return this._bestiaryPlanGameData?.combatMonsterDetailMap?.[hrid]?.name || hrid;
+    }
+
+    /**
+     * The plan as plain text, what the Copy button puts on the clipboard.
+     * @returns {string}
+     * @private
+     */
+    _bestiaryPlanText() {
+        const plan = this._currentBestiaryPlan();
+        return plan ? formatPlanText(plan, { monsterName: (hrid) => this._bestiaryMonsterName(hrid) }) : '';
+    }
+
+    /**
+     * Draw (or redraw) the plan into the planner's output slot.
+     * @private
+     */
+    _drawBestiaryPlan() {
+        const out = this.panel?.querySelector('#mwi-csim-bestiary-plan-out');
+        const copyBtn = this.panel?.querySelector('#mwi-csim-bestiary-plan-copy');
+        if (!out) return;
+
+        if (!this._bestiaryPlanCounts) {
+            this._requestBestiary();
+            out.innerHTML =
+                '<span style="color:#888; font-size:11px;">waiting for bestiary… (open Achievements → Bestiary once ' +
+                'if this does not fill in)</span>';
+            if (copyBtn) copyBtn.style.display = 'none';
+            return;
+        }
+
+        const plan = this._currentBestiaryPlan();
+        if (copyBtn) copyBtn.style.display = plan?.segments.length ? '' : 'none';
+        const esc = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        const skipped = this._bestiaryPlanSkipped || 0;
+        const skippedNote = skipped
+            ? `<div style="color:#888; font-size:10px; margin-bottom:4px;">${skipped} zone${
+                  skipped === 1 ? '' : 's'
+              } without a sim result skipped.</div>`
+            : '';
+        if (!plan || !plan.segments.length) {
+            out.innerHTML = `${skippedNote}<span style="color:#888; font-size:11px;">No zone in this run earns a Bestiary point.</span>`;
+            return;
+        }
+
+        const th = (label, align = 'right') =>
+            `<th style="padding:3px 4px; white-space:nowrap; font-size:10px; font-weight:600; color:#888; ` +
+            `border-bottom:1px solid #333; text-align:${align};">${label}</th>`;
+        const tdStyle = 'padding:2px 4px; font-size:10px; white-space:nowrap;';
+        const body = plan.segments
+            .map((segment, index) => {
+                const crossings = segment.monsters.filter((m) => m.reached);
+                const pending = segment.monsters.filter((m) => !m.reached);
+                const crossText = crossings
+                    .map((m) => `${esc(this._bestiaryMonsterName(m.monsterHrid))} ${m.from} → ${m.to}`)
+                    .join(', ');
+                const partialText = segment.partial
+                    ? pending
+                          .slice(0, 3)
+                          .map((m) => `${esc(this._bestiaryMonsterName(m.monsterHrid))} ${Math.floor(m.count)}/${m.to}`)
+                          .join(', ')
+                    : '';
+                const detail =
+                    (crossText ? `<span style="color:#e0e0e0;">${crossText}</span>` : '') +
+                    (partialText
+                        ? `<span style="color:#888;">${crossText ? ' · ' : ''}partial: ${partialText}</span>`
+                        : '');
+                const stripe = index % 2 ? ' background:rgba(255,255,255,0.02);' : '';
+                return (
+                    `<tr style="border-bottom:1px solid #1a1a1a;${stripe}">` +
+                    `<td style="${tdStyle} color:#888; text-align:right;">${index + 1}</td>` +
+                    `<td style="${tdStyle} color:#e0e0e0; text-align:left;">${esc(segment.name)}</td>` +
+                    `<td style="${tdStyle} color:#e0e0e0; text-align:right; font-variant-numeric:tabular-nums;">${formatPlanHours(segment.hours)}</td>` +
+                    `<td style="${tdStyle} color:${segment.points > 0 ? '#4caf50' : '#888'}; text-align:right; font-variant-numeric:tabular-nums;">+${segment.points}</td>` +
+                    `<td style="${tdStyle} text-align:left; white-space:normal;">${detail || '—'}</td>` +
+                    `</tr>`
+                );
+            })
+            .join('');
+        const single = plan.bestSingle
+            ? `best single zone ${esc(plan.bestSingle.name)}: <span style="color:#e0e0e0;">${plan.bestSingle.points}</span>`
+            : 'no single zone earns a point';
+        out.innerHTML = `
+            ${skippedNote}
+            <div style="overflow-x:auto;">
+                <table style="width:100%; border-collapse:collapse; min-width:360px;">
+                    <thead><tr>${th('#')}${th('Zone', 'left')}${th('Time')}${th('Points')}${th('Thresholds crossed', 'left')}</tr></thead>
+                    <tbody>${body}</tbody>
+                </table>
+            </div>
+            <div id="mwi-csim-bestiary-plan-footer" style="font-size:11px; color:#888; margin-top:4px;">
+                Route: <span style="color:#4caf50; font-weight:600;">${plan.totalPoints} points</span> in ${formatPlanHours(plan.hoursUsed)} h · ${single}
+            </div>
+        `;
     }
 
     /**
@@ -5604,6 +5825,8 @@ class CombatSimUI {
         this._allZonesMaxTierFood = false;
         this._allZonesFoodSwaps = [];
         this._seekResults = null;
+        this._bestiaryPlanActive = false;
+        this._bestiaryPlanZones = null;
         if (this._bestiaryListener) {
             dataManager.off?.('monsters_updated', this._bestiaryListener);
             this._bestiaryListener = null;
