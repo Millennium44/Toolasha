@@ -14,6 +14,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
 import { calculateActionsPerHour } from '../../utils/profit-helpers.js';
 import { calculateMultiLevelProgress } from '../../utils/experience-calculator.js';
+import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
 
 class AlchemyProfitDisplay {
     constructor() {
@@ -891,6 +892,8 @@ class AlchemyProfitDisplay {
             margin-bottom: 8px;
         `;
         netProfitLine.textContent = `Net Profit: ${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+        // How the alchemy forecast has fared against finished runs, when measured
+        appendCalibrationBadge(netProfitLine, 'alchemy', { actionHrid: `/actions/alchemy/${actionType}` });
         topLevelContent.appendChild(netProfitLine);
 
         // Add pricing mode label

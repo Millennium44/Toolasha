@@ -48,6 +48,9 @@ const coreExternalGlobals = new Map([
 const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/formatters.js')), 'Toolasha.Utils.formatters'],
     [normalize(join(__dirname, 'src/utils/liquidity-cap.js')), 'Toolasha.Utils.liquidityCap'],
+    // The calibration badges' ledger cache: one read of the ledger and one set
+    // of memoised summaries, reached from the actions and sim bundles
+    [normalize(join(__dirname, 'src/utils/calibration-badge.js')), 'Toolasha.Utils.calibrationBadge'],
     [normalize(join(__dirname, 'src/utils/class-weapon.js')), 'Toolasha.Utils.classWeapon'],
     [normalize(join(__dirname, 'src/utils/damage-board.js')), 'Toolasha.Utils.damageBoard'],
     [normalize(join(__dirname, 'src/utils/efficiency.js')), 'Toolasha.Utils.efficiency'],

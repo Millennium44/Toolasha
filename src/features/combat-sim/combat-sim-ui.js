@@ -30,6 +30,7 @@ import { formatWithSeparator, formatKMB, parseKMB, timeReadable } from '../../ut
 import { monsterKillsPerHour, countsByMonster, zoneBestiaryOutlook } from '../../utils/bestiary.js';
 import { planBestiaryRoute, formatPlanHours, formatPlanText } from '../../utils/bestiary-plan.js';
 import { capProfitRate, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
+import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
 import {
     isSkillingGearItem,
     isAuraAbility,
@@ -2707,7 +2708,13 @@ class CombatSimUI {
             ...visibleAllZonesSkillColumns(rows),
             { key: 'revenue', label: 'Rev/hr' },
             { key: 'expenses', label: 'Cost/hr' },
-            { key: 'profit', label: 'Profit/hr' },
+            {
+                key: 'profit',
+                // The sim's track record against archived sessions rides on
+                // the header; a zone with enough sessions of its own gets its
+                // own mark on the cell
+                label: `Profit/hr${badgeHtml(calibrationBadgeFor('combat', { label: 'all-zones sim profit' }))}`,
+            },
             {
                 key: 'bestiary',
                 label: 'Bestiary pts/day',
@@ -2849,6 +2856,19 @@ class CombatSimUI {
                             // A volume-bounded figure is never shown silently
                             if ((col.key === 'profitDay' || col.key === 'profit') && row.liquidityLimit) {
                                 display += liquidityMarkerHtml(row.liquidityLimit, { compact: true });
+                            }
+
+                            // How the sim's forecast for this zone and tier has
+                            // fared against the sessions actually fought there
+                            if (col.key === 'profit' && row.zoneHrid) {
+                                display += badgeHtml(
+                                    calibrationBadgeFor('combat', {
+                                        actionHrid: row.zoneHrid,
+                                        difficultyTier: Number(row.tier) || 0,
+                                        exact: true,
+                                        label: 'sim profit for this zone',
+                                    })
+                                );
                             }
 
                             // Highlight best value per column in green

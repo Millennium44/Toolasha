@@ -3203,6 +3203,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Records what the profit calculators predicted for an action beside what the loot log says the run actually paid, and flags skills where the forecast is persistently off. Adds a Prediction Calibration overlay tile and panel.',
             },
+            insights_calibrationBadges: {
+                id: 'insights_calibrationBadges',
+                label: 'Prediction Calibration: Show track-record badges beside forecasts',
+                type: 'checkbox',
+                default: true,
+                help: 'Marks profit forecasts (action panel, action bar, alchemy rankings, all-zones sim) with how that forecast has fared against finished runs — e.g. “−12% over 40 runs” when it has run hot, or “on target”. Nothing is shown until enough runs are measured.',
+            },
         },
     },
 

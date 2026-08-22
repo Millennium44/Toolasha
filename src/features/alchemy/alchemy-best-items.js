@@ -17,6 +17,7 @@ import assetManifest from '../../utils/asset-manifest.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { capProfitRate, sellsFromProfitData, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
+import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
 import { ALCHEMY_TYPES, rankAlchemyType, getAlchemyBaseXP, calcXpPerAction } from './alchemy-rankings.js';
 
 // Re-exported because this module is where both helpers were first written and
@@ -554,6 +555,13 @@ class AlchemyBestItems {
             th.style.cssText = 'padding: 6px 8px; text-align: left; color: #aaa; font-weight: 500;';
             if (col === '#' || col === 'Lvl') th.style.textAlign = 'center';
             if (col === 'Profit/hr' || col === 'XP/hr') th.style.textAlign = 'right';
+            // The ranking's track record against finished runs, once measured
+            if (col === 'Profit/hr') {
+                appendCalibrationBadge(th, 'alchemy', {
+                    actionHrid: `/actions/alchemy/${this.currentType}`,
+                    label: `alchemy ${this.currentType} profit`,
+                });
+            }
             headerRow.appendChild(th);
         }
         thead.appendChild(headerRow);

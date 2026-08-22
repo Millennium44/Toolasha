@@ -24,6 +24,7 @@ import { loadoutSnapshot, scrollSimulator } from '../../utils/bundle-bridge.js';
 import bundledScrollSimulator from '../combat/scroll-simulator.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
 import { isPriceOverridden, getPriceAgeString } from '../../utils/market-data.js';
+import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
 
 const getMissingPriceIndicator = (isMissing) => (isMissing ? ' ⚠' : '');
 export const formatMissingLabel = (isMissing, value) => (isMissing ? '-- ⚠' : value);
@@ -509,6 +510,8 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
     netProfitLine.textContent = netMissing
         ? 'Net Profit: -- ⚠'
         : `Net Profit: ${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+    // How this forecast has fared against finished runs, when enough are measured
+    if (!netMissing) appendCalibrationBadge(netProfitLine, gatheringActionType, { actionHrid });
     topLevelContent.appendChild(netProfitLine);
 
     // Add pricing mode label
@@ -1153,6 +1156,7 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
         : netEstimated
           ? `Net Profit: ${formatLargeNumber(profit)}/hr ⚠, ${formatLargeNumber(profitPerDay)}/day ⚠`
           : `Net Profit: ${formatLargeNumber(profit)}/hr, ${formatLargeNumber(profitPerDay)}/day`;
+    if (!netMissing) appendCalibrationBadge(netProfitLine, productionActionType, { actionHrid });
     topLevelContent.appendChild(netProfitLine);
 
     // Add pricing mode label

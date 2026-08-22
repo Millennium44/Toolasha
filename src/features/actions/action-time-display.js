@@ -34,6 +34,7 @@ import {
 } from '../../utils/tea-parser.js';
 import { getAlchemySuccessBonus } from '../../utils/buff-parser.js';
 import { capProfitData, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
+import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
 import {
     calculateProductionActionTotalsFromBase,
     calculateGatheringActionTotalsFromBase,
@@ -2764,6 +2765,9 @@ class ActionTimeDisplay {
             if (profitData.liquidityLimit) {
                 html += liquidityMarkerHtml(profitData.liquidityLimit, { compact: true });
             }
+
+            // The forecast's track record against finished runs, from the cached ledger
+            html += badgeHtml(calibrationBadgeFor(actionDetails.type, { actionHrid }));
 
             if (isFinite(remainingActions) && remainingActions > 0 && profitData.actionsPerHour > 0) {
                 const profitPerAction =
