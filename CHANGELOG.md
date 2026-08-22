@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Right-click an ability to open its book in the Item Dictionary
+
+Any ability icon the game draws — a slot in Abilities, Equipment or Loadouts, a learned ability, the combat bar — opens the ability's book entry on right-click; rides the existing "Open Item Dictionary" ability-menu setting.
+
 ### Simulators read a house room you built while the panel was open
 
 The player DTO is built when the simulator opens, so a room upgraded in the House tab afterwards kept being proposed by the Upgrade tab at its old level until the panel was reset. The editor now follows the game's house rooms on every read (a room you edited by hand in the editor stays yours), and the data manager refreshes the character's own room map on `house_rooms_updated` too.

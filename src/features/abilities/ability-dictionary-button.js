@@ -35,6 +35,53 @@ class AbilityDictionaryButton {
         this.unregisterHandlers.push(unregister);
 
         this._scan(document.body);
+
+        // Right-click any ability icon — a slot in Abilities, Equipment or
+        // Loadouts, a learned ability, the combat bar — to open its book in the
+        // Item Dictionary without going through the popup. The icon is known
+        // by its sprite: the game draws every ability off `abilities_sprite`
+        // with the ability's slug as the fragment
+        this._onContextMenu = (event) => {
+            try {
+                this._rightClick(event);
+            } catch (error) {
+                console.error('[AbilityDictionaryButton] Right-click handling failed:', error);
+            }
+        };
+        document.addEventListener('contextmenu', this._onContextMenu, true);
+        this.unregisterHandlers.push(() => document.removeEventListener('contextmenu', this._onContextMenu, true));
+    }
+
+    /**
+     * The ability an element draws, from its sprite, or null.
+     * @param {Element|null} target - Where the click landed
+     * @returns {string|null} Ability hrid
+     */
+    static abilityAt(target) {
+        const svg = target?.closest?.('svg');
+        if (!svg) return null;
+        const use = svg.querySelector('use');
+        const href = use?.getAttribute('href') || use?.getAttribute('xlink:href') || '';
+        if (!href.includes('abilities_sprite')) return null;
+        const tail = href.split('#')[1];
+        return tail ? `/abilities/${tail}` : null;
+    }
+
+    /**
+     * Open the book of the ability under a right-click.
+     * @param {MouseEvent} event
+     * @private
+     */
+    _rightClick(event) {
+        const abilityHrid = AbilityDictionaryButton.abilityAt(event.target);
+        if (!abilityHrid) return;
+        const bookHrid = abilityHrid.replace('/abilities/', '/items/');
+        if (!dataManager.getItemDetails(bookHrid)?.abilityBookDetail) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!openItemDictionary(bookHrid)) {
+            console.warn('[AbilityDictionaryButton] Could not open dictionary for', bookHrid);
+        }
     }
 
     /**
@@ -135,6 +182,7 @@ class AbilityDictionaryButton {
         this.unregisterHandlers = [];
         document.querySelectorAll(`.${BTN_CLASS}`).forEach((btn) => btn.remove());
         this._abilityNameToHrid = null;
+        this._onContextMenu = null;
         this.isInitialized = false;
     }
 }

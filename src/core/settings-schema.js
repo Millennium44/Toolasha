@@ -1935,7 +1935,7 @@ export const settingsGroups = {
                 label: 'Abilities: Add Open Item Dictionary to ability menus',
                 type: 'checkbox',
                 default: true,
-                help: "Adds an Open Item Dictionary button to the popup shown when clicking an ability, opening that ability's book entry.",
+                help: "Adds an Open Item Dictionary button to the popup shown when clicking an ability, and opens that ability's book entry on a right-click of any ability icon (slots, loadouts, the combat bar).",
             },
             chestKeyMarketButton: {
                 id: 'chestKeyMarketButton',
