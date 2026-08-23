@@ -193,6 +193,15 @@ export function loadoutSnapshot() {
 }
 
 /**
+ * The dungeon run history store. The combat bundle's copy is the one the
+ * tracker writes to; another bundle's would read an empty list.
+ * @returns {Object|null} The store, or null when the combat bundle is absent
+ */
+export function dungeonTrackerStorage() {
+    return toolashaRoot()?.Combat?.dungeonTrackerStorage || null;
+}
+
+/**
  * The combat recorder the websocket actually feeds.
  * @returns {Object|null} The recorder, or null when the combat bundle is absent
  */

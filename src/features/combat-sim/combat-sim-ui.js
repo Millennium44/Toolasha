@@ -7,7 +7,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import bundledExpectedValueCalculator from '../market/expected-value-calculator.js';
-import { expectedValueCalculator, missingMaterialsButton } from '../../utils/bundle-bridge.js';
+import { expectedValueCalculator, missingMaterialsButton, dungeonTrackerStorage } from '../../utils/bundle-bridge.js';
 import { watchTarget } from '../inventory/equipment-savings-row.js';
 import { watchItem } from '../inventory/watchlist.js';
 import { addAbilityGoal, addHouseGoal } from '../../utils/equipment-savings.js';
@@ -28,7 +28,7 @@ import {
 } from '../../utils/all-zones-snapshot.js';
 import { formatWithSeparator, formatKMB, parseKMB, timeReadable } from '../../utils/formatters.js';
 import { monsterKillsPerHour, countsByMonster, zoneBestiaryOutlook } from '../../utils/bestiary.js';
-import { planBestiaryRoute, formatPlanHours, formatPlanText } from '../../utils/bestiary-plan.js';
+import { planBestiaryRoute, rescaleDungeonRates, formatPlanHours, formatPlanText } from '../../utils/bestiary-plan.js';
 import { capProfitRate, liquidityMarkerHtml } from '../../utils/liquidity-cap.js';
 import { badgeHtml, calibrationBadgeFor } from '../../utils/calibration-badge.js';
 import {
@@ -113,6 +113,29 @@ const ALL_ZONES_MAX_FOOD_KEY = 'combatSimAllZonesMaxTierFood';
 /** The Bestiary planner's time budget, remembered across sessions */
 const BESTIARY_PLAN_HOURS_KEY = 'combatSimBestiaryPlanHours';
 const BESTIARY_PLAN_DEFAULT_HOURS = 24;
+
+/**
+ * Which way round the planner is asked its question — a time budget ("what can
+ * I earn in a day") or a points target ("how long until twenty more") — and the
+ * target itself. Both are remembered for the same reason the hours are: whoever
+ * plans in points plans in points.
+ */
+const BESTIARY_PLAN_MODE_KEY = 'combatSimBestiaryPlanMode';
+const BESTIARY_PLAN_POINTS_KEY = 'combatSimBestiaryPlanPoints';
+const BESTIARY_PLAN_DEFAULT_POINTS = 20;
+
+/**
+ * Whether an All Zones run also simulates every dungeon at every tier.
+ *
+ * Off by default: dungeons roughly double the run, and a Bestiary route that
+ * sends you into one is only honest if your own clear times back it up. On, the
+ * dungeons join the results table marked `[D]` and the planner rescales their
+ * simulated kill rates to the clear time your run history measured.
+ */
+const ALL_ZONES_DUNGEONS_KEY = 'combatSimAllZonesIncludeDungeons';
+
+/** Dungeons run T0-T2 where an ordinary zone runs T0-T5 */
+const DUNGEON_MAX_TIER = 2;
 
 /**
  * What the Max-tier Food checkbox promises, in one hover.
@@ -1515,6 +1538,11 @@ class CombatSimUI {
         this._allZonesSortAsc = false;
         this._earlyExitEnabled = true; // default on
         this._maxTierFoodEnabled = false; // sim all zones on the best food of each kind you run
+        this._includeDungeons = false; // whether an all-zones run also simulates every dungeon
+        // Bestiary planner: a time budget by default, a points target on request
+        this._bestiaryPlanMode = 'hours';
+        this._bestiaryPlanHours = BESTIARY_PLAN_DEFAULT_HOURS;
+        this._bestiaryPlanPoints = BESTIARY_PLAN_DEFAULT_POINTS;
         // What the displayed results were actually run on, so a re-sort keeps
         // saying so and a saved comparison can never be read as a real-loadout run
         this._allZonesMaxTierFood = false;
@@ -2085,7 +2113,7 @@ class CombatSimUI {
         this._restoreSwapAuraOnly();
         this._loadUpgradeColumnPrefs();
         this._loadMaxTierFoodPref();
-        this._loadBestiaryPlanHoursPref();
+        this._loadBestiaryPlanPrefs();
         this._restoreUpgradeResults();
         this._restorePanelGeometry();
         this.panel.querySelector('#mwi-csim-ability-targets-toggle').addEventListener('click', () => {
@@ -2245,7 +2273,7 @@ class CombatSimUI {
         const selectedHrid = zoneSelect.value;
         const zones = getCombatZones();
         const zone = zones.find((z) => z.hrid === selectedHrid);
-        const maxTier = zone?.isDungeon ? 2 : 5;
+        const maxTier = zone?.isDungeon ? DUNGEON_MAX_TIER : 5;
 
         const currentTier = parseInt(tierSelect.value) || 0;
         tierSelect.innerHTML = Array.from({ length: maxTier + 1 }, (_, i) => `<option value="${i}">${i}</option>`).join(
@@ -2407,6 +2435,18 @@ class CombatSimUI {
                 selected.push({ zoneHrid: zone.hrid, difficultyTier: t, name: zone.name });
             }
         });
+
+        // Dungeons are not in the checklist — there are only a handful of them
+        // and they are all-or-nothing, so one preference decides it. Appended
+        // last so an ordinary run's rows keep the order they always had.
+        if (this._includeDungeons) {
+            for (const zone of allZones.filter((z) => z.isDungeon)) {
+                // T0-T2, the same range the Configure tier dropdown offers
+                for (let t = 0; t <= DUNGEON_MAX_TIER; t++) {
+                    selected.push({ zoneHrid: zone.hrid, difficultyTier: t, name: zone.name });
+                }
+            }
+        }
 
         return selected;
     }
@@ -2634,10 +2674,18 @@ class CombatSimUI {
                       })
                     : null;
 
+                // A dungeon row is marked the way the Configure select marks
+                // one, and carries what the planner needs to restate its kill
+                // rates at a real clear time
+                const dungeon = sim.isDungeon
+                    ? { completions: sim.dungeonsCompleted || 0, simHours, name: r.zone.name }
+                    : null;
+
                 return {
-                    zone: r.zone.name,
+                    zone: dungeon ? `[D] ${r.zone.name}` : r.zone.name,
                     zoneHrid: r.zone.zoneHrid || r.zone.hrid,
                     tier: r.zone.difficultyTier,
+                    _dungeon: dungeon,
                     encounters,
                     deaths: playerDeaths,
                     totalXP,
@@ -2699,15 +2747,10 @@ class CombatSimUI {
               }, null)
             : null;
 
-        // What the route planner works from: every simulated zone in run order
-        // (ties in the plan go to the earlier one), the counts, and how many
-        // zones had no result to plan with
-        this._bestiaryPlanZones = rows.map((row) => ({
-            zoneHrid: `${row.zoneHrid || row.zone}|T${row.tier}`,
-            name: `${row.zone} T${row.tier}`,
-            killsPerHour: row._killsPerHour,
-            encountersPerHour: row.encounters,
-        }));
+        // What the route planner works from: the zones (in run order — ties in
+        // the plan go to the earlier one), the counts, and how many zones had
+        // no result to plan with
+        this._bestiaryPlanZones = await this._buildBestiaryPlanZones(rows);
         this._bestiaryPlanCounts = bestiaryCounts;
         this._bestiaryPlanSkipped = zoneResults.filter((r) => !r || !r.simResult).length;
         this._bestiaryPlanGameData = gameData;
@@ -2997,23 +3040,105 @@ class CombatSimUI {
         });
     }
 
-    /** @private */
-    async _loadBestiaryPlanHoursPref() {
+    /**
+     * The zones the route planner works from: every simulated zone in run order
+     * (ties in the plan go to the earlier one), at the kill rates it should be
+     * planned at.
+     *
+     * An ordinary zone is planned at the rates the sim reported. A dungeon is
+     * not: the sim clears one at a pace nobody sustains, and a route that sent
+     * you there on that promise would be wrong by however much your party
+     * actually hesitates. What the sim is right about is the *contents* of a
+     * clear, so the rates are restated as "one clear's worth of kills, at the
+     * clears an hour your own run history manages" — see `rescaleDungeonRates`.
+     *
+     * @param {Array<Object>} rows - The results table's rows
+     * @returns {Promise<Array<Object>>} Planner zones
+     * @private
+     */
+    async _buildBestiaryPlanZones(rows) {
+        let runs = [];
+        if (rows.some((row) => row._dungeon)) {
+            try {
+                runs = (await dungeonTrackerStorage()?.getAllRuns()) || [];
+            } catch (error) {
+                console.error('[CombatSimUI] Reading the dungeon run history for the plan failed:', error);
+            }
+        }
+
+        return rows.map((row) => {
+            const zone = {
+                zoneHrid: `${row.zoneHrid || row.zone}|T${row.tier}`,
+                name: `${row.zone} T${row.tier}`,
+                killsPerHour: row._killsPerHour,
+                encountersPerHour: row.encounters,
+            };
+            if (!row._dungeon) return zone;
+
+            const simHours = Number(row._dungeon.simHours) || 0;
+            const scaled = rescaleDungeonRates({
+                killsPerHour: row._killsPerHour,
+                simClearsPerHour: simHours > 0 ? row._dungeon.completions / simHours : 0,
+                runs: runs.filter((run) => run?.dungeonName === row._dungeon.name || run?.dungeonHrid === row.zoneHrid),
+                tier: row.tier,
+            });
+            if (!scaled) return { ...zone, isDungeon: true };
+
+            return {
+                ...zone,
+                killsPerHour: scaled.killsPerHour,
+                // A dungeon's "fights" are clears, which is also what the plan
+                // table calls them
+                encountersPerHour: scaled.clearsPerHour,
+                isDungeon: true,
+                note:
+                    scaled.source === 'measured'
+                        ? `measured (${scaled.runs} run${scaled.runs === 1 ? '' : 's'})`
+                        : scaled.source === 'measured-all-tiers'
+                          ? `measured, all tiers (${scaled.runs} run${scaled.runs === 1 ? '' : 's'})`
+                          : 'sim clear time',
+            };
+        });
+    }
+
+    /**
+     * Read back the planner's remembered budget, mode, points target and
+     * whether dungeons join the run.
+     * @private
+     */
+    async _loadBestiaryPlanPrefs() {
         try {
-            const saved = await storage.get(BESTIARY_PLAN_HOURS_KEY, 'settings', null);
-            const hours = Number(saved);
-            if (hours > 0) this._bestiaryPlanHours = hours;
+            const savedHours = Number(await storage.get(BESTIARY_PLAN_HOURS_KEY, 'settings', null));
+            if (savedHours > 0) this._bestiaryPlanHours = savedHours;
+            const savedMode = await storage.get(BESTIARY_PLAN_MODE_KEY, 'settings', null);
+            if (savedMode === 'points' || savedMode === 'hours') this._bestiaryPlanMode = savedMode;
+            const savedPoints = Number(await storage.get(BESTIARY_PLAN_POINTS_KEY, 'settings', null));
+            if (savedPoints > 0) this._bestiaryPlanPoints = savedPoints;
+            this._includeDungeons = Boolean(await storage.get(ALL_ZONES_DUNGEONS_KEY, 'settings', false));
         } catch (error) {
-            console.error('[CombatSimUI] Failed to read the Bestiary plan hours:', error);
+            console.error('[CombatSimUI] Failed to read the Bestiary plan preferences:', error);
         }
     }
 
     /** @private */
-    async _persistBestiaryPlanHoursPref() {
+    async _persistBestiaryPlanPrefs() {
         try {
-            await storage.set(BESTIARY_PLAN_HOURS_KEY, this._bestiaryPlanHours, 'settings');
+            await Promise.all([
+                storage.set(
+                    BESTIARY_PLAN_HOURS_KEY,
+                    this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS,
+                    'settings'
+                ),
+                storage.set(BESTIARY_PLAN_MODE_KEY, this._bestiaryPlanMode || 'hours', 'settings'),
+                storage.set(
+                    BESTIARY_PLAN_POINTS_KEY,
+                    this._bestiaryPlanPoints || BESTIARY_PLAN_DEFAULT_POINTS,
+                    'settings'
+                ),
+                storage.set(ALL_ZONES_DUNGEONS_KEY, Boolean(this._includeDungeons), 'settings'),
+            ]);
         } catch (error) {
-            console.error('[CombatSimUI] Failed to save the Bestiary plan hours:', error);
+            console.error('[CombatSimUI] Failed to save the Bestiary plan preferences:', error);
         }
     }
 
@@ -3037,27 +3162,72 @@ class CombatSimUI {
         const box = document.createElement('div');
         box.id = 'mwi-csim-bestiary-plan';
         box.style.cssText = 'margin-top:8px; padding-top:6px; border-top:1px solid #333;';
+        const mode = this._bestiaryPlanMode === 'points' ? 'points' : 'hours';
         const hours = this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS;
+        const points = this._bestiaryPlanPoints || BESTIARY_PLAN_DEFAULT_POINTS;
+        const inputStyle =
+            'width:56px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; ' +
+            'padding:2px 4px; font-size:11px; text-align:center;';
         box.innerHTML = `
             <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11px;">
                 <span style="color:#ffb74d; font-weight:600;" title="Which zones, in which order, earn the most Bestiary points in the time given: fight wherever the next point lands soonest, then move on. Uses the kills per hour this run simulated and your current defeated counts.">Bestiary plan</span>
-                <label style="color:#888; display:flex; align-items:center; gap:4px;">Hours
-                    <input id="mwi-csim-bestiary-plan-hours" type="number" min="0.1" max="10000" step="any" value="${hours}" style="width:56px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; text-align:center;">
+                <select id="mwi-csim-bestiary-plan-mode" title="Hours: what a time budget earns. Points: how long a points target takes, and where." style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; font-family:inherit; cursor:pointer;">
+                    <option value="hours"${mode === 'hours' ? ' selected' : ''}>Hours</option>
+                    <option value="points"${mode === 'points' ? ' selected' : ''}>Points</option>
+                </select>
+                <label style="color:#888; display:flex; align-items:center; gap:4px;"><span id="mwi-csim-bestiary-plan-label">${mode === 'points' ? 'Points wanted' : 'Hours'}</span>
+                    <input id="mwi-csim-bestiary-plan-value" type="number" min="${mode === 'points' ? '1' : '0.1'}" max="100000" step="any" value="${mode === 'points' ? points : hours}" style="${inputStyle}">
                 </label>
                 <button id="mwi-csim-bestiary-plan-btn" style="background:${ACCENT_BTN_BG}; border:1px solid ${ACCENT_BTN_BORDER}; color:#8ab4f8; border-radius:4px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;">Plan</button>
                 <button id="mwi-csim-bestiary-plan-copy" style="display:none; background:#1a1a2e; color:#8ab4f8; border:1px solid #333; border-radius:3px; padding:2px 8px; font-size:11px; cursor:pointer; font-family:inherit;">Copy</button>
+                <label style="color:#888; display:flex; align-items:center; gap:4px; cursor:pointer;" title="Simulate every dungeon at T0-T2 as well, and let the plan send you into one. Dungeon rows are marked [D] and are planned at the clear time your own run history measured, not the simulator's. Takes effect on the next All Zones run.">
+                    <input id="mwi-csim-bestiary-plan-dungeons" type="checkbox"${this._includeDungeons ? ' checked' : ''} style="margin:0; cursor:pointer;">
+                    Include dungeons
+                </label>
             </div>
             <div id="mwi-csim-bestiary-plan-out" style="margin-top:6px;"></div>
         `;
         container.appendChild(box);
 
-        const input = box.querySelector('#mwi-csim-bestiary-plan-hours');
+        const input = box.querySelector('#mwi-csim-bestiary-plan-value');
+        const label = box.querySelector('#mwi-csim-bestiary-plan-label');
+        const modeSelect = box.querySelector('#mwi-csim-bestiary-plan-mode');
+        // What the one box means depends on the mode, so the switch banks the
+        // value it is leaving before it swaps the field under the cursor
+        const readInput = () => {
+            const value = parseFloat(input.value);
+            if (this._bestiaryPlanMode === 'points') {
+                this._bestiaryPlanPoints = value > 0 ? value : BESTIARY_PLAN_DEFAULT_POINTS;
+                input.value = String(this._bestiaryPlanPoints);
+            } else {
+                this._bestiaryPlanHours = value > 0 ? value : BESTIARY_PLAN_DEFAULT_HOURS;
+                input.value = String(this._bestiaryPlanHours);
+            }
+        };
+        modeSelect.addEventListener('change', (event) => {
+            event.stopPropagation();
+            readInput();
+            this._bestiaryPlanMode = modeSelect.value === 'points' ? 'points' : 'hours';
+            const nowPoints = this._bestiaryPlanMode === 'points';
+            label.textContent = nowPoints ? 'Points wanted' : 'Hours';
+            input.min = nowPoints ? '1' : '0.1';
+            input.value = String(
+                nowPoints
+                    ? this._bestiaryPlanPoints || BESTIARY_PLAN_DEFAULT_POINTS
+                    : this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS
+            );
+            this._persistBestiaryPlanPrefs();
+            if (this._bestiaryPlanActive) this._drawBestiaryPlan();
+        });
+        box.querySelector('#mwi-csim-bestiary-plan-dungeons').addEventListener('change', (event) => {
+            event.stopPropagation();
+            this._includeDungeons = event.target.checked;
+            this._persistBestiaryPlanPrefs();
+        });
         box.querySelector('#mwi-csim-bestiary-plan-btn').addEventListener('click', (event) => {
             event.stopPropagation();
-            const value = parseFloat(input.value);
-            this._bestiaryPlanHours = value > 0 ? value : BESTIARY_PLAN_DEFAULT_HOURS;
-            input.value = String(this._bestiaryPlanHours);
-            this._persistBestiaryPlanHoursPref();
+            readInput();
+            this._persistBestiaryPlanPrefs();
             this._bestiaryPlanActive = true;
             this._drawBestiaryPlan();
         });
@@ -3111,6 +3281,8 @@ class CombatSimUI {
             zones: this._bestiaryPlanZones,
             counts: this._bestiaryPlanCounts,
             hours: this._bestiaryPlanHours || BESTIARY_PLAN_DEFAULT_HOURS,
+            targetPoints:
+                this._bestiaryPlanMode === 'points' ? this._bestiaryPlanPoints || BESTIARY_PLAN_DEFAULT_POINTS : null,
         });
     }
 
@@ -3165,8 +3337,12 @@ class CombatSimUI {
             `<th style="padding:3px 4px; white-space:nowrap; font-size:10px; font-weight:600; color:#888; ` +
             `border-bottom:1px solid #333; text-align:${align};">${label}</th>`;
         const tdStyle = 'padding:2px 4px; font-size:10px; white-space:nowrap;';
-        const fightsCell = (encounters) =>
-            encounters === null || encounters === undefined ? '—' : `≈${Math.round(encounters).toLocaleString()}`;
+        // A dungeon's stay is quoted in clears — "≈3 fights" for three trips
+        // through a fortress would be nonsense
+        const fightsCell = (segment) =>
+            segment.encounters === null || segment.encounters === undefined
+                ? '—'
+                : `≈${Math.round(segment.encounters).toLocaleString()}${segment.isDungeon ? ' clears' : ''}`;
         const body = plan.segments
             .map((segment, index) => {
                 const crossings = segment.monsters.filter((m) => m.reached);
@@ -3186,21 +3362,42 @@ class CombatSimUI {
                         ? `<span style="color:#888;">${crossText ? ' · ' : ''}partial: ${partialText}</span>`
                         : '');
                 const stripe = index % 2 ? ' background:rgba(255,255,255,0.02);' : '';
+                const fightsTitle = segment.isDungeon
+                    ? `About how many clears that stay is, at your clear time for this dungeon — ${
+                          segment.note || 'sim clear time'
+                      }`
+                    : 'About how many fights that stay is, at the fights per hour this run simulated for the zone';
+                const nameTitle = segment.note ? ` title="Clear time: ${esc(segment.note)}"` : '';
                 return (
                     `<tr style="border-bottom:1px solid #1a1a1a;${stripe}">` +
                     `<td style="${tdStyle} color:#888; text-align:right;">${index + 1}</td>` +
-                    `<td style="${tdStyle} color:#e0e0e0; text-align:left;">${esc(segment.name)}</td>` +
+                    `<td style="${tdStyle} color:#e0e0e0; text-align:left;"${nameTitle}>${esc(segment.name)}</td>` +
                     `<td style="${tdStyle} color:#e0e0e0; text-align:right; font-variant-numeric:tabular-nums;">${formatPlanHours(segment.hours)}</td>` +
-                    `<td style="${tdStyle} color:#bbb; text-align:right; font-variant-numeric:tabular-nums;" title="About how many fights that stay is, at the fights per hour this run simulated for the zone">${fightsCell(segment.encounters)}</td>` +
+                    `<td style="${tdStyle} color:#bbb; text-align:right; font-variant-numeric:tabular-nums;" title="${esc(fightsTitle)}">${fightsCell(segment)}</td>` +
                     `<td style="${tdStyle} color:${segment.points > 0 ? '#4caf50' : '#888'}; text-align:right; font-variant-numeric:tabular-nums;">+${segment.points}</td>` +
                     `<td style="${tdStyle} text-align:left; white-space:normal;">${detail || '—'}</td>` +
                     `</tr>`
                 );
             })
             .join('');
-        const single = plan.bestSingle
-            ? `best single zone ${esc(plan.bestSingle.name)}: <span style="color:#e0e0e0;">${plan.bestSingle.points}</span>`
-            : 'no single zone earns a point';
+        // Points mode compares in time, not in points: the single zone that
+        // reaches the same target soonest, or that it never does
+        let single;
+        if (!plan.bestSingle) {
+            single = plan.mode === 'points' ? 'no single zone reaches it' : 'no single zone earns a point';
+        } else if (plan.mode === 'points') {
+            single =
+                plan.bestSingle.hours === null || plan.bestSingle.hours === undefined
+                    ? `no single zone reaches ${plan.targetPoints}`
+                    : `best single zone ${esc(plan.bestSingle.name)} reaches ${plan.targetPoints} in ` +
+                      `<span style="color:#e0e0e0;">${formatPlanHours(plan.bestSingle.hours)} h</span>`;
+        } else {
+            single = `best single zone ${esc(plan.bestSingle.name)}: <span style="color:#e0e0e0;">${plan.bestSingle.points}</span>`;
+        }
+        const shortfall = plan.unreachable
+            ? `<div style="color:#ffb74d; font-size:10px; margin-top:2px;">Every zone ran dry before ` +
+              `${plan.targetPoints} points — this is as far as they get.</div>`
+            : '';
         out.innerHTML = `
             ${skippedNote}
             <div style="overflow-x:auto;">
@@ -3212,6 +3409,7 @@ class CombatSimUI {
             <div id="mwi-csim-bestiary-plan-footer" style="font-size:11px; color:#888; margin-top:4px;">
                 Route: <span style="color:#4caf50; font-weight:600;">${plan.totalPoints} points</span> in ${formatPlanHours(plan.hoursUsed)} h · ${single}
             </div>
+            ${shortfall}
         `;
     }
 

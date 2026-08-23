@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest';
-import { planBestiaryRoute, formatPlanHours, formatPlanText } from './bestiary-plan.js';
+import { planBestiaryRoute, rescaleDungeonRates, formatPlanHours, formatPlanText } from './bestiary-plan.js';
 import { pointsFromCount } from './bestiary.js';
 
 const zone = (zoneHrid, killsPerHour, name = zoneHrid) => ({ zoneHrid, name, killsPerHour });
@@ -179,5 +179,185 @@ describe('fights per stay', () => {
         expect(plan.bestSingle.encounters === null || plan.bestSingle.encounters > 0).toBe(true);
         const text = formatPlanText(plan);
         expect(text).toMatch(/≈\d+ fights/);
+    });
+});
+
+describe('planning to a points target', () => {
+    test('stops at the first crossing that reaches the target, and reports how long it took', () => {
+        // Fly 10/hr from 0: a point at 1 kill (0.1 h), the next at 10 (0.9 h more).
+        // Bee 5/hr from 0: a point at 1 kill (0.2 h).
+        const plan = planBestiaryRoute({
+            zones: [zone('a', { '/monsters/fly': 10 }), zone('b', { '/monsters/bee': 5 })],
+            counts: {},
+            targetPoints: 2,
+        });
+        expect(plan.mode).toBe('points');
+        expect(plan.targetPoints).toBe(2);
+        expect(plan.unreachable).toBe(false);
+        // a for the fly's first kill (+1, 0.1 h), then b for the bee's (+1, 0.2 h)
+        // — and nothing after, because the second point is the target
+        expect(plan.totalPoints).toBe(2);
+        expect(plan.segments.map((s) => s.zoneHrid)).toEqual(['a', 'b']);
+        expect(plan.hoursUsed).toBeCloseTo(0.3, 9);
+        expect(plan.hours).toBeCloseTo(plan.hoursUsed, 9);
+        // Nothing is planned past the crossing that got there
+        expect(plan.segments[plan.segments.length - 1].partial).toBe(false);
+    });
+
+    test('a target the route overshoots is reported at the crossing that took it past', () => {
+        // Wasp at 99 crossing 100 is worth +3 on its own
+        const plan = planBestiaryRoute({
+            zones: [zone('a', { '/monsters/wasp': 10 })],
+            counts: { '/monsters/wasp': 99 },
+            targetPoints: 2,
+        });
+        expect(plan.totalPoints).toBe(3);
+        expect(plan.totalPoints).toBeGreaterThanOrEqual(plan.targetPoints);
+        expect(plan.segments).toHaveLength(1);
+        expect(plan.hoursUsed).toBeCloseTo(0.1, 9);
+        expect(plan.unreachable).toBe(false);
+    });
+
+    test('a target reached exactly stops there', () => {
+        const plan = planBestiaryRoute({
+            zones: [zone('a', { '/monsters/fly': 1 })],
+            counts: {},
+            targetPoints: 1,
+        });
+        expect(plan.totalPoints).toBe(1);
+        expect(plan.hoursUsed).toBeCloseTo(1, 9);
+        expect(plan.segments).toHaveLength(1);
+    });
+
+    test('no zone that kills anything means the target is unreachable, with what was reached', () => {
+        const plan = planBestiaryRoute({ zones: [zone('a', { '/monsters/fly': 0 })], counts: {}, targetPoints: 5 });
+        expect(plan.unreachable).toBe(true);
+        expect(plan.totalPoints).toBe(0);
+        expect(plan.segments).toEqual([]);
+        expect(plan.bestSingle).toBeNull();
+    });
+
+    test('a target beyond patience is unreachable, and the single-zone time is null', () => {
+        // One kill a century: the first point lands, the tenth kill never does
+        const plan = planBestiaryRoute({
+            zones: [zone('slow', { '/monsters/snail': 1e-6 })],
+            counts: {},
+            targetPoints: 4,
+        });
+        expect(plan.unreachable).toBe(true);
+        expect(plan.cappedOut).toBe(true);
+        expect(plan.totalPoints).toBe(1);
+        expect(plan.bestSingle.hours).toBeNull();
+        const text = formatPlanText(plan);
+        expect(text).toContain('Best single zone: none reaches 4 points');
+    });
+
+    test('the single-zone comparison is the soonest one zone gets there alone', () => {
+        const plan = planBestiaryRoute({
+            zones: [zone('slow', { '/monsters/bee': 1 }, 'Hive'), zone('fast', { '/monsters/fly': 10 }, 'Farm')],
+            counts: {},
+            targetPoints: 3,
+        });
+        // Farm alone: fly 0 to 1 (+1) at 0.1 h, 1 to 10 (+2) at 1 h = 3 points in 1 h.
+        // Hive alone: bee 0 to 1 (+1) at 1 h, 1 to 10 (+2) at 10 h = 3 points in 10 h.
+        expect(plan.bestSingle.name).toBe('Farm');
+        expect(plan.bestSingle.hours).toBeCloseTo(1, 9);
+        expect(plan.bestSingle.points).toBe(3);
+        const text = formatPlanText(plan);
+        expect(text.split('\n')[0]).toMatch(/^Bestiary plan — 3 points in /);
+        expect(text).toContain('Best single zone: Farm — reaches 3 in 1:00 h');
+    });
+
+    test('a points target ignores the hours budget entirely', () => {
+        const withHours = planBestiaryRoute({
+            zones: [zone('a', { '/monsters/bee': 1 })],
+            counts: {},
+            hours: 0.1,
+            targetPoints: 1,
+        });
+        expect(withHours.hoursUsed).toBeCloseTo(1, 9);
+        expect(withHours.totalPoints).toBe(1);
+    });
+
+    test('hours mode is untouched by the new fields', () => {
+        const plan = planBestiaryRoute({ zones: [zone('a', { '/monsters/fly': 10 })], counts: {}, hours: 1 });
+        expect(plan.mode).toBe('hours');
+        expect(plan.targetPoints).toBeNull();
+        expect(plan.unreachable).toBe(false);
+        expect(plan.hours).toBe(1);
+    });
+});
+
+describe('a dungeon at your own clear time', () => {
+    // 6 clears an hour: 10 goblins and 1 king to a clear
+    const sim = { '/monsters/goblin': 60, '/monsters/king': 6 };
+
+    test('measured runs for the tier rescale the sim rates to your pace', () => {
+        // Twenty minutes a clear is three an hour, half the sim's six
+        const runs = [
+            { tier: 1, duration: 1_200_000 },
+            { tier: 1, duration: 1_200_000 },
+            { tier: 0, duration: 60_000 },
+        ];
+        const scaled = rescaleDungeonRates({ killsPerHour: sim, simClearsPerHour: 6, runs, tier: 1 });
+        expect(scaled.source).toBe('measured');
+        expect(scaled.runs).toBe(2);
+        expect(scaled.clearSeconds).toBe(1200);
+        expect(scaled.clearsPerHour).toBeCloseTo(3, 9);
+        expect(scaled.killsPerHour['/monsters/goblin']).toBeCloseTo(30, 9);
+        expect(scaled.killsPerHour['/monsters/king']).toBeCloseTo(3, 9);
+    });
+
+    test('a tier with no runs falls back to the dungeon median, and says so', () => {
+        const runs = [
+            { tier: 0, duration: 1_200_000 },
+            { tier: 0, totalTime: 1_200_000 },
+        ];
+        const scaled = rescaleDungeonRates({ killsPerHour: sim, simClearsPerHour: 6, runs, tier: 2 });
+        expect(scaled.source).toBe('measured-all-tiers');
+        expect(scaled.runs).toBe(2);
+        expect(scaled.clearsPerHour).toBeCloseTo(3, 9);
+    });
+
+    test('with no runs at all the sim clear time stands, unchanged', () => {
+        const scaled = rescaleDungeonRates({ killsPerHour: sim, simClearsPerHour: 6, runs: [], tier: 1 });
+        expect(scaled.source).toBe('sim');
+        expect(scaled.runs).toBe(0);
+        expect(scaled.clearSeconds).toBeCloseTo(600, 9);
+        expect(scaled.killsPerHour['/monsters/goblin']).toBeCloseTo(60, 9);
+        expect(scaled.killsPerHour['/monsters/king']).toBeCloseTo(6, 9);
+    });
+
+    test('a dungeon the sim never cleared, or one that killed nothing, has no rate to rescale', () => {
+        expect(rescaleDungeonRates({ killsPerHour: sim, simClearsPerHour: 0, runs: [] })).toBeNull();
+        expect(rescaleDungeonRates({ killsPerHour: {}, simClearsPerHour: 6, runs: [] })).toBeNull();
+        expect(rescaleDungeonRates()).toBeNull();
+    });
+
+    test('runs without a usable duration are ignored rather than counted as instant', () => {
+        const runs = [{ tier: 1, duration: 0 }, { tier: 1 }, { tier: 1, duration: 1_800_000 }];
+        const scaled = rescaleDungeonRates({ killsPerHour: sim, simClearsPerHour: 6, runs, tier: 1 });
+        expect(scaled.runs).toBe(1);
+        expect(scaled.clearsPerHour).toBeCloseTo(2, 9);
+    });
+
+    test('a dungeon segment is quoted in clears, not fights', () => {
+        const plan = planBestiaryRoute({
+            zones: [
+                {
+                    zoneHrid: 'd|T1',
+                    name: '[D] Den T1',
+                    killsPerHour: { '/monsters/goblin': 30 },
+                    encountersPerHour: 3,
+                    isDungeon: true,
+                    note: 'measured (2 runs)',
+                },
+            ],
+            counts: {},
+            hours: 1,
+        });
+        expect(plan.segments[0].isDungeon).toBe(true);
+        expect(plan.segments[0].note).toBe('measured (2 runs)');
+        expect(formatPlanText(plan)).toMatch(/≈\d+ clears/);
     });
 });

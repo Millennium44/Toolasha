@@ -44,6 +44,8 @@ const mocks = vi.hoisted(() => ({
     itemPrices: {},
     /** The Bestiary as `getCharacterMonsters` hands it back; null until the tab has loaded it */
     monsters: null,
+    /** Dungeon runs the bridge's run-history store answers with */
+    dungeonRuns: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -154,6 +156,7 @@ vi.mock('../../core/data-manager.js', () => ({
 vi.mock('../../utils/bundle-bridge.js', () => ({
     expectedValueCalculator: () => null,
     missingMaterialsButton: () => mocks.bridgeMissingMats,
+    dungeonTrackerStorage: () => ({ getAllRuns: async () => mocks.dungeonRuns }),
 }));
 
 vi.mock('../../api/marketplace.js', () => ({
@@ -2869,7 +2872,7 @@ describe('the Bestiary route planner under the all-zones table', () => {
         const request = vi.spyOn(ui, '_requestBestiary').mockImplementation(() => {});
         await ui._displayAllZonesResults([result('Farm', { '/monsters/fly': 10 })], 1, gameData);
 
-        const input = ui.panel.querySelector('#mwi-csim-bestiary-plan-hours');
+        const input = ui.panel.querySelector('#mwi-csim-bestiary-plan-value');
         expect(input.value).toBe('24');
         expect(planText()).toBe('');
 
@@ -2902,7 +2905,7 @@ describe('the Bestiary route planner under the all-zones table', () => {
             1,
             gameData
         );
-        const input = ui.panel.querySelector('#mwi-csim-bestiary-plan-hours');
+        const input = ui.panel.querySelector('#mwi-csim-bestiary-plan-value');
         input.value = '1';
         click('#mwi-csim-bestiary-plan-btn');
 
@@ -2966,7 +2969,7 @@ describe('the Bestiary route planner under the all-zones table', () => {
             1,
             gameData
         );
-        ui.panel.querySelector('#mwi-csim-bestiary-plan-hours').value = '1';
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = '1';
         click('#mwi-csim-bestiary-plan-btn');
 
         const written = [];
@@ -2987,5 +2990,205 @@ describe('the Bestiary route planner under the all-zones table', () => {
         expect(lines[2]).toMatch(/^2\. Hive T2 — 0:48( \(≈[0-9]+ fights\))? — \+0 — \(partial: Bee 0\/1\)$/);
         expect(lines[3]).toBe('Best single zone: Farm T0 — 2 points');
         expect(copyBtn.textContent).toBe('Copied ✓');
+    });
+});
+
+describe('planning to a points target from the panel', () => {
+    const HOUR_NS = 3600 * 1e9;
+    const result = (name, deaths, tier = 0) => ({
+        zone: { name, difficultyTier: tier, zoneHrid: `/actions/combat/${name.toLowerCase()}` },
+        simResult: {
+            simulatedTime: HOUR_NS,
+            encounters: 10,
+            deaths: { player1: 0, ...deaths },
+            experienceGained: { player1: { defense: 100 } },
+        },
+        revenue: { netPerHour: 1, revenuePerHour: 1, costPerHour: 0, dropEntries: [] },
+    });
+    const gameData = { combatMonsterDetailMap: { '/monsters/fly': { name: 'Fly' } } };
+    const click = (selector) =>
+        ui.panel.querySelector(selector).dispatchEvent(new window.Event('click', { bubbles: true }));
+    const change = (selector) =>
+        ui.panel.querySelector(selector).dispatchEvent(new window.Event('change', { bubbles: true }));
+
+    beforeEach(() => {
+        // The panel reads its remembered prefs as it is built, so an earlier
+        // suite's budget has to be off the store before that happens
+        mocks.store.set('settings:combatSimBestiaryPlanHours', 24);
+        mocks.store.set('settings:combatSimBestiaryPlanMode', 'hours');
+        mocks.store.set('settings:combatSimBestiaryPlanPoints', 20);
+        ui.buildPanel();
+        ui._allZonesSortCol = null;
+        ui._bestiaryPlanMode = 'hours';
+        ui._bestiaryPlanHours = 24;
+        ui._bestiaryPlanPoints = 20;
+        mocks.monsters = null;
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        ui._bestiaryPlanMode = 'hours';
+        mocks.monsters = null;
+        vi.restoreAllMocks();
+    });
+
+    test('the mode switch relabels the one box and remembers which way round it was asked', async () => {
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults([result('Farm', { '/monsters/fly': 10 })], 1, gameData);
+
+        const label = ui.panel.querySelector('#mwi-csim-bestiary-plan-label');
+        const input = ui.panel.querySelector('#mwi-csim-bestiary-plan-value');
+        expect(label.textContent).toBe('Hours');
+        expect(input.value).toBe('24');
+
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-mode').value = 'points';
+        change('#mwi-csim-bestiary-plan-mode');
+        expect(label.textContent).toBe('Points wanted');
+        expect(input.value).toBe('20');
+        await Promise.resolve();
+        expect(mocks.store.get('settings:combatSimBestiaryPlanMode')).toBe('points');
+    });
+
+    test('points mode answers in time, and the footer compares against the soonest single zone', async () => {
+        // Fly at 8, 10/hr: +2 at 10 kills (0:12), +3 at 100 (9:12 more)
+        mocks.monsters = [{ monsterHrid: '/monsters/fly', count: 8 }];
+        await ui._displayAllZonesResults([result('Farm', { '/monsters/fly': 10 })], 1, gameData);
+
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-mode').value = 'points';
+        change('#mwi-csim-bestiary-plan-mode');
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = '2';
+        click('#mwi-csim-bestiary-plan-btn');
+
+        const rows = [...ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr')].map((tr) =>
+            [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())
+        );
+        expect(rows).toHaveLength(1);
+        expect(rows[0].slice(0, 3)).toEqual(['1', 'Farm T0', '0:12']);
+        expect(rows[0][4]).toBe('+2');
+
+        const footer = ui.panel.querySelector('#mwi-csim-bestiary-plan-footer').textContent;
+        expect(footer).toContain('2 points');
+        expect(footer).toContain('in 0:12 h');
+        expect(footer).toContain('best single zone Farm T0 reaches 2 in 0:12 h');
+        expect(mocks.store.get('settings:combatSimBestiaryPlanPoints')).toBe(2);
+    });
+});
+
+describe('dungeons in the all-zones run and in the plan', () => {
+    const HOUR_NS = 3600 * 1e9;
+    /** A one-hour dungeon sim: six clears, sixty goblins — ten goblins a clear */
+    const dungeonResult = () => ({
+        zone: { name: 'Den', difficultyTier: 1, zoneHrid: '/actions/combat/den' },
+        simResult: {
+            simulatedTime: HOUR_NS,
+            encounters: 300,
+            isDungeon: true,
+            dungeonsCompleted: 6,
+            dungeonsFailed: 0,
+            deaths: { player1: 0, '/monsters/goblin': 60 },
+            experienceGained: { player1: { defense: 100 } },
+        },
+        revenue: { netPerHour: 1, revenuePerHour: 1, costPerHour: 0, dropEntries: [] },
+    });
+    const gameData = { combatMonsterDetailMap: { '/monsters/goblin': { name: 'Goblin' } } };
+    const click = (selector) =>
+        ui.panel.querySelector(selector).dispatchEvent(new window.Event('click', { bubbles: true }));
+
+    beforeEach(() => {
+        // The panel reads its remembered prefs as it is built, so an earlier
+        // suite's budget has to be off the store before that happens
+        mocks.store.set('settings:combatSimBestiaryPlanHours', 24);
+        mocks.store.set('settings:combatSimBestiaryPlanMode', 'hours');
+        mocks.store.set('settings:combatSimBestiaryPlanPoints', 20);
+        ui.buildPanel();
+        ui._allZonesSortCol = null;
+        ui._bestiaryPlanMode = 'hours';
+        ui._bestiaryPlanHours = 24;
+        ui._includeDungeons = false;
+        mocks.monsters = null;
+    });
+
+    afterEach(() => {
+        ui.destroy();
+        ui._includeDungeons = false;
+        mocks.dungeonRuns = [];
+        mocks.monsters = null;
+        vi.restoreAllMocks();
+    });
+
+    test('the toggle is what puts dungeons in the run, at T0-T2', () => {
+        mocks.zones = [
+            { hrid: '/actions/combat/fly', name: 'Fly', maxSpawnCount: 1, maxDifficulty: 1, isDungeon: false },
+            { hrid: '/actions/combat/den', name: 'Den', maxSpawnCount: 1, maxDifficulty: 0, isDungeon: true },
+        ];
+        ui._allZonesMode = 'solo';
+        ui._populateZoneChecklist();
+
+        // Off: the checklist never offered the dungeon and the run does not have it
+        expect(ui._getSelectedAllZones()).toEqual([
+            { zoneHrid: '/actions/combat/fly', difficultyTier: 0, name: 'Fly' },
+            { zoneHrid: '/actions/combat/fly', difficultyTier: 1, name: 'Fly' },
+        ]);
+
+        ui._includeDungeons = true;
+        const withDungeons = ui._getSelectedAllZones();
+        expect(withDungeons.filter((z) => z.zoneHrid === '/actions/combat/den').map((z) => z.difficultyTier)).toEqual([
+            0, 1, 2,
+        ]);
+        // The ordinary zones are untouched and still come first
+        expect(withDungeons.slice(0, 2)).toEqual([
+            { zoneHrid: '/actions/combat/fly', difficultyTier: 0, name: 'Fly' },
+            { zoneHrid: '/actions/combat/fly', difficultyTier: 1, name: 'Fly' },
+        ]);
+    });
+
+    test('a dungeon row is marked [D] and planned at the clear time the run history measured', async () => {
+        // Twenty minutes a clear is three an hour, half the sim's six — so the
+        // sim's 60 goblins an hour become 30
+        mocks.dungeonRuns = [
+            { dungeonName: 'Den', tier: 1, duration: 1_200_000 },
+            { dungeonName: 'Den', tier: 1, duration: 1_200_000 },
+        ];
+        mocks.monsters = [{ monsterHrid: '/monsters/goblin', count: 8 }];
+        await ui._displayAllZonesResults([dungeonResult()], 1, gameData);
+
+        // The results table marks it the way the Configure select does
+        const zoneCells = [...ui.panel.querySelectorAll('#mwi-csim-results tbody tr td:first-child')].map((td) =>
+            td.textContent.trim()
+        );
+        expect(zoneCells.some((cell) => cell.includes('[D] Den'))).toBe(true);
+
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = '1';
+        click('#mwi-csim-bestiary-plan-btn');
+
+        const cells = [...ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr')].map((tr) =>
+            [...tr.querySelectorAll('td')].map((td) => td.textContent.trim())
+        );
+        expect(cells[0][1]).toBe('[D] Den T1');
+        expect(cells[0][2]).toBe('1:00');
+        // Three clears an hour, your pace — not the simulator's six — and the
+        // stay is quoted in clears rather than fights
+        expect(cells[0][3]).toBe('≈3 clears');
+        expect(cells[0][4]).toBe('+2');
+        // Where the clear time came from rides on the row
+        const fightsCell = ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')[3];
+        expect(fightsCell.getAttribute('title')).toContain('measured (2 runs)');
+    });
+
+    test('with no recorded runs the plan says the clear time is the simulator’s', async () => {
+        mocks.dungeonRuns = [];
+        mocks.monsters = [{ monsterHrid: '/monsters/goblin', count: 8 }];
+        await ui._displayAllZonesResults([dungeonResult()], 1, gameData);
+
+        ui.panel.querySelector('#mwi-csim-bestiary-plan-value').value = '1';
+        click('#mwi-csim-bestiary-plan-btn');
+
+        const fightsCell = ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')[3];
+        expect(fightsCell.getAttribute('title')).toContain('sim clear time');
+        // The simulator's own six clears an hour, unrescaled
+        const cells = [...ui.panel.querySelectorAll('#mwi-csim-bestiary-plan-out tbody tr td')].map((td) =>
+            td.textContent.trim()
+        );
+        expect(cells[3]).toBe('≈6 clears');
     });
 });

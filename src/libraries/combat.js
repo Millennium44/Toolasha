@@ -16,6 +16,7 @@ import combatRecorder from '../features/combat/combat-recorder.js';
 import scrollSimulator from '../features/combat/scroll-simulator.js';
 import scrollSimulatorUI from '../features/combat/scroll-simulator-ui.js';
 import dungeonTracker from '../features/combat/dungeon-tracker.js';
+import dungeonTrackerStorage from '../features/combat/dungeon-tracker-storage.js';
 import dungeonTrackerUI from '../features/combat/dungeon-tracker-ui.js';
 import dungeonTrackerChatAnnotations from '../features/combat/dungeon-tracker-chat-annotations.js';
 import combatSummary from '../features/combat/combat-summary.js';
@@ -106,6 +107,7 @@ toolashaRoot.Combat = {
     scrollSimulator,
     scrollSimulatorUI,
     dungeonTracker,
+    dungeonTrackerStorage,
     dungeonTrackerUI,
     dungeonTrackerChatAnnotations,
     combatSummary,
