@@ -18,6 +18,8 @@ import {
 } from '../../utils/formatters.js';
 import { formatKeyCostNote } from '../../utils/key-cost.js';
 import { shortDuration } from '../../utils/overlay-format.js';
+import { compareBurnToSim, formatBurnLine } from '../../utils/consumable-burn.js';
+import { readScoped } from '../../utils/character-key.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 
 /**
@@ -64,6 +66,8 @@ class CombatStatsUI {
         this.viewing = 'live';
         /** Archived runs, newest first; refreshed on every popup open */
         this.sessions = [];
+        /** `{actionHrid, difficultyTier, simRecord}` for the burn-vs-sim line */
+        this.burnContext = null;
     }
 
     /**
@@ -364,11 +368,79 @@ class CombatStatsUI {
             }
         }
 
+        // The sim's own guess at what this zone eats, for the burn-vs-sim line.
+        // Read here rather than in the card because the card is synchronous and
+        // a row that renders a frame late reads as a bug.
+        this.burnContext = await this.loadBurnContext(combatData);
+
         // Calculate statistics — archived runs go through the same pathway
         const playerStats = combatData ? calculateAllPlayerStats(combatData, durationSeconds) : [];
 
         // Create and show popup
         this.createPopup(playerStats, { archived });
+    }
+
+    /**
+     * The sim record this run's consumption should be judged against.
+     *
+     * Keyed by zone *and* tier, because a tier changes what is hitting you and
+     * therefore how often food fires; the comparison itself rejects a record
+     * that does not match, so a wrong lookup here shows nothing rather than a
+     * wrong ratio.
+     *
+     * The tier comes from the live action queue, which is the only place it is
+     * stated — an archived run does not record one, so its lookup falls back to
+     * tier 0 and simply finds nothing when the run was not at tier 0.
+     *
+     * @param {Object|null} combatData - The snapshot being displayed
+     * @returns {Promise<{actionHrid: string, difficultyTier: number, simRecord: Object|null}|null>}
+     */
+    async loadBurnContext(combatData) {
+        const actionHrid = combatData?.actionHrid || null;
+        if (!actionHrid) return null;
+        // The rates are filed per character; without one there is no record to
+        // find, and asking for it would only raise an error to swallow
+        if (!dataManager.getCurrentCharacterId?.()) return null;
+
+        try {
+            const live = (dataManager.getCurrentActions?.() || []).find((action) => action.actionHrid === actionHrid);
+            const difficultyTier = Number(live?.difficultyTier) || 0;
+            const byZone = (await readScoped('simConsumableRatesByZone', 'combatExport', {})) || {};
+            return { actionHrid, difficultyTier, simRecord: byZone[`${actionHrid}|${difficultyTier}`] || null };
+        } catch (error) {
+            console.error('[Combat Stats] Reading the sim consumable rates failed:', error);
+            return null;
+        }
+    }
+
+    /**
+     * The measured-against-simmed line for one player card, or null.
+     *
+     * Only the logged-in character has a sim on record — the rates are stored
+     * per character, and a party member's appetite was never simulated — so
+     * everyone else's card is left alone rather than being judged against
+     * somebody else's simulation.
+     *
+     * @param {Object} stats - One player's stats
+     * @returns {{text: string, tone: string, color: string, note: string}|null}
+     */
+    burnVsSimLine(stats) {
+        try {
+            if (!this.burnContext?.simRecord) return null;
+            if (stats?.name !== dataManager.getCurrentCharacterName?.()) return null;
+
+            const comparison = compareBurnToSim({
+                consumables: stats.consumableBreakdown,
+                simRecord: this.burnContext.simRecord,
+                actionHrid: this.burnContext.actionHrid,
+                difficultyTier: this.burnContext.difficultyTier,
+                itemDetailFor: (itemHrid) => dataManager.getItemDetails?.(itemHrid),
+            });
+            return formatBurnLine(comparison, shortDuration);
+        } catch (error) {
+            console.error('[Combat Stats] Comparing measured consumables against the sim failed:', error);
+            return null;
+        }
     }
 
     /**
@@ -697,6 +769,8 @@ class CombatStatsUI {
             ? stats.chestLuckAdjustments.map(describeLuckAdjustment).join('\n')
             : null;
 
+        const burnLine = this.burnVsSimLine(stats);
+
         const statsRows = [
             { label: 'Duration', value: stats.durationFormatted || '0s' },
             { label: 'Encounters/Hour', value: formatNum(stats.encountersPerHour) },
@@ -724,6 +798,19 @@ class CombatStatsUI {
                 breakdown: stats.consumableBreakdown,
                 isDaily: true,
             },
+            // What the run ate against what the sim assumed it would. Sits under
+            // the consumable costs because that is the figure it qualifies, and
+            // above the profit line that inherits the same error.
+            ...(burnLine
+                ? [
+                      {
+                          label: 'Consumables vs sim',
+                          value: burnLine.text,
+                          color: burnLine.color,
+                          note: burnLine.note,
+                      },
+                  ]
+                : []),
             ...(stats.keyBreakdown && stats.keyBreakdown.length > 0
                 ? [
                       {

@@ -62,6 +62,9 @@ import {
     buyStrategy,
 } from '../../utils/consumable-forecast.js';
 import { dungeonEntryKey, heldInInventory, keyConsumableEntry } from '../../utils/dungeon-key-forecast.js';
+import { buildReadiness, keyReadiness, memberReadiness, typicalRunSeconds } from '../../utils/dungeon-readiness.js';
+import { partyLintWarnings } from '../../utils/party-lint.js';
+import { combatLevel } from '../../utils/combat-level.js';
 import { resolveSupplyHrids, readSupplyCounts, bestOwnedTier, SUPPLY_KINDS } from '../combat/labyrinth-supplies.js';
 import { rushFloorTable, preserveChance, observedUse } from '../combat/labyrinth-run-ledger.js';
 import storage from '../../core/storage.js';
@@ -168,21 +171,33 @@ class ConsumablesPanel {
      * measured consumable rates and the lab run ledger — so a finished sim
      * rates the idle plan's food on the panel's next open rather than on the
      * next page load.
+     *
+     * The dungeon run history and the captured profiles are here for the same
+     * reason and a sharper one: opening a party member's profile in game is the
+     * one action that turns their readiness line from unknown into known, and a
+     * card that needed a page reload to notice would teach the player it does
+     * not work.
      */
     async _refreshStoredReadings() {
         try {
-            const [rates, byZone, ledger] = await Promise.all([
+            const [rates, byZone, ledger, runs, profiles] = await Promise.all([
                 readScoped('simConsumableRates', 'combatExport', null).catch(() => null),
                 readScoped('simConsumableRatesByZone', 'combatExport', {}).catch(() => ({})),
                 readScoped('labyrinthRunLedger', 'labyrinth', []).catch(() => []),
+                storage.getJSON('allRuns', 'unifiedRuns', []).catch(() => []),
+                storage.getJSON('profile_list', 'combatExport', []).catch(() => []),
             ]);
             const changed =
                 JSON.stringify(rates) !== JSON.stringify(this._simRates) ||
                 JSON.stringify(byZone) !== JSON.stringify(this._simRatesByZone) ||
-                JSON.stringify(ledger) !== JSON.stringify(this._ledgerRuns);
+                JSON.stringify(ledger) !== JSON.stringify(this._ledgerRuns) ||
+                JSON.stringify(runs) !== JSON.stringify(this._dungeonHistory) ||
+                JSON.stringify(profiles) !== JSON.stringify(this._profiles);
             this._simRates = rates;
             this._simRatesByZone = byZone || {};
             this._ledgerRuns = ledger || [];
+            this._dungeonHistory = runs || [];
+            this._profiles = profiles || [];
             if (changed && this.panel) this._render();
         } catch {
             // Stale readings render exactly what the last open rendered
@@ -219,6 +234,12 @@ class ConsumablesPanel {
         this._simRatesByZone =
             (await readScoped('simConsumableRatesByZone', 'combatExport', {}).catch(() => ({}))) || {};
         this._ledgerRuns = (await readScoped('labyrinthRunLedger', 'labyrinth', []).catch(() => [])) || [];
+        // The dungeon readiness card: how many runs to plan for, the recorded
+        // run history that turns "hours of food" into "runs of food", and the
+        // captured profiles that are the only pre-run window onto anybody else
+        this._dungeonRuns = Number(await storage.get('consumablesDungeonRuns', 'settings', 5)) || 5;
+        this._dungeonHistory = (await storage.getJSON('allRuns', 'unifiedRuns', []).catch(() => [])) || [];
+        this._profiles = (await storage.getJSON('profile_list', 'combatExport', []).catch(() => [])) || [];
     }
 
     /** The duration everything is measured against */
@@ -305,6 +326,390 @@ class ConsumablesPanel {
             console.error('[ConsumablesPanel] Building the entry-key row failed:', error);
             return null;
         }
+    }
+
+    /** How many runs the readiness card is sized for */
+    get dungeonRuns() {
+        return this._dungeonRuns || 5;
+    }
+
+    /** Cycle the run target and remember it, the way the labyrinth block does */
+    _cycleDungeonRuns() {
+        const steps = [1, 3, 5, 10, 25, 50];
+        this._dungeonRuns = steps[(steps.indexOf(this.dungeonRuns) + 1) % steps.length];
+        storage.set('consumablesDungeonRuns', this._dungeonRuns, 'settings').catch(() => {});
+        this._render();
+    }
+
+    /**
+     * Which dungeon this character is about to run, and who with.
+     *
+     * The live action queue is preferred over `partyInfo` because `partyInfo`
+     * is an `init_character_data` snapshot that nothing updates — it says what
+     * the party was set to when the page loaded, not what the leader picked
+     * since. The queue is kept current but only speaks for you, so the party
+     * block is the fallback and is marked as such.
+     *
+     * @returns {Object|null} Null when this is not a dungeon
+     */
+    _dungeonContext() {
+        const characterData = dataManager.characterData;
+        if (!characterData) return null;
+
+        const slots = characterData.partyInfo?.partySlotMap || null;
+        const roster = slots ? Object.values(slots).filter((member) => member?.characterID) : [];
+
+        const live = (dataManager.getCurrentActions?.() || []).find(
+            (action) => action.actionHrid?.startsWith('/actions/combat/') && !action.isDone
+        );
+
+        let actionHrid = live?.actionHrid || null;
+        let tier = Number(live?.difficultyTier) || 0;
+        let stale = false;
+
+        if (!actionHrid && characterData.partyInfo?.party?.actionHrid) {
+            actionHrid = characterData.partyInfo.party.actionHrid;
+            tier = Number(characterData.partyInfo.party.difficultyTier) || 0;
+            stale = true;
+        }
+        if (!actionHrid) return null;
+
+        const detail = dataManager.getActionDetails?.(actionHrid);
+        if (detail?.combatZoneInfo?.isDungeon !== true) return null;
+
+        return {
+            actionHrid,
+            tier,
+            stale,
+            roster,
+            name: detail.name || actionHrid.split('/').pop(),
+            characterId: characterData.character?.id ?? null,
+            selfName: characterData.character?.name || 'You',
+        };
+    }
+
+    /**
+     * A character's combat level from a skills array, or null.
+     *
+     * @param {Array<Object>|null} skills - `[{skillHrid, level}]`
+     * @returns {number|null}
+     */
+    _combatLevelOf(skills) {
+        if (!Array.isArray(skills) || !skills.length) return null;
+        const levels = {};
+        for (const skill of skills) {
+            const name = skill?.skillHrid?.split('/').pop();
+            if (name) levels[name] = skill.level || 1;
+        }
+        const level = combatLevel(levels)?.level;
+        return Number.isFinite(level) && level > 0 ? level : null;
+    }
+
+    /**
+     * The gear and aura lint, from the only pre-run sources that exist.
+     *
+     * Your own kit is live. Everyone else's is a profile you opened in game at
+     * some point, which the live DPS panel deliberately refuses to use because
+     * mid-battle it has something fresher. Before the run there is nothing
+     * fresher, so a stale profile is the choice between a dated answer and no
+     * answer — taken here, and labelled.
+     *
+     * @param {Object} context - From `_dungeonContext`
+     * @returns {{warnings: Array<string>, checked: Array<string>, uncheckable: Array<string>}}
+     */
+    _readinessLint(context) {
+        const clientData = dataManager.getInitClientData?.() || {};
+        const itemDetailMap = clientData.itemDetailMap || {};
+        const playerDTOs = [];
+        const playerInfo = [];
+        const checked = [];
+        const uncheckable = [];
+
+        context.roster.forEach((member, index) => {
+            const hrid = `player${index + 1}`;
+            const isSelf = member.characterID === context.characterId;
+            const name = isSelf ? context.selfName : member.characterName || `Player ${index + 1}`;
+            const equipment = {};
+            const abilities = [];
+
+            const wear = (itemHrid, enhancementLevel) => {
+                const type = itemDetailMap[itemHrid]?.equipmentDetail?.type;
+                if (type) equipment[type] = { hrid: itemHrid, enhancementLevel: enhancementLevel || 0 };
+            };
+
+            if (isSelf) {
+                for (const item of dataManager.getEquipment?.()?.values?.() || []) {
+                    wear(item?.itemHrid, item?.enhancementLevel);
+                }
+                for (const ability of dataManager.getEquippedAbilities?.() || []) {
+                    if (ability?.abilityHrid) abilities.push({ hrid: ability.abilityHrid, level: ability.level || 1 });
+                }
+            } else {
+                const profile = (this._profiles || []).find((entry) => entry?.characterID === member.characterID);
+                if (!profile) {
+                    uncheckable.push(name);
+                    return;
+                }
+                for (const item of Object.values(profile.profile?.wearableItemMap || {})) {
+                    wear(item?.itemHrid, item?.enhancementLevel);
+                }
+                for (const ability of profile.profile?.equippedAbilities || []) {
+                    if (ability?.abilityHrid) abilities.push({ hrid: ability.abilityHrid, level: ability.level || 1 });
+                }
+            }
+
+            checked.push(name);
+            playerDTOs.push({ hrid, equipment, abilities });
+            playerInfo.push({ hrid, name });
+        });
+
+        return { warnings: partyLintWarnings(playerDTOs, playerInfo, clientData), checked, uncheckable };
+    }
+
+    /**
+     * The readiness model: everything the card draws, decided in one place.
+     *
+     * @param {Array<Object>} players - From `_players`, for the measured supplies
+     * @returns {Object|null} Null when this is not a dungeon
+     */
+    _readinessModel(players) {
+        const context = this._dungeonContext();
+        if (!context) return null;
+
+        const keyHrid = dungeonEntryKey(context.actionHrid, dataManager.getActionDetails?.(context.actionHrid));
+        const runLength = typicalRunSeconds(this._dungeonHistory, { dungeonName: context.name, tier: context.tier });
+        const measured = new Map((players || []).map((player) => [player.name, player]));
+
+        // The key row never uses the measured pile: `_keyForecast`'s rate is
+        // derived from chests dropped this session, and before the run there is
+        // no session. One key per clear is arithmetic, and is enough.
+        const keys = keyReadiness({
+            itemHrid: keyHrid,
+            itemName: keyHrid ? dataManager.getItemDetails?.(keyHrid)?.name : '',
+            held: keyHrid ? heldInInventory(dataManager.getInventory?.(), keyHrid) : 0,
+            runsPlanned: this.dungeonRuns,
+        });
+
+        const roster = context.roster.length
+            ? context.roster
+            : [{ characterID: context.characterId, characterName: context.selfName }];
+
+        const members = roster.map((member) => {
+            const isSelf = member.characterID === context.characterId;
+            const name = isSelf ? context.selfName : member.characterName || 'Unknown player';
+            const seen = measured.get(name);
+
+            let level = null;
+            if (isSelf) level = this._combatLevelOf(dataManager.getSkills?.());
+            else {
+                const profile = (this._profiles || []).find((entry) => entry?.characterID === member.characterID);
+                level = this._combatLevelOf(profile?.profile?.characterSkills);
+            }
+
+            return memberReadiness({
+                name,
+                isSelf,
+                combatLevel: level,
+                forecasts: seen?.forecasts || null,
+                runSeconds: runLength?.seconds ?? null,
+                measuredFrom: seen ? 'last measured battle' : null,
+            });
+        });
+
+        const lint = this._readinessLint(context);
+        const scopeParts = [];
+        if (lint.checked.length) scopeParts.push(`Gear and auras checked for ${lint.checked.join(', ')}`);
+        if (lint.uncheckable.length) {
+            scopeParts.push(`not for ${lint.uncheckable.join(', ')} — open their profile in game once and it can be`);
+        }
+
+        const model = buildReadiness({
+            dungeon: { actionHrid: context.actionHrid, name: context.name, tier: context.tier },
+            runsPlanned: this.dungeonRuns,
+            keys,
+            members,
+            lint: lint.warnings,
+            lintScope: scopeParts.length ? `${scopeParts.join('; ')}.` : '',
+            runLength,
+        });
+
+        if (context.stale) {
+            model.footnotes.unshift(
+                'The dungeon and tier come from the party block the game sent at login — nothing updates it, ' +
+                    'so it may not be what the leader has selected now.'
+            );
+        }
+        return model;
+    }
+
+    /**
+     * The readiness card.
+     *
+     * Deliberately three-state throughout: every member line says known,
+     * unknown-with-a-reason, or nothing. A card that rendered an unreadable
+     * member as blank would be indistinguishable from one that read them and
+     * found them stocked, which is the one way this feature could do harm.
+     *
+     * @param {Array<Object>} players - From `_players`
+     * @returns {HTMLElement|null}
+     */
+    _readinessSection(players) {
+        const model = this._readinessModel(players);
+        if (!model) return null;
+
+        const section = document.createElement('div');
+        section.style.marginBottom = '12px';
+
+        const heading = document.createElement('div');
+        Object.assign(heading.style, {
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: '8px',
+            borderBottom: `1px solid ${COLORS.border}`,
+            paddingBottom: '3px',
+            marginBottom: '5px',
+        });
+
+        const name = document.createElement('span');
+        name.textContent = `${model.dungeon.name}${model.dungeon.tier ? ` · T${model.dungeon.tier}` : ''} readiness`;
+        name.style.fontWeight = 'bold';
+        name.style.color = COLORS.accent;
+
+        const runsBtn = document.createElement('button');
+        Object.assign(runsBtn.style, {
+            background: 'rgba(255, 255, 255, 0.07)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.accent,
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '1px 8px',
+        });
+        runsBtn.textContent = `${model.runsPlanned} run${model.runsPlanned === 1 ? '' : 's'}`;
+        runsBtn.title = 'How many runs to check against. Click to cycle.';
+        runsBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this._cycleDungeonRuns();
+        });
+
+        heading.append(name, runsBtn);
+        section.appendChild(heading);
+
+        if (model.keys) {
+            const short = model.keys.shortfall;
+            section.appendChild(
+                this._readinessLine(
+                    model.keys.itemName,
+                    short > 0
+                        ? `${model.keys.held} held · ${short} short of ${model.keys.runsPlanned}`
+                        : `${model.keys.held} held · covers ${model.keys.runsPlanned}`,
+                    short > 0 ? ROW_COLORS.bad : ROW_COLORS.good,
+                    'One entry key per clear, counted from your inventory. This one is exact.'
+                )
+            );
+        }
+
+        for (const member of model.members) {
+            const label = member.isSelf ? `${member.name} (you)` : member.name;
+            if (member.unknown) {
+                section.appendChild(
+                    this._readinessLine(
+                        label,
+                        `unknown — ${member.unknown}`,
+                        COLORS.textDim,
+                        member.isSelf
+                            ? 'Your own rate is measured from combat; nothing has been measured yet.'
+                            : 'Food and drinks travel in the battle payload, which only arrives once the run has started.'
+                    )
+                );
+                continue;
+            }
+
+            const runs =
+                member.runsCovered === null
+                    ? shortDuration(member.secondsLeft)
+                    : `${member.runsCovered} run${member.runsCovered === 1 ? '' : 's'}`;
+            const enough = member.runsCovered === null || member.runsCovered >= model.runsPlanned;
+            section.appendChild(
+                this._readinessLine(
+                    label,
+                    `${runs}${member.limitedBy ? ` · ${member.limitedBy}` : ''}`,
+                    enough ? ROW_COLORS.good : ROW_COLORS.bad,
+                    `Measured from the ${member.measuredFrom}, converted with your recorded run length.`
+                )
+            );
+        }
+
+        if (model.stopsFirst) {
+            const first = model.stopsFirst;
+            const when =
+                first.runsCovered === null
+                    ? shortDuration(first.secondsLeft)
+                    : `${first.runsCovered} run${first.runsCovered === 1 ? '' : 's'}`;
+            section.appendChild(
+                this._readinessLine(
+                    'Stops first',
+                    // The sample size is on the face of it, not only in the
+                    // tooltip: "you stop first" out of one readable member is a
+                    // much weaker claim than out of five, and it must look it
+                    `${first.name} in ${when}${first.known < first.total ? ` (${first.known} of ${first.total} read)` : ''}`,
+                    COLORS.text,
+                    `Out of ${first.known} of ${first.total} member${first.total === 1 ? '' : 's'} whose supplies could be read.`
+                )
+            );
+        }
+
+        for (const warning of model.levelGap.warnings) {
+            section.appendChild(
+                this._readinessNote(
+                    `⚠ ${warning.name} is level-gapped — ${Math.round(-warning.debuff * 100)}% off their monster drops`,
+                    '#e8c66c'
+                )
+            );
+        }
+        for (const warning of model.lint) section.appendChild(this._readinessNote(`⚠ ${warning}`, '#e8c66c'));
+        for (const note of model.footnotes) section.appendChild(this._readinessNote(note, COLORS.textDim));
+
+        return section;
+    }
+
+    /**
+     * One label/value line of the readiness card.
+     * @param {string} label - Left side
+     * @param {string} value - Right side
+     * @param {string} color - The value's colour
+     * @param {string} [title] - What the figure is measured from
+     * @returns {HTMLElement}
+     */
+    _readinessLine(label, value, color, title = '') {
+        const line = document.createElement('div');
+        line.style.cssText = 'display:flex; justify-content:space-between; gap:8px; margin-bottom:2px;';
+        if (title) line.title = title;
+
+        const left = document.createElement('span');
+        left.textContent = label;
+        left.style.color = COLORS.text;
+
+        const right = document.createElement('span');
+        right.textContent = value;
+        right.style.color = color;
+
+        line.append(left, right);
+        return line;
+    }
+
+    /**
+     * One footnote or warning under the readiness card.
+     * @param {string} text - What it says
+     * @param {string} color - Its colour
+     * @returns {HTMLElement}
+     */
+    _readinessNote(text, color) {
+        const note = document.createElement('div');
+        note.style.cssText = 'font-size:0.9em; margin-top:3px;';
+        note.style.color = color;
+        note.textContent = text;
+        return note;
     }
 
     /**
@@ -792,6 +1197,16 @@ class ConsumablesPanel {
         // topped up stops being offered
         this._buyQueues = [];
         const players = this._players();
+
+        // Before the players, because the readiness card is the pre-run
+        // question and the player sections are the mid-run one — and it has to
+        // draw when there are no players at all, which is exactly the lobby
+        try {
+            const readiness = this._readinessSection(players);
+            if (readiness) this.bodyEl.appendChild(readiness);
+        } catch (error) {
+            console.error('[ConsumablesPanel] Building the dungeon readiness card failed:', error);
+        }
 
         if (!players.length) {
             // Nothing measured because nothing is being fought — but what the
