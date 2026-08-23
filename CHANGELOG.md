@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Notification digest, notice log and quiet hours
+
+Every notice is written to a per-character log readable from a new Notices panel and overlay row (and the session briefing); digest mode collapses routine notices into one summary line every few minutes per category; quiet hours suppress desktop notifications inside a local-time window. Deaths, an empty queue and consumables running dry are on a critical allow-list that bypasses both. What features alert about is unchanged — only how it is delivered.
+
+### Rotation tab: mana and rotation auditor for your own fights
+
+The per-player combat panel gains a Rotation tab: per ability, how much of the fight it spent on cooldown, what it produced per cast, per point of mana and per second of cooldown, and how much of its ready time the mana bar was below its cost — separating an ability that cannot be afforded from one the rotation never reaches. Closes with mana spent against mana restored, seconds per fight spent stalled, and one suggested change derived from those numbers.
+
 ### Session briefing
 
 A single card on login and character switch saying what needs you: an empty queue and since when, tasks waiting or slots about to overflow, a community buff about to lapse, the consumable that runs dry first, listings filled or undercut, an unfinished enhancement run, your guild trial signup, banked labyrinth entries, and any other character gone idle. Only lines with something to say appear, each opening the panel that fixes it; close to dismiss until you switch character or reload, reopen from the Briefing overlay row or the command palette. Setting (default on).
