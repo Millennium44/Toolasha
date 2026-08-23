@@ -116,7 +116,12 @@ describe('drawing', () => {
 
     test('notices are grouped by day', () => {
         const now = Date.now();
-        log.entries = [entry({ at: now }), entry({ at: now - 26 * 3_600_000 })];
+        // Yesterday at noon, not "26 hours ago": just after midnight that would
+        // be the day before yesterday and carry a date rather than the label
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        yesterday.setHours(12, 0, 0, 0);
+        log.entries = [entry({ at: now }), entry({ at: yesterday.getTime() })];
 
         noticePanel.show({ remember: false });
 
