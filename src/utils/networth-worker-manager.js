@@ -3,19 +3,27 @@
  * Manages parallel item valuation calculations including enhancement paths
  */
 
-import WorkerPool from './worker-pool.js';
+import WorkerPool, { createIdlePoolReaper } from './worker-pool.js';
 import { BASE_SUCCESS_RATES, BLESSED_TEA_BASE_CHANCE, buildEnhancementMarkov } from './enhancement-calculator.js';
+import { createMatrixMath } from './matrix-inverse.js';
 
 // Worker pool instance
 let workerPool = null;
+const idleReaper = createIdlePoolReaper(
+    () => terminateItemValueWorkerPool(),
+    undefined,
+    () => Boolean(workerPool) && (workerPool.getStats().busyWorkers > 0 || workerPool.getStats().queuedTasks > 0)
+);
 
 // Worker script as inline string.
 // The Markov chain is not written here: a blob worker cannot import a module, so the real
 // buildEnhancementMarkov is serialised in below and networth costs the same chain the tooltip
 // quotes, clamp and blessed-tea chance included.
 const WORKER_SCRIPT = `
-// Import math.js library for enhancement calculations
-importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js');
+// The matrix helper the chain needs, serialised in the same way the chain
+// itself is — this used to importScripts ~600 KB of unminified math.js per
+// worker for one 20x20 inverse.
+const math = (${createMatrixMath.toString()})();
 
 // Cache for item valuations
 const valuationCache = new Map();
@@ -458,6 +466,8 @@ self.onmessage = function (e) {
  * Get or create the worker pool instance
  */
 async function getWorkerPool() {
+    idleReaper.touch();
+
     if (workerPool) {
         return workerPool;
     }
@@ -566,6 +576,7 @@ export function getItemValueWorkerStats() {
  * Terminate the worker pool
  */
 export function terminateItemValueWorkerPool() {
+    idleReaper.cancel();
     if (workerPool) {
         workerPool.terminate();
         workerPool = null;

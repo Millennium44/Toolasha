@@ -3,8 +3,16 @@
  * Manages a pool of Web Workers for parallel task execution
  */
 
+/** How long a single task may run before the pool gives up on it. */
+const DEFAULT_TASK_TIMEOUT_MS = 120000;
+
 class WorkerPool {
-    constructor(workerScript, poolSize = null) {
+    /**
+     * @param {Blob} workerScript - Blob holding the worker source
+     * @param {number|null} poolSize - Worker count, or null to auto-detect
+     * @param {{taskTimeoutMs?: number}} [options] - Pool options
+     */
+    constructor(workerScript, poolSize = null, options = {}) {
         // Auto-detect optimal pool size (max 4 workers)
         this.poolSize = poolSize || Math.min(navigator.hardwareConcurrency || 2, 4);
         this.workerScript = workerScript;
@@ -13,6 +21,11 @@ class WorkerPool {
         this.activeWorkers = new Set();
         this.nextTaskId = 0;
         this.initialized = false;
+        // A worker that dies without firing `error` — killed for memory, or
+        // wedged in a loop — leaves its task's promise pending forever, and the
+        // caller (a calculator awaiting a result to draw) waits with it. Every
+        // assigned task gets a deadline instead.
+        this.taskTimeoutMs = options.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT_MS;
     }
 
     /**
@@ -26,7 +39,17 @@ class WorkerPool {
         try {
             // Create workers
             for (let i = 0; i < this.poolSize; i++) {
-                const worker = new Worker(URL.createObjectURL(this.workerScript));
+                // The object URL keeps the blob alive for the life of the
+                // document unless it is revoked; the worker holds its own
+                // reference once constructed, so revoking immediately is safe
+                // and stops one blob leaking per pool created.
+                const objectUrl = URL.createObjectURL(this.workerScript);
+                let worker;
+                try {
+                    worker = new Worker(objectUrl);
+                } finally {
+                    URL.revokeObjectURL(objectUrl);
+                }
                 this.workers.push({
                     id: i,
                     worker,
@@ -96,16 +119,30 @@ class WorkerPool {
         workerWrapper.busy = true;
         workerWrapper.currentTask = task;
 
+        let settled = false;
+        let timeoutId = null;
+
+        /**
+         * Detach handlers, cancel the deadline and free the worker slot.
+         * Runs at most once, whichever of message/error/timeout arrives first.
+         */
+        const release = () => {
+            if (settled) return false;
+            settled = true;
+            if (timeoutId !== null) clearTimeout(timeoutId);
+            workerWrapper.worker.removeEventListener('message', messageHandler);
+            workerWrapper.worker.removeEventListener('error', errorHandler);
+            workerWrapper.busy = false;
+            workerWrapper.currentTask = null;
+            return true;
+        };
+
         // Set up message handler for this specific task
         const messageHandler = (e) => {
             const { taskId, result, error } = e.data;
 
             if (taskId === task.id) {
-                // Clean up
-                workerWrapper.worker.removeEventListener('message', messageHandler);
-                workerWrapper.worker.removeEventListener('error', errorHandler);
-                workerWrapper.busy = false;
-                workerWrapper.currentTask = null;
+                if (!release()) return;
 
                 // Resolve or reject the promise
                 if (error) {
@@ -121,16 +158,26 @@ class WorkerPool {
 
         const errorHandler = (error) => {
             console.error('[WorkerPool] Worker error:', error);
-            workerWrapper.worker.removeEventListener('message', messageHandler);
-            workerWrapper.worker.removeEventListener('error', errorHandler);
-            workerWrapper.busy = false;
-            workerWrapper.currentTask = null;
+            if (!release()) return;
 
             task.reject(error);
 
             // Process next task in queue
             this.processQueue();
         };
+
+        if (this.taskTimeoutMs > 0) {
+            timeoutId = setTimeout(() => {
+                if (!release()) return;
+                console.error(`[WorkerPool] Task ${task.id} timed out after ${this.taskTimeoutMs}ms`);
+                task.reject(new Error(`Worker task timed out after ${this.taskTimeoutMs}ms`));
+
+                // The worker is presumed wedged or dead: replace it rather than
+                // hand the next task to something that already stopped answering.
+                this.replaceWorker(workerWrapper);
+                this.processQueue();
+            }, this.taskTimeoutMs);
+        }
 
         workerWrapper.worker.addEventListener('message', messageHandler);
         workerWrapper.worker.addEventListener('error', errorHandler);
@@ -159,6 +206,35 @@ class WorkerPool {
     }
 
     /**
+     * Replace a worker that stopped answering with a fresh one.
+     * @param {Object} workerWrapper - The pool entry to rebuild in place
+     * @private
+     */
+    replaceWorker(workerWrapper) {
+        try {
+            workerWrapper.worker.terminate();
+        } catch (error) {
+            console.error('[WorkerPool] Failed to terminate unresponsive worker:', error);
+        }
+
+        try {
+            const objectUrl = URL.createObjectURL(this.workerScript);
+            try {
+                workerWrapper.worker = new Worker(objectUrl);
+            } finally {
+                URL.revokeObjectURL(objectUrl);
+            }
+            workerWrapper.busy = false;
+            workerWrapper.currentTask = null;
+        } catch (error) {
+            console.error('[WorkerPool] Failed to replace unresponsive worker:', error);
+            // Drop the dead slot rather than keep a pool entry with no worker
+            const index = this.workers.indexOf(workerWrapper);
+            if (index !== -1) this.workers.splice(index, 1);
+        }
+    }
+
+    /**
      * Get pool statistics
      */
     getStats() {
@@ -182,6 +258,60 @@ class WorkerPool {
         this.taskQueue = [];
         this.initialized = false;
     }
+}
+
+/** Default idle window before an unused pool is torn down. */
+export const DEFAULT_POOL_IDLE_MS = 5 * 60 * 1000;
+
+/**
+ * Build an idle reaper for a lazily-created worker pool.
+ *
+ * A pool is a handful of OS threads plus, for the enhancement and networth
+ * workers, a parsed copy of a maths library apiece. Created on the first
+ * calculation and never torn down, they sit there for the rest of a session
+ * that may only ever open the calculator once. The reaper terminates the pool
+ * after an idle window; the manager's `getWorkerPool` recreates it on the next
+ * call, which is a few milliseconds against hours of idle threads.
+ * @param {Function} terminate - Called when the idle window elapses
+ * @param {number} [idleMs] - Idle window in milliseconds
+ * @param {Function} [isBusy] - Returns true while work is still in flight
+ * @returns {{touch: Function, cancel: Function}} Reaper handle
+ */
+export function createIdlePoolReaper(terminate, idleMs = DEFAULT_POOL_IDLE_MS, isBusy = null) {
+    let timer = null;
+
+    const schedule = () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+            timer = null;
+            try {
+                // A batch still running is not idle; wait out another window
+                // rather than terminate a worker mid-task.
+                if (isBusy && isBusy()) {
+                    schedule();
+                    return;
+                }
+                terminate();
+            } catch (error) {
+                console.error('[WorkerPool] Idle teardown failed:', error);
+            }
+        }, idleMs);
+        // Never hold a test runner or a node process open on our account
+        if (typeof timer === 'object' && timer && typeof timer.unref === 'function') timer.unref();
+    };
+
+    return {
+        /** Restart the idle countdown — call whenever the pool is used. */
+        touch() {
+            schedule();
+        },
+
+        /** Stop the countdown — call when the pool has been torn down already. */
+        cancel() {
+            if (timer) clearTimeout(timer);
+            timer = null;
+        },
+    };
 }
 
 export default WorkerPool;

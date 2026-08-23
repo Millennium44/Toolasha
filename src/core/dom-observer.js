@@ -14,6 +14,9 @@
 
 import performanceMonitor from '../utils/performance-monitor.js';
 
+/** Distinct class attributes remembered before the dispatch cache is dropped. */
+const CLASSNAME_CACHE_LIMIT = 2000;
+
 class DOMObserver {
     constructor() {
         this.observer = null;
@@ -24,6 +27,9 @@ class DOMObserver {
         this.debounceMaxStart = new Map(); // When the oldest un-fired mutation arrived, for maxWait
         this.DEFAULT_DEBOUNCE_DELAY = 50; // 50ms default delay
         this._combinedSelector = undefined; // Built on demand from the class handlers; undefined = stale
+        // className string -> the class handlers it satisfies, in registration
+        // order. Rebuilt lazily and invalidated with `_combinedSelector`.
+        this._handlersByClassName = new Map();
     }
 
     /**
@@ -85,6 +91,34 @@ class DOMObserver {
             return matches;
         };
 
+        // Which descendants concern which handler, computed once per node
+        // rather than once per handler.
+        //
+        // The old shape asked every class handler "does any of your classes
+        // appear in this match?" for every match, which is a substring search
+        // per (handler, match) pair — some 150 handlers against the couple of
+        // dozen elements in an inserted panel, on every insertion, forever.
+        // Here each match is resolved once, through a per-className cache of
+        // the handlers that className satisfies, and the handler loop below
+        // just reads its own list. Document order within a handler's list is
+        // preserved because the matches are walked in document order.
+        let matchesByHandler;
+        const matchesFor = (handler) => {
+            if (matchesByHandler === undefined) {
+                matchesByHandler = new Map();
+                for (const match of descendants()) {
+                    const matchClass = typeof match.className === 'string' ? match.className : '';
+                    if (!matchClass) continue;
+                    for (const matched of this._handlersFor(matchClass)) {
+                        const list = matchesByHandler.get(matched);
+                        if (list) list.push(match);
+                        else matchesByHandler.set(matched, [match]);
+                    }
+                }
+            }
+            return matchesByHandler.get(handler);
+        };
+
         // One pass in registration order. Two handlers watching the same
         // insertion — one on the container's own class, one on a class inside
         // it — must fire in the order they registered, because that is the
@@ -105,17 +139,53 @@ class DOMObserver {
                 this._run(handler, handler.debounce ? handler.callback : handler.onMatch, node, mutation);
                 continue;
             }
-            for (const match of descendants()) {
-                const matchClass = typeof match.className === 'string' ? match.className : '';
-                if (!classMatches(handler.classes, matchClass)) continue;
-                if (handler.debounce) {
-                    // Once per container: the matcher finds every match when it fires
-                    this._run(handler, handler.callback, node, mutation);
-                    break;
-                }
+            const matched = matchesFor(handler);
+            if (!matched) continue;
+            if (handler.debounce) {
+                // Once per container: the matcher finds every match when it fires
+                this._run(handler, handler.callback, node, mutation);
+                continue;
+            }
+            for (const match of matched) {
                 this._run(handler, handler.onMatch, match, mutation);
             }
         }
+    }
+
+    /**
+     * The class handlers a className satisfies, in registration order.
+     *
+     * Cached per className string, which is what makes the dispatch above
+     * cheap: the game reuses a small set of class attributes across thousands
+     * of elements, so the substring scan runs once per distinct className
+     * instead of once per element per handler.
+     *
+     * The scan itself is still `classMatches`, deliberately. A watched string
+     * is a substring of a className, not necessarily a whole class token nor
+     * even a token prefix: `GuildPanel_` matches the hashed
+     * `GuildPanel_dataGrid__1x2Yz`, but nothing stops a feature watching a
+     * fragment from the middle of one. Indexing by token prefix would be
+     * faster still and would quietly stop firing for any such handler.
+     * @param {string} className - The element's class attribute
+     * @returns {Array<Object>} Matching class handlers, registration order
+     * @private
+     */
+    _handlersFor(className) {
+        const cached = this._handlersByClassName.get(className);
+        if (cached) return cached;
+
+        const result = [];
+        for (const handler of this.handlers) {
+            if (!handler.classes) continue;
+            if (classMatches(handler.classes, className)) result.push(handler);
+        }
+
+        // A page that generates unique class attributes would otherwise grow
+        // this without bound; the cache is an optimisation, so dropping it
+        // wholesale is always safe.
+        if (this._handlersByClassName.size >= CLASSNAME_CACHE_LIMIT) this._handlersByClassName.clear();
+        this._handlersByClassName.set(className, result);
+        return result;
     }
 
     /**
@@ -264,6 +334,7 @@ class DOMObserver {
     _add(handler) {
         this.handlers.push(handler);
         this._combinedSelector = undefined;
+        this._handlersByClassName.clear();
 
         // Return unregister function
         return () => {
@@ -271,6 +342,7 @@ class DOMObserver {
             if (index > -1) {
                 this.handlers.splice(index, 1);
                 this._combinedSelector = undefined;
+                this._handlersByClassName.clear();
 
                 // Clean up any pending debounced callbacks
                 if (this.debounceTimers.has(handler)) {

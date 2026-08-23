@@ -8,6 +8,7 @@
  */
 
 import { MIN_ACTION_TIME_SECONDS } from './profit-constants.js';
+import matrixMath from './matrix-inverse.js';
 
 /**
  * Base success rates by enhancement level (before bonuses)
@@ -50,7 +51,10 @@ export const BLESSED_TEA_BASE_CHANCE = 0.01;
  * takes `math` and the base rates as arguments and closes over nothing. Any module-scope name
  * read from here would not exist in the worker, and the two copies would drift apart again.
  *
- * @param {Object} math - math.js namespace (a parameter, not the global, so this can be serialised)
+ * `math` used to be the math.js global pulled in by a `@require`; it is now the tiny namespace
+ * from `matrix-inverse.js`, which the workers serialise the same way.
+ *
+ * @param {Object} math - Matrix namespace (a parameter, not a module import, so this can be serialised)
  * @param {Object} options - Chain parameters
  * @param {number[]} options.baseSuccessRates - Base success rate per level, as percentages
  * @param {number} options.successMultiplier - Multiplier applied to the base rates
@@ -129,7 +133,7 @@ export function buildEnhancementMarkov(math, options) {
  * Takes the matrix rather than the chain parameters so it stays a pure function of M, which is
  * what lets a caller that already has one avoid rebuilding it.
  *
- * @param {Object} M - Fundamental matrix (I − Q)^-1, math.js matrix or anything with .get([i,j])
+ * @param {Object} M - Fundamental matrix (I − Q)^-1, or anything with .get([i,j])
  * @param {number} targetLevel - Absorbing state, so the transient block is 0..targetLevel−1
  * @param {number} [startLevel=0] - State the run starts from
  * @returns {number} Variance in attempts, never negative
@@ -429,7 +433,7 @@ export function calculateEnhancement(params) {
     });
 
     // Build Markov Chain transition matrix (20×20) — shared with the worker pools
-    const markov = buildEnhancementMarkov(math, {
+    const markov = buildEnhancementMarkov(matrixMath, {
         baseSuccessRates: BASE_SUCCESS_RATES,
         successMultiplier,
         targetLevel,
@@ -440,11 +444,11 @@ export function calculateEnhancement(params) {
     });
 
     // Extract transient matrix Q (all states before target)
-    const Q = markov.subset(math.index(math.range(0, targetLevel), math.range(0, targetLevel)));
+    const Q = markov.subset(matrixMath.index(matrixMath.range(0, targetLevel), matrixMath.range(0, targetLevel)));
 
     // Fundamental matrix: M = (I - Q)^-1
-    const I = math.identity(targetLevel);
-    const M = math.inv(math.subtract(I, Q));
+    const I = matrixMath.identity(targetLevel);
+    const M = matrixMath.inv(matrixMath.subtract(I, Q));
 
     // Expected attempts from startLevel to target.
     // This is the full row sum of the fundamental matrix: a failure below startLevel drops the

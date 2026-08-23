@@ -267,6 +267,15 @@ class Storage {
                     console.error(`[Storage] Failed to get key ${key}:`, request.error);
                     resolve(defaultValue);
                 };
+
+                // A transaction that aborts (version change, quota, the tab
+                // being frozen) can take the request's own events with it;
+                // without this the promise never settles and every awaiting
+                // caller hangs for the life of the page
+                transaction.onabort = () => {
+                    console.warn(`[Storage] Get transaction aborted for key ${key}:`, transaction.error);
+                    resolve(defaultValue);
+                };
             } catch (error) {
                 console.error(`[Storage] Get transaction failed for key ${key}:`, error);
                 resolve(defaultValue);
@@ -363,6 +372,13 @@ class Storage {
 
                 request.onerror = () => {
                     console.error(`[Storage] Failed to read key ${key}:`, request.error);
+                    resolve(null);
+                };
+
+                // An abort is exactly the "could not be trusted" case this
+                // method exists to report, and it must not hang instead
+                transaction.onabort = () => {
+                    console.warn(`[Storage] Read transaction aborted for key ${key}:`, transaction.error);
                     resolve(null);
                 };
             } catch (error) {
@@ -664,6 +680,17 @@ class Storage {
                     return;
                 }
 
+                // The generation counter only exists to tell a stale timer from
+                // the live one; once the write has landed and nobody newer has
+                // claimed the slot, the entry is dead weight. Left in place it
+                // grows one entry per distinct key written for the life of the
+                // page — history chunks and per-character records make that
+                // unbounded. Dropping it restarts the counter at 1 for that
+                // key, which is safe precisely because no timer is outstanding.
+                if (this._writeGeneration.get(timerKey) === generation && !this.saveDebounceTimers.has(timerKey)) {
+                    this._writeGeneration.delete(timerKey);
+                }
+
                 for (const r of pending.resolvers) {
                     r(true);
                 }
@@ -743,6 +770,11 @@ class Storage {
                     console.error(`[Storage] Failed to delete key ${key}:`, request.error);
                     resolve(false);
                 };
+
+                transaction.onabort = () => {
+                    console.warn(`[Storage] Delete transaction aborted for key ${key}:`, transaction.error);
+                    resolve(false);
+                };
             } catch (error) {
                 console.error(`[Storage] Delete transaction failed for key ${key}:`, error);
                 resolve(false);
@@ -790,6 +822,11 @@ class Storage {
                     console.error(`[Storage] Failed to get all keys from ${storeName}:`, request.error);
                     resolve([]);
                 };
+
+                transaction.onabort = () => {
+                    console.warn(`[Storage] GetAllKeys transaction aborted for ${storeName}:`, transaction.error);
+                    resolve([]);
+                };
             } catch (error) {
                 console.error(`[Storage] GetAllKeys transaction failed for store ${storeName}:`, error);
                 resolve([]);
@@ -829,6 +866,13 @@ class Storage {
                     console.error(`[Storage] Failed to get all from ${storeName}:`, cursorRequest.error);
                     resolve({});
                 };
+
+                // A cursor walk aborted part way has read whatever it read;
+                // hand that back rather than leaving the caller waiting
+                transaction.onabort = () => {
+                    console.warn(`[Storage] GetAll transaction aborted for ${storeName}:`, transaction.error);
+                    resolve(result);
+                };
             } catch (error) {
                 console.error(`[Storage] GetAll transaction failed for store ${storeName}:`, error);
                 resolve({});
@@ -861,14 +905,29 @@ class Storage {
      * @returns {Promise<number>} Number of entries successfully written
      */
     async putAll(storeName, entries) {
+        const written = await this._putAllWritten(storeName, entries);
+        return written.length;
+    }
+
+    /**
+     * Internal: the body of `putAll`, reporting *which* keys landed.
+     *
+     * `flushAll` needs per-key outcomes so it can resolve each caller's promise
+     * and requeue only what failed, which a count cannot tell it.
+     * @param {string} storeName - Object store name
+     * @param {Record<string, *>} entries - Map of key → value to write
+     * @returns {Promise<Array<string>>} The keys that were written
+     * @private
+     */
+    async _putAllWritten(storeName, entries) {
         if (!this.db) {
             console.warn(`[Storage] Database not available, cannot bulk write to store: ${storeName}`);
-            return 0;
+            return [];
         }
 
         const keys = Object.keys(entries || {});
         if (keys.length === 0) {
-            return 0;
+            return [];
         }
 
         return new Promise((resolve) => {
@@ -891,7 +950,7 @@ class Storage {
                 }
 
                 transaction.oncomplete = () => {
-                    resolve(written.length);
+                    resolve(written);
                 };
                 // A quota abort fires `abort` and never `complete` or `error`;
                 // without this the promise never settles and every awaiting
@@ -901,24 +960,31 @@ class Storage {
                     if (this._isQuotaError(transaction.error)) {
                         this._handleQuotaExceeded(keys[0], storeName, transaction.error);
                     }
-                    resolve(written.length);
+                    resolve(written);
                 };
                 transaction.onerror = () => {
                     console.error(`[Storage] Bulk write transaction failed for store ${storeName}:`, transaction.error);
                     if (this._isQuotaError(transaction.error)) {
                         this._handleQuotaExceeded(keys[0], storeName, transaction.error);
                     }
-                    resolve(written.length);
+                    resolve(written);
                 };
             } catch (error) {
                 console.error(`[Storage] Bulk write transaction failed for store ${storeName}:`, error);
-                resolve(0);
+                resolve([]);
             }
         });
     }
 
     /**
-     * Force immediate save of all pending debounced writes
+     * Force immediate save of all pending debounced writes.
+     *
+     * Called from `beforeunload`/`pagehide`, where the page may be torn down at
+     * any moment: one transaction per pending key, awaited in turn, is the shape
+     * most likely to be cut off half way. Instead every pending key is grouped by
+     * store into a single `putAll` transaction, and the stores are issued
+     * together rather than awaited one after another, so the whole flush is a
+     * handful of transactions started in the same tick.
      */
     async flushAll() {
         // Clear all timers first
@@ -933,27 +999,52 @@ class Storage {
         // only removed once its write is confirmed, so a failure here leaves the value
         // queued for the next flush instead of discarding it.
         const writes = Array.from(this.pendingWrites.entries());
+        if (writes.length === 0) return;
 
+        /** @type {Map<string, Array<{timerKey: string, key: string, pending: object}>>} */
+        const byStore = new Map();
         for (const [timerKey, pending] of writes) {
             // Skip if a newer write has already replaced this entry.
             if (this.pendingWrites.get(timerKey) !== pending) continue;
 
-            const colonIndex = timerKey.indexOf(':');
-            const key = timerKey.substring(colonIndex + 1);
-
-            const success = await this._saveToIndexedDB(key, pending.value, pending.storeName);
-
-            if (success) {
-                // Only remove if no newer write claimed the slot while we were writing.
-                if (this.pendingWrites.get(timerKey) === pending) {
-                    this.pendingWrites.delete(timerKey);
-                }
-            }
-
-            for (const r of pending.resolvers || []) {
-                r(success);
-            }
+            const key = timerKey.substring(timerKey.indexOf(':') + 1);
+            const bucket = byStore.get(pending.storeName);
+            if (bucket) bucket.push({ timerKey, key, pending });
+            else byStore.set(pending.storeName, [{ timerKey, key, pending }]);
         }
+
+        const flushes = [];
+        for (const [storeName, items] of byStore) {
+            const entries = {};
+            for (const item of items) entries[item.key] = item.pending.value;
+
+            // Deliberately not awaited inside the loop: every store's
+            // transaction is opened in this tick, and they run concurrently.
+            flushes.push(
+                (async () => {
+                    let writtenKeys;
+                    try {
+                        writtenKeys = new Set(await this._putAllWritten(storeName, entries));
+                    } catch (error) {
+                        console.error(`[Storage] Flush of store ${storeName} failed:`, error);
+                        writtenKeys = new Set();
+                    }
+
+                    for (const { timerKey, key, pending } of items) {
+                        const success = writtenKeys.has(key);
+                        if (success && this.pendingWrites.get(timerKey) === pending) {
+                            // Only remove if no newer write claimed the slot mid-flush.
+                            this.pendingWrites.delete(timerKey);
+                        }
+                        for (const r of pending.resolvers || []) {
+                            r(success);
+                        }
+                    }
+                })()
+            );
+        }
+
+        await Promise.all(flushes);
     }
 
     /**

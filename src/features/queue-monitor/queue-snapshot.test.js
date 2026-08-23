@@ -37,6 +37,11 @@ vi.mock('../../core/storage.js', () => ({
         },
         get: async (key) => game.stored[key],
         getAllKeys: async () => game.storedKeys,
+        getAll: async () => {
+            const result = {};
+            for (const key of game.storedKeys) result[key] = game.stored[key];
+            return result;
+        },
         delete: async (key) => {
             delete game.stored[key];
             game.storedKeys = game.storedKeys.filter((k) => k !== key);

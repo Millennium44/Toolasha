@@ -3,19 +3,27 @@
  * Manages a worker pool for parallel enhancement calculations
  */
 
-import WorkerPool from './worker-pool.js';
+import WorkerPool, { createIdlePoolReaper } from './worker-pool.js';
 import { BASE_SUCCESS_RATES, BLESSED_TEA_BASE_CHANCE, buildEnhancementMarkov } from './enhancement-calculator.js';
+import { createMatrixMath } from './matrix-inverse.js';
 
 // Worker pool instance
 let workerPool = null;
+const idleReaper = createIdlePoolReaper(
+    () => terminateWorkerPool(),
+    undefined,
+    () => Boolean(workerPool) && (workerPool.getStats().busyWorkers > 0 || workerPool.getStats().queuedTasks > 0)
+);
 
 // Worker script as inline string — this is the sole source of the worker code.
 // The chain itself is NOT written here: a blob worker cannot import a module, so the real
 // buildEnhancementMarkov is serialised in below. A hand-copied chain in this string is exactly
 // how the worker drifted from the calculator and lost the success-chance clamp.
 const WORKER_SCRIPT = `
-// Import math.js library from CDN
-importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.2/math.js');
+// The matrix helper the chain needs, serialised in the same way the chain
+// itself is — this used to importScripts ~600 KB of unminified math.js per
+// worker for one 20x20 inverse.
+const math = (${createMatrixMath.toString()})();
 
 // Cache for enhancement calculation results
 const calculationCache = new Map();
@@ -134,6 +142,8 @@ self.onmessage = function (e) {
  * Get or create the worker pool instance
  */
 async function getWorkerPool() {
+    idleReaper.touch();
+
     if (workerPool) {
         return workerPool;
     }
@@ -207,6 +217,7 @@ export function getWorkerStats() {
  * Terminate the worker pool
  */
 export function terminateWorkerPool() {
+    idleReaper.cancel();
     if (workerPool) {
         workerPool.terminate();
         workerPool = null;

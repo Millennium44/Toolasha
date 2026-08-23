@@ -433,20 +433,193 @@ describe('event listener snapshots (upstream 03204a5)', () => {
         expect(calls).toEqual(['first', 'second', 'third']);
     });
 
-    test('deferred events use the listener set that existed when emit was called', async () => {
+    test('a deferred event goes to listeners registered at emit time and still registered at delivery', async () => {
         const { default: dataManager } = await import('./data-manager.js');
-        const first = vi.fn();
+        const stays = vi.fn();
+        const leaves = vi.fn();
         const late = vi.fn();
 
-        dataManager.on('snapshot_test', first);
+        dataManager.on('snapshot_test', stays);
+        dataManager.on('snapshot_test', leaves);
         dataManager.emit('snapshot_test', { id: 1 });
-        dataManager.off('snapshot_test', first);
+
+        // Unregistered in the gap between emit and the deferred delivery — the
+        // shape a character switch produces, where a feature is torn down while
+        // an event is already in flight. Calling it would hand a cleaned-up
+        // feature an event it can no longer service.
+        dataManager.off('snapshot_test', leaves);
+        // Registered in the same gap: it did not exist when the event happened.
         dataManager.on('snapshot_test', late);
 
         await new Promise((resolve) => setTimeout(resolve, 0));
 
-        expect(first).toHaveBeenCalledWith({ id: 1 });
+        expect(stays).toHaveBeenCalledWith({ id: 1 });
+        expect(leaves).not.toHaveBeenCalled();
         expect(late).not.toHaveBeenCalled();
+
+        dataManager.off('snapshot_test', stays);
         dataManager.off('snapshot_test', late);
+    });
+
+    test('a listener that unregisters others mid-delivery does not skip the rest', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        const calls = [];
+        const second = () => calls.push('second');
+        const first = () => {
+            calls.push('first');
+            // Already-snapshotted and still registered when the loop reaches it
+            dataManager.off('mid_delivery_test', first);
+        };
+        const third = () => calls.push('third');
+
+        dataManager.on('mid_delivery_test', first);
+        dataManager.on('mid_delivery_test', second);
+        dataManager.on('mid_delivery_test', third);
+        dataManager.emit('mid_delivery_test', {});
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(calls).toEqual(['first', 'second', 'third']);
+        dataManager.off('mid_delivery_test', second);
+        dataManager.off('mid_delivery_test', third);
+    });
+});
+
+describe('inventory index', () => {
+    test('items_updated updates, removes and appends by id without rescanning', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterItems = [
+            { id: 'a', count: 1, itemLocationHrid: '/item_locations/inventory' },
+            { id: 'b', count: 2, itemLocationHrid: '/item_locations/inventory' },
+            { id: 'c', count: 3, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        dataManager._itemIndexById = null;
+
+        const handler = webSocketHandlers.get('items_updated');
+        handler({
+            endCharacterItems: [
+                { id: 'b', count: 20 },
+                { id: 'a', count: 0 },
+                { id: 'd', count: 7 },
+            ],
+        });
+
+        expect(dataManager.characterItems.map((i) => i.id)).toEqual(['b', 'c', 'd']);
+        expect(dataManager.characterItems.find((i) => i.id === 'b').count).toBe(20);
+        expect(dataManager.characterItems.find((i) => i.id === 'd').count).toBe(7);
+    });
+
+    test('the index recovers when characterItems is replaced behind its back', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterItems = [{ id: 'x', count: 1 }];
+        dataManager._itemIndexById = null;
+        expect(dataManager._itemIndexOf('x')).toBe(0);
+
+        // Something outside the update paths reorders the array
+        dataManager.characterItems = [
+            { id: 'y', count: 5 },
+            { id: 'x', count: 1 },
+        ];
+        expect(dataManager._itemIndexOf('x')).toBe(1);
+        expect(dataManager._itemIndexOf('y')).toBe(0);
+        expect(dataManager._itemIndexOf('nope')).toBe(-1);
+    });
+
+    test('action_completed inventory updates go through the same index', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterItems = [{ id: 'a', count: 1, itemLocationHrid: '/item_locations/inventory' }];
+        dataManager._itemIndexById = null;
+        dataManager.characterActions = [];
+
+        const handler = webSocketHandlers.get('action_completed');
+        handler({
+            endCharacterAction: { id: 99, isDone: true },
+            endCharacterItems: [
+                { id: 'a', count: 9, itemLocationHrid: '/item_locations/inventory' },
+                { id: 'z', count: 4, itemLocationHrid: '/item_locations/inventory' },
+                { id: 'ignored', count: 4, itemLocationHrid: '/item_locations/bank' },
+            ],
+        });
+
+        expect(dataManager.characterItems.map((i) => [i.id, i.count])).toEqual([
+            ['a', 9],
+            ['z', 4],
+        ]);
+    });
+});
+
+describe('actions_updated', () => {
+    test('replaces existing actions once and drops finished ones', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterActions = [
+            { id: 1, isDone: false },
+            { id: 2, isDone: false },
+            { id: 3, isDone: false },
+        ];
+
+        const handler = webSocketHandlers.get('actions_updated');
+        handler({
+            endCharacterActions: [
+                { id: 2, isDone: true },
+                { id: 4, isDone: false },
+                { id: 1, isDone: false, updated: true },
+            ],
+        });
+
+        expect(dataManager.characterActions).toEqual([
+            { id: 3, isDone: false },
+            { id: 4, isDone: false },
+            { id: 1, isDone: false, updated: true },
+        ]);
+    });
+
+    test('a repeated id in one message keeps the last copy', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterActions = [];
+
+        const handler = webSocketHandlers.get('actions_updated');
+        handler({
+            endCharacterActions: [
+                { id: 7, isDone: false, take: 'first' },
+                { id: 8, isDone: false },
+                { id: 7, isDone: false, take: 'second' },
+            ],
+        });
+
+        expect(dataManager.characterActions).toEqual([
+            { id: 8, isDone: false },
+            { id: 7, isDone: false, take: 'second' },
+        ]);
+    });
+});
+
+describe('guild shrine capture', () => {
+    test('an unchanged map is not treated as a change', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+
+        const levels = { '/guild_buildings/shrine': 4 };
+        const first = dataManager.captureGuildShrineData({ guildBuildingLevelMap: { ...levels } });
+        expect(first).toBe(true);
+
+        const listener = vi.fn();
+        dataManager.on('guild_shrine_levels_updated', listener);
+
+        // Same values arriving again on a later message
+        const second = dataManager.captureGuildShrineData({ guildBuildingLevelMap: { ...levels } });
+        expect(second).toBe(false);
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(listener).not.toHaveBeenCalled();
+
+        // A real change still gets through
+        const third = dataManager.captureGuildShrineData({
+            guildBuildingLevelMap: { '/guild_buildings/shrine': 5 },
+        });
+        expect(third).toBe(true);
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(listener).toHaveBeenCalledTimes(1);
+        dataManager.off('guild_shrine_levels_updated', listener);
     });
 });

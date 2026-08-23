@@ -483,6 +483,7 @@ describe('Storage debounced write durability', () => {
         storage.pendingWrites.clear();
         storage._writeGeneration.clear();
         storage._saveToIndexedDB.mockRestore?.();
+        storage._putAllWritten.mockRestore?.();
         storage.db = null;
     });
 
@@ -491,10 +492,25 @@ describe('Storage debounced write durability', () => {
      * @param {boolean|Function} outcome - Fixed result, or a function of the attempt
      */
     function stubSaves(outcome) {
+        const answer = (attempt) => (typeof outcome === 'function' ? outcome(attempt) : outcome);
+
         vi.spyOn(storage, '_saveToIndexedDB').mockImplementation(async (key, value, storeName) => {
             const attempt = { key, value, storeName };
             saves.push(attempt);
-            return typeof outcome === 'function' ? outcome(attempt) : outcome;
+            return answer(attempt);
+        });
+
+        // flushAll groups its pending writes into one bulk transaction per
+        // store rather than one `set` per key, so the bulk path needs standing
+        // in for too — and it reports *which* keys landed, not how many.
+        vi.spyOn(storage, '_putAllWritten').mockImplementation(async (storeName, entries) => {
+            const written = [];
+            for (const [key, value] of Object.entries(entries)) {
+                const attempt = { key, value, storeName };
+                saves.push(attempt);
+                if (answer(attempt)) written.push(key);
+            }
+            return written;
         });
     }
 
@@ -543,10 +559,15 @@ describe('Storage debounced write durability', () => {
         expect(await done).toBe(false);
         expect(storage.pendingWrites.size).toBe(1);
 
-        // The database comes back; the queued value is what gets written
-        storage._saveToIndexedDB.mockImplementation(async (key, value, storeName) => {
-            saves.push({ key, value, storeName });
-            return true;
+        // The database comes back; the queued value is what gets written.
+        // flushAll goes through the bulk path, so that is what comes back here.
+        storage._putAllWritten.mockImplementation(async (storeName, entries) => {
+            const written = [];
+            for (const [key, value] of Object.entries(entries)) {
+                saves.push({ key, value, storeName });
+                written.push(key);
+            }
+            return written;
         });
         await storage.flushAll();
 
@@ -702,5 +723,77 @@ describe('Storage waits out a lost connection instead of answering with defaults
 
         expect(await write).toBe(true);
         expect(written).toEqual([['history', [1]]]);
+    });
+});
+
+describe('read transactions that abort', () => {
+    /**
+     * A database whose read transactions abort without ever firing the
+     * request's own success or error handlers — a version-change abort, a
+     * frozen tab, a quota abort mid-cursor. This is the shape that used to
+     * leave the promise pending for the life of the page.
+     * @param {Array<string>} storeNames - Stores the fake exposes
+     * @returns {object} Fake IDBDatabase
+     */
+    function createAbortingReadDb(storeNames = ['settings']) {
+        return {
+            objectStoreNames: storeNames,
+            transaction() {
+                const txn = { onabort: null, onerror: null, error: new Error('read aborted') };
+                const store = {
+                    get: () => ({ onsuccess: null, onerror: null }),
+                    getAllKeys: () => ({ onsuccess: null, onerror: null }),
+                    openCursor: () => ({ onsuccess: null, onerror: null }),
+                };
+                // Nothing settles the requests; only the transaction aborts
+                queueMicrotask(() => queueMicrotask(() => txn.onabort?.()));
+                return {
+                    objectStore: () => store,
+                    get error() {
+                        return txn.error;
+                    },
+                    set onabort(fn) {
+                        txn.onabort = fn;
+                    },
+                    set onerror(fn) {
+                        txn.onerror = fn;
+                    },
+                };
+            },
+        };
+    }
+
+    /** Resolve to 'hung' if the operation has not settled shortly. */
+    const orHang = (promise) =>
+        Promise.race([promise, new Promise((resolve) => setTimeout(() => resolve('hung'), 50))]);
+
+    beforeEach(() => {
+        storage.db = createAbortingReadDb();
+    });
+
+    afterEach(() => {
+        storage.db = null;
+    });
+
+    test('get falls back to its default instead of hanging for ever', async () => {
+        await expect(orHang(storage.get('anything', 'settings', 'fallback'))).resolves.toBe('fallback');
+    });
+
+    test('tryGet reports the read as untrustworthy rather than hanging', async () => {
+        // null is the "could not be read" answer a read-merge-write caller
+        // needs so it declines to write back over the record
+        await expect(orHang(storage.tryGet('anything', 'settings'))).resolves.toBeNull();
+    });
+
+    test('delete reports failure instead of hanging for ever', async () => {
+        await expect(orHang(storage.delete('anything', 'settings'))).resolves.toBe(false);
+    });
+
+    test('getAllKeys returns an empty list instead of hanging for ever', async () => {
+        await expect(orHang(storage.getAllKeys('settings'))).resolves.toEqual([]);
+    });
+
+    test('getAll returns what the cursor read instead of hanging for ever', async () => {
+        await expect(orHang(storage.getAll('settings'))).resolves.toEqual({});
     });
 });

@@ -307,7 +307,37 @@ describe('saveCombatSimData side effects', () => {
         const savedProfile = setCurrentProfile.mock.calls[0][0];
         expect(savedProfile.characterID).toBe('char-1');
         expect(savedProfile.characterName).toBe('Hero');
-        expect(storage.setJSON).toHaveBeenCalledWith('profile_list', expect.any(Array), 'combatExport', true);
+        // Debounced, not immediate: opening several profiles in a row must not
+        // serialise the whole twenty-profile list on each one.
+        expect(storage.setJSON).toHaveBeenCalledWith('profile_list', expect.any(Array), 'combatExport');
+    });
+
+    test('a profile_shared message with no profile at all is ignored without throwing', async () => {
+        const profileMessage = msg('profile_shared', {});
+        expect(() => webSocketHook.processMessage(profileMessage)).not.toThrow();
+        await new Promise((r) => setTimeout(r, 0));
+        expect(setCurrentProfile).not.toHaveBeenCalled();
+        expect(storage.setJSON).not.toHaveBeenCalled();
+    });
+
+    test('the stored profile list is read once and reused across shares', async () => {
+        webSocketHook._profileList = null;
+
+        webSocketHook.processMessage(
+            msg('profile_shared', { profile: { sharableCharacter: { id: 'char-1', name: 'One' } } })
+        );
+        await new Promise((r) => setTimeout(r, 0));
+        webSocketHook.processMessage(
+            msg('profile_shared', { profile: { sharableCharacter: { id: 'char-2', name: 'Two' } } })
+        );
+        await new Promise((r) => setTimeout(r, 0));
+
+        // Twenty full profiles are not re-read from storage per click
+        expect(storage.getJSON.mock.calls.filter((c) => c[0] === 'profile_list')).toHaveLength(1);
+        expect(storage.setJSON.mock.calls.filter((c) => c[0] === 'profile_list')).toHaveLength(2);
+
+        const lastWritten = storage.setJSON.mock.calls.filter((c) => c[0] === 'profile_list').at(-1)[1];
+        expect(lastWritten.map((p) => p.characterID)).toEqual(['char-2', 'char-1']);
     });
 
     test('a profile_shared message with no resolvable character id is skipped without throwing', async () => {

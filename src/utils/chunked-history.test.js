@@ -25,6 +25,11 @@ const storageMock = vi.hoisted(() => {
             store.delete(key);
             return true;
         }),
+        getMany: vi.fn(async (keys) => {
+            const result = new Map();
+            for (const key of keys) result.set(key, store.has(key) ? store.get(key) : null);
+            return result;
+        }),
         getAllKeys: vi.fn(async () => [...store.keys()]),
         putAll: vi.fn(async (storeName, entries) => {
             for (const [key, value] of Object.entries(entries)) store.set(key, value);
@@ -355,5 +360,63 @@ describe('clearing', () => {
         expect(storageMock.store.has('rec_c1_2026-06')).toBe(false);
         expect(storageMock.store.has('rec_c2_2026-06')).toBe(true);
         expect(await history.load('c1')).toEqual([]);
+    });
+});
+
+describe('the changed-chunk hint', () => {
+    test('only the hinted chunk is written, even when another one also changed', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 6), at(2026, 7)]);
+        storageMock.set.mockClear();
+
+        // Both months differ from what is stored, but the caller vouches for
+        // July only — an append knows exactly which chunk it touched.
+        await history.save('c1', [at(2026, 6, 2), at(2026, 7, 2)], { changedChunks: '2026-07' });
+
+        expect(written()).toEqual(['rec_c1_2026-07']);
+    });
+
+    test('an unhinted save still compares every chunk', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 6), at(2026, 7)]);
+        storageMock.set.mockClear();
+
+        await history.save('c1', [at(2026, 6, 2), at(2026, 7, 2)]);
+
+        expect(written().sort()).toEqual(['rec_c1_2026-06', 'rec_c1_2026-07']);
+    });
+
+    test('a chunk that has never been written is written whatever the hint says', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 7)]);
+        storageMock.set.mockClear();
+
+        // The hint names July, but August has no stored serialisation to
+        // carry forward, so skipping it would lose the entry entirely
+        await history.save('c1', [at(2026, 7), at(2026, 8)], { changedChunks: '2026-07' });
+
+        expect(written()).toContain('rec_c1_2026-08');
+    });
+
+    test('a hinted save still prunes a chunk that lost all its entries', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 6), at(2026, 7)]);
+        expect(storageMock.store.has('rec_c1_2026-06')).toBe(true);
+
+        await history.save('c1', [at(2026, 7)], { changedChunks: '2026-07' });
+
+        expect(storageMock.store.has('rec_c1_2026-06')).toBe(false);
+    });
+
+    test('the hint accepts an array or a Set as well as one id', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 6), at(2026, 7), at(2026, 8)]);
+        storageMock.set.mockClear();
+
+        await history.save('c1', [at(2026, 6, 2), at(2026, 7, 2), at(2026, 8, 2)], {
+            changedChunks: ['2026-06', '2026-08'],
+        });
+
+        expect(written().sort()).toEqual(['rec_c1_2026-06', 'rec_c1_2026-08']);
     });
 });

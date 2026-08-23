@@ -3,10 +3,15 @@
  * Manages a worker pool for parallel EV container calculations
  */
 
-import WorkerPool from './worker-pool.js';
+import WorkerPool, { createIdlePoolReaper } from './worker-pool.js';
 
 // Worker pool instance
 let workerPool = null;
+const idleReaper = createIdlePoolReaper(
+    () => terminateEVWorkerPool(),
+    undefined,
+    () => Boolean(workerPool) && (workerPool.getStats().busyWorkers > 0 || workerPool.getStats().queuedTasks > 0)
+);
 
 // Worker script as inline string
 const WORKER_SCRIPT = `
@@ -108,6 +113,8 @@ self.onmessage = function (e) {
  * Get or create the worker pool instance
  */
 async function getWorkerPool() {
+    idleReaper.touch();
+
     if (workerPool) {
         return workerPool;
     }
@@ -179,6 +186,7 @@ export function getEVWorkerStats() {
  * Terminate the worker pool
  */
 export function terminateEVWorkerPool() {
+    idleReaper.cancel();
     if (workerPool) {
         workerPool.terminate();
         workerPool = null;

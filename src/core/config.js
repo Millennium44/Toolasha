@@ -8,6 +8,22 @@ import { settingsGroups } from './settings-schema.js';
 import dataManager from './data-manager.js';
 
 /**
+ * Every setting key in the schema mapped to its declared default.
+ *
+ * Built once at module load rather than rediscovered by scanning the groups on
+ * each lookup — the schema is static, so the flattened map cannot go stale.
+ */
+const SCHEMA_DEFAULTS = (() => {
+    const defaults = Object.create(null);
+    for (const group of Object.values(settingsGroups)) {
+        for (const [key, setting] of Object.entries(group.settings || {})) {
+            defaults[key] = setting.default;
+        }
+    }
+    return defaults;
+})();
+
+/**
  * Config class manages all script configuration
  * - Constants (colors, URLs, formatters)
  * - User settings with persistence
@@ -558,11 +574,15 @@ class Config {
             }
         }
 
-        // Fallback: Check settings-schema for default (fixes race condition on load)
-        for (const group of Object.values(settingsGroups)) {
-            if (group.settings[key]) {
-                return group.settings[key].default ?? defaultValue;
-            }
+        // Fallback: the schema default (fixes a race condition on load).
+        //
+        // This used to walk every group's settings object on every miss, and a
+        // miss is not rare: features read their settings before the character's
+        // stored settings have loaded, and a handful of settings have no stored
+        // value at all, so the scan ran on hot paths. SCHEMA_DEFAULTS flattens
+        // the same lookup to one map read.
+        if (Object.hasOwn(SCHEMA_DEFAULTS, key)) {
+            return SCHEMA_DEFAULTS[key] ?? defaultValue;
         }
 
         // Ultimate fallback

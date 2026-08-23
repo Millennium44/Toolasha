@@ -44,8 +44,9 @@ class QueueSnapshot {
      * Handle character_switching event — snapshot departing character's queue
      * At this point, departing character's data is still live in dataManager
      * @param {Object} event - { oldId, newId, oldName, newName }
+     * @returns {Promise<void>} Resolves once the snapshot has been written
      */
-    _onCharacterSwitching(event) {
+    async _onCharacterSwitching(event) {
         try {
             const { oldId, oldName } = event;
             if (!oldId) return;
@@ -119,8 +120,11 @@ class QueueSnapshot {
 
             this.snapshots.set(oldId, snapshot);
 
-            // Persist to IndexedDB immediately (must complete before _loadSnapshots re-runs on re-init)
-            storage.set(`queueSnapshot_${oldId}`, snapshot, STORE_NAME, true);
+            // Persist to IndexedDB immediately, and *awaited*: this must land
+            // before _loadSnapshots re-runs on re-init, which is exactly what
+            // the un-awaited version could not promise. dataManager awaits the
+            // character_switching listeners for this reason.
+            await storage.set(`queueSnapshot_${oldId}`, snapshot, STORE_NAME, true);
         } catch (error) {
             console.error('[QueueSnapshot] Failed to create snapshot:', error);
         }
@@ -131,9 +135,10 @@ class QueueSnapshot {
      */
     async _loadSnapshots() {
         try {
-            const keys = await storage.getAllKeys(STORE_NAME);
-            for (const key of keys) {
-                const snapshot = await storage.get(key, STORE_NAME);
+            // One transaction for the whole store rather than one read per
+            // key: this runs on every re-init, including every character switch.
+            const snapshots = await storage.getAll(STORE_NAME);
+            for (const snapshot of Object.values(snapshots)) {
                 if (snapshot?.characterId) {
                     const existing = this.snapshots.get(snapshot.characterId);
                     if (!existing || existing.timestamp <= snapshot.timestamp) {

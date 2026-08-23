@@ -1900,9 +1900,21 @@ if (isCombatSimulatorPage()) {
             await config.initialize();
             performanceMonitor.mark('config:loaded');
 
-            // Add beforeunload handler to flush all pending writes
-            window.addEventListener('beforeunload', () => {
+            // Flush pending writes on every way a page can go away.
+            //
+            // `beforeunload` alone is not enough: a mobile tab that is
+            // backgrounded and then killed, or a bfcache-eligible navigation,
+            // never fires it, and up to three seconds of debounced writes go
+            // with the page. `pagehide` covers the bfcache case and
+            // `visibilitychange`→hidden covers backgrounding, which is the last
+            // event a discarded tab reliably gets.
+            const flushPendingWrites = () => {
                 storage.flushAll();
+            };
+            window.addEventListener('beforeunload', flushPendingWrites);
+            window.addEventListener('pagehide', flushPendingWrites);
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'hidden') flushPendingWrites();
             });
 
             // Initialize Data Manager immediately

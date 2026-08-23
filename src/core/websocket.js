@@ -111,6 +111,20 @@ function ttlDedupKey(message) {
     return `${message.length}:${message.slice(0, TTL_KEY_EDGE)}${message.slice(-TTL_KEY_EDGE)}`;
 }
 
+/**
+ * The only message types `saveCombatSimData` does anything for.
+ *
+ * Checked at the call site so the hundreds of other messages a minute do not
+ * each pay for an async call that falls through every branch.
+ */
+const COMBAT_SIM_MESSAGE_TYPES = new Set(['init_character_data', 'init_client_data', 'new_battle', 'profile_shared']);
+
+/** How many shared profiles are kept in the export list. */
+const MAX_STORED_PROFILES = 20;
+
+/** Retries of the localStorage client-data capture before giving up (~2 min). */
+const MAX_CLIENT_DATA_RETRIES = 60;
+
 class WebSocketHook {
     constructor() {
         this.isHooked = false;
@@ -466,15 +480,18 @@ class WebSocketHook {
             // messages of either type are far enough apart that a repeat inside 50ms
             // is a duplicate rather than a second event.
             const now = Date.now();
-            const key = ttlDedupKey(message);
-            if (this.recentActionCompleted.has(key)) {
+            const dedupKey = ttlDedupKey(message);
+            if (this.recentActionCompleted.has(dedupKey)) {
                 return; // Duplicate from second listener — skip
             }
-            this.recentActionCompleted.set(key, now);
-            // Prune entries older than 50ms to keep memory bounded
-            for (const [key, ts] of this.recentActionCompleted) {
+            this.recentActionCompleted.set(dedupKey, now);
+            // Prune entries older than 50ms to keep memory bounded.
+            // The loop variable used to be called `key` too, shadowing the
+            // message's own key inside the loop — harmless as written, and one
+            // edit away from pruning against the wrong string.
+            for (const [pruneKey, ts] of this.recentActionCompleted) {
                 if (now - ts > 50) {
-                    this.recentActionCompleted.delete(key);
+                    this.recentActionCompleted.delete(pruneKey);
                 }
             }
         }
@@ -483,8 +500,15 @@ class WebSocketHook {
             const data = JSON.parse(message);
             const parsedMessageType = data.type;
 
-            // Save critical data to GM storage for Combat Sim export
-            this.saveCombatSimData(parsedMessageType, message);
+            // Save critical data to GM storage for Combat Sim export.
+            //
+            // Four message types out of dozens are interesting here, and the
+            // game sends hundreds of the others a minute. Calling an async
+            // method for each allocated a promise and a microtask apiece just
+            // to fall through every branch, so the type check moved out here.
+            if (COMBAT_SIM_MESSAGE_TYPES.has(parsedMessageType)) {
+                this.saveCombatSimData(parsedMessageType, message);
+            }
 
             // Call registered handlers for this message type. Snapshot the array:
             // a handler that off()s itself mid-dispatch would otherwise shift the
@@ -589,12 +613,20 @@ class WebSocketHook {
             if (messageType === 'profile_shared') {
                 const parsed = JSON.parse(message);
 
+                // A profile_shared without a profile is a malformed or partial
+                // message, not a profile. This used to read straight through
+                // `parsed.profile` and throw, which the outer catch turned into
+                // a console error for every such message.
+                const profile = parsed?.profile;
+                if (!profile) {
+                    console.warn('[Toolasha] profile_shared carried no profile; ignoring');
+                    return;
+                }
+
                 // Extract character info - try multiple sources for ID
                 parsed.characterID =
-                    parsed.profile.sharableCharacter?.id ||
-                    parsed.profile.characterSkills?.[0]?.characterID ||
-                    parsed.profile.character?.id;
-                parsed.characterName = parsed.profile.sharableCharacter?.name || 'Unknown';
+                    profile.sharableCharacter?.id || profile.characterSkills?.[0]?.characterID || profile.character?.id;
+                parsed.characterName = profile.sharableCharacter?.name || 'Unknown';
                 parsed.timestamp = Date.now();
 
                 // Validate we got a character ID
@@ -606,22 +638,32 @@ class WebSocketHook {
                 // Store in memory for Steam users (works without GM storage)
                 setCurrentProfile(parsed);
 
-                // Load existing profile list from IndexedDB
-                let profileList = (await storage.getJSON('profile_list', 'combatExport', null)) || [];
+                // Load the existing list once per session rather than once per
+                // shared profile: this is twenty full profiles, and clicking
+                // through a party's profiles re-read and rewrote all of them
+                // for each click. After the first read the list is held here
+                // and only ever written.
+                if (!this._profileList) {
+                    this._profileList = (await storage.getJSON('profile_list', 'combatExport', null)) || [];
+                }
 
                 // Remove old entry for same character
-                profileList = profileList.filter((p) => p.characterID !== parsed.characterID);
+                let profileList = this._profileList.filter((p) => p.characterID !== parsed.characterID);
 
                 // Add to front of list
                 profileList.unshift(parsed);
 
                 // Keep only last 20 profiles
-                if (profileList.length > 20) {
-                    profileList.pop();
+                if (profileList.length > MAX_STORED_PROFILES) {
+                    profileList = profileList.slice(0, MAX_STORED_PROFILES);
                 }
+                this._profileList = profileList;
 
-                // Save updated profile list to IndexedDB (cross-session) and GM storage (cross-domain for Shykai)
-                await storage.setJSON('profile_list', profileList, 'combatExport', true);
+                // Save updated profile list to IndexedDB (cross-session) and GM storage (cross-domain for Shykai).
+                // Debounced rather than immediate: opening several profiles in a
+                // row is the normal case, and each immediate write serialised
+                // the whole twenty-profile list to disk on the spot.
+                await storage.setJSON('profile_list', profileList, 'combatExport');
                 if (hasGM) {
                     try {
                         GM_setValue('toolasha_profile_list', JSON.stringify(profileList));
@@ -685,6 +727,7 @@ class WebSocketHook {
 
             // Verify it's init_client_data
             if (clientDataObj?.type === 'init_client_data') {
+                this.clientDataRetryCount = 0;
                 this.clearClientDataRetry();
             }
         } catch (error) {
@@ -699,6 +742,17 @@ class WebSocketHook {
      */
     scheduleClientDataRetry() {
         this.clearClientDataRetry();
+
+        // Capped: if the game's localStorage util has not produced client data
+        // after a couple of minutes it is not going to, and the uncapped
+        // version re-armed a 2 s timer for the rest of the session — on a page
+        // that is not the game, forever.
+        this.clientDataRetryCount = (this.clientDataRetryCount || 0) + 1;
+        if (this.clientDataRetryCount > MAX_CLIENT_DATA_RETRIES) {
+            console.warn('[WebSocket] Giving up on capturing init_client_data from localStorage');
+            return;
+        }
+
         this.clientDataRetryTimeout = setTimeout(() => this.captureClientDataFromLocalStorage(), 2000);
     }
 

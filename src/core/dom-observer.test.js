@@ -349,3 +349,60 @@ describe('dispatch', () => {
         vi.useRealTimers();
     });
 });
+
+describe('per-className handler cache', () => {
+    test('matches hashed CSS-module class tokens, and mid-token substrings too', () => {
+        const skill = [];
+        const mid = [];
+        // The common shape: the watched string is a prefix of the hashed token
+        domObserver.onClass('Skill', 'SkillAction_skillAction', (el) => skill.push(el.className));
+        // The shape a token-prefix index would silently drop
+        domObserver.onClass('Mid', 'skillAction__', (el) => mid.push(el.className));
+
+        const container = document.createElement('div');
+        container.innerHTML =
+            '<div class="SkillAction_skillAction__1esCp"></div>' +
+            '<div class="Other_thing__9zZ"></div>' +
+            '<div class="SkillAction_skillAction__2abCd extra"></div>';
+
+        domObserver.dispatch(container, {});
+
+        expect(skill).toEqual(['SkillAction_skillAction__1esCp', 'SkillAction_skillAction__2abCd extra']);
+        expect(mid).toEqual(['SkillAction_skillAction__1esCp', 'SkillAction_skillAction__2abCd extra']);
+    });
+
+    test('the cache is rebuilt when a handler registers or unregisters', () => {
+        const first = [];
+        domObserver.onClass('First', 'Panel_row', (el) => first.push(el.className));
+
+        const container = document.createElement('div');
+        container.innerHTML = '<div class="Panel_row__aB"></div>';
+        domObserver.dispatch(container, {});
+        expect(first).toHaveLength(1);
+
+        // A handler registered after the cache was populated must still be seen
+        const second = [];
+        const unregisterSecond = domObserver.onClass('Second', 'Panel_row', (el) => second.push(el.className));
+        domObserver.dispatch(container, {});
+        expect(first).toHaveLength(2);
+        expect(second).toEqual(['Panel_row__aB']);
+
+        unregisterSecond();
+        domObserver.dispatch(container, {});
+        expect(second).toHaveLength(1);
+        expect(first).toHaveLength(3);
+    });
+
+    test('handlers still fire in registration order across container and descendant matches', () => {
+        const order = [];
+        domObserver.onClass('Outer', 'Outer_y', () => order.push('outer'));
+        domObserver.onClass('Inner', 'Inner_x', () => order.push('inner'));
+
+        const node = document.createElement('div');
+        node.className = 'Outer_y__hash';
+        node.innerHTML = '<span class="Inner_x__hash"></span>';
+
+        domObserver.dispatch(node, {});
+        expect(order).toEqual(['outer', 'inner']);
+    });
+});

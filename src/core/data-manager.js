@@ -20,6 +20,32 @@ import { extractGuildShrineData, loadGuildShrineLevels, saveGuildShrineLevels, m
 import { mergeMarketListings } from '../utils/market-listings.js';
 import { SCROLL_BUFF_VALUES } from '../utils/scroll-buff-values.js';
 
+/**
+ * Whether two plain hrid -> value maps hold the same entries.
+ *
+ * Only ever used on the guild buff and building-level maps, which are flat
+ * objects of numbers, so a shallow comparison is the whole comparison.
+ * @param {Object|null|undefined} a - Left map
+ * @param {Object|null|undefined} b - Right map
+ * @returns {boolean} True when both hold the same keys and values
+ */
+function shallowEqualMaps(a, b) {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    const aKeys = Object.keys(a);
+    if (aKeys.length !== Object.keys(b).length) return false;
+    for (const key of aKeys) {
+        if (!Object.hasOwn(b, key) || a[key] !== b[key]) return false;
+    }
+    return true;
+}
+
+/** Retries of the static-data load before giving up (60 x 500 ms = 30 s). */
+const MAX_STATIC_DATA_ATTEMPTS = 60;
+
+/** Switches closer together than this skip the expensive feature teardown. */
+const RAPID_SWITCH_WINDOW_MS = 1000;
+
 class DataManager {
     constructor() {
         this.webSocketHook = webSocketHook;
@@ -31,6 +57,10 @@ class DataManager {
         this.characterData = null;
         this.characterSkills = null;
         this.characterItems = null;
+        // id -> position in characterItems, so a changed item is found without
+        // scanning the whole inventory. Null means "not built yet".
+        this._itemIndexById = null;
+        this._itemIndexLength = 0;
         this.characterActions = [];
         this.characterQuests = []; // Active quests including tasks
         this.characterEquipment = new Map();
@@ -86,11 +116,30 @@ class DataManager {
         // Try to load static game data using official API
         const success = this.tryLoadStaticData();
 
-        // If failed, set up retry polling
+        // If failed, set up retry polling.
+        //
+        // Capped like the fallback poll below: the game either exposes its
+        // static data within a few seconds or it never will (a broken build, a
+        // page that is not the game), and an uncapped 500 ms interval polls a
+        // dead object for the rest of the session.
         if (!success && !this.loadRetryInterval) {
+            let staticDataAttempts = 0;
             this.loadRetryInterval = setInterval(() => {
+                staticDataAttempts++;
+
                 if (this.tryLoadStaticData()) {
                     this.cleanupIntervals();
+                    return;
+                }
+
+                if (staticDataAttempts >= MAX_STATIC_DATA_ATTEMPTS) {
+                    console.error(
+                        '[DataManager] Static game data not available after 30 seconds; giving up on retry polling.'
+                    );
+                    if (this.loadRetryInterval) {
+                        clearInterval(this.loadRetryInterval);
+                        this.loadRetryInterval = null;
+                    }
                 }
             }, 500); // Retry every 500ms
         }
@@ -215,17 +264,37 @@ class DataManager {
             // Check if this is a character switch (not first load)
             if (this.currentCharacterId && this.currentCharacterId !== newCharacterId) {
                 isCharacterSwitch = true;
-                // Prevent rapid-fire character switches (loop protection)
+
+                // Rapid-switch guard (loop protection).
+                //
+                // This used to `return`, which threw away the whole message:
+                // the new character's data was never stored, so every reader
+                // went on serving the previous character's skills, items and
+                // actions until another init arrived. What is expensive about a
+                // switch is the teardown — cleaning up and re-initialising a
+                // hundred features — not recording the data. So the data update
+                // and the lifecycle events below always happen; only the
+                // teardown is skipped when switches arrive faster than a second
+                // apart, which is exactly what the guard was defending.
                 const now = Date.now();
-                if (this.lastCharacterSwitchTime && now - this.lastCharacterSwitchTime < 1000) {
-                    console.warn('[Toolasha] Ignoring rapid character switch (<1s since last), possible loop detected');
-                    return;
+                const isRapidSwitch = Boolean(
+                    this.lastCharacterSwitchTime && now - this.lastCharacterSwitchTime < RAPID_SWITCH_WINDOW_MS
+                );
+                if (isRapidSwitch) {
+                    console.warn(
+                        '[Toolasha] Rapid character switch (<1s since last); updating data but skipping feature teardown'
+                    );
                 }
                 this.lastCharacterSwitchTime = now;
 
-                // Flush all pending storage writes before cleanup (non-blocking)
-                // Use setTimeout to prevent main thread blocking during character switch
-                setTimeout(async () => {
+                // Flush pending storage writes before anything tears down.
+                //
+                // This used to be a `setTimeout(…, 0)` whose promise nobody
+                // waited for, so the flush raced the switch: the writes it was
+                // draining belong to the *old* character, and a feature that
+                // rewrote its state during cleanup could land on top of them.
+                // Awaiting it costs one macrotask and makes the ordering real.
+                if (!isRapidSwitch) {
                     try {
                         if (storage && typeof storage.flushAll === 'function') {
                             await storage.flushAll();
@@ -233,18 +302,23 @@ class DataManager {
                     } catch (error) {
                         console.error('[Toolasha] Failed to flush storage before character switch:', error);
                     }
-                }, 0);
+                }
 
                 // Set switching flag to block feature initialization
                 this.isCharacterSwitching = true;
 
                 // Emit character_switching event (cleanup phase)
-                this.emit('character_switching', {
-                    oldId: this.currentCharacterId,
-                    newId: newCharacterId,
-                    oldName: this.currentCharacterName,
-                    newName: newCharacterName,
-                });
+                if (!isRapidSwitch) {
+                    // Awaited: a listener that persists the departing
+                    // character's state must land before the teardown below
+                    // starts clearing that state out from under it.
+                    await this.emit('character_switching', {
+                        oldId: this.currentCharacterId,
+                        newId: newCharacterId,
+                        oldName: this.currentCharacterName,
+                        newName: newCharacterName,
+                    });
+                }
 
                 // Update character tracking
                 this.currentCharacterId = newCharacterId;
@@ -256,6 +330,7 @@ class DataManager {
                 this.characterMonsters = null;
                 this.characterSkills = null;
                 this.characterItems = null;
+                this._itemIndexById = null;
                 this.characterActions = [];
                 this.characterQuests = [];
                 this.characterEquipment.clear();
@@ -273,11 +348,15 @@ class DataManager {
                 // Reset switching flag (cleanup complete, ready for re-init)
                 this.isCharacterSwitching = false;
 
-                // Emit character_switched event (ready for re-init)
-                this.emit('character_switched', {
-                    newId: newCharacterId,
-                    newName: newCharacterName,
-                });
+                // Emit character_switched event (ready for re-init).
+                // Paired with character_switching: a rapid switch skips both, so
+                // feature-registry never sees a re-init without a teardown.
+                if (!isRapidSwitch) {
+                    this.emit('character_switched', {
+                        newId: newCharacterId,
+                        newName: newCharacterName,
+                    });
+                }
             } else if (!this.currentCharacterId) {
                 // First load - set character tracking
                 this.currentCharacterId = newCharacterId;
@@ -289,6 +368,7 @@ class DataManager {
             this.characterData = data;
             this.characterSkills = data.characterSkills;
             this.characterItems = data.characterItems;
+            this._itemIndexById = null; // Rebuilt lazily against the new inventory
             this.characterActions = [...data.characterActions];
             this.characterQuests = data.characterQuests || [];
 
@@ -334,11 +414,25 @@ class DataManager {
 
         // Handle actions_updated (action queue changes)
         this.webSocketHook.on('actions_updated', (data) => {
-            // Update action list
+            // Update action list.
+            //
+            // This used to rebuild the whole array once per incoming action —
+            // a full queue reorder is 30-odd actions against a 30-entry list,
+            // so ~900 comparisons and 30 fresh arrays for what is one pass.
+            // Collect the incoming ids first, filter once, then append.
+            const incoming = new Map();
             for (const action of data.endCharacterActions) {
-                // Always remove the old entry first to prevent duplicates —
-                // endCharacterActions can contain existing actions alongside new ones.
-                this.characterActions = this.characterActions.filter((a) => a.id !== action.id);
+                // Re-inserting keeps the *last* entry for a repeated id, and at
+                // the position the repeat arrived — what the per-action filter
+                // did when endCharacterActions carried the same id twice.
+                incoming.delete(action.id);
+                incoming.set(action.id, action);
+            }
+
+            // endCharacterActions can contain existing actions alongside new
+            // ones, so drop every incoming id before appending to avoid dupes.
+            this.characterActions = this.characterActions.filter((a) => !incoming.has(a.id));
+            for (const action of incoming.values()) {
                 if (action.isDone === false) {
                     this.characterActions.push(action);
                 }
@@ -370,13 +464,13 @@ class DataManager {
                     }
 
                     // Find and update the item in inventory
-                    const index = this.characterItems.findIndex((invItem) => invItem.id === endItem.id);
+                    const index = this._itemIndexOf(endItem.id);
                     if (index !== -1) {
                         // Update existing item
                         this.characterItems[index].count = endItem.count;
                     } else {
                         // Add new item to inventory
-                        this.characterItems.push(endItem);
+                        this._pushItem(endItem);
                     }
                 }
 
@@ -449,18 +543,22 @@ class DataManager {
                 }
                 // Update inventory items in-place (endCharacterItems contains only changed items, not full inventory)
                 for (const item of data.endCharacterItems) {
-                    const index = this.characterItems.findIndex((invItem) => invItem.id === item.id);
+                    const index = this._itemIndexOf(item.id);
                     if (index !== -1) {
                         if (item.count === 0) {
                             // count 0 means removed from this location (e.g. equipped from inventory)
                             this.characterItems.splice(index, 1);
+                            // Every position after the hole moved; cheaper to
+                            // rebuild than to patch, and removals are rare next
+                            // to the count updates above.
+                            this._itemIndexById = null;
                         } else {
                             // Update existing item (count and location may have changed, e.g. unequip)
                             this.characterItems[index] = { ...this.characterItems[index], ...item };
                         }
                     } else if (item.count > 0) {
                         // New item in inventory or equipment slot
-                        this.characterItems.push(item);
+                        this._pushItem(item);
                     }
                 }
 
@@ -729,6 +827,66 @@ class DataManager {
     }
 
     /**
+     * Position of an inventory item by id, or -1.
+     *
+     * Backed by an id -> index map so a burst of item updates does not walk the
+     * inventory once per changed item. The map is rebuilt whenever it cannot be
+     * trusted — `characterItems` is public and other code may replace or
+     * reorder it — which makes this a cache rather than a second source of truth.
+     * @param {string} id - Character item id
+     * @returns {number} Index into characterItems, or -1 when absent
+     * @private
+     */
+    _itemIndexOf(id) {
+        const items = this.characterItems;
+        if (!Array.isArray(items)) return -1;
+
+        if (!this._itemIndexById || this._itemIndexLength !== items.length) {
+            this._rebuildItemIndex();
+        }
+
+        const index = this._itemIndexById.get(id);
+        if (index === undefined) return -1;
+        if (items[index] && items[index].id === id) return index;
+
+        // The array was reordered under us; rebuild once and answer from it
+        this._rebuildItemIndex();
+        const rebuilt = this._itemIndexById.get(id);
+        return rebuilt === undefined ? -1 : rebuilt;
+    }
+
+    /**
+     * Rebuild the id -> index map from characterItems.
+     * @private
+     */
+    _rebuildItemIndex() {
+        const map = new Map();
+        const items = this.characterItems;
+        if (Array.isArray(items)) {
+            for (let i = 0; i < items.length; i++) {
+                map.set(items[i].id, i);
+            }
+        }
+        this._itemIndexById = map;
+        // Length, not map size: duplicate ids would make the two disagree
+        // forever and rebuild the map on every single lookup.
+        this._itemIndexLength = Array.isArray(items) ? items.length : 0;
+    }
+
+    /**
+     * Append an item to the inventory, keeping the index map in step.
+     * @param {Object} item - Character item record
+     * @private
+     */
+    _pushItem(item) {
+        this.characterItems.push(item);
+        if (this._itemIndexById) {
+            this._itemIndexById.set(item.id, this.characterItems.length - 1);
+            this._itemIndexLength = this.characterItems.length;
+        }
+    }
+
+    /**
      * Every ability the character has learned, with level and experience.
      * @returns {Array<Object>} Copies of the learned ability entries
      */
@@ -746,14 +904,23 @@ class DataManager {
         const captured = extractGuildShrineData(data);
         if (!captured) return false;
 
+        // "Present on the message" is not "different from what we hold".
+        // Several message types carry these maps unchanged on every tick, and
+        // treating each as a change meant a storage write and a
+        // guild_shrine_levels_updated event — with every listener's redraw
+        // behind it — for state that had not moved.
         let changed = false;
         if (captured.characterGuildBuffMap !== undefined) {
-            this.characterGuildBuffMap = captured.characterGuildBuffMap;
-            changed = true;
+            if (!shallowEqualMaps(this.characterGuildBuffMap, captured.characterGuildBuffMap)) {
+                this.characterGuildBuffMap = captured.characterGuildBuffMap;
+                changed = true;
+            }
         }
         if (captured.guildBuildingLevelMap !== undefined) {
-            this.guildBuildingLevelMap = captured.guildBuildingLevelMap;
-            changed = true;
+            if (!shallowEqualMaps(this.guildBuildingLevelMap, captured.guildBuildingLevelMap)) {
+                this.guildBuildingLevelMap = captured.guildBuildingLevelMap;
+                changed = true;
+            }
         }
         if (!changed) return false;
 
@@ -1403,6 +1570,9 @@ class DataManager {
      * All other events including character_switched and character_initialized are deferred
      * @param {string} event - Event name
      * @param {*} data - Event data
+     * @returns {Promise<void>|undefined} For critical events, a promise that settles once every
+     *   async listener has, so a caller that must not proceed until they have can await it.
+     *   Deferred events return undefined — there is nothing to wait for.
      */
     emit(event, data) {
         // Snapshot at emit time. Lifecycle listeners commonly unregister themselves
@@ -1416,18 +1586,42 @@ class DataManager {
         const isCritical = event === 'character_switching';
 
         if (isCritical) {
-            // Run immediately on main thread
+            // Run immediately on main thread.
+            //
+            // An async listener's promise is collected and handed back so the
+            // emitter can wait for it: the queue snapshot of the departing
+            // character is written here, and the re-init that reads it back
+            // begins as soon as this returns.
+            const settled = [];
             for (const listener of listeners) {
                 try {
-                    listener(data);
+                    const result = listener(data);
+                    if (result && typeof result.then === 'function') {
+                        settled.push(
+                            Promise.resolve(result).catch((error) => {
+                                console.error(`[Data Manager] Error in ${event} listener:`, error);
+                            })
+                        );
+                    }
                 } catch (error) {
                     console.error(`[Data Manager] Error in ${event} listener:`, error);
                 }
             }
+            return settled.length > 0 ? Promise.all(settled) : undefined;
         } else {
             // Defer all other events to prevent main thread blocking
             setTimeout(() => {
+                // The snapshot fixes *which* listeners this event goes to, but a
+                // tick is long enough for a feature to be disabled in between —
+                // a character switch tears down a hundred of them — and calling
+                // a listener whose feature has already cleaned up is how a
+                // handler ends up reading a nulled panel. Deliver only to
+                // listeners that were in the snapshot and are still registered.
+                const live = this.eventListeners.get(event);
+                if (!live || live.length === 0) return;
+                const stillRegistered = new Set(live);
                 for (const listener of listeners) {
+                    if (!stillRegistered.has(listener)) continue;
                     try {
                         listener(data);
                     } catch (error) {

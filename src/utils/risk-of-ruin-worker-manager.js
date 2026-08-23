@@ -17,10 +17,15 @@
  * project's ES modules) — kept deliberately tiny and mirrored closely so the two stay in sync.
  */
 
-import WorkerPool from './worker-pool.js';
+import WorkerPool, { createIdlePoolReaper } from './worker-pool.js';
 import { createSeededRng, drawFromDistribution } from './risk-of-ruin-engine.js';
 
 let workerPool = null;
+const idleReaper = createIdlePoolReaper(
+    () => terminateRiskOfRuinWorkerPool(),
+    undefined,
+    () => Boolean(workerPool) && (workerPool.getStats().busyWorkers > 0 || workerPool.getStats().queuedTasks > 0)
+);
 
 /**
  * Run a batch of 'fixedOutcome' trials (chests, alchemy): a flat per-action outcome list,
@@ -233,6 +238,8 @@ self.onmessage = function (e) {
 `;
 
 async function getWorkerPool() {
+    idleReaper.touch();
+
     if (workerPool) return workerPool;
 
     const blob = new Blob([WORKER_SCRIPT], { type: 'application/javascript' });
@@ -313,6 +320,7 @@ export async function simulateRuinAsync(model) {
  * Terminate the worker pool.
  */
 export function terminateRiskOfRuinWorkerPool() {
+    idleReaper.cancel();
     if (workerPool) {
         workerPool.terminate();
         workerPool = null;

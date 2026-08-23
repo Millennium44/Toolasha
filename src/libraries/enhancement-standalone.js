@@ -17,6 +17,8 @@
  *   });
  */
 
+import matrixMath from '../utils/matrix-inverse.js';
+
 /**
  * Base success rates by enhancement level (before bonuses)
  * Index 0 = +1, Index 19 = +20
@@ -98,7 +100,7 @@ function calculateEnhancementStats(params) {
     }
 
     // Build Markov Chain transition matrix (20×20)
-    const markov = math.zeros(20, 20);
+    const markov = matrixMath.zeros(20, 20);
 
     for (let i = 0; i < targetLevel; i++) {
         const successChance = successRates[i];
@@ -126,11 +128,11 @@ function calculateEnhancementStats(params) {
     markov.set([targetLevel, targetLevel], 1.0);
 
     // Extract transient matrix Q (all states before target)
-    const Q = markov.subset(math.index(math.range(0, targetLevel), math.range(0, targetLevel)));
+    const Q = markov.subset(matrixMath.index(matrixMath.range(0, targetLevel), matrixMath.range(0, targetLevel)));
 
     // Fundamental matrix: M = (I - Q)^-1
-    const I = math.identity(targetLevel);
-    const M = math.inv(math.subtract(I, Q));
+    const I = matrixMath.identity(targetLevel);
+    const M = matrixMath.inv(matrixMath.subtract(I, Q));
 
     // Expected attempts from level 0 to target
     let attempts = 0;

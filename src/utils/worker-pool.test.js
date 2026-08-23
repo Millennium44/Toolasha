@@ -1,144 +1,239 @@
 /**
- * Tests for Worker Pool Manager
+ * Worker pool: the failure modes a pool has that a plain promise does not.
  *
- * Uses a fake Worker that lets the test control when/what each worker "replies"
- * with, so the queueing and task-routing logic can be pinned without a real
- * worker thread.
+ * A worker that dies without firing `error` is the interesting one — nothing
+ * settles the task, nothing frees the slot, and the calculator awaiting a
+ * result waits for the rest of the session. That is what the timeout is for,
+ * and it needs a fake Worker to reproduce.
  */
-import { describe, test, expect, vi, beforeEach } from 'vitest';
-import WorkerPool from './worker-pool.js';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import WorkerPool, { createIdlePoolReaper } from './worker-pool.js';
 
-class FakeWorker {
-    constructor() {
-        this.listeners = {};
-        FakeWorker.instances.push(this);
+/** Workers created by the fake constructor, newest last. */
+let created = [];
+/** Object URLs handed out and revoked, so the leak fix is observable. */
+let urls = [];
+
+/**
+ * A Worker that does nothing at all unless a test tells it to answer.
+ */
+class SilentWorker {
+    constructor(url) {
+        this.url = url;
+        this.terminated = false;
+        this.posted = [];
+        this._listeners = new Map();
+        created.push(this);
     }
-    addEventListener(type, handler) {
-        this.listeners[type] = this.listeners[type] || [];
-        this.listeners[type].push(handler);
+
+    addEventListener(type, fn) {
+        if (!this._listeners.has(type)) this._listeners.set(type, new Set());
+        this._listeners.get(type).add(fn);
     }
-    removeEventListener(type, handler) {
-        if (!this.listeners[type]) return;
-        this.listeners[type] = this.listeners[type].filter((h) => h !== handler);
+
+    removeEventListener(type, fn) {
+        this._listeners.get(type)?.delete(fn);
     }
-    postMessage(data) {
-        this.lastMessage = data;
+
+    postMessage(message) {
+        this.posted.push(message);
     }
+
     terminate() {
         this.terminated = true;
     }
-    // Test helper: simulate the worker replying to the given task
-    reply(taskId, result, error) {
-        const handlers = this.listeners['message'] || [];
-        for (const h of handlers) h({ data: { taskId, result, error } });
+
+    /**
+     * Deliver a message as the real worker would.
+     * @param {Object} data - The message payload
+     */
+    reply(data) {
+        for (const fn of this._listeners.get('message') || []) fn({ data });
+    }
+
+    /** How many listeners of a type are still attached. */
+    listenerCount(type) {
+        return this._listeners.get(type)?.size ?? 0;
     }
 }
-FakeWorker.instances = [];
 
 beforeEach(() => {
-    FakeWorker.instances = [];
-    vi.stubGlobal('Worker', FakeWorker);
-    vi.stubGlobal('navigator', { hardwareConcurrency: 4 });
-    globalThis.URL.createObjectURL = vi.fn(() => 'blob:fake');
+    created = [];
+    urls = [];
+    vi.stubGlobal('Worker', SilentWorker);
+    vi.stubGlobal('URL', {
+        createObjectURL: vi.fn(() => {
+            const url = `blob:fake/${urls.length}`;
+            urls.push({ url, revoked: false });
+            return url;
+        }),
+        revokeObjectURL: vi.fn((url) => {
+            const entry = urls.find((u) => u.url === url);
+            if (entry) entry.revoked = true;
+        }),
+    });
+    vi.stubGlobal('navigator', { hardwareConcurrency: 2 });
 });
 
-describe('WorkerPool', () => {
-    test('initialize() creates poolSize workers, capped at 4 by default', async () => {
-        const pool = new WorkerPool('script', null);
+afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+});
+
+describe('WorkerPool task timeouts', () => {
+    test('a worker that never answers rejects its task instead of hanging forever', async () => {
+        vi.useFakeTimers();
+        const pool = new WorkerPool({}, 1, { taskTimeoutMs: 1000 });
         await pool.initialize();
-        expect(pool.workers).toHaveLength(4);
-        expect(pool.getStats().poolSize).toBe(4);
+        const promise = pool.execute({ work: 1 });
+        const assertion = expect(promise).rejects.toThrow(/timed out after 1000ms/);
+
+        await vi.advanceTimersByTimeAsync(1001);
+        await assertion;
     });
 
-    test('initialize() is idempotent', async () => {
-        const pool = new WorkerPool('script', 2);
+    test('the timed-out worker is replaced and the slot freed for the next task', async () => {
+        vi.useFakeTimers();
+        const pool = new WorkerPool({}, 1, { taskTimeoutMs: 1000 });
         await pool.initialize();
-        await pool.initialize();
-        expect(pool.workers).toHaveLength(2);
-    });
 
-    test('execute() assigns to an available worker immediately when the pool has capacity', async () => {
-        const pool = new WorkerPool('script', 2);
-        await pool.initialize();
-        const promise = pool.execute({ action: 'foo' });
+        const first = pool.execute({ work: 1 });
+        const firstRejects = expect(first).rejects.toThrow(/timed out/);
+        await vi.advanceTimersByTimeAsync(1001);
+        await firstRejects;
 
-        expect(pool.getStats().busyWorkers).toBe(1);
-        FakeWorker.instances[0].reply(0, { ok: true });
-
-        await expect(promise).resolves.toEqual({ ok: true });
+        expect(created[0].terminated).toBe(true);
         expect(pool.getStats().busyWorkers).toBe(0);
+
+        // A second task goes to the replacement worker and completes normally
+        const second = pool.execute({ work: 2 });
+        await vi.advanceTimersByTimeAsync(0);
+        const replacement = created[created.length - 1];
+        replacement.reply({ taskId: replacement.posted[0].taskId, result: 'ok' });
+        await expect(second).resolves.toBe('ok');
     });
 
-    test('execute() queues tasks once every worker is busy, and drains the queue as workers free up', async () => {
-        const pool = new WorkerPool('script', 1);
+    test('a queued task is started once the timed-out slot frees up', async () => {
+        vi.useFakeTimers();
+        const pool = new WorkerPool({}, 1, { taskTimeoutMs: 1000 });
+        // Initialized up front so the two executes queue in call order: the
+        // first execute on an uninitialized pool awaits initialize(), which
+        // lets a second call overtake it and take the only worker.
         await pool.initialize();
-        const p1 = pool.execute({ action: 'first' });
-        const p2 = pool.execute({ action: 'second' });
 
-        expect(pool.getStats().queuedTasks).toBe(1);
+        const first = pool.execute({ work: 1 });
+        const queued = pool.execute({ work: 2 });
+        // Captured rather than asserted with `.rejects`, which does not settle
+        // cleanly once the fake clock has been advanced more than once
+        const firstError = first.catch((error) => error);
 
-        FakeWorker.instances[0].reply(0, 'first-result');
-        await p1;
-        expect(pool.getStats().queuedTasks).toBe(0);
+        expect(pool.taskQueue).toHaveLength(1);
 
-        FakeWorker.instances[0].reply(1, 'second-result');
-        await expect(p2).resolves.toBe('second-result');
+        await vi.advanceTimersByTimeAsync(1001);
+        expect((await firstError).message).toMatch(/timed out/);
+
+        const replacement = created[created.length - 1];
+        expect(replacement.posted).toHaveLength(1);
+        replacement.reply({ taskId: replacement.posted[0].taskId, result: 'queued-ran' });
+        await expect(queued).resolves.toBe('queued-ran');
     });
 
-    test('a worker error rejects the pending task and frees the worker for the queue', async () => {
-        const pool = new WorkerPool('script', 1);
+    test('a normal answer cancels the deadline and detaches its listeners', async () => {
+        vi.useFakeTimers();
+        const pool = new WorkerPool({}, 1, { taskTimeoutMs: 1000 });
         await pool.initialize();
-        const p1 = pool.execute({ action: 'boom' });
 
-        const handlers = FakeWorker.instances[0].listeners['error'];
-        handlers[0](new Error('worker crashed'));
+        const promise = pool.execute({ work: 1 });
+        await vi.advanceTimersByTimeAsync(0);
+        const worker = created[0];
+        worker.reply({ taskId: worker.posted[0].taskId, result: 42 });
 
-        await expect(p1).rejects.toBeTruthy();
-        expect(pool.getStats().busyWorkers).toBe(0);
+        await expect(promise).resolves.toBe(42);
+        expect(worker.listenerCount('message')).toBe(0);
+        expect(worker.listenerCount('error')).toBe(0);
+
+        // The deadline must not fire after the task already settled
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(worker.terminated).toBe(false);
     });
 
-    test('executeAll() resolves with results in the same order as the input tasks', async () => {
-        const pool = new WorkerPool('script', 2);
+    test('a timeout of 0 disables the deadline entirely', async () => {
+        vi.useFakeTimers();
+        const pool = new WorkerPool({}, 1, { taskTimeoutMs: 0 });
         await pool.initialize();
-        const promise = pool.executeAll([{ action: 'a' }, { action: 'b' }]);
+        const promise = pool.execute({ work: 1 });
 
-        // Two workers pick up both tasks immediately
-        FakeWorker.instances[0].reply(0, 'A');
-        FakeWorker.instances[1].reply(1, 'B');
+        await vi.advanceTimersByTimeAsync(600000);
+        expect(created[0].terminated).toBe(false);
 
-        await expect(promise).resolves.toEqual(['A', 'B']);
+        const worker = created[0];
+        worker.reply({ taskId: worker.posted[0].taskId, result: 'late but fine' });
+        await expect(promise).resolves.toBe('late but fine');
     });
+});
 
-    test('execute() auto-initializes the pool if not already initialized', async () => {
-        const pool = new WorkerPool('script', 1);
-        expect(pool.initialized).toBe(false);
-        const promise = pool.execute({ action: 'x' });
-
-        // initialize() runs synchronously up to its own await-free body, but execute()
-        // yields once on `await this.initialize()` before assigning the task — flush that.
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(pool.initialized).toBe(true);
-        FakeWorker.instances[0].reply(0, 'done');
-        await promise;
-    });
-
-    test('an error result (task.reject via error field) rejects with that message', async () => {
-        const pool = new WorkerPool('script', 1);
+describe('WorkerPool object URLs', () => {
+    test('every object URL is revoked as soon as its worker holds it', async () => {
+        const pool = new WorkerPool({}, 3, { taskTimeoutMs: 0 });
         await pool.initialize();
-        const promise = pool.execute({ action: 'fails' });
-        FakeWorker.instances[0].reply(0, null, 'something went wrong');
-        await expect(promise).rejects.toThrow('something went wrong');
+
+        expect(urls).toHaveLength(3);
+        expect(urls.every((entry) => entry.revoked)).toBe(true);
+    });
+});
+
+describe('createIdlePoolReaper', () => {
+    test('terminates after the idle window and not before', () => {
+        vi.useFakeTimers();
+        const terminate = vi.fn();
+        const reaper = createIdlePoolReaper(terminate, 1000);
+
+        reaper.touch();
+        vi.advanceTimersByTime(999);
+        expect(terminate).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(2);
+        expect(terminate).toHaveBeenCalledTimes(1);
     });
 
-    test('terminate() terminates every worker and resets pool state', async () => {
-        const pool = new WorkerPool('script', 2);
-        await pool.initialize();
-        pool.terminate();
+    test('each use restarts the countdown', () => {
+        vi.useFakeTimers();
+        const terminate = vi.fn();
+        const reaper = createIdlePoolReaper(terminate, 1000);
 
-        expect(FakeWorker.instances.every((w) => w.terminated)).toBe(true);
-        expect(pool.workers).toHaveLength(0);
-        expect(pool.initialized).toBe(false);
+        reaper.touch();
+        vi.advanceTimersByTime(800);
+        reaper.touch();
+        vi.advanceTimersByTime(800);
+        expect(terminate).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(300);
+        expect(terminate).toHaveBeenCalledTimes(1);
+    });
+
+    test('a busy pool is not torn down mid-batch', () => {
+        vi.useFakeTimers();
+        const terminate = vi.fn();
+        let busy = true;
+        const reaper = createIdlePoolReaper(terminate, 1000, () => busy);
+
+        reaper.touch();
+        vi.advanceTimersByTime(1001);
+        expect(terminate).not.toHaveBeenCalled();
+
+        busy = false;
+        vi.advanceTimersByTime(1001);
+        expect(terminate).toHaveBeenCalledTimes(1);
+    });
+
+    test('cancel stops a pending teardown', () => {
+        vi.useFakeTimers();
+        const terminate = vi.fn();
+        const reaper = createIdlePoolReaper(terminate, 1000);
+
+        reaper.touch();
+        reaper.cancel();
+        vi.advanceTimersByTime(5000);
+        expect(terminate).not.toHaveBeenCalled();
     });
 });

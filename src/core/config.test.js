@@ -37,6 +37,7 @@ vi.mock('./settings-storage.js', () => ({ default: settingsStorageMock }));
 vi.mock('./data-manager.js', () => ({ default: dataManagerMock }));
 
 const { default: config } = await import('./config.js');
+const { settingsGroups } = await import('./settings-schema.js');
 
 describe('Config.getSetting', () => {
     beforeEach(() => {
@@ -66,6 +67,24 @@ describe('Config.getSetting', () => {
     test('returns provided default for unknown settings', () => {
         expect(config.getSetting('doesNotExist')).toBe(false);
         expect(config.getSetting('doesNotExist', 'fallback')).toBe('fallback');
+    });
+
+    test('falls back to the schema default for a setting that has not loaded yet', () => {
+        // Nothing is in settingsMap for these, so the answer has to come from
+        // the flattened schema-default map rather than from stored settings.
+        config.settingsMap = {};
+
+        for (const group of Object.values(settingsGroups)) {
+            for (const [key, setting] of Object.entries(group.settings || {})) {
+                if (setting.default === undefined || setting.default === null) continue;
+                expect(config.getSetting(key)).toEqual(setting.default);
+            }
+        }
+    });
+
+    test('a key absent from the schema still returns the caller default', () => {
+        config.settingsMap = {};
+        expect(config.getSetting('no_such_setting_anywhere', 'sentinel')).toBe('sentinel');
     });
 });
 

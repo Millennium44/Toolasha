@@ -14,6 +14,11 @@ const storageMock = vi.hoisted(() => ({
     get: vi.fn(async (key, store, fallback) => fallback),
     set: vi.fn(),
     delete: vi.fn(async () => true),
+    getMany: vi.fn(async (keys, store) => {
+        const result = new Map();
+        for (const key of keys) result.set(key, await storageMock.get(key, store, null));
+        return result;
+    }),
     getAllKeys: vi.fn(async () => []),
     putAll: vi.fn(async () => 0),
     isQuotaExceeded: vi.fn(() => false),

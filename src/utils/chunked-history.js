@@ -221,9 +221,14 @@ class ChunkedHistory {
      *
      * @param {string} charId - Whose history
      * @param {Array<Object>} entries - The history as it now stands
+     * @param {Object} [options] - Save options
+     * @param {string|Array<string>|Set<string>} [options.changedChunks] - Chunk ids that may have
+     *   changed since the last save. An append knows exactly one — `groupOf(entry)` — and passing
+     *   it skips serialising every other chunk just to discover they are identical. Omit it and
+     *   every chunk is compared, which is always correct and always the full cost.
      * @returns {Promise<boolean>} False when there was nowhere to write it
      */
-    async save(charId, entries) {
+    async save(charId, entries, options = {}) {
         if (!charId) return false;
 
         // A save before any read has nothing to diff against, and taking the
@@ -242,10 +247,27 @@ class ChunkedHistory {
         const next = new Map();
         const pending = [];
 
+        // A history of a year of hourly records is hundreds of chunks, and
+        // appending one entry used to re-serialise all of them on every append
+        // purely to find the one that moved. A caller that knows which chunk it
+        // touched says so, and the rest are carried over from the snapshot
+        // untouched.
+        const changedChunks = normalizeChunkHint(options.changedChunks);
+
         for (const [chunkId, bucket] of grouped) {
+            const previous = this._snapshot.get(chunkId);
+
+            // Only skip a chunk the caller vouched for AND that we have a
+            // previous serialisation of — a chunk we have never written has to
+            // be written whatever the hint says.
+            if (changedChunks && !changedChunks.has(chunkId) && previous !== undefined) {
+                next.set(chunkId, previous);
+                continue;
+            }
+
             const serialized = JSON.stringify(bucket);
             next.set(chunkId, serialized);
-            if (this._snapshot.get(chunkId) === serialized) continue;
+            if (previous === serialized) continue;
             const write = storage.set(this.keyFor(charId, chunkId), bucket, this.storeName, this.immediate);
             if (this.immediate) pending.push(write);
         }
@@ -273,10 +295,14 @@ class ChunkedHistory {
 
         try {
             const keys = await storage.getAllKeys(this.storeName);
-            for (const key of recordKeysFor(keys, this.prefix, charId)) {
-                await storage.delete(key, this.storeName);
-            }
-            await storage.delete(this.legacyKey(charId), this.storeName);
+            // Issued together rather than awaited one at a time: a year of
+            // hourly records is hundreds of keys, and each serial await is a
+            // full transaction round trip.
+            const deletions = recordKeysFor(keys, this.prefix, charId).map((key) =>
+                storage.delete(key, this.storeName)
+            );
+            deletions.push(storage.delete(this.legacyKey(charId), this.storeName));
+            await Promise.all(deletions);
         } catch (error) {
             console.error(`[${this.label}] Clearing the history failed:`, error);
         }
@@ -327,10 +353,11 @@ class ChunkedHistory {
         // beside the ones just written, as entries nothing put there
         try {
             const keys = await storage.getAllKeys(this.storeName);
-            for (const key of recordKeysFor(keys, this.prefix, charId)) {
-                if (key in records) continue;
-                await storage.delete(key, this.storeName);
-            }
+            await Promise.all(
+                recordKeysFor(keys, this.prefix, charId)
+                    .filter((key) => !(key in records))
+                    .map((key) => storage.delete(key, this.storeName))
+            );
         } catch (error) {
             console.error(`[${this.label}] Clearing stale chunks failed:`, error);
         }
@@ -352,10 +379,12 @@ class ChunkedHistory {
     /**
      * Read every record of one character back into one array.
      *
-     * One key at a time rather than `getAll()`: these stores hold other things
-     * too — a year of item-level networth snapshots, another feature's keys —
-     * and a whole-store read would pull all of it into memory to assemble a
-     * series of timestamps and totals.
+     * Named keys rather than `getAll()`: these stores hold other things too — a
+     * year of item-level networth snapshots, another feature's keys — and a
+     * whole-store read would pull all of it into memory to assemble a series of
+     * timestamps and totals. But the named keys go out in one `getMany`
+     * transaction rather than one transaction apiece; a character with a year of
+     * hourly records was paying several hundred round trips to open a panel.
      *
      * @param {string} charId - Whose records
      * @returns {Promise<Array<Object>>} The assembled entries
@@ -363,12 +392,19 @@ class ChunkedHistory {
      */
     async _readRecords(charId) {
         const keys = await storage.getAllKeys(this.storeName);
-        const entries = [];
+        const recordKeys = recordKeysFor(keys, this.prefix, charId);
+        if (recordKeys.length === 0) return [];
 
-        for (const key of recordKeysFor(keys, this.prefix, charId)) {
-            const bucket = await storage.get(key, this.storeName, null);
+        const buckets = await storage.getMany(recordKeys, this.storeName);
+        const entries = [];
+        const prefixLength = `${this.prefix}_${charId}_`.length;
+
+        // recordKeys order, not Map order, so the snapshot and the assembled
+        // list are built in the same deterministic order as before
+        for (const key of recordKeys) {
+            const bucket = buckets.get(key);
             if (!Array.isArray(bucket)) continue;
-            this._snapshot.set(key.slice(`${this.prefix}_${charId}_`.length), JSON.stringify(bucket));
+            this._snapshot.set(key.slice(prefixLength), JSON.stringify(bucket));
             entries.push(...bucket);
         }
 
@@ -402,6 +438,18 @@ class ChunkedHistory {
     _sorted(entries) {
         return this.compare ? [...entries].sort(this.compare) : [...entries];
     }
+}
+
+/**
+ * Normalise a changed-chunk hint into a Set of string ids, or null for "no hint".
+ * @param {string|number|Array|Set|null|undefined} hint - What the caller passed
+ * @returns {Set<string>|null} The chunk ids to re-serialise, or null for all of them
+ */
+function normalizeChunkHint(hint) {
+    if (hint === null || hint === undefined) return null;
+    if (hint instanceof Set) return new Set([...hint].map(String));
+    if (Array.isArray(hint)) return new Set(hint.map(String));
+    return new Set([String(hint)]);
 }
 
 export default { createChunkedHistory, timeChunkId, idsFromRecordKeys, recordKeysFor };

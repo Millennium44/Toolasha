@@ -30,6 +30,11 @@ const storageMock = vi.hoisted(() => {
             store.delete(key);
             return true;
         }),
+        getMany: vi.fn(async (keys) => {
+            const result = new Map();
+            for (const key of keys) result.set(key, store.has(key) ? store.get(key) : null);
+            return result;
+        }),
         getAllKeys: vi.fn(async () => [...store.keys()]),
         putAll: vi.fn(async (storeName, entries) => {
             for (const [key, value] of Object.entries(entries)) store.set(key, value);

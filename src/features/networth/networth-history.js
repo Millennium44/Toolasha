@@ -182,18 +182,23 @@ class NetworthHistory {
             (key) => typeof key === 'string' && key.startsWith(prefix)
         );
 
+        // One transaction for the lot rather than a round trip per snapshot:
+        // this is up to MAX_DETAIL_SNAPSHOTS item-level records and it runs on
+        // the path that opens the networth panel.
+        const records = await storage.getMany(keys, STORE_NAME);
         const snapshots = [];
         for (const key of keys) {
-            const snapshot = await storage.get(key, STORE_NAME, null);
+            const snapshot = records.get(key);
             if (snapshot && typeof snapshot.t === 'number') snapshots.push(snapshot);
         }
         snapshots.sort((a, b) => a.t - b.t);
 
         // A window that grew past its cap (an interrupted trim, an older build)
         // is brought back to size here rather than left to accumulate
-        while (snapshots.length > MAX_DETAIL_SNAPSHOTS) {
-            const dropped = snapshots.shift();
-            await storage.delete(this._detailKey(dropped.t), STORE_NAME);
+        const overflow = snapshots.length - MAX_DETAIL_SNAPSHOTS;
+        if (overflow > 0) {
+            const dropped = snapshots.splice(0, overflow);
+            await Promise.all(dropped.map((entry) => storage.delete(this._detailKey(entry.t), STORE_NAME)));
         }
 
         return snapshots;

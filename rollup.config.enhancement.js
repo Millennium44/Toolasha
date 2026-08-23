@@ -1,11 +1,5 @@
 import resolve from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
-import { readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 // Library header for standalone enhancement library (no userscript metadata)
 const standaloneHeader = `/**
@@ -30,33 +24,16 @@ const standaloneHeader = `/**
  */
 `;
 
-// Custom plugin to inject mathjs after header
-function injectMathJS(headerContent) {
+// Prepend the library header to the bundle.
+//
+// This used to vendor the whole of math.js in front of our code — roughly
+// 600 KB for one 20x20 matrix inverse. `src/utils/matrix-inverse.js` does that
+// job in a few dozen lines and rollup bundles it like any other import.
+function prependHeader(headerContent) {
     return {
-        name: 'inject-mathjs',
+        name: 'prepend-header',
         renderChunk(code) {
-            // Read mathjs from node_modules
-            const mathjs = readFileSync(join(__dirname, 'node_modules/mathjs/lib/browser/math.js'), 'utf-8');
-
-            // Strip IIFE wrapper from mathjs
-            const stripIIFE = (libCode) => {
-                let stripped = libCode.replace(/^\s*\(function\s*\([^)]*\)\s*\{/, '');
-                stripped = stripped.replace(/\}\s*\)\s*\([^)]*\)\s*;?\s*$/, '');
-                stripped = stripped.replace(/\}\s*\)\s*\.call\s*\([^)]*\)\s*;?\s*$/, '');
-                return stripped;
-            };
-
-            // Drop the sourcemap pointer — math.js.map isn't packaged, so the
-            // browser logs a fetch error for it on every load
-            const mathjsUnwrapped = stripIIFE(mathjs).replace(/^\/\/# sourceMappingURL=.*$/m, '');
-
-            // Build complete file: header + mathjs + our code
             return `${headerContent}
-
-// ===== MATHJS LIBRARY (vendored) =====
-${mathjsUnwrapped}
-
-// ===== TOOLASHA ENHANCEMENT CALCULATOR =====
 ${code}
 `;
         },
@@ -76,6 +53,6 @@ export default {
             preferBuiltins: false,
         }),
         commonjs(),
-        injectMathJS(standaloneHeader),
+        prependHeader(standaloneHeader),
     ],
 };
