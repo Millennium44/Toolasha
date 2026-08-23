@@ -12,3 +12,6 @@ docs/*
 !docs/THIRD-PARTY-LICENSES.md
 # Exception: the GreasyFork listing body carries that attribution to the listing
 !docs/GREASYFORK.md
+
+# Agent worktrees and session files
+.claude/
