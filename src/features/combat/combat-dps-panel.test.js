@@ -20,6 +20,9 @@ const opts = vi.hoisted(() => ({
     enabled: true,
     dealt: { seconds: 0, players: [] },
     taken: { seconds: 0, players: [] },
+    audit: { tracking: false, fight: null, session: null },
+    started: 0,
+    stopped: 0,
     handlers: [],
 }));
 
@@ -41,7 +44,17 @@ vi.mock('../../core/dom-observer.js', () => ({
         },
     },
 }));
-vi.mock('./damage-tracker.js', () => ({ damageBreakdown: () => opts.dealt }));
+vi.mock('./damage-tracker.js', () => ({
+    damageBreakdown: () => opts.dealt,
+    // Real ability names need game data; the shape of the label is all the
+    // panel is responsible for
+    actionLabel: (hrid) => String(hrid).split('/').pop().replace(/_/g, ' '),
+}));
+vi.mock('./rotation-tracker.js', () => ({
+    rotationAudit: () => opts.audit,
+    startRotationTracker: () => opts.started++,
+    stopRotationTracker: () => opts.stopped++,
+}));
 vi.mock('./damage-taken-tracker.js', () => ({ takenBreakdown: () => opts.taken }));
 // The weapon icon needs game data; what matters here is that a verdict becomes
 // a chip and no verdict becomes nothing
@@ -71,6 +84,9 @@ const {
     default: feature,
 } = await import('./combat-dps-panel.js');
 
+const { newRotationState, noteRotationKit, noteRotationFight, foldRotationTick, summariseRotation } =
+    await import('../../utils/rotation-audit.js');
+
 /** The players area as the game builds it, hashed class name and all */
 function battlePanel() {
     const area = document.createElement('div');
@@ -93,6 +109,9 @@ beforeEach(() => {
     opts.enabled = true;
     opts.dealt = { seconds: 0, players: [] };
     opts.taken = { seconds: 0, players: [] };
+    opts.audit = { tracking: false, fight: null, session: null };
+    opts.started = 0;
+    opts.stopped = 0;
     opts.handlers = [];
     document.body.replaceChildren();
     feature._resetTab();
@@ -336,5 +355,119 @@ describe('a battle panel that the observer missed', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+
+describe('the rotation tab', () => {
+    const CHEAP = '/abilities/cheap_jab';
+    const PRICEY = '/abilities/pricey_nova';
+    const DETAILS = {
+        [CHEAP]: { manaCost: 10, cooldownDuration: 2e9 },
+        [PRICEY]: { manaCost: 500, cooldownDuration: 5e9 },
+    };
+
+    /** A run where the cheap ability carries the fight and the expensive one never fires */
+    function starvedAudit() {
+        const state = newRotationState();
+        noteRotationKit(state, [CHEAP, PRICEY], DETAILS);
+        noteRotationFight(state);
+
+        const start = 1_700_000_000_000;
+        for (let index = 0; index < 41; index++) {
+            foldRotationTick(state, {
+                at: start + index * 500,
+                player: { cMP: 100, mMP: 1000, atkCounter: index },
+                action: CHEAP,
+                events: [{ action: CHEAP, amount: 250 }],
+                detailMap: DETAILS,
+            });
+        }
+        const summary = summariseRotation(state);
+        return { tracking: true, fight: summary, session: summary };
+    }
+
+    test('is a tab of its own, after the party ones', () => {
+        expect(TABS.map((entry) => entry.key)).toEqual(['damage', 'taken', 'healed', 'rotation']);
+    });
+
+    test('says nothing is being watched until a battle names your slot', () => {
+        feature._setTab('rotation');
+        const text = board().textContent;
+
+        expect(text).toContain('Waiting for a battle to name your slot');
+        expect(text).toContain('this tab is about the bar you can change');
+        expect(text).not.toContain('could not be drawn');
+    });
+
+    test('draws a row per ability with the verdict on it', () => {
+        opts.audit = starvedAudit();
+        feature._setTab('rotation');
+        const text = board().textContent;
+
+        expect(text).toContain('cheap jab');
+        expect(text).toContain('pricey nova');
+        // The one that cannot be paid for says so, and says which fix applies
+        expect(text).toContain('Effectively never fires');
+        expect(text).toContain('drop it or raise regen');
+        // The one that works is not dressed up as a problem
+        expect(text).toMatch(/Fine: \d+% uptime/);
+        expect(text).not.toContain('could not be drawn');
+    });
+
+    test('carries the per-cast, per-mana and per-cooldown-second figures', () => {
+        opts.audit = starvedAudit();
+        feature._setTab('rotation');
+        const text = board().textContent;
+
+        expect(text).toContain('/cast');
+        expect(text).toContain('/mana');
+        expect(text).toContain('/cd-s');
+        expect(text).toContain('starved 100% of ready');
+    });
+
+    test('summarises mana against regen, seconds starved, and one labelled suggestion', () => {
+        opts.audit = starvedAudit();
+        feature._setTab('rotation');
+        const text = board().textContent;
+
+        expect(text).toContain('mana/min spent');
+        expect(text).toContain('per fight under the cheapest cast');
+        expect(text).toContain('Suggestion:');
+    });
+
+    test('an ability slotted and never cast is marked as such', () => {
+        opts.audit = starvedAudit();
+        feature._setTab('rotation');
+
+        expect(board().textContent).toContain('slotted');
+    });
+
+    test('switching scope redraws against the session figures', () => {
+        opts.audit = starvedAudit();
+        feature._setTab('rotation');
+        const body = board();
+
+        const session = body.querySelector('[data-scope="session"]');
+        expect(session).toBeTruthy();
+        session.click();
+        expect(body.querySelector('[data-scope="session"]').outerHTML).toContain('#8fd3ff');
+    });
+
+    test('copies as text rather than as HTML', () => {
+        opts.audit = starvedAudit();
+        feature._setTab('rotation');
+
+        const text = panelText('rotation');
+        expect(text).toContain('Rotation (this fight)');
+        expect(text).toContain('uptime');
+        expect(text).not.toContain('<div');
+    });
+
+    test('the tracker starts and stops with the panel', () => {
+        feature.initialize();
+        expect(opts.started).toBe(1);
+
+        feature.cleanup();
+        expect(opts.stopped).toBe(1);
     });
 });

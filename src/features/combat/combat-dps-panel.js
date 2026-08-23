@@ -30,6 +30,17 @@
  *   per-caster healing at all — that only exists for a spectated trial, where
  *   the stream carries a lone caster to attribute a rise to.
  *
+ * ## A fourth tab that is not about the party at all
+ *
+ * - **Rotation** — your own abilities, from `rotation-tracker.js`. Three tabs of
+ *   "who is carrying this" answer nothing you can act on mid-fight; the one
+ *   thing you can change is your own bar, and the question there is per ability
+ *   rather than per player: which of them fire, which are ready and cannot be
+ *   paid for, and what each one buys per cast, per point of mana and per second
+ *   of the cooldown it occupies. The starvation arithmetic is the guild trial
+ *   support module's, generalised in `utils/rotation-audit.js` rather than
+ *   written twice.
+ *
  * ## Everything is the party's, and in a party nothing says who struck
  *
  * The attribution is `utils/damage-attribution.js`' and its limits are its own:
@@ -50,8 +61,9 @@
 
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
-import { damageBreakdown } from './damage-tracker.js';
+import { damageBreakdown, actionLabel } from './damage-tracker.js';
 import { takenBreakdown } from './damage-taken-tracker.js';
+import { rotationAudit, startRotationTracker, stopRotationTracker } from './rotation-tracker.js';
 import { createPanel } from '../../utils/simple-panel.js';
 import {
     BOARD_COLORS,
@@ -61,10 +73,11 @@ import {
     boardRowHTML,
     boardTabsHTML,
     boardLines,
+    escapeText,
     rankRows,
 } from '../../utils/damage-board.js';
 import { classTagIconHTML } from '../../utils/class-weapon.js';
-import { formatWithSeparator } from '../../utils/formatters.js';
+import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 
@@ -93,10 +106,20 @@ export const TABS = [
     { key: 'damage', label: 'Damage' },
     { key: 'taken', label: 'Taken' },
     { key: 'healed', label: 'Healed' },
+    { key: 'rotation', label: 'Rotation' },
 ];
 
 /** Which tab is showing. Remembered between openings, the way a panel should */
 let tab = 'damage';
+
+/** Which scope the Rotation tab shows: the fight on screen, or the whole run */
+let scope = 'fight';
+
+/** The Rotation tab's two scopes, in display order */
+export const ROTATION_SCOPES = [
+    { key: 'fight', label: 'This fight' },
+    { key: 'session', label: 'Session' },
+];
 
 /**
  * The rows one tab shows, ranked, with shares.
@@ -114,6 +137,10 @@ let tab = 'damage';
  * @returns {{rows: Array<Object>, total: number, perSecond: number|null, seconds: number}}
  */
 export function panelRows(which, { dealt = damageBreakdown, taken = takenBreakdown } = {}) {
+    // The Rotation tab is not a ranked board of players: its rows are your own
+    // abilities and it builds them itself
+    if (which === 'rotation') return rankRows([], 0);
+
     const dealtRun = dealt() || {};
     if (which === 'damage') {
         return rankRows(
@@ -193,6 +220,212 @@ const NOTES = {
     },
 };
 
+/** The ink each verdict is drawn in — the two that want acting on stand out */
+const VERDICT_COLORS = {
+    starved: BOARD_COLORS.warn,
+    pinched: BOARD_COLORS.warn,
+    idle: BOARD_COLORS.dim,
+    fine: BOARD_COLORS.good,
+    unknown: BOARD_COLORS.dim,
+    measuring: BOARD_COLORS.dim,
+};
+
+/**
+ * A figure or an em dash — never a zero standing in for "nothing to divide by".
+ * @param {number|null} value - The figure
+ * @param {Function} [format] - How to draw it
+ * @returns {string}
+ */
+function figure(value, format = (n) => formatKMB(Math.round(n))) {
+    return value === null || value === undefined || !Number.isFinite(value) ? '—' : format(value);
+}
+
+/** @param {number|null} share - 0..1 @returns {string} A percentage or a dash */
+function percent(share) {
+    return share === null || share === undefined || !Number.isFinite(share) ? '—' : `${Math.round(share * 100)}%`;
+}
+
+/**
+ * One ability's row: what it produced, what it cost, and whether it fires.
+ *
+ * The bar behind it is **uptime**, not a share of damage — this tab ranks by
+ * whether an ability is in the rotation at all, and a heavy ability cast twice
+ * would otherwise draw a longer bar than the one holding the fight together.
+ *
+ * @param {Object} row - From `summariseRotation`
+ * @returns {string} HTML
+ */
+export function rotationRowHTML(row) {
+    const { dim } = BOARD_COLORS;
+    const color = VERDICT_COLORS[row?.verdict?.kind] || BOARD_COLORS.accent;
+    const width = Math.max(2, Math.min(100, (row?.uptime ?? 0) * 100));
+
+    const perMana = row.damagePerMana === null ? '—' : formatKMB(Math.round(row.damagePerMana * 10) / 10);
+    const perCooldown = figure(row.damagePerCooldownSecond);
+    const detail =
+        `${formatWithSeparator(row.casts)} casts · ${figure(row.outputPerCast)}/cast · ${perMana}/mana · ` +
+        `${perCooldown}/cd-s · starved ${percent(row.starvedShare)} of ready`;
+
+    return (
+        `<div style="position:relative; margin:3px 0; padding:3px 6px; border-radius:3px;` +
+        `background:linear-gradient(to right, ${color}44 ${width}%, rgba(255,255,255,0.04) ${width}%);">` +
+        `<div style="display:flex; gap:6px; align-items:baseline;">` +
+        `<span style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">` +
+        `${escapeText(actionLabel(row.hrid))}</span>` +
+        (row.equipped && row.casts === 0
+            ? `<span style="color:${dim}; font-size:9px; border:1px solid ${dim}; border-radius:3px; padding:0 3px;"` +
+              ` title="On the bar and never seen firing this scope.">slotted</span>`
+            : '') +
+        `<span style="margin-left:auto; color:${color}; font-weight:600;">${percent(row.uptime)}</span>` +
+        `</div>` +
+        `<div style="color:${dim}; font-size:10px;">${escapeText(detail)}</div>` +
+        `<div style="color:${color}; font-size:10px; line-height:1.4;">${escapeText(row.verdict.text)}</div>` +
+        `</div>`
+    );
+}
+
+/**
+ * The lines under the rows: what mana did over the scope, and the one change
+ * the numbers point at.
+ *
+ * @param {Object} summary - From `summariseRotation`
+ * @returns {string} HTML
+ */
+export function rotationSummaryHTML(summary) {
+    const { dim, warn, good } = BOARD_COLORS;
+    const balance = summary.manaBalance;
+    const balanceColor = balance === null ? dim : balance < 0 ? warn : good;
+
+    const lines = [
+        [
+            'Mana',
+            `${figure(summary.manaPerMinute)}/min spent · ${figure(summary.regenPerMinute)}/min restored`,
+            balanceColor,
+        ],
+        [
+            'Starved',
+            summary.fights > 0
+                ? `${summary.starvedSeconds.toFixed(1)}s per fight under the cheapest cast` +
+                  (summary.castFloor === null ? '' : ` (${formatWithSeparator(summary.castFloor)} mana)`)
+                : '—',
+            summary.starvedSeconds > 0 ? warn : dim,
+        ],
+        [
+            'Measured',
+            `${summary.seconds.toFixed(0)}s of fighting over ${formatWithSeparator(summary.fights)} fights`,
+            dim,
+        ],
+    ];
+
+    const rows = lines
+        .map(
+            ([label, value, color]) =>
+                `<div style="display:flex; gap:8px; font-size:11px; line-height:1.6;">` +
+                `<span style="color:${dim};">${escapeText(label)}</span>` +
+                `<span style="margin-left:auto; color:${color}; text-align:right;">${escapeText(value)}</span></div>`
+        )
+        .join('');
+
+    const suggestion = summary.suggestion
+        ? `<div style="margin-top:6px; padding:4px 6px; border-left:2px solid ${BOARD_COLORS.accent};` +
+          ` color:${BOARD_COLORS.accent}; font-size:10px; line-height:1.5;">${escapeText(summary.suggestion.text)}</div>`
+        : '';
+
+    return `<div style="margin-top:8px;">${rows}${suggestion}</div>`;
+}
+
+/**
+ * The Rotation tab's whole body.
+ *
+ * @param {Object} audit - From `rotationAudit`
+ * @param {string} which - A key of {@link ROTATION_SCOPES}
+ * @returns {string} HTML
+ */
+export function rotationHTML(audit, which) {
+    const summary = audit?.[which] || audit?.fight;
+    const { dim } = BOARD_COLORS;
+
+    const scopes =
+        `<div style="display:flex; gap:6px; margin:6px 0;">` +
+        ROTATION_SCOPES.map((entry) => {
+            const on = entry.key === which;
+            const color = on ? BOARD_COLORS.accent : dim;
+            return (
+                `<button data-scope="${entry.key}" style="flex:1; cursor:pointer; padding:2px 0; border-radius:4px;` +
+                ` border:1px solid ${color}66; background:${on ? `${color}22` : 'transparent'}; color:${color};` +
+                ` font-size:10px;">${entry.label}</button>`
+            );
+        }).join('') +
+        `</div>`;
+
+    if (!audit?.tracking) {
+        return (
+            scopes +
+            boardNoteHTML('Waiting for a battle to name your slot.', { color: dim, strong: true }) +
+            boardNoteHTML(
+                'Your abilities are read from the loadout the game states for your own character at the start of a ' +
+                    'battle, so nothing is measured until one begins. Nobody else’s row appears here — this tab is ' +
+                    'about the bar you can change.'
+            )
+        );
+    }
+
+    const rows = summary.abilities.length
+        ? summary.abilities.map(rotationRowHTML).join('')
+        : `<div style="color:${dim}; padding:6px 0; line-height:1.5;">Nothing on the bar yet.</div>`;
+
+    return (
+        boardHeadHTML({
+            value: summary.manaPerMinute,
+            label: 'mana/min spent',
+            right: summary.measurable ? `${percent(summary.starvedShare)} starved` : '—',
+            color: BOARD_COLORS.accent,
+        }) +
+        scopes +
+        boardNoteHTML('Your own abilities: whether each one fires, and what it buys.', {
+            color: BOARD_COLORS.good,
+            strong: true,
+        }) +
+        boardNoteHTML(
+            'Uptime is the share of the fight an ability spent on cooldown, against the cooldown the game states — ' +
+                'haste is not on the wire, so a hasted ability reads low rather than being guessed at. “Starved” is ' +
+                'time it was off cooldown with the bar below its cost: the ability could not fire, which is a ' +
+                'different problem from the rotation never reaching it. Mana spent and restored are measured off ' +
+                'the bar; per-ability mana is the stated cost times casts.'
+        ) +
+        rows +
+        rotationSummaryHTML(summary) +
+        (summary.incomplete
+            ? boardNoteHTML('Some abilities state no mana cost, so the per-mana figures are a lower bound.')
+            : '')
+    );
+}
+
+/**
+ * The Rotation tab as plain text, for the clipboard.
+ * @param {Object} audit - From `rotationAudit`
+ * @param {string} which - A key of {@link ROTATION_SCOPES}
+ * @returns {string}
+ */
+export function rotationText(audit, which) {
+    if (!audit?.tracking) return 'Rotation: waiting for a battle to name your slot.';
+
+    const summary = audit[which] || audit.fight;
+    const label = which === 'session' ? 'session' : 'this fight';
+    const head =
+        `Rotation (${label}) — ${summary.seconds.toFixed(0)}s over ${summary.fights} fights, ` +
+        `${figure(summary.manaPerMinute)} mana/min spent against ${figure(summary.regenPerMinute)}/min restored, ` +
+        `${summary.starvedSeconds.toFixed(1)}s per fight starved`;
+
+    const rows = summary.abilities.map(
+        (row) =>
+            `${actionLabel(row.hrid)}: ${percent(row.uptime)} uptime, ${row.casts} casts, ` +
+            `${figure(row.outputPerCast)}/cast, starved ${percent(row.starvedShare)} of ready — ${row.verdict.text}`
+    );
+
+    return [head, ...rows, summary.suggestion ? summary.suggestion.text : ''].filter(Boolean).join('\n');
+}
+
 /**
  * The panel's contents as plain text, for the clipboard.
  * @param {string} which - A key of {@link TABS}
@@ -200,6 +433,8 @@ const NOTES = {
  * @returns {string}
  */
 export function panelText(which, sources) {
+    if (which === 'rotation') return rotationText((sources?.audit || rotationAudit)(), scope);
+
     const { rows, total, perSecond, seconds } = panelRows(which, sources);
     const label = which === 'healed' ? 'health restored' : which === 'taken' ? 'damage taken' : 'damage';
 
@@ -222,6 +457,15 @@ export function panelText(which, sources) {
  * @param {Object} [sources] - As {@link panelRows}
  */
 export function drawBoard(body, sources) {
+    if (tab === 'rotation') {
+        body.innerHTML =
+            boardTabsHTML(TABS, tab) +
+            rotationHTML((sources?.audit || rotationAudit)(), scope) +
+            boardButtonsHTML([{ key: 'copy', label: 'Copy stats' }]);
+        wireBoard(body, sources);
+        return;
+    }
+
     const { rows, total, perSecond } = panelRows(tab, sources);
     const note = NOTES[tab] || NOTES.damage;
     const unit = tab === 'healed' ? 'hps' : 'dps';
@@ -245,9 +489,29 @@ export function drawBoard(body, sources) {
         list +
         boardButtonsHTML([{ key: 'copy', label: 'Copy stats' }]);
 
+    wireBoard(body, sources);
+}
+
+/**
+ * Attach the tab strip, the Rotation tab's scope switch and the copy button.
+ *
+ * One function for both branches of {@link drawBoard}: a tab that wired its own
+ * buttons is a tab that can forget one, and the Rotation tab did not exist when
+ * the wiring lived inline.
+ *
+ * @param {HTMLElement} body - The board's container
+ * @param {Object} [sources] - As {@link panelRows}
+ */
+function wireBoard(body, sources) {
     body.querySelectorAll('[data-tab]').forEach((button) => {
         button.addEventListener('click', () => {
             tab = button.dataset.tab;
+            drawBoard(body, sources);
+        });
+    });
+    body.querySelectorAll('[data-scope]').forEach((button) => {
+        button.addEventListener('click', () => {
+            scope = button.dataset.scope;
             drawBoard(body, sources);
         });
     });
@@ -365,6 +629,9 @@ export default {
         // Building the shell here is also what lets it reopen where it was
         // left, since that is `createPanel`'s doing
         getPanel();
+        // The Rotation tab is the only reader of this, so it starts and stops
+        // with the panel rather than carrying a setting of its own
+        startRotationTracker();
         unregister = domObserver.onClass('CombatDpsPanel', ['BattlePanel_playersArea'], inject, {
             debounce: true,
             debounceDelay: 200,
@@ -377,6 +644,7 @@ export default {
         try {
             unregister?.();
             unregister = null;
+            stopRotationTracker();
             timers.clearAll();
             const button = typeof document === 'undefined' ? null : document.getElementById(BUTTON_ID);
             injected = null;
@@ -395,8 +663,14 @@ export default {
     },
     /** For tests, and for a settings change that wants the board now */
     getPanel,
-    /** Reset the remembered tab — for tests, which must not inherit one */
+    /** Reset the remembered tab and scope — for tests, which must not inherit either */
     _resetTab: () => {
         tab = 'damage';
+        scope = 'fight';
+    },
+    /** Show a tab directly — for tests, which cannot click one */
+    _setTab: (which, which2) => {
+        tab = which;
+        if (which2) scope = which2;
     },
 };
