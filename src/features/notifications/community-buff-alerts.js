@@ -264,7 +264,10 @@ class CommunityBuffAlerts {
         const result = notificationService.notify(
             `${EVENT_KEY_PREFIX}:${buff.hrid}:${buff.expireTime}`,
             `Community buff ${name} runs out in ${remaining} — donate minutes to keep it going.`,
-            { title: 'Community buff expiring' }
+            // The subject is delivery metadata, not a second opinion about what
+            // is worth saying: it is what a digest names when it says "Buffs: 2
+            // lapsing (Experience, Enhancing Speed)"
+            { title: 'Community buff expiring', subject: name }
         );
 
         // Only a delivered alert counts as told. One that reached no channel

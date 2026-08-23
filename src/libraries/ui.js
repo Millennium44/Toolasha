@@ -114,6 +114,10 @@ import enhancementTargetAlerts from '../features/notifications/enhancement-targe
 import taskSlotAlerts from '../features/notifications/task-slot-alerts.js';
 import marketUndercutAlerts from '../features/notifications/market-undercut-alerts.js';
 import notificationService from '../features/notifications/notification-service.js';
+// The record of everything the service has announced, and the panel that reads
+// it. It rides in this bundle rather than beside each alert because it is one
+// log, and because the overlay row it registers is what puts it in the palette.
+import noticeLogPanel from '../features/notifications/notice-log-panel.js';
 
 // Queue Monitor
 import queueMonitor from '../features/queue-monitor/queue-monitor.js';
@@ -230,6 +234,7 @@ toolashaRoot.UI = {
     taskSlotAlerts,
     marketUndercutAlerts,
     notificationService,
+    noticeLogPanel,
     queueMonitor,
     sessionBriefing,
     accountView,

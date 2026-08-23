@@ -52,6 +52,7 @@ export const TARGETS = {
     enhancement: 'enhancement',
     guild: 'guild',
     labyrinth: 'labyrinth',
+    notices: 'notices',
 };
 
 /**
@@ -302,6 +303,31 @@ function idleLine(facts) {
     return { key: 'idle', label: 'Idle characters', value: names.join(', '), tone: 'bad', target: null };
 }
 
+/**
+ * "12 notices while you were away".
+ *
+ * The only line here that reports the *script* rather than the game, and it
+ * earns its place for the same reason the briefing does: digest mode and quiet
+ * hours both deliberately withhold something at the moment it happened, so an
+ * arriving player needs one place that says how much was withheld. Zero unread
+ * is silence, like every other subject — a permanent "0 notices" row would be
+ * the first thing to stop being read.
+ *
+ * @param {Object} facts - The collected facts
+ * @returns {Object|null} A line, or null
+ */
+function noticeLine(facts) {
+    const unread = Math.max(0, Math.floor(Number(facts.notices) || 0));
+    if (unread === 0) return null;
+    return {
+        key: 'notices',
+        label: 'Notices',
+        value: `${unread} while you were away`,
+        tone: 'neutral',
+        target: TARGETS.notices,
+    };
+}
+
 /** The subjects, in the order they are worth reading */
 const BUILDERS = [
     queueLine,
@@ -315,6 +341,7 @@ const BUILDERS = [
     guildLine,
     labyrinthLine,
     idleLine,
+    noticeLine,
 ];
 
 /**

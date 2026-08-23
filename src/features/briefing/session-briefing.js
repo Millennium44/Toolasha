@@ -49,6 +49,10 @@ import { readFreeRerollOffer } from '../tasks/task-reroll-options.js';
 import { soonestCombatConsumable } from '../notifications/combat-consumable-alerts.js';
 import { forecastLabyrinthEntries } from '../notifications/labyrinth-entry-forecast.js';
 import { newlyIdleCharacters } from '../notifications/notification-predicates.js';
+// Soft coupling: the briefing reports the notice log's unread count and links
+// to its panel, but never writes to it and works fine if the count throws.
+import { unreadNoticeCount } from '../notifications/notice-log.js';
+import { noticePanel } from '../notifications/notice-log-panel.js';
 import marketUndercutAlerts from '../notifications/market-undercut-alerts.js';
 import enhancementTracker from '../enhancement/enhancement-tracker.js';
 import { guildXpTracker, consumablesPanel } from '../../utils/bundle-bridge.js';
@@ -281,6 +285,7 @@ export function collectFacts(now = Date.now()) {
         idle: attempt('the other characters', () =>
             newlyIdleCharacters(queueSnapshot.getOtherCharacterSnapshots?.() || [], now, new Map())
         ),
+        notices: attempt('the notice log', () => unreadNoticeCount()) || 0,
     };
 }
 
@@ -342,6 +347,7 @@ export const OPENERS = {
     enhancement: () => navigateToAction('/actions/enhancing/enhance'),
     guild: () => clickNav('navigationBar.guild'),
     labyrinth: () => clickNav('navigationBar.labyrinth'),
+    notices: () => noticePanel.toggle(),
 };
 
 /**

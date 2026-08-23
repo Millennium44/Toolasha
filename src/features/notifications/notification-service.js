@@ -37,10 +37,42 @@
  * cooldown map and the "already watching settings" flag through a global means
  * the copies behave as one service, which is what matters — the alternative is
  * three permission prompts and three independent cooldowns.
+ *
+ * ## Digesting, quiet hours, and the log
+ *
+ * Three things sit between "a feature decided to say something" and "a channel
+ * said it", and all three are here rather than in the features, because none of
+ * them is about *what* is worth saying:
+ *
+ * - **The log.** Every notice is recorded before any delivery decision is
+ *   taken, including ones about to be batched, silenced, or dropped for want of
+ *   a channel. It is the only reason the other two are safe.
+ * - **Digest mode.** Low-urgency notices are held and go out as one summary
+ *   every N minutes. Twelve undercut toasts in an afternoon is not twelve times
+ *   the information of one line saying there were twelve.
+ * - **Quiet hours.** A wall-clock window in which the desktop channel is shut
+ *   off. Not the in-page ones — a toast on a tab you are looking at at midnight
+ *   is a thing you chose to be looking at.
+ *
+ * A category on the critical allow-list — dying, an empty queue, drinks running
+ * out, by default — bypasses both. Those are the notifications the script was
+ * switched on for, and a feature that delays them by a quarter of an hour is a
+ * downgrade however well it summarises.
  */
 
 import config from '../../core/config.js';
 import { showToast } from '../../utils/toast.js';
+import { appendNotice } from './notice-log.js';
+import {
+    categoryForEventKey,
+    kindForEventKey,
+    isCriticalCategory,
+    isDigestCategory,
+    isWithinQuietHours,
+    summarizeDigest,
+    DEFAULT_CRITICAL_CATEGORIES,
+    DEFAULT_DIGEST_CATEGORIES,
+} from './notice-policy.js';
 
 /** What a flashed tab title is prefixed with; stripped again on focus */
 export const TITLE_FLASH_PREFIX = '❗ ';
@@ -53,6 +85,29 @@ const BROWSER_NOTIFICATION_TTL_MS = 8000;
 
 /** Title on a desktop notification when the caller does not give one */
 const DEFAULT_TITLE = 'Milky Way Idle';
+
+/** Title on the summary toast a digest goes out as */
+export const DIGEST_TITLE = 'While you were busy';
+
+/** How long a digest window is when the setting is missing or nonsense */
+export const DEFAULT_DIGEST_MINUTES = 15;
+
+/** A digest window may not be shorter than this; a one-second digest is not a digest */
+const MIN_DIGEST_MINUTES = 1;
+
+/** …nor longer than this, or the summary outlives the thing it summarises */
+const MAX_DIGEST_MINUTES = 240;
+
+/** The settings this file reads, named once so the schema and the code can be diffed */
+export const DELIVERY_SETTING_KEYS = {
+    digestEnabled: 'notifications_digestEnabled',
+    digestMinutes: 'notifications_digestMinutes',
+    digestCategories: 'notifications_digestCategories',
+    criticalCategories: 'notifications_criticalCategories',
+    quietHoursEnabled: 'notifications_quietHoursEnabled',
+    quietHoursStart: 'notifications_quietHoursStart',
+    quietHoursEnd: 'notifications_quietHoursEnd',
+};
 
 /**
  * The settings whose being switched **on** is a user gesture we can ask for
@@ -88,14 +143,24 @@ const GLOBAL_STATE_KEY = '__toolashaNotificationState';
 
 /**
  * The one piece of state every copy of this module shares.
- * @returns {{lastFired: Map<string, number>, watching: boolean}}
+ *
+ * The digest buffer is in here for the same reason the cooldown map is: three
+ * private buffers would be three summary toasts a quarter of an hour apart,
+ * each covering a third of what happened.
+ *
+ * @returns {{lastFired: Map<string, number>, watching: boolean, digest: Array<Object>, digestTimer: any}}
  */
 function sharedState() {
     const host = typeof globalThis === 'undefined' ? {} : globalThis;
     if (!host[GLOBAL_STATE_KEY]) {
-        host[GLOBAL_STATE_KEY] = { lastFired: new Map(), watching: false };
+        host[GLOBAL_STATE_KEY] = { lastFired: new Map(), watching: false, digest: [], digestTimer: null };
     }
-    return host[GLOBAL_STATE_KEY];
+    const state = host[GLOBAL_STATE_KEY];
+    // Defensive: a bundle built before digesting existed may have created the
+    // object already, and an undefined buffer would throw on the first notice
+    if (!Array.isArray(state.digest)) state.digest = [];
+    if (state.digestTimer === undefined) state.digestTimer = null;
+    return state;
 }
 
 /**
@@ -135,23 +200,84 @@ class NotificationService {
      * @param {Object} [options] - Options
      * @param {string} [options.title] - Desktop notification title
      * @param {number} [options.cooldownMs] - Override the de-duplication window
-     * @returns {{fired: boolean, channels: string[], reason?: string}} What went out, and where
+     * @param {string} [options.subject] - What it is *about* — an item, a buff, a
+     *   skill. Shown as its own column in the notice log and named in the digest
+     *   summary, which is the difference between "3 undercuts" and "3 undercuts
+     *   (Cheese, Milk, Flax)". Optional: falls back to the title
+     * @param {string} [options.category] - Override the category derived from the
+     *   event key. Almost never wanted; the derivation is the point
+     * @returns {{fired: boolean, channels: string[], reason?: string, category: string, urgency: string}}
+     *   What went out, and where. `fired` still means "the player has been told,
+     *   do not repeat it" — a digested notice counts, because it will be
+     *   summarised; a notice that reached nothing does not
      */
-    notify(eventKey, message, { title = DEFAULT_TITLE, cooldownMs = this.cooldownMs } = {}) {
+    notify(
+        eventKey,
+        message,
+        { title = DEFAULT_TITLE, cooldownMs = this.cooldownMs, subject = '', category = '' } = {}
+    ) {
         if (!eventKey || !message) {
-            return { fired: false, channels: [], reason: 'nothing to say' };
+            return { fired: false, channels: [], reason: 'nothing to say', category: 'other', urgency: 'normal' };
         }
+
+        const kind = kindForEventKey(eventKey);
+        const resolved = category || categoryForEventKey(eventKey);
+        const critical = this.isCritical(resolved);
+        const urgency = critical ? 'critical' : 'normal';
 
         const now = Date.now();
         const last = this.lastFired.get(eventKey);
         if (last !== undefined && now - last < cooldownMs) {
-            return { fired: false, channels: [], reason: 'cooldown' };
+            return { fired: false, channels: [], reason: 'cooldown', category: resolved, urgency };
         }
 
+        // Whatever happens to it below, it happened. The log is written first so
+        // that a notice which is batched, silenced by quiet hours, or reaches no
+        // channel at all is still recoverable
+        const named = subject || (title === DEFAULT_TITLE ? '' : title);
+
+        if (!critical && this.shouldDigest(resolved)) {
+            this.recordNotice({ eventKey, resolved, named, message, urgency, channels: ['digest'] });
+            sharedState().digest.push({ category: resolved, noun: kind.noun, subject: named });
+            this.scheduleDigest();
+            this.lastFired.set(eventKey, now);
+            return { fired: true, channels: ['digest'], reason: 'digested', category: resolved, urgency };
+        }
+
+        const channels = this.deliver(message, title, critical);
+        this.recordNotice({ eventKey, resolved, named, message, urgency, channels });
+
+        // Only a delivered message starts the clock. Burning the cooldown on a
+        // notification that reached no channel — permission refused, no DOM yet
+        // — would silence the next attempt, which is the one that might work
+        if (!channels.length) {
+            return { fired: false, channels, reason: 'no channel available', category: resolved, urgency };
+        }
+
+        this.lastFired.set(eventKey, now);
+        return { fired: true, channels, category: resolved, urgency };
+    }
+
+    /**
+     * Put a message on whichever channels are open right now.
+     *
+     * The only thing quiet hours change here is the desktop channel. The tab
+     * title still gets its mark and a visible tab still gets its toast, because
+     * both of those are things you have to be looking at the page to see, and
+     * being asleep is precisely not looking at the page.
+     *
+     * @param {string} message - Body text
+     * @param {string} title - Desktop notification title
+     * @param {boolean} critical - Whether it may ignore quiet hours
+     * @returns {string[]} Channels it actually reached
+     */
+    deliver(message, title, critical = false) {
         const channels = [];
+        const quiet = !critical && this.inQuietHours();
+
         try {
             if (isPageHidden()) {
-                if (this.sendBrowserNotification(message, title)) channels.push('browser');
+                if (!quiet && this.sendBrowserNotification(message, title)) channels.push('browser');
                 if (this.flashTitle()) channels.push('title');
             } else if (this.showInPage(message)) {
                 channels.push('toast');
@@ -160,15 +286,118 @@ class NotificationService {
             console.error('[NotificationService] Failed to deliver notification:', error);
         }
 
-        // Only a delivered message starts the clock. Burning the cooldown on a
-        // notification that reached no channel — permission refused, no DOM yet
-        // — would silence the next attempt, which is the one that might work
-        if (!channels.length) {
-            return { fired: false, channels, reason: 'no channel available' };
+        return channels;
+    }
+
+    /**
+     * Write one notice to the log, and never let that failure stop delivery.
+     * @param {Object} notice - What happened
+     * @returns {void}
+     */
+    recordNotice({ eventKey, resolved, named, message, urgency, channels }) {
+        try {
+            appendNotice({
+                key: eventKey,
+                category: resolved,
+                subject: named,
+                text: message,
+                urgency,
+                channels,
+            });
+        } catch (error) {
+            console.error('[NotificationService] Could not log a notice:', error);
+        }
+    }
+
+    /**
+     * Whether a category is on the critical allow-list.
+     * @param {string} category - Category key
+     * @returns {boolean} True when it ignores digesting and quiet hours
+     */
+    isCritical(category) {
+        const list = config.getSetting(DELIVERY_SETTING_KEYS.criticalCategories, DEFAULT_CRITICAL_CATEGORIES);
+        return isCriticalCategory(category, list || DEFAULT_CRITICAL_CATEGORIES);
+    }
+
+    /**
+     * Whether a category's notices are being batched at the moment.
+     * @param {string} category - Category key
+     * @returns {boolean} True when the notice should be held for the summary
+     */
+    shouldDigest(category) {
+        if (!config.getSetting(DELIVERY_SETTING_KEYS.digestEnabled, false)) return false;
+        const list = config.getSetting(DELIVERY_SETTING_KEYS.digestCategories, DEFAULT_DIGEST_CATEGORIES);
+        return isDigestCategory(category, list ?? DEFAULT_DIGEST_CATEGORIES);
+    }
+
+    /**
+     * Whether the wall clock is inside the player's quiet window.
+     * @param {Date|number} [when] - The moment to test, injectable for tests
+     * @returns {boolean} True while desktop notifications are to be held back
+     */
+    inQuietHours(when = Date.now()) {
+        if (!config.getSetting(DELIVERY_SETTING_KEYS.quietHoursEnabled, false)) return false;
+        return isWithinQuietHours(
+            when,
+            config.getSetting(DELIVERY_SETTING_KEYS.quietHoursStart, ''),
+            config.getSetting(DELIVERY_SETTING_KEYS.quietHoursEnd, '')
+        );
+    }
+
+    /**
+     * How long a digest window is, in milliseconds.
+     * @returns {number} Clamped to something a summary can usefully cover
+     */
+    digestWindowMs() {
+        const minutes = Number(config.getSetting(DELIVERY_SETTING_KEYS.digestMinutes, DEFAULT_DIGEST_MINUTES));
+        const safe = Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_DIGEST_MINUTES;
+        return Math.min(MAX_DIGEST_MINUTES, Math.max(MIN_DIGEST_MINUTES, safe)) * 60 * 1000;
+    }
+
+    /**
+     * Start the digest clock, if it is not already running.
+     *
+     * Started by the *first* held notice and not restarted by the ones after it,
+     * so the summary arrives a fixed time after the batch opened rather than a
+     * fixed time after it went quiet. A sliding window would mean a steady
+     * trickle of undercuts never produced a summary at all.
+     *
+     * @returns {void}
+     */
+    scheduleDigest() {
+        const state = sharedState();
+        if (state.digestTimer) return;
+        if (typeof setTimeout !== 'function') return;
+
+        state.digestTimer = setTimeout(() => {
+            state.digestTimer = null;
+            this.flushDigest();
+        }, this.digestWindowMs());
+    }
+
+    /**
+     * Say everything that has been held, as one line, and empty the buffer.
+     *
+     * The summary is not itself logged: every notice in it was written to the
+     * log as it arrived, and a summary row beside its own constituents would
+     * double-count the afternoon.
+     *
+     * @returns {{fired: boolean, channels: string[], message: string}} What went out
+     */
+    flushDigest() {
+        const state = sharedState();
+        if (state.digestTimer) {
+            clearTimeout(state.digestTimer);
+            state.digestTimer = null;
         }
 
-        this.lastFired.set(eventKey, now);
-        return { fired: true, channels };
+        const held = state.digest;
+        state.digest = [];
+        if (!held.length) return { fired: false, channels: [], message: '' };
+
+        const message = summarizeDigest(held);
+        const channels = this.deliver(message, DIGEST_TITLE, false);
+        return { fired: channels.length > 0, channels, message };
     }
 
     /**
@@ -310,6 +539,10 @@ class NotificationService {
 
     /** Forget every cooldown and put the title back. For teardown and for tests. */
     reset() {
+        const state = sharedState();
+        if (state.digestTimer) clearTimeout(state.digestTimer);
+        state.digestTimer = null;
+        state.digest = [];
         this.lastFired.clear();
         this.restoreTitle();
         this.cooldownMs = DEFAULT_COOLDOWN_MS;

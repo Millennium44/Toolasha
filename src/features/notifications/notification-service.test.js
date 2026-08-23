@@ -32,10 +32,13 @@ vi.mock('../../utils/toast.js', () => ({
     },
 }));
 
+vi.mock('./notice-log.js', () => ({ appendNotice: vi.fn() }));
+
 const {
     default: notificationService,
     TITLE_FLASH_PREFIX,
     NOTIFICATION_SETTING_KEYS,
+    DELIVERY_SETTING_KEYS,
 } = await import('./notification-service.js');
 
 // The real schema, not a mock: the point of the drift test below is that these
@@ -284,10 +287,16 @@ describe('asking for permission', () => {
         // buffs the community-buff warning covers, is on by default, and turning
         // one on is not somebody asking to be notified for the first time. The
         // number settings (the warning lead time) are not switches at all.
+        //
+        // The delivery switches — digest mode, quiet hours — are excluded for
+        // the same reason: they decide how an already-wanted notice is handed
+        // over, so switching one on is not somebody asking to be notified about
+        // anything, and spending the permission prompt there would waste it.
+        const delivery = new Set(Object.values(DELIVERY_SETTING_KEYS));
         const notificationToggles = Object.values(schemaGroups.notifications.settings)
             .filter((setting) => setting.type === 'checkbox')
             .map((setting) => setting.id)
-            .filter((id) => !id.startsWith('notifications_communityBuff_'));
+            .filter((id) => !id.startsWith('notifications_communityBuff_') && !delivery.has(id));
 
         expect([...NOTIFICATION_SETTING_KEYS].sort()).toEqual(notificationToggles.sort());
     });

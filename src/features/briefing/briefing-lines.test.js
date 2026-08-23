@@ -198,6 +198,15 @@ describe('buildBriefingLines', () => {
         expect(entry.target).toBeNull();
     });
 
+    test('unread notices are reported, and no notices are not', () => {
+        expect(keys({ notices: 0 })).toEqual([]);
+        expect(keys({})).toEqual([]);
+
+        const entry = line({ notices: 12 }, 'notices');
+        expect(entry.value).toBe('12 while you were away');
+        expect(entry.target).toBe('notices');
+    });
+
     test('one malformed fact costs its own line and no other', () => {
         const exploding = {
             get buffs() {

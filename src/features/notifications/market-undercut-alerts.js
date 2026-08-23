@@ -344,7 +344,22 @@ class MarketUndercutAlerts {
 
         notificationService.notify(`market-undercut-${listing.id}`, this.buildMessage(listing, bestPrice, priceAgeMs), {
             title: listing.isSell ? 'Listing undercut' : 'Buy order outbid',
+            // Delivery metadata, not a change of mind about what is worth
+            // saying: it is what lets a digest read "3 undercuts (Cheese, Milk,
+            // Flax)" rather than just counting to three
+            subject: this.itemLabel(listing),
         });
+    }
+
+    /**
+     * The item a listing is for, named the way the player sees it.
+     * @param {Object} listing - A market listing
+     * @returns {string} Item name, carrying the enhancement level when there is one
+     */
+    itemLabel(listing) {
+        const baseName = dataManager.getItemDetails(listing.itemHrid)?.name || listing.itemHrid;
+        const level = listing.enhancementLevel || 0;
+        return level > 0 ? `${baseName} +${level}` : baseName;
     }
 
     /**
@@ -360,9 +375,7 @@ class MarketUndercutAlerts {
      * @returns {string} What to tell the player
      */
     buildMessage(listing, bestPrice, priceAgeMs) {
-        const baseName = dataManager.getItemDetails(listing.itemHrid)?.name || listing.itemHrid;
-        const level = listing.enhancementLevel || 0;
-        const itemName = level > 0 ? `${baseName} +${level}` : baseName;
+        const itemName = this.itemLabel(listing);
         const age = priceAgeMs < 60000 ? 'as of just now' : `as of ~${formatRelativeTime(priceAgeMs)} ago`;
         const best = formatKMB3Digits(bestPrice);
         const yours = formatKMB3Digits(listing.price);
