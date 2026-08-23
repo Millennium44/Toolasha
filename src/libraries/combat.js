@@ -88,6 +88,7 @@ import guildRosterView from '../features/guild/guild-roster-view.js';
 import guildTrials, { guildTrials as guildTrialsStore } from '../features/guild/guild-trials.js';
 import * as guildTrialExport from '../features/guild/guild-trial-recorder.js';
 import guildTrialScoreboard from '../features/guild/guild-trial-scoreboard.js';
+import guildTrialLedgerView from '../features/guild/guild-trial-ledger-view.js';
 // Side-effect import: registers the Guild Trials overlay row
 import '../features/guild/guild-trials-row.js';
 
@@ -160,6 +161,7 @@ toolashaRoot.Combat = {
     guildTrialsStore,
     guildTrialExport,
     guildTrialScoreboard,
+    guildTrialLedgerView,
 };
 
 // Console-driven debug tools, kept out of the feature namespaces because

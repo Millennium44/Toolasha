@@ -51,6 +51,7 @@ import { supportCoverage } from './guild-trial-support.js';
 import guildMemberSkills from './guild-member-skills.js';
 import { TRIAL_ACTIVE_MS, trialWeekStart } from './guild-trials-math.js';
 import { loadTrialRecord } from './guild-trials-store.js';
+import { recordFinishedTrial } from './guild-trial-ledger.js';
 import { scriptVersion } from '../../utils/script-version.js';
 
 /** Object store sessions live in — shared with the rest of the guild history */
@@ -262,8 +263,44 @@ class GuildTrialRecorder {
             this.session.endedAt = at;
             this.session.endedBy = reason;
             this._persist();
+            this._accrue();
         }
         return this.session;
+    }
+
+    /**
+     * Fold the finished session into the long-lived attendance ledger.
+     *
+     * The archive in `guild-trials-store.js` keeps four cycles; the ledger keeps
+     * half a year of one small row per member, and this is the only moment it is
+     * ever written. Idempotent on the session's own start time, so a manual stop
+     * racing the watcher's cannot count the hour twice.
+     *
+     * Not awaited by `stop`, and `async` so that its own `catch` covers a
+     * rejection as well as a throw: every failure here is the ledger's own, and
+     * a table with a hole in it must never be the reason a recording fails to be
+     * saved — nor an unhandled rejection on the page.
+     *
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _accrue() {
+        try {
+            const breakdown = guildTrialDamage.breakdown?.() || {};
+            await recordFinishedTrial({
+                session: this.session,
+                guildName: this.guildName,
+                characterId: this.characterId,
+                encounter: breakdown.encounter ?? null,
+                tier: breakdown.tier ?? null,
+                roster: Object.values(breakdown.roster || {})
+                    .map((entry) => (typeof entry === 'string' ? entry : entry?.name))
+                    .filter((name) => typeof name === 'string' && name),
+                participants: breakdown.participants ?? null,
+            });
+        } catch (error) {
+            console.error('[GuildTrialRecorder] Folding the session into the ledger failed:', error);
+        }
     }
 
     /**

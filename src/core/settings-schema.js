@@ -3206,6 +3206,18 @@ export const settingsGroups = {
                 default: true,
                 help: 'Adds a shrine upgrade planner to the guild credit exchange panel, showing total credit and token costs to upgrade from your current level to a target level.',
             },
+            guildTrialLedger: {
+                id: 'guildTrialLedger',
+                label: 'Guild Trials: Attendance ledger and roster composition planner',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Keeps a per-member tally of every trial recorded on this client — trials joined, share of ' +
+                    'damage, healing and damage taken, deaths and mana-starved time — for far longer than the ' +
+                    'four cycles the trials panel archives, and adds a Trial Ledger panel with a sortable table, a ' +
+                    'window selector, a CSV export and a pre-sign-up composition check against the kits already ' +
+                    'captured.',
+            },
             guildRoster: {
                 id: 'guildRoster',
                 label: 'Guild Roster: Contribution shares and gone-quiet flags',

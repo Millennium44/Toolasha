@@ -19,6 +19,8 @@ const game = vi.hoisted(() => ({
     loadouts: { players: {}, updatedAt: 0 },
     record: { weekStart: 0, tiles: {} },
     traceId: null,
+    /** Every call the recorder made into the attendance ledger */
+    accrued: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -63,6 +65,12 @@ vi.mock('./guild-trial-trace.js', () => ({
 }));
 vi.mock('./guild-trial-abilities.js', () => ({
     default: { exportSnapshot: () => game.abilitiesSnapshot },
+}));
+vi.mock('./guild-trial-ledger.js', () => ({
+    recordFinishedTrial: async (options) => {
+        game.accrued.push(options);
+        return null;
+    },
 }));
 
 const {
@@ -130,6 +138,7 @@ beforeEach(() => {
     game.breakdown = breakdown();
     game.traceId = null;
     game.abilitiesSnapshot = null;
+    game.accrued = [];
     guildTrialRecorder.session = null;
     guildTrialRecorder.lastActivityAt = 0;
     guildTrialRecorder.phase = null;
@@ -429,6 +438,32 @@ describe('stopping', () => {
 
         expect(guildTrialRecorder.recording).toBe(false);
         expect(guildTrialRecorder.session.endedBy).toMatch(/hour a trial runs/);
+    });
+
+    test('a closed session is folded into the attendance ledger, once', () => {
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.stop('button');
+        guildTrialRecorder.stop('button again');
+
+        expect(game.accrued).toHaveLength(1);
+        expect(game.accrued[0].session).toBe(guildTrialRecorder.session);
+        expect(game.accrued[0].characterId).toBe(game.characterId);
+        expect(game.accrued[0].encounter).toBe(game.breakdown.encounter ?? null);
+        // The roster arrives as names, not as the `{name, characterId}` entries
+        // the damage module keys by unit index
+        expect(game.accrued[0].roster.every((name) => typeof name === 'string')).toBe(true);
+    });
+
+    test('a ledger that throws is not allowed to lose the recording', () => {
+        game.accrued = {
+            push() {
+                throw new Error('the ledger is having a day');
+            },
+        };
+
+        guildTrialRecorder.start('button');
+        expect(() => guildTrialRecorder.stop('button')).not.toThrow();
+        expect(guildTrialRecorder.session.endedBy).toBe('button');
     });
 
     test('stopping by hand is recorded as by hand', () => {

@@ -1650,6 +1650,13 @@ function registerFeatures() {
             concurrent: true,
         },
         {
+            key: 'guildTrialLedger',
+            name: 'Guild Trial Ledger',
+            category: 'Guild',
+            module: Combat.guildTrialLedgerView,
+            async: true,
+        },
+        {
             key: 'insights_calibration',
             name: 'Prediction Calibration',
             category: 'Insights',
