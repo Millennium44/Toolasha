@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Audit fixes: storage hang, dungeon runs across tabs, honest "—"s
+
+A bulk storage write could hang for ever when the browser refused it on quota, which stalled every feature starting after the trade ledger; it now settles, and the ledger migration gives up after 15 s and carries on. Dungeon runs are no longer lost with two tabs open — saves merge with what is stored instead of overwriting it, and deleted runs stay deleted. The dungeon ROI board no longer counts unpriced keys or unknown food as free (those rows show "—" and say why); the protect-from sweep labels its p10–p90 as approximate wherever protection is priced in. An All Zones sweep cannot stall waiting on a tier decision that never arrives, and cancelling one frees its worker. Also: DOM handlers fire in registration order again, listing retention no longer re-scans on every batch, old trade-ledger day records are actually deleted when they fall off the cap, and several smaller leaks and stale-count bugs are fixed.
+
 ### Bestiary planner: plan to a points target, and optionally through dungeons
 
 Switch the planner to Points, name a target, and it says how long that takes and where the time goes, against the single zone that would reach the same target soonest. An "Include dungeons" toggle (off by default) adds every dungeon at T0–T2 to the All Zones run and lets the plan send you into one — planned at the clear time your own run history measured rather than the simulator's pace (falling back to the sim's when you have no runs), with each stay quoted in clears.
