@@ -2750,6 +2750,21 @@ export const settingsGroups = {
                     'doing, how long is left, whether anything is idle). Reads the data each character has already ' +
                     'recorded, so a character shows up once it has been played with Toolasha running.',
             },
+            sessionBriefing: {
+                id: 'sessionBriefing',
+                label: 'Session briefing: One card on login saying what needs you',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Every other warning in the script fires while you are here, so the one thing none of them can ' +
+                    'cover is the time you were away. This meets you at the door with only the lines that have ' +
+                    'something to say — an empty queue and since when, tasks waiting or slots about to overflow, a ' +
+                    'community buff about to lapse, the consumable that runs dry first, listings filled or ' +
+                    'undercut, an unfinished enhancement run, your guild trial signup, labyrinth entries banked, ' +
+                    'and any other character that has gone idle. Each line opens the panel that fixes it. Close it ' +
+                    'to dismiss it until you switch character or reload; reopen it from the Briefing overlay row or ' +
+                    'the command palette.',
+            },
             overlayPanel: {
                 id: 'overlayPanel',
                 label: 'Overlay Panel: One floating panel other features add a row to',

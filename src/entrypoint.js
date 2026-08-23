@@ -1773,6 +1773,16 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'sessionBriefing',
+            name: 'Session Briefing',
+            category: 'General',
+            module: UI.sessionBriefing,
+            async: true,
+            // Awaits only its own stored listing snapshot before showing its own
+            // panel; nothing else reads or writes either.
+            concurrent: true,
+        },
+        {
             // Registry key stays ironCowFarm (persisted enable/disable state);
             // the display name is "Iron Bell Farming".
             key: 'ironCowFarm',

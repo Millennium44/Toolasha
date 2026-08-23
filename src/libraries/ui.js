@@ -120,6 +120,11 @@ import queueMonitor from '../features/queue-monitor/queue-monitor.js';
 // Side-effect import: registers the Queue Time Left overlay row
 import '../features/queue-monitor/queue-time-row.js';
 
+// Session Briefing. Reads the queue, task, consumable, listing, enhancement and
+// labyrinth sources this bundle already carries, so it costs the bundle only
+// its own panel.
+import sessionBriefing from '../features/briefing/session-briefing.js';
+
 // Account
 import accountView from '../features/account/index.js';
 
@@ -226,6 +231,7 @@ toolashaRoot.UI = {
     marketUndercutAlerts,
     notificationService,
     queueMonitor,
+    sessionBriefing,
     accountView,
     pformancePanel,
     healthStatus,
