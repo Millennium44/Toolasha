@@ -43,6 +43,12 @@ const rows = [];
  * @param {string} row.key - Stable identifier, used as the storage key
  * @param {string} row.name - Label in the row picker
  * @param {Function} row.render - `(container: HTMLElement) => void`, called per refresh
+ * @param {Function} [row.version] - `() => string|number`, a cheap summary of what
+ *   the row would draw from. The panel redraws every visible tile once a second;
+ *   a row that can say "nothing I read has changed" in a comparison or two saves
+ *   its whole render, and the tile keeps what it already shows. Optional — a row
+ *   without one is redrawn every tick, as they all used to be. It must be
+ *   *cheap* and it must cover everything the render reads, including settings.
  * @param {boolean} [row.defaultVisible] - Whether it starts on
  * @param {Function} [row.onOpen] - Called when the row is double-clicked. A row is
  *   a summary; this is where the panel behind it opens. It should **toggle**,
@@ -66,6 +72,7 @@ export function registerRow({
     key,
     name,
     render,
+    version = null,
     defaultVisible = true,
     onOpen = null,
     defaultSize = null,
@@ -83,6 +90,7 @@ export function registerRow({
         key,
         name: name || key,
         render,
+        version: typeof version === 'function' ? version : null,
         defaultVisible,
         onOpen,
         defaultSize,

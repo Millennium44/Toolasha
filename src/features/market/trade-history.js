@@ -39,6 +39,39 @@ export function mergeHistory(base, fresh) {
 registerSyncMerge({ store: 'settings', base: 'tradeHistory', merge: mergeHistory, label: 'Personal trade prices' });
 
 /**
+ * How long a burst of fills is allowed to gather before one save is made.
+ *
+ * A save is a read-merge-write over the whole map. Selling a stack into a dozen
+ * listings used to be a dozen of those, back to back, each one re-reading and
+ * re-writing every price ever recorded. They coalesce into one instead.
+ */
+const SAVE_COALESCE_MS = 1500;
+
+/**
+ * The most item/enhancement pairs the map will keep.
+ *
+ * It only ever grew, and a record written on every fill forever is one that
+ * eventually costs more to read and merge than the oldest prices in it are worth.
+ * Object key order is insertion order, so the entries dropped are the ones
+ * recorded longest ago.
+ */
+const MAX_ENTRIES = 4000;
+
+/**
+ * The map, trimmed to `MAX_ENTRIES` oldest-first.
+ * @param {Object} history - The history map
+ * @returns {Object} The same map, or a trimmed copy
+ */
+export function pruneHistory(history) {
+    const keys = Object.keys(history || {});
+    if (keys.length <= MAX_ENTRIES) return history;
+
+    const kept = {};
+    for (const key of keys.slice(keys.length - MAX_ENTRIES)) kept[key] = history[key];
+    return kept;
+}
+
+/**
  * TradeHistory class manages personal buy/sell price tracking
  */
 class TradeHistory {
@@ -49,6 +82,7 @@ class TradeHistory {
         this.characterId = null;
         this.marketUpdateHandler = null; // Store handler reference for cleanup
         this._saveChain = null;
+        this._saveTimer = null;
     }
 
     /**
@@ -155,7 +189,10 @@ class TradeHistory {
                     }
                     this.history = mergeHistory(probe.found ? probe.value : {}, this.history);
                 }
-                return await storage.setJSON(storageKey, this.history, 'settings', true);
+                this.history = pruneHistory(this.history);
+                // Not `immediate`: a price recorded a heartbeat before the tab
+                // closes is not worth flushing the store on every fill for
+                return await storage.setJSON(storageKey, this.history, 'settings');
             } catch (error) {
                 console.error('[TradeHistory] Failed to save history:', error);
                 return false;
@@ -165,6 +202,42 @@ class TradeHistory {
         // each miss the other's entries
         this._saveChain = (this._saveChain || Promise.resolve()).then(run, run);
         return this._saveChain;
+    }
+
+    /**
+     * Ask for a save, gathering anything else that arrives first.
+     *
+     * The pre-write read is the expensive half, and a burst of fills only needs
+     * one of them: whatever the burst records is in `this.history` by the time
+     * the timer runs.
+     */
+    scheduleSave() {
+        if (this._saveTimer) return;
+        this._saveTimer = setTimeout(() => {
+            this._saveTimer = null;
+            this.saveHistory();
+        }, SAVE_COALESCE_MS);
+    }
+
+    /**
+     * Make any gathered save happen now.
+     * @returns {Promise<boolean|undefined>} The write in flight, if there is one
+     */
+    async flushSave() {
+        if (this._saveTimer) {
+            clearTimeout(this._saveTimer);
+            this._saveTimer = null;
+            this.saveHistory();
+        }
+        return this._saveChain;
+    }
+
+    /** Forget a save that has not run yet (a clear supersedes it) */
+    _cancelScheduledSave() {
+        if (this._saveTimer) {
+            clearTimeout(this._saveTimer);
+            this._saveTimer = null;
+        }
     }
 
     /**
@@ -199,7 +272,7 @@ class TradeHistory {
 
         // Save to storage if any changes
         if (hasChanges) {
-            this.saveHistory();
+            this.scheduleSave();
         }
     }
 
@@ -226,6 +299,8 @@ class TradeHistory {
      * Clear all trade history
      */
     async clearHistory() {
+        // A save gathered a moment ago would merge the rows back in
+        this._cancelScheduledSave();
         this.history = {};
         await this.saveHistory({ overwrite: true });
     }
@@ -239,6 +314,8 @@ class TradeHistory {
                 dataManager.off('market_listings_updated', this.marketUpdateHandler);
                 this.marketUpdateHandler = null;
             }
+            // Anything gathered but not yet written goes now, or it goes nowhere
+            this.flushSave();
 
             // Don't clear history data, just stop tracking
             this.isInitialized = false;
@@ -255,6 +332,9 @@ class TradeHistory {
     async handleCharacterSwitch() {
         // Disable first to clean up old handlers
         this.disable();
+        // …and let the save it flushed land against the old character's key
+        // before the map it is writing is emptied out from under it
+        await this._saveChain;
 
         // Clear old character's data from memory
         this.history = {};

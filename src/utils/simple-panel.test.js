@@ -25,6 +25,21 @@ vi.mock('./floating-panel.js', () => ({
     makeResizable: vi.fn(() => vi.fn()),
 }));
 
+// The real minimize control folds the panel and persists the choice; the tests
+// below only need to say whether it is folded, and to be handed the toggle
+const minimize = vi.hoisted(() => ({ collapsed: false, onToggle: null }));
+vi.mock('./panel-minimize.js', () => ({
+    attachMinimize: ({ onToggle }) => {
+        minimize.onToggle = onToggle;
+        return {
+            get collapsed() {
+                return minimize.collapsed;
+            },
+            destroy: vi.fn(),
+        };
+    },
+}));
+
 const { createPanel, panelCard, panelLine, panelNote } = await import('./simple-panel.js');
 
 const SIZE = { width: 300, height: 200 };
@@ -149,5 +164,62 @@ describe('panel pieces', () => {
 
     test('a note is plain text with nothing to read into it', () => {
         expect(panelNote('Nothing cast yet.').textContent).toBe('Nothing cast yet.');
+    });
+});
+
+/**
+ * When a panel is allowed to redraw.
+ *
+ * Every panel in the script is one of these, and each rebuilds its whole body on
+ * a timer. Twenty-odd of them redrawing a body nobody can see — a background tab,
+ * a panel folded to its header — is the same work as redrawing them in front of
+ * somebody, for none of the benefit.
+ */
+describe('a body nobody can see is not redrawn', () => {
+    let draw;
+    let panel;
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        document.body.replaceChildren();
+        minimize.collapsed = false;
+        draw = vi.fn((body) => body.append('something'));
+        panel = createPanel({ id: 'unseen', title: 'Unseen', size: SIZE, refreshMs: 1000, draw });
+        panel.show();
+        draw.mockClear();
+    });
+
+    afterEach(() => {
+        panel.hide();
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    test('a hidden tab is skipped, and picked up again on return', () => {
+        const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+
+        vi.advanceTimersByTime(3000);
+        expect(draw).not.toHaveBeenCalled();
+
+        hidden.mockReturnValue(false);
+        vi.advanceTimersByTime(1000);
+        expect(draw).toHaveBeenCalledTimes(1);
+    });
+
+    test('a panel folded to its header is skipped', () => {
+        minimize.collapsed = true;
+
+        vi.advanceTimersByTime(3000);
+        expect(draw).not.toHaveBeenCalled();
+    });
+
+    test('unfolding draws at once rather than a refresh later', () => {
+        minimize.collapsed = true;
+        vi.advanceTimersByTime(1000);
+        expect(draw).not.toHaveBeenCalled();
+
+        minimize.collapsed = false;
+        minimize.onToggle(false);
+        expect(draw).toHaveBeenCalledTimes(1);
     });
 });

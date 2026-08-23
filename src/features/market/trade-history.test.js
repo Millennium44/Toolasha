@@ -53,7 +53,7 @@ vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true, onSettingChange: () => {} },
 }));
 
-const { default: tradeHistory, mergeHistory } = await import('./trade-history.js');
+const { default: tradeHistory, mergeHistory, pruneHistory } = await import('./trade-history.js');
 
 const KEY = 'tradeHistory_market123';
 const stored = () => storageMock.storeFor('settings').get(KEY);
@@ -75,6 +75,7 @@ beforeEach(() => {
     tradeHistory.history = {};
     tradeHistory.isLoaded = false;
     tradeHistory._saveChain = null;
+    tradeHistory._cancelScheduledSave();
     for (const fn of [storageMock.getJSON, storageMock.setJSON, storageMock.tryGet]) fn.mockClear();
 });
 
@@ -87,6 +88,56 @@ describe('mergeHistory', () => {
             )
         ).toEqual({ '/items/a:0': { buy: 3, sell: 2 }, '/items/b:0': { sell: 5 }, '/items/c:0': { buy: 7 } });
         expect(mergeHistory(null, [])).toEqual({});
+    });
+});
+
+describe('pruneHistory', () => {
+    test('leaves a map that fits alone', () => {
+        const small = { a: { buy: 1 }, b: { sell: 2 } };
+        expect(pruneHistory(small)).toBe(small);
+        expect(pruneHistory(undefined)).toBeUndefined();
+    });
+
+    test('drops the longest-ago entries once the map is over the cap', () => {
+        const big = {};
+        for (let i = 0; i < 4100; i++) big[`/items/i${i}:0`] = { buy: i };
+
+        const pruned = pruneHistory(big);
+
+        expect(Object.keys(pruned)).toHaveLength(4000);
+        expect(pruned['/items/i0:0']).toBeUndefined();
+        expect(pruned['/items/i99:0']).toBeUndefined();
+        expect(pruned['/items/i100:0']).toEqual({ buy: 100 });
+        expect(pruned['/items/i4099:0']).toEqual({ buy: 4099 });
+    });
+});
+
+describe('saves are gathered rather than made per fill', () => {
+    test('a burst of fills produces one read-merge-write', async () => {
+        tradeHistory.handleMarketUpdate({ endMarketListings: [order('/items/a', true, 1)] });
+        tradeHistory.handleMarketUpdate({ endMarketListings: [order('/items/b', true, 2)] });
+        tradeHistory.handleMarketUpdate({ endMarketListings: [order('/items/c', false, 3)] });
+        expect(storageMock.setJSON).not.toHaveBeenCalled();
+
+        await tradeHistory.flushSave();
+
+        expect(storageMock.setJSON).toHaveBeenCalledTimes(1);
+        expect(storageMock.tryGet).toHaveBeenCalledTimes(1);
+        expect(stored()).toEqual({
+            '/items/a:0': { sell: 1 },
+            '/items/b:0': { sell: 2 },
+            '/items/c:0': { buy: 3 },
+        });
+    });
+
+    test('a clear supersedes a save that has not run yet', async () => {
+        tradeHistory.handleMarketUpdate({ endMarketListings: [order('/items/a', true, 1)] });
+        await tradeHistory.clearHistory();
+
+        expect(stored()).toEqual({});
+        // The gathered save must not come back and put the row in again
+        await tradeHistory.flushSave();
+        expect(stored()).toEqual({});
     });
 });
 
@@ -119,7 +170,7 @@ describe('the history cannot be wiped by a failed read or a stale copy', () => {
         storageMock.unavailable = true;
 
         tradeHistory.handleMarketUpdate({ endMarketListings: [order('/items/c', true, 9)] });
-        await tradeHistory._saveChain;
+        await tradeHistory.flushSave();
 
         expect(stored()).toEqual({ '/items/a:0': { buy: 1 }, '/items/b:0': { sell: 2 } });
         expect(storageMock.setJSON).not.toHaveBeenCalled();
@@ -131,7 +182,7 @@ describe('the history cannot be wiped by a failed read or a stale copy', () => {
         tradeHistory.history = { '/items/a:0': { buy: 3 } };
 
         tradeHistory.handleMarketUpdate({ endMarketListings: [order('/items/c', false, 7)] });
-        await tradeHistory._saveChain;
+        await tradeHistory.flushSave();
 
         expect(stored()).toEqual({
             '/items/a:0': { buy: 3, sell: 2 },
@@ -145,12 +196,12 @@ describe('the history cannot be wiped by a failed read or a stale copy', () => {
         storageMock.storeFor('settings').set(KEY, { '/items/a:0': { buy: 1 } });
         storageMock.unavailable = true;
         tradeHistory.handleMarketUpdate({ endMarketListings: [order('/items/b', true, 2)] });
-        await tradeHistory._saveChain;
+        await tradeHistory.flushSave();
         expect(stored()).toEqual({ '/items/a:0': { buy: 1 } });
 
         storageMock.unavailable = false;
         tradeHistory.handleMarketUpdate({ endMarketListings: [order('/items/c', false, 3)] });
-        await tradeHistory._saveChain;
+        await tradeHistory.flushSave();
 
         expect(stored()).toEqual({ '/items/a:0': { buy: 1 }, '/items/b:0': { sell: 2 }, '/items/c:0': { buy: 3 } });
     });
@@ -163,7 +214,7 @@ describe('the history cannot be wiped by a failed read or a stale copy', () => {
         expect(stored()).toEqual({});
 
         tradeHistory.handleMarketUpdate({ endMarketListings: [order('/items/b', true, 2)] });
-        await tradeHistory._saveChain;
+        await tradeHistory.flushSave();
         expect(stored()).toEqual({ '/items/b:0': { sell: 2 } });
     });
 });

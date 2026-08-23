@@ -91,6 +91,8 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
  * stands, so the cost is one getElementById.
  */
 const REINJECT_MS = 2000;
+/** How often the timer may scan the document for a battle panel nothing told it about */
+const DISCOVERY_MS = 10000;
 
 /** Geometry key and DOM id stem — `toolasha-combatDpsPanel-panel` */
 export const PANEL_ID = 'combatDpsPanel';
@@ -588,6 +590,15 @@ function inGuildPanel(element) {
 /** The button last injected, so the re-inject timer can tell "still there" cheaply */
 let injected = null;
 
+/**
+ * The battle-panel area the button was last hung on.
+ *
+ * Out of combat there is no battle panel, and the timer below used to prove that
+ * with two whole-document `[class*=]` scans every two seconds. Holding the area
+ * the class watcher handed us turns "am I in a fight" into an `isConnected` read.
+ */
+let lastArea = null;
+
 function inject() {
     if (typeof document === 'undefined') return;
     // The button already placed is the common case for the slow timer below;
@@ -626,11 +637,32 @@ function inject() {
     if (!area.style.position) area.style.position = 'relative';
     area.appendChild(button);
     injected = button;
+    lastArea = area;
 }
 
-/** The timer's inject: nothing to do for a hidden tab */
+/** When the last speculative scan for a missed battle panel was made */
+let lastDiscoveryAt = 0;
+
+/**
+ * The timer's inject: nothing to do for a hidden tab.
+ *
+ * With a battle panel in hand this is the cheap path — `inject()` answers off the
+ * cached button without touching the document. With nothing in hand the only way
+ * to find a panel the class watcher missed is a pair of whole-document scans, and
+ * that is the case that holds for hours at a time while nobody is fighting. So it
+ * stays a safety net and drops to once every ten seconds.
+ */
 function reinject() {
-    if (typeof document !== 'undefined' && document.hidden) return;
+    if (typeof document === 'undefined' || document.hidden) return;
+
+    if (injected?.isConnected || lastArea?.isConnected) {
+        inject();
+        return;
+    }
+
+    const now = Date.now();
+    if (now - lastDiscoveryAt < DISCOVERY_MS) return;
+    lastDiscoveryAt = now;
     inject();
 }
 
@@ -645,12 +677,17 @@ export default {
         // The Rotation tab is the only reader of this, so it starts and stops
         // with the panel rather than carrying a setting of its own
         startRotationTracker();
-        unregister = domObserver.onClass('CombatDpsPanel', ['BattlePanel_playersArea'], inject, {
+        const onArea = (el) => {
+            if (el && !inGuildPanel(el)) lastArea = el;
+            inject();
+        };
+        unregister = domObserver.onClass('CombatDpsPanel', ['BattlePanel_playersArea'], onArea, {
             debounce: true,
             debounceDelay: 200,
             debounceMaxWait: 1000,
         });
         inject();
+        lastDiscoveryAt = Date.now();
         timers.registerInterval(setInterval(reinject, REINJECT_MS));
     },
     cleanup: () => {
@@ -661,6 +698,7 @@ export default {
             timers.clearAll();
             const button = typeof document === 'undefined' ? null : document.getElementById(BUTTON_ID);
             injected = null;
+            lastArea = null;
             // The tile area was made a positioning context for the button's
             // sake; a game-owned element should not keep that once it is gone
             const area = button?.parentElement;

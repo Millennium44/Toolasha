@@ -28,6 +28,7 @@
 
 import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
+import domObserver from '../../core/dom-observer.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { row, ROW_COLORS, GLYPHS, glyph } from '../../utils/overlay-format.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
@@ -49,6 +50,42 @@ const allyHealth = new Map();
 let battleId = null;
 let handler = null;
 let newBattleHandler = null;
+let unregisterArea = null;
+
+/**
+ * The unit tiles, held between ticks.
+ *
+ * `battle_updated` arrives several times a second, and re-running a whole-document
+ * `[class*=]` query for tiles that only change when the battle panel re-renders is
+ * the most expensive thing this feature did. The list is dropped when the battle
+ * panel is rebuilt (the class watcher below), when a new battle starts, and when
+ * the tiles it holds have left the document.
+ */
+let tileCache = null;
+
+/**
+ * Tiles that have already been given `position: relative`.
+ *
+ * Asking `getComputedStyle` per unit per tick forces a style recalculation for an
+ * answer that cannot change after the first write. A WeakSet lets the tiles be
+ * collected with the panel they belong to.
+ */
+const madeRelative = new WeakSet();
+
+/** Drop the held tiles; the next tick looks them up again. */
+function invalidateTiles() {
+    tileCache = null;
+}
+
+/**
+ * The battle panel's unit tiles.
+ * @returns {Array<HTMLElement>} Tiles in the game's own order
+ */
+function unitTiles() {
+    if (tileCache && tileCache.length && tileCache[0].isConnected) return tileCache;
+    tileCache = Array.from(document.querySelectorAll(UNIT_SELECTOR));
+    return tileCache;
+}
 
 /**
  * The counters attribution is measured against.
@@ -86,6 +123,7 @@ function onBattleUpdated(data) {
         // somebody else and comparing against it would invent enormous hits
         if (data?.battleId !== battleId) {
             battleId = data?.battleId;
+            invalidateTiles();
             enemyHealth.clear();
             allyHealth.clear();
             attribution.monstersHP = {};
@@ -132,8 +170,15 @@ function onBattleUpdated(data) {
  * @param {Array<Object>} events - From `healthDeltas`
  */
 function drawFloating(events) {
-    const tiles = document.querySelectorAll(UNIT_SELECTOR);
+    // Nothing to see on a hidden tab, and the animation would not run anyway
+    if (document.hidden) return;
+
+    const tiles = unitTiles();
     if (!tiles.length) return;
+    // A panel that is in the document but not laid out (another tab of the game
+    // is open over it) gives every tile a zero-size box, so the numbers would
+    // stack invisibly in a corner and still cost a node each
+    if (!tiles[0].getClientRects().length) return;
 
     const biggest = new Map();
     for (const event of events) {
@@ -174,7 +219,10 @@ function colourFor(event) {
  * @param {Object} event - One event
  */
 function floatOver(tile, event) {
-    if (getComputedStyle(tile).position === 'static') tile.style.position = 'relative';
+    if (!madeRelative.has(tile)) {
+        if (getComputedStyle(tile).position === 'static') tile.style.position = 'relative';
+        madeRelative.add(tile);
+    }
 
     const text = document.createElement('div');
     text.className = FLOAT_CLASS;
@@ -219,9 +267,15 @@ function applySettings() {
         newBattleHandler = (data) => noteActions(attribution, data?.players || {});
         webSocketHook.on('battle_updated', handler);
         webSocketHook.on('new_battle', newBattleHandler);
+        // The only thing that changes which tiles exist is the battle panel being
+        // rebuilt, so that is what drops the held list — not every tick
+        unregisterArea = domObserver.onClass('CombatText', 'BattlePanel_playersArea', invalidateTiles);
     } else if (!wanted && handler) {
         webSocketHook.off('battle_updated', handler);
         webSocketHook.off('new_battle', newBattleHandler);
+        unregisterArea?.();
+        unregisterArea = null;
+        invalidateTiles();
         handler = null;
         newBattleHandler = null;
         attribution = newAttributionState();
@@ -239,6 +293,9 @@ export default {
     cleanup: () => {
         if (handler) webSocketHook.off('battle_updated', handler);
         if (newBattleHandler) webSocketHook.off('new_battle', newBattleHandler);
+        unregisterArea?.();
+        unregisterArea = null;
+        invalidateTiles();
         handler = null;
         newBattleHandler = null;
         attribution = newAttributionState();
@@ -294,6 +351,13 @@ registerRow({
     name: 'Combat Log',
     defaultSize: { width: 240, height: 90 },
     defaultVisible: false,
+    // Everything the render below reads: the setting, and the newest event. Out
+    // of combat nothing moves, so the tile is not rebuilt once a second for the
+    // six lines it already shows.
+    version: () => {
+        const entries = log.entries();
+        return `${config.getSetting(SCROLLING_SETTING) ? 1 : 0}:${entries.length}:${entries[0]?.at ?? 0}`;
+    },
     render: (container) => {
         // The tile is a window onto a log that nothing is writing unless the
         // setting is on. Blank reads as broken, so it says which switch it wants

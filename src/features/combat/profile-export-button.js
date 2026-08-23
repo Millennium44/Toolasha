@@ -9,20 +9,41 @@ import { constructExportObject } from './combat-sim-export.js';
 import config from '../../core/config.js';
 import storage from '../../core/storage.js';
 import domObserver from '../../core/dom-observer.js';
+import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
+
+/**
+ * The observers this feature has running.
+ *
+ * `domObserver.register` appends a handler every time it is called and hands back
+ * the only way to take it off again. Both of those were thrown away, so a
+ * character switch — which re-initialises every feature — left the previous
+ * character's pair of whole-document handlers running alongside the new ones,
+ * for the lifetime of the page.
+ */
+let registry = null;
 
 /**
  * Initialize profile export button
  */
 function initialize() {
+    if (registry) return;
+    registry = createCleanupRegistry();
     waitForProfilePage();
     observeProfileClosure();
+}
+
+/** Take the observers off again */
+function cleanup() {
+    registry?.cleanupAll();
+    registry = null;
+    document.getElementById('toolasha-profile-export-button')?.remove();
 }
 
 /**
  * Wait for profile page to load
  */
 function waitForProfilePage() {
-    domObserver.register(
+    const unregister = domObserver.register(
         'ProfileExportButton-ProfileTab',
         () => {
             const profileTab = document.querySelector('div.SharableProfile_overviewTab__W4dCV');
@@ -34,13 +55,14 @@ function waitForProfilePage() {
         },
         { debounce: true, debounceDelay: 200 }
     );
+    registry.registerCleanup(unregister);
 }
 
 /**
  * Observe profile page closure and clear current profile ID
  */
 function observeProfileClosure() {
-    domObserver.register(
+    const unregister = domObserver.register(
         'ProfileExportButton-ProfileClose',
         () => {
             const profileTab = document.querySelector('div.SharableProfile_overviewTab__W4dCV');
@@ -51,6 +73,7 @@ function observeProfileClosure() {
         },
         { debounce: true, debounceDelay: 200 }
     );
+    registry.registerCleanup(unregister);
 }
 
 /**
@@ -157,4 +180,5 @@ function resetButton(button) {
 // Export module
 export default {
     initialize,
+    cleanup,
 };

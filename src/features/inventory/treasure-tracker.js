@@ -92,6 +92,9 @@ const DEFAULT_PANEL = { width: 720, height: 560 };
 const MIN_PANEL = { width: 320, height: 200 };
 /** A control a finger can hit, per the usual 32px floor */
 const TOUCH_TARGET = 32;
+
+/** How long the "waiting for chest data" poll keeps asking before giving up */
+const DATA_WAIT_LIMIT_MS = 5 * 60 * 1000;
 /** Header space kept clear on the right, so nothing flows under the close button */
 const CLOSE_GUTTER = { pointer: 28, touch: TOUCH_TARGET + 6 };
 /** The game's own dialog, which the popup wants to sit beside */
@@ -1671,11 +1674,20 @@ class TreasureTracker {
      * that would do — `character_initialized` — has usually already fired by the
      * time a restored panel asks. It stops itself the moment there is something
      * to draw, and when the panel closes.
+     *
+     * It also gives up. If the data has not arrived in five minutes it is not
+     * coming this session, and a poll that summarises every chest in the game
+     * once a second forever is a poll that outlives its own reason. Reopening
+     * the panel starts a fresh attempt. A hidden tab is skipped outright —
+     * nobody is reading the message it would replace.
      */
     _waitForChestData() {
         if (this._dataWait) return;
+        const startedAt = Date.now();
         this._dataWait = setInterval(() => {
             if (!this.contentEl) return this._stopWaiting();
+            if (Date.now() - startedAt > DATA_WAIT_LIMIT_MS) return this._stopWaiting();
+            if (document.hidden) return;
             if (this._summary().rows.length) this._render();
         }, 1000);
     }

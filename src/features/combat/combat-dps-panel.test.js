@@ -340,7 +340,13 @@ describe('a battle panel that the observer missed', () => {
             battlePanel();
             expect(button()).toBeNull();
 
+            // The two-second tick is the cheap "is my button still there" pass;
+            // with no panel in hand the document scan is only worth making every
+            // ten seconds, so that is how long the safety net takes
             vi.advanceTimersByTime(2500);
+            expect(button()).toBeNull();
+
+            vi.advanceTimersByTime(10_000);
             expect(button()).not.toBeNull();
 
             // Idempotent: the timer keeps asking and never doubles it

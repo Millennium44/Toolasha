@@ -47,6 +47,7 @@ vi.mock('../../core/dom-observer.js', () => ({
     default: {
         register: (id, callback) => {
             harness.observers[id] = callback;
+            return () => delete harness.observers[id];
         },
     },
 }));
@@ -93,6 +94,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    // The feature holds its observers until it is told to let go; without this
+    // the next initialize() is a no-op and every test after the first draws a
+    // blank page, which is exactly the double-registration guard doing its job
+    profileExportButton.cleanup();
     vi.useRealTimers();
 });
 
@@ -103,6 +108,19 @@ describe('putting the button on the page', () => {
         expect(button()).toBeTruthy();
         expect(button().textContent).toBe('Export to Clipboard');
         expect(button().style.backgroundColor).toBeTruthy();
+    });
+
+    test('initialising twice does not leave two sets of observers running', () => {
+        profileExportButton.initialize();
+        profileExportButton.initialize();
+
+        expect(Object.keys(harness.observers)).toHaveLength(2);
+
+        profileExportButton.cleanup();
+        expect(Object.keys(harness.observers)).toHaveLength(0);
+
+        // Put it back for the shared afterEach
+        profileExportButton.initialize();
     });
 
     test('no profile page, no button', () => {

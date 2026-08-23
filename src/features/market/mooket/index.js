@@ -60,6 +60,8 @@ const PREFS_KEY = 'mooketPanelPrefs';
  */
 const WATCHLIST_BASE = 'mooketWatchlist';
 const POLL_MS = 1000;
+/** The game's marketplace panel, matched the same way the class watcher matches it */
+const MARKETPLACE_SELECTOR = '[class*="MarketplacePanel_marketplacePanel"]';
 
 /**
  * The watched items, per character, through a curated persisted record
@@ -136,6 +138,15 @@ class MarketHistoryPanel {
         this.tabWatcher = null;
         this.tabBar = null; // The marketplace tab bar last found, reused while it stays in the DOM
         this.marketplace = null; // The visible marketplace panel last found, likewise
+        /**
+         * Every marketplace panel currently in the DOM, kept by the class watcher.
+         *
+         * The poll used to answer "is the marketplace open" with a whole-document
+         * `[class*=]` query every second — paid in full while the marketplace was
+         * closed, which is nearly all the time. The game tells us when one appears;
+         * an empty set means the poll has nothing to do.
+         */
+        this.marketplacePanels = new Set();
         this.watchlist = [];
         /** Whose list `watchlist` holds, so a switch never shows another's */
         this.watchlistOwner = null;
@@ -179,11 +190,23 @@ class MarketHistoryPanel {
             debounce: true,
             debounceDelay: 200,
         });
+        // The marketplace panel announces itself instead of being hunted for once
+        // a second. Seeded with a scan because the panel may already be open when
+        // the feature initializes.
+        for (const el of document.querySelectorAll(MARKETPLACE_SELECTOR)) this.marketplacePanels.add(el);
+        const marketplaceWatcher = domObserver.onClass(
+            'MarketHistoryMarketplacePanel',
+            ['MarketplacePanel_marketplacePanel'],
+            (el) => this.marketplacePanels.add(el)
+        );
+
         this.cleanupRegistry.registerCleanup(() => {
             this.tabWatcher?.();
             this.tabWatcher = null;
+            marketplaceWatcher?.();
             this.tabBar = null;
             this.marketplace = null;
+            this.marketplacePanels.clear();
         });
         this.ensureTabButton();
 
@@ -807,29 +830,16 @@ class MarketHistoryPanel {
     followMarketplace() {
         if (document.hidden || !this.panel) return;
 
-        // Any marketplace that is actually on screen. The game can leave a
-        // second, hidden marketplace panel in the DOM after some navigations;
-        // reading only the first match then saw "not visible" and this poll
-        // hid the panel half a second after every click on the History tab —
-        // the tab "stopped working" until a refresh cleared the stray panel.
-        //
-        // The one found last time is reused while it is still in the DOM, so a
-        // tick that finds nothing changed is one layout read, not a scan
-        if (!this.marketplace?.isConnected || !this.marketplace.getClientRects().length) {
-            this.marketplace =
-                [...document.querySelectorAll('[class*="MarketplacePanel_marketplacePanel"]')].find(
-                    (el) => el.getClientRects().length
-                ) || null;
-        }
-        const marketplace = this.marketplace;
-        const visible = !!marketplace;
+        const marketplace = this._visibleMarketplace();
+        this.marketplace = marketplace;
 
         // Off the marketplace there is no item to chart and nowhere to put the
         // pin, so the panel goes with it — but coming back does not reopen a
         // panel that was closed on purpose
-        this.panel.style.display = visible && this.prefs.open ? 'flex' : 'none';
-        if (!visible) {
-            this.pinButton.style.display = 'none';
+        const wantPanel = marketplace && this.prefs.open ? 'flex' : 'none';
+        if (!marketplace) {
+            this._setDisplay(this.panel, wantPanel);
+            this._setDisplay(this.pinButton, 'none');
             return;
         }
 
@@ -837,7 +847,8 @@ class MarketHistoryPanel {
         const use = currentItem?.querySelector('svg use');
         const iconName = use?.href?.baseVal?.split('#')[1];
         if (!currentItem || !iconName) {
-            this.pinButton.style.display = 'none';
+            this._setDisplay(this.panel, wantPanel);
+            this._setDisplay(this.pinButton, 'none');
             return;
         }
 
@@ -845,14 +856,58 @@ class MarketHistoryPanel {
         const level = Number(badge?.textContent?.replace('+', '')) || 0;
         const itemHrid = `/items/${iconName}`;
 
+        // Every measurement first, then every write. Reading a rect after writing
+        // a style forces the browser to lay the page out again mid-tick, once a
+        // second, for a position that has almost never moved.
         const iconRect = currentItem.querySelector('svg').getBoundingClientRect();
-        this.pinButton.style.left = `${iconRect.right + window.scrollX + 6}px`;
-        this.pinButton.style.top = `${iconRect.top + window.scrollY - 2}px`;
-        this.pinButton.style.display = 'block';
+        const left = `${iconRect.right + window.scrollX + 6}px`;
+        const top = `${iconRect.top + window.scrollY - 2}px`;
+
+        this._setDisplay(this.panel, wantPanel);
+        if (this.pinButton.style.left !== left) this.pinButton.style.left = left;
+        if (this.pinButton.style.top !== top) this.pinButton.style.top = top;
+        this._setDisplay(this.pinButton, 'block');
 
         if (this.current?.itemHrid !== itemHrid || this.current?.enhancementLevel !== level) {
             this.showItem(itemHrid, level);
         }
+    }
+
+    /**
+     * Write `display` only when it would change it.
+     * @param {HTMLElement} el - The element
+     * @param {string} value - The wanted display
+     */
+    _setDisplay(el, value) {
+        if (el && el.style.display !== value) el.style.display = value;
+    }
+
+    /**
+     * The marketplace panel that is actually on screen, if any.
+     *
+     * The game can leave a second, hidden marketplace panel in the DOM after some
+     * navigations; taking the first match then saw "not visible" and this poll hid
+     * the panel half a second after every click on the History tab — the tab
+     * "stopped working" until a refresh cleared the stray panel. So every panel the
+     * class watcher has seen is considered, and the one with a box wins.
+     *
+     * The one found last time is checked first, so a tick that finds nothing
+     * changed is a single layout read; a closed marketplace is no reads at all.
+     *
+     * @returns {HTMLElement|null} The visible panel
+     */
+    _visibleMarketplace() {
+        if (this.marketplace?.isConnected && this.marketplace.getClientRects().length) return this.marketplace;
+
+        let found = null;
+        for (const el of this.marketplacePanels) {
+            if (!el.isConnected) {
+                this.marketplacePanels.delete(el);
+                continue;
+            }
+            if (!found && el.getClientRects().length) found = el;
+        }
+        return found;
     }
 }
 

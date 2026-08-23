@@ -388,6 +388,8 @@ class GuildTrialScoreboard {
         this.container = null;
         this.tab = 'damage';
         this.refreshId = null;
+        /** Redraws on the way back from a hidden tab; removed on close */
+        this._visibilityHandler = null;
         /** The trials feature's expected-tier forecast, pushed in rather than imported */
         this.forecast = null;
         /** The trial's name, tier and shortfall, likewise pushed in */
@@ -427,6 +429,10 @@ class GuildTrialScoreboard {
     close() {
         if (this.refreshId) clearInterval(this.refreshId);
         this.refreshId = null;
+        if (this._visibilityHandler) {
+            document.removeEventListener('visibilitychange', this._visibilityHandler);
+            this._visibilityHandler = null;
+        }
         // The drag listeners live on the document rather than on the panel, so
         // closing has to take them off by hand or every open leaves a pair
         this._release?.();
@@ -482,8 +488,18 @@ class GuildTrialScoreboard {
         this._drag(header);
 
         // A trial is live while this is open; five seconds is the cadence the
-        // rest of the feature samples at
-        this.refreshId = setInterval(() => this.render(), 5000);
+        // rest of the feature samples at. A hidden tab is skipped — the whole
+        // board is rebuilt each pass, and nobody is looking at it.
+        this.refreshId = setInterval(() => {
+            if (document.hidden) return;
+            this.render();
+        }, 5000);
+        // Coming back to the tab should show the trial as it stands now, not as
+        // it stood when the tab was left.
+        this._visibilityHandler = () => {
+            if (!document.hidden) this.render();
+        };
+        document.addEventListener('visibilitychange', this._visibilityHandler);
     }
 
     /**

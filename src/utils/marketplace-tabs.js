@@ -29,6 +29,9 @@ const pendingRetireTimeouts = new Map();
 /** How long the ✓ badge stays up before the tab is actually removed. */
 const ACQUIRED_BADGE_DELAY_MS = 900;
 
+/** How often the cleanup watchdog checks that its tabs are still on screen */
+const POLL_MS = 3000;
+
 /**
  * Create a custom material tab for the marketplace
  * @param {Object} material - Material data object
@@ -355,6 +358,9 @@ export function setupMarketplaceCleanupObserver(onCleanup, tabsArray) {
 
     function poll() {
         if (!tabsArray || tabsArray.length === 0) return;
+        // Nobody can navigate away from a tab they are not looking at, and every
+        // check below is a layout read
+        if (document.hidden) return;
 
         // If custom tabs were removed from DOM, clean up
         const hasCustomTabsInDOM = tabsArray.some((tab) => document.body.contains(tab));
@@ -380,7 +386,11 @@ export function setupMarketplaceCleanupObserver(onCleanup, tabsArray) {
         }
     }
 
-    pollInterval = setInterval(poll, 1000);
+    // Three seconds rather than one: every pass forces layout (`offsetParent` per
+    // tab, then `getComputedStyle` on the sub-panel container), and the thing it
+    // is waiting for is a person navigating away — noticing that a couple of
+    // seconds later costs nothing, since the tabs are already off screen by then.
+    pollInterval = setInterval(poll, POLL_MS);
 
     return () => {
         if (pollInterval) {

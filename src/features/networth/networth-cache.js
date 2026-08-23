@@ -4,11 +4,68 @@
  * Prevents recalculating the same enhancement paths repeatedly
  */
 
+import dataManager from '../../core/data-manager.js';
+import { getEnhancingParams } from '../../utils/enhancement-config.js';
+
+/**
+ * How long a params fingerprint is trusted before it is rebuilt.
+ *
+ * The cost of a +N depends on the enhancer's level, gear, tea and Observatory,
+ * none of which change between two items of the same sweep — and enhancement-config
+ * already memoises detection for about this long, so matching it costs nothing.
+ */
+const PARAMS_FINGERPRINT_MS = 1000;
+
+/**
+ * A short, stable string for a set of enhancing parameters.
+ * @param {Object} params - `getEnhancingParams()` shape
+ * @returns {string} Fingerprint
+ */
+function fingerprintParams(params) {
+    if (!params || typeof params !== 'object') return 'none';
+    return Object.keys(params)
+        .sort()
+        .map((key) => {
+            const value = params[key];
+            return `${key}:${typeof value === 'object' ? JSON.stringify(value) : value}`;
+        })
+        .join('|');
+}
+
 class NetworthCache {
     constructor(maxSize = 100) {
         this.maxSize = maxSize;
         this.cache = new Map();
         this.marketDataHash = null;
+        this._paramsFingerprint = null;
+        this._paramsFingerprintAt = 0;
+    }
+
+    /**
+     * The current character + enhancing-params fingerprint, memoised briefly.
+     *
+     * Without it the cache answers a level-140-with-blessed-tea question with a
+     * level-40-no-tea cost — same item, same target level, different enhancer.
+     *
+     * @returns {string} Fingerprint segment for cache keys
+     */
+    contextKey() {
+        const now = Date.now();
+        if (this._paramsFingerprint !== null && now - this._paramsFingerprintAt < PARAMS_FINGERPRINT_MS) {
+            return this._paramsFingerprint;
+        }
+
+        let fingerprint = 'none';
+        try {
+            const characterId = dataManager?.getCurrentCharacterId?.() ?? 'anon';
+            fingerprint = `${characterId}#${fingerprintParams(getEnhancingParams())}`;
+        } catch (error) {
+            console.error('[NetworthCache] Could not read enhancing params:', error);
+        }
+
+        this._paramsFingerprint = fingerprint;
+        this._paramsFingerprintAt = now;
+        return fingerprint;
     }
 
     /**
@@ -18,7 +75,7 @@ class NetworthCache {
      * @returns {string} Cache key
      */
     generateKey(itemHrid, enhancementLevel) {
-        return `${itemHrid}_${enhancementLevel}`;
+        return `${this.contextKey()}_${itemHrid}_${enhancementLevel}`;
     }
 
     /**
@@ -111,6 +168,8 @@ class NetworthCache {
     clear() {
         this.cache.clear();
         this.marketDataHash = null;
+        this._paramsFingerprint = null;
+        this._paramsFingerprintAt = 0;
     }
 
     /**
@@ -127,5 +186,14 @@ class NetworthCache {
 }
 
 const networthCache = new NetworthCache();
+
+// A switch changes the enhancer, so every cached cost belongs to somebody else.
+// The keys carry the character already; this only stops the old character's
+// entries occupying the LRU until they age out.
+try {
+    dataManager?.on?.('character_switching', () => networthCache.clear());
+} catch (error) {
+    console.error('[NetworthCache] Could not subscribe to character switches:', error);
+}
 
 export default networthCache;

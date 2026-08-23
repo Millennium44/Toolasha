@@ -63,8 +63,17 @@ export function createPanel({ id, title, size, draw, accent = '#8fb4ff', refresh
      * seconds and the list shuts under the pointer — which reads as the panel
      * refusing to be used rather than as a redraw. A control the pointer or the
      * keyboard is in is a control somebody is in the middle of.
+     *
+     * It also leaves alone a panel nobody can see. A hidden tab and a minimized
+     * panel both redraw a body that is not on screen; with twenty-odd of these
+     * shells alive that is twenty rebuilds a few seconds apart for nothing. Both
+     * states end by drawing again — `show`/expand re-renders, and the interval
+     * picks the panel back up on the next tick once the tab is visible.
      */
     function refresh() {
+        if (document.hidden) return;
+        if (minimizeCtl?.collapsed) return;
+
         const active = document.activeElement;
         const busy = panel?.contains(active) && ['INPUT', 'SELECT', 'TEXTAREA'].includes(active.tagName);
         if (busy) return;
@@ -146,6 +155,11 @@ export function createPanel({ id, title, size, draw, accent = '#8fb4ff', refresh
             panelKey: id,
             beforeEl: close,
             defaultHeight: size.height,
+            // Expanding shows a body that stopped refreshing while folded, so
+            // it is redrawn on the way out rather than a refresh interval later.
+            onToggle: (collapsed) => {
+                if (!collapsed) render();
+            },
         });
 
         detachDrag = makeDraggable(panel, header, (position) => {

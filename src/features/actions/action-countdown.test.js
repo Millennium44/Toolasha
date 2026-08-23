@@ -1,6 +1,7 @@
 /** @vitest-environment happy-dom
  *
- * The countdown's frame loop only runs while there is a progress bar to drive.
+ * The countdown's tick loop only runs while there is a progress bar to drive,
+ * and it wakes on a tenth-of-a-second interval rather than on every frame.
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -38,14 +39,7 @@ function mountBar() {
 
 beforeEach(() => {
     vi.useFakeTimers();
-    vi.stubGlobal(
-        'requestAnimationFrame',
-        vi.fn((cb) => setTimeout(cb, 16))
-    );
-    vi.stubGlobal(
-        'cancelAnimationFrame',
-        vi.fn((id) => clearTimeout(id))
-    );
+    vi.stubGlobal('requestAnimationFrame', vi.fn());
 });
 
 afterEach(() => {
@@ -55,22 +49,26 @@ afterEach(() => {
     document.body.innerHTML = '';
 });
 
-describe('frame loop lifetime', () => {
+describe('tick loop lifetime', () => {
     test('the loop ends when the bar leaves the DOM and restarts when a new one is seen', () => {
         const bar = mountBar();
         actionCountdown.initialize();
-        expect(actionCountdown.rafId).not.toBeNull();
+        expect(actionCountdown.timerId).not.toBeNull();
 
         bar.remove();
-        vi.advanceTimersByTime(50);
-        expect(actionCountdown.rafId).toBeNull();
-        const framesBefore = requestAnimationFrame.mock.calls.length;
-        vi.advanceTimersByTime(500);
-        expect(requestAnimationFrame.mock.calls.length).toBe(framesBefore);
+        vi.advanceTimersByTime(200);
+        expect(actionCountdown.timerId).toBeNull();
 
         const next = mountBar();
         handlers.classCallback(next);
-        expect(actionCountdown.rafId).not.toBeNull();
+        expect(actionCountdown.timerId).not.toBeNull();
+    });
+
+    test('the countdown never asks for an animation frame', () => {
+        mountBar();
+        actionCountdown.initialize();
+        vi.advanceTimersByTime(1000);
+        expect(requestAnimationFrame).not.toHaveBeenCalled();
     });
 
     test('a completed action drops the cached --duration', () => {

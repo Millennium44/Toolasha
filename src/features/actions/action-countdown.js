@@ -8,10 +8,13 @@ import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
 import dataManager from '../../core/data-manager.js';
 
+/** How often the countdown redraws. The readout only shows tenths. */
+const TICK_MS = 100;
+
 class ActionCountdown {
     constructor() {
         this.initialized = false;
-        this.rafId = null;
+        this.timerId = null;
         this.textEl = null;
         this.fillBar = null;
         this.totalTime = null;
@@ -103,34 +106,31 @@ class ActionCountdown {
     }
 
     _startLoop() {
-        if (this.rafId) return;
+        if (this.timerId) return;
+        // The readout shows tenths of a second, so ten redraws a second is all it
+        // can display. A rAF loop re-armed every frame woke the countdown 60–120
+        // times a second to throw all but every sixth wake-up away; a plain
+        // interval asks for exactly the ten it uses, and a background tab gets
+        // the browser's own interval throttling for free.
+        this.timerId = setInterval(() => this._tick(), TICK_MS);
         this._tick();
     }
 
     _stopLoop() {
-        if (this.rafId) {
-            cancelAnimationFrame(this.rafId);
-            this.rafId = null;
+        if (this.timerId) {
+            clearInterval(this.timerId);
+            this.timerId = null;
         }
     }
 
     _tick() {
         // No bar to drive: let the loop end. The ProgressBar_text class watcher
         // restarts it when the game renders a new one, so there is no point
-        // paying for a frame callback (and two style reads) in the meantime.
+        // paying for a wake-up (and two style reads) in the meantime.
         if (!this.textEl || !this.textEl.isConnected) {
-            this.rafId = null;
+            this._stopLoop();
             return;
         }
-
-        this.rafId = requestAnimationFrame(() => this._tick());
-
-        // The readout shows tenths of a second, so ~10 redraws a second is all
-        // it can display — running the getComputedStyle work at 60–120fps just
-        // burns battery on style recalculation
-        const now = performance.now();
-        if (this._lastTickAt && now - this._lastTickAt < 100) return;
-        this._lastTickAt = now;
 
         if (!this.totalTime) return;
 

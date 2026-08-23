@@ -77,6 +77,17 @@ function getRatingMode() {
 // quiet until enough cards carry a rating for "the board" to mean anything.
 const MIN_RATED_CARDS_FOR_MEDIAN = 3;
 
+/** How long a shared full-zone sim result stands before it is re-run */
+const ZONE_SIM_TTL_MS = 3 * 60 * 1000;
+
+/**
+ * How long the coalesced card refresh waits for the rest of the panel to arrive.
+ *
+ * Cards land one at a time, and each used to schedule its own pass over every
+ * card on screen — twenty cards, twenty full passes, all with the same answer.
+ */
+const CARD_REFRESH_MS = 150;
+
 /**
  * Median of a list of numbers.
  * @param {number[]} values - Values (need not be sorted)
@@ -495,7 +506,10 @@ class TaskProfitDisplay {
         this.eventListeners = new WeakMap(); // Store listeners for cleanup
         this.isInitialized = false;
         this.timerRegistry = createTimerRegistry();
-        this._zoneSimCache = new Map(); // zoneHrid|loadout → {promise, t} shared full-zone sims
+        // `character|zoneHrid|loadout` → {promise, t} shared full-zone sims. Keyed by
+        // character because a switch changes the gear the sim was run with, and
+        // expired entries are dropped as they are met rather than kept forever.
+        this._zoneSimCache = new Map();
         this._estimateMode = 'solo'; // Last-used Solo/Zone choice (persisted)
         this.marketDataInitPromise = null; // Guard against duplicate market data inits
         this._simQueue = Promise.resolve();
@@ -503,6 +517,8 @@ class TaskProfitDisplay {
         this._questsTimer = null;
         this._actionsTimer = null;
         this._materialsTimer = null;
+        /** The one pending "redraw the cards" pass, shared by every card that arrives */
+        this._cardRefreshTimer = null;
     }
 
     /**
@@ -697,6 +713,30 @@ class TaskProfitDisplay {
         });
     }
 
+    /** Drop every zone sim result that has aged out */
+    _pruneZoneSimCache() {
+        const now = Date.now();
+        for (const [key, entry] of this._zoneSimCache) {
+            if (now - entry.t >= ZONE_SIM_TTL_MS) this._zoneSimCache.delete(key);
+        }
+    }
+
+    /**
+     * Redraw every card once, shortly.
+     *
+     * A trailing timer: whatever else arrives while it is pending joins the same
+     * pass instead of booking another one.
+     */
+    _scheduleCardRefresh() {
+        if (this._cardRefreshTimer) clearTimeout(this._cardRefreshTimer);
+        this._cardRefreshTimer = setTimeout(() => {
+            this._cardRefreshTimer = null;
+            this.updateTaskProfits();
+            this.updateQueuedIndicators();
+        }, CARD_REFRESH_MS);
+        this.timerRegistry.registerTimeout(this._cardRefreshTimer);
+    }
+
     /**
      * Register DOM observers
      */
@@ -711,8 +751,6 @@ class TaskProfitDisplay {
         // Watch for individual tasks appearing
         const unregisterTask = domObserver.onClass('TaskProfitDisplay-Task', 'RandomTask_randomTask', (taskNode) => {
             this._setupTaskNode(taskNode);
-            const queuedTimeout = setTimeout(() => this.updateQueuedIndicators(), 150);
-            this.timerRegistry.registerTimeout(queuedTimeout);
         });
         this.unregisterHandlers.push(unregisterTask);
 
@@ -739,9 +777,9 @@ class TaskProfitDisplay {
      * @param {HTMLElement} taskNode
      */
     _setupTaskNode(taskNode) {
-        // Small delay to let task data settle
-        const taskTimeout = setTimeout(() => this.updateTaskProfits(), 100);
-        this.timerRegistry.registerTimeout(taskTimeout);
+        // One pass for the whole panel, a moment after the last card lands —
+        // not a pass over every card for each card that arrives
+        this._scheduleCardRefresh();
 
         // Merge duplicate task Go buttons: sum goalCount - currentCount across all
         // in-progress tasks with the same actionHrid/monsterHrid and overwrite the input
@@ -1381,11 +1419,15 @@ class TaskProfitDisplay {
             const sharedZoneSim = mode === 'zone' || isBossTarget;
             let simResult;
             if (sharedZoneSim) {
-                const cacheKey = `${zoneHrid}|${loadoutName || ''}`;
+                const cacheKey = `${dataManager.getCurrentCharacterId() || ''}|${zoneHrid}|${loadoutName || ''}`;
                 const cached = this._zoneSimCache.get(cacheKey);
-                if (cached && Date.now() - cached.t < 3 * 60 * 1000) {
+                if (cached && Date.now() - cached.t < ZONE_SIM_TTL_MS) {
                     simResult = await cached.promise;
                 } else {
+                    // Anything past its time is dropped on the way through, so a
+                    // long session does not accumulate a sim result per zone per
+                    // loadout for the rest of the day
+                    this._pruneZoneSimCache();
                     const promise = runSimulation({
                         gameData: simGameData,
                         playerDTOs: players,
@@ -2715,6 +2757,10 @@ class TaskProfitDisplay {
         try {
             // Cancel pending timeouts so they cannot recreate UI after disable
             this.timerRegistry.clearAll();
+            this._cardRefreshTimer = null;
+            // Sim results belong to the character and the gear that were current;
+            // nothing about them survives being switched off
+            this._zoneSimCache.clear();
 
             this.unregisterHandlers.forEach((unregister) => unregister());
             this.unregisterHandlers = [];

@@ -587,6 +587,23 @@ class OverlayPanel {
             this._placePicker();
         });
         this.panelObserver.observe(this.panel);
+        this._watchDock();
+    }
+
+    /**
+     * Re-fit the docked panel when a box it is fitted to changes size.
+     *
+     * `_fitDock` follows two things: how much room the column has, and how tall
+     * the tiles came out. Both are boxes, so both can be observed — which is
+     * cheaper and more responsive than the once-a-second re-measure this
+     * replaces, and does not force a layout in the middle of a draw.
+     */
+    _watchDock() {
+        if (typeof ResizeObserver !== 'function') return;
+        this.dockObserver?.disconnect();
+        this.dockObserver = new ResizeObserver(() => this._fitDock());
+        if (this.dockHost) this.dockObserver.observe(this.dockHost);
+        if (this.canvasEl) this.dockObserver.observe(this.canvasEl);
     }
 
     /** The window changed shape: fit to it, then redraw for what is left */
@@ -2536,7 +2553,13 @@ class OverlayPanel {
      */
     _styleTile(tile, row) {
         if (!tile) return;
-        Object.assign(tile.style, {
+        // Written property by property, and only where the value differs. Every
+        // assignment to `style` invalidates the element whether or not it changed
+        // anything, and this runs for every tile on every tick — a dozen tiles ×
+        // eleven properties a second, for a layout that changes when somebody
+        // drags a tile. Reading `style.x` back is a cheap inline-style read; it
+        // does not touch layout.
+        const want = {
             display: '',
             left: `${row.x}px`,
             top: `${row.y}px`,
@@ -2547,15 +2570,39 @@ class OverlayPanel {
             // While unlocked a finger drag must not become a scroll; locked
             // again, the panel's own scrolling comes back
             touchAction: this.isEditable ? 'none' : '',
-            // Editing shows the tile's own outline; otherwise a rule under
-            // each one, which is what gives a column of tiles the ruled look
-            // rather than a floating jumble
-            border: this.isEditable ? `1px dashed ${COLORS.tileEdit}` : '1px solid transparent',
-            borderBottom:
-                this.isEditable || this.settings.separators === false ? undefined : `1px solid ${COLORS.separator}`,
-        });
-        tile._grip.style.display = this.isEditable ? '' : 'none';
-        if (!this.isEditable) tile._zoom.style.display = 'none';
+        };
+        for (const [property, value] of Object.entries(want)) {
+            if (tile.style[property] !== value) tile.style[property] = value;
+        }
+
+        // The borders are their own case: `border` is a shorthand that resets the
+        // bottom edge, so the two have to be written in order and remembered
+        // rather than read back — the shorthand getter returns '' as soon as the
+        // sides differ, which would make every tick look like a change.
+        //
+        // Editing shows the tile's own dashed outline; otherwise a rule under each
+        // one, which is what gives a column of tiles the ruled look rather than a
+        // floating jumble.
+        const border = this.isEditable ? `1px dashed ${COLORS.tileEdit}` : '1px solid transparent';
+        const separator =
+            this.isEditable || this.settings.separators === false ? null : `1px solid ${COLORS.separator}`;
+        if (tile._styleBorder !== border) {
+            tile.style.border = border;
+            tile._styleBorder = border;
+            // Whatever the bottom edge was, the shorthand has just replaced it
+            tile._styleSeparator = null;
+        }
+        if (separator !== tile._styleSeparator) {
+            // No separator wanted means the shorthand's own bottom edge, which is
+            // what is there whenever the shorthand was the last thing written
+            if (separator === null) tile.style.border = border;
+            else tile.style.borderBottom = separator;
+            tile._styleSeparator = separator;
+        }
+
+        const grip = this.isEditable ? '' : 'none';
+        if (tile._grip.style.display !== grip) tile._grip.style.display = grip;
+        if (!this.isEditable && tile._zoom.style.display !== 'none') tile._zoom.style.display = 'none';
     }
 
     /**
@@ -2567,21 +2614,38 @@ class OverlayPanel {
      */
     _drawRow(tile, row) {
         try {
+            // A row that can summarise its own inputs gets to say "still the
+            // same", and the tile keeps what it already shows. This is a whole
+            // render — DOM rebuild included — skipped per tile per second, and
+            // the answer is nearly always "same" for a tile nothing has touched.
+            let version;
+            if (typeof row.version === 'function') {
+                version = row.version();
+                if (version !== undefined && tile._version === version && typeof tile._wasEmpty === 'boolean') {
+                    return tile._wasEmpty;
+                }
+            }
+
             // Left dim by a previous failure, the tile stays dim for every
             // successful render after it
-            tile._content.style.color = '';
+            if (tile._content.style.color) tile._content.style.color = '';
             row.render(tile._content);
+            tile._version = version;
         } catch (error) {
             console.error(`[OverlayPanel] Row "${row.key}" failed to render:`, error);
             tile._content.textContent = `${row.name}: unavailable`;
             tile._content.style.color = COLORS.textDim;
+            // Nothing about a failed render is worth reusing next tick
+            tile._version = undefined;
+            tile._wasEmpty = undefined;
             // A row that fell over is not a row with nothing to report, and
             // hiding it would hide the failure with it
             return false;
         }
         // An icon is content even with no text beside it — a tile showing only
         // a coin has drawn what it meant to
-        return !tile._content.textContent.trim() && !tile._content.querySelector('svg, img');
+        tile._wasEmpty = !tile._content.textContent.trim() && !tile._content.querySelector('svg, img');
+        return tile._wasEmpty;
     }
 
     /**
@@ -3003,6 +3067,8 @@ class OverlayPanel {
         host.appendChild(this.panel);
         this.dockHost = host;
         this._fitDock();
+        // A new column is a new box to follow
+        this._watchDock();
     }
 
     _startRefreshing() {
@@ -3014,7 +3080,11 @@ class OverlayPanel {
             this._ensureDocked();
             if (!this.panel?.isConnected) return;
             this._renderBody();
-            this._fitDock();
+            // `_fitDock` is not on the tick any more: it measured the column with
+            // `getBoundingClientRect` straight after the draw had written the
+            // canvas's size, which forces the browser to lay the page out again
+            // once a second for an answer that changes when a box changes size.
+            // `_watchDock` observes the two boxes it depends on instead.
             this._followActivity();
         }, REFRESH_MS);
         this.timerRegistry.registerInterval(this.refreshId);
@@ -3103,6 +3173,8 @@ class OverlayPanel {
         }
         this.panelObserver?.disconnect();
         this.panelObserver = null;
+        this.dockObserver?.disconnect();
+        this.dockObserver = null;
         this.lastCanvasWidth = null;
         // Decided from the width at every draw; a stale true would leave the
         // next panel unable to be unlocked
