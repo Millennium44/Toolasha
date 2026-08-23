@@ -304,3 +304,11 @@ describe('the suggestion', () => {
         expect(suggestion.text).toContain('mana is not the constraint');
     });
 });
+
+describe('auras', () => {
+    test('an aura row is neither idle nor starved — it is cast once and kept up', () => {
+        const verdict = abilityVerdict({ hrid: '/abilities/mystic_aura', uptime: 0, starvedShare: 0, casts: 0 }, 600);
+        expect(verdict.kind).toBe('aura');
+        expect(verdict.text).toMatch(/Aura/);
+    });
+});

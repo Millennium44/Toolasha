@@ -358,6 +358,11 @@ export function foldRotationTick(state, { at, player, action, events, detailMap 
  * @returns {{kind: string, text: string}} A verdict and its reason
  */
 export function abilityVerdict(row, seconds) {
+    // An aura is cast once and kept up for the whole fight; it has no rotation
+    // slot to fire in, so uptime and starvation say nothing about it
+    if (AURA_PATTERN.test(row.hrid || '')) {
+        return { kind: 'aura', text: 'Aura — cast once and kept up; not part of the rotation.' };
+    }
     if (!(seconds >= MIN_SECONDS)) {
         return { kind: 'measuring', text: 'Not enough fighting measured yet to say.' };
     }
