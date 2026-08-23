@@ -577,6 +577,22 @@ export function testerRouteHTML(itemDetails) {
  * @param {string} itemHrid - Item hrid
  * @returns {number} Price in coins, 0 when nothing knows one
  */
+/**
+ * Why the spread on a protected row is only approximate.
+ *
+ * The cost distribution is built over the attempt count with one cost per
+ * attempt, so protection — which is spent on protected failures, not on every
+ * attempt — is folded in as a rate proportional to attempts. That reproduces
+ * the expected cost exactly and only approximates the tails.
+ */
+const SPREAD_APPROX_NOTE =
+    'Approximate: protections are modelled as a cost proportional to attempts, ' +
+    'which gets the expected cost right but widens or narrows the tails. ' +
+    'The &quot;none&quot; row is exact.';
+
+/** The no-protection row: one cost per attempt, so the percentiles are exact. */
+const SPREAD_EXACT_NOTE = 'Exact: no protection is used, so every attempt costs the same.';
+
 function sweepBuyPrice(itemHrid) {
     if (itemHrid === '/items/coin') return 1;
     try {
@@ -695,7 +711,9 @@ export function protectSweepHTML({
                         cheapest ? '#88ff88' : '#ffd700',
                         cheapest ? 'font-weight:bold;' : ''
                     ) +
-                    cell(`${coins(row.p10)} – ${coins(row.p90)}`, '#999') +
+                    `<td style="padding:2px 8px 2px 0; text-align:right; color:#999; white-space:nowrap;" ` +
+                    `title="${row.spreadApprox ? SPREAD_APPROX_NOTE : SPREAD_EXACT_NOTE}">` +
+                    `${coins(row.p10)} – ${coins(row.p90)}${row.spreadApprox ? ' ≈' : ''}</td>` +
                     cell(formatAttempts(row.attempts)) +
                     cell(
                         row.protections > 0 ? formatAttempts(row.protections) : '-',
@@ -712,8 +730,9 @@ export function protectSweepHTML({
             );
         });
 
-        const th = (text, align = 'right') =>
-            `<th style="text-align:${align}; padding:2px 8px 2px 0; color:#888; font-weight:normal;">${text}</th>`;
+        const th = (text, align = 'right', title = '') =>
+            `<th style="text-align:${align}; padding:2px 8px 2px 0; color:#888; font-weight:normal;"` +
+            `${title ? ` title="${title}"` : ''}>${text}</th>`;
         const notes = [];
         if (selectedIsMirror) {
             notes.push(
@@ -725,7 +744,8 @@ export function protectSweepHTML({
         if (materialsUnpriced) notes.push('Some materials have no price; costs are understated.');
         if (testerShopEnabled()) notes.push('Tester shop prices floor the materials and protection.');
         notes.push(
-            "p10–p90 is the spread a run can land in; ★ cheapest expected, ✦ best gold per XP, ◂ the panel's current setting. From +0."
+            'p10–p90 is the spread a run can land in — exact on the "none" row and approximate (≈) wherever ' +
+                "protection is used. ★ cheapest expected, ✦ best gold per XP, ◂ the panel's current setting. From +0."
         );
 
         return (
@@ -735,7 +755,7 @@ export function protectSweepHTML({
             '<div id="mwi-enh-protsweep" style="display: none;">' +
             `<div style="color:#888; font-size:0.8em; margin:4px 0;">${notes.join(' ')}</div>` +
             '<div style="overflow-x:auto;"><table id="mwi-protsweep-table" style="font-size:0.85em; border-collapse:collapse; width:100%;">' +
-            `<tr style="border-bottom:1px solid #444;">${th('Protect from', 'left')}${th('Expected cost')}${th('p10 – p90')}${th('Attempts')}${th('Protections')}${th('Time')}${th('XP')}${th('Gold/XP')}${th('', 'left')}</tr>` +
+            `<tr style="border-bottom:1px solid #444;">${th('Protect from', 'left')}${th('Expected cost')}${th('p10 – p90 (approx.)', 'right', SPREAD_APPROX_NOTE)}${th('Attempts')}${th('Protections')}${th('Time')}${th('XP')}${th('Gold/XP')}${th('', 'left')}</tr>` +
             `${rows.join('')}</table></div></div></div>`
         );
     } catch (error) {

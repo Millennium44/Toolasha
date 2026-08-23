@@ -71,42 +71,49 @@ class DOMObserver {
      */
     dispatch(node, mutation) {
         const className = typeof node.className === 'string' ? node.className : '';
-        // Class handlers satisfied by the node itself do not also get its
-        // descendants: one call per node per handler, as before
-        let directMatched = null;
 
+        // The combined subtree query, run at most once per node and only if a
+        // handler actually needs it. Descendants, when a container subtree is
+        // inserted; leaf nodes are skipped, which is the bulk of React's init
+        // burst.
+        let matches;
+        const descendants = () => {
+            if (matches === undefined) {
+                const selector = node.childElementCount === 0 ? null : this._selector();
+                matches = selector ? node.querySelectorAll(selector) : [];
+            }
+            return matches;
+        };
+
+        // One pass in registration order. Two handlers watching the same
+        // insertion — one on the container's own class, one on a class inside
+        // it — must fire in the order they registered, because that is the
+        // only ordering a feature can rely on; deciding container-matches for
+        // everybody before descendant-matches for anybody reordered them by
+        // where the class sits rather than by who asked first.
         for (const handler of this.handlers) {
             if (!handler.classes) {
                 this._run(handler, handler.callback, node, mutation);
                 continue;
             }
             if (classMatches(handler.classes, className)) {
-                (directMatched ??= new Set()).add(handler);
-                // A debounced class handler is handed the container and matches
-                // for itself when it fires, as it always did; an immediate one
-                // gets the match straight away
+                // A class handler satisfied by the node itself does not also
+                // get its descendants: one call per node per handler, as before.
+                // A debounced one is handed the container and matches for
+                // itself when it fires, as it always did; an immediate one gets
+                // the match straight away.
                 this._run(handler, handler.debounce ? handler.callback : handler.onMatch, node, mutation);
+                continue;
             }
-        }
-
-        // Descendants, when a container subtree is inserted. Leaf nodes are
-        // skipped, which is the bulk of React's init burst
-        if (node.childElementCount === 0) return;
-        const selector = this._selector();
-        if (!selector) return;
-        const matches = node.querySelectorAll(selector);
-        for (const match of matches) {
-            const matchClass = typeof match.className === 'string' ? match.className : '';
-            for (const handler of this.handlers) {
-                if (!handler.classes || directMatched?.has(handler)) continue;
+            for (const match of descendants()) {
+                const matchClass = typeof match.className === 'string' ? match.className : '';
                 if (!classMatches(handler.classes, matchClass)) continue;
                 if (handler.debounce) {
                     // Once per container: the matcher finds every match when it fires
-                    (directMatched ??= new Set()).add(handler);
                     this._run(handler, handler.callback, node, mutation);
-                } else {
-                    this._run(handler, handler.onMatch, match, mutation);
+                    break;
                 }
+                this._run(handler, handler.onMatch, match, mutation);
             }
         }
     }

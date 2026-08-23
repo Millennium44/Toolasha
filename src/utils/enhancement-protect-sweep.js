@@ -119,7 +119,8 @@ export function chooseProtectionOptions({ itemHrid, itemDetails, selectedHrid = 
  * @returns {{rows: Array<Object>, cheapestIndex: number, bestGoldPerXpIndex: number}} Rows are the
  *   "no protection" row first, then for each protection option every protect-from level from 2
  *   to the target. Each row: protectFrom, itemHrid (null for none), name, attempts,
- *   attemptsStdDev, protections, expectedCost, costStdDev, p10, p90, xp, goldPerXp, time.
+ *   attemptsStdDev, protections, expectedCost, costStdDev, p10, p90, spreadApprox, xp,
+ *   goldPerXp, time. `spreadApprox` marks the rows whose p10–p90 is only approximate.
  *   The index fields point at the cheapest expected cost and the lowest gold per XP
  */
 export function sweepProtectFrom({
@@ -172,6 +173,13 @@ export function sweepProtectFrom({
             costStdDev: stats.stdDev,
             p10: percentiles.p10,
             p90: percentiles.p90,
+            // The percentiles come from a distribution over attempts at one
+            // cost each, and protection is not spent once per attempt — it is
+            // spent on protected failures. Folding it into the per-attempt rate
+            // gets the mean right and only approximates the spread, so a row
+            // that uses protection says so rather than implying a precision the
+            // model does not have
+            spreadApprox: protectionPerAttempt > 0,
             xp,
             goldPerXp: xp > 0 ? stats.expected / xp : null,
             time: seconds,

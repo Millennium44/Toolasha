@@ -91,6 +91,7 @@ const {
     mergeStates,
     bucketOf,
     recordKey,
+    MIGRATION_TIMEOUT_MS,
 } = await import('./trade-ledger-store.js');
 const { _resetAdoptionCache } = await import('../../utils/character-key.js');
 const { LEDGER_RECORD_CAP } = await import('../../utils/trade-ledger.js');
@@ -289,6 +290,36 @@ describe('splitting the single key into day records', () => {
         expect(recordKeys()).toEqual([]);
     });
 
+    test('a split whose write never settles gives up and keeps the single key', async () => {
+        LEDGER().set(RECORDS_KEY, [fill(1, DAY1)]);
+        // A write that neither resolves nor rejects: the quota-abort hang this
+        // load used to inherit, which stalls every feature initialized after it
+        storageMock.putAll.mockImplementationOnce(() => new Promise(() => {}));
+
+        const loading = tradeLedgerStore.load();
+        await vi.advanceTimersByTimeAsync(MIGRATION_TIMEOUT_MS + 10);
+        await loading;
+
+        expect(tradeLedgerStore._legacy).toBe(true);
+        expect(tradeLedgerStore.records.map((r) => r.listingId)).toEqual([1]);
+        expect(LEDGER().has(RECORDS_KEY)).toBe(true);
+        expect(LEDGER().has(MARKER_KEY)).toBe(false);
+    });
+
+    test('absorbing a returned single key that never settles does not stall the load', async () => {
+        seedSplit([fill(1, DAY1)]);
+        LEDGER().set(RECORDS_KEY, [fill(2, DAY2)]);
+        storageMock.putAll.mockImplementationOnce(() => new Promise(() => {}));
+
+        const loading = tradeLedgerStore.load();
+        await vi.advanceTimersByTimeAsync(MIGRATION_TIMEOUT_MS + 10);
+        await loading;
+
+        // The load finished and the returned key's fills are in memory either way
+        expect(tradeLedgerStore.records.map((r) => r.listingId).sort()).toEqual([1, 2]);
+        expect(tradeLedgerStore.isLoaded).toBe(true);
+    });
+
     test('a later load reads the day records and does not look for a legacy value to adopt', async () => {
         seedSplit([fill(1, DAY1), fill(2, DAY2)]);
         // The pre-scoping bare key: without the marker this would be offered for adoption
@@ -362,6 +393,39 @@ describe('a fill writes its own day and nothing else', () => {
         await awaitSaves();
         expect(LEDGER().has(REC(DAY1))).toBe(false);
         expect(LEDGER().get(REC(DAY3))).toHaveLength(2);
+    });
+
+    test('day records the cap dropped before this save are deleted, not left behind', async () => {
+        // DAY1 falls off the cap entirely on load, so no later save ever names
+        // it — only a sweep by key can remove it
+        const day1 = [fill(1, DAY1 + 1000), fill(2, DAY1 + 2000)];
+        const day2 = Array.from({ length: LEDGER_RECORD_CAP }, (_, i) => fill(100 + i, DAY2 + i));
+        seedSplit([...day1, ...day2]);
+        await tradeLedgerStore.load();
+
+        expect(tradeLedgerStore.records).toHaveLength(LEDGER_RECORD_CAP);
+        expect(tradeLedgerStore.records.some((r) => r.listingId === 1)).toBe(false);
+        expect(LEDGER().has(REC(DAY1))).toBe(true);
+
+        tradeLedgerStore.states = baseline3();
+        fillNow(DAY3, 4);
+        await awaitSaves();
+
+        expect(LEDGER().has(REC(DAY1))).toBe(false);
+        expect(LEDGER().has(REC(DAY2))).toBe(true);
+    });
+
+    test('no sweep happens while the ledger is below the cap', async () => {
+        seedSplit([fill(1, DAY1), fill(2, DAY2)]);
+        await tradeLedgerStore.load();
+        tradeLedgerStore.states = baseline3();
+        storageMock.getAllKeys.mockClear();
+
+        fillNow(DAY3, 4);
+        await awaitSaves();
+
+        expect(storageMock.getAllKeys).not.toHaveBeenCalled();
+        expect(LEDGER().has(REC(DAY1))).toBe(true);
     });
 });
 

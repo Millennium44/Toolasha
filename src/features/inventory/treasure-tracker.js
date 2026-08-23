@@ -466,26 +466,35 @@ class TreasureTracker {
         // the dialog read as the popup opening in the wrong place
         this.popup.style.visibility = 'hidden';
         if (!pinned) this._placeBesideDialog(0);
-        restoreGeometry(this.popup, POPUP_GEOMETRY_KEY, { width: 260, height: 120 }, { position: pinned }).then(() => {
-            // The height fits the chest being shown, not the chest the popup was
-            // once resized on. capHeightToWindow already sized it to its content
-            // above; restoring a stored height on top of that clipped every
-            // chest with more rows than the one the resize happened on. Width is
-            // the half of a resize worth keeping, and it changes how rows wrap —
-            // so the height is re-fitted after the width lands.
-            if (!this.popup) return;
-            this.popup.style.height = '';
-            capHeightToWindow(this.popup);
-            if (pinned) {
-                this.popup.style.visibility = '';
-                return;
-            }
-            // The width just landed, so the edge it was placed against may have
-            // moved: place once more — quietly, because the first round of
-            // retries may still be waiting on the dialog and this pass must
-            // neither start a second round nor reveal the popup in the corner
-            this._placeBesideDialog(DIALOG_TRIES, { quiet: true });
-        });
+        restoreGeometry(this.popup, POPUP_GEOMETRY_KEY, { width: 260, height: 120 }, { position: pinned })
+            .then(() => {
+                // The height fits the chest being shown, not the chest the popup was
+                // once resized on. capHeightToWindow already sized it to its content
+                // above; restoring a stored height on top of that clipped every
+                // chest with more rows than the one the resize happened on. Width is
+                // the half of a resize worth keeping, and it changes how rows wrap —
+                // so the height is re-fitted after the width lands.
+                if (!this.popup) return;
+                this.popup.style.height = '';
+                capHeightToWindow(this.popup);
+                if (pinned) {
+                    this.popup.style.visibility = '';
+                    return;
+                }
+                // The width just landed, so the edge it was placed against may have
+                // moved: place once more — quietly, because the first round of
+                // retries may still be waiting on the dialog and this pass must
+                // neither start a second round nor reveal the popup in the corner
+                this._placeBesideDialog(DIALOG_TRIES, { quiet: true });
+            })
+            .catch((error) => {
+                // The popup is hidden until the restore says where it goes; a
+                // restore that rejects (a storage read that failed) would otherwise
+                // leave it hidden for ever — better in the default corner than not
+                // there at all
+                console.error('[TreasureTracker] Restoring the popup geometry failed:', error);
+                if (this.popup) this.popup.style.visibility = '';
+            });
     }
 
     /**

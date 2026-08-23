@@ -284,6 +284,40 @@ describe('dispatch', () => {
         expect(generic).toHaveBeenCalledWith(container, {});
     });
 
+    test('handlers fire in registration order whether they match the container or something inside it', () => {
+        const order = [];
+        // Registered first, matches a descendant; registered second, matches
+        // the container itself. Deciding container-matches before descendant
+        // matches ran B before A, which is not the order they registered in.
+        domObserver.onClass('A', 'Inner_x', () => order.push('A'));
+        domObserver.onClass('B', 'Outer_y', () => order.push('B'));
+        domObserver.register('G', () => order.push('G'));
+        domObserver.onClass('C', 'Inner_x', () => order.push('C'));
+
+        const container = document.createElement('div');
+        container.className = 'Outer_y__1';
+        container.innerHTML = '<div class="Inner_x__1"></div>';
+        const qsa = vi.spyOn(container, 'querySelectorAll');
+
+        domObserver.dispatch(container, {});
+
+        expect(order).toEqual(['A', 'B', 'G', 'C']);
+        // Still one combined query for the whole dispatch
+        expect(qsa).toHaveBeenCalledTimes(1);
+    });
+
+    test('the combined query is skipped entirely when every class handler matched the node itself', () => {
+        domObserver.onClass('A', 'Outer_y', () => {});
+        const node = document.createElement('div');
+        node.className = 'Outer_y__1';
+        node.innerHTML = '<div class="Other"></div>';
+        const qsa = vi.spyOn(node, 'querySelectorAll');
+
+        domObserver.dispatch(node, {});
+
+        expect(qsa).not.toHaveBeenCalled();
+    });
+
     test('a node that matches itself is not also searched for that handler, and the selector follows registrations', () => {
         const seen = [];
         const unregister = domObserver.onClass('A', 'Foo_item', (el) => seen.push(el));

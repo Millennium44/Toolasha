@@ -213,6 +213,32 @@ function gold(value) {
     return formatKMB(value);
 }
 
+/**
+ * Why a row has no net figure.
+ *
+ * A missing cost is not a zero cost, so the board says "—" and says why rather
+ * than quietly reporting the revenue as profit.
+ * @param {Object} row - A board row
+ * @returns {string} Tooltip text
+ */
+function costGapNote(row) {
+    return row.costGap === 'keys'
+        ? 'No net: at least one key this run needs has no market price, so the cost is unknown'
+        : 'No net: no measured or simulated consumable cost for this tier, so the food bill is unknown';
+}
+
+/**
+ * The arithmetic behind a net figure.
+ * @param {Object} row - A board row
+ * @returns {string} Tooltip text
+ */
+function netNote(row) {
+    return (
+        `Revenue ${gold(row.revenuePerRun)} − keys ${gold(row.keyCostPerRun ?? 0)} ` +
+        `− food ${gold(row.consumableCostPerRun ?? 0)}`
+    );
+}
+
 const CONFIDENCE_COLORS = {
     good: '#5fda5f',
     ok: '#ffc107',
@@ -558,12 +584,17 @@ class DungeonRoiBoardUI {
             mark: row.consumableSource === 'sim' ? 'sim' : null,
         });
         cell(gold(row.netPerRun), {
-            color: row.netPerRun >= 0 ? '#fff' : '#ff6b6b',
-            title: `Revenue ${gold(row.revenuePerRun)} − keys ${gold(row.keyCostPerRun ?? 0)} − food ${gold(row.consumableCostPerRun ?? 0)}`,
+            color: row.costComplete === false ? '#666' : row.netPerRun >= 0 ? '#fff' : '#ff6b6b',
+            title: row.costComplete === false ? costGapNote(row) : netNote(row),
         });
         cell(gold(row.netPerHour), {
             color: !Number.isFinite(row.netPerHour) ? '#666' : row.netPerHour >= 0 ? '#5fda5f' : '#ff6b6b',
-            title: row.runsPerHour ? `${row.runsPerHour.toFixed(2)} runs/hr` : 'Needs a clear time',
+            title:
+                row.costComplete === false
+                    ? costGapNote(row)
+                    : row.runsPerHour
+                      ? `${row.runsPerHour.toFixed(2)} runs/hr`
+                      : 'Needs a clear time',
             mark: row.clearSource === 'sim' && Number.isFinite(row.netPerHour) ? 'sim' : null,
         });
         cell(Number.isFinite(row.xpPerHour) ? formatKMB(row.xpPerHour) : '—', {
@@ -576,8 +607,11 @@ class DungeonRoiBoardUI {
             mark: row.xpSource === 'sim' ? 'sim' : null,
         });
         cell(row.confidence.label, {
-            color: CONFIDENCE_COLORS[row.confidence.tone] || '#aaa',
-            title: COLUMNS[COLUMNS.length - 1].title,
+            color: row.costComplete === false ? '#666' : CONFIDENCE_COLORS[row.confidence.tone] || '#aaa',
+            title:
+                row.costComplete === false
+                    ? `${costGapNote(row)}\n${COLUMNS[COLUMNS.length - 1].title}`
+                    : COLUMNS[COLUMNS.length - 1].title,
         });
 
         return tr;

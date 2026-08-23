@@ -245,11 +245,15 @@ describe('drawing', () => {
         expect(cells[11]).toBe('sim');
         expect(container.textContent).toContain('Rows marked "sim"');
 
-        // A tier the sim never ran still prices the run, and is last in the sort
+        // A tier with neither runs nor sim has no food bill, so both net cells
+        // read "—" and say why rather than reporting the revenue as profit
         expect(rowTexts(container).at(-1)).toBe('Pirate Cove T0');
         const cove = container.querySelectorAll('.mwi-dt-roi-row')[2];
         expect(cove.children[9].textContent).toBe('—');
-        expect(cove.children[8].textContent).not.toBe('—');
+        expect(cove.children[8].textContent).toBe('—');
+        expect(cove.children[8].title).toContain('No net');
+        expect(cove.children[8].title).toContain('consumable');
+        expect(cove.children[11].title).toContain('No net');
     });
 
     test('a header click re-sorts, and a second click flips it', async () => {

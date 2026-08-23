@@ -66,8 +66,12 @@ afterEach(() => {
     vi.useRealTimers();
 });
 
-/** Drive the coordinator: start, answer every tier result with `decide`, return the final results */
-async function sweep(zones, { useEarlyExit, decide = () => false, maxWorkers = 4, ticks = 400 } = {}) {
+/**
+ * Drive the coordinator: start, answer every tier result with `decide`, return
+ * the final results. `decide: null` answers nothing, standing in for a main
+ * thread that went away mid-sweep.
+ */
+async function sweep(zones, { useEarlyExit, decide = () => false, maxWorkers = 4, ticks = 400, step = 5 } = {}) {
     globalThis.onmessage({
         data: {
             type: 'start_all_zones',
@@ -83,11 +87,11 @@ async function sweep(zones, { useEarlyExit, decide = () => false, maxWorkers = 4
     });
     let answered = 0;
     for (let i = 0; i < ticks; i++) {
-        await vi.advanceTimersByTimeAsync(5);
+        await vi.advanceTimersByTimeAsync(step);
         // Answer tier results the way the main thread would
         while (answered < harness.sent.length) {
             const msg = harness.sent[answered++];
-            if (msg.type === 'zone_tier_result') {
+            if (msg.type === 'zone_tier_result' && decide !== null) {
                 globalThis.onmessage({
                     data: { type: 'zone_tier_decision', zoneHrid: msg.zoneHrid, skip: decide(msg) },
                 });
@@ -154,6 +158,19 @@ describe('the all-zones coordinator', () => {
         expect(done.results[1].tier).toBe(0);
         const silent = harness.workers.find((w) => w.terminated && harness.behaviour.a === 'silent');
         expect(silent).toBeTruthy();
+    });
+
+    test('a tier decision that never comes back does not wedge the sweep', async () => {
+        // With a worker pool, one chain still waiting on go/skip keeps
+        // `inFlight` above zero, so an unanswered decision used to mean the
+        // sweep never finished and the panel span for ever
+        const zones = [...tiers('a', 2), ...tiers('b', 2)];
+
+        const done = await sweep(zones, { useEarlyExit: true, decide: null, ticks: 400, step: 1000 });
+
+        expect(done?.type).toBe('all_zones_result');
+        // Treated as "go": every tier ran, none was written off as skipped
+        expect(done.results.map((r) => r?.tier)).toEqual([0, 1, 0, 1]);
     });
 
     test('without early exit every zone runs exactly once', async () => {

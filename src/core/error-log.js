@@ -99,18 +99,43 @@ function trimStack(stack) {
     return lines.join('\n').slice(0, MAX_STACK_LENGTH);
 }
 
+/** Whether a coalesced notification is already queued. */
+let notifyScheduled = false;
+
 /**
  * Tell the subscribers something changed. A listener that throws is dropped
  * from the notification, not allowed to break the capture.
+ *
+ * Coalesced onto a microtask and built once: a burst of failures — a render
+ * loop throwing on every frame, a rejected batch of requests — used to run
+ * every listener once per failure, and to rebuild the whole entry list (a copy
+ * of every entry, reversed) separately for each of them. Subscribers redraw
+ * from the log rather than diff it, so one notification carrying the settled
+ * state is what they actually want.
  */
 function notify() {
-    for (const listener of [...listeners]) {
+    if (notifyScheduled || listeners.size === 0) return;
+    notifyScheduled = true;
+    queueMicrotask(() => {
+        notifyScheduled = false;
+        const snapshot = getEntries();
+        // Listeners run outside the capture path now, so the guard has to be
+        // raised here: a listener that logs an error must not be captured into
+        // the log it is redrawing from
+        const wasCapturing = inCapture;
+        inCapture = true;
         try {
-            listener(getEntries());
-        } catch {
-            /* a listener's failure is its own business */
+            for (const listener of [...listeners]) {
+                try {
+                    listener(snapshot);
+                } catch {
+                    /* a listener's failure is its own business */
+                }
+            }
+        } finally {
+            inCapture = wasCapturing;
         }
-    }
+    });
 }
 
 /**

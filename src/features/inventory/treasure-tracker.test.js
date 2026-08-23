@@ -73,12 +73,16 @@ vi.mock('../../utils/mobile.js', () => ({
     hasCoarsePointer: () => pointer.touch,
     detectedModeLabel: () => (pointer.touch ? 'mobile' : 'desktop'),
 }));
+/** Whether the geometry restore is made to fail, for the popup-visibility test */
+const geometry = vi.hoisted(() => ({ restoreFails: false }));
 // Geometry lives in IndexedDB and is never what these tests are about
 vi.mock('../../utils/panel-geometry.js', () => ({
     saveCollapsed: async () => {},
     wasCollapsed: async () => false,
     savedSize: async () => null,
-    restoreGeometry: async () => {},
+    restoreGeometry: async () => {
+        if (geometry.restoreFails) throw new Error('storage is gone');
+    },
     saveGeometry: () => {},
     clearPosition: () => {},
     saveOpenState: () => {},
@@ -674,6 +678,27 @@ describe('the popup is shown only once it has somewhere to be', () => {
 
         expect(treasureTracker.popup.style.visibility).toBe('hidden');
         expect(treasureTracker.popup.style.left).toBeUndefined();
+    });
+
+    test('a geometry restore that fails still reveals the popup rather than leaving it hidden', async () => {
+        geometry.restoreFails = true;
+        dm.dropTables['/items/chimerical_chest'] = [{ itemHrid: '/items/coin', dropRate: 1, minCount: 1, maxCount: 1 }];
+        treasureTracker.settings = { ...treasureTracker.settings, popupPinned: true };
+        treasureTracker.tally = {
+            '/items/chimerical_chest': { opened: 1, loot: { '/items/coin': 1 }, last: { opened: 1, loot: {} } },
+        };
+
+        treasureTracker._showOpening('/items/chimerical_chest');
+        expect(treasureTracker.popup.style.visibility).toBe('hidden');
+
+        // The rejection is handled on a later microtask
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(treasureTracker.popup.style.visibility).toBe('');
+        geometry.restoreFails = false;
+        treasureTracker.tally = {};
+        dm.dropTables = {};
     });
 
     test('stays hidden while the dialog is still rendering, then shows in the corner when it never comes', () => {

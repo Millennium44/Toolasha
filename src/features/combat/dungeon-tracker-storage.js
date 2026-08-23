@@ -71,6 +71,56 @@ export function filterRunsForCharacter(runs, filterCharacter, character) {
 }
 
 /**
+ * What tells two sightings of the same run apart.
+ *
+ * A run carries no id, so the team that ran it, when it started and how long it
+ * took are its identity — the same triple the duplicate check has always used,
+ * here matched exactly because both sides are copies of one written record
+ * rather than two independent observations.
+ * @param {Object} run - A stored run
+ * @returns {string} `teamKey|timestamp|duration`
+ */
+export function runIdentity(run) {
+    return `${run?.teamKey ?? ''}|${run?.timestamp ?? ''}|${run?.duration ?? ''}`;
+}
+
+/**
+ * Fold the stored list into the in-memory one.
+ *
+ * `allRuns` is one key for the whole account, so two tabs — or two characters
+ * in the same party — write the same key. Memory is a snapshot taken when the
+ * tab loaded; writing it back whole erases everything the other tab recorded
+ * since. Runs are matched on the triple that identifies them (team, timestamp,
+ * duration), memory wins on a tie because it may have been amended in place
+ * (a tier filled in), and anything this session deleted stays deleted rather
+ * than being carried back in from a copy written before the delete.
+ *
+ * @param {Array<Object>} memory - The in-memory list, newest first
+ * @param {Array<Object>} stored - What storage holds right now
+ * @param {Set<string>} [deleted] - Identities removed in this session
+ * @returns {Array<Object>} The union, newest first
+ */
+export function mergeRuns(memory, stored, deleted) {
+    const merged = Array.isArray(memory) ? [...memory] : [];
+    const seen = new Set(merged.map(runIdentity));
+    for (const run of Array.isArray(stored) ? stored : []) {
+        if (!run) continue;
+        const id = runIdentity(run);
+        if (seen.has(id) || deleted?.has(id)) continue;
+        seen.add(id);
+        merged.push(run);
+    }
+    const at = (run) => {
+        const time = new Date(run?.timestamp).getTime();
+        return Number.isFinite(time) ? time : 0;
+    };
+    // Newest first, as the list has always been; runs with no usable timestamp
+    // all score 0 and so keep the order they came in
+    merged.sort((a, b) => at(b) - at(a));
+    return merged;
+}
+
+/**
  * The character the panel is currently speaking for.
  * @returns {{id: string|null, name: string|null}}
  */
@@ -98,6 +148,13 @@ class DungeonTrackerStorage {
         this._runs = null;
         /** teamKey → that team's runs (the same objects), for the duplicate check */
         this._byTeam = new Map();
+        /**
+         * Identities removed in this session, so a merge cannot resurrect them
+         * from a copy of the list written before the delete landed.
+         */
+        this._deleted = new Set();
+        /** One read-merge-write at a time; two interleaved would each miss the other */
+        this._persistChain = null;
         /** When the last run was appended, to tell a burst from a lone run */
     }
 
@@ -145,16 +202,50 @@ class DungeonTrackerStorage {
     }
 
     /**
-     * Write the in-memory list out.
+     * Write the in-memory list out, folding in whatever storage holds now.
+     *
+     * `allRuns` is a single account-wide key, so a second tab (or a second
+     * character in the same party) writes it too. Taking memory for the whole
+     * truth threw those runs away on the next save; the list is re-read and
+     * merged first (see {@link mergeRuns}), which costs one read per save and
+     * is the only thing that makes two tabs safe.
+     *
+     * A read that could not be made skips the write rather than overwriting
+     * with a copy that may be missing runs — the same rule the load follows.
      * @param {boolean} immediate - Skip the write debounce
-     * @returns {Promise<boolean>|boolean} The write's outcome when immediate; true when queued
+     * @returns {Promise<boolean>} Whether the write was issued
      * @private
      */
-    _persist(immediate) {
-        const write = storage.setJSON('allRuns', this._runs, this.unifiedStoreName, immediate);
-        // A debounced write resolves when its timer fires; awaiting it would
-        // stall a backfill loop for the debounce delay on every run
-        return immediate ? write : true;
+    async _persist(immediate) {
+        const run = async () => {
+            const probe = await storage.tryGet('allRuns', this.unifiedStoreName);
+            if (probe === null) {
+                console.warn('[DungeonTrackerStorage] Runs not saved: the stored history could not be read first');
+                return false;
+            }
+            const merged = mergeRuns(this._runs || [], Array.isArray(probe.value) ? probe.value : [], this._deleted);
+            this._index(merged);
+            const write = storage.setJSON('allRuns', merged, this.unifiedStoreName, immediate);
+            // A debounced write resolves when its timer fires; awaiting it
+            // would stall a backfill loop for the debounce delay on every run
+            return immediate ? write : true;
+        };
+        this._persistChain = (this._persistChain || Promise.resolve()).then(run, run);
+        return this._persistChain;
+    }
+
+    /**
+     * Write the in-memory list out as the whole truth, without merging.
+     *
+     * Only "forget everything" wants this: a clear that merged would read back
+     * the very runs it was asked to drop.
+     * @returns {Promise<boolean>} Whether the write landed
+     * @private
+     */
+    async _persistReplace() {
+        const run = () => storage.setJSON('allRuns', this._runs, this.unifiedStoreName, true);
+        this._persistChain = (this._persistChain || Promise.resolve()).then(run, run);
+        return this._persistChain;
     }
 
     /**
@@ -164,6 +255,8 @@ class DungeonTrackerStorage {
     _resetCache() {
         this._runs = null;
         this._byTeam = new Map();
+        this._deleted = new Set();
+        this._persistChain = null;
     }
 
     /**
@@ -324,6 +417,8 @@ class DungeonTrackerStorage {
             // Add to front of list (most recent first)
             allRuns.unshift(unifiedRun);
             this._indexRun(unifiedRun);
+            // A run recorded again after being deleted is wanted again
+            this._deleted.delete(runIdentity(unifiedRun));
 
             // Memory is authoritative and every reader goes through it, so the
             // write takes the normal debounce — a backfill of dozens of runs
@@ -355,7 +450,12 @@ class DungeonTrackerStorage {
     async deleteRun(timestamp) {
         const allRuns = await this._loadRuns();
         if (!allRuns) return false;
-        this._index(allRuns.filter((r) => r.timestamp !== timestamp));
+        const kept = [];
+        for (const run of allRuns) {
+            if (run.timestamp === timestamp) this._deleted.add(runIdentity(run));
+            else kept.push(run);
+        }
+        this._index(kept);
         return this._persist(true);
     }
 
@@ -365,7 +465,8 @@ class DungeonTrackerStorage {
      */
     async clearAllRuns() {
         this._index([]);
-        return this._persist(true);
+        this._deleted = new Set();
+        return this._persistReplace();
     }
 
     /**
@@ -427,7 +528,11 @@ class DungeonTrackerStorage {
 
         if (outlierIndices.size === 0) return 0;
 
-        const cleaned = allRuns.filter((_, i) => !outlierIndices.has(i));
+        const cleaned = [];
+        for (let i = 0; i < allRuns.length; i++) {
+            if (outlierIndices.has(i)) this._deleted.add(runIdentity(allRuns[i]));
+            else cleaned.push(allRuns[i]);
+        }
         this._index(cleaned);
         await this._persist(true);
         console.log(`[DungeonTrackerStorage] Scrubbed ${outlierIndices.size} outlier run(s) from storage`);

@@ -139,6 +139,81 @@ describe('Storage.putAll', () => {
     });
 });
 
+describe('Storage.putAll when the transaction aborts', () => {
+    beforeEach(() => {
+        storage.db = null;
+    });
+
+    /**
+     * A database whose write transaction aborts after `writesBeforeAbort` puts.
+     *
+     * This is what a quota rejection looks like: `abort` fires and neither
+     * `complete` nor `error` ever does, so a putAll that listens only for
+     * those two never settles.
+     * @param {number} writesBeforeAbort - Puts that land before the abort
+     * @param {Error} [error] - The transaction error the abort carries
+     * @returns {object} Fake IDBDatabase
+     */
+    function createAbortingDb(writesBeforeAbort, error = new Error('aborted')) {
+        return {
+            objectStoreNames: ['xpHistory'],
+            transaction() {
+                const pending = [];
+                const txn = { oncomplete: null, onerror: null, onabort: null, error };
+                const store = {
+                    put() {
+                        const request = { onsuccess: null, onerror: null };
+                        pending.push(() => request.onsuccess?.());
+                        return request;
+                    },
+                };
+                queueMicrotask(() => {
+                    for (const run of pending.slice(0, writesBeforeAbort)) run();
+                    queueMicrotask(() => txn.onabort?.());
+                });
+                return {
+                    objectStore: () => store,
+                    get error() {
+                        return txn.error;
+                    },
+                    set oncomplete(fn) {
+                        txn.oncomplete = fn;
+                    },
+                    set onerror(fn) {
+                        txn.onerror = fn;
+                    },
+                    set onabort(fn) {
+                        txn.onabort = fn;
+                    },
+                };
+            },
+        };
+    }
+
+    test('settles with what was written instead of hanging for ever', async () => {
+        storage.db = createAbortingDb(2);
+
+        const count = await Promise.race([
+            storage.putAll('xpHistory', { a: 1, b: 2, c: 3 }),
+            new Promise((resolve) => setTimeout(() => resolve('hung'), 50)),
+        ]);
+
+        expect(count).toBe(2);
+    });
+
+    test('a quota abort is reported through the quota path', async () => {
+        const quotaError = new Error('full');
+        quotaError.name = 'QuotaExceededError';
+        storage.db = createAbortingDb(0, quotaError);
+        const handled = vi.spyOn(storage, '_handleQuotaExceeded').mockImplementation(() => {});
+
+        await storage.putAll('xpHistory', { a: 1 });
+
+        expect(handled).toHaveBeenCalled();
+        handled.mockRestore();
+    });
+});
+
 describe('Storage.getMany', () => {
     beforeEach(() => {
         storage.db = null;

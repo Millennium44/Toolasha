@@ -14,6 +14,8 @@ import { calculateSimRevenue } from './combat-sim-adapter.js';
 
 let multiWorker = null;
 let activeReject = null;
+/** The current run's teardown, so a cancel frees the blob URL the run made */
+let activeCleanup = null;
 
 /**
  * Run simulations for all specified zones in parallel via a coordinator worker.
@@ -60,8 +62,10 @@ export async function runAllZonesSimulation(params, onProgress) {
         const cleanup = () => {
             multiWorker = null;
             activeReject = null;
+            activeCleanup = null;
             URL.revokeObjectURL(blobURL);
         };
+        activeCleanup = cleanup;
 
         // Per-zone tier metrics for early exit comparison: zoneHrid → [{xpPerHour, profitPerHour}]
         const tierResultsByZone = new Map();
@@ -169,8 +173,11 @@ export function cancelAllZonesSimulation() {
         multiWorker.terminate();
         multiWorker = null;
     }
-    if (activeReject) {
-        activeReject(new Error('Cancelled'));
-        activeReject = null;
-    }
+    const reject = activeReject;
+    // Every other exit runs the teardown; a cancel used to skip it and leak the
+    // coordinator's blob URL — and its script — for the life of the page
+    activeCleanup?.();
+    activeReject = null;
+    activeCleanup = null;
+    if (reject) reject(new Error('Cancelled'));
 }

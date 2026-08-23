@@ -130,6 +130,48 @@ describe('planning a Bestiary route', () => {
         expect(plan.totalPoints).toBeGreaterThanOrEqual(plan.bestSingle.points);
     });
 
+    test('the single-zone comparison starts from the same floored counts the route did', () => {
+        // 9.9 kills is nine kills to the route — thresholds are whole kills —
+        // so the comparison must not be handed the raw 9.9 and credited with
+        // a tenth of a kill the route never had
+        const fractional = planBestiaryRoute({
+            zones: [zone('b', { '/monsters/bee': 10 })],
+            counts: { '/monsters/bee': 9.9 },
+            hours: 0.01,
+        });
+        const whole = planBestiaryRoute({
+            zones: [zone('b', { '/monsters/bee': 10 })],
+            counts: { '/monsters/bee': 9 },
+            hours: 0.01,
+        });
+
+        // 0.01 h at 10/hr is a tenth of a kill: from 9 that reaches nothing
+        expect(fractional.bestSingle.points).toBe(0);
+        expect(fractional.bestSingle.points).toBe(whole.bestSingle.points);
+        expect(fractional.totalPoints).toBe(whole.totalPoints);
+    });
+
+    test('the single-zone comparison is not measured from the counts the route already advanced', () => {
+        // The route spends the whole budget raising these counts; the
+        // comparison must still be measured from where everything started
+        const plan = planBestiaryRoute({
+            zones: [zone('a', { '/monsters/fly': 10 }, 'Farm'), zone('b', { '/monsters/bee': 60 })],
+            counts: { '/monsters/fly': 0, '/monsters/bee': 0 },
+            hours: 2,
+        });
+
+        // What b earns held alone, measured on its own with nothing to share
+        // the budget with
+        const bAlone = planBestiaryRoute({
+            zones: [zone('b', { '/monsters/bee': 60 })],
+            counts: { '/monsters/bee': 0 },
+            hours: 2,
+        });
+        expect(plan.bestSingle.zoneHrid).toBe('b');
+        expect(plan.bestSingle.points).toBe(bAlone.totalPoints);
+        expect(plan.totalPoints).toBeGreaterThanOrEqual(plan.bestSingle.points);
+    });
+
     test('zones with no kill rates are skipped without affecting the order', () => {
         const plan = planBestiaryRoute({
             zones: [zone('none', {}), zone('a', { '/monsters/fly': 1 })],

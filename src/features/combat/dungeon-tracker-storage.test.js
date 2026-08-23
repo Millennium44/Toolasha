@@ -40,6 +40,7 @@ const {
     default: dungeonTrackerStorage,
     runMatchesCharacter,
     filterRunsForCharacter,
+    mergeRuns,
 } = await import('./dungeon-tracker-storage.js');
 
 function seedRuns(runs) {
@@ -215,11 +216,11 @@ describe('saveTeamRun', () => {
         expect(game.saved.unifiedRuns.allRuns[0].dungeonName).toBe('Unknown');
     });
 
-    test('the stored list is read once; later saves and reads work from memory', async () => {
+    test('reads work from memory; a save folds in whatever storage holds', async () => {
         seedRuns([{ timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 }]);
         await dungeonTrackerStorage.getAllRuns();
 
-        // Storage changing behind memory's back is not seen — memory is the truth
+        // Storage emptied behind memory's back loses nothing: memory still has it
         game.saved.unifiedRuns.allRuns = [];
         await dungeonTrackerStorage.saveTeamRun('C,D', { timestamp: '2026-01-02T00:00:00Z', duration: 700 });
 
@@ -304,6 +305,121 @@ describe('deleting runs', () => {
         expect(game.writes).toEqual([['allRuns', true]]);
         expect(game.saved.unifiedRuns.allRuns).toEqual([]);
         expect(await dungeonTrackerStorage.getAllRuns()).toEqual([]);
+    });
+});
+
+describe('a second tab writing the same account-wide key', () => {
+    beforeEach(() => {
+        game.saved = {};
+    });
+
+    // A real read hands back a fresh deserialized array, so the other tab's
+    // append must not be visible through the array this tab already holds
+    function otherTabAppends(run) {
+        game.saved.unifiedRuns.allRuns = [...structuredClone(game.saved.unifiedRuns.allRuns), run];
+    }
+
+    test("a save keeps the other tab's runs instead of overwriting them", async () => {
+        seedRuns([{ timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 }]);
+        await dungeonTrackerStorage.getAllRuns();
+
+        // The other tab records a run after this one read the list
+        otherTabAppends({ timestamp: '2026-01-01T12:00:00Z', teamKey: 'X,Y', duration: 400 });
+
+        await dungeonTrackerStorage.saveTeamRun('C,D', { timestamp: '2026-01-02T00:00:00Z', duration: 700 });
+
+        expect(game.saved.unifiedRuns.allRuns.map((r) => r.teamKey)).toEqual(['C,D', 'X,Y', 'A,B']);
+        expect((await dungeonTrackerStorage.getAllRuns()).map((r) => r.teamKey)).toEqual(['C,D', 'X,Y', 'A,B']);
+    });
+
+    test('the same run seen by both tabs is kept once', async () => {
+        seedRuns([{ timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 }]);
+        await dungeonTrackerStorage.getAllRuns();
+
+        // Byte-identical copy of what memory already holds
+        otherTabAppends({ timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 });
+
+        await dungeonTrackerStorage.saveTeamRun('C,D', { timestamp: '2026-01-02T00:00:00Z', duration: 700 });
+
+        expect(game.saved.unifiedRuns.allRuns).toHaveLength(2);
+    });
+
+    test('a deleted run is not resurrected by a later merge', async () => {
+        seedRuns([
+            { timestamp: '2026-01-02T00:00:00Z', teamKey: 'A,B', duration: 500 },
+            { timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 },
+        ]);
+
+        await dungeonTrackerStorage.deleteRun('2026-01-01T00:00:00Z');
+        // A copy written before the delete landed comes back — a slow tab, a sync pull
+        otherTabAppends({ timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 });
+
+        await dungeonTrackerStorage.saveTeamRun('C,D', { timestamp: '2026-01-03T00:00:00Z', duration: 700 });
+
+        expect(game.saved.unifiedRuns.allRuns.map((r) => r.timestamp)).toEqual([
+            '2026-01-03T00:00:00Z',
+            '2026-01-02T00:00:00Z',
+        ]);
+    });
+
+    test('a scrubbed outlier stays scrubbed across a later merge', async () => {
+        const group = Array.from({ length: 5 }, (_, i) => ({
+            dungeonName: 'Chimerical Den',
+            teamKey: 'A,B',
+            timestamp: `2026-01-0${i + 1}T00:00:00Z`,
+            duration: 100,
+        }));
+        const outlier = {
+            dungeonName: 'Chimerical Den',
+            teamKey: 'A,B',
+            timestamp: '2026-01-06T00:00:00Z',
+            duration: 5000,
+        };
+        seedRuns([...group, outlier]);
+
+        expect(await dungeonTrackerStorage.scrubOutlierRuns()).toBe(1);
+        otherTabAppends({ ...outlier });
+
+        await dungeonTrackerStorage.saveTeamRun('C,D', { timestamp: '2026-01-07T00:00:00Z', duration: 700 });
+
+        expect(game.saved.unifiedRuns.allRuns.some((r) => r.duration === 5000)).toBe(false);
+    });
+
+    test('clearAllRuns empties the key outright rather than merging it back', async () => {
+        seedRuns([{ timestamp: '2026-01-02T00:00:00Z', teamKey: 'A,B', duration: 500 }]);
+        await dungeonTrackerStorage.getAllRuns();
+        otherTabAppends({ timestamp: '2026-01-01T00:00:00Z', teamKey: 'X,Y', duration: 500 });
+
+        await dungeonTrackerStorage.clearAllRuns();
+
+        expect(game.saved.unifiedRuns.allRuns).toEqual([]);
+    });
+
+    test('a save is skipped, not blindly written, when the pre-write read fails', async () => {
+        seedRuns([{ timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 }]);
+        await dungeonTrackerStorage.getAllRuns();
+        game.writes = [];
+
+        game.unreadable = true;
+        expect(await dungeonTrackerStorage.deleteRun('2026-01-01T00:00:00Z')).toBe(false);
+        expect(game.writes).toEqual([]);
+    });
+});
+
+describe('mergeRuns', () => {
+    test('memory wins on a tie, so an amended run is not replaced by its stored copy', () => {
+        const memory = [{ timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500, tier: 2 }];
+        const stored = [{ timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500, tier: null }];
+
+        const merged = mergeRuns(memory, stored);
+
+        expect(merged).toHaveLength(1);
+        expect(merged[0].tier).toBe(2);
+    });
+
+    test('runs without a usable timestamp keep the order they came in', () => {
+        const merged = mergeRuns([{ teamKey: 'A' }, { teamKey: 'B' }], [{ teamKey: 'C' }]);
+        expect(merged.map((r) => r.teamKey)).toEqual(['A', 'B', 'C']);
     });
 });
 

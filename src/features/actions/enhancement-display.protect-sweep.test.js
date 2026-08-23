@@ -160,6 +160,29 @@ describe('protect-from sweep in the enhancing panel', () => {
         expect(current[0].dataset.protectFrom).toBe('0');
     });
 
+    test('the spread column says it is approximate, and only the protected rows carry the mark', async () => {
+        const panel = buildPanel();
+        await displayEnhancementStats(panel, '/items/cheese_sword');
+        const stats = panel.querySelector('#mwi-enhancement-stats');
+
+        const header = Array.from(stats.querySelectorAll('th')).find((th) => th.textContent.includes('p10 – p90'));
+        expect(header.textContent).toContain('(approx.)');
+        expect(header.title).toContain('proportional to attempts');
+
+        const rows = Array.from(stats.querySelectorAll('.mwi-protsweep-row'));
+        const spreadCell = (row) => row.children[2];
+
+        const none = rows.find((row) => row.dataset.protectFrom === '0');
+        expect(spreadCell(none).textContent).not.toContain('≈');
+        expect(spreadCell(none).title).toContain('Exact');
+
+        const protectedRow = rows.find((row) => row.dataset.item === '/items/mirror_of_protection');
+        expect(spreadCell(protectedRow).textContent).toContain('≈');
+        expect(spreadCell(protectedRow).title).toContain('Approximate');
+
+        expect(stats.textContent).toContain('exact on the "none" row');
+    });
+
     test('protectSweepHTML returns nothing without an item', () => {
         expect(protectSweepHTML({ itemDetails: null, targetLevel: 5 })).toBe('');
     });

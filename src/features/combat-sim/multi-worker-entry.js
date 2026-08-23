@@ -218,8 +218,28 @@ onmessage = async function (event) {
                         index: task.index,
                         simResult,
                     });
+                    // A decision that never arrives — the panel closed, the
+                    // main thread threw mid-comparison — used to hold this
+                    // chain for ever, and with a worker pool one held chain
+                    // keeps `inFlight` above zero so the whole sweep never
+                    // finishes. Past the stall window, carry on as if told to.
                     const skip = await new Promise((resolve) => {
-                        pendingDecisions.set(task.zoneHrid, resolve);
+                        let timer = null;
+                        const settle = (value) => {
+                            if (timer !== null) clearTimeout(timer);
+                            if (pendingDecisions.get(task.zoneHrid) === settle) {
+                                pendingDecisions.delete(task.zoneHrid);
+                            }
+                            resolve(value);
+                        };
+                        timer = setTimeout(() => {
+                            console.warn(
+                                `[MultiWorker] No tier decision for ${task.zoneHrid} in ` +
+                                    `${Math.round(STALL_MS / 1000)}s — continuing to the next tier`
+                            );
+                            settle(false);
+                        }, STALL_MS);
+                        pendingDecisions.set(task.zoneHrid, settle);
                     });
 
                     if (skip) {

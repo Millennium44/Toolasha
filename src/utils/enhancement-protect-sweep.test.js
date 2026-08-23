@@ -94,6 +94,17 @@ describe('sweepProtectFrom', () => {
         }
     });
 
+    test('the spread is flagged approximate exactly where protection is priced in', () => {
+        const { rows } = sweep();
+        for (const row of rows) {
+            // Protection is spent on protected failures, not per attempt, so
+            // only the rows that pay for it have an approximated spread
+            expect(row.spreadApprox).toBe(row.protectFrom > 0 && row.protections > 0);
+        }
+        expect(rows[0].protectFrom).toBe(0);
+        expect(rows[0].spreadApprox).toBe(false);
+    });
+
     test('XP and gold per XP are populated, and the best gold/XP row is flagged', () => {
         const { rows, bestGoldPerXpIndex } = sweep();
         expect(rows.every((row) => row.xp > 0 && row.goldPerXp > 0)).toBe(true);

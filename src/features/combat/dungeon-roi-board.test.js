@@ -105,12 +105,14 @@ describe('pricing a completion', () => {
             { itemHrid: '/items/chimerical_chest_key', count: 5.02, unitCost: 1_000 },
         ]);
         expect(keys.total).toBeCloseTo(3_000 + 5.02 * 1_000);
+        expect(keys.complete).toBe(true);
     });
 
     test('an unpriceable key leaves the total null rather than free', () => {
         const rewards = priceRewards(rewardsPerRun(DEN, 0, 1, 0), pricing);
         const keys = priceKeys(DEN, rewards, { ...pricing, keyCost: () => null });
         expect(keys.total).toBeNull();
+        expect(keys.complete).toBe(false);
     });
 });
 
@@ -217,10 +219,13 @@ describe('buildDungeonRoiRows', () => {
         const keys = 3_000 + 5.03 * 1_000;
         expect(den1.revenuePerRun).toBeCloseTo(revenue);
         expect(den1.keyCostPerRun).toBeCloseTo(keys);
-        // No sessions and no sim for this tier: consumables unknown, left out of net
+        // No sessions and no sim for this tier: the food bill is unknown, so
+        // there is no honest net to report — an unknown cost is not a zero cost
         expect(den1.consumableCostPerRun).toBeNull();
-        expect(den1.netPerRun).toBeCloseTo(revenue - keys);
-        expect(den1.netPerHour).toBeCloseTo((revenue - keys) * (3600 / 660));
+        expect(den1.costComplete).toBe(false);
+        expect(den1.costGap).toBe('consumables');
+        expect(den1.netPerRun).toBeNull();
+        expect(den1.netPerHour).toBeNull();
         expect(den1.xpPerHour).toBeNull();
     });
 
@@ -240,13 +245,42 @@ describe('buildDungeonRoiRows', () => {
         expect(cove0.netPerHour).toBeCloseTo(cove0.netPerRun * 2);
     });
 
-    test('a tier with neither runs nor sim still prices the run, but not the hour', () => {
+    test('a tier with neither runs nor sim reports no net at all, not a costless one', () => {
         const rows = buildDungeonRoiRows({ dungeons, runs, snapshot, pricing });
         const cove2 = rows.find((row) => row.key === `${COVE}::T2`);
         expect(cove2.clearSource).toBeNull();
-        expect(cove2.netPerRun).toBeGreaterThan(0);
+        expect(cove2.revenuePerRun).toBeGreaterThan(0);
+        expect(cove2.costComplete).toBe(false);
+        expect(cove2.netPerRun).toBeNull();
         expect(cove2.netPerHour).toBeNull();
         expect(cove2.confidence.label).toBe('none');
+    });
+
+    test('an unpriced key leaves the net blank rather than counting the key as free', () => {
+        const rows = buildDungeonRoiRows({
+            dungeons,
+            runs,
+            snapshot,
+            pricing: { ...pricing, keyCost: (hrid) => (hrid.endsWith('_entry_key') ? null : 1_000) },
+        });
+        const cove0 = rows.find((row) => row.key === `${COVE}::T0`);
+
+        // The sim gives this row a clear time and a food bill, so keys are the
+        // only thing missing
+        expect(cove0.consumableCostPerRun).toBeGreaterThan(0);
+        expect(cove0.costGap).toBe('keys');
+        expect(cove0.netPerRun).toBeNull();
+        expect(cove0.netPerHour).toBeNull();
+    });
+
+    test('a fully priced row still reports its net', () => {
+        const rows = buildDungeonRoiRows({ dungeons, runs, snapshot, pricing });
+        const cove0 = rows.find((row) => row.key === `${COVE}::T0`);
+
+        expect(cove0.costComplete).toBe(true);
+        expect(cove0.costGap).toBeNull();
+        expect(cove0.netPerRun).toBeCloseTo(cove0.revenuePerRun - cove0.keyCostPerRun - cove0.consumableCostPerRun);
+        expect(cove0.netPerHour).toBeCloseTo(cove0.netPerRun * cove0.runsPerHour);
     });
 
     test('the T? row is measured from tierless runs and priced as T0, at their party size', () => {

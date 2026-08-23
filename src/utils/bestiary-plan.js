@@ -295,10 +295,17 @@ export function planBestiaryRoute({ zones = [], counts = {}, hours = 24, targetP
             zone.killsPerHour &&
             Object.values(zone.killsPerHour).some((rate) => Number(rate) > 0)
     );
-    const state = {};
+    // The route walks on whole kills, so the starting counts are floored once
+    // here. `state` is the walk's own mutable copy; `start` is the untouched
+    // snapshot the single-zone comparison is measured from — it has to see the
+    // same starting point the route did, not the raw counts (a fractional count
+    // would credit the zone with progress the route never had) and not the
+    // state the route has since advanced.
+    const start = {};
     for (const [hrid, count] of Object.entries(counts || {})) {
-        state[hrid] = Math.max(0, Math.floor(Number(count) || 0));
+        start[hrid] = Math.max(0, Math.floor(Number(count) || 0));
     }
+    const state = { ...start };
 
     const segments = [];
     const pointsByZone = {};
@@ -393,7 +400,7 @@ export function planBestiaryRoute({ zones = [], counts = {}, hours = 24, targetP
         // The comparison a points target wants is time, not points: which one
         // zone, held the whole way, gets there soonest
         for (const zone of usable) {
-            const toTarget = singleZoneHoursToTarget(zone.killsPerHour, counts, target);
+            const toTarget = singleZoneHoursToTarget(zone.killsPerHour, start, target);
             // A zone that never gets there only stands in until one that does
             const better =
                 !bestSingle || (toTarget !== null && (bestSingle.hours === null || toTarget < bestSingle.hours));
@@ -408,7 +415,7 @@ export function planBestiaryRoute({ zones = [], counts = {}, hours = 24, targetP
         }
     } else {
         for (const zone of usable) {
-            const points = singleZonePoints(zone.killsPerHour, counts, budget);
+            const points = singleZonePoints(zone.killsPerHour, start, budget);
             if (!bestSingle || points > bestSingle.points) {
                 bestSingle = {
                     zoneHrid: zone.zoneHrid,

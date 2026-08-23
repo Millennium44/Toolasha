@@ -893,6 +893,16 @@ class Storage {
                 transaction.oncomplete = () => {
                     resolve(written.length);
                 };
+                // A quota abort fires `abort` and never `complete` or `error`;
+                // without this the promise never settles and every awaiting
+                // caller hangs for the life of the page
+                transaction.onabort = () => {
+                    console.warn(`[Storage] Bulk write transaction aborted for store ${storeName}:`, transaction.error);
+                    if (this._isQuotaError(transaction.error)) {
+                        this._handleQuotaExceeded(keys[0], storeName, transaction.error);
+                    }
+                    resolve(written.length);
+                };
                 transaction.onerror = () => {
                     console.error(`[Storage] Bulk write transaction failed for store ${storeName}:`, transaction.error);
                     if (this._isQuotaError(transaction.error)) {

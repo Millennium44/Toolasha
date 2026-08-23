@@ -96,6 +96,7 @@ const {
     ANCHOR_POOL_MAX,
     LISTING_RETENTION_MS,
     LISTING_RETENTION_MAX,
+    RETENTION_SWEEP_EVERY,
     applyListingRetention,
     ORDER_BOOK_CACHE_MAX_ITEMS,
     ORDER_BOOK_PERSISTED_ROWS,
@@ -1058,10 +1059,35 @@ describe('listing log retention — the personal log no longer grows for life', 
 
         estimatedListingAge.recordListings([aged(0)]);
 
+        // A one-listing batch does not buy a full retention pass; the prune
+        // happens before the log is written, which is the only moment it matters
+        expect(estimatedListingAge.knownListings).toHaveLength(3);
+
+        await estimatedListingAge.flushPendingSave();
         expect(estimatedListingAge.knownListings.map((l) => l.id)).toEqual([aged(0).id]);
         // The save lands the trimmed log; what is stored does not resurrect the rest
-        await estimatedListingAge.flushPendingSave();
         expect(storedLog().map((l) => l.id)).toEqual([aged(0).id]);
+    });
+
+    test('retention does not re-run on every batch, but a big enough run of them triggers it', async () => {
+        storageMock.storeFor('marketListings').set(LOG_KEY, []);
+        knownAs(byId([aged(100), aged(120)]));
+        const sweep = vi.spyOn(estimatedListingAge, '_applyRetention');
+
+        for (let i = 0; i < 20; i++) estimatedListingAge.recordListings([aged(0, { id: 900_000 + i })]);
+        expect(sweep).not.toHaveBeenCalled();
+
+        // Enough listings in one go to pay for a pass
+        const batch = Array.from({ length: RETENTION_SWEEP_EVERY }, (_, i) => aged(0, { id: 800_000 + i }));
+        estimatedListingAge.recordListings(batch);
+        expect(sweep).toHaveBeenCalledTimes(1);
+        expect(estimatedListingAge.knownListings.some((l) => l.id === aged(100).id)).toBe(false);
+
+        // And the counter starts again, so the next small batch is free
+        sweep.mockClear();
+        estimatedListingAge.recordListings([aged(0, { id: 700_000 })]);
+        expect(sweep).not.toHaveBeenCalled();
+        sweep.mockRestore();
     });
 
     test('a save does not bring trimmed rows back from storage', async () => {

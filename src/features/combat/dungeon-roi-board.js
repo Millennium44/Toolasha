@@ -328,7 +328,10 @@ export function priceKeys(dungeonHrid, rewards, { entryKeyFor, keyCost }) {
         }
     }
 
-    return { total: anyPriced ? total : null, entries };
+    // Complete only when nothing was left out: an entry with no price is a cost
+    // the total does not carry, and a net built on it would read as profit
+    const complete = entries.every((entry) => Number.isFinite(entry.unitCost));
+    return { total: anyPriced ? total : null, entries, complete };
 }
 
 /**
@@ -444,10 +447,15 @@ export function buildDungeonRoiRows(input) {
             const consumableCostPerRun =
                 consumableCostPerHour !== null && runsPerHour ? consumableCostPerHour / runsPerHour : null;
 
-            // Net per run is what a completion leaves after its keys; consumables
-            // join it only when there is a clear time to spread them over
-            const netPerRun = revenuePerRun - (keys.total || 0) - (consumableCostPerRun || 0);
-            const netPerHour = runsPerHour ? netPerRun * runsPerHour : null;
+            // Net per run is what a completion leaves after its keys and its
+            // consumables — and only when both are actually known. Treating an
+            // unpriced key or an unknown food bill as zero turned a cost the
+            // board could not see into profit it reported, which is the one
+            // number nobody should have to second-guess.
+            const costGap = !keys.complete ? 'keys' : consumableCostPerRun === null ? 'consumables' : null;
+            const costComplete = costGap === null;
+            const netPerRun = costComplete ? revenuePerRun - (keys.total || 0) - consumableCostPerRun : null;
+            const netPerHour = costComplete && runsPerHour ? netPerRun * runsPerHour : null;
             const wavesPerMinute =
                 clearSeconds > 0 && dungeon.maxWaves > 0 ? dungeon.maxWaves / (clearSeconds / 60) : null;
 
@@ -482,6 +490,8 @@ export function buildDungeonRoiRows(input) {
                 netPerRun,
                 runsPerHour,
                 netPerHour,
+                costComplete,
+                costGap,
                 xpPerHour,
                 xpSource,
                 simDeathsPerHour: sim?.deathsPerHour ?? null,

@@ -90,12 +90,14 @@ describe('console.error capture', () => {
         expect(getEntries()[0].message.length).toBeLessThanOrEqual(500);
     });
 
-    test('a listener that throws does not break capture, and neither does a re-entrant error', () => {
+    test('a listener that throws does not break capture, and neither does a re-entrant error', async () => {
         const unsubscribe = subscribe(() => {
             con.error('[Listener] re-entrant');
             throw new Error('listener blew up');
         });
         expect(() => con.error('[Outer] first')).not.toThrow();
+        // Notifications are coalesced onto a microtask
+        await Promise.resolve();
         unsubscribe();
         const entries = getEntries();
         expect(entries.some((entry) => entry.message === '[Outer] first')).toBe(true);
@@ -175,15 +177,30 @@ describe('lifecycle', () => {
         expect(getEntries()).toHaveLength(1);
     });
 
-    test('subscribe hears changes and clear empties the log', () => {
+    test('subscribe hears the settled state once per burst, and clear empties the log', async () => {
         const seen = [];
         const unsubscribe = subscribe((entries) => seen.push(entries.length));
+
         con.error('[Sub] one');
+        await Promise.resolve();
+        expect(seen).toEqual([1]);
+
+        // A burst inside one turn is one notification carrying the end state,
+        // not one per failure
         con.error('[Sub] two');
-        clear();
-        unsubscribe();
         con.error('[Sub] three');
-        expect(seen).toEqual([1, 2, 0]);
+        con.error('[Sub] four');
+        await Promise.resolve();
+        expect(seen).toEqual([1, 4]);
+
+        clear();
+        await Promise.resolve();
+        expect(seen).toEqual([1, 4, 0]);
+
+        unsubscribe();
+        con.error('[Sub] five');
+        await Promise.resolve();
+        expect(seen).toEqual([1, 4, 0]);
         expect(getEntries()).toHaveLength(1);
     });
 });

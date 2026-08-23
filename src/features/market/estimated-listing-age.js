@@ -65,6 +65,18 @@ const LISTING_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 /** At most this many personal listings are kept — the newest; active ones are never dropped */
 const LISTING_RETENTION_MAX = 5000;
 
+/**
+ * How many recorded listings buy one retention pass.
+ *
+ * Retention is a full scan of the log — up to LISTING_RETENTION_MAX entries,
+ * with a sort when the cap bites — and it used to run on every batch, including
+ * the one-listing batches a status update produces. Nothing it drops is
+ * time-critical (the oldest entries are already outside the estimation window),
+ * so it runs once every so many recorded listings and again on the debounced
+ * save, which is the last moment before the log is written out.
+ */
+const RETENTION_SWEEP_EVERY = 200;
+
 /** An order book older than this is dropped from the cache, in memory and as stored */
 const ORDER_BOOK_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -195,6 +207,8 @@ class EstimatedListingAge {
         this._resolvePendingSave = null;
         this._repaintTimer = null;
         this._pageHideHandler = null;
+        /** Listings recorded since the last retention pass, for the gate */
+        this._recordedSinceRetention = 0;
     }
 
     /**
@@ -905,6 +919,7 @@ class EstimatedListingAge {
 
         const newAnchors = [];
         let changed = false;
+        let recorded = 0;
 
         for (const listing of listings) {
             if (!listing || !listing.createdTimestamp) {
@@ -954,6 +969,7 @@ class EstimatedListingAge {
                 this.knownListings.push(entry);
             }
             changed = true;
+            recorded++;
 
             // Growth: this id↔time pair is exact, so mirror it into the shared
             // anchor pool too — dedup means re-recording the same id on a later
@@ -965,9 +981,11 @@ class EstimatedListingAge {
             return;
         }
 
-        // Re-sort by ID, then let retention go over the log, the batch included
+        // Re-sort by ID; retention goes over the log once enough has come in
+        // since its last pass, and in any case before the log is saved
         this.knownListings.sort((a, b) => a.id - b.id);
-        this.knownListings = applyListingRetention(this.knownListings);
+        this._recordedSinceRetention += recorded;
+        if (this._recordedSinceRetention >= RETENTION_SWEEP_EVERY) this._applyRetention();
         this.rebuildEstimationPoints();
 
         // Save to storage (debounced)
@@ -1008,12 +1026,31 @@ class EstimatedListingAge {
         return pending;
     }
 
+    /**
+     * Apply retention to the log and say whether anything was dropped.
+     *
+     * Resets the since-last-pass counter either way: a pass that dropped
+     * nothing is still a pass.
+     * @returns {boolean} Whether the log changed
+     * @private
+     */
+    _applyRetention() {
+        this._recordedSinceRetention = 0;
+        const kept = applyListingRetention(this.knownListings);
+        if (kept === this.knownListings) return false;
+        this.knownListings = kept;
+        return true;
+    }
+
     /** @private */
     _runPendingSave() {
         const resolve = this._resolvePendingSave;
         this._saveTimer = null;
         this._pendingSave = null;
         this._resolvePendingSave = null;
+        // The last moment before the log is written: prune whatever the
+        // batch-count gate has not got to yet, so nothing stale is persisted
+        if (this._recordedSinceRetention > 0 && this._applyRetention()) this.rebuildEstimationPoints();
         resolve(this.saveHistoricalData());
     }
 
@@ -1732,6 +1769,7 @@ export {
     ANCHOR_POOL_MAX,
     LISTING_RETENTION_MS,
     LISTING_RETENTION_MAX,
+    RETENTION_SWEEP_EVERY,
     applyListingRetention,
     ORDER_BOOK_CACHE_MAX_ITEMS,
     ORDER_BOOK_PERSISTED_ROWS,

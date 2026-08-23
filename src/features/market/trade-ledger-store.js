@@ -63,6 +63,42 @@ const SPLIT_MARKER_BASE = 'tradeLedgerRecordsSplit';
 const STATE_BASE = 'tradeLedgerState';
 
 /**
+ * How long a one-off migration write is given before the load moves on.
+ *
+ * The split runs inside `initialize()` of a feature the rest of startup waits
+ * on, so a storage call that never settles does not just lose the ledger, it
+ * stops every feature registered after this one. Fifteen seconds is far longer
+ * than a bulk write of a day's records takes and short enough that a wedged
+ * database costs a pause rather than the session.
+ */
+export const MIGRATION_TIMEOUT_MS = 15000;
+
+/**
+ * Resolve to `fallback` if `promise` has not settled within `timeoutMs`.
+ *
+ * The abandoned promise is not cancelled — nothing can cancel an IndexedDB
+ * request — it is simply no longer awaited, so a write that lands late still
+ * lands; the next load sees the result.
+ * @param {Promise<*>} promise - What to wait for
+ * @param {number} timeoutMs - How long to wait
+ * @param {*} fallback - What to resolve to on timeout
+ * @returns {Promise<*>} The promise's value, or the fallback
+ */
+export async function withTimeout(promise, timeoutMs, fallback) {
+    let timer = null;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((resolve) => {
+                timer = setTimeout(() => resolve(fallback), timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timer !== null) clearTimeout(timer);
+    }
+}
+
+/**
  * The identity of a fill record, for folding two copies of the ledger together.
  *
  * Fills carry no id of their own: one is "listing N moved by Q units at time
@@ -272,7 +308,7 @@ class TradeLedgerStore {
                 const legacyProbe = await storage.tryGet(characterKey(RECORDS_BASE), LEDGER_STORE);
                 if (legacyProbe?.found && Array.isArray(legacyProbe.value)) {
                     stored = mergeRecords(stored, legacyProbe.value);
-                    await this._absorbLegacy(charId, legacyProbe.value);
+                    await withTimeout(this._absorbLegacy(charId, legacyProbe.value), MIGRATION_TIMEOUT_MS, undefined);
                 }
                 this.records = mergeRecords(stored, this.records);
             } else {
@@ -283,7 +319,13 @@ class TradeLedgerStore {
                     const stored = recordsProbe.found
                         ? recordsProbe.value
                         : (await readScoped(RECORDS_BASE, LEDGER_STORE, [])) || [];
-                    const split = await this._split(charId, Array.isArray(stored) ? stored : []);
+                    // A split that hangs must not hold up the features that
+                    // initialize after this one: fall back to the legacy path
+                    const split = await withTimeout(
+                        this._split(charId, Array.isArray(stored) ? stored : []),
+                        MIGRATION_TIMEOUT_MS,
+                        false
+                    );
                     this._legacy = !split;
                     this.records = mergeRecords(stored, this.records);
                 }
@@ -540,6 +582,15 @@ class TradeLedgerStore {
                 // Rows only storage knew come into memory too, as they did
                 // when the whole ledger was merged on every save
                 if (carried.length > 0) this.records = mergeRecords(this.records, carried);
+
+                // Days that fell off the cap before this save are not in
+                // `days` — nothing in memory points at them any more — so
+                // trimming only the days being written leaves them in storage
+                // for ever. Sweep them by key, which costs one `getAllKeys`
+                // and only when the cap is actually in force.
+                if (floorT > -Infinity && floorT < Infinity) {
+                    await this._evictBefore(charId, bucketOf({ t: floorT }));
+                }
                 return issued;
             } catch (error) {
                 console.error('[TradeLedger] Failed to save records:', error);
@@ -550,6 +601,34 @@ class TradeLedgerStore {
         // each miss the other's entries
         this._recordsChain = (this._recordsChain || Promise.resolve()).then(run, run);
         return this._recordsChain;
+    }
+
+    /**
+     * Delete day records entirely older than the cap's floor day.
+     *
+     * Day ids are `YYYY-MM-DD`, so a plain string comparison is a date
+     * comparison; the floor day itself is kept, because the save path trims
+     * it record by record.
+     * @param {string} charId - Whose records
+     * @param {string} floorBucket - Oldest day still in memory
+     * @returns {Promise<number>} How many day records were deleted
+     * @private
+     */
+    async _evictBefore(charId, floorBucket) {
+        try {
+            const keys = recordKeysFor(await storage.getAllKeys(LEDGER_STORE), RECORD_PREFIX, charId);
+            const prefix = `${RECORD_PREFIX}_${charId}_`;
+            let deleted = 0;
+            for (const key of keys) {
+                if (key.slice(prefix.length) >= floorBucket) continue;
+                await storage.delete(key, LEDGER_STORE);
+                deleted += 1;
+            }
+            return deleted;
+        } catch (error) {
+            console.error('[TradeLedger] Failed to evict day records past the cap:', error);
+            return 0;
+        }
     }
 
     /**
