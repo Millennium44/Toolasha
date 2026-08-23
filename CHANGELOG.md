@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Rotation tab lists the whole equipped kit and opens on the session
+
+The game's battle message does not carry a player's ability bar, so the tab only listed abilities it had already seen fire; it now seeds the rows from your equipped abilities (aura included) the moment it opens and on every battle. It also opens on the Session scope — a fight can be two seconds long, and a tab that emptied itself every fight read as one that kept resetting.
+
 ### Notification digest, notice log and quiet hours
 
 Every notice is written to a per-character log readable from a new Notices panel and overlay row (and the session briefing); digest mode collapses routine notices into one summary line every few minutes per category; quiet hours suppress desktop notifications inside a local-time window. Deaths, an empty queue and consumables running dry are on a critical allow-list that bypasses both. What features alert about is unchanged — only how it is delivered.

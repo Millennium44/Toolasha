@@ -112,8 +112,12 @@ export const TABS = [
 /** Which tab is showing. Remembered between openings, the way a panel should */
 let tab = 'damage';
 
-/** Which scope the Rotation tab shows: the fight on screen, or the whole run */
-let scope = 'fight';
+/**
+ * Which scope the Rotation tab shows: the fight on screen, or the whole run.
+ * The run by default — a fight can be two seconds long, and a tab that empties
+ * itself every two seconds reads as a tab that keeps resetting
+ */
+let scope = 'session';
 
 /** The Rotation tab's two scopes, in display order */
 export const ROTATION_SCOPES = [
@@ -666,7 +670,7 @@ export default {
     /** Reset the remembered tab and scope — for tests, which must not inherit either */
     _resetTab: () => {
         tab = 'damage';
-        scope = 'fight';
+        scope = 'session';
     },
     /** Show a tab directly — for tests, which cannot click one */
     _setTab: (which, which2) => {

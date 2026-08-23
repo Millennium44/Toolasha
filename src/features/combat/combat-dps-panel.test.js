@@ -458,7 +458,7 @@ describe('the rotation tab', () => {
         feature._setTab('rotation');
 
         const text = panelText('rotation');
-        expect(text).toContain('Rotation (this fight)');
+        expect(text).toContain('Rotation (session)');
         expect(text).toContain('uptime');
         expect(text).not.toContain('<div');
     });

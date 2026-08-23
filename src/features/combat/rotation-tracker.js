@@ -59,6 +59,25 @@ function detailMap() {
     return dataManager.getInitClientData?.()?.abilityDetailMap || {};
 }
 
+/**
+ * The equipped kit as the character data holds it — the fallback for a fight
+ * joined mid-way (no `new_battle` seen yet) and for a battle message that
+ * happens not to carry the bar, so the ability list is on the tab from the
+ * moment it opens instead of after the next fight starts.
+ * @returns {Array|null}
+ */
+function equippedKit() {
+    const kit = dataManager.characterData?.combatUnit?.combatAbilities;
+    return Array.isArray(kit) && kit.length ? kit : null;
+}
+
+/** Note the character's own kit on both scopes, when one is known */
+function seedKit(kit = equippedKit()) {
+    if (!kit) return;
+    noteRotationKit(fight, kit, detailMap());
+    noteRotationKit(session, kit, detailMap());
+}
+
 /** Forget everything and measure again from here */
 export function resetRotationAudit() {
     state = newAttributionState();
@@ -114,11 +133,10 @@ export function startRotationTracker() {
             noteRotationFight(fight);
             noteRotationFight(session);
 
-            if (ownIndex !== null) {
-                const kit = players[ownIndex]?.combatDetails?.combatAbilities;
-                noteRotationKit(fight, kit, detailMap());
-                noteRotationKit(session, kit, detailMap());
-            }
+            // The bar this battle states for our seat; the character's equipped
+            // kit when the message does not carry one
+            const stated = ownIndex !== null ? players[ownIndex]?.combatDetails?.combatAbilities : null;
+            seedKit(Array.isArray(stated) && stated.length ? stated : equippedKit());
         } catch (error) {
             console.error('[RotationTracker] Reading a new battle failed:', error);
         }
@@ -155,6 +173,8 @@ export function startRotationTracker() {
 
     webSocketHook.on('new_battle', onNewBattle);
     webSocketHook.on('battle_updated', onBattleUpdated);
+    // A panel opened in the middle of a run should list the kit at once
+    seedKit();
 }
 
 /** Stop watching and forget the run */
