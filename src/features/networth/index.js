@@ -19,6 +19,8 @@ import { row, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatLargeNumber } from '../../utils/formatters.js';
 import networthHistory from './networth-history.js';
 import networthHistoryChart from './networth-history-chart.js';
+import productionIncomeRecorder from './production-income-recorder.js';
+import goldSourcesPanel from './gold-sources-panel.js';
 import { initExclusions } from './networth-exclusions.js';
 import networthExclusionPopup from './networth-exclusion-popup.js';
 import { terminateItemValueWorkerPool } from '../../utils/networth-worker-manager.js';
@@ -84,6 +86,11 @@ class NetworthFeature {
             if (config.getSetting('networth_historyChart')) {
                 networthHistoryChart.setNetworthFeature(this);
                 await performanceMonitor.span('bg:networth', 'history', () => networthHistory.initialize(this));
+            }
+            if (config.getSetting('networth_goldSources')) {
+                await performanceMonitor.span('bg:networth', 'gold sources', () =>
+                    productionIncomeRecorder.initialize()
+                );
             }
         });
     }
@@ -232,6 +239,8 @@ class NetworthFeature {
             networthHistory.disable();
             networthHistoryChart.closeModal();
             networthExclusionPopup.close();
+            productionIncomeRecorder.cleanup();
+            goldSourcesPanel.closeModal();
 
             // Clear the enhancement cost cache (character-specific)
             networthCache.clear();

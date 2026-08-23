@@ -27,6 +27,10 @@ vi.mock('./networth-history-chart.js', () => ({
     default: { toggleModal: () => {} },
     CHART_BUTTON_ID: 'mwi-networth-chart-btn',
 }));
+vi.mock('./gold-sources-panel.js', () => ({
+    default: { toggleModal: () => {}, closeModal: () => {} },
+    BUTTON_ID: 'mwi-gold-sources-btn',
+}));
 vi.mock('../market/expected-value-calculator.js', () => ({
     default: { isInitialized: false, calculateExpectedValue: () => null },
 }));

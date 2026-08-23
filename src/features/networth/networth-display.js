@@ -11,6 +11,7 @@ import domObserver from '../../core/dom-observer.js';
 import marketAPI from '../../api/marketplace.js';
 import { networthFormatter, formatKMB } from '../../utils/formatters.js';
 import networthHistoryChart, { CHART_BUTTON_ID } from './networth-history-chart.js';
+import goldSourcesPanel, { BUTTON_ID as GOLD_SOURCES_BUTTON_ID } from './gold-sources-panel.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
 import { DUNGEON_CHEST_CHEST_KEYS } from '../../utils/dungeon-keys.js';
 import networthExclusionPopup from './networth-exclusion-popup.js';
@@ -351,6 +352,7 @@ class NetworthInventoryDisplay {
 
         const totalNetworth = networthFormatter(Math.round(networthData.totalNetworth));
         const showChartBtn = config.getSetting('networth_historyChart');
+        const showGoldSourcesBtn = config.getSetting('networth_goldSources');
         const ca = networthData.currentAssets;
         const fa = networthData.fixedAssets;
         const excl = networthData.excluded ?? { total: 0, items: [] };
@@ -383,6 +385,18 @@ class NetworthInventoryDisplay {
                     border-radius: 3px;
                     line-height: 1;
                 ">&#x1F4C8;</span>`
+                        : ''
+                }
+                ${
+                    showGoldSourcesBtn
+                        ? `<span id="${GOLD_SOURCES_BUTTON_ID}" title="Where the gold came from (click again to close)" style="
+                    cursor: pointer;
+                    font-size: 14px;
+                    opacity: 0.7;
+                    padding: 2px 4px;
+                    border-radius: 3px;
+                    line-height: 1;
+                ">&#x1F4B0;</span>`
                         : ''
                 }
                 <span id="mwi-networth-exclusions-btn" title="Configure Net Worth Exclusions" style="
@@ -775,6 +789,21 @@ class NetworthInventoryDisplay {
             });
             chartBtn.addEventListener('mouseleave', () => {
                 chartBtn.style.opacity = '0.7';
+            });
+        }
+
+        // Gold source attribution button
+        const goldSourcesBtn = this.container.querySelector(`#${GOLD_SOURCES_BUTTON_ID}`);
+        if (goldSourcesBtn) {
+            goldSourcesBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                goldSourcesPanel.toggleModal();
+            });
+            goldSourcesBtn.addEventListener('mouseenter', () => {
+                goldSourcesBtn.style.opacity = '1';
+            });
+            goldSourcesBtn.addEventListener('mouseleave', () => {
+                goldSourcesBtn.style.opacity = '0.7';
             });
         }
 

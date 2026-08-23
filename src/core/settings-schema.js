@@ -1720,6 +1720,16 @@ export const settingsGroups = {
                 default: true,
                 help: 'Records hourly net worth snapshots and shows a chart icon next to Total Net Worth. Disable to stop tracking and hide the chart button.',
             },
+            networth_goldSources: {
+                id: 'networth_goldSources',
+                label: 'Enable gold source attribution',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Adds a 💰 button beside Net Worth that splits your net worth change by activity — combat drops, ' +
+                    'gathering, production, alchemy, enhancing, marketplace, offline — and shows what is left ' +
+                    'unexplained rather than balancing it away. Also records production and offline income per day.',
+            },
             autoAllButton: {
                 id: 'autoAllButton',
                 label: 'Auto-click "All" button when opening loot boxes',
