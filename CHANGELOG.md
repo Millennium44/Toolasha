@@ -1156,6 +1156,26 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.21.1](https://github.com/Millennium44/Toolasha/compare/v3.21.0...v3.21.1) (2026-08-23)
+
+### Bug Fixes
+
+- price provenance, shared buff/house maths, and honest partial totals ([913edc9](https://github.com/Millennium44/Toolasha/commit/913edc972007a6b7b1533f2c9b094593ee6e96f8))
+- rotation audit, dungeon-run saves, burn tone and nine other combat/networth reporting bugs ([cc85a8b](https://github.com/Millennium44/Toolasha/commit/cc85a8bd29d20f73d306136cfa0ded29fa4058d8))
+
+### Performance Improvements
+
+- drop mathjs, index the hot core paths, and stop promises hanging ([ee929ea](https://github.com/Millennium44/Toolasha/commit/ee929ea7786acd723ef897943c1defcaa4cd5c62))
+- stop the idle timers doing full-page work every second ([20b0f76](https://github.com/Millennium44/Toolasha/commit/20b0f7673439ac207db6cc43ffe5f15261e769ef))
+
+### Documentation
+
+- changelog for audit round two ([b320dea](https://github.com/Millennium44/Toolasha/commit/b320dea94d89e54b435140de34521f14086be5a5))
+
+### Tests
+
+- notice log day grouping uses yesterday noon rather than 26 hours ago ([d51a1d1](https://github.com/Millennium44/Toolasha/commit/d51a1d176198cc618eecd5c0db26dacc5883fd62))
+
 ## [3.21.0](https://github.com/Millennium44/Toolasha/compare/v3.20.0...v3.21.0) (2026-08-23)
 
 ### Features
