@@ -1148,6 +1148,36 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.21.0](https://github.com/Millennium44/Toolasha/compare/v3.20.0...v3.21.0) (2026-08-23)
+
+
+### Features
+
+* bestiary planner plans to a points target, and can include dungeons at your measured clear time ([73f01ab](https://github.com/Millennium44/Toolasha/commit/73f01ab1c2b679b63715aeb578100479d6231f5e))
+* dungeon readiness check and consumable burn vs sim ([753760f](https://github.com/Millennium44/Toolasha/commit/753760f1036db8a7f4ff02347a1278c116b65b1c))
+* gold source attribution splits your net worth change by activity ([9f738d5](https://github.com/Millennium44/Toolasha/commit/9f738d5e1c3a2a1ad8d3a53887e32d568411a320))
+* notification digest, notice log and quiet hours ([5f98fb2](https://github.com/Millennium44/Toolasha/commit/5f98fb234422d0a62028bb3ab43726a94ccc0e93))
+* rotation and mana auditor for your own fights ([9183c21](https://github.com/Millennium44/Toolasha/commit/9183c212acc77b86637b6ab658543fe04824a77b))
+* session briefing card on login and character switch ([34190b0](https://github.com/Millennium44/Toolasha/commit/34190b07e69b3daa85203b16569e1831618a3a88))
+* trial attendance ledger and roster planner for guild trials ([b50c738](https://github.com/Millennium44/Toolasha/commit/b50c7382351e3f218ef3353027157455c9bae57e))
+
+
+### Bug Fixes
+
+* All Zones pool slots wait for tiers still to come under skip-worse-tiers, a silent sim worker is given up on, and a failed tier ends its zone ([77efb45](https://github.com/Millennium44/Toolasha/commit/77efb453640c1d2fd7db35f4633bb710bd1c6802))
+* rotation tab reads an aura as cast-once-and-kept-up rather than as an idle ability ([7e89952](https://github.com/Millennium44/Toolasha/commit/7e89952764e78ecba7c0ec917611b245428fcc65))
+* rotation tab seeds the equipped kit instead of waiting to see each ability fire, and opens on the session scope ([42f0a12](https://github.com/Millennium44/Toolasha/commit/42f0a12022ed328310e98ca4b016b04d6e9a30b6))
+* storage hangs, cross-tab run loss, and costs reported as free ([c9d7c86](https://github.com/Millennium44/Toolasha/commit/c9d7c86e4fea897f7fff8bc562b4f61a06e1d71d))
+
+
+### Documentation
+
+* changelog for the audit fixes ([6ca9cb3](https://github.com/Millennium44/Toolasha/commit/6ca9cb3a9b3e14eca0135b38146273010c3713c1))
+* changelog for the briefing, gold attribution, trial ledger and dungeon readiness ([f0c928b](https://github.com/Millennium44/Toolasha/commit/f0c928bab27165b46a46dbb5277f1ce84906a46c))
+* changelog for the notice log/digest/quiet hours and the rotation auditor ([32eafe6](https://github.com/Millennium44/Toolasha/commit/32eafe6fb224246bb2669dc2fdc47b32178da340))
+* changelog for the planner's points mode and dungeons ([7fab05f](https://github.com/Millennium44/Toolasha/commit/7fab05ff573fdb30fef2d85a1b65846c08e1adcd))
+* record the agent-worktree convention next to the work-on-main rule; ignore .claude/ ([42ed0bb](https://github.com/Millennium44/Toolasha/commit/42ed0bbf708d68641cb5f3bce11e8952f434540b))
+
 ## [3.20.0](https://github.com/Millennium44/Toolasha/compare/v3.19.0...v3.20.0) (2026-08-22)
 
 ### Features
