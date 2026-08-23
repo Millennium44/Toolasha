@@ -168,13 +168,23 @@ describe('clampToBand', () => {
 describe('reconcileBook', () => {
     test('passes through untouched until the patch is live', () => {
         mocks.patchLive = false;
-        expect(reconcileBook(5000, 100, '/items/cheese')).toEqual({ ask: 5000, bid: 100 });
+        expect(reconcileBook(5000, 100, '/items/cheese')).toEqual({
+            ask: 5000,
+            bid: 100,
+            askSource: 'book',
+            bidSource: 'book',
+        });
     });
 
     test('passes through when the item has no official value', () => {
         mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
         refreshMarketValues(0);
-        expect(reconcileBook(5000, 100, '/items/unknown')).toEqual({ ask: 5000, bid: 100 });
+        expect(reconcileBook(5000, 100, '/items/unknown')).toEqual({
+            ask: 5000,
+            bid: 100,
+            askSource: 'book',
+            bidSource: 'book',
+        });
     });
 
     test('clamps stale prices into the tradable range', () => {
@@ -189,16 +199,46 @@ describe('reconcileBook', () => {
     test('leaves an in-band price alone', () => {
         mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
         refreshMarketValues(0);
-        expect(reconcileBook(1050, 950, '/items/cheese')).toEqual({ ask: 1050, bid: 950 });
+        expect(reconcileBook(1050, 950, '/items/cheese')).toEqual({
+            ask: 1050,
+            bid: 950,
+            askSource: 'book',
+            bidSource: 'book',
+        });
     });
 
     test('fills a missing side with the value', () => {
         mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
         refreshMarketValues(0);
 
-        expect(reconcileBook(null, 950, '/items/cheese')).toEqual({ ask: 1000, bid: 950 });
-        expect(reconcileBook(1050, null, '/items/cheese')).toEqual({ ask: 1050, bid: 1000 });
-        expect(reconcileBook(null, null, '/items/cheese')).toEqual({ ask: 1000, bid: 1000 });
+        expect(reconcileBook(null, 950, '/items/cheese')).toEqual({
+            ask: 1000,
+            bid: 950,
+            askSource: 'value',
+            bidSource: 'book',
+        });
+        expect(reconcileBook(1050, null, '/items/cheese')).toEqual({
+            ask: 1050,
+            bid: 1000,
+            askSource: 'book',
+            bidSource: 'value',
+        });
+        expect(reconcileBook(null, null, '/items/cheese')).toEqual({
+            ask: 1000,
+            bid: 1000,
+            askSource: 'value',
+            bidSource: 'value',
+        });
+    });
+
+    test('a value-filled side is marked as such, so callers can tell an estimate from a quote', () => {
+        mocks.payload = payload(1, { '/items/cheese': { 0: 1000 } });
+        refreshMarketValues(0);
+
+        // A clamp is still the book speaking — the price moved, the source did not
+        const clamped = reconcileBook(5000, null, '/items/cheese');
+        expect(clamped.askSource).toBe('book');
+        expect(clamped.bidSource).toBe('value');
     });
 });
 
@@ -212,7 +252,12 @@ describe('band memo', () => {
         expect(clampToBand(band.max + 500, '/items/cheese', 0)).toBe(band.max);
         const callsAfterFirst = spy.mock.calls.length;
         expect(clampToBand(band.min - 500, '/items/cheese', 0)).toBe(band.min);
-        expect(reconcileBook(band.max + 500, null, '/items/cheese', 0)).toEqual({ ask: band.max, bid: 1000 });
+        expect(reconcileBook(band.max + 500, null, '/items/cheese', 0)).toEqual({
+            ask: band.max,
+            bid: 1000,
+            askSource: 'book',
+            bidSource: 'value',
+        });
         expect(spy.mock.calls.length).toBe(callsAfterFirst);
         // Another level is its own memo
         expect(clampToBand(1, '/items/cheese', 2)).toBe(bandFromValue(5000).min);

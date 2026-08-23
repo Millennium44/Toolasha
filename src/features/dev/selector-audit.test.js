@@ -94,3 +94,50 @@ describe('collectStylesheetClasses', () => {
         expect(classes.has('plain-class')).toBe(false);
     });
 });
+
+describe('what the audit does not cover', () => {
+    test('the most-used inline prefixes are in the registry, so the audit can see them', async () => {
+        const { GAME } = await import('../../utils/selectors.js');
+        const registered = Object.values(GAME).join(' ');
+
+        // Each of these was written out at a dozen or more call sites and registered
+        // nowhere, which meant a rename would not have shown up in the audit at all
+        for (const prefix of [
+            'Item_enhancementLevel',
+            'Collection_tooltipContent',
+            'GuildPanel',
+            'MarketplacePanel_myListingsTable',
+            'BattlePanel_playersArea',
+            'SkillActionDetail_alchemyComponent',
+            'EnhancingPanel_enhancingPanel',
+        ]) {
+            expect(registered).toContain(prefix);
+        }
+    });
+
+    test('a CSS-module registry entry is always judgeable; only foreign prefixes are not', async () => {
+        const { GAME } = await import('../../utils/selectors.js');
+        const report = auditSelectors(GAME, CLASSES);
+
+        // Everything the audit had to pass on names something the game's CSS-module
+        // pipeline did not generate — MUI's own classes, or a bare camelCase class. Those
+        // are real selectors that never enter the module-class inventory. Nothing
+        // Component_name-shaped should end up unchecked.
+        for (const name of report.unchecked) {
+            expect(GAME[name]).not.toMatch(/class[*^]?=["'][A-Z][A-Za-z]*_[A-Za-z]/);
+        }
+
+        // And the prefixes just moved out of the feature files are all judged
+        for (const name of [
+            'ITEM_ENHANCEMENT_LEVEL',
+            'COLLECTION_TOOLTIP_CONTENT',
+            'GUILD_PANEL',
+            'MARKETPLACE_MY_LISTINGS_TABLE',
+            'BATTLE_PLAYERS_AREA',
+            'SKILL_ACTION_DETAIL_ALCHEMY',
+            'ENHANCING_PANEL',
+        ]) {
+            expect(report.unchecked).not.toContain(name);
+        }
+    });
+});

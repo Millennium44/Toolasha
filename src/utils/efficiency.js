@@ -21,6 +21,7 @@ import {
     parseArtisanBonus,
 } from './tea-parser.js';
 import { calculateHouseEfficiency } from './house-efficiency.js';
+import { getCommunityGatheringQuantity } from './community-buffs.js';
 import { GATHERING_TYPES, PRODUCTION_TYPES } from './profit-constants.js';
 
 /**
@@ -202,20 +203,13 @@ export function getActionEfficiencyContext(actionDetails, options = {}) {
     let actionLevelBonus = 0;
     let houseEfficiency = 0;
 
+    // House efficiency is one calculation for both paths: calculateHouseEfficiency reads
+    // the game's own houseRoomDetailMap, so production and gathering can no longer disagree
+    houseEfficiency = calculateHouseEfficiency(actionDetails.type, { gameData });
+
     if (isProduction) {
         artisanBonus = parseArtisanBonus(drinkSlots, itemDetailMap, drinkConcentration);
         actionLevelBonus = parseActionLevelBonus(drinkSlots, itemDetailMap, drinkConcentration);
-        houseEfficiency = calculateHouseEfficiency(actionDetails.type);
-    } else {
-        // Gathering: compute house efficiency from houseRooms + houseRoomDetailMap
-        const houseRooms = Array.from(dataManager.getHouseRooms().values());
-        const initData = gameData ?? dataManager.getInitClientData();
-        for (const room of houseRooms) {
-            const roomDetail = initData?.houseRoomDetailMap?.[room.houseRoomHrid];
-            if (roomDetail?.usableInActionTypeMap?.[actionDetails.type]) {
-                houseEfficiency += (room.level || 0) * 1.5;
-            }
-        }
     }
 
     // Gathering-only: gathering quantity bonuses
@@ -224,8 +218,7 @@ export function getActionEfficiencyContext(actionDetails, options = {}) {
 
     if (!isProduction && GATHERING_TYPES.includes(actionDetails.type)) {
         const gatheringTea = parseGatheringBonus(drinkSlots, itemDetailMap, drinkConcentration);
-        const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/gathering_quantity');
-        const communityGathering = communityBuffLevel ? 0.2 + (communityBuffLevel - 1) * 0.005 : 0;
+        const communityGathering = getCommunityGatheringQuantity(actionDetails.type);
         const achievementGathering = dataManager.getAchievementBuffFlatBoost(
             actionDetails.type,
             '/buff_types/gathering'

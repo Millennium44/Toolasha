@@ -294,3 +294,37 @@ describe('buildLootLogRows, the CSV export', () => {
         }
     });
 });
+
+describe('LootLogStats daily extrapolation', () => {
+    let stats;
+
+    beforeEach(() => {
+        stats = new LootLogStats();
+    });
+
+    test('scales a run to 24 hours', () => {
+        expect(stats.calculateDailyOutput(1000, 3600)).toBe(24000);
+    });
+
+    test('nothing to scale, or no time to scale it over, is 0', () => {
+        expect(stats.calculateDailyOutput(0, 3600)).toBe(0);
+        expect(stats.calculateDailyOutput(1000, 0)).toBe(0);
+    });
+
+    test('a run too short to be a rate is not treated as one', () => {
+        // Three minutes multiplied by 480 is not a daily rate: one lucky rare in those
+        // three minutes becomes half a billion a day, and the figure reads as a forecast
+        expect(stats.isDailyRateMeaningful(180)).toBe(false);
+        expect(stats.isDailyRateMeaningful(60)).toBe(false);
+    });
+
+    test('a long enough run does read as a rate', () => {
+        expect(stats.isDailyRateMeaningful(600)).toBe(true);
+        expect(stats.isDailyRateMeaningful(4 * 3600)).toBe(true);
+    });
+
+    test('a missing duration is not a rate either', () => {
+        expect(stats.isDailyRateMeaningful(undefined)).toBe(false);
+        expect(stats.isDailyRateMeaningful(null)).toBe(false);
+    });
+});

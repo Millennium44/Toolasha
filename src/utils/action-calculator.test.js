@@ -24,7 +24,26 @@ const character = vi.hoisted(() => ({
     communityBuffLevels: {},
     taskActions: new Set(),
     taskSpeedBonus: 0,
+    /**
+     * The game's own community buff definitions. The efficiency helper reads the
+     * strength and the skill list out of here rather than carrying its own copy,
+     * so the mock has to publish them the way the client does.
+     */
+    communityBuffDetails: {},
 }));
+
+/** The production efficiency buff as the game ships it: 14% at level 1, +0.3% a level. */
+const PRODUCTION_EFFICIENCY_BUFF = {
+    buff: { flatBoost: 0.14, flatBoostLevelBonus: 0.003 },
+    usableInActionTypeMap: {
+        '/action_types/alchemy': true,
+        '/action_types/brewing': true,
+        '/action_types/cheesesmithing': true,
+        '/action_types/cooking': true,
+        '/action_types/crafting': true,
+        '/action_types/tailoring': true,
+    },
+};
 
 const parsers = vi.hoisted(() => ({
     equipmentSpeed: 0,
@@ -47,6 +66,7 @@ vi.mock('../core/data-manager.js', () => ({
         getPersonalBuffFlatBoost: (type, buff) => character.personalBuffs[`${type}|${buff}`] || 0,
         getAchievementBuffFlatBoost: (type, buff) => character.achievementBuffs[`${type}|${buff}`] || 0,
         getCommunityBuffLevel: (hrid) => character.communityBuffLevels[hrid] || 0,
+        getInitClientData: () => ({ communityBuffTypeDetailMap: character.communityBuffDetails }),
         isTaskAction: (hrid) => character.taskActions.has(hrid),
         getTaskSpeedBonus: () => character.taskSpeedBonus,
     },
@@ -305,6 +325,12 @@ describe('efficiency', () => {
 });
 
 describe('community buff efficiency', () => {
+    beforeEach(() => {
+        character.communityBuffDetails = {
+            '/community_buff_types/production_efficiency': PRODUCTION_EFFICIENCY_BUFF,
+        };
+    });
+
     test('it is off unless asked for', () => {
         character.communityBuffLevels['/community_buff_types/production_efficiency'] = 1;
 
@@ -337,6 +363,51 @@ describe('community buff efficiency', () => {
         });
 
         expect(stats.totalEfficiency).toBe(0);
+    });
+
+    test('without the game data it contributes nothing rather than a remembered number', () => {
+        character.communityBuffLevels['/community_buff_types/production_efficiency'] = 1;
+        character.communityBuffDetails = {};
+
+        expect(
+            calculateActionStats(action(), { skills: skillsAt(30), equipment: [], includeCommunityBuff: true })
+                .totalEfficiency
+        ).toBe(0);
+    });
+
+    test('a balance patch to the buff moves the figure, because the figure is read not remembered', () => {
+        character.communityBuffLevels['/community_buff_types/production_efficiency'] = 2;
+        character.communityBuffDetails = {
+            '/community_buff_types/production_efficiency': {
+                ...PRODUCTION_EFFICIENCY_BUFF,
+                buff: { flatBoost: 0.2, flatBoostLevelBonus: 0.01 },
+            },
+        };
+
+        expect(
+            calculateActionStats(action(), { skills: skillsAt(30), equipment: [], includeCommunityBuff: true })
+                .totalEfficiency
+        ).toBeCloseTo(21, 9); // (0.2 + 0.01) × 100
+    });
+
+    test('a skill the game adds to the buff is covered without editing a list here', () => {
+        character.communityBuffLevels['/community_buff_types/production_efficiency'] = 1;
+        character.communityBuffDetails = {
+            '/community_buff_types/production_efficiency': {
+                ...PRODUCTION_EFFICIENCY_BUFF,
+                usableInActionTypeMap: {
+                    ...PRODUCTION_EFFICIENCY_BUFF.usableInActionTypeMap,
+                    '/action_types/milking': true,
+                },
+            },
+        };
+
+        const stats = calculateActionStats(action({ type: '/action_types/milking', levelRequirement: { level: 1 } }), {
+            skills: [{ skillHrid: '/skills/milking', level: 1 }],
+            equipment: [],
+            includeCommunityBuff: true,
+        });
+        expect(stats.totalEfficiency).toBeCloseTo(14, 9);
     });
 
     test('it applies to the production skills and alchemy, and to nothing else', () => {

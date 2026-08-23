@@ -6,6 +6,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 
 const game = vi.hoisted(() => ({
     initClientData: null,
@@ -105,16 +106,20 @@ beforeEach(() => {
 
 describe('task shop token valuation', () => {
     test('reads the shop map and picks the best coins-per-token line', () => {
-        // chest: 60000 / 30 = 2000; crystal: 5000 / 10 = 500
+        // chest: 60000 / 30 = 2000 (an expected value, already net of tax);
+        // crystal: 5000 post-tax / 10 = 475
         const best = findBestTaskShopValue();
         expect(best.itemHrid).toBe('/items/large_treasure_chest');
         expect(best.perToken).toBe(2000);
         expect(calculateTaskTokenValue().tokenValue).toBe(2000);
     });
 
-    test('follows the shop when a cheaper line becomes the better deal', () => {
-        market.prices['/items/task_crystal'] = 90000; // 9000 per token
-        expect(calculateTaskTokenValue().tokenValue).toBe(9000);
+    test('a market-priced shop line is valued after tax, like every other sell side', () => {
+        // A token is worth what the shop line would actually fetch, and selling it pays the
+        // marketplace cut. Quoting it gross while the action profit it is weighed against is
+        // net made every task look better than it was.
+        market.prices['/items/task_crystal'] = 90000; // 90000 × (1 − tax) / 10 tokens
+        expect(calculateTaskTokenValue().tokenValue).toBe(calculatePriceAfterTax(90000) / 10);
     });
 
     test('reports an error when the shop map is unavailable', () => {
@@ -135,10 +140,10 @@ describe('task shop token valuation', () => {
             bulk: {
                 itemHrid: '/items/task_crystal',
                 costs: [{ itemHrid: TOKEN, count: 10 }],
-                outputCount: 5, // 5 × 5000 for 10 tokens = 2500 per token
+                outputCount: 5, // 5 × 5000 post-tax for 10 tokens
             },
         };
-        expect(findBestTaskShopValue().perToken).toBe(2500);
+        expect(findBestTaskShopValue().perToken).toBe((calculatePriceAfterTax(5000) * 5) / 10);
     });
 });
 

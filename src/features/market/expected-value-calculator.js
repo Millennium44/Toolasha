@@ -174,28 +174,48 @@ class ExpectedValueCalculator {
     }
 
     /**
-     * Calculate expected value for a single container
+     * Calculate expected value for a single container.
      * @param {string} containerHrid - Container item HRID
      * @param {Object} initData - Cached game data (optional, will fetch if not provided)
      * @returns {number|null} Expected value or null if unavailable
      */
     calculateSingleContainer(containerHrid, initData = null) {
+        const result = this.calculateContainerValue(containerHrid, initData);
+        return result.expectedValue;
+    }
+
+    /**
+     * Calculate a container's expected value, and say how much of it is missing.
+     *
+     * A drop nobody can price is skipped, which makes the total a lower bound rather
+     * than an estimate. That distinction used to be counted into a local nobody read
+     * (`_missingDataCount`) and then thrown away, so a chest whose best item had no
+     * market data reported a confident small number instead of "at least this much".
+     *
+     * @param {string} containerHrid - Container item HRID
+     * @param {Object} [initData] - Cached game data (optional, will fetch if not provided)
+     * @param {Set<string>} [visited] - Containers already being valued on this path
+     * @returns {{expectedValue: number|null, missingCount: number, isPartial: boolean}}
+     */
+    calculateContainerValue(containerHrid, initData = null, visited = null) {
+        const unavailable = { expectedValue: null, missingCount: 0, isPartial: false };
+
         // Use cached data if provided, otherwise fetch
         if (!initData) {
             initData = dataManager.getInitClientData();
         }
         if (!initData || !initData.openableLootDropMap) {
-            return null;
+            return unavailable;
         }
 
         // Get drop table for this container
         const dropTable = initData.openableLootDropMap[containerHrid];
         if (!dropTable || dropTable.length === 0) {
-            return null;
+            return unavailable;
         }
 
         let totalExpectedValue = 0;
-        let _missingDataCount = 0;
+        let missingCount = 0;
 
         // Calculate expected value for each drop
         for (const drop of dropTable) {
@@ -213,11 +233,11 @@ class ExpectedValueCalculator {
             const avgCount = (minCount + maxCount) / 2;
 
             // Get price for this drop
-            const price = this.getDropPrice(itemHrid);
+            const price = this.getDropPrice(itemHrid, visited);
 
             if (price === null) {
-                _missingDataCount++;
-                continue; // Skip drops with missing data
+                missingCount++;
+                continue; // Skip drops with missing data — the total becomes a lower bound
             }
 
             // Check if item is tradeable (for tax calculation)
@@ -240,7 +260,7 @@ class ExpectedValueCalculator {
             this.containerCache.set(containerHrid, totalExpectedValue);
         }
 
-        return totalExpectedValue;
+        return { expectedValue: totalExpectedValue, missingCount, isPartial: missingCount > 0 };
     }
 
     /**
@@ -253,7 +273,7 @@ class ExpectedValueCalculator {
      * @param {number} [enhancementLevel=0] - Enhancement level (ignored for special currencies)
      * @returns {{value: number, source: string, needsTax: boolean}|null} Resolved value or null
      */
-    resolveSellSideValue(itemHrid, enhancementLevel = 0) {
+    resolveSellSideValue(itemHrid, enhancementLevel = 0, visited = null) {
         // Special case: Coin (face value = 1, never taxed)
         if (itemHrid === this.COIN_HRID) {
             return { value: 1, source: 'coin', needsTax: false };
@@ -284,9 +304,12 @@ class ExpectedValueCalculator {
             return value !== null ? { value, source: 'dungeonToken', needsTax: false } : null;
         }
 
-        // Check if this is a nested container (use cached EV, already tax-adjusted per drop)
-        if (this.containerCache.has(itemHrid)) {
-            return { value: this.containerCache.get(itemHrid), source: 'expectedValue', needsTax: false };
+        // Nested container: worth its contents, computed on demand rather than read out of
+        // whatever the cache happened to hold when this drop table's turn came round
+        const nested = this.resolveContainerValue(itemHrid, visited);
+        if (nested !== null) {
+            // Already tax-adjusted per drop inside
+            return { value: nested, source: 'expectedValue', needsTax: false };
         }
 
         // Regular market item - get price based on pricing mode (sell side - you're selling drops)
@@ -341,8 +364,48 @@ class ExpectedValueCalculator {
      * @param {string} itemHrid - Item HRID
      * @returns {number|null} Price or null if unavailable
      */
-    getDropPrice(itemHrid) {
-        return this.resolveSellSideValue(itemHrid)?.value ?? null;
+    getDropPrice(itemHrid, visited = null) {
+        return this.resolveSellSideValue(itemHrid, 0, visited)?.value ?? null;
+    }
+
+    /**
+     * What a nested container inside a drop table is worth.
+     *
+     * A container's expected value used to be read only out of `containerCache`, which
+     * meant a chest containing a crate was worth the crate's contents if the crate had
+     * already been costed this pass and worth its bare market price (or nothing) if it
+     * had not — the same chest, two answers, decided by iteration order. Computing it on
+     * demand makes the answer the same whoever asks first.
+     *
+     * `visited` is the cycle guard: a container that (directly or through a chain)
+     * contains itself would otherwise recurse forever. A container already on the path
+     * contributes nothing rather than looping.
+     *
+     * @param {string} itemHrid - Possibly a container
+     * @param {Set<string>|null} visited - Containers already being valued on this path
+     * @returns {number|null} Expected value, or null when this is not a container
+     */
+    resolveContainerValue(itemHrid, visited = null) {
+        if (this.containerCache.has(itemHrid)) {
+            return this.containerCache.get(itemHrid);
+        }
+
+        const initData = dataManager.getInitClientData();
+        const dropTable = initData?.openableLootDropMap?.[itemHrid];
+        if (!dropTable || dropTable.length === 0) {
+            return null;
+        }
+
+        const path = visited || new Set();
+        if (path.has(itemHrid)) {
+            return null; // Already being valued further up this chain
+        }
+        path.add(itemHrid);
+        try {
+            return this.calculateContainerValue(itemHrid, initData, path).expectedValue;
+        } finally {
+            path.delete(itemHrid);
+        }
     }
 
     /**
@@ -373,10 +436,16 @@ class ExpectedValueCalculator {
         // Calculate total expected value from fresh drop data
         const expectedReturn = drops.reduce((sum, drop) => sum + drop.expectedValue, 0);
 
+        // Drops nobody can price contribute nothing, so the total is a floor, not an estimate.
+        // Callers that render it are expected to say so — see formatExpectedValue.
+        const missingCount = drops.filter((drop) => !drop.hasPriceData).length;
+
         return {
             itemName: itemDetails.name,
             itemHrid,
             expectedValue: expectedReturn,
+            missingCount,
+            isPartial: missingCount > 0,
             drops,
         };
     }
@@ -460,6 +529,30 @@ class ExpectedValueCalculator {
         drops.sort((a, b) => b.expectedValue - a.expectedValue);
 
         return drops;
+    }
+
+    /**
+     * How to say an expected value out loud, given that some of it may be unpriceable.
+     *
+     * A partial total is a floor: "at least this much, and these many drops could not be
+     * priced". Rendering it as a plain figure claims a precision the data does not have.
+     *
+     * @param {{expectedValue: number, missingCount: number, isPartial: boolean}|null} evData
+     * @param {Function} format - Number formatter, e.g. formatKMB
+     * @returns {string} Display string, or '--' when there is nothing to show
+     */
+    formatExpectedValue(evData, format = (n) => String(Math.round(n))) {
+        if (!evData || evData.expectedValue === null || evData.expectedValue === undefined) {
+            return '--';
+        }
+
+        const figure = format(evData.expectedValue);
+        if (!evData.isPartial) {
+            return figure;
+        }
+
+        const drops = evData.missingCount === 1 ? 'drop' : 'drops';
+        return `\u2265 ${figure} (${evData.missingCount} ${drops} unpriced)`;
     }
 
     /**

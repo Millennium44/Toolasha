@@ -68,7 +68,7 @@ vi.mock('../../utils/adoption-consent.js', () => ({
     requestAdoptionConsent: () => Promise.resolve(null),
 }));
 
-const { xpTracker } = await import('./xp-tracker.js');
+const { xpTracker, inLastInterval } = await import('./xp-tracker.js');
 
 const KEY = 'xpHistory_char1';
 const stored = () => storageMock.storeFor('xpHistory').get(KEY);
@@ -161,5 +161,39 @@ describe('the XP history survives', () => {
         expect(theirs.foraging.map((s) => s.xp)).toEqual([7]);
         expect(theirs.milking.map((s) => s.xp)).toEqual([9]);
         expect(stored().milking.map((s) => s.xp)).toEqual([20]);
+    });
+});
+
+describe('inLastInterval', () => {
+    const HALF_HOUR = 1800_000;
+
+    test('keeps the samples inside the window and drops the rest', () => {
+        const now = Date.now();
+        const samples = [
+            { t: now - 3 * HOUR, xp: 10 },
+            { t: now - HALF_HOUR, xp: 20 },
+            { t: now - 60_000, xp: 30 },
+        ];
+
+        expect(inLastInterval(samples, HOUR).map((s) => s.xp)).toEqual([20, 30]);
+    });
+
+    test('does not assume the series is in time order', () => {
+        // A cross-device sync merge folds another tab's samples into this one's, and the
+        // window used to be found by walking back from the end and stopping at the first
+        // sample that was too old — one out-of-order entry and everything before it vanished
+        const now = Date.now();
+        const interleaved = [
+            { t: now - 3 * HOUR, xp: 10 },
+            { t: now - 60_000, xp: 30 },
+            { t: now - HALF_HOUR, xp: 20 },
+        ];
+
+        expect(inLastInterval(interleaved, HOUR).map((s) => s.xp)).toEqual([30, 20]);
+    });
+
+    test('an empty or missing series is empty, not a crash', () => {
+        expect(inLastInterval([], HOUR)).toEqual([]);
+        expect(inLastInterval(undefined, HOUR)).toEqual([]);
     });
 });

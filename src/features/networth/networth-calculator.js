@@ -251,8 +251,12 @@ function calculateCurrencyValue(itemHrid) {
         if (tokenData && tokenData.tokenValue > 0) {
             return tokenData.tokenValue;
         }
-        // Fallback if market data not loaded: 30K (approximate)
-        return 30000;
+        // Market data not loaded yet: the task shop is what prices a token, and until it
+        // can be read there is no honest figure. A stand-in 30,000 apiece was worse than
+        // nothing — a five-figure token stack appeared in the total, moved when nothing
+        // about the character had, and settled somewhere else once prices arrived. Report
+        // the tokens as unvalued instead, which is what offline economics already does.
+        return 0;
     }
 
     // Dungeon tokens: Best market value per token approach

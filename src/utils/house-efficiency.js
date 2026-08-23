@@ -10,51 +10,46 @@
 
 import dataManager from '../core/data-manager.js';
 
+/** A house room level is worth this much efficiency, in percentage points. */
+const EFFICIENCY_PER_ROOM_LEVEL = 1.5;
+
 /**
- * Map action type HRID to house room HRID
+ * Calculate house efficiency bonus for an action type.
+ *
+ * Which room helps which skill is the game's own `usableInActionTypeMap`, not a
+ * table kept here. A hand-written action-type → room map was the second of two
+ * implementations of this — the other looped `houseRoomDetailMap` — and the two
+ * could disagree the moment the game added a room or let one room cover a second
+ * skill. This is the single implementation; the loop was the correct one, so this
+ * is it.
+ *
  * @param {string} actionTypeHrid - Action type HRID (e.g., "/action_types/brewing")
- * @returns {string|null} House room HRID or null
- */
-function getHouseRoomForActionType(actionTypeHrid) {
-    // Mapping matches original MWI Tools
-    const actionTypeToHouseRoomMap = {
-        '/action_types/brewing': '/house_rooms/brewery',
-        '/action_types/cheesesmithing': '/house_rooms/forge',
-        '/action_types/cooking': '/house_rooms/kitchen',
-        '/action_types/crafting': '/house_rooms/workshop',
-        '/action_types/foraging': '/house_rooms/garden',
-        '/action_types/milking': '/house_rooms/dairy_barn',
-        '/action_types/tailoring': '/house_rooms/sewing_parlor',
-        '/action_types/woodcutting': '/house_rooms/log_shed',
-        '/action_types/alchemy': '/house_rooms/laboratory',
-    };
-
-    return actionTypeToHouseRoomMap[actionTypeHrid] || null;
-}
-
-/**
- * Calculate house efficiency bonus for an action type
- * @param {string} actionTypeHrid - Action type HRID
+ * @param {Object} [options]
+ * @param {Object} [options.gameData] - Pre-fetched init client data, to avoid re-fetching
  * @returns {number} Efficiency bonus percentage (e.g., 12 for 12%)
  *
  * @example
  * calculateHouseEfficiency("/action_types/brewing")
  * // Returns: 12 (if brewery is level 8: 8 × 1.5% = 12%)
  */
-export function calculateHouseEfficiency(actionTypeHrid) {
-    // Get the house room for this action type
-    const houseRoomHrid = getHouseRoomForActionType(actionTypeHrid);
+export function calculateHouseEfficiency(actionTypeHrid, { gameData = null } = {}) {
+    if (!actionTypeHrid) return 0;
 
-    if (!houseRoomHrid) {
-        return 0; // No house room for this action type
+    const rooms = dataManager.getHouseRooms();
+    if (!rooms || rooms.size === 0) return 0;
+
+    const roomDetailMap = (gameData ?? dataManager.getInitClientData())?.houseRoomDetailMap;
+    if (!roomDetailMap) return 0;
+
+    let efficiency = 0;
+    for (const [roomHrid, room] of rooms) {
+        const detail = roomDetailMap[room.houseRoomHrid || roomHrid];
+        if (detail?.usableInActionTypeMap?.[actionTypeHrid]) {
+            efficiency += (room.level || 0) * EFFICIENCY_PER_ROOM_LEVEL;
+        }
     }
 
-    // Get house room level from game data (via dataManager)
-    const roomLevel = dataManager.getHouseRoomLevel(houseRoomHrid);
-
-    // Formula: houseLevel × 1.5%
-    // Returns as percentage (e.g., 12 for 12%)
-    return roomLevel * 1.5;
+    return efficiency;
 }
 
 /**

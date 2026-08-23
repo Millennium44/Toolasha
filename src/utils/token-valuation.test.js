@@ -1,5 +1,21 @@
-import { describe, test, expect } from 'vitest';
-import { labyrinthTokenValue, labyrinthRewardValue, shopPurchasePrice } from './token-valuation.js';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+
+const game = vi.hoisted(() => ({ initClientData: null, settings: {}, prices: {} }));
+
+vi.mock('../core/data-manager.js', () => ({
+    default: { getInitClientData: () => game.initClientData },
+}));
+vi.mock('../core/config.js', () => ({
+    default: { getSettingValue: (key, fallback) => game.settings[key] ?? fallback },
+}));
+// Prices go through getItemPrice, so a user's custom overrides count — reading the raw
+// order book (which the dungeon token valuation used to do) skips them entirely
+vi.mock('./market-data.js', () => ({
+    getItemPrice: (hrid, { mode } = {}) => game.prices[hrid]?.[mode] ?? null,
+}));
+
+const { labyrinthTokenValue, labyrinthRewardValue, shopPurchasePrice, calculateDungeonTokenValue } =
+    await import('./token-valuation.js');
 
 /**
  * A shop where an essence is the best conversion and a scroll is the reward
@@ -90,5 +106,70 @@ describe('shopPurchasePrice', () => {
 
     test('nothing sells it', () => {
         expect(shopPurchasePrice('/items/nowhere', [shop], priceOf)).toBeNull();
+    });
+});
+
+describe('calculateDungeonTokenValue', () => {
+    const TOKEN = '/items/chimerical_token';
+
+    beforeEach(() => {
+        game.settings = {};
+        game.prices = {
+            '/items/cape': { ask: 1000, bid: 900 },
+            '/items/chimerical_essence': { ask: 200, bid: 180 },
+        };
+        game.initClientData = {
+            shopItemDetailMap: {
+                cape: { itemHrid: '/items/cape', costs: [{ itemHrid: TOKEN, count: 10 }] },
+            },
+        };
+    });
+
+    test('a token is worth the best line its own shop offers', () => {
+        // Conservative is the default, so the bid: 900 / 10
+        expect(calculateDungeonTokenValue(TOKEN)).toBe(90);
+    });
+
+    test('the token cost is found wherever it sits in the costs array', () => {
+        // It used to be read from costs[0] only, so a line that listed coins first was
+        // priced as though its first cost were the token
+        game.initClientData.shopItemDetailMap.cape.costs = [{ itemHrid: TOKEN, count: 10 }];
+        expect(calculateDungeonTokenValue(TOKEN)).toBe(90);
+
+        game.initClientData.shopItemDetailMap.cape.costs = [
+            { itemHrid: '/items/other_token', count: 3 },
+            { itemHrid: TOKEN, count: 10 },
+        ];
+        // Two currencies say nothing clean about what one token alone is worth, so the
+        // line is skipped and the essence fallback speaks instead
+        expect(calculateDungeonTokenValue(TOKEN)).toBe(180);
+    });
+
+    test('a line that hands over several is counted as several', () => {
+        game.initClientData.shopItemDetailMap.cape.outputCount = 3;
+        expect(calculateDungeonTokenValue(TOKEN)).toBe(270); // 3 × 900 / 10
+    });
+
+    test('the pricing mode picks the side, and respecting it can be turned off', () => {
+        game.settings.profitCalc_pricingMode = 'hybrid';
+        expect(calculateDungeonTokenValue(TOKEN)).toBe(100); // ask: 1000 / 10
+
+        game.settings.expectedValue_respectPricingMode = false;
+        expect(calculateDungeonTokenValue(TOKEN)).toBe(90); // back to the bid
+    });
+
+    test('nothing priceable in the shop falls back to the essence', () => {
+        game.prices['/items/cape'] = { ask: 0, bid: 0 };
+        expect(calculateDungeonTokenValue(TOKEN)).toBe(180);
+    });
+
+    test('nothing priceable at all is null rather than zero', () => {
+        game.prices = {};
+        expect(calculateDungeonTokenValue(TOKEN)).toBeNull();
+    });
+
+    test('no game data is null', () => {
+        game.initClientData = null;
+        expect(calculateDungeonTokenValue(TOKEN)).toBeNull();
     });
 });

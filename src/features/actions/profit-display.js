@@ -23,7 +23,7 @@ import bundledLoadoutSnapshot from '../combat/loadout-snapshot.js';
 import { loadoutSnapshot, scrollSimulator } from '../../utils/bundle-bridge.js';
 import bundledScrollSimulator from '../combat/scroll-simulator.js';
 import { SCROLL_BUFF_ITEMS } from '../../utils/scroll-buff-values.js';
-import { isPriceOverridden, getPriceAgeString } from '../../utils/market-data.js';
+import { isPriceOverridden, isPriceEstimated, getPriceAgeString } from '../../utils/market-data.js';
 import { appendCalibrationBadge } from '../../utils/calibration-badge.js';
 
 const getMissingPriceIndicator = (isMissing) => (isMissing ? ' ⚠' : '');
@@ -34,6 +34,13 @@ export const formatMissingLabel = (isMissing, value) => (isMissing ? '-- ⚠' : 
 const OVERRIDE_TITLE = 'Uses your custom price override';
 const getOverrideIndicatorHtml = (isOverridden) =>
     isOverridden ? `<sup title="${OVERRIDE_TITLE}" style="cursor: help;">✱</sup>` : '';
+
+// Same idea for the other kind of not-quite-a-market-price: since the marketplace patch an
+// item whose order book is empty is still priced, from the game's official value map. That is
+// a real number and worth showing, but it is an estimate, not a quote anyone is standing behind.
+const ESTIMATED_TITLE = 'Estimated from the game’s market value — no live listing';
+const getEstimatedIndicatorHtml = (isEstimated) =>
+    isEstimated ? `<sup title="${ESTIMATED_TITLE}" style="cursor: help;">≈</sup>` : '';
 
 let _spriteUrl = null;
 function scrollSpriteHtml(buffTypeHrid, size = 14) {
@@ -177,7 +184,9 @@ async function renderGatheringProfit(panel, actionHrid, dropTableSelector, gathe
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
             const missingPriceNote = getMissingPriceIndicator(output.missingPrice);
-            const overrideNote = getOverrideIndicatorHtml(isPriceOverridden(output.itemHrid, 0, 'sell'));
+            const overrideNote =
+                getOverrideIndicatorHtml(isPriceOverridden(output.itemHrid, 0, 'sell')) +
+                getEstimatedIndicatorHtml(isPriceEstimated(output.itemHrid, { context: 'profit', side: 'sell' }));
             line.innerHTML = `• ${output.name} (Base): ${output.itemsPerHour.toFixed(decimals)}/hr @ ${formatWithSeparator(output.priceEach)}${missingPriceNote}${overrideNote} each → ${formatLargeNumber(Math.round(output.revenuePerHour))}/hr`;
             primaryDropsContent.appendChild(line);
         }
@@ -800,7 +809,9 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
     const baseOutputMissingNote = getMissingPriceIndicator(
         profitData.outputPriceMissing || profitData.outputPriceEstimated
     );
-    const baseOutputOverrideNote = getOverrideIndicatorHtml(isPriceOverridden(profitData.itemHrid, 0, 'sell'));
+    const baseOutputOverrideNote =
+        getOverrideIndicatorHtml(isPriceOverridden(profitData.itemHrid, 0, 'sell')) +
+        getEstimatedIndicatorHtml(isPriceEstimated(profitData.itemHrid, { context: 'profit', side: 'sell' }));
     baseOutputLine.innerHTML = `• ${profitData.itemName} (Base): ${profitData.itemsPerHour.toFixed(2)}/hr @ ${formatWithSeparator(Math.round(profitData.outputPrice))}${baseOutputMissingNote}${baseOutputOverrideNote} each → ${formatLargeNumber(Math.round(profitData.itemsPerHour * profitData.outputPrice))}/hr`;
     primaryOutputContent.appendChild(baseOutputLine);
 
@@ -929,7 +940,8 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
             }
 
             const missingPriceNote = getMissingPriceIndicator(material.missingPrice);
-            const overrideNote = getOverrideIndicatorHtml(material.customPrice);
+            const overrideNote =
+                getOverrideIndicatorHtml(material.customPrice) + getEstimatedIndicatorHtml(material.estimatedPrice);
             materialText += ` @ ${formatWithSeparator(Math.round(material.askPrice))}${missingPriceNote}${overrideNote} → ${formatLargeNumber(Math.round(material.totalCost * profitData.actionsPerHour * efficiencyMultiplier))}/hr`;
 
             line.innerHTML = materialText;
@@ -958,7 +970,9 @@ async function renderProductionProfit(panel, actionHrid, dropTableSelector, prod
             line.style.marginLeft = '8px';
             // Tea structure: { itemHrid, itemName, pricePerDrink, drinksPerHour, totalCost }
             const missingPriceNote = getMissingPriceIndicator(tea.missingPrice);
-            const overrideNote = getOverrideIndicatorHtml(isPriceOverridden(tea.itemHrid, 0, 'buy'));
+            const overrideNote =
+                getOverrideIndicatorHtml(isPriceOverridden(tea.itemHrid, 0, 'buy')) +
+                getEstimatedIndicatorHtml(isPriceEstimated(tea.itemHrid, { context: 'profit', side: 'buy' }));
             line.innerHTML = `• ${tea.itemName}: ${tea.drinksPerHour.toFixed(2)}/hr @ ${formatWithSeparator(Math.round(tea.pricePerDrink))}${missingPriceNote}${overrideNote} → ${formatLargeNumber(Math.round(tea.totalCost))}/hr`;
             teaCostsContent.appendChild(line);
         }

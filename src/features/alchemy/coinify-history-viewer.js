@@ -11,7 +11,6 @@ import { getItemPrices } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
-import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
 
 const CATALYST_OF_COINIFICATION_HRID = '/items/catalyst_of_coinification';
 const PRIME_CATALYST_HRID = '/items/prime_catalyst';
@@ -418,7 +417,7 @@ class CoinifyHistoryViewer {
      * buy price for the session's enhancement level — historical input prices
      * were not recorded), catalysts consumed, and the alchemy coin fee.
      * @param {Object} session
-     * @returns {{profit: number, revenue: number, inputCost: number, catalystCost: number, coinCost: number, netConsumed: number}}
+     * @returns {{profit: number, revenue: number, inputCost: number, catalystCost: number, netConsumed: number}}
      */
     computeSessionProfit(session) {
         const itemDetails = dataManager.getItemDetails(session.inputItemHrid);
@@ -440,16 +439,14 @@ class CoinifyHistoryViewer {
             (session.catalystOfCoinificationUsed || 0) * catalystPrice(CATALYST_OF_COINIFICATION_HRID) +
             (session.primeCatalystUsed || 0) * catalystPrice(PRIME_CATALYST_HRID);
 
-        // Alchemy coin fee — see utils/alchemy-fees.js. The session's recorded bulkMultiplier
-        // is the one that was actually billed, so it overrides the item's current one.
-        const coinCost = getAlchemyCoinCost(itemDetails, 'coinify', bulkMultiplier) * attempts;
-
+        // Coinify has no coin fee at all — the item is the input and coins are the output
+        // (see utils/alchemy-fees.js). The line outlived the fee, so every tooltip carried a
+        // permanent "Alchemy coins: -0" for a charge that does not exist.
         return {
-            profit: revenue - inputCost - catalystCost - coinCost,
+            profit: revenue - inputCost - catalystCost,
             revenue,
             inputCost,
             catalystCost,
-            coinCost,
             netConsumed,
         };
     }
@@ -665,8 +662,7 @@ class CoinifyHistoryViewer {
                 profitCell.title =
                     `Coins earned: ${formatKMB(profitDetail.revenue, 1)}\n` +
                     `Inputs (${profitDetail.netConsumed} @ current buy): −${formatKMB(profitDetail.inputCost, 1)}\n` +
-                    `Catalysts: −${formatKMB(profitDetail.catalystCost, 1)}\n` +
-                    `Alchemy coins: −${formatKMB(profitDetail.coinCost, 1)}`;
+                    `Catalysts: −${formatKMB(profitDetail.catalystCost, 1)}`;
                 row.appendChild(profitCell);
 
                 // Delete

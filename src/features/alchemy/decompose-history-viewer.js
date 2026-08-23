@@ -469,7 +469,9 @@ class DecomposeHistoryViewer {
         // absent from game data and unrecorded in session history, so nothing could adjudicate
         // it; the item-level formula won as the one the rest of the codebase already agreed on.
         // See utils/alchemy-fees.js.
-        const coinCost = getAlchemyCoinCost(itemDetails, 'decompose') * attempts;
+        // The session's recorded bulkMultiplier is the one that was actually billed, so it
+        // overrides whatever the item's bulk size happens to be now
+        const coinCost = getAlchemyCoinCost(itemDetails, 'decompose', bulkMultiplier) * attempts;
 
         return {
             profit: revenue - inputCost - catalystCost - coinCost,

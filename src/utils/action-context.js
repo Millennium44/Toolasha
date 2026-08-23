@@ -48,11 +48,15 @@ export function resolveActionContext(actionTypeHrid) {
     const rawDrinks =
         loadoutSnapshot.getSnapshotDrinksForSkill(actionTypeHrid) ?? dataManager.getActionDrinkSlots(actionTypeHrid);
 
-    // Only include drinks that are actually in stock — slotted-but-empty teas give no buff
+    // Only include drinks that will actually buff the next action. A slot with no stock left
+    // brews nothing — but the buff from the last cup keeps running until it expires, and the
+    // slot says so (`isActive` with time remaining). Dropping it the moment the stack hit zero
+    // made every prediction jump the instant the last tea was consumed, minutes before the buff
+    // it was still enjoying actually ended.
     const inventory = dataManager.getInventory() || [];
-    const drinks = (rawDrinks || []).filter(
-        (d) => d?.itemHrid && inventory.some((i) => i.itemHrid === d.itemHrid && (i.count || 0) > 0)
-    );
+    const inStock = (hrid) => inventory.some((i) => i.itemHrid === hrid && (i.count || 0) > 0);
+    const stillRunning = (d) => d?.isActive === true && (d?.duration || 0) > 0;
+    const drinks = (rawDrinks || []).filter((d) => d?.itemHrid && (inStock(d.itemHrid) || stillRunning(d)));
 
     return {
         equipment: loadoutSnapshot.getSnapshotForSkill(actionTypeHrid) ?? dataManager.getEquipment(),

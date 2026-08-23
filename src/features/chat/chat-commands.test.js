@@ -56,6 +56,10 @@ vi.mock('../../utils/timer-registry.js', () => ({
 // two data sources rather than wholesale, so the line is the real arithmetic.
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (itemHrid, { mode } = {}) => game.prices[itemHrid]?.[mode] ?? 0,
+    getItemPriceInfo: (itemHrid, { mode } = {}) => {
+        const price = game.prices[itemHrid]?.[mode] ?? 0;
+        return { price, source: price > 0 ? 'book' : null, estimated: false };
+    },
 }));
 vi.mock('../guild/guild-token-exchange-capture.js', () => ({
     capturedTokenExchanges: () => game.capturedExchanges,

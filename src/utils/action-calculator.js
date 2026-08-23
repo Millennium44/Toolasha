@@ -15,6 +15,7 @@ import {
     parseTeaSkillLevelBonus,
 } from './tea-parser.js';
 import { calculateHouseEfficiency } from './house-efficiency.js';
+import { getCommunityProductionEfficiency } from './community-buffs.js';
 import { stackAdditive } from './efficiency.js';
 import { MIN_ACTION_TIME_SECONDS } from './profit-constants.js';
 import { resolveActionContext } from './action-context.js';
@@ -134,26 +135,9 @@ export function calculateActionStats(actionDetails, options = {}) {
             teaEfficiency = parseTeaEfficiency(actionDetails.type, activeDrinks, itemDetailMap, drinkConcentration);
         }
 
-        // Get community buff efficiency (if requested)
-        let communityEfficiency = 0;
-        if (includeCommunityBuff) {
-            // Production Efficiency buff applies to production skills and alchemy
-            const productionSkills = [
-                '/action_types/alchemy',
-                '/action_types/brewing',
-                '/action_types/cheesesmithing',
-                '/action_types/cooking',
-                '/action_types/crafting',
-                '/action_types/tailoring',
-            ];
-
-            if (productionSkills.includes(actionDetails.type)) {
-                const communityBuffLevel = dataManager.getCommunityBuffLevel(
-                    '/community_buff_types/production_efficiency'
-                );
-                communityEfficiency = communityBuffLevel ? (0.14 + (communityBuffLevel - 1) * 0.003) * 100 : 0;
-            }
-        }
+        // Get community buff efficiency (if requested). Which skills it covers and how
+        // strong it is both come from the game's own buff definition.
+        const communityEfficiency = includeCommunityBuff ? getCommunityProductionEfficiency(actionDetails.type) : 0;
 
         // Total efficiency (stack all components additively)
         const totalEfficiency = stackAdditive(

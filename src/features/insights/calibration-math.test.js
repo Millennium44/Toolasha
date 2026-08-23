@@ -121,14 +121,21 @@ describe('summarizeCalibration', () => {
 });
 
 describe('dailySeries', () => {
+    /** `YYYY-MM-DD` for a local time, the way the reader's own calendar reads it. */
+    const localDay = (date) =>
+        `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+    /** A local time on a given day, so the test says the same thing in every timezone. */
+    const at = (year, month, day, hour) => new Date(year, month - 1, day, hour, 0, 0).getTime();
+
     test('buckets by day, oldest first, inside the window', () => {
-        const now = Date.parse('2026-08-04T12:00:00Z');
+        const now = at(2026, 8, 4, 12);
         const records = [
-            record('milking', 1000, 900, Date.parse('2026-08-03T02:00:00Z')),
-            record('milking', 1000, 700, Date.parse('2026-08-03T22:00:00Z')),
-            record('milking', 1000, 1100, Date.parse('2026-08-04T09:00:00Z')),
+            record('milking', 1000, 900, at(2026, 8, 3, 2)),
+            record('milking', 1000, 700, at(2026, 8, 3, 22)),
+            record('milking', 1000, 1100, at(2026, 8, 4, 9)),
             // Older than the window
-            record('milking', 1000, 100, Date.parse('2026-07-01T09:00:00Z')),
+            record('milking', 1000, 100, at(2026, 7, 1, 9)),
         ];
 
         const series = dailySeries(records, { now, days: 7 });
@@ -137,5 +144,23 @@ describe('dailySeries', () => {
         expect(series[0].samples).toBe(2);
         expect(series[0].actualMean).toBe(800);
         expect(series[1].deviation).toBe(10);
+    });
+
+    test('a day is the reader’s own day, not a UTC one', () => {
+        // Late evening local time: west of Greenwich this is already tomorrow in UTC, and
+        // bucketing by UTC would file an evening's actions under the next day's heading
+        const evening = new Date(2026, 7, 3, 23, 30, 0);
+        const morning = new Date(2026, 7, 3, 7, 0, 0);
+        const now = new Date(2026, 7, 4, 12, 0, 0).getTime();
+
+        const series = dailySeries(
+            [record('milking', 1000, 900, morning.getTime()), record('milking', 1000, 700, evening.getTime())],
+            { now, days: 7 }
+        );
+
+        expect(series).toHaveLength(1);
+        expect(series[0].day).toBe(localDay(evening));
+        expect(series[0].day).toBe(localDay(morning));
+        expect(series[0].samples).toBe(2);
     });
 });

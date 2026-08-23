@@ -29,6 +29,10 @@ const game = vi.hoisted(() => ({
     currentActions: [],
     communityBuffLevels: {},
     achievementBuffs: {},
+    /** buffTypeHrid → flat boost, the personal (seal) buffs */
+    personalBuffs: {},
+    /** actionTypeHrid → [{typeHrid, flatBoost}], the guild buffs */
+    guildBuffs: {},
 }));
 
 const market = vi.hoisted(() => ({
@@ -38,16 +42,30 @@ const market = vi.hoisted(() => ({
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
+        get characterData() {
+            return { guildActionTypeBuffsMap: game.guildBuffs };
+        },
         getInitClientData: () => game.initClientData,
         getSkills: () => game.skills,
         getEquipment: () => new Map(game.equipment),
         getHouseRooms: () => game.houseRooms,
         getActionDrinkSlots: () => game.drinkSlots,
+        // A slotted tea is in stock unless a test says otherwise — the shared context drops
+        // slots with nothing left in the bag, which is not what these tests are about
+        getInventory: () => game.drinkSlots.map((slot) => ({ itemHrid: slot.itemHrid, count: 10 })),
         getCurrentActions: () => game.currentActions,
         getCommunityBuffLevel: (hrid) => game.communityBuffLevels[hrid] || 0,
         getAchievementBuffFlatBoost: (_type, buffHrid) => game.achievementBuffs[buffHrid] || 0,
+        getPersonalBuffFlatBoost: (_type, buffHrid) => game.personalBuffs[buffHrid] || 0,
     },
 }));
+
+// The loadout store lives in storage and is never what an alchemy test is about; with no
+// snapshot the shared context falls back to what the character is wearing, which is the fixture
+vi.mock('../combat/loadout-snapshot.js', () => ({
+    default: { getSnapshotForSkill: () => null, getSnapshotDrinksForSkill: () => null },
+}));
+vi.mock('../../utils/bundle-bridge.js', () => ({ loadoutSnapshot: () => null }));
 
 vi.mock('../../api/marketplace.js', () => ({
     default: {
@@ -124,6 +142,13 @@ beforeEach(() => {
                 },
             },
         },
+        // The efficiency helper reads the buff's strength and skill list out of game data
+        communityBuffTypeDetailMap: {
+            '/community_buff_types/production_efficiency': {
+                buff: { flatBoost: 0.14, flatBoostLevelBonus: 0.003 },
+                usableInActionTypeMap: { '/action_types/alchemy': true },
+            },
+        },
         houseRoomDetailMap: {
             '/house_rooms/laboratory': {
                 usableInActionTypeMap: { '/action_types/alchemy': true },
@@ -140,6 +165,8 @@ beforeEach(() => {
     game.currentActions = [];
     game.communityBuffLevels = {};
     game.achievementBuffs = {};
+    game.personalBuffs = {};
+    game.guildBuffs = {};
     market.prices = {
         [CHEESE]: { ask: 1000, bid: 900 },
         '/items/milk': { ask: 120, bid: 100 },
@@ -151,42 +178,6 @@ beforeEach(() => {
 
 afterEach(() => {
     document.body.innerHTML = '';
-});
-
-describe('enhancement scaling tables', () => {
-    test('pins the enhancement bonus table at its anchors', () => {
-        expect(alchemyProfit.getEnhancementBonus(0)).toBe(0);
-        expect(alchemyProfit.getEnhancementBonus(1)).toBe(0.02);
-        expect(alchemyProfit.getEnhancementBonus(10)).toBe(0.29);
-        expect(alchemyProfit.getEnhancementBonus(15)).toBe(0.57);
-        expect(alchemyProfit.getEnhancementBonus(20)).toBe(1.0);
-    });
-
-    test('unknown enhancement levels score no bonus', () => {
-        expect(alchemyProfit.getEnhancementBonus(21)).toBe(0);
-        expect(alchemyProfit.getEnhancementBonus(-1)).toBe(0);
-        expect(alchemyProfit.getEnhancementBonus(undefined)).toBe(0);
-    });
-
-    test('accessories, back, trinket, charm and pouch enhance 5x', () => {
-        for (const type of [
-            '/equipment_types/neck',
-            '/equipment_types/ring',
-            '/equipment_types/earrings',
-            '/equipment_types/back',
-            '/equipment_types/trinket',
-            '/equipment_types/charm',
-            '/equipment_types/pouch',
-        ]) {
-            expect(alchemyProfit.getSlotMultiplier(type)).toBe(5);
-        }
-    });
-
-    test('armour and weapons enhance 1x', () => {
-        expect(alchemyProfit.getSlotMultiplier('/equipment_types/head')).toBe(1);
-        expect(alchemyProfit.getSlotMultiplier('/equipment_types/main_hand')).toBe(1);
-        expect(alchemyProfit.getSlotMultiplier(undefined)).toBe(1);
-    });
 });
 
 describe('getCurrentActionHrid', () => {
@@ -270,7 +261,26 @@ describe('extractActionSpeed', () => {
     });
 
     test('is zero with no gear', () => {
-        expect(alchemyProfit.extractActionSpeed()).toEqual({ total: 0, equipment: 0, tea: 0 });
+        expect(alchemyProfit.extractActionSpeed()).toEqual({
+            total: 0,
+            equipment: 0,
+            tea: 0,
+            personal: 0,
+            guild: 0,
+        });
+    });
+
+    test('personal and guild speed buffs count, which the panel used to ignore entirely', () => {
+        game.personalBuffs['/buff_types/action_speed'] = 0.05;
+        game.guildBuffs = {
+            '/action_types/alchemy': [{ typeHrid: '/buff_types/action_speed', flatBoost: 0.03 }],
+        };
+
+        const speed = alchemyProfit.extractActionSpeed();
+
+        expect(speed.personal).toBeCloseTo(0.05, 10);
+        expect(speed.guild).toBeCloseTo(0.03, 10);
+        expect(speed.total).toBeCloseTo(0.08, 10);
     });
 });
 
@@ -328,6 +338,31 @@ describe('extractEfficiency', () => {
         game.skills = [{ skillHrid: '/skills/alchemy', level: 200 }];
 
         expect(alchemyProfit.extractEfficiency().total).toBeCloseTo(1.4, 10);
+    });
+
+    test('personal and guild efficiency count, which the panel used to leave out', () => {
+        // Both are real buffs the character has and the alchemy panel simply never read,
+        // so every alchemy profit figure was quoted below what the character actually earns
+        game.personalBuffs['/buff_types/efficiency'] = 0.06;
+        game.guildBuffs = {
+            '/action_types/alchemy': [{ typeHrid: '/buff_types/efficiency', flatBoost: 0.04 }],
+        };
+
+        const eff = alchemyProfit.extractEfficiency();
+
+        expect(eff.personal).toBeCloseTo(6, 10);
+        expect(eff.guild).toBeCloseTo(4, 10);
+        // Level 70 against a requirement of 60 is 10%, plus the two buffs
+        expect(eff.total).toBeCloseTo(0.2, 10);
+    });
+
+    test('the community buff only applies where the game says it does', () => {
+        game.communityBuffLevels['/community_buff_types/production_efficiency'] = 11;
+        game.initClientData.communityBuffTypeDetailMap[
+            '/community_buff_types/production_efficiency'
+        ].usableInActionTypeMap = { '/action_types/cooking': true };
+
+        expect(alchemyProfit.extractEfficiency().community).toBe(0);
     });
 });
 
@@ -397,7 +432,13 @@ describe('extractRareFind / extractEssenceFind', () => {
 
         expect(alchemyProfit.extractRareFind()).toEqual({ total: 0, equipment: 0, achievement: 0 });
         expect(alchemyProfit.extractEssenceFind()).toEqual({ total: 0, equipment: 0 });
-        expect(alchemyProfit.extractActionSpeed()).toEqual({ total: 0, equipment: 0, tea: 0 });
+        expect(alchemyProfit.extractActionSpeed()).toEqual({
+            total: 0,
+            equipment: 0,
+            tea: 0,
+            personal: 0,
+            guild: 0,
+        });
     });
 });
 

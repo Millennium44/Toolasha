@@ -10,15 +10,13 @@
 import marketAPI from '../../api/marketplace.js';
 import dataManager from '../../core/data-manager.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
-import {
-    parseEquipmentSpeedBonuses,
-    parseEquipmentEfficiencyBonuses,
-    parseRareFindBonus,
-    parseEssenceFindBonus,
-} from '../../utils/equipment-parser.js';
-import { parseTeaEfficiency, getDrinkConcentration, parseTeaSkillLevelBonus } from '../../utils/tea-parser.js';
-import { calculateEfficiencyBreakdown } from '../../utils/efficiency.js';
+import { parseRareFindBonus, parseEssenceFindBonus } from '../../utils/equipment-parser.js';
+import { getDrinkConcentration } from '../../utils/tea-parser.js';
+import { getActionEfficiencyContext } from '../../utils/efficiency.js';
+import { getCommunityProductionEfficiency } from '../../utils/community-buffs.js';
 import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
+
+const ALCHEMY_ACTION_TYPE = '/action_types/alchemy';
 
 class AlchemyProfit {
     constructor() {
@@ -188,144 +186,109 @@ class AlchemyProfit {
     }
 
     /**
-     * Extract action speed buff using dataManager (matches Action Panel pattern)
-     * @returns {Object} Action speed breakdown { total, equipment, tea }
+     * The action type this panel is about. Alchemy is always alchemy, but the shared
+     * efficiency context is written against an action detail, so give it one: the level
+     * requirement is the only part that varies and it is read off the panel.
+     * @returns {Object} A minimal action detail for the efficiency context
+     */
+    alchemyActionDetails() {
+        return {
+            type: ALCHEMY_ACTION_TYPE,
+            // The panel prices per action, never in wall-clock seconds, so the base time
+            // is irrelevant here — only the speed and efficiency bonuses are read back
+            baseTimeCost: 0,
+            levelRequirement: { level: this.extractRequiredLevel(), skillHrid: '/skills/alchemy' },
+        };
+    }
+
+    /**
+     * The shared efficiency context for the alchemy panel.
+     *
+     * This used to be two hand-rolled copies of the efficiency stack that had drifted:
+     * neither counted personal (seal) or guild buffs, the speed reading had a hardcoded
+     * `teaSpeed = 0`, and the community buff was applied without checking the game's
+     * `usableInActionTypeMap`. The shared context is the same one the action panel and
+     * the production profit calculator use, so alchemy can no longer disagree with them.
+     *
+     * @returns {Object|null} Efficiency context, or null when game data is unavailable
+     */
+    efficiencyContext() {
+        const gameData = dataManager.getInitClientData();
+        if (!gameData) return null;
+
+        return getActionEfficiencyContext(this.alchemyActionDetails(), {
+            isProduction: true,
+            gameData,
+            communityEfficiency: getCommunityProductionEfficiency(ALCHEMY_ACTION_TYPE),
+        });
+    }
+
+    /**
+     * Extract action speed buff using the shared efficiency context
+     * @returns {Object} Action speed breakdown { total, equipment, tea, personal, guild }
      */
     extractActionSpeed() {
         try {
-            const gameData = dataManager.getInitClientData();
-            if (!gameData) {
-                return { total: 0, equipment: 0, tea: 0 };
+            const context = this.efficiencyContext();
+            if (!context) {
+                return { total: 0, equipment: 0, tea: 0, personal: 0, guild: 0 };
             }
 
-            const equipment = dataManager.getEquipment();
-            const actionTypeHrid = '/action_types/alchemy';
-
-            // Parse equipment speed bonuses using utility
-            const equipmentSpeed = parseEquipmentSpeedBonuses(equipment, actionTypeHrid, gameData.itemDetailMap);
-
-            // TODO: Add tea speed bonuses when tea-parser supports it
-            const teaSpeed = 0;
-
-            const total = equipmentSpeed + teaSpeed;
+            // speedBonus is the equipment share; personal (seal) and guild buffs stack
+            // additively on top of it, exactly as the action panel adds them
+            const equipment = context.speedBonus;
+            const personal = context.personalSpeedBonus;
+            const guild = context.guildSpeedBonus;
 
             return {
-                total,
-                equipment: equipmentSpeed,
-                tea: teaSpeed,
+                total: equipment + personal + guild,
+                equipment,
+                // Speed teas do not exist for alchemy; the field stays for callers that read it
+                tea: 0,
+                personal,
+                guild,
             };
         } catch (error) {
             console.error('[AlchemyProfit] Failed to extract action speed:', error);
-            return { total: 0, equipment: 0, tea: 0 };
+            return { total: 0, equipment: 0, tea: 0, personal: 0, guild: 0 };
         }
     }
 
     /**
-     * Extract efficiency using dataManager (matches Action Panel pattern)
-     * @returns {Object} Efficiency breakdown { total, level, house, tea, equipment, community }
+     * Extract efficiency using the shared efficiency context
+     * @returns {Object} Efficiency breakdown { total, level, house, tea, equipment, community, ... }
      */
     extractEfficiency() {
+        const empty = {
+            total: 0,
+            level: 0,
+            house: 0,
+            tea: 0,
+            equipment: 0,
+            community: 0,
+            achievement: 0,
+            personal: 0,
+            guild: 0,
+        };
+
         try {
-            const gameData = dataManager.getInitClientData();
-            if (!gameData) {
-                return { total: 0, level: 0, house: 0, tea: 0, equipment: 0, community: 0 };
-            }
-
-            const equipment = dataManager.getEquipment();
-            const skills = dataManager.getSkills();
-            const houseRooms = Array.from(dataManager.getHouseRooms().values());
-            const actionTypeHrid = '/action_types/alchemy';
-
-            // Get required level from the DOM (action-specific)
-            const requiredLevel = this.extractRequiredLevel();
-
-            // Get current alchemy level from character skills
-            let currentLevel = requiredLevel;
-            for (const skill of skills) {
-                if (skill.skillHrid === '/skills/alchemy') {
-                    currentLevel = skill.level;
-                    break;
-                }
-            }
-
-            // Calculate house efficiency bonus (room level × 1.5%)
-            let houseEfficiency = 0;
-            for (const room of houseRooms) {
-                const roomDetail = gameData.houseRoomDetailMap?.[room.houseRoomHrid];
-                if (roomDetail?.usableInActionTypeMap?.[actionTypeHrid]) {
-                    houseEfficiency += (room.level || 0) * 1.5;
-                }
-            }
-
-            // Get equipped drink slots for alchemy
-            const drinkSlots = dataManager.getActionDrinkSlots(actionTypeHrid);
-
-            // Get drink concentration from equipment
-            const drinkConcentration = getDrinkConcentration(equipment, gameData.itemDetailMap);
-
-            // Parse tea efficiency bonus using utility
-            const teaEfficiency = parseTeaEfficiency(
-                actionTypeHrid,
-                drinkSlots,
-                gameData.itemDetailMap,
-                drinkConcentration
-            );
-
-            // Parse tea skill level bonus (e.g., +8 Cheesesmithing from Ultra Cheesesmithing Tea)
-            const teaLevelBonus = parseTeaSkillLevelBonus(
-                actionTypeHrid,
-                drinkSlots,
-                gameData.itemDetailMap,
-                drinkConcentration
-            );
-
-            // Calculate equipment efficiency bonus using utility
-            const equipmentEfficiency = parseEquipmentEfficiencyBonuses(
-                equipment,
-                actionTypeHrid,
-                gameData.itemDetailMap
-            );
-
-            // Get community buff efficiency (Production Efficiency)
-            const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/production_efficiency');
-            let communityEfficiency = 0;
-            if (communityBuffLevel > 0) {
-                // Formula: 0.14 + ((level - 1) × 0.003) = 14% base, +0.3% per level
-                const flatBoost = 0.14;
-                const flatBoostLevelBonus = 0.003;
-                const communityBonus = flatBoost + (communityBuffLevel - 1) * flatBoostLevelBonus;
-                communityEfficiency = communityBonus * 100; // Convert to percentage
-            }
-
-            // Get achievement buffs (Adept tier: +2% efficiency per tier)
-            const achievementEfficiency =
-                dataManager.getAchievementBuffFlatBoost(actionTypeHrid, '/buff_types/efficiency') * 100;
-
-            const efficiencyBreakdown = calculateEfficiencyBreakdown({
-                requiredLevel,
-                skillLevel: currentLevel,
-                teaSkillLevelBonus: teaLevelBonus,
-                houseEfficiency,
-                teaEfficiency,
-                equipmentEfficiency,
-                communityEfficiency,
-                achievementEfficiency,
-            });
-            const totalEfficiency = efficiencyBreakdown.totalEfficiency;
-            const levelEfficiency = efficiencyBreakdown.levelEfficiency;
+            const context = this.efficiencyContext();
+            if (!context) return empty;
 
             return {
-                total: totalEfficiency / 100, // Convert percentage to decimal
-                level: levelEfficiency,
-                house: houseEfficiency,
-                tea: teaEfficiency,
-                equipment: equipmentEfficiency,
-                community: communityEfficiency,
-                achievement: achievementEfficiency,
+                total: context.efficiencyBreakdown.totalEfficiency / 100, // Convert percentage to decimal
+                level: context.efficiencyBreakdown.levelEfficiency,
+                house: context.houseEfficiency,
+                tea: context.teaEfficiency,
+                equipment: context.equipmentEfficiency,
+                community: context.communityEfficiency,
+                achievement: context.achievementEfficiency,
+                personal: context.personalEfficiency,
+                guild: context.guildEfficiency,
             };
         } catch (error) {
             console.error('[AlchemyProfit] Failed to extract efficiency:', error);
-            return { total: 0, level: 0, house: 0, tea: 0, equipment: 0, community: 0, achievement: 0 };
+            return empty;
         }
     }
 
@@ -387,57 +350,6 @@ class AlchemyProfit {
             console.error('[AlchemyProfit] Failed to extract essence find:', error);
             return { total: 0, equipment: 0 };
         }
-    }
-
-    /**
-     * Get enhancement bonus percentage for a given enhancement level
-     * @param {number} enhancementLevel - Enhancement level (0-20)
-     * @returns {number} Enhancement bonus as decimal
-     */
-    getEnhancementBonus(enhancementLevel) {
-        const bonuses = {
-            0: 0,
-            1: 0.02,
-            2: 0.042,
-            3: 0.066,
-            4: 0.092,
-            5: 0.12,
-            6: 0.15,
-            7: 0.182,
-            8: 0.216,
-            9: 0.252,
-            10: 0.29,
-            11: 0.334,
-            12: 0.384,
-            13: 0.44,
-            14: 0.502,
-            15: 0.57,
-            16: 0.644,
-            17: 0.724,
-            18: 0.81,
-            19: 0.902,
-            20: 1.0,
-        };
-        return bonuses[enhancementLevel] || 0;
-    }
-
-    /**
-     * Get slot multiplier for enhancement bonuses
-     * @param {string} equipmentType - Equipment type HRID
-     * @returns {number} Multiplier (1 or 5)
-     */
-    getSlotMultiplier(equipmentType) {
-        // 5× multiplier for accessories, back, trinket, charm, pouch
-        const fiveXSlots = [
-            '/equipment_types/neck',
-            '/equipment_types/ring',
-            '/equipment_types/earrings',
-            '/equipment_types/back',
-            '/equipment_types/trinket',
-            '/equipment_types/charm',
-            '/equipment_types/pouch',
-        ];
-        return fiveXSlots.includes(equipmentType) ? 5 : 1;
     }
 
     /**

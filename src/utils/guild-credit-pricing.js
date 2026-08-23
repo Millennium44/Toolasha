@@ -15,7 +15,7 @@
  */
 
 import dataManager from '../core/data-manager.js';
-import { getItemPrice } from './market-data.js';
+import { getItemPrice, getItemPriceInfo } from './market-data.js';
 
 /**
  * Cheapest gold cost of one credit of each type, by conversion.
@@ -27,9 +27,19 @@ export function buildGoldPerCredit(mode = 'ask') {
     const cheapest = {};
 
     for (const [hrid, item] of Object.entries(itemDetailMap)) {
-        for (const conversion of item.guildCreditConversions || []) {
-            const price = getItemPrice(hrid, { mode });
-            if (!(price > 0) || !(conversion.creditCount > 0)) continue;
+        const conversions = item.guildCreditConversions || [];
+        if (conversions.length === 0) continue;
+
+        // One lookup per item, not one per conversion - this runs over the whole item map
+        const { price, estimated } = getItemPriceInfo(hrid, { mode });
+        // "Cheapest item that yields a credit" is a claim about what you could actually buy.
+        // An item priced off the official value map has no order book behind it, so quoting a
+        // credit at that price says you can buy something nobody is selling - and being an
+        // estimate of an illiquid item, it is exactly the kind of number that wins a minimum.
+        if (!(price > 0) || estimated) continue;
+
+        for (const conversion of conversions) {
+            if (!(conversion.creditCount > 0)) continue;
             const perCredit = (price * conversion.itemCount) / conversion.creditCount;
             const creditHrid = conversion.creditItemHrid;
             if (!cheapest[creditHrid] || perCredit < cheapest[creditHrid]) cheapest[creditHrid] = perCredit;

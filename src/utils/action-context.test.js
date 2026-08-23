@@ -89,3 +89,44 @@ describe('resolveActionContext', () => {
         expect(loadoutSnapshot.getSnapshotDrinksForSkill).toHaveBeenCalledWith(TYPE);
     });
 });
+
+describe('a tea whose stack has run out', () => {
+    test('is dropped once the buff it left behind has expired', () => {
+        loadoutSnapshot.getSnapshotDrinksForSkill.mockReturnValue(null);
+        dataManager.getActionDrinkSlots.mockReturnValue([{ itemHrid: '/items/empty_tea', isActive: false }]);
+        dataManager.getInventory.mockReturnValue([]);
+
+        expect(resolveActionContext(TYPE).drinks).toEqual([]);
+    });
+
+    test('is kept while the buff from the last cup is still running', () => {
+        // The bag is empty but the tea is still in effect — the game says so, with an
+        // active slot and time left on it. Dropping the slot the moment the count hit
+        // zero made every prediction jump minutes before the buff actually ended.
+        const stillBrewing = { itemHrid: '/items/empty_tea', isActive: true, duration: 90_000 };
+        loadoutSnapshot.getSnapshotDrinksForSkill.mockReturnValue(null);
+        dataManager.getActionDrinkSlots.mockReturnValue([stillBrewing]);
+        dataManager.getInventory.mockReturnValue([]);
+
+        expect(resolveActionContext(TYPE).drinks).toEqual([stillBrewing]);
+    });
+
+    test('an active slot with no time left is over, and goes', () => {
+        loadoutSnapshot.getSnapshotDrinksForSkill.mockReturnValue(null);
+        dataManager.getActionDrinkSlots.mockReturnValue([
+            { itemHrid: '/items/empty_tea', isActive: true, duration: 0 },
+        ]);
+        dataManager.getInventory.mockReturnValue([]);
+
+        expect(resolveActionContext(TYPE).drinks).toEqual([]);
+    });
+
+    test('stock alone is still enough, with no buff running', () => {
+        const slot = { itemHrid: '/items/current_tea' };
+        loadoutSnapshot.getSnapshotDrinksForSkill.mockReturnValue(null);
+        dataManager.getActionDrinkSlots.mockReturnValue([slot]);
+        dataManager.getInventory.mockReturnValue([{ itemHrid: '/items/current_tea', count: 2 }]);
+
+        expect(resolveActionContext(TYPE).drinks).toEqual([slot]);
+    });
+});

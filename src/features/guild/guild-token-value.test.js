@@ -22,6 +22,10 @@ vi.mock('../../core/data-manager.js', () => ({
 }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (itemHrid, { mode } = {}) => game.prices[itemHrid]?.[mode] ?? 0,
+    getItemPriceInfo: (itemHrid, { mode } = {}) => {
+        const price = game.prices[itemHrid]?.[mode] ?? 0;
+        return { price, source: price > 0 ? 'book' : null, estimated: false };
+    },
 }));
 vi.mock('./guild-token-exchange-capture.js', () => ({
     capturedTokenExchanges: () => game.captured,

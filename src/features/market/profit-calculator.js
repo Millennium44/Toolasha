@@ -7,6 +7,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import marketAPI from '../../api/marketplace.js';
 import { calculateHouseEfficiency } from '../../utils/house-efficiency.js';
+import { getCommunityProductionEfficiency } from '../../utils/community-buffs.js';
 import { getActionEfficiencyContext } from '../../utils/efficiency.js';
 import { calculateBonusRevenue } from '../../utils/bonus-revenue-calculator.js';
 import { getProductionCost, getProductionChainTime } from '../enhancement/tooltip-enhancement.js';
@@ -471,7 +472,7 @@ class ProfitCalculator {
                         config.getSetting('profitCalc_craftUpgradeItems') &&
                         !config.getSetting('itemTooltip_detailedProfitFlat');
                     const craftCost = craftEnabled ? getProductionCost(actionDetails.upgradeItemHrid, 'ask') : 0;
-                    isCrafted = craftCost > 0 && (resolved.price === 0 || craftCost < resolved.price);
+                    isCrafted = craftCost > 0 && (!(resolved.price > 0) || craftCost < resolved.price);
                     if (isCrafted) {
                         resolved = { price: craftCost, custom: false, missing: false };
                     }
@@ -485,9 +486,10 @@ class ProfitCalculator {
                     itemName: itemDetails.name,
                     baseAmount: 1,
                     amount: reducedAmount,
-                    askPrice: resolved.price,
-                    totalCost: resolved.price * reducedAmount,
+                    askPrice: resolved.price ?? 0,
+                    totalCost: (resolved.price ?? 0) * reducedAmount,
                     missingPrice: resolved.missing,
+                    estimatedPrice: Boolean(resolved.estimated),
                     customPrice: resolved.custom,
                     isUpgradeItem: true,
                     isCrafted,
@@ -522,9 +524,10 @@ class ProfitCalculator {
                     itemName: itemDetails.name,
                     baseAmount: baseAmount,
                     amount: reducedAmount,
-                    askPrice: resolved.price,
-                    totalCost: resolved.price * reducedAmount,
+                    askPrice: resolved.price ?? 0,
+                    totalCost: (resolved.price ?? 0) * reducedAmount,
                     missingPrice: resolved.missing,
+                    estimatedPrice: Boolean(resolved.estimated),
                     customPrice: resolved.custom,
                 });
             }
@@ -616,23 +619,7 @@ class ProfitCalculator {
      * @returns {number} Efficiency bonus percentage
      */
     calculateCommunityBuffBonus(buffLevel, actionTypeHrid) {
-        if (buffLevel === 0) {
-            return 0;
-        }
-
-        // Check if buff applies to this action type
-        const communityBuffMap = this.getCommunityBuffMap();
-        const buffDef = communityBuffMap['/community_buff_types/production_efficiency'];
-
-        if (!buffDef?.usableInActionTypeMap?.[actionTypeHrid]) {
-            return 0; // Buff doesn't apply to this skill
-        }
-
-        // Formula: flatBoost + (level - 1) × flatBoostLevelBonus
-        const baseBonus = buffDef.buff.flatBoost * 100; // 14%
-        const levelBonus = (buffLevel - 1) * buffDef.buff.flatBoostLevelBonus * 100; // 0.3% per level
-
-        return baseBonus + levelBonus;
+        return getCommunityProductionEfficiency(actionTypeHrid, { level: buffLevel });
     }
 }
 

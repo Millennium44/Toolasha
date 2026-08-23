@@ -17,7 +17,7 @@ import {
     MARKET_TAX,
     MIN_ACTION_TIME_SECONDS,
 } from './profit-constants.js';
-import { getItemPrice } from './market-data.js';
+import { getItemPriceInfo } from './market-data.js';
 import { getCustomPrice } from '../features/settings/custom-price-overrides.js';
 import { getShopCoinCost } from './game-lookups.js';
 import { getProductionCost } from '../features/enhancement/tooltip-enhancement.js';
@@ -225,7 +225,7 @@ export function calculateTeaCostsPerHour({
  * @returns {number} Price after tax deduction
  *
  * @example
- * calculatePriceAfterTax(100) // Returns 98
+ * calculatePriceAfterTax(100) // Returns 95 (MARKET_TAX is 5% since the marketplace patch)
  */
 export function calculatePriceAfterTax(price, taxRate = MARKET_TAX) {
     return price * (1 - taxRate);
@@ -414,7 +414,10 @@ export function calculateGatheringActionTotalsFromBase({
  * @param {string} [options.mode] - Pricing mode ('ask'|'bid'|'average')
  * @param {string} [options.context] - Context for pricing mode ('profit'|'networth')
  * @param {string} [options.side='sell'] - Transaction side ('buy'|'sell')
- * @returns {{ price: number, custom: boolean, missing: boolean }}
+ * @returns {{ price: number|null, custom: boolean, missing: boolean, estimated: boolean }}
+ *   `price` is null when nothing in the chain could price the item — unpriced, not free.
+ *   `estimated` is true when the number is the game's official value for an item whose
+ *   order book is empty, or a production-cost fallback: a figure, but not a quote.
  */
 export function resolveItemPrice(itemHrid, options = {}) {
     const { enhancementLevel = 0, mode, context, side = 'sell' } = options;
@@ -422,32 +425,34 @@ export function resolveItemPrice(itemHrid, options = {}) {
     // 1. Custom override — absolute priority
     const customPrice = getCustomPrice(itemHrid, enhancementLevel, side);
     if (customPrice !== null) {
-        return { price: customPrice, custom: true, missing: false };
+        return { price: customPrice, custom: true, missing: false, estimated: false };
     }
 
-    // 2. Market price (via getItemPrice which handles pricing mode)
-    const marketPrice = getItemPrice(itemHrid, { enhancementLevel, mode, context, side });
+    // 2. Market price (via getItemPriceInfo which handles pricing mode and provenance)
+    const market = getItemPriceInfo(itemHrid, { enhancementLevel, mode, context, side });
+    const marketPrice = market.price;
 
     // 3. Shop price floor (buy-side only)
     if (side === 'buy') {
         const shopCost = getShopCoinCost(itemHrid);
         if (shopCost > 0 && (marketPrice === null || shopCost < marketPrice)) {
-            return { price: shopCost, custom: false, missing: false };
+            return { price: shopCost, custom: false, missing: false, estimated: false };
         }
     }
 
     if (marketPrice !== null) {
-        return { price: marketPrice, custom: false, missing: false };
+        return { price: marketPrice, custom: false, missing: false, estimated: market.estimated };
     }
 
     // 4. Production cost fallback
     const prodCost = getProductionCost(itemHrid, mode || 'ask');
     if (prodCost > 0) {
-        return { price: prodCost, custom: false, missing: false };
+        return { price: prodCost, custom: false, missing: false, estimated: true };
     }
 
-    // 5. No price found
-    return { price: 0, custom: false, missing: true };
+    // 5. No price found — null, so a caller that forgets to check `missing`
+    // gets a visible NaN rather than a silent "this material is free"
+    return { price: null, custom: false, missing: true, estimated: false };
 }
 
 export default {

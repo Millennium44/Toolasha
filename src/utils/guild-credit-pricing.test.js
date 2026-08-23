@@ -9,13 +9,20 @@
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ clientData: null, prices: {} }));
+const mocks = vi.hoisted(() => ({ clientData: null, prices: {}, estimated: new Set() }));
 
 vi.mock('../core/data-manager.js', () => ({
     default: { getInitClientData: () => mocks.clientData },
 }));
 vi.mock('./market-data.js', () => ({
     getItemPrice: (hrid) => mocks.prices[hrid] ?? null,
+    getItemPriceInfo: (hrid) => {
+        const price = mocks.prices[hrid] ?? null;
+        // A price the module treats as an estimate is one the value map filled in for an
+        // item with no order book — the tests name those in `mocks.estimated`
+        const estimated = price !== null && mocks.estimated.has(hrid);
+        return { price, source: price === null ? null : estimated ? 'value' : 'book', estimated };
+    },
 }));
 
 const { buildGoldPerCredit, priceGuildCreditCosts } = await import('./guild-credit-pricing.js');
@@ -40,11 +47,44 @@ beforeEach(() => {
         },
     };
     mocks.prices = { '/items/cheese': 1000, '/items/milk': 300 };
+    mocks.estimated = new Set();
 });
 
 describe('gold per credit', () => {
     test('takes the cheapest conversion, counted per credit rather than per item', () => {
         expect(buildGoldPerCredit()[CREDIT]).toBe(750);
+    });
+
+    test('an estimated price cannot set the rate — nobody is actually selling at it', () => {
+        // Milk is the cheaper conversion at 750/credit, but its price is the game's
+        // official value for an item with an empty book rather than a live listing.
+        // "Cheapest item that yields a credit" has to mean an item you could buy.
+        mocks.estimated.add('/items/milk');
+        expect(buildGoldPerCredit()[CREDIT]).toBe(1000); // cheese, which really is listed
+
+        // With the estimate gone from the picture entirely there is still a rate
+        mocks.estimated.add('/items/cheese');
+        expect(buildGoldPerCredit()[CREDIT]).toBeUndefined();
+    });
+
+    test('an item is priced once however many conversions it publishes', () => {
+        let calls = 0;
+        const prices = mocks.prices;
+        mocks.prices = new Proxy(prices, {
+            get(target, key) {
+                if (typeof key === 'string') calls++;
+                return target[key];
+            },
+        });
+        mocks.clientData.itemDetailMap['/items/cheese'].guildCreditConversions = [
+            { creditItemHrid: CREDIT, itemCount: 1, creditCount: 1 },
+            { creditItemHrid: OTHER_CREDIT, itemCount: 2, creditCount: 1 },
+            { creditItemHrid: OTHER_CREDIT, itemCount: 5, creditCount: 4 },
+        ];
+
+        buildGoldPerCredit();
+        // One lookup for cheese and one for milk, not one per conversion
+        expect(calls).toBe(2);
     });
 
     test('an item with no price cannot set the rate', () => {

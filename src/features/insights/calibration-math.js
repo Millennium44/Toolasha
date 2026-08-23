@@ -150,8 +150,24 @@ export function summarizeCalibration(records, options = {}) {
  * @param {number} [options.now] - Clock
  * @param {number} [options.days] - How many days back to cover
  * @returns {Array<{day: string, samples: number, predictedMean: number, actualMean: number, deviation: number|null}>}
- *   Oldest first
+ *   Oldest first, bucketed by the reader's own calendar day
  */
+/**
+ * The calendar day a timestamp falls on, in the reader's own timezone.
+ *
+ * `toISOString().slice(0, 10)` buckets by UTC day, which for anyone west of
+ * Greenwich splits an evening's actions across two rows and mislabels both.
+ * A day here means the day the user experienced.
+ * @param {number} timestamp - Epoch ms
+ * @returns {string} `YYYY-MM-DD`
+ */
+function localDayKey(timestamp) {
+    const d = new Date(timestamp);
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${month}-${day}`;
+}
+
 export function dailySeries(records, { now = Date.now(), days = 7 } = {}) {
     const cutoff = now - days * 24 * 60 * 60 * 1000;
     const buckets = new Map();
@@ -159,7 +175,7 @@ export function dailySeries(records, { now = Date.now(), days = 7 } = {}) {
     for (const record of records || []) {
         if (!record || !Number.isFinite(record.predicted) || !Number.isFinite(record.actual)) continue;
         if (!record.t || record.t < cutoff) continue;
-        const day = new Date(record.t).toISOString().slice(0, 10);
+        const day = localDayKey(record.t);
         if (!buckets.has(day)) buckets.set(day, []);
         buckets.get(day).push(record);
     }

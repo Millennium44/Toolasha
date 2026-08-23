@@ -798,8 +798,8 @@ class TooltipPrices {
         const upgradeDetails = dataManager.getItemDetails(upgradeHrid);
         if (!upgradeDetails) return [];
 
-        let askPrice = resolveItemPrice(upgradeHrid, { mode: 'ask', side: 'buy' }).price;
-        let bidPrice = resolveItemPrice(upgradeHrid, { mode: 'bid', side: 'buy' }).price;
+        let askPrice = resolveItemPrice(upgradeHrid, { mode: 'ask', side: 'buy' }).price ?? 0;
+        let bidPrice = resolveItemPrice(upgradeHrid, { mode: 'bid', side: 'buy' }).price ?? 0;
 
         const craftAsk = getProductionCost(upgradeHrid, 'ask');
         const craftBid = getProductionCost(upgradeHrid, 'bid');
@@ -845,8 +845,8 @@ class TooltipPrices {
                     return { ...material, askPrice: 1, bidPrice: 1 };
                 }
 
-                let askPrice = resolveItemPrice(material.itemHrid, { mode: 'ask', side: 'buy' }).price;
-                let bidPrice = resolveItemPrice(material.itemHrid, { mode: 'bid', side: 'buy' }).price;
+                let askPrice = resolveItemPrice(material.itemHrid, { mode: 'ask', side: 'buy' }).price ?? 0;
+                let bidPrice = resolveItemPrice(material.itemHrid, { mode: 'bid', side: 'buy' }).price ?? 0;
 
                 if (material.isUpgradeItem) {
                     const craftEnabled = config.getSetting('profitCalc_craftUpgradeItems');
@@ -971,8 +971,13 @@ class TooltipPrices {
         html += '<div style="font-weight: bold; margin-bottom: 4px;">EXPECTED VALUE</div>';
         html += '<div style="font-size: 0.9em; margin-left: 8px;">';
 
-        // Expected value (simple display)
-        html += `<div style="color: ${config.COLOR_TOOLTIP_PROFIT}; font-weight: bold;">Expected Return: ${formatTooltipPrice(evData.expectedValue)}</div>`;
+        // Expected value. Drops nobody can price contributed nothing to the total, so it is a
+        // lower bound rather than an estimate — the display says which of the two it is.
+        const evPrefix = evData.isPartial ? '\u2265 ' : '';
+        const evSuffix = evData.isPartial
+            ? ` <span style="color: ${config.COLOR_TEXT_SECONDARY}; font-weight: normal;">(${evData.missingCount} drop${evData.missingCount === 1 ? '' : 's'} unpriced)</span>`
+            : '';
+        html += `<div style="color: ${config.COLOR_TOOLTIP_PROFIT}; font-weight: bold;">Expected Return: ${evPrefix}${formatTooltipPrice(evData.expectedValue)}${evSuffix}</div>`;
         if (keyPrice > 0) {
             const keyLabel = keyName ? `Key Cost (${keyName})` : 'Key Cost';
             html += `<div style="color: ${config.COLOR_TOOLTIP_LOSS};">- ${keyLabel}: ${formatTooltipPrice(keyPrice)}</div>`;

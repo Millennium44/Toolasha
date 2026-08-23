@@ -5,12 +5,45 @@
  */
 
 import config from '../core/config.js';
-import marketAPI from '../api/marketplace.js';
 import dataManager from '../core/data-manager.js';
+import { getItemPrice } from './market-data.js';
+
+/** Essence a dungeon token falls back to when its shop prices nothing. */
+const TOKEN_ESSENCE_MAP = {
+    '/items/chimerical_token': '/items/chimerical_essence',
+    '/items/sinister_token': '/items/sinister_essence',
+    '/items/enchanted_token': '/items/enchanted_essence',
+    '/items/pirate_token': '/items/pirate_essence',
+};
 
 /**
- * Calculate dungeon token value based on best shop item value
- * Uses "best market value per token" approach: finds the shop item with highest (market price / token cost)
+ * Which side of the book a token valuation quotes, from the user's settings.
+ * @param {string} pricingModeSetting - Config key for the profit pricing mode
+ * @param {string} respectModeSetting - Config key for whether that mode is respected
+ * @returns {'ask'|'bid'}
+ */
+function tokenPricingSide(pricingModeSetting, respectModeSetting) {
+    const pricingMode = config.getSettingValue(pricingModeSetting, 'conservative');
+    const respectPricingMode = config.getSettingValue(respectModeSetting, true);
+    if (!respectPricingMode) return 'bid';
+    // Conservative/Patient Buy sell into the bid; Hybrid/Optimistic wait for the ask
+    return pricingMode === 'conservative' || pricingMode === 'patientBuy' ? 'bid' : 'ask';
+}
+
+/**
+ * Calculate dungeon token value based on best shop item value.
+ *
+ * A token is worth the most valuable thing its own shop converts it into —
+ * the same rule {@link labyrinthTokenValue} runs on, and the same one the task
+ * shop uses. Three details that a naive read of the shop map gets wrong and
+ * this does not: a line's token cost may sit anywhere in `costs`, not only at
+ * `costs[0]`; a line can hand over several of something (`outputCount`); and a
+ * line paid for with a token *and* something else says nothing clean about
+ * what a token alone is worth, so it is skipped rather than credited free.
+ *
+ * Prices go through `getItemPrice`, so a user's custom price overrides count
+ * here exactly as they do everywhere else.
+ *
  * @param {string} tokenHrid - Token HRID (e.g., '/items/chimerical_token')
  * @param {string} pricingModeSetting - Config setting key for pricing mode (default: 'profitCalc_pricingMode')
  * @param {string} respectModeSetting - Config setting key for respect pricing mode flag (default: 'expectedValue_respectPricingMode')
@@ -24,80 +57,21 @@ export function calculateDungeonTokenValue(
     const gameData = dataManager.getInitClientData();
     if (!gameData) return null;
 
-    // Get all shop items for this token type
-    const shopItems = Object.values(gameData.shopItemDetailMap || {}).filter(
-        (item) => item.costs && item.costs[0]?.itemHrid === tokenHrid
-    );
+    const mode = tokenPricingSide(pricingModeSetting, respectModeSetting);
+    const priceOf = (hrid) => (hrid ? getItemPrice(hrid, { mode }) : null);
 
-    if (shopItems.length === 0) return null;
+    // Only single-currency lines price a token cleanly
+    const tokenShop = Object.values(gameData.shopItemDetailMap || {}).filter((line) => {
+        const costs = shopCosts(line);
+        return costs.length === 1 && costs[0]?.itemHrid === tokenHrid;
+    });
 
-    let bestValuePerToken = 0;
+    const best = tokenValueIn(tokenShop, priceOf, tokenHrid);
+    if (best > 0) return best;
 
-    // For each shop item, calculate market price / token cost
-    for (const shopItem of shopItems) {
-        const itemHrid = shopItem.itemHrid;
-        const tokenCost = shopItem.costs[0].count;
-
-        // Get market price for this item
-        const prices = marketAPI.getPrice(itemHrid, 0);
-        if (!prices) continue;
-
-        // Use pricing mode to determine which price to use
-        const pricingMode = config.getSettingValue(pricingModeSetting, 'conservative');
-        const respectPricingMode = config.getSettingValue(respectModeSetting, true);
-
-        let marketPrice = 0;
-        if (respectPricingMode) {
-            // Conservative/Patient Buy: Bid, Hybrid/Optimistic: Ask
-            marketPrice = pricingMode === 'conservative' || pricingMode === 'patientBuy' ? prices.bid : prices.ask;
-        } else {
-            // Always conservative
-            marketPrice = prices.bid;
-        }
-
-        if (marketPrice <= 0) continue;
-
-        // Calculate value per token
-        const valuePerToken = marketPrice / tokenCost;
-
-        // Keep track of best value
-        if (valuePerToken > bestValuePerToken) {
-            bestValuePerToken = valuePerToken;
-        }
-    }
-
-    // Fallback to essence price if no shop items found
-    if (bestValuePerToken === 0) {
-        const essenceMap = {
-            '/items/chimerical_token': '/items/chimerical_essence',
-            '/items/sinister_token': '/items/sinister_essence',
-            '/items/enchanted_token': '/items/enchanted_essence',
-            '/items/pirate_token': '/items/pirate_essence',
-        };
-
-        const essenceHrid = essenceMap[tokenHrid];
-        if (essenceHrid) {
-            const essencePrice = marketAPI.getPrice(essenceHrid, 0);
-            if (essencePrice) {
-                const pricingMode = config.getSettingValue(pricingModeSetting, 'conservative');
-                const respectPricingMode = config.getSettingValue(respectModeSetting, true);
-
-                let marketPrice = 0;
-                if (respectPricingMode) {
-                    marketPrice =
-                        pricingMode === 'conservative' || pricingMode === 'patientBuy'
-                            ? essencePrice.bid
-                            : essencePrice.ask;
-                } else {
-                    marketPrice = essencePrice.bid;
-                }
-
-                return marketPrice > 0 ? marketPrice : null;
-            }
-        }
-    }
-
-    return bestValuePerToken > 0 ? bestValuePerToken : null;
+    // Nothing in the shop is priced: fall back to the token's essence
+    const essencePrice = priceOf(TOKEN_ESSENCE_MAP[tokenHrid]);
+    return essencePrice > 0 ? essencePrice : null;
 }
 
 /**

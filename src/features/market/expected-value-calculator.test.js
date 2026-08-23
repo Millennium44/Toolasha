@@ -317,3 +317,121 @@ describe('invalidateCache', () => {
         expect(expectedValueCalculator.containerCache.size).toBe(0);
     });
 });
+
+describe('nested containers', () => {
+    const OUTER = '/items/outer_chest';
+    const INNER = '/items/inner_crate';
+
+    beforeEach(() => {
+        mocks.itemDetails[OUTER] = { name: 'Outer Chest', isOpenable: true };
+        mocks.itemDetails[INNER] = { name: 'Inner Crate', isOpenable: true };
+        mocks.initData.openableLootDropMap[OUTER] = [{ itemHrid: INNER, dropRate: 1, minCount: 1, maxCount: 1 }];
+        mocks.initData.openableLootDropMap[INNER] = [{ itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 }];
+    });
+
+    test('a container inside a container is worth its contents whoever is costed first', () => {
+        // This used to be read straight out of containerCache, so the outer chest was
+        // worth the crate's contents if the crate happened to have been costed already
+        // and worth nothing if it had not — the same chest, two answers, decided by
+        // iteration order. Both orders now agree.
+        const outerFirst = expectedValueCalculator.calculateContainerValue(OUTER, mocks.initData).expectedValue;
+
+        expectedValueCalculator.containerCache.clear();
+        expectedValueCalculator.calculateContainerValue(INNER, mocks.initData);
+        const innerFirst = expectedValueCalculator.calculateContainerValue(OUTER, mocks.initData).expectedValue;
+
+        expect(outerFirst).toBe(innerFirst);
+        expect(outerFirst).toBeGreaterThan(0);
+    });
+
+    test('a container that contains itself terminates instead of recursing forever', () => {
+        mocks.initData.openableLootDropMap[INNER] = [
+            { itemHrid: OUTER, dropRate: 1, minCount: 1, maxCount: 1 },
+            { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+        ];
+
+        const result = expectedValueCalculator.calculateContainerValue(OUTER, mocks.initData);
+
+        expect(Number.isFinite(result.expectedValue)).toBe(true);
+        expect(result.expectedValue).toBeGreaterThan(0);
+    });
+});
+
+describe('partially priceable containers', () => {
+    const PARTIAL = '/items/partial_chest';
+    const UNPRICEABLE = '/items/unpriceable_thing';
+
+    beforeEach(() => {
+        mocks.itemDetails[PARTIAL] = { name: 'Partial Chest', isOpenable: true };
+        mocks.itemDetails[UNPRICEABLE] = { name: 'Unpriceable Thing', isTradable: true };
+        mocks.initData.openableLootDropMap[PARTIAL] = [
+            { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+            { itemHrid: UNPRICEABLE, dropRate: 1, minCount: 1, maxCount: 1 },
+        ];
+        expectedValueCalculator.isInitialized = true;
+    });
+
+    test('a drop nobody can price is counted, so the total is known to be a floor', () => {
+        // The count used to go into a local nobody read, so a chest whose best item had
+        // no market data reported a confident small number instead of "at least this much"
+        const result = expectedValueCalculator.calculateContainerValue(PARTIAL, mocks.initData);
+
+        expect(result.missingCount).toBe(1);
+        expect(result.isPartial).toBe(true);
+        expect(result.expectedValue).toBeGreaterThan(0);
+    });
+
+    test('a fully priced container is not partial', () => {
+        mocks.prices[UNPRICEABLE] = 10;
+
+        const result = expectedValueCalculator.calculateContainerValue(PARTIAL, mocks.initData);
+
+        expect(result.missingCount).toBe(0);
+        expect(result.isPartial).toBe(false);
+    });
+
+    test('calculateExpectedValue carries the same verdict to whoever draws it', () => {
+        const evData = expectedValueCalculator.calculateExpectedValue(PARTIAL);
+
+        expect(evData.missingCount).toBe(1);
+        expect(evData.isPartial).toBe(true);
+    });
+
+    test('calculateSingleContainer still answers with a bare number', () => {
+        expect(expectedValueCalculator.calculateSingleContainer(PARTIAL, mocks.initData)).toBeGreaterThan(0);
+        expect(expectedValueCalculator.calculateSingleContainer('/items/not_a_container', mocks.initData)).toBeNull();
+    });
+});
+
+describe('formatExpectedValue', () => {
+    const round = (n) => String(Math.round(n));
+
+    test('a complete total is just the figure', () => {
+        expect(
+            expectedValueCalculator.formatExpectedValue(
+                { expectedValue: 1500, missingCount: 0, isPartial: false },
+                round
+            )
+        ).toBe('1500');
+    });
+
+    test('a partial total says it is a floor and how much is missing', () => {
+        expect(
+            expectedValueCalculator.formatExpectedValue(
+                { expectedValue: 1500, missingCount: 2, isPartial: true },
+                round
+            )
+        ).toBe('\u2265 1500 (2 drops unpriced)');
+    });
+
+    test('one unpriced drop is a drop, not drops', () => {
+        expect(
+            expectedValueCalculator.formatExpectedValue({ expectedValue: 10, missingCount: 1, isPartial: true }, round)
+        ).toBe('\u2265 10 (1 drop unpriced)');
+    });
+
+    test('nothing to say is a dash rather than a number', () => {
+        expect(expectedValueCalculator.formatExpectedValue(null, round)).toBe('--');
+        expect(expectedValueCalculator.formatExpectedValue({ expectedValue: null }, round)).toBe('--');
+    });
+});

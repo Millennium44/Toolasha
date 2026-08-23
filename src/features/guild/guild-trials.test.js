@@ -114,6 +114,10 @@ vi.mock('../../core/storage.js', () => ({
 // mocked here so the real marketplace client is never pulled into this file
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (itemHrid, { mode } = {}) => game.prices[itemHrid]?.[mode] ?? 0,
+    getItemPriceInfo: (itemHrid, { mode } = {}) => {
+        const price = game.prices[itemHrid]?.[mode] ?? 0;
+        return { price, source: price > 0 ? 'book' : null, estimated: false };
+    },
 }));
 // `encounterOf` is a pure name-matcher and the feature now routes the spectated
 // pool through it, so the real one is kept rather than stubbed

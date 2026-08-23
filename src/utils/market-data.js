@@ -56,9 +56,33 @@ export function withProfitPricingMode(mode, fn) {
  * @returns {number|null} Price in gold, or null if no market data
  */
 export function getItemPrice(itemHrid, options = {}) {
+    return getItemPriceInfo(itemHrid, options).price;
+}
+
+/**
+ * Price an item and say where the number came from.
+ *
+ * `getItemPrice` returns a bare number and always will — too much depends on
+ * that shape. But since the marketplace patch an item with an empty order book
+ * is still priced, from the game's official value map, and a caller that cannot
+ * tell that apart from a real listing quietly reports an estimate as a quote.
+ * Everything that used to mean "no market data" (`missing`, `hasMissingPrices`,
+ * `hasPriceData`) stopped firing the day value-filling landed; this is how a
+ * caller gets that signal back.
+ *
+ * @param {string} itemHrid - Item HRID
+ * @param {Object} options - Same options as {@link getItemPrice}
+ * @returns {{price: number|null, source: 'custom'|'book'|'value'|null, estimated: boolean}}
+ *   `source` is `'custom'` for a user override, `'book'` for a live order-book price,
+ *   `'value'` for one derived from the official value map, `null` when unpriced.
+ *   `estimated` is true exactly when `source === 'value'`.
+ */
+export function getItemPriceInfo(itemHrid, options = {}) {
+    const unpriced = { price: null, source: null, estimated: false };
+
     // Validate inputs
     if (!itemHrid || typeof itemHrid !== 'string') {
-        return null;
+        return unpriced;
     }
 
     // Handle case where someone passes enhancementLevel as second arg (old API)
@@ -76,7 +100,7 @@ export function getItemPrice(itemHrid, options = {}) {
     // Check for custom price override
     const customPrice = getCustomPrice(itemHrid, enhancementLevel, side);
     if (customPrice !== null) {
-        return customPrice;
+        return { price: customPrice, source: 'custom', estimated: false };
     }
 
     // Get raw price data from API, reconciled against the official market value:
@@ -84,10 +108,15 @@ export function getItemPrice(itemHrid, options = {}) {
     // valued the way the game values it. A pass-through until the patch is live.
     refreshMarketValues();
     const priceData = marketAPI.getPrice(itemHrid, enhancementLevel);
-    const { ask, bid } = reconcileBook(priceData?.ask ?? null, priceData?.bid ?? null, itemHrid, enhancementLevel);
+    const { ask, bid, askSource, bidSource } = reconcileBook(
+        priceData?.ask ?? null,
+        priceData?.bid ?? null,
+        itemHrid,
+        enhancementLevel
+    );
 
     if (ask === null && bid === null) {
-        return null;
+        return unpriced;
     }
 
     // Determine pricing mode
@@ -98,43 +127,55 @@ export function getItemPrice(itemHrid, options = {}) {
     if (!validModes.includes(pricingMode)) {
         const warningKey = `mode:${pricingMode}`;
         if (!loggedWarnings.has(warningKey)) {
-            console.warn(`[Market Data] Unknown pricing mode: ${pricingMode}, defaulting to ask`);
+            console.warn(`[Market Data] Unknown pricing mode: ${pricingMode}, no price returned`);
             loggedWarnings.add(warningKey);
         }
-        return ask || 0;
+        // A mode nobody recognises is a bug, and answering it with the ask (or
+        // worse, 0) hides that bug behind a plausible number. Unpriced is honest.
+        return unpriced;
     }
 
-    const resolvePrice = (value) => {
-        if (typeof value !== 'number') {
-            return null;
+    const resolveSide = (value, source) => {
+        if (typeof value !== 'number' || value < 0) {
+            return unpriced;
         }
-
-        if (value < 0) {
-            return null;
-        }
-
-        return value;
+        return { price: value, source, estimated: source === 'value' };
     };
 
     // Return price based on mode
     switch (pricingMode) {
         case 'ask':
-            return resolvePrice(ask);
+            return resolveSide(ask, askSource);
         case 'bid':
-            return resolvePrice(bid);
-        case 'average':
+            return resolveSide(bid, bidSource);
+        case 'average': {
             if (typeof ask !== 'number' || typeof bid !== 'number') {
-                return null;
+                return unpriced;
             }
 
             if (ask < 0 || bid < 0) {
-                return null;
+                return unpriced;
             }
 
-            return (ask + bid) / 2;
+            // An average is only as solid as its weaker half
+            const estimated = askSource === 'value' || bidSource === 'value';
+            return { price: (ask + bid) / 2, source: estimated ? 'value' : 'book', estimated };
+        }
         default:
-            return resolvePrice(ask);
+            return resolveSide(ask, askSource);
     }
+}
+
+/**
+ * Whether an item's price is an estimate from the official value map rather
+ * than a live order-book quote. The parallel-check counterpart of
+ * {@link isPriceOverridden}, for callers that hold a bare number.
+ * @param {string} itemHrid - Item HRID
+ * @param {Object} [options] - Same options as {@link getItemPrice}
+ * @returns {boolean}
+ */
+export function isPriceEstimated(itemHrid, options = {}) {
+    return getItemPriceInfo(itemHrid, options).estimated;
 }
 
 /**
@@ -174,12 +215,19 @@ export function getPriceAgeString() {
  * Get all price variants for an item
  * @param {string} itemHrid - Item HRID
  * @param {number} [enhancementLevel=0] - Enhancement level
- * @returns {Object|null} Object with {ask, bid, average} or null if no market data
+ * @returns {Object|null} Object with {ask, bid, average, askEstimated, bidEstimated} or null if no
+ *   market data. The `*Estimated` flags are true when that side was filled in from the official
+ *   value map rather than read off a live order book.
  */
 export function getItemPrices(itemHrid, enhancementLevel = 0) {
     refreshMarketValues();
     const priceData = marketAPI.getPrice(itemHrid, enhancementLevel);
-    const { ask, bid } = reconcileBook(priceData?.ask ?? null, priceData?.bid ?? null, itemHrid, enhancementLevel);
+    const { ask, bid, askSource, bidSource } = reconcileBook(
+        priceData?.ask ?? null,
+        priceData?.bid ?? null,
+        itemHrid,
+        enhancementLevel
+    );
 
     if (ask === null && bid === null) {
         return null;
@@ -189,6 +237,8 @@ export function getItemPrices(itemHrid, enhancementLevel = 0) {
         ask,
         bid,
         average: (ask + bid) / 2,
+        askEstimated: askSource === 'value',
+        bidEstimated: bidSource === 'value',
     };
 }
 
@@ -316,6 +366,8 @@ export function getItemPricesBatch(items, options = {}) {
 
 export default {
     getItemPrice,
+    getItemPriceInfo,
+    isPriceEstimated,
     getItemPrices,
     formatPrice,
     getPricingMode,

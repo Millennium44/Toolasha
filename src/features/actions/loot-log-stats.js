@@ -82,6 +82,13 @@ export function buildLootLogRows(entries, { itemInfo, actionName }) {
     return rows;
 }
 
+/**
+ * Shortest run whose 24-hour extrapolation is presented as a rate rather than as
+ * "what this would come to if it kept up". Ten minutes: long enough that a single
+ * rare drop no longer sets the whole figure.
+ */
+const MIN_DAILY_EXTRAPOLATION_SECONDS = 600;
+
 class LootLogStats {
     constructor() {
         this.unregisterHandlers = [];
@@ -694,6 +701,21 @@ class LootLogStats {
     }
 
     /**
+     * Whether a run lasted long enough for a 24-hour figure derived from it to be
+     * worth reading as a rate.
+     *
+     * A three-minute entry scaled to a day is multiplied by 480: one lucky rare in
+     * those three minutes becomes half a billion a day, and the number reads as a
+     * projection rather than the single sample it is. Short runs still show the
+     * figure, labelled as an extrapolation rather than a forecast.
+     * @param {number} durationSeconds - How long the run actually lasted
+     * @returns {boolean}
+     */
+    isDailyRateMeaningful(durationSeconds) {
+        return Number(durationSeconds) >= MIN_DAILY_EXTRAPOLATION_SECONDS;
+    }
+
+    /**
      * Format duration for display
      * @param {number} seconds - Duration in seconds
      * @returns {string} Formatted duration string
@@ -1190,10 +1212,19 @@ class LootLogStats {
         const dayValueSpan = document.createElement('span');
         dayValueSpan.className = 'mwi-loot-log-day-value';
 
+        const rateIsMeaningful = this.isDailyRateMeaningful(duration);
+        // Below the threshold the figure is what this short run would come to if it kept up,
+        // which is a different claim from what a day actually looks like — so it says so
+        const rateSuffix = rateIsMeaningful ? '' : ' (at this rate)';
+        const rateTitle = rateIsMeaningful
+            ? ''
+            : `Extrapolated from ${Math.round(duration)}s of activity — too short to be a daily rate`;
+
         if (dayValueAsk === 0 && dayValueBid === 0) {
             dayValueSpan.textContent = 'Daily Output: —';
         } else {
-            dayValueSpan.textContent = `Daily Output: ${formatKMB(dayValueAsk)}/${formatKMB(dayValueBid)}`;
+            dayValueSpan.textContent = `Daily Output: ${formatKMB(dayValueAsk)}/${formatKMB(dayValueBid)}` + rateSuffix;
+            if (rateTitle) dayValueSpan.title = rateTitle;
         }
 
         dayValueSpan.style.float = 'right';
@@ -1210,7 +1241,9 @@ class LootLogStats {
             dayProfitSpan.className = 'mwi-loot-log-day-profit';
             const dayProfitAsk = (profit.askProfit * 86400) / duration;
             const dayProfitBid = (profit.bidProfit * 86400) / duration;
-            dayProfitSpan.textContent = `Daily Profit: ${formatKMB(dayProfitAsk)}/${formatKMB(dayProfitBid)}`;
+            dayProfitSpan.textContent =
+                `Daily Profit: ${formatKMB(dayProfitAsk)}/${formatKMB(dayProfitBid)}` + rateSuffix;
+            if (rateTitle) dayProfitSpan.title = rateTitle;
             dayProfitSpan.style.float = 'right';
             dayProfitSpan.style.color = this.getProfitColor(dayProfitAsk, dayProfitBid);
             dayProfitSpan.style.fontWeight = 'bold';

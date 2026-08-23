@@ -180,6 +180,17 @@ describe('calculateItemValue', () => {
         expect(value).toBe(10000);
     });
 
+    test('task tokens are unvalued, not guessed at, before the shop can be read', async () => {
+        // The task shop is what prices a token; until market data arrives there is no
+        // honest figure. A stand-in 30,000 apiece put a five-figure phantom in the total
+        // that moved on its own and settled somewhere else once prices loaded.
+        mocks.settings.networth_includeTaskTokens = true;
+        mocks.taskTokenValue = { tokenValue: null, error: 'Market data not loaded' };
+
+        const value = await calculateItemValue({ itemHrid: '/items/task_token', enhancementLevel: 0, count: 400 });
+        expect(value).toBe(0);
+    });
+
     test('an openable container with no market price falls back to its expected value net of key cost', async () => {
         // No market data, not high enhancement, level 0 -> should hit crafting/shop fallback path (0 here)
         mocks.itemDetails['/items/crate'] = { isOpenable: true };

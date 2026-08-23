@@ -13,6 +13,7 @@ import { actionPanelSort } from '../../utils/bundle-bridge.js';
 import {
     calculateProductionActionTotalsFromBase,
     calculateGatheringActionTotalsFromBase,
+    calculatePriceAfterTax,
 } from '../../utils/profit-helpers.js';
 import { getItemPrice } from '../../utils/market-data.js';
 
@@ -28,20 +29,31 @@ const TASKS_PER_PURPLES_GIFT = 50;
  * anything else tradable is worth its market price.
  * @param {string} itemHrid - Shop item
  * @param {Object} itemDetailMap - Game item details
- * @returns {number} Coins the item is worth, or 0 when unpriceable
+ * @returns {{value: number, partialDrops: number}} Coins the item is worth (0 when unpriceable),
+ *   and how many of its drops could not be priced — non-zero makes the value a lower bound
  */
 function valueOfShopItem(itemHrid, itemDetailMap) {
-    let value = getItemPrice(itemHrid, { context: 'profit', side: 'sell' }) || 0;
+    // Post-tax: this is what the shop item would fetch if sold, and every other sell-side
+    // figure in the plugin is net of the marketplace cut. Quoting a token pre-tax while the
+    // action profit it is compared against is post-tax overstated every task by the tax rate.
+    const listed = getItemPrice(itemHrid, { context: 'profit', side: 'sell' });
+    let value = listed > 0 ? calculatePriceAfterTax(listed) : 0;
+
+    let partialDrops = 0;
 
     if (itemDetailMap?.[itemHrid]?.isOpenable) {
         const evData = expectedValueCalculator.calculateExpectedValue(itemHrid);
         const expectedValue = evData?.expectedValue || 0;
         if (expectedValue > value) {
             value = expectedValue;
+            // The chest's own total left out drops nothing could price, so a token valued
+            // through it is a floor. Carried up so the panel can say so rather than
+            // presenting an incomplete figure as the answer.
+            partialDrops = evData?.missingCount || 0;
         }
     }
 
-    return value;
+    return { value, partialDrops };
 }
 
 /**
@@ -62,7 +74,8 @@ function shopCosts(line) {
  * line that buys several of something is priced correctly — none of which a
  * hardcoded list of three chests at 30 tokens each could ever notice.
  *
- * @returns {{perToken: number, itemHrid: string, tokenCost: number, itemValue: number}|null}
+ * @returns {{perToken: number, itemHrid: string, tokenCost: number, itemValue: number,
+ *   partialDrops: number}|null}
  */
 export function findBestTaskShopValue() {
     const gameData = dataManager.getInitClientData();
@@ -86,14 +99,14 @@ export function findBestTaskShopValue() {
         const tokenCost = costs[0].count || 0;
         if (tokenCost <= 0) continue;
 
-        const unitValue = valueOfShopItem(itemHrid, itemDetailMap);
+        const { value: unitValue, partialDrops } = valueOfShopItem(itemHrid, itemDetailMap);
         if (unitValue <= 0) continue;
 
         // One purchase can hand over several of something, and the shop says so
         const itemValue = unitValue * (line.outputCount || 1);
         const perToken = itemValue / tokenCost;
         if (!best || perToken > best.perToken) {
-            best = { perToken, itemHrid, tokenCost, itemValue };
+            best = { perToken, itemHrid, tokenCost, itemValue, partialDrops };
         }
     }
 
@@ -142,6 +155,10 @@ export function calculateTaskTokenValue() {
         bestShopItemHrid: best.itemHrid,
         bestShopTokenCost: best.tokenCost,
         totalPerToken: taskTokenValue + giftPerTask,
+        // The best shop line was an openable whose own contents are not fully priceable, so
+        // the token value is a floor
+        partialDrops: best.partialDrops || 0,
+        isPartial: (best.partialDrops || 0) > 0,
         error: null,
     };
 }

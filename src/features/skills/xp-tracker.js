@@ -141,21 +141,20 @@ registerSyncMerge({ store: STORE_NAME, base: 'xpHistory', merge: mergeXPHistory,
 
 /**
  * Filter history to only entries within the given interval from now.
+ *
+ * Exported for its test: it is the one piece of the rate calculation that used to
+ * depend on the series being in time order, which a cross-device merge does not
+ * guarantee at the point this runs.
  * @param {Array} arr
  * @param {number} interval - ms
  * @returns {Array}
  */
-function inLastInterval(arr, interval) {
+export function inLastInterval(arr, interval) {
     const now = Date.now();
-    const result = [];
-    for (let i = arr.length - 1; i >= 0; i--) {
-        if (now - arr[i].t <= interval) {
-            result.unshift(arr[i]);
-        } else {
-            break;
-        }
-    }
-    return result;
+    // A filter, not a walk back until something is too old: the series is normally in time
+    // order, but a cross-device sync merge folds another tab's samples in, and a stop at the
+    // first old entry would have to trust that ordering completely. A filter is right either way.
+    return (arr || []).filter((sample) => sample && now - sample.t <= interval);
 }
 
 /**

@@ -3,7 +3,21 @@
  * Testing profit/rate calculations used across features
  */
 
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
+
+const chain = vi.hoisted(() => ({ market: null, custom: null, shop: 0, production: 0 }));
+
+vi.mock('./market-data.js', () => ({
+    getItemPriceInfo: () => chain.market ?? { price: null, source: null, estimated: false },
+}));
+vi.mock('../features/settings/custom-price-overrides.js', () => ({
+    getCustomPrice: () => chain.custom,
+}));
+vi.mock('./game-lookups.js', () => ({ getShopCoinCost: () => chain.shop }));
+vi.mock('../features/enhancement/tooltip-enhancement.js', () => ({
+    getProductionCost: () => chain.production,
+}));
+
 import {
     calculateActionsPerHour,
     calculateHoursForActions,
@@ -16,6 +30,7 @@ import {
     calculatePriceAfterTax,
     calculateProductionActionTotalsFromBase,
     calculateGatheringActionTotalsFromBase,
+    resolveItemPrice,
 } from './profit-helpers.js';
 import { MARKET_TAX } from './profit-constants.js';
 import { calculateEfficiencyMultiplier } from './efficiency.js';
@@ -438,5 +453,85 @@ describe('Real-world profit scenarios', () => {
         });
 
         expect(result.totalProfit).toBe(-2000);
+    });
+});
+
+describe('resolveItemPrice', () => {
+    beforeEach(() => {
+        chain.market = null;
+        chain.custom = null;
+        chain.shop = 0;
+        chain.production = 0;
+    });
+
+    test('a custom override beats everything and is neither missing nor an estimate', () => {
+        chain.custom = 1234;
+        chain.market = { price: 500, source: 'book', estimated: false };
+
+        expect(resolveItemPrice('/items/cheese')).toEqual({
+            price: 1234,
+            custom: true,
+            missing: false,
+            estimated: false,
+        });
+    });
+
+    test('a live order-book price is not an estimate', () => {
+        chain.market = { price: 500, source: 'book', estimated: false };
+
+        expect(resolveItemPrice('/items/cheese')).toEqual({
+            price: 500,
+            custom: false,
+            missing: false,
+            estimated: false,
+        });
+    });
+
+    test('a price filled in from the official value is carried through as an estimate', () => {
+        // The number is real and worth using; it is just not a quote anyone is standing
+        // behind, and a caller that renders it should be able to say so
+        chain.market = { price: 1000, source: 'value', estimated: true };
+
+        expect(resolveItemPrice('/items/cheese')).toEqual({
+            price: 1000,
+            custom: false,
+            missing: false,
+            estimated: true,
+        });
+    });
+
+    test('a production-cost fallback is an estimate too', () => {
+        chain.production = 700;
+
+        expect(resolveItemPrice('/items/cheese')).toEqual({
+            price: 700,
+            custom: false,
+            missing: false,
+            estimated: true,
+        });
+    });
+
+    test('a shop floor undercuts the market on the buy side', () => {
+        chain.market = { price: 900, source: 'book', estimated: false };
+        chain.shop = 400;
+
+        expect(resolveItemPrice('/items/cheese', { side: 'buy' })).toEqual({
+            price: 400,
+            custom: false,
+            missing: false,
+            estimated: false,
+        });
+    });
+
+    test('nothing can price it: null, not zero', () => {
+        // Zero meant "free", and a material that is free makes a recipe look wildly
+        // profitable. Null is unpriced, and arithmetic on it goes visibly wrong rather
+        // than quietly wrong.
+        expect(resolveItemPrice('/items/cheese')).toEqual({
+            price: null,
+            custom: false,
+            missing: true,
+            estimated: false,
+        });
     });
 });

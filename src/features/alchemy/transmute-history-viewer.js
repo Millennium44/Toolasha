@@ -655,8 +655,9 @@ class TransmuteHistoryViewer {
         const inputPrice = getItemPrice(session.inputItemHrid, { context: 'profit', side: 'buy' }) || 0;
         const inputCost = netConsumed * inputPrice;
 
-        // Transmute coin fee — see utils/alchemy-fees.js (bulkMultiplier already folded in)
-        const coinCost = getAlchemyCoinCost(itemDetails, 'transmute') * attempts;
+        // Transmute coin fee — see utils/alchemy-fees.js. The session's recorded bulkMultiplier
+        // is the one that was actually billed, so it overrides the item's current one.
+        const coinCost = getAlchemyCoinCost(itemDetails, 'transmute', bulkMultiplier) * attempts;
 
         return { profit: revenue - inputCost - coinCost, revenue, inputCost, coinCost, netConsumed };
     }

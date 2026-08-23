@@ -2770,7 +2770,8 @@ function resaleCredit(candidate) {
     let credit = 0;
     for (const item of removed) {
         if (!item?.hrid) continue;
-        credit += resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price;
+        credit +=
+            resolveItemPrice(item.hrid, { side: 'sell', enhancementLevel: item.enhancementLevel || 0 }).price ?? 0;
     }
     return credit;
 }
@@ -2857,7 +2858,7 @@ function resolveUpgradeBuyPrice(itemHrid, enhancementLevel, slot, gameData) {
         }
 
         // No listing at the target level: base item price + enhancement cost
-        const basePrice = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price;
+        const basePrice = resolveItemPrice(itemHrid, { side: 'buy', enhancementLevel: 0 }).price ?? 0;
         const enhanceCost = calculateEnhancementCost(itemHrid, 0, enhancementLevel, gameData, { slot });
         // Unknown enhancement cost must stay unknown — pricing the item as a
         // bare +0 craft would understate an enhanced buy by the whole enhance path

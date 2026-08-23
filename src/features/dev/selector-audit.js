@@ -13,8 +13,17 @@
  * What it can check: `class*=` prefixes (must appear inside some stylesheet
  * class name) and full hashed literals (must appear exactly). What it cannot:
  * selectors built from neither — those are reported as unchecked rather than
- * silently passed. The registry in utils/selectors.js is the inventory; a
- * selector a feature keeps privately can be handed in via `extra`.
+ * silently passed.
+ *
+ * What it does not see at all: the roughly 180 `class*="…"` literals written
+ * inline in feature files rather than registered in utils/selectors.js. The
+ * audit runs in the page and cannot grep the source, so a class named only at a
+ * call site is outside its reach — and a clean report used to read as though it
+ * had covered everything. It now says what it covered instead. The fix for a
+ * given selector is to register it in `GAME`, which costs nothing at the call
+ * site (the audit checks the name, not who spells it) — the most-used inline
+ * prefixes have been moved there already. A selector a feature must keep
+ * privately can be handed in via `extra` for a one-off run.
  */
 
 import { GAME } from '../../utils/selectors.js';
@@ -57,12 +66,14 @@ export function collectStylesheetClasses(doc = document) {
  */
 export function auditSelector(selector, classSet) {
     const text = String(selector);
-    // Only CSS-module-shaped prefixes (Component_name) can be judged against
-    // the module-class inventory — a MUI prefix like MuiTabs-flexContainer is
-    // real but never enters the set, and judging it there is a false alarm
+    // Only CSS-module-shaped prefixes can be judged against the module-class
+    // inventory — either `Component_name` or a bare `Component`, which is how a
+    // whole-panel selector is usually written. A MUI prefix like
+    // MuiTabs-flexContainer is real but never enters the set (the hyphen gives it
+    // away), and judging it there is a false alarm; so is a bare camelCase class.
     const prefixes = [...text.matchAll(/class[*^]?=["']([^"']+)["']/g)]
         .map((match) => match[1])
-        .filter((prefix) => /^[A-Z][A-Za-z]*_[A-Za-z]/.test(prefix));
+        .filter((prefix) => /^[A-Z][A-Za-z]*(_[A-Za-z]|$)/.test(prefix));
     const hashed = [...text.matchAll(/\.([A-Za-z]+_[A-Za-z0-9]+__[A-Za-z0-9_-]+)/g)].map((match) => match[1]);
     if (!prefixes.length && !hashed.length) return { status: 'unchecked', missing: [] };
 
@@ -122,7 +133,11 @@ export function runSelectorAudit(extra = []) {
         console.warn(`[SelectorAudit] ${report.broken.length} selector(s) no longer match any game class:`);
         console.table(report.broken);
     } else {
-        console.log(`[SelectorAudit] All ${report.checked} checkable selectors still name real game classes.`);
+        console.log(
+            `[SelectorAudit] All ${report.checked} registered selectors still name real game classes. ` +
+                'Selectors written inline in feature files are not covered — this audit can only see the ' +
+                'utils/selectors.js registry plus anything passed as `extra`.'
+        );
     }
     if (report.unchecked.length) {
         console.log(

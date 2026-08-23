@@ -71,6 +71,7 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/buff-parser.js')), 'Toolasha.Utils.buffParser'],
     [normalize(join(__dirname, 'src/utils/selectors.js')), 'Toolasha.Utils.selectors'],
     [normalize(join(__dirname, 'src/utils/house-efficiency.js')), 'Toolasha.Utils.houseEfficiency'],
+    [normalize(join(__dirname, 'src/utils/community-buffs.js')), 'Toolasha.Utils.communityBuffs'],
     [normalize(join(__dirname, 'src/utils/experience-calculator.js')), 'Toolasha.Utils.experienceCalculator'],
     [normalize(join(__dirname, 'src/utils/market-data.js')), 'Toolasha.Utils.marketData'],
     [normalize(join(__dirname, 'src/utils/market-values.js')), 'Toolasha.Utils.marketValues'],

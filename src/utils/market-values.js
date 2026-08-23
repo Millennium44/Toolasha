@@ -196,17 +196,29 @@ export function clampToBand(price, itemHrid, enhancementLevel = 0) {
  * @param {number|null} bid - Raw best bid
  * @param {string} itemHrid - Item HRID
  * @param {number} [enhancementLevel=0] - Enhancement level
- * @returns {{ask:number|null, bid:number|null}}
+ * @returns {{ask:number|null, bid:number|null, askSource:string|null, bidSource:string|null}}
+ *   Each `*Source` is `'book'` when the side came from the live order book (clamped or not),
+ *   `'value'` when it was filled in from the official value map, and `null` when there is no
+ *   price at all. Callers that must distinguish a real quote from an estimate read these —
+ *   without them a value-filled side is indistinguishable from a genuine listing, and every
+ *   "no market data" signal downstream silently stops firing.
  */
 export function reconcileBook(ask, bid, itemHrid, enhancementLevel = 0) {
-    if (!isMarketplacePatchLive()) return { ask, bid };
+    const sourceOf = (x) => (typeof x === 'number' && x >= 0 ? 'book' : null);
+    if (!isMarketplacePatchLive()) {
+        return { ask, bid, askSource: sourceOf(ask), bidSource: sourceOf(bid) };
+    }
     const value = marketValueFor(itemHrid, enhancementLevel);
-    if (value === null) return { ask, bid };
+    if (value === null) return { ask, bid, askSource: sourceOf(ask), bidSource: sourceOf(bid) };
     const band = bandFor(itemHrid, enhancementLevel);
     const clamp = (x) => (typeof x === 'number' && x >= 0 ? Math.min(Math.max(x, band.min), band.max) : null);
+    const askIsBook = typeof ask === 'number' && ask >= 0;
+    const bidIsBook = typeof bid === 'number' && bid >= 0;
     return {
-        ask: typeof ask === 'number' && ask >= 0 ? clamp(ask) : value,
-        bid: typeof bid === 'number' && bid >= 0 ? clamp(bid) : value,
+        ask: askIsBook ? clamp(ask) : value,
+        bid: bidIsBook ? clamp(bid) : value,
+        askSource: askIsBook ? 'book' : 'value',
+        bidSource: bidIsBook ? 'book' : 'value',
     };
 }
 

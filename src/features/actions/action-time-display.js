@@ -23,6 +23,7 @@ import { calculateActionStats } from '../../utils/action-calculator.js';
 import { getAlchemyCoinCost, getAlchemyTypeFromActionHrid } from '../../utils/alchemy-fees.js';
 import { timeReadable, formatWithSeparator, formatDateTime } from '../../utils/formatters.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
+import { getCommunityGatheringQuantity } from '../../utils/community-buffs.js';
 import { createCleanupRegistry } from '../../utils/cleanup-registry.js';
 import { isMobileMode } from '../../utils/mobile.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -961,9 +962,8 @@ class ActionTimeDisplay {
             const drinkConcentration = getDrinkConcentration(equipment, itemDetailMap);
             const gatheringTea = parseGatheringBonus(activeDrinks, itemDetailMap, drinkConcentration);
 
-            // Community buff
-            const communityBuffLevel = dataManager.getCommunityBuffLevel('/community_buff_types/gathering_quantity');
-            const communityGathering = communityBuffLevel ? 0.2 + (communityBuffLevel - 1) * 0.005 : 0;
+            // Community buff — strength and which skills it covers both come from game data
+            const communityGathering = getCommunityGatheringQuantity(actionDetails.type);
 
             // Achievement buffs
             const achievementGathering = dataManager.getAchievementBuffFlatBoost(

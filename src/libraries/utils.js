@@ -26,6 +26,7 @@ import * as teaParser from '../utils/tea-parser.js';
 import * as buffParser from '../utils/buff-parser.js';
 import * as selectors from '../utils/selectors.js';
 import * as houseEfficiency from '../utils/house-efficiency.js';
+import * as communityBuffs from '../utils/community-buffs.js';
 import * as experienceCalculator from '../utils/experience-calculator.js';
 import * as marketData from '../utils/market-data.js';
 import * as marketValues from '../utils/market-values.js';
@@ -151,6 +152,7 @@ if (typeof unsafeWindow !== 'undefined') {
 toolashaRoot.Utils = {
     formatters,
     efficiency,
+    communityBuffs,
     profitHelpers,
     profitConstants,
     serverGate,

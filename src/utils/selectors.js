@@ -129,6 +129,24 @@ export const GAME = {
 
     // Tooltips
     MUI_TOOLTIP: '.MuiTooltip-tooltip',
+
+    // Frequently used inline prefixes.
+    //
+    // These were each written out by hand at a dozen or more call sites and never
+    // registered, which meant the selector audit had nothing to check them against —
+    // a game update could rename any of them and the audit would still report all
+    // clear. Registered here so the audit covers them; call sites are free to keep
+    // their inline literal, since the audit checks the name, not who spells it.
+    ITEM_ENHANCEMENT_LEVEL: '[class*="Item_enhancementLevel"]',
+    COLLECTION_TOOLTIP_CONTENT: '[class*="Collection_tooltipContent"]',
+    GUILD_PANEL: '[class*="GuildPanel"]',
+    MARKETPLACE_MY_LISTINGS_TABLE: '[class*="MarketplacePanel_myListingsTable"]',
+    MARKETPLACE_HEADER: '[class*="MarketplacePanel_header"]',
+    BATTLE_PLAYERS_AREA: '[class*="BattlePanel_playersArea"]',
+    SKILL_ACTION_DETAIL_ALCHEMY: '[class*="SkillActionDetail_alchemyComponent"]',
+    ENHANCING_PANEL: '[class*="EnhancingPanel_enhancingPanel"]',
+    HEADER_ACTION_NAME: '[class*="Header_actionName"]',
+    NAVIGATION_BAR_NAV: '[class*="NavigationBar_nav__"]',
 };
 
 /**
