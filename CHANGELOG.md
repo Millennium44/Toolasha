@@ -6,6 +6,22 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Session briefing
+
+A single card on login and character switch saying what needs you: an empty queue and since when, tasks waiting or slots about to overflow, a community buff about to lapse, the consumable that runs dry first, listings filled or undercut, an unfinished enhancement run, your guild trial signup, banked labyrinth entries, and any other character gone idle. Only lines with something to say appear, each opening the panel that fixes it; close to dismiss until you switch character or reload, reopen from the Briefing overlay row or the command palette. Setting (default on).
+
+### Gold source attribution
+
+A 💰 button beside Net Worth splits your net worth change over a day, a week or thirty days across combat drops, gathering, production, alchemy, enhancing, marketplace trades, offline progress, consumables and market tax — and shows whatever is left as an unexplained residual instead of spreading it over the rows. Production and offline income are now recorded per day, since nothing recorded them before.
+
+### Guild trials: attendance ledger and roster planner
+
+A Trial Ledger panel keeps a per-member record of every trial recorded on this client — trials joined, share of damage, healing and damage taken, deaths and mana-starved time — far longer than the four cycles the trials panel archives; sortable, windowed (4 / 12 / all cycles), CSV export, and an "observed coverage" line. The same panel lints a roster before sign-up against captured kits: revive and invincible carriers, duplicate auras, tanks for the tier, kits against the written plan, with a "14 of 28 kits known" line and swap suggestions from the bench.
+
+### Dungeon readiness card and consumable burn vs sim
+
+The Consumables panel gains a dungeon readiness card: entry keys against a run target, your food/drink coverage in runs, level-gap and gear/aura warnings from captured profiles, and who stops first — explicit about what is visible before a run and what is not (a party member's supplies only reach the client once the run has started). Combat Statistics gains a "Consumables vs sim" line comparing what the run actually ate per hour against what the simulator assumed for that zone and tier, coloured past 25%.
+
 ### Audit fixes: storage hang, dungeon runs across tabs, honest "—"s
 
 A bulk storage write could hang for ever when the browser refused it on quota, which stalled every feature starting after the trade ledger; it now settles, and the ledger migration gives up after 15 s and carries on. Dungeon runs are no longer lost with two tabs open — saves merge with what is stored instead of overwriting it, and deleted runs stay deleted. The dungeon ROI board no longer counts unpriced keys or unknown food as free (those rows show "—" and say why); the protect-from sweep labels its p10–p90 as approximate wherever protection is priced in. An All Zones sweep cannot stall waiting on a tier decision that never arrives, and cancelling one frees its worker. Also: DOM handlers fire in registration order again, listing retention no longer re-scans on every batch, old trade-ledger day records are actually deleted when they fall off the cap, and several smaller leaks and stale-count bugs are fixed.
