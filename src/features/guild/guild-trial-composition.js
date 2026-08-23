@@ -102,7 +102,11 @@ export function parseRosterNames(text) {
     for (const piece of String(text || '').split(/[\n,]/)) {
         const cleaned = piece
             .trim()
-            .replace(/^[-*•\d.)\s]+/, '')
+            // Anchored to marker *shapes* — a bullet, or a number followed by a
+            // dot or bracket — rather than to the characters a marker is made
+            // of. The old character class ate the leading digits of any name
+            // that starts with one, so "3vil" was pasted in as "vil"
+            .replace(/^(?:[-*•]+\s*|\d+\s*[.)]\s*)+/, '')
             .replace(/\s*[([{<].*$/, '')
             .trim();
         if (!cleaned) continue;

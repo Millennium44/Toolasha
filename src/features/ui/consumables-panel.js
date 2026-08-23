@@ -198,6 +198,9 @@ class ConsumablesPanel {
             this._ledgerRuns = ledger || [];
             this._dungeonHistory = runs || [];
             this._profiles = profiles || [];
+            // A refreshed profile list or run history changes what the card
+            // says without changing its signature's shape, so the memo goes
+            if (changed) this._readinessMemo = null;
             if (changed && this.panel) this._render();
         } catch {
             // Stale readings render exactly what the last open rendered
@@ -240,6 +243,8 @@ class ConsumablesPanel {
         this._dungeonRuns = Number(await storage.get('consumablesDungeonRuns', 'settings', 5)) || 5;
         this._dungeonHistory = (await storage.getJSON('allRuns', 'unifiedRuns', []).catch(() => [])) || [];
         this._profiles = (await storage.getJSON('profile_list', 'combatExport', []).catch(() => [])) || [];
+        // Everything the readiness memo is a function of has just been re-read
+        this._readinessMemo = null;
     }
 
     /** The duration everything is measured against */
@@ -337,6 +342,7 @@ class ConsumablesPanel {
     _cycleDungeonRuns() {
         const steps = [1, 3, 5, 10, 25, 50];
         this._dungeonRuns = steps[(steps.indexOf(this.dungeonRuns) + 1) % steps.length];
+        this._readinessMemo = null;
         storage.set('consumablesDungeonRuns', this._dungeonRuns, 'settings').catch(() => {});
         this._render();
     }
@@ -474,7 +480,28 @@ class ConsumablesPanel {
      */
     _readinessModel(players) {
         const context = this._dungeonContext();
-        if (!context) return null;
+        if (!context) {
+            this._readinessMemo = null;
+            return null;
+        }
+
+        // The panel redraws every five seconds and nothing this card reads
+        // moves on that clock: the party is fixed before the run, the profiles
+        // are a stored list, and the run target only changes when the button is
+        // clicked. Rebuilding meant walking every member's equipment through
+        // the item map and re-running the party lint sixty times an hour to
+        // produce the same card, so the model is kept until one of the things
+        // it is actually a function of changes
+        const signature = [
+            context.actionHrid,
+            context.tier,
+            context.stale ? 1 : 0,
+            context.roster.length,
+            this.dungeonRuns,
+            (this._profiles || []).length,
+            (players || []).length,
+        ].join('|');
+        if (this._readinessMemo?.signature === signature) return this._readinessMemo.model;
 
         const keyHrid = dungeonEntryKey(context.actionHrid, dataManager.getActionDetails?.(context.actionHrid));
         const runLength = typicalRunSeconds(this._dungeonHistory, { dungeonName: context.name, tier: context.tier });
@@ -539,6 +566,8 @@ class ConsumablesPanel {
                     'so it may not be what the leader has selected now.'
             );
         }
+
+        this._readinessMemo = { signature, model };
         return model;
     }
 

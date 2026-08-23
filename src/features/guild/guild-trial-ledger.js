@@ -472,16 +472,40 @@ export function sortLedgerRows(rows, sortKey = 'damageShare', direction = 'desc'
  * from the ledger, and every attendance figure has to be read next to this or
  * it reads as an accusation.
  *
+ * The cycle in progress is the exception. Its second trial has not happened
+ * yet, and charging the ledger for a trial the guild has not run reports the
+ * panel as having missed something — a window ending mid-week could not read
+ * above 75% however faithfully it watched. The current week therefore expects
+ * only what it has seen, so coverage answers "of the trials that have been
+ * run, how many did this ledger record".
+ *
  * @param {Array<Object>} cycles - The cycles in the window
  * @param {Object} [options] - Context
  * @param {number} [options.trialsPerCycle] - Trials a cycle runs
- * @returns {{observed: number, expected: number, cycles: number, fraction: number|null}} The coverage
+ * @param {number} [options.now] - Clock, for deciding which cycle is in progress
+ * @returns {{observed: number, expected: number, cycles: number, inProgress: boolean,
+ *   fraction: number|null}} The coverage
  */
-export function observedCoverage(cycles, { trialsPerCycle = TRIALS_PER_CYCLE } = {}) {
+export function observedCoverage(cycles, { trialsPerCycle = TRIALS_PER_CYCLE, now = Date.now() } = {}) {
     const list = (cycles || []).filter(Boolean);
-    const observed = list.reduce((sum, cycle) => sum + (cycle.trials || []).length, 0);
-    const expected = list.length * trialsPerCycle;
-    return { observed, expected, cycles: list.length, fraction: expected > 0 ? observed / expected : null };
+    const currentWeek = trialWeekStart(now);
+
+    let observed = 0;
+    let expected = 0;
+    let inProgress = false;
+
+    for (const cycle of list) {
+        const seen = (cycle.trials || []).length;
+        observed += seen;
+        if (cycle.weekStart === currentWeek) {
+            inProgress = true;
+            expected += Math.min(seen, trialsPerCycle);
+        } else {
+            expected += trialsPerCycle;
+        }
+    }
+
+    return { observed, expected, cycles: list.length, inProgress, fraction: expected > 0 ? observed / expected : null };
 }
 
 /** The CSV's columns: raw numbers, so a spreadsheet can sort and chart them */

@@ -89,8 +89,15 @@ describe('compareCategory', () => {
     });
 
     test('a sim that assumed nothing is unratable, not infinite', () => {
-        expect(compareCategory(10, 0)).toBeNull();
+        // Both sides zero is genuinely nothing to say
         expect(compareCategory(0, 0)).toBeNull();
+    });
+
+    test('eating what the sim budgeted none of is a reason, not an agreement', () => {
+        const entry = compareCategory(10, 0);
+        expect(entry.ratio).toBeNull();
+        expect(entry.tone).toBe('high');
+        expect(entry.reason).toBe('the sim assumed none of this');
     });
 
     test('eating nothing against a sim that expected something is a real zero', () => {
@@ -180,6 +187,27 @@ describe('formatBurnLine', () => {
         expect(line.text).toBe('food 1.8× sim · drinks 1.0× sim (2h measured)');
         expect(line.tone).toBe('high');
         expect(line.note).toContain('inherits');
+    });
+
+    test('the tone is the worst of the two, not the last of the two', () => {
+        // Drinks are read second. Taking the last non-flat tone painted this
+        // line green — "under the sim" — while the food bill was nearly double
+        const line = formatBurnLine({
+            food: { ratio: 1.9, tone: 'high' },
+            drinks: { ratio: 0.5, tone: 'low' },
+            measuredSeconds: 2 * HOUR,
+        });
+        expect(line.tone).toBe('high');
+    });
+
+    test('a category the sim budgeted nothing for says so on the line', () => {
+        const line = formatBurnLine({
+            food: { ratio: null, tone: 'high', reason: 'the sim assumed none of this' },
+            drinks: { ratio: 1, tone: 'flat' },
+            measuredSeconds: HOUR,
+        });
+        expect(line.text).toContain('food — the sim assumed none of this');
+        expect(line.tone).toBe('high');
     });
 
     test('one rated category is still a line', () => {

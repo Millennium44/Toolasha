@@ -101,6 +101,7 @@ export function rotationAudit() {
 
 let onNewBattle = null;
 let onBattleUpdated = null;
+let onCharacterSwitching = null;
 
 /**
  * Start watching. Idempotent — a second call while running does nothing.
@@ -171,8 +172,21 @@ export function startRotationTracker() {
         }
     };
 
+    // A session scope is "what this run says about *this* build". Carrying it
+    // across a character switch mixes two bars, two mana pools and two sets of
+    // fights into one set of rows, and the rows are unlabelled — so the switch
+    // starts the measurement again rather than quietly averaging two characters
+    onCharacterSwitching = () => {
+        try {
+            resetRotationAudit();
+        } catch (error) {
+            console.error('[RotationTracker] Resetting on a character switch failed:', error);
+        }
+    };
+
     webSocketHook.on('new_battle', onNewBattle);
     webSocketHook.on('battle_updated', onBattleUpdated);
+    dataManager.on?.('character_switching', onCharacterSwitching);
     // A panel opened in the middle of a run should list the kit at once
     seedKit();
 }
@@ -181,7 +195,9 @@ export function startRotationTracker() {
 export function stopRotationTracker() {
     if (onNewBattle) webSocketHook.off('new_battle', onNewBattle);
     if (onBattleUpdated) webSocketHook.off('battle_updated', onBattleUpdated);
+    if (onCharacterSwitching) dataManager.off?.('character_switching', onCharacterSwitching);
     onNewBattle = null;
     onBattleUpdated = null;
+    onCharacterSwitching = null;
     resetRotationAudit();
 }

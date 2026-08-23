@@ -187,12 +187,20 @@ describe('digest summaries', () => {
         expect(summarizeDigest([{ category: 'market', noun: undercut }])).toBe('Market: 1 undercut');
     });
 
-    test('the same subject twice is one subject', () => {
+    test('the same subject twice is one subject, in the count as well as the list', () => {
         const message = summarizeDigest([
             { category: 'market', noun: undercut, subject: 'Cheese' },
             { category: 'market', noun: undercut, subject: 'Cheese' },
         ]);
-        expect(message).toBe('Market: 2 undercuts (Cheese)');
+        expect(message).toBe('Market: 1 undercut (Cheese)');
+    });
+
+    test('with no subjects at all the count is still the entries', () => {
+        const message = summarizeDigest([
+            { category: 'market', noun: undercut },
+            { category: 'market', noun: undercut },
+        ]);
+        expect(message).toBe('Market: 2 undercuts');
     });
 
     test('a long list is named up to the limit and then counted', () => {

@@ -63,8 +63,10 @@ const RETENTION_DAYS = 400;
  * @property {string} d - UTC day id, `YYYY-MM-DD`
  * @property {number} outputValue - What the recipes produced, at market
  * @property {number} inputValue - What they consumed, at market
- * @property {number} actions - Actions completed
+ * @property {number} actions - Actions completed and valued
  * @property {number} offlineProfit - Net Welcome Back income recorded that day
+ * @property {number} [unpricedActions] - Actions left out because an input or
+ *   output had no market price; the day's production figure is short by these
  */
 
 class ProductionIncomeRecorder {
@@ -86,6 +88,12 @@ class ProductionIncomeRecorder {
         this._loading = null;
         /** characterActionId → the `currentCount` last seen, to derive a delta */
         this._counts = new Map();
+        /**
+         * Bumped whenever the character changes. Anything read under an old
+         * generation belongs to the character who left, and adopting it would
+         * file their days under the arriving character's key.
+         */
+        this._generation = 0;
         this._handlers = null;
         this.isActive = false;
     }
@@ -128,6 +136,7 @@ class ProductionIncomeRecorder {
 
     /** Forget the departing character's rows, so they are never written under the arriving one's key. */
     _forget() {
+        this._generation += 1;
         this._rows = [];
         this._charId = null;
         this._loading = null;
@@ -151,19 +160,26 @@ class ProductionIncomeRecorder {
         if (!charId) return [];
         if (this._charId === charId && !this._loading) return [...this._rows];
 
+        const generation = this._generation;
+
         if (!this._loading) {
             this._charId = charId;
             this._loading = (async () => {
-                this._rows = await this._store.load(charId);
+                const rows = await this._store.load(charId);
+                // The character switched while the read was in flight: these
+                // are the departing character's days, and `_forget()` has
+                // already cleared the fields this would otherwise refill
+                if (this._generation !== generation) return;
+                this._rows = rows;
             })();
         }
 
         try {
             await this._loading;
         } finally {
-            this._loading = null;
+            if (this._generation === generation) this._loading = null;
         }
-        return [...this._rows];
+        return this._generation === generation ? [...this._rows] : [];
     }
 
     /**
@@ -217,26 +233,44 @@ class ProductionIncomeRecorder {
             const completed = this._completedSince(action);
             if (completed <= 0) return;
 
+            // A missing price on either half is not a zero. An unpriced *input*
+            // used to be skipped while its outputs were still counted, which
+            // reports a recipe's whole gross as income — the exact overstatement
+            // this recorder exists to avoid. So an action either has both halves
+            // priced or it is not valued at all, and the day counts how many it
+            // had to leave out so the panel can say the figure is short
             let outputValue = 0;
+            let unpriced = false;
             for (const output of details.outputItems || []) {
                 const unit = getItemPrice(output.itemHrid, { enhancementLevel: 0, context: 'networth' });
                 if (Number.isFinite(unit)) outputValue += unit * (output.count || 0) * completed;
+                else if ((output.count || 0) > 0) unpriced = true;
             }
 
             let inputValue = 0;
             for (const inputItem of details.inputItems || []) {
                 const unit = getItemPrice(inputItem.itemHrid, { enhancementLevel: 0, context: 'networth' });
                 if (Number.isFinite(unit)) inputValue += unit * (inputItem.count || 0) * completed;
+                else if ((inputItem.count || 0) > 0) unpriced = true;
             }
 
-            if (outputValue === 0 && inputValue === 0) return;
+            if (!unpriced && outputValue === 0 && inputValue === 0) return;
             if (!this._currentCharId()) return;
+
+            const generation = this._generation;
             await this.load();
+            // The character switched while the rows were being read; these
+            // actions belong to whoever left
+            if (this._generation !== generation) return;
 
             const row = this._rowFor(utcDayId(Date.now()));
-            row.outputValue += outputValue;
-            row.inputValue += inputValue;
-            row.actions += completed;
+            if (unpriced) {
+                row.unpricedActions = (row.unpricedActions || 0) + completed;
+            } else {
+                row.outputValue += outputValue;
+                row.inputValue += inputValue;
+                row.actions += completed;
+            }
             this._save();
         } catch (error) {
             console.error('[ProductionIncome] Recording a completed action failed:', error);
@@ -261,6 +295,11 @@ class ProductionIncomeRecorder {
         if (id === undefined || id === null) return 1;
 
         const previous = this._counts.get(id);
+        // Delete before setting so the entry moves to the end of the insertion
+        // order: without it the eviction below drops the *first-seen* id, which
+        // on a long-running action is the one still ticking, and re-baselining
+        // it costs the next delta
+        this._counts.delete(id);
         this._counts.set(id, current);
 
         // The map would otherwise grow with every action the character ever

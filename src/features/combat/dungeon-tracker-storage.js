@@ -23,6 +23,15 @@ import dataManager from '../../core/data-manager.js';
  * roster does not carry.
  */
 
+/**
+ * How long a deferred save waits for company before it reads, merges and writes.
+ *
+ * Short enough that a lone run is on disk almost at once, long enough that a
+ * chat backfill — which appends dozens of runs in one synchronous sweep —
+ * collapses into a single read-merge-write instead of one per run.
+ */
+export const PERSIST_COALESCE_MS = 250;
+
 // Hardcoded max waves for each dungeon (fallback if maxCount is 0)
 const DUNGEON_MAX_WAVES = {
     '/actions/combat/chimerical_den': 50,
@@ -155,7 +164,8 @@ class DungeonTrackerStorage {
         this._deleted = new Set();
         /** One read-merge-write at a time; two interleaved would each miss the other */
         this._persistChain = null;
-        /** When the last run was appended, to tell a burst from a lone run */
+        /** A deferred merge-and-write is armed, to tell a burst from a lone run */
+        this._pendingTimer = null;
     }
 
     /**
@@ -212,11 +222,46 @@ class DungeonTrackerStorage {
      *
      * A read that could not be made skips the write rather than overwriting
      * with a copy that may be missing runs — the same rule the load follows.
-     * @param {boolean} immediate - Skip the write debounce
-     * @returns {Promise<boolean>} Whether the write was issued
+     * The merge is what costs: one `tryGet` plus a full sort of the history per
+     * call. A chat backfill appends runs one at a time and asked for a save
+     * after each, so N recovered runs paid for N reads and N sorts of a list
+     * that was growing as it went. A deferred save is *coalesced* instead —
+     * the first one arms a short timer and every save asked for while it is
+     * armed does nothing, so the burst produces one read-merge-write with all
+     * of the runs already in memory. An immediate save (a delete, a scrub)
+     * still runs at once, and takes the armed one with it.
+     *
+     * @param {boolean} immediate - Skip the coalescing window and the write debounce
+     * @returns {Promise<boolean>} Whether the write was issued — a deferred save
+     *   answers true as soon as it is armed, since awaiting the timer would
+     *   stall an append loop by the coalescing window on every run
      * @private
      */
     async _persist(immediate) {
+        if (!immediate) {
+            if (this._pendingTimer === null) {
+                this._pendingTimer = setTimeout(() => {
+                    this._pendingTimer = null;
+                    this._persistNow(false);
+                }, PERSIST_COALESCE_MS);
+            }
+            return true;
+        }
+
+        if (this._pendingTimer !== null) {
+            clearTimeout(this._pendingTimer);
+            this._pendingTimer = null;
+        }
+        return this._persistNow(true);
+    }
+
+    /**
+     * Read the stored list, merge memory into it and write it back, now.
+     * @param {boolean} immediate - Passed through to the store's write debounce
+     * @returns {Promise<boolean>} Whether the write was issued
+     * @private
+     */
+    _persistNow(immediate) {
         const run = async () => {
             const probe = await storage.tryGet('allRuns', this.unifiedStoreName);
             if (probe === null) {
@@ -253,10 +298,26 @@ class DungeonTrackerStorage {
      * @returns {void}
      */
     _resetCache() {
+        if (this._pendingTimer !== null) {
+            clearTimeout(this._pendingTimer);
+            this._pendingTimer = null;
+        }
         this._runs = null;
         this._byTeam = new Map();
         this._deleted = new Set();
         this._persistChain = null;
+    }
+
+    /**
+     * Run an armed deferred save now, if there is one.
+     *
+     * For a caller that has to know the history is on its way out — and for a
+     * test that would otherwise have to advance a timer.
+     * @returns {Promise<boolean>} Whether a write was issued
+     */
+    async flushPendingSave() {
+        if (this._pendingTimer === null) return this._persistChain ? this._persistChain : false;
+        return this._persist(true);
     }
 
     /**

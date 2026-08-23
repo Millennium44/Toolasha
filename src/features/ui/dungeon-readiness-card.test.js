@@ -312,3 +312,39 @@ describe('the checks that a captured profile does make possible', () => {
         expect(text()).toContain('Ally has skilling gear equipped: Cheese Hatchet');
     });
 });
+
+describe('the card is not rebuilt on the refresh clock', () => {
+    test('a redraw with nothing changed reuses the model it already built', async () => {
+        inParty();
+        await render();
+
+        const first = consumablesPanel._readinessModel([]);
+        const second = consumablesPanel._readinessModel([]);
+        // The same object, not merely an equal one: the lint walks every
+        // member's equipment through the item map, and doing it again five
+        // seconds later produces the same card at the same cost
+        expect(second).toBe(first);
+    });
+
+    test('changing the run target rebuilds it', async () => {
+        inParty();
+        await render();
+
+        const first = consumablesPanel._readinessModel([]);
+        consumablesPanel._cycleDungeonRuns();
+        const second = consumablesPanel._readinessModel([]);
+
+        expect(second).not.toBe(first);
+        expect(second.runsPlanned).not.toBe(first.runsPlanned);
+    });
+
+    test('leaving the party drops the memo rather than keeping a stale card', async () => {
+        inParty();
+        await render();
+        expect(consumablesPanel._readinessModel([])).not.toBeNull();
+
+        game.characterData = { character: { id: 'char1', name: 'Me' } };
+        game.actions = [];
+        expect(consumablesPanel._readinessModel([])).toBeNull();
+    });
+});

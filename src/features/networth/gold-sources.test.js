@@ -299,6 +299,44 @@ describe('attributeGoldSources', () => {
         expect(result.coverage.alchemy).toBeNull();
     });
 
+    test('combat and gathering coverage are split the way the attribution splits them', () => {
+        // Both live in the loot log, so answering both with the log's earliest
+        // entry claimed combat had been recorded since a date on which only
+        // foraging had — coverage for a source that had never been seen
+        const result = attributeGoldSources({
+            ...base,
+            lootEntries: [
+                { startTime: new Date(D18).toISOString(), actionHrid: '/actions/milking/cow', drops: {} },
+                { startTime: new Date(D20).toISOString(), actionHrid: '/actions/combat/cow', drops: {} },
+            ],
+        });
+
+        expect(result.coverage.gathering).toBe(D18);
+        expect(result.coverage.combat).toBe(D20);
+    });
+
+    test('gathering coverage is null when only combat has ever been logged', () => {
+        const result = attributeGoldSources({
+            ...base,
+            lootEntries: [{ startTime: new Date(D20).toISOString(), actionHrid: '/actions/combat/cow', drops: {} }],
+        });
+
+        expect(result.coverage.gathering).toBeNull();
+    });
+
+    test('production actions nothing could be priced for are counted and reported', () => {
+        const result = attributeGoldSources({
+            ...base,
+            productionDays: [
+                { d: '2026-08-19', outputValue: 100, inputValue: 40, actions: 2, unpricedActions: 7 },
+                // Outside the window, so its uncounted actions are not this window's
+                { d: '2026-08-01', outputValue: 0, inputValue: 0, unpricedActions: 3 },
+            ],
+        });
+
+        expect(result.unpricedProductionActions).toBe(7);
+    });
+
     test('activity outside the window is left out entirely', () => {
         const result = attributeGoldSources({
             ...base,

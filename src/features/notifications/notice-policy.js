@@ -245,7 +245,13 @@ export function summarizeDigest(entries) {
             const named = subjects.slice(0, DIGEST_SUBJECT_LIMIT).join(', ');
             const rest = subjects.length - DIGEST_SUBJECT_LIMIT;
             const tail = named ? ` (${named}${rest > 0 ? `, +${rest}` : ''})` : '';
-            pieces.push(`${count} ${count === 1 ? noun.one : noun.many}${tail}`);
+            // Distinct subjects when there are any, entries when there are not.
+            // The de-duplication above already decided that the same listing
+            // undercut twice is one listing; leaving the count at the number of
+            // entries said "3 undercuts (Cheese)", which names one thing and
+            // claims three
+            const shown = subjects.length ? subjects.length : count;
+            pieces.push(`${shown} ${shown === 1 ? noun.one : noun.many}${tail}`);
         }
         parts.push(`${categoryLabel(category)}: ${pieces.join(', ')}`);
     }

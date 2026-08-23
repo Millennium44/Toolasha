@@ -189,7 +189,9 @@ describe('collectFacts', () => {
         const facts = collectFacts(1_000);
         expect(facts.queue).toBeNull();
         expect(facts.tasksReady).toBe(0);
-        expect(facts.listings).toEqual({ filled: 0, expired: 0, undercut: 0 });
+        // `undercut` is null, not zero: the watcher has compared nothing yet,
+        // and "no listings are undercut" would be a reassurance nobody checked
+        expect(facts.listings).toEqual({ filled: 0, expired: 0, undercut: null });
         expect(facts.idle).toEqual([]);
     });
 
@@ -402,8 +404,8 @@ describe('what the market did while away', () => {
         expect(collectFacts().listings.filled).toBe(1);
         // and this session becomes the next one's baseline
         expect(game.stored.get('sessionBriefingListings_char-1').listings).toEqual({
-            1: '/market_listing_status/filled',
-            2: '/market_listing_status/filled',
+            1: { status: '/market_listing_status/filled', toolashaStatus: '' },
+            2: { status: '/market_listing_status/filled', toolashaStatus: '' },
         });
     });
 
@@ -417,5 +419,31 @@ describe('what the market did while away', () => {
         game.listings = [{ id: 7, status: '/market_listing_status/active', _toolashaStatus: 'expired' }];
         await feature.initialize();
         expect(collectFacts().listings.expired).toBe(1);
+    });
+
+    test('an expiry already reported last session is not reported again', async () => {
+        game.listings = [{ id: 7, status: '/market_listing_status/active', _toolashaStatus: 'expired' }];
+        game.stored.set('sessionBriefingListings_char-1', {
+            at: 1,
+            listings: { 7: { status: '/market_listing_status/active', toolashaStatus: 'expired' } },
+        });
+
+        await feature.initialize();
+
+        // A standing count made the line permanent, and a permanent line is one
+        // nobody reads. Only a *newly* expired listing is news
+        expect(collectFacts().listings.expired).toBe(0);
+    });
+
+    test('a baseline written before the marking was stored is still readable', async () => {
+        game.listings = [{ id: 7, status: '/market_listing_status/filled' }];
+        game.stored.set('sessionBriefingListings_char-1', {
+            at: 1,
+            listings: { 7: '/market_listing_status/filled' },
+        });
+
+        await feature.initialize();
+
+        expect(collectFacts().listings.filled).toBe(0);
     });
 });

@@ -308,10 +308,10 @@ export function rotationSummaryHTML(summary) {
         ],
         [
             'Starved',
-            summary.fights > 0
-                ? `${summary.starvedSeconds.toFixed(1)}s per fight under the cheapest cast` +
-                  (summary.castFloor === null ? '' : ` (${formatWithSeparator(summary.castFloor)} mana)`)
-                : '—',
+            summary.starvedSeconds === null
+                ? '—'
+                : `${summary.starvedSeconds.toFixed(1)}s per fight under the cheapest cast` +
+                  (summary.castFloor === null ? '' : ` (${formatWithSeparator(summary.castFloor)} mana)`),
             summary.starvedSeconds > 0 ? warn : dim,
         ],
         [
@@ -363,6 +363,14 @@ export function rotationHTML(audit, which) {
         `</div>`;
 
     if (!audit?.tracking) {
+        // Rows can exist before a battle names the slot — a previous session's
+        // kit, or a loadout read ahead of the first fight. Throwing them away
+        // and showing only the notice loses the one thing worth reading, so the
+        // notice goes *above* whatever has been seeded rather than instead of it
+        const seeded = summary?.abilities?.length
+            ? summary.abilities.map(rotationRowHTML).join('')
+            : boardNoteHTML('Nothing on the bar yet.');
+
         return (
             scopes +
             boardNoteHTML('Waiting for a battle to name your slot.', { color: dim, strong: true }) +
@@ -370,7 +378,8 @@ export function rotationHTML(audit, which) {
                 'Your abilities are read from the loadout the game states for your own character at the start of a ' +
                     'battle, so nothing is measured until one begins. Nobody else’s row appears here — this tab is ' +
                     'about the bar you can change.'
-            )
+            ) +
+            seeded
         );
     }
 
@@ -419,7 +428,7 @@ export function rotationText(audit, which) {
     const head =
         `Rotation (${label}) — ${summary.seconds.toFixed(0)}s over ${summary.fights} fights, ` +
         `${figure(summary.manaPerMinute)} mana/min spent against ${figure(summary.regenPerMinute)}/min restored, ` +
-        `${summary.starvedSeconds.toFixed(1)}s per fight starved`;
+        `${summary.starvedSeconds === null ? '—' : `${summary.starvedSeconds.toFixed(1)}s`} per fight starved`;
 
     const rows = summary.abilities.map(
         (row) =>

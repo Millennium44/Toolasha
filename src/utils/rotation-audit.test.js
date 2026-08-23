@@ -232,6 +232,46 @@ describe('mana, measured and looked up', () => {
         expect(summary.suggestion.kind).toBe('swap');
     });
 
+    test('regen across an idle gap is not counted as restored', () => {
+        const state = armed();
+        // A fight ends with the bar nearly empty…
+        foldRotationTick(state, { at: START, player: { cMP: 5, mMP: 100, atkCounter: 0 }, detailMap: DETAILS });
+        // …the character stands in town for an hour and comes back full. That
+        // rise is out-of-combat regen over time nothing measured, and folding it
+        // in reported a regen rate the fight never saw — which is exactly the
+        // reading that hides the "more regen would help" suggestion
+        foldRotationTick(state, {
+            at: START + 60 * 60 * 1000,
+            player: { cMP: 100, mMP: 100, atkCounter: 0 },
+            detailMap: DETAILS,
+        });
+
+        const summary = summariseRotation(state);
+        expect(summary.manaRestored).toBe(0);
+        expect(summary.manaSpent).toBe(0);
+
+        // …and the reading is re-baselined, so the next in-fight tick measures
+        // against the bar as it is now rather than as it was an hour ago
+        foldRotationTick(state, {
+            at: START + 60 * 60 * 1000 + 500,
+            player: { cMP: 90, mMP: 100, atkCounter: 0 },
+            detailMap: DETAILS,
+        });
+        expect(summariseRotation(state).manaSpent).toBe(10);
+    });
+
+    test('starved seconds are null with no fight to divide by, not zero', () => {
+        const state = newRotationState();
+        noteRotationKit(state, [CHEAP], DETAILS);
+        run(
+            state,
+            Array.from({ length: 5 }, () => ({ mana: 4 })),
+            { step: 1000 }
+        );
+
+        expect(summariseRotation(state).starvedSeconds).toBeNull();
+    });
+
     test('a gap longer than a tick is between fights and buys no time', () => {
         const state = armed();
         foldRotationTick(state, { at: START, player: { cMP: 5, mMP: 100, atkCounter: 0 }, detailMap: DETAILS });
@@ -294,6 +334,7 @@ describe('the suggestion', () => {
     test('says mana is not the constraint when nothing was ever under its cost', () => {
         const suggestion = bestChange({
             seconds: 60,
+            fights: 4,
             manaPerMinute: 100,
             regenPerMinute: 400,
             starvedSeconds: 0,
@@ -302,6 +343,21 @@ describe('the suggestion', () => {
 
         expect(suggestion.kind).toBe('priority');
         expect(suggestion.text).toContain('mana is not the constraint');
+    });
+
+    test('will not claim mana was never the constraint when no fight was measured', () => {
+        // `starvedSeconds` is null with no fights, not zero: nothing was
+        // measured, so "nothing spent time under its cost" is not a finding
+        const suggestion = bestChange({
+            seconds: 60,
+            fights: 0,
+            manaPerMinute: 100,
+            regenPerMinute: 400,
+            starvedSeconds: null,
+            abilities: [{ verdict: { kind: 'idle' } }],
+        });
+
+        expect(suggestion).toBeNull();
     });
 });
 

@@ -178,11 +178,13 @@ describe('buildBriefingLines', () => {
             expect(line({ guild: { signedUp: false } }, 'guild').value).toBe('Not signed up this week');
         });
 
-        test('signed up with a start time says both', () => {
+        test('a countdown nothing produces is never printed', () => {
+            // A guild trial has no scheduled start, so `startsInMs` was a field
+            // no collector ever set — the line says what is known and no more
             const facts = { guild: { signedUp: true, trialName: 'combat', startsInMs: 30 * 60_000 } };
             const entry = line(facts, 'guild');
-            expect(entry.value).toBe('Signed up: combat, starts in 30m');
-            expect(entry.tone).toBe('gold');
+            expect(entry.value).toBe('Signed up: combat');
+            expect(entry.tone).toBe('good');
         });
     });
 

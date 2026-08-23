@@ -466,7 +466,13 @@ class TreasureTracker {
         // the dialog read as the popup opening in the wrong place
         this.popup.style.visibility = 'hidden';
         if (!pinned) this._placeBesideDialog(0);
-        restoreGeometry(this.popup, POPUP_GEOMETRY_KEY, { width: 260, height: 120 }, { position: pinned })
+        // The popup this restore is for. A storage read takes long enough for
+        // the player to close one chest and open the next, and the continuation
+        // below would then size and reveal the *new* popup using the old one's
+        // stored geometry — or, worse, un-hide a popup whose own restore is
+        // still in flight. Identity is checked rather than mere existence
+        const popup = this.popup;
+        restoreGeometry(popup, POPUP_GEOMETRY_KEY, { width: 260, height: 120 }, { position: pinned })
             .then(() => {
                 // The height fits the chest being shown, not the chest the popup was
                 // once resized on. capHeightToWindow already sized it to its content
@@ -474,7 +480,7 @@ class TreasureTracker {
                 // chest with more rows than the one the resize happened on. Width is
                 // the half of a resize worth keeping, and it changes how rows wrap —
                 // so the height is re-fitted after the width lands.
-                if (!this.popup) return;
+                if (this.popup !== popup) return;
                 this.popup.style.height = '';
                 capHeightToWindow(this.popup);
                 if (pinned) {
@@ -493,7 +499,7 @@ class TreasureTracker {
                 // leave it hidden for ever — better in the default corner than not
                 // there at all
                 console.error('[TreasureTracker] Restoring the popup geometry failed:', error);
-                if (this.popup) this.popup.style.visibility = '';
+                if (this.popup === popup) this.popup.style.visibility = '';
             });
     }
 

@@ -55,6 +55,14 @@ export const BURN_COLORS = {
 };
 
 /**
+ * How bad each tone is, so a line carrying two of them takes the worst.
+ *
+ * Overeating moves the profit figure the wrong way and is the finding worth
+ * colouring; undereating is a pleasant surprise; agreement is nothing.
+ */
+export const BURN_TONE_RANK = { flat: 0, low: 1, high: 2 };
+
+/**
  * Is this consumable a drink?
  *
  * The same test the collector's rate cap and the sim adapter's slot split both
@@ -134,22 +142,36 @@ export function simBurnPerHour(perHour, itemDetailFor = null) {
  * @param {number} measured - Items per hour, measured
  * @param {number} sim - Items per hour, simmed
  * @param {number} [band] - Drift tolerated before colouring
- * @returns {{ratio: number, measured: number, sim: number, tone: string}|null}
+ * @returns {{ratio: number|null, measured: number, sim: number, tone: string,
+ *   reason: string|null}|null} `ratio` is null when the sim filled nothing to
+ *   divide by; null altogether only when both sides are zero
  */
 export function compareCategory(measured, sim, band = BURN_BAND) {
     const observed = Number(measured) || 0;
     const assumed = Number(sim) || 0;
 
     // Nothing simmed is not "infinitely over" — it is a slot the sim never
-    // filled, and dividing by it would manufacture a verdict out of a gap
-    if (assumed <= 0) return null;
+    // filled, and dividing by it would manufacture a verdict out of a gap.
+    // But it is not "the two agree" either: eating something the sim budgeted
+    // nothing for is the largest error this comparison can find, and returning
+    // null made it indistinguishable from a category nobody touched
+    if (assumed <= 0) {
+        if (observed <= 0) return null;
+        return {
+            ratio: null,
+            measured: observed,
+            sim: 0,
+            tone: 'high',
+            reason: 'the sim assumed none of this',
+        };
+    }
 
     const ratio = observed / assumed;
     let tone = 'flat';
     if (ratio > 1 + band) tone = 'high';
     else if (ratio < 1 - band) tone = 'low';
 
-    return { ratio, measured: observed, sim: assumed, tone };
+    return { ratio, measured: observed, sim: assumed, tone, reason: null };
 }
 
 /**
@@ -225,8 +247,11 @@ export function formatBurnLine(comparison, formatDuration = null) {
         ['drinks', comparison?.drinks],
     ]) {
         if (!entry) continue;
-        parts.push(`${label} ${entry.ratio.toFixed(1)}× sim`);
-        if (entry.tone !== 'flat') tone = entry.tone;
+        parts.push(entry.ratio === null ? `${label} — ${entry.reason}` : `${label} ${entry.ratio.toFixed(1)}× sim`);
+        // The worst of the two, not the last of the two: a run eating half the
+        // simmed drinks and twice the simmed food was being coloured green
+        // purely because drinks are read second
+        if (BURN_TONE_RANK[entry.tone] > BURN_TONE_RANK[tone]) tone = entry.tone;
     }
 
     if (!parts.length) return null;
@@ -250,6 +275,7 @@ export default {
     MIN_MEASURED_SECONDS,
     BURN_BAND,
     BURN_COLORS,
+    BURN_TONE_RANK,
     isDrinkConsumable,
     measuredBurnPerHour,
     simBurnPerHour,

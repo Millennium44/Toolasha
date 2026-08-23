@@ -61,6 +61,7 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import { showToast } from '../../utils/toast.js';
 import { appendNotice } from './notice-log.js';
 import {
@@ -153,7 +154,13 @@ const GLOBAL_STATE_KEY = '__toolashaNotificationState';
 function sharedState() {
     const host = typeof globalThis === 'undefined' ? {} : globalThis;
     if (!host[GLOBAL_STATE_KEY]) {
-        host[GLOBAL_STATE_KEY] = { lastFired: new Map(), watching: false, digest: [], digestTimer: null };
+        host[GLOBAL_STATE_KEY] = {
+            lastFired: new Map(),
+            watching: false,
+            watchingCharacter: false,
+            digest: [],
+            digestTimer: null,
+        };
     }
     const state = host[GLOBAL_STATE_KEY];
     // Defensive: a bundle built before digesting existed may have created the
@@ -537,6 +544,36 @@ class NotificationService {
         }
     }
 
+    /**
+     * Empty the digest and the cooldowns when the character changes.
+     *
+     * Both are about a character who is no longer logged in: the buffer holds
+     * "your listing was undercut" lines belonging to the account that just
+     * left, and the cooldown map would silence the arriving character's first
+     * notice of an event the departing one had already been told about. The
+     * held notices are flushed rather than dropped — every one of them was true
+     * when it was recorded, and the log already has them either way — and only
+     * then is the state cleared.
+     *
+     * Installed at import time beside {@link watchSettings}, and once across
+     * every bundle copy, for the same reasons.
+     */
+    watchCharacterSwitch() {
+        const state = sharedState();
+        if (state.watchingCharacter) return;
+        if (typeof dataManager?.on !== 'function') return;
+        state.watchingCharacter = true;
+
+        dataManager.on('character_switching', () => {
+            try {
+                this.flushDigest();
+            } catch (error) {
+                console.warn('[NotificationService] Flushing the digest on a character switch failed:', error);
+            }
+            this.reset();
+        });
+    }
+
     /** Forget every cooldown and put the title back. For teardown and for tests. */
     reset() {
         const state = sharedState();
@@ -553,5 +590,6 @@ const notificationService = new NotificationService();
 
 // Side effect at module scope, deliberately: see `watchSettings`
 notificationService.watchSettings();
+notificationService.watchCharacterSwitch();
 
 export default notificationService;

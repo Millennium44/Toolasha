@@ -53,6 +53,7 @@ const {
     sessionContribution,
     sortLedgerRows,
 } = await import('./guild-trial-ledger.js');
+const { trialWeekStart } = await import('./guild-trials-math.js');
 
 const WEEK = Date.parse('2026-08-03T00:00:00Z');
 
@@ -282,7 +283,30 @@ describe('observedCoverage', () => {
             { trials: [{ trialId: 'c' }] },
             { trials: [] },
         ];
-        expect(observedCoverage(cycles)).toEqual({ observed: 3, expected: 6, cycles: 3, fraction: 0.5 });
+        expect(observedCoverage(cycles, { now: Date.parse('2020-01-01T00:00:00Z') })).toEqual({
+            observed: 3,
+            expected: 6,
+            cycles: 3,
+            inProgress: false,
+            fraction: 0.5,
+        });
+    });
+
+    test('the week in progress is not charged for the trials it has not run yet', () => {
+        const now = Date.parse('2026-08-23T12:00:00Z');
+        const thisWeek = trialWeekStart(now);
+        const lastWeek = thisWeek - 7 * 24 * 60 * 60 * 1000;
+
+        // Last week ran both; this week has run one so far and the panel saw it
+        const coverage = observedCoverage(
+            [
+                { weekStart: lastWeek, trials: [{ trialId: 'a' }, { trialId: 'b' }] },
+                { weekStart: thisWeek, trials: [{ trialId: 'c' }] },
+            ],
+            { now }
+        );
+
+        expect(coverage).toEqual({ observed: 3, expected: 3, cycles: 2, inProgress: true, fraction: 1 });
     });
 
     test('no cycles is no fraction rather than zero', () => {

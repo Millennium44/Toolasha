@@ -250,23 +250,23 @@ function guildLine(facts) {
     // must not be reported as it
     if (!guild || guild.signedUp === null || guild.signedUp === undefined) return null;
 
-    const startsIn = Number.isFinite(guild.startsInMs) && guild.startsInMs > 0;
+    // No "starts in": a guild trial has no scheduled start — it begins when the
+    // guild begins it — and nothing that fills these facts has ever produced a
+    // countdown. The branch that read one was dead code dressed as a feature
     if (guild.signedUp) {
-        const when = startsIn ? `, starts in ${shortDuration(guild.startsInMs / 1000)}` : '';
         return {
             key: 'guild',
             label: 'Guild trial',
-            value: `Signed up${guild.trialName ? `: ${guild.trialName}` : ''}${when}`,
-            tone: startsIn ? 'gold' : 'good',
+            value: `Signed up${guild.trialName ? `: ${guild.trialName}` : ''}`,
+            tone: 'good',
             target: TARGETS.guild,
         };
     }
 
-    const when = startsIn ? ` — starts in ${shortDuration(guild.startsInMs / 1000)}` : '';
     return {
         key: 'guild',
         label: 'Guild trial',
-        value: `Not signed up this week${when}`,
+        value: 'Not signed up this week',
         tone: 'gold',
         target: TARGETS.guild,
     };

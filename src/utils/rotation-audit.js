@@ -274,7 +274,13 @@ export function foldRotationTick(state, { at, player, action, events, detailMap 
     if (Number.isFinite(maxMana) && maxMana > 0) state.maxMana = maxMana;
 
     if (Number.isFinite(mana)) {
-        if (state.lastMana !== null) {
+        // Only movement across a gap that counts as fighting time is spend or
+        // regen. A night idle in town comes back on the first tick of the next
+        // fight as one enormous "restored", which would drown the measured
+        // regen and hide the very suggestion this file exists to make — so a
+        // tick that starts a new fight re-baselines the reading instead of
+        // folding the interval nobody was fighting through
+        if (dt > 0 && state.lastMana !== null) {
             const change = mana - state.lastMana;
             if (change > 0) state.manaRestored += change;
             else if (change < 0) state.manaSpent += -change;
@@ -442,7 +448,14 @@ export function bestChange(summary) {
         }
     }
 
-    if (summary.starvedSeconds === 0 && summary.abilities.some((row) => row.verdict.kind === 'idle')) {
+    // Needs a fight to have been recorded: with none, `starvedSeconds` is null
+    // rather than zero, and "nothing spent time under its cost" would be a claim
+    // about a scope that measured no fights at all
+    if (
+        summary.fights > 0 &&
+        summary.starvedSeconds === 0 &&
+        summary.abilities.some((row) => row.verdict.kind === 'idle')
+    ) {
         return {
             kind: 'priority',
             text:
@@ -520,7 +533,7 @@ export function summariseRotation(state) {
         manaBalance: minutes > 0 ? ((state?.manaRestored || 0) - (state?.manaSpent || 0)) / minutes : null,
         // Per fight, because that is the comparable figure — a total only says
         // how long you have been playing
-        starvedSeconds: fights > 0 ? state.starvedMs / 1000 / fights : 0,
+        starvedSeconds: fights > 0 ? state.starvedMs / 1000 / fights : null,
         starvedShare: ms > 0 ? (state?.starvedMs || 0) / ms : null,
         lowManaShare: ms > 0 ? (state?.lowManaMs || 0) / ms : null,
         castFloor: state?.castFloor ?? null,

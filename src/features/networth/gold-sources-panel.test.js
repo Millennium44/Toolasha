@@ -76,6 +76,18 @@ beforeEach(() => {
 });
 
 describe('buildPanelBody', () => {
+    test('production actions that could not be valued are said out loud', () => {
+        const body = buildPanelBody(attribution({ unpricedProductionActions: 4 }));
+        const note = body.querySelector('.mwi-gold-sources-unpriced-production');
+        expect(note.textContent).toContain('4 production actions');
+        expect(note.textContent).toContain('residual');
+    });
+
+    test('nothing is said when every production action was priced', () => {
+        const body = buildPanelBody(attribution());
+        expect(body.querySelector('.mwi-gold-sources-unpriced-production')).toBeNull();
+    });
+
     test('draws every source row plus a residual row of its own', () => {
         const body = buildPanelBody(attribution());
         const text = body.textContent;
@@ -224,6 +236,24 @@ describe('buildTotalsTable', () => {
         const combat = table.querySelector('.mwi-gold-sources-row-combat');
         // 5M of a 20M measured change
         expect(combat.textContent).toContain('25%');
+    });
+
+    test('a losing window does not report an earning source as a negative share', () => {
+        // Dividing by the signed delta flipped every sign: combat genuinely
+        // brought 5M in, and the column said it was minus a quarter of the week
+        const table = buildTotalsTable(
+            attribution({
+                totals: { sources: { combat: 5_000_000 }, explained: 5_000_000, delta: -20_000_000, residual: null },
+            })
+        );
+
+        const combat = table.querySelector('.mwi-gold-sources-row-combat');
+        expect(combat.textContent).toContain('25%');
+        expect(combat.textContent).not.toContain('-25%');
+    });
+
+    test('the column says what the share is of', () => {
+        expect(buildTotalsTable(attribution()).textContent).toContain('Share of change');
     });
 
     test('with no measured change there is nothing to take a share of', () => {

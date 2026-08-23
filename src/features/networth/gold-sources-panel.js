@@ -220,7 +220,7 @@ export function buildTotalsTable(attribution) {
     for (const [text, align] of [
         ['Source', 'left'],
         ['Total', 'right'],
-        ['Share', 'right'],
+        ['Share of change', 'right'],
         ['Basis', 'left'],
     ]) {
         const cell = document.createElement('th');
@@ -235,12 +235,17 @@ export function buildTotalsTable(attribution) {
     const delta = attribution?.totals?.delta ?? null;
     const residual = attribution?.totals?.residual ?? null;
 
-    // The share is against the measured change when there is one, so the rows
-    // answer "how much of what happened was this"; with no measured change to
-    // divide by there is nothing honest to show
+    // The share is against the *size* of the measured change, so the rows
+    // answer "how much of what happened was this". Dividing by the signed
+    // delta flipped every sign on a losing window — a source that genuinely
+    // earned coins read as a negative share of a loss, which points the wrong
+    // way. The magnitude is the denominator; the direction stays on the amount
+    // in the column beside it. With no measured change there is nothing honest
+    // to divide by
+    const scale = Number.isFinite(delta) ? Math.abs(delta) : 0;
     const share = (value) => {
-        if (!Number.isFinite(delta) || delta === 0 || !Number.isFinite(value)) return '—';
-        return `${((value / delta) * 100).toFixed(0)}%`;
+        if (!(scale > 0) || !Number.isFinite(value)) return '—';
+        return `${((value / scale) * 100).toFixed(0)}%`;
     };
 
     const addRow = (key, label, value, tooltip, basis, emphasis = false) => {
@@ -329,7 +334,9 @@ export function buildPanelBody(attribution) {
     const delta = attribution?.totals?.delta;
     const explained = attribution?.totals?.explained ?? 0;
     if (Number.isFinite(delta)) {
-        const pct = delta === 0 ? null : Math.round((explained / delta) * 100);
+        // Against the size of the change, for the same reason the table's share
+        // column is: a losing window would otherwise report a negative share
+        const pct = delta === 0 ? null : Math.round((explained / Math.abs(delta)) * 100);
         summary.textContent =
             `Net worth changed by ${networthFormatter(Math.round(delta))}; ` +
             `the recordings account for ${networthFormatter(Math.round(explained))}` +
@@ -358,6 +365,18 @@ export function buildPanelBody(attribution) {
         warning.textContent =
             `${unpriced} enhancement session${unpriced === 1 ? '' : 's'} could not be valued — the item has no ` +
             'market price at one of its two levels — so they are in the residual rather than the enhancement row.';
+        body.appendChild(warning);
+    }
+
+    const unpricedProduction = attribution?.unpricedProductionActions || 0;
+    if (unpricedProduction > 0) {
+        const warning = document.createElement('div');
+        warning.className = 'mwi-gold-sources-unpriced-production';
+        warning.style.cssText = 'font-size: 10px; color: #fbbf24; margin-top: 6px;';
+        warning.textContent =
+            `${unpricedProduction} production action${unpricedProduction === 1 ? '' : 's'} could not be valued — ` +
+            'an input or output has no market price — so the production row is short by whatever they were worth ' +
+            'and the difference sits in the residual.';
         body.appendChild(warning);
     }
 

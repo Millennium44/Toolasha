@@ -12,7 +12,7 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
-    settings: { guildTrialAutoRecord: true },
+    settings: { guildTrialAutoRecord: true, guildTrialLedger: true },
     store: {},
     breakdown: null,
     characterId: 30404,
@@ -133,7 +133,7 @@ function breakdown(overrides = {}) {
 beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
-    game.settings = { guildTrialAutoRecord: true };
+    game.settings = { guildTrialAutoRecord: true, guildTrialLedger: true };
     game.store = {};
     game.breakdown = breakdown();
     game.traceId = null;
@@ -452,6 +452,18 @@ describe('stopping', () => {
         // The roster arrives as names, not as the `{name, characterId}` entries
         // the damage module keys by unit index
         expect(game.accrued[0].roster.every((name) => typeof name === 'string')).toBe(true);
+    });
+
+    test('the ledger is not written when the ledger setting is off', () => {
+        // The setting is the record, not merely the panel that reads it: half a
+        // year of per-member rows for somebody who asked for none is exactly
+        // what switching it off is for
+        game.settings = { guildTrialAutoRecord: true, guildTrialLedger: false };
+
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.stop('button');
+
+        expect(game.accrued).toHaveLength(0);
     });
 
     test('a ledger that throws is not allowed to lose the recording', () => {

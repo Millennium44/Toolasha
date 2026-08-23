@@ -166,11 +166,17 @@ function readCommunityBuffs() {
  * in a Map. `armed: false` is exactly "this listing has been reported beaten
  * and not repriced since".
  *
- * @returns {number} Beaten listings
+ * An empty map is *unknown*, not zero. The briefing is built at login, which
+ * is generally before the watcher's first pass has compared anything — reading
+ * an unpopulated map as "no listings are undercut" prints a reassurance nobody
+ * checked. Null omits the figure and the next refresh picks it up.
+ *
+ * @returns {number|null} Beaten listings, or null when the watcher has not run
  */
 function undercutCount() {
     const states = marketUndercutAlerts?.listingStates;
-    if (!states || typeof states.values !== 'function') return 0;
+    if (!states || typeof states.values !== 'function') return null;
+    if (typeof states.size === 'number' && states.size === 0) return null;
     let beaten = 0;
     for (const state of states.values()) {
         if (state?.armed === false) beaten += 1;
@@ -196,9 +202,31 @@ function listingFingerprint(listings) {
     const fingerprint = {};
     for (const listing of listings) {
         if (listing?.id === undefined || listing?.id === null) continue;
-        fingerprint[listing.id] = listing.status || '';
+        fingerprint[listing.id] = {
+            status: listing.status || '',
+            // The listing-age feature's own marking, kept so that "expired"
+            // can be a delta rather than a standing count
+            toolashaStatus: listing._toolashaStatus || '',
+        };
     }
     return fingerprint;
+}
+
+/**
+ * One listing's stored state, from either fingerprint shape.
+ *
+ * Baselines written before the marking was recorded hold a bare status string;
+ * a session that read one as an object would see every field blank and report
+ * the whole board as newly changed.
+ *
+ * @param {Object|null} baseline - The stored fingerprint
+ * @param {string|number} id - The listing
+ * @returns {{status: string, toolashaStatus: string}} What was stored
+ */
+function baselineListing(baseline, id) {
+    const entry = baseline?.[id];
+    if (typeof entry === 'string') return { status: entry, toolashaStatus: '' };
+    return { status: entry?.status || '', toolashaStatus: entry?.toolashaStatus || '' };
 }
 
 /**
@@ -224,11 +252,14 @@ async function loadListingDelta(characterId) {
         let expired = 0;
         for (const listing of listings) {
             if (!listing) continue;
-            const wasFilled = baseline?.[listing.id] === '/market_listing_status/filled';
-            if (listing.status === '/market_listing_status/filled' && !wasFilled) filled += 1;
+            const before = baselineListing(baseline, listing.id);
+            if (listing.status === '/market_listing_status/filled' && before.status !== '/market_listing_status/filled')
+                filled += 1;
             // Set by the listing-age feature when the board showed a listing as
-            // expired; absent when that feature is off, which reads as zero
-            if (listing._toolashaStatus === 'expired') expired += 1;
+            // expired; absent when that feature is off, which reads as zero.
+            // Newly expired only — a standing count made the line permanent and
+            // therefore invisible, which is the same reason `filled` is a delta
+            if (listing._toolashaStatus === 'expired' && before.toolashaStatus !== 'expired') expired += 1;
         }
 
         listingDelta = { filled, expired };
@@ -268,7 +299,9 @@ export function collectFacts(now = Date.now()) {
         listings: {
             filled: listingDelta?.filled || 0,
             expired: listingDelta?.expired || 0,
-            undercut: attempt('the undercut listings', () => undercutCount()) || 0,
+            // Null rather than zero when the watcher has not compared anything
+            // yet; the line leaves the figure out instead of claiming none
+            undercut: attempt('the undercut listings', () => undercutCount()) ?? null,
         },
         enhancement: attempt('the enhancement session', () => {
             const session = enhancementTracker.getCurrentSession?.();

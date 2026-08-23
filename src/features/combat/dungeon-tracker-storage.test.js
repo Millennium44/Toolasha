@@ -41,6 +41,7 @@ const {
     runMatchesCharacter,
     filterRunsForCharacter,
     mergeRuns,
+    PERSIST_COALESCE_MS,
 } = await import('./dungeon-tracker-storage.js');
 
 function seedRuns(runs) {
@@ -212,6 +213,7 @@ describe('saveTeamRun', () => {
     test('missing dungeonName defaults to Unknown', async () => {
         seedRuns([]);
         await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T00:00:00Z', duration: 500 });
+        await dungeonTrackerStorage.flushPendingSave();
 
         expect(game.saved.unifiedRuns.allRuns[0].dungeonName).toBe('Unknown');
     });
@@ -223,29 +225,40 @@ describe('saveTeamRun', () => {
         // Storage emptied behind memory's back loses nothing: memory still has it
         game.saved.unifiedRuns.allRuns = [];
         await dungeonTrackerStorage.saveTeamRun('C,D', { timestamp: '2026-01-02T00:00:00Z', duration: 700 });
+        await dungeonTrackerStorage.flushPendingSave();
 
         expect((await dungeonTrackerStorage.getAllRuns()).map((r) => r.teamKey)).toEqual(['C,D', 'A,B']);
         expect(game.saved.unifiedRuns.allRuns.map((r) => r.teamKey)).toEqual(['C,D', 'A,B']);
     });
 
-    test('every append takes the write debounce; memory is what readers see meanwhile', async () => {
-        vi.useFakeTimers();
-        try {
-            vi.setSystemTime(new Date('2026-01-05T00:00:00Z'));
-            seedRuns([]);
-            await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T00:00:00Z', duration: 500 });
-            await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T01:00:00Z', duration: 500 });
-            await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T02:00:00Z', duration: 500 });
-            expect(game.writes.map(([, immediate]) => immediate)).toEqual([false, false, false]);
-
-            vi.setSystemTime(new Date('2026-01-05T00:01:00Z'));
-            await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T03:00:00Z', duration: 500 });
-            expect(game.writes.at(-1)[1]).toBe(false);
-            expect(await dungeonTrackerStorage.getAllRuns()).toHaveLength(4);
-            expect(game.saved.unifiedRuns.allRuns).toHaveLength(4);
-        } finally {
-            vi.useRealTimers();
+    test('a burst of appends costs one read-merge-write, not one per run', async () => {
+        seedRuns([]);
+        // A chat backfill: several runs recovered in one sweep. Each used to
+        // read the whole history back and re-sort it before writing
+        for (let i = 0; i < 5; i += 1) {
+            await dungeonTrackerStorage.saveTeamRun('A,B', {
+                timestamp: `2026-01-0${i + 1}T00:00:00Z`,
+                duration: 500,
+            });
         }
+
+        // Nothing on disk yet, and every reader already sees all five
+        expect(game.writes).toEqual([]);
+        expect(await dungeonTrackerStorage.getAllRuns()).toHaveLength(5);
+
+        await dungeonTrackerStorage.flushPendingSave();
+
+        expect(game.writes).toHaveLength(1);
+        expect(game.saved.unifiedRuns.allRuns).toHaveLength(5);
+    });
+
+    test('a deferred save still takes the store’s own write debounce', async () => {
+        seedRuns([]);
+        await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T00:00:00Z', duration: 500 });
+        await new Promise((resolve) => setTimeout(resolve, PERSIST_COALESCE_MS + 20));
+
+        expect(game.writes.map(([, immediate]) => immediate)).toEqual([false]);
+        expect(game.saved.unifiedRuns.allRuns).toHaveLength(1);
     });
 
     test('a run is not written over a history that could not be read first', async () => {
@@ -327,6 +340,7 @@ describe('a second tab writing the same account-wide key', () => {
         otherTabAppends({ timestamp: '2026-01-01T12:00:00Z', teamKey: 'X,Y', duration: 400 });
 
         await dungeonTrackerStorage.saveTeamRun('C,D', { timestamp: '2026-01-02T00:00:00Z', duration: 700 });
+        await dungeonTrackerStorage.flushPendingSave();
 
         expect(game.saved.unifiedRuns.allRuns.map((r) => r.teamKey)).toEqual(['C,D', 'X,Y', 'A,B']);
         expect((await dungeonTrackerStorage.getAllRuns()).map((r) => r.teamKey)).toEqual(['C,D', 'X,Y', 'A,B']);
@@ -340,6 +354,7 @@ describe('a second tab writing the same account-wide key', () => {
         otherTabAppends({ timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 });
 
         await dungeonTrackerStorage.saveTeamRun('C,D', { timestamp: '2026-01-02T00:00:00Z', duration: 700 });
+        await dungeonTrackerStorage.flushPendingSave();
 
         expect(game.saved.unifiedRuns.allRuns).toHaveLength(2);
     });
@@ -355,6 +370,7 @@ describe('a second tab writing the same account-wide key', () => {
         otherTabAppends({ timestamp: '2026-01-01T00:00:00Z', teamKey: 'A,B', duration: 500 });
 
         await dungeonTrackerStorage.saveTeamRun('C,D', { timestamp: '2026-01-03T00:00:00Z', duration: 700 });
+        await dungeonTrackerStorage.flushPendingSave();
 
         expect(game.saved.unifiedRuns.allRuns.map((r) => r.timestamp)).toEqual([
             '2026-01-03T00:00:00Z',
@@ -381,6 +397,7 @@ describe('a second tab writing the same account-wide key', () => {
         otherTabAppends({ ...outlier });
 
         await dungeonTrackerStorage.saveTeamRun('C,D', { timestamp: '2026-01-07T00:00:00Z', duration: 700 });
+        await dungeonTrackerStorage.flushPendingSave();
 
         expect(game.saved.unifiedRuns.allRuns.some((r) => r.duration === 5000)).toBe(false);
     });
@@ -563,6 +580,7 @@ describe('who recorded a run', () => {
             duration: 700,
             dungeonName: 'Chimerical Den',
         });
+        await dungeonTrackerStorage.flushPendingSave();
 
         expect(game.saved.unifiedRuns.allRuns[0]).toMatchObject({
             recordedBy: 'market123',
@@ -584,6 +602,7 @@ describe('who recorded a run', () => {
             duration: 800,
             dungeonName: 'Chimerical Den',
         });
+        await dungeonTrackerStorage.flushPendingSave();
 
         expect(game.saved.unifiedRuns.allRuns.map((run) => run.recordedBy)).toEqual(['iron456', 'market123']);
     });

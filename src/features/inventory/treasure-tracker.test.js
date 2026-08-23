@@ -701,6 +701,32 @@ describe('the popup is shown only once it has somewhere to be', () => {
         dm.dropTables = {};
     });
 
+    test('a restore that lands after the popup was replaced does not touch the new one', async () => {
+        geometry.restoreFails = true;
+        dm.dropTables['/items/chimerical_chest'] = [{ itemHrid: '/items/coin', dropRate: 1, minCount: 1, maxCount: 1 }];
+        treasureTracker.settings = { ...treasureTracker.settings, popupPinned: true };
+        treasureTracker.tally = {
+            '/items/chimerical_chest': { opened: 1, loot: { '/items/coin': 1 }, last: { opened: 1, loot: {} } },
+        };
+
+        treasureTracker._showOpening('/items/chimerical_chest');
+
+        // One chest closed and the next opened while the read was in flight
+        const replacement = fakePopup();
+        treasureTracker.popup = replacement;
+
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // The continuation belonged to a popup that is gone; the new one is
+        // still waiting on its own restore and must stay hidden
+        expect(replacement.style.visibility).toBe('hidden');
+
+        geometry.restoreFails = false;
+        treasureTracker.tally = {};
+        dm.dropTables = {};
+    });
+
     test('stays hidden while the dialog is still rendering, then shows in the corner when it never comes', () => {
         vi.useFakeTimers();
         treasureTracker.popup = fakePopup();

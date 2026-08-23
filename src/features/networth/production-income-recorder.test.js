@@ -128,12 +128,66 @@ describe('recording production', () => {
         expect(state.saved).toBeNull();
     });
 
-    test('an unpriceable recipe records nothing rather than a zero day', async () => {
+    test('an unpriceable recipe is counted as uncounted rather than valued', async () => {
         state.prices = {};
         await recorder._onActionCompleted({
             endCharacterAction: { id: 6, actionHrid: '/actions/cooking/cheese', currentCount: 1 },
         });
-        expect(state.saved).toBeNull();
+
+        // Not valued — nothing is added to either half — but recorded as an
+        // action the day's figure is short by, so the panel can say so
+        const [row] = state.saved.rows;
+        expect(row).toMatchObject({ outputValue: 0, inputValue: 0, actions: 0, unpricedActions: 1 });
+    });
+
+    test('an input with no price does not let its outputs be counted as income', async () => {
+        // The whole reason this recorder exists: counting the gross of a recipe
+        // whose inputs could not be priced reports a crafting day as several
+        // times the profit it was
+        state.prices = { '/items/cheese': 10 };
+        await recorder._onActionCompleted({
+            endCharacterAction: { id: 61, actionHrid: '/actions/cooking/cheese', currentCount: 1 },
+        });
+
+        const [row] = state.saved.rows;
+        expect(row.outputValue).toBe(0);
+        expect(row.unpricedActions).toBe(1);
+    });
+});
+
+describe('the action-counter map', () => {
+    test('a long-running action is not evicted by two hundred short ones', async () => {
+        const long = { id: 'long', actionHrid: '/actions/cooking/cheese', currentCount: 1 };
+        await recorder._onActionCompleted({ endCharacterAction: long });
+
+        // Two hundred other actions go past, each touching the map once
+        for (let i = 0; i < 200; i += 1) {
+            await recorder._onActionCompleted({
+                endCharacterAction: { id: `other${i}`, actionHrid: '/actions/cooking/cheese', currentCount: 1 },
+            });
+            // …and the long one ticks between them, which must move it to the
+            // end of the eviction order rather than leaving it first-seen
+            await recorder._onActionCompleted({ endCharacterAction: { ...long, currentCount: 2 + i } });
+        }
+
+        state.saved = null;
+        await recorder._onActionCompleted({ endCharacterAction: { ...long, currentCount: 300 } });
+
+        // 300 minus the 201 already counted for it, not a re-baselined 1
+        const row = state.saved.rows.find((entry) => entry.d === TODAY);
+        expect(row.actions).toBeGreaterThan(0);
+        expect(recorder._completedSince({ ...long, currentCount: 305 })).toBe(5);
+    });
+});
+
+describe('a character switch mid-read', () => {
+    test('the departing character’s rows are never adopted by the arriving one', async () => {
+        // The read is in flight when the switch lands
+        const load = recorder.load();
+        recorder._forget();
+        await load;
+
+        expect(recorder._rows).toEqual([]);
     });
 });
 

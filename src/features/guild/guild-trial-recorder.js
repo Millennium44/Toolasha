@@ -286,6 +286,12 @@ class GuildTrialRecorder {
      */
     async _accrue() {
         try {
+            // The ledger is its own setting, and a player who switched it off
+            // was switching off the record, not merely the panel that reads it.
+            // Writing half a year of per-member rows for somebody who asked for
+            // none is the one thing the setting exists to prevent
+            if (!config.getSetting('guildTrialLedger')) return;
+
             const breakdown = guildTrialDamage.breakdown?.() || {};
             await recordFinishedTrial({
                 session: this.session,

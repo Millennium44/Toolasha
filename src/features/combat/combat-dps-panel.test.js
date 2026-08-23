@@ -399,6 +399,35 @@ describe('the rotation tab', () => {
         expect(text).not.toContain('could not be drawn');
     });
 
+    test('a kit read before the first battle is still drawn, under the notice', () => {
+        // The tracker seeds the equipped bar the moment the panel opens, so
+        // rows can exist before a battle names the slot. Hiding them behind the
+        // notice threw away the only thing the tab had to show
+        const state = newRotationState();
+        noteRotationKit(state, [CHEAP, PRICEY], DETAILS);
+        const summary = summariseRotation(state);
+        opts.audit = { tracking: false, fight: summary, session: summary };
+
+        feature._setTab('rotation');
+        const text = board().textContent;
+
+        expect(text).toContain('Waiting for a battle to name your slot');
+        expect(text).toContain('cheap jab');
+        expect(text).toContain('pricey nova');
+        expect(text).not.toContain('could not be drawn');
+    });
+
+    test('with nothing seen at all the notice stands alone', () => {
+        const summary = summariseRotation(newRotationState());
+        opts.audit = { tracking: false, fight: summary, session: summary };
+
+        feature._setTab('rotation');
+        const text = board().textContent;
+
+        expect(text).toContain('Waiting for a battle to name your slot');
+        expect(text).toContain('Nothing on the bar yet');
+    });
+
     test('draws a row per ability with the verdict on it', () => {
         opts.audit = starvedAudit();
         feature._setTab('rotation');

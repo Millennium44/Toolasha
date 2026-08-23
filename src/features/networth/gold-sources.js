@@ -380,7 +380,8 @@ function earliest(items, timeOf) {
  * @param {Array<Object>} [input.series] - Net worth snapshots `{t, total}`
  * @param {Array<Object>} [input.lootEntries] - Loot log entries
  * @param {Function} [input.actionType] - `(actionHrid) => string|null`
- * @param {Array<Object>} [input.productionDays] - Recorder rows `{d, outputValue, inputValue, offlineProfit}`
+ * @param {Array<Object>} [input.productionDays] - Recorder rows
+ *   `{d, outputValue, inputValue, offlineProfit, unpricedActions}`
  * @param {Array<Object>} [input.alchemySessions] - Stored alchemy sessions
  * @param {Array<Object>} [input.enhancementSessions] - Stored enhancement sessions
  * @param {Array<Object>} [input.tradeFills] - Trade ledger fill records
@@ -392,7 +393,8 @@ function earliest(items, timeOf) {
  *   days: Array<{day: string, sources: Object, explained: number, delta: number|null, residual: number|null}>,
  *   totals: {sources: Object, explained: number, delta: number|null, residual: number|null},
  *   coverage: Object<string, number|null>,
- *   unpricedEnhancementSessions: number
+ *   unpricedEnhancementSessions: number,
+ *   unpricedProductionActions: number
  * }} The attribution
  */
 export function attributeGoldSources(input) {
@@ -439,10 +441,16 @@ export function attributeGoldSources(input) {
     }
 
     // Production recorder: already per UTC day, already valued
+    let unpricedProductionActions = 0;
     for (const row of productionDays || []) {
         if (!row?.d) continue;
         add(row.d, 'production', num(row.outputValue) - num(row.inputValue));
         add(row.d, 'offline', num(row.offlineProfit));
+        // Actions the recorder could not value at all, because one of their
+        // items has no market price. They are in the residual, not the
+        // production row, and the panel says so rather than letting the
+        // production figure look complete
+        if (inWindow.has(row.d)) unpricedProductionActions += num(row.unpricedActions);
     }
 
     for (const session of alchemySessions || []) {
@@ -552,8 +560,16 @@ export function attributeGoldSources(input) {
             residual: windowDelta === null ? null : windowDelta - totalExplained,
         },
         coverage: {
-            combat: earliest(lootEntries, (entry) => Date.parse(entry?.startTime)),
-            gathering: earliest(lootEntries, (entry) => Date.parse(entry?.startTime)),
+            // Split the same way the attribution loop above splits them: the
+            // loot log holds both, and answering "combat has been recorded
+            // since" with the date of a foraging entry claims coverage for a
+            // source that has never been seen
+            combat: earliest(lootEntries, (entry) =>
+                actionType(entry?.actionHrid) === '/action_types/combat' ? Date.parse(entry?.startTime) : NaN
+            ),
+            gathering: earliest(lootEntries, (entry) =>
+                GATHERING_ACTION_TYPES.includes(actionType(entry?.actionHrid)) ? Date.parse(entry?.startTime) : NaN
+            ),
             production: earliest(productionDays, (row) => dayStart(row?.d)),
             offline: earliest(productionDays, (row) => (row?.offlineProfit ? dayStart(row?.d) : NaN)),
             alchemy: earliest(alchemySessions, (session) => num(session?.startTime) || NaN),
@@ -563,5 +579,6 @@ export function attributeGoldSources(input) {
             consumables: earliest(combatSessions, (session) => Date.parse(session?.combatStartTime)),
         },
         unpricedEnhancementSessions,
+        unpricedProductionActions,
     };
 }

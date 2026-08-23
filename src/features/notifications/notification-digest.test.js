@@ -43,6 +43,17 @@ vi.mock('./notice-log.js', () => ({
     },
 }));
 
+const characterEvents = vi.hoisted(() => ({ handlers: new Map() }));
+vi.mock('../../core/data-manager.js', () => ({
+    default: {
+        on: (event, handler) => {
+            if (!characterEvents.handlers.has(event)) characterEvents.handlers.set(event, []);
+            characterEvents.handlers.get(event).push(handler);
+        },
+        off: () => {},
+    },
+}));
+
 const {
     default: notificationService,
     DELIVERY_SETTING_KEYS,
@@ -240,6 +251,38 @@ describe('digest mode', () => {
     test('flushing an empty buffer says nothing', () => {
         expect(notificationService.flushDigest()).toMatchObject({ fired: false, message: '' });
         expect(toast.shown).toHaveLength(0);
+    });
+
+    test('a character switch flushes what is held rather than carrying it over', () => {
+        setHidden(false);
+        notificationService.notify('market-undercut-1', 'Cheese undercut.');
+        expect(toast.shown).toHaveLength(0);
+
+        const switching = characterEvents.handlers.get('character_switching') || [];
+        expect(switching.length).toBeGreaterThan(0);
+        switching.forEach((handler) => handler({}));
+
+        // Said once, about the character it was true of…
+        expect(toast.shown).toHaveLength(1);
+
+        // …and the buffer and its timer went with them, so the arriving
+        // character's quarter of an hour does not open with somebody else's
+        vi.advanceTimersByTime(60 * 60 * 1000);
+        expect(toast.shown).toHaveLength(1);
+    });
+
+    test('a character switch clears the cooldowns as well as the buffer', () => {
+        settings.values[DELIVERY_SETTING_KEYS.digestEnabled] = false;
+        setHidden(false);
+        notificationService.notify('combat-death', 'You died.');
+        notificationService.notify('combat-death', 'You died.');
+        expect(toast.shown).toHaveLength(1);
+
+        (characterEvents.handlers.get('character_switching') || []).forEach((handler) => handler({}));
+
+        // The arriving character has not been told anything yet
+        notificationService.notify('combat-death', 'You died.');
+        expect(toast.shown).toHaveLength(2);
     });
 });
 

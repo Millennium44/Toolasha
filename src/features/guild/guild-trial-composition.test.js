@@ -84,6 +84,22 @@ describe('parseRosterNames', () => {
         expect(parseRosterNames('1. Alice (tank)\n- Bob [heal]')).toEqual(['Alice', 'Bob']);
     });
 
+    test('a name that starts with a digit keeps it', () => {
+        // The marker strip used to be a character class, which ate the leading
+        // digits of any name beginning with one — "3vil" was pasted in as "vil"
+        expect(parseRosterNames('3vil\n007Bond\n2Cool4School')).toEqual(['3vil', '007Bond', '2Cool4School']);
+    });
+
+    test('numbered and bulleted markers are still stripped', () => {
+        expect(parseRosterNames('1. Alice\n2) Bob\n- Carol\n• Dave\n3.7Eleven')).toEqual([
+            'Alice',
+            'Bob',
+            'Carol',
+            'Dave',
+            '7Eleven',
+        ]);
+    });
+
     test('the same person twice is one person', () => {
         expect(parseRosterNames('Alice\nalice\nALICE')).toEqual(['Alice']);
     });
