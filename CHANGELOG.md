@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Bestiary planner: plan to a points target, and optionally through dungeons
+
+Switch the planner to Points, name a target, and it says how long that takes and where the time goes, against the single zone that would reach the same target soonest. An "Include dungeons" toggle (off by default) adds every dungeon at T0–T2 to the All Zones run and lets the plan send you into one — planned at the clear time your own run history measured rather than the simulator's pace (falling back to the sim's when you have no runs), with each stay quoted in clears.
+
 ### All Zones no longer stalls near the end with "skip worse tiers" on
 
 With early exit only the lowest tier of every zone is queued at first; the higher tiers are added later, after the main thread's go/skip answer. Pool slots that found the queue momentarily empty used to retire for good, leaving one slot to grind every remaining tier of every zone one at a time — the "94%, a few seconds left" that sat for minutes. Slots now wait while any chain can still add work. A child sim worker that goes silent (the browser killing it for memory) is given up on after two minutes and its zone recorded as failed instead of holding the sweep open for ever; a tier that fails under early exit ends its zone cleanly so the bar reaches 100; and the main thread always answers a tier result, even if its comparison throws.
