@@ -292,7 +292,7 @@ describe('observedCoverage', () => {
         });
     });
 
-    test('the week in progress is not charged for the trials it has not run yet', () => {
+    test('the week in progress is left out of the ratio, not scored against itself', () => {
         const now = Date.parse('2026-08-23T12:00:00Z');
         const thisWeek = trialWeekStart(now);
         const lastWeek = thisWeek - 7 * 24 * 60 * 60 * 1000;
@@ -306,11 +306,48 @@ describe('observedCoverage', () => {
             { now }
         );
 
-        expect(coverage).toEqual({ observed: 3, expected: 3, cycles: 2, inProgress: true, fraction: 1 });
+        expect(coverage).toEqual({ observed: 2, expected: 2, cycles: 1, inProgress: true, fraction: 1 });
+    });
+
+    test('a trial missed this week cannot hide behind seen-of-seen', () => {
+        const now = Date.parse('2026-08-23T12:00:00Z');
+        const thisWeek = trialWeekStart(now);
+        const lastWeek = thisWeek - 7 * 24 * 60 * 60 * 1000;
+
+        // The panel was shut for one of last week's two, and saw nothing at all
+        // this week. Charging the current cycle only for what it saw used to
+        // report the whole window as perfect
+        const coverage = observedCoverage(
+            [
+                { weekStart: lastWeek, trials: [{ trialId: 'a' }] },
+                { weekStart: thisWeek, trials: [] },
+            ],
+            { now }
+        );
+
+        expect(coverage.fraction).toBe(0.5);
+        expect(coverage.inProgress).toBe(true);
+    });
+
+    test('a duplicate recording cannot push a cycle past what a cycle holds', () => {
+        const coverage = observedCoverage(
+            [{ weekStart: 0, trials: [{ trialId: 'a' }, { trialId: 'b' }, { trialId: 'b' }] }],
+            { now: Date.parse('2026-08-23T12:00:00Z') }
+        );
+
+        expect(coverage.observed).toBe(2);
+        expect(coverage.fraction).toBe(1);
     });
 
     test('no cycles is no fraction rather than zero', () => {
         expect(observedCoverage([]).fraction).toBeNull();
+    });
+
+    test('a window that is only the week in progress has nothing to measure', () => {
+        const now = Date.parse('2026-08-23T12:00:00Z');
+        const coverage = observedCoverage([{ weekStart: trialWeekStart(now), trials: [{ trialId: 'a' }] }], { now });
+
+        expect(coverage).toEqual({ observed: 0, expected: 0, cycles: 0, inProgress: true, fraction: null });
     });
 });
 

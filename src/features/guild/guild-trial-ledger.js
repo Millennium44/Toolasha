@@ -472,40 +472,52 @@ export function sortLedgerRows(rows, sortKey = 'damageShare', direction = 'desc'
  * from the ledger, and every attendance figure has to be read next to this or
  * it reads as an accusation.
  *
- * The cycle in progress is the exception. Its second trial has not happened
- * yet, and charging the ledger for a trial the guild has not run reports the
- * panel as having missed something — a window ending mid-week could not read
- * above 75% however faithfully it watched. The current week therefore expects
- * only what it has seen, so coverage answers "of the trials that have been
- * run, how many did this ledger record".
+ * The cycle in progress is left out of the ratio entirely. Its second trial
+ * has not happened yet, and charging the ledger for a trial the guild has not
+ * run reports the panel as having missed something — a window ending mid-week
+ * could not read above 75% however faithfully it watched. Expecting only what
+ * it has seen was worse: that made the current week `seen of seen`, a perfect
+ * score by construction, so a trial actually missed this week was invisible.
+ * The week is therefore excluded and said to be excluded; `inProgress` is what
+ * the view says it with.
+ *
+ * Observed is clamped per cycle to what a cycle can hold, so a duplicate
+ * recording cannot push the fraction above 1.
  *
  * @param {Array<Object>} cycles - The cycles in the window
  * @param {Object} [options] - Context
  * @param {number} [options.trialsPerCycle] - Trials a cycle runs
  * @param {number} [options.now] - Clock, for deciding which cycle is in progress
  * @returns {{observed: number, expected: number, cycles: number, inProgress: boolean,
- *   fraction: number|null}} The coverage
+ *   fraction: number|null}} The coverage, over the completed cycles only
  */
 export function observedCoverage(cycles, { trialsPerCycle = TRIALS_PER_CYCLE, now = Date.now() } = {}) {
     const list = (cycles || []).filter(Boolean);
     const currentWeek = trialWeekStart(now);
+    const perCycle = Math.max(0, Number(trialsPerCycle) || 0);
 
     let observed = 0;
     let expected = 0;
+    let counted = 0;
     let inProgress = false;
 
     for (const cycle of list) {
-        const seen = (cycle.trials || []).length;
-        observed += seen;
         if (cycle.weekStart === currentWeek) {
             inProgress = true;
-            expected += Math.min(seen, trialsPerCycle);
-        } else {
-            expected += trialsPerCycle;
+            continue;
         }
+        observed += Math.min((cycle.trials || []).length, perCycle);
+        expected += perCycle;
+        counted += 1;
     }
 
-    return { observed, expected, cycles: list.length, inProgress, fraction: expected > 0 ? observed / expected : null };
+    return {
+        observed,
+        expected,
+        cycles: counted,
+        inProgress,
+        fraction: expected > 0 ? observed / expected : null,
+    };
 }
 
 /** The CSV's columns: raw numbers, so a spreadsheet can sort and chart them */

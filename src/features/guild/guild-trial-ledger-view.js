@@ -174,14 +174,23 @@ export function buildLedgerTable({
 
 /**
  * The observed-coverage sentence.
+ *
+ * The current week is excluded from the ratio — its trials have not all been
+ * run — so the sentence says so rather than letting the reader assume the
+ * figure covers everything on screen.
+ *
  * @param {Object} coverage - From `observedCoverage`
  * @returns {string} e.g. `4 of 8 trials watched across 4 cycles`
  */
 export function coverageLine(coverage) {
-    if (!coverage?.cycles) return 'No cycles recorded yet.';
-    return `${coverage.observed} of ${coverage.expected} trials watched across ${coverage.cycles} cycle${
-        coverage.cycles === 1 ? '' : 's'
-    }`;
+    const thisWeek = coverage?.inProgress ? ' This week is still running and is not counted yet.' : '';
+    if (!coverage?.cycles) {
+        return coverage?.inProgress ? `No completed cycles yet.${thisWeek}` : 'No cycles recorded yet.';
+    }
+    return (
+        `${coverage.observed} of ${coverage.expected} trials watched across ${coverage.cycles} cycle` +
+        `${coverage.cycles === 1 ? '' : 's'}${thisWeek}`
+    );
 }
 
 /** A percentage, or a dash for a figure nothing measured */

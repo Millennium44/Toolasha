@@ -150,6 +150,18 @@ describe('coverageLine', () => {
     test('nothing recorded says so rather than printing zeros', () => {
         expect(coverageLine({ observed: 0, expected: 0, cycles: 0 })).toBe('No cycles recorded yet.');
     });
+
+    test('the week in progress is said to be uncounted', () => {
+        const line = coverageLine({ observed: 2, expected: 2, cycles: 1, inProgress: true });
+        expect(line).toContain('2 of 2 trials watched across 1 cycle');
+        expect(line).toContain('This week is still running and is not counted yet.');
+    });
+
+    test('a window that is only this week says there is nothing complete to measure', () => {
+        const line = coverageLine({ observed: 0, expected: 0, cycles: 0, inProgress: true });
+        expect(line).toContain('No completed cycles yet.');
+        expect(line).toContain('not counted yet');
+    });
 });
 
 describe('ledgerCellText', () => {
