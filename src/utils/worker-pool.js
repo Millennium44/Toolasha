@@ -75,6 +75,13 @@ class WorkerPool {
             await this.initialize();
         }
 
+        // replaceWorker drops a slot it cannot rebuild, so a pool can end up empty even
+        // though it initialized. Queueing here would wait forever: nothing arms a
+        // deadline until assignTask, and no worker is left to pick the task up.
+        if (this.workers.length === 0) {
+            throw new Error('Worker pool has no workers available');
+        }
+
         return new Promise((resolve, reject) => {
             const taskId = this.nextTaskId++;
             const task = {
@@ -136,6 +143,8 @@ class WorkerPool {
             workerWrapper.currentTask = null;
             return true;
         };
+        // So terminate() can cancel this task's deadline and detach its handlers
+        task.release = release;
 
         // Set up message handler for this specific task
         const messageHandler = (e) => {
@@ -250,6 +259,12 @@ class WorkerPool {
      * Terminate all workers and clean up
      */
     terminate() {
+        // Nothing will ever answer these once the workers are gone: an in-flight task
+        // whose worker is terminated gets no message and no error, and a queued task has
+        // no deadline armed yet (deadlines start in assignTask), so both would leave
+        // their callers awaiting for the life of the page.
+        const abandoned = [...this.workers.map((w) => w.currentTask), ...this.taskQueue];
+
         for (const workerWrapper of this.workers) {
             workerWrapper.worker.terminate();
         }
@@ -257,6 +272,14 @@ class WorkerPool {
         this.workers = [];
         this.taskQueue = [];
         this.initialized = false;
+
+        for (const task of abandoned) {
+            if (!task) continue;
+            // Cancels the deadline and detaches the handlers for an in-flight task;
+            // returns false if it already settled, in which case leave it alone.
+            if (task.release && !task.release()) continue;
+            task.reject(new Error('Worker pool terminated'));
+        }
     }
 }
 

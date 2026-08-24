@@ -172,6 +172,56 @@ describe('WorkerPool task timeouts', () => {
     });
 });
 
+describe('WorkerPool.terminate', () => {
+    test('rejects the in-flight and the queued tasks instead of leaving them awaited forever', async () => {
+        vi.useFakeTimers();
+        const pool = new WorkerPool({}, 1, { taskTimeoutMs: 1000 });
+        await pool.initialize();
+
+        const inFlight = pool.execute({ work: 1 });
+        const queued = pool.execute({ work: 2 });
+        const inFlightError = inFlight.catch((error) => error);
+        const queuedError = queued.catch((error) => error);
+
+        pool.terminate();
+
+        expect((await inFlightError).message).toMatch(/pool terminated/i);
+        expect((await queuedError).message).toMatch(/pool terminated/i);
+
+        // The in-flight task's deadline went with it; nothing is left to fire
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(created[0].listenerCount('message')).toBe(0);
+    });
+
+    test('a task that already answered is not rejected a second time', async () => {
+        vi.useFakeTimers();
+        const pool = new WorkerPool({}, 1, { taskTimeoutMs: 1000 });
+        await pool.initialize();
+
+        const promise = pool.execute({ work: 1 });
+        await vi.advanceTimersByTimeAsync(0);
+        const worker = created[0];
+        worker.reply({ taskId: worker.posted[0].taskId, result: 7 });
+        await expect(promise).resolves.toBe(7);
+
+        expect(() => pool.terminate()).not.toThrow();
+    });
+});
+
+describe('WorkerPool with no workers left', () => {
+    test('execute refuses rather than queueing a task nothing can pick up', async () => {
+        const pool = new WorkerPool({}, 1, { taskTimeoutMs: 0 });
+        await pool.initialize();
+
+        // What replaceWorker's failure path leaves behind: an initialized pool with
+        // an empty worker list, where a queued task would wait for the whole session
+        pool.workers.length = 0;
+
+        await expect(pool.execute({ work: 1 })).rejects.toThrow(/no workers/i);
+        expect(pool.taskQueue).toHaveLength(0);
+    });
+});
+
 describe('WorkerPool object URLs', () => {
     test('every object URL is revoked as soon as its worker holds it', async () => {
         const pool = new WorkerPool({}, 3, { taskTimeoutMs: 0 });
