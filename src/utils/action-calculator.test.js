@@ -49,6 +49,7 @@ const parsers = vi.hoisted(() => ({
     equipmentSpeed: 0,
     equipmentEfficiency: 0,
     houseEfficiency: 0,
+    houseSpeed: 0,
     teaEfficiency: 0,
     teaEfficiencyBreakdown: [],
     drinkConcentration: 0,
@@ -88,6 +89,7 @@ vi.mock('./tea-parser.js', () => ({
 
 vi.mock('./house-efficiency.js', () => ({
     calculateHouseEfficiency: () => parsers.houseEfficiency,
+    calculateHouseActionSpeed: () => parsers.houseSpeed,
 }));
 
 vi.mock('./action-context.js', () => ({
@@ -124,6 +126,7 @@ beforeEach(() => {
     parsers.equipmentSpeed = 0;
     parsers.equipmentEfficiency = 0;
     parsers.houseEfficiency = 0;
+    parsers.houseSpeed = 0;
     parsers.teaEfficiency = 0;
     parsers.teaEfficiencyBreakdown = [];
     parsers.drinkConcentration = 0;
@@ -158,6 +161,18 @@ describe('action time', () => {
             20 / 1.4,
             9
         );
+    });
+
+    test('a house room that grants action speed shortens the action, it does not add efficiency', () => {
+        // The Observatory's enhancing buff is /buff_types/action_speed. It belongs in the
+        // time divisor: 20 / (1 + 0.12). Crediting it as efficiency instead would leave the
+        // action 20s long and invent a 12% chance of a free repeat.
+        parsers.houseSpeed = 0.12;
+
+        const stats = calculateActionStats(action(), { skills: skillsAt(30), equipment: [] });
+
+        expect(stats.actionTime).toBeCloseTo(20 / 1.12, 9);
+        expect(stats.totalEfficiency).toBe(0);
     });
 
     test('a guild buff’s flat and ratio parts both count', () => {

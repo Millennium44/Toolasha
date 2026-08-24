@@ -14,7 +14,7 @@ import {
     parseActionLevelBonusBreakdown,
     parseTeaSkillLevelBonus,
 } from './tea-parser.js';
-import { calculateHouseEfficiency } from './house-efficiency.js';
+import { calculateHouseEfficiency, calculateHouseActionSpeed } from './house-efficiency.js';
 import { getCommunityProductionEfficiency } from './community-buffs.js';
 import { stackAdditive } from './efficiency.js';
 import { MIN_ACTION_TIME_SECONDS } from './profit-constants.js';
@@ -64,8 +64,14 @@ export function calculateActionStats(actionDetails, options = {}) {
             0
         );
 
+        // House rooms that grant /buff_types/action_speed rather than efficiency —
+        // the Observatory speeds up enhancing. It belongs in the divisor with the
+        // other speed sources, never in the efficiency total: a shorter action is
+        // not a free extra action, and the two have different arithmetic.
+        const houseSpeedBonus = calculateHouseActionSpeed(actionDetails.type);
+
         // Calculate action time with equipment speed
-        let actionTime = baseTime / (1 + speedBonus + personalSpeedBonus + guildSpeedBonus);
+        let actionTime = baseTime / (1 + speedBonus + personalSpeedBonus + guildSpeedBonus + houseSpeedBonus);
 
         // Apply task speed multiplicatively (if action is an active task)
         if (actionHrid && dataManager.isTaskAction(actionHrid)) {

@@ -152,9 +152,25 @@ beforeEach(() => {
         houseRoomDetailMap: {
             '/house_rooms/laboratory': {
                 usableInActionTypeMap: { '/action_types/alchemy': true },
+                actionBuffs: [
+                    {
+                        typeHrid: '/buff_types/efficiency',
+                        usableInActionTypeMap: { '/action_types/alchemy': true },
+                        flatBoost: 0.015,
+                        flatBoostLevelBonus: 0.015,
+                    },
+                ],
             },
             '/house_rooms/dairy_barn': {
                 usableInActionTypeMap: { '/action_types/milking': true },
+                actionBuffs: [
+                    {
+                        typeHrid: '/buff_types/efficiency',
+                        usableInActionTypeMap: { '/action_types/milking': true },
+                        flatBoost: 0.015,
+                        flatBoostLevelBonus: 0.015,
+                    },
+                ],
             },
         },
     };
@@ -307,7 +323,7 @@ describe('extractEfficiency', () => {
         const eff = alchemyProfit.extractEfficiency();
 
         expect(eff.level).toBe(10);
-        expect(eff.house).toBe(12);
+        expect(eff.house).toBeCloseTo(12, 10);
         expect(eff.tea).toBeCloseTo(10, 10);
         expect(eff.equipment).toBeCloseTo(4, 10);
         expect(eff.community).toBeCloseTo(17, 10);
