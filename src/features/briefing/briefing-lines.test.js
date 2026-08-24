@@ -45,7 +45,7 @@ describe('buildBriefingLines', () => {
             rerolls: { known: true, available: false, remaining: 0 },
             buffs: [{ name: 'Experience', expiresAt: NOW + 5 * 3_600_000 }],
             consumable: { name: 'Coffee', secondsLeft: Infinity },
-            listings: { filled: 0, undercut: 0, expired: 0 },
+            listings: { filled: 0, undercut: 0 },
             enhancement: null,
             guild: null,
             labyrinth: { ok: true, available: 0 },
@@ -150,13 +150,13 @@ describe('buildBriefingLines', () => {
 
     describe('market listings', () => {
         test('each kind is named and zeroes are left out', () => {
-            const entry = line({ listings: { filled: 3, undercut: 1, expired: 0 } }, 'listings');
+            const entry = line({ listings: { filled: 3, undercut: 1 } }, 'listings');
             expect(entry.value).toBe('3 filled, 1 undercut');
             expect(entry.target).toBe('listings');
         });
 
         test('nothing happened means no line', () => {
-            expect(line({ listings: { filled: 0, undercut: 0, expired: 0 } }, 'listings')).toBeUndefined();
+            expect(line({ listings: { filled: 0, undercut: 0 } }, 'listings')).toBeUndefined();
         });
     });
 

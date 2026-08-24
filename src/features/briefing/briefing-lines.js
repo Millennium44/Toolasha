@@ -207,14 +207,13 @@ function listingLine(facts) {
     const parts = [];
     if (listings.filled > 0) parts.push(`${listings.filled} filled`);
     if (listings.undercut > 0) parts.push(`${listings.undercut} undercut`);
-    if (listings.expired > 0) parts.push(`${listings.expired} expired`);
     if (parts.length === 0) return null;
 
     return {
         key: 'listings',
         label: 'Market listings',
         value: parts.join(', '),
-        tone: listings.expired > 0 ? 'bad' : 'gold',
+        tone: 'gold',
         target: TARGETS.listings,
     };
 }

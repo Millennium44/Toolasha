@@ -78,7 +78,7 @@ const dismissed = new Set();
  * Computed once, at initialize, against a snapshot persisted when the previous
  * session started — and then held, because "since you were last here" must not
  * quietly become "since fifteen seconds ago" on the next redraw.
- * @type {{filled: number, expired: number}|null}
+ * @type {{filled: number}|null}
  */
 let listingDelta = null;
 
@@ -202,31 +202,26 @@ function listingFingerprint(listings) {
     const fingerprint = {};
     for (const listing of listings) {
         if (listing?.id === undefined || listing?.id === null) continue;
-        fingerprint[listing.id] = {
-            status: listing.status || '',
-            // The listing-age feature's own marking, kept so that "expired"
-            // can be a delta rather than a standing count
-            toolashaStatus: listing._toolashaStatus || '',
-        };
+        fingerprint[listing.id] = listing.status || '';
     }
     return fingerprint;
 }
 
 /**
- * One listing's stored state, from either fingerprint shape.
+ * One listing's stored status, from either fingerprint shape.
  *
- * Baselines written before the marking was recorded hold a bare status string;
- * a session that read one as an object would see every field blank and report
- * the whole board as newly changed.
+ * A short-lived version stored an object per listing so that expiries could be
+ * a delta; those baselines are still on disk, and a session that read one as a
+ * string would see no status at all and report the whole board as newly filled.
  *
  * @param {Object|null} baseline - The stored fingerprint
  * @param {string|number} id - The listing
- * @returns {{status: string, toolashaStatus: string}} What was stored
+ * @returns {string} The status stored for it, or `''`
  */
-function baselineListing(baseline, id) {
+function baselineStatus(baseline, id) {
     const entry = baseline?.[id];
-    if (typeof entry === 'string') return { status: entry, toolashaStatus: '' };
-    return { status: entry?.status || '', toolashaStatus: entry?.toolashaStatus || '' };
+    if (entry && typeof entry === 'object') return entry.status || '';
+    return entry || '';
 }
 
 /**
@@ -248,21 +243,26 @@ async function loadListingDelta(characterId) {
         const baseline = (await storage.get(key, 'settings', null))?.listings || null;
         const listings = dataManager.getMarketListings?.() || [];
 
+        // Expiries are deliberately not counted here. The only list this can
+        // read is `getMarketListings()`, and `mergeMarketListings` drops
+        // expired listings the moment the game reports them, so an expiry
+        // never reaches this loop — the count was structurally zero. The
+        // listing-age log does keep expired entries, but it only learns of an
+        // expiry from the marketplace's own My Listings table, which nobody
+        // has opened at login; a listing that expired while you were away is
+        // reconciled to 'unknown' there, indistinguishable from a cancel. So
+        // there is no source for "expired since you were last here".
         let filled = 0;
-        let expired = 0;
         for (const listing of listings) {
             if (!listing) continue;
-            const before = baselineListing(baseline, listing.id);
-            if (listing.status === '/market_listing_status/filled' && before.status !== '/market_listing_status/filled')
+            if (
+                listing.status === '/market_listing_status/filled' &&
+                baselineStatus(baseline, listing.id) !== '/market_listing_status/filled'
+            )
                 filled += 1;
-            // Set by the listing-age feature when the board showed a listing as
-            // expired; absent when that feature is off, which reads as zero.
-            // Newly expired only — a standing count made the line permanent and
-            // therefore invisible, which is the same reason `filled` is a delta
-            if (listing._toolashaStatus === 'expired' && before.toolashaStatus !== 'expired') expired += 1;
         }
 
-        listingDelta = { filled, expired };
+        listingDelta = { filled };
         await storage.set(key, { at: Date.now(), listings: listingFingerprint(listings) }, 'settings');
     } catch (error) {
         console.error('[SessionBriefing] Could not compare listings against the last session:', error);
@@ -298,7 +298,6 @@ export function collectFacts(now = Date.now()) {
         consumable: attempt('the consumable forecast', () => soonestCombatConsumable()),
         listings: {
             filled: listingDelta?.filled || 0,
-            expired: listingDelta?.expired || 0,
             // Null rather than zero when the watcher has not compared anything
             // yet; the line leaves the figure out instead of claiming none
             undercut: attempt('the undercut listings', () => undercutCount()) ?? null,
