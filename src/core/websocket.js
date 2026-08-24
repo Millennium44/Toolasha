@@ -157,6 +157,8 @@ class WebSocketHook {
         this.originalWebSocket = null;
         this.currentWebSocket = null;
         this.clientDataRetryTimeout = null;
+        /** Serialises overlapping profile_shared persistence (read-modify-write across awaits) */
+        this._profileChain = null;
     }
 
     /**
@@ -638,36 +640,63 @@ class WebSocketHook {
                 // Store in memory for Steam users (works without GM storage)
                 setCurrentProfile(parsed);
 
-                // Re-read the stored list on every share rather than caching it on the
-                // hook: two game tabs are a supported setup, and a tab that held its own
-                // copy overwrote whatever the other tab had shared in the meantime. One
-                // getJSON per profile click is cheap next to that.
-                const stored = (await storage.getJSON('profile_list', 'combatExport', null)) || [];
-
-                // Newest first, one entry per character
-                let profileList = [parsed, ...stored.filter((p) => p.characterID !== parsed.characterID)];
-
-                // Keep only last 20 profiles
-                if (profileList.length > MAX_STORED_PROFILES) {
-                    profileList = profileList.slice(0, MAX_STORED_PROFILES);
-                }
-
-                // Save updated profile list to IndexedDB (cross-session) and GM storage
-                // (cross-domain for Shykai). Immediate: the GM copy an external page reads
-                // is written right after, and a debounced write would leave the two
-                // disagreeing for the length of the debounce.
-                await storage.setJSON('profile_list', profileList, 'combatExport', true);
-                if (hasGM) {
-                    try {
-                        GM_setValue('toolasha_profile_list', JSON.stringify(profileList));
-                        this.writeBridgeMeta('toolasha_profile_list_meta');
-                    } catch {
-                        /* ignore */
-                    }
-                }
+                // The read-modify-write below spans two awaits. Two profiles shared in the
+                // same burst would both read the pre-existing list and the later write would
+                // win, dropping the first profile from IndexedDB and the GM copy alike.
+                // Serialise the whole body behind a per-hook chain so each share sees the
+                // list the previous one left. (Same pattern as data-manager's _switchChain.)
+                this._profileChain = (this._profileChain || Promise.resolve())
+                    .then(() => this.persistSharedProfile(parsed, hasGM))
+                    .catch((error) => {
+                        console.error('[WebSocket] Failed to save shared profile:', error);
+                    });
+                await this._profileChain;
             }
         } catch (error) {
             console.error('[WebSocket] Failed to save Combat Sim data:', error);
+        }
+    }
+
+    /**
+     * Merge one shared profile into the stored profile list and persist it.
+     *
+     * Runs serialised behind `_profileChain` — see the call site. Everything here is
+     * read-modify-write across awaits, so overlapping runs lose profiles.
+     * @param {Object} parsed - The parsed profile_shared payload, already stamped
+     * @param {boolean} hasGM - Whether GM_setValue is available for the cross-domain copy
+     * @returns {Promise<void>}
+     * @private
+     */
+    async persistSharedProfile(parsed, hasGM) {
+        // Re-read the stored list on every share rather than caching it on the
+        // hook: two game tabs are a supported setup, and a tab that held its own
+        // copy overwrote whatever the other tab had shared in the meantime. One
+        // getJSON per profile click is cheap next to that.
+        const raw = await storage.getJSON('profile_list', 'combatExport', null);
+        // A corrupted or hand-edited record can be an object or a string; treating a
+        // non-array as an empty list beats throwing away the write on `.filter`.
+        const stored = Array.isArray(raw) ? raw : [];
+
+        // Newest first, one entry per character
+        let profileList = [parsed, ...stored.filter((p) => p?.characterID !== parsed.characterID)];
+
+        // Keep only last 20 profiles
+        if (profileList.length > MAX_STORED_PROFILES) {
+            profileList = profileList.slice(0, MAX_STORED_PROFILES);
+        }
+
+        // Save updated profile list to IndexedDB (cross-session) and GM storage
+        // (cross-domain for Shykai). Immediate: the GM copy an external page reads
+        // is written right after, and a debounced write would leave the two
+        // disagreeing for the length of the debounce.
+        await storage.setJSON('profile_list', profileList, 'combatExport', true);
+        if (hasGM) {
+            try {
+                GM_setValue('toolasha_profile_list', JSON.stringify(profileList));
+                this.writeBridgeMeta('toolasha_profile_list_meta');
+            } catch {
+                /* ignore */
+            }
         }
     }
 

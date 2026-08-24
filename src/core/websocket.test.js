@@ -363,6 +363,47 @@ describe('saveCombatSimData side effects', () => {
         expect(onDisk.map((p) => p.characterID)).toEqual(['char-1', 'char-2']);
     });
 
+    test('two shares in the same tick both survive rather than the later one winning', async () => {
+        // The handler reads the list, merges, then writes — across two awaits. Fired
+        // back to back, both used to read the same empty list and the second write
+        // dropped the first profile from IndexedDB and the GM copy alike.
+        let onDisk = [];
+        storage.getJSON.mockImplementation(async (key) => {
+            await new Promise((r) => setTimeout(r, 0)); // a real IDB read is not instant
+            return key === 'profile_list' ? onDisk : null;
+        });
+        storage.setJSON.mockImplementation(async (key, value) => {
+            if (key === 'profile_list') onDisk = value;
+        });
+
+        webSocketHook.processMessage(
+            msg('profile_shared', { profile: { sharableCharacter: { id: 'char-1', name: 'One' } } })
+        );
+        webSocketHook.processMessage(
+            msg('profile_shared', { profile: { sharableCharacter: { id: 'char-2', name: 'Two' } } })
+        );
+        // Wait on the serialising chain itself rather than a fixed delay
+        await webSocketHook._profileChain;
+
+        expect(onDisk.map((p) => p.characterID).sort()).toEqual(['char-1', 'char-2']);
+    });
+
+    test('a stored profile list that is not an array is treated as empty, not thrown on', async () => {
+        // A corrupted or hand-edited record; `.filter` on it used to throw and lose the share
+        storage.getJSON.mockImplementation(async (key) => (key === 'profile_list' ? { not: 'an array' } : null));
+        let written = null;
+        storage.setJSON.mockImplementation(async (key, value) => {
+            if (key === 'profile_list') written = value;
+        });
+
+        webSocketHook.processMessage(
+            msg('profile_shared', { profile: { sharableCharacter: { id: 'char-1', name: 'One' } } })
+        );
+        await new Promise((r) => setTimeout(r, 0));
+
+        expect(written.map((p) => p.characterID)).toEqual(['char-1']);
+    });
+
     test('a profile_shared message with no resolvable character id is skipped without throwing', async () => {
         const profileMessage = msg('profile_shared', { profile: {} });
         expect(() => webSocketHook.processMessage(profileMessage)).not.toThrow();
