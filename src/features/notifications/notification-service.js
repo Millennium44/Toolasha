@@ -245,7 +245,7 @@ class NotificationService {
 
         if (!critical && this.shouldDigest(resolved)) {
             this.recordNotice({ eventKey, resolved, named, message, urgency, channels: ['digest'] });
-            sharedState().digest.push({ category: resolved, noun: kind.noun, subject: named });
+            sharedState().digest.push({ category: resolved, noun: kind.noun, subject: named, eventKey });
             this.scheduleDigest();
             this.lastFired.set(eventKey, now);
             return { fired: true, channels: ['digest'], reason: 'digested', category: resolved, urgency };

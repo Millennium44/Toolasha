@@ -187,12 +187,32 @@ describe('digest summaries', () => {
         expect(summarizeDigest([{ category: 'market', noun: undercut }])).toBe('Market: 1 undercut');
     });
 
-    test('the same subject twice is one subject, in the count as well as the list', () => {
+    test('the same event twice is one event, and its subject is named once', () => {
         const message = summarizeDigest([
-            { category: 'market', noun: undercut, subject: 'Cheese' },
-            { category: 'market', noun: undercut, subject: 'Cheese' },
+            { category: 'market', noun: undercut, subject: 'Cheese', eventKey: 'market-undercut-1' },
+            { category: 'market', noun: undercut, subject: 'Cheese', eventKey: 'market-undercut-1' },
         ]);
         expect(message).toBe('Market: 1 undercut (Cheese)');
+    });
+
+    test('three listings of one item are three undercuts, not one', () => {
+        // Undercut notices are per listing but carry the item as the subject.
+        // Counting distinct subjects said "1 undercut (Cheese)" when three
+        // separate Cheese listings had been undercut
+        const message = summarizeDigest([
+            { category: 'market', noun: undercut, subject: 'Cheese', eventKey: 'market-undercut-1' },
+            { category: 'market', noun: undercut, subject: 'Cheese', eventKey: 'market-undercut-2' },
+            { category: 'market', noun: undercut, subject: 'Cheese', eventKey: 'market-undercut-3' },
+        ]);
+        expect(message).toBe('Market: 3 undercuts (Cheese)');
+    });
+
+    test('an entry with no subject still counts', () => {
+        const message = summarizeDigest([
+            { category: 'market', noun: undercut, subject: 'Cheese', eventKey: 'market-undercut-1' },
+            { category: 'market', noun: undercut, eventKey: 'market-listing-filled' },
+        ]);
+        expect(message).toBe('Market: 2 undercuts (Cheese)');
     });
 
     test('with no subjects at all the count is still the entries', () => {

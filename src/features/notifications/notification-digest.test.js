@@ -174,6 +174,27 @@ describe('digest mode', () => {
         expect(toast.shown[0].message).toBe('Market: 3 undercuts (Cheese, Milk, Flax) · Buffs: 1 lapsing (Experience)');
     });
 
+    test('three listings of one item digest as three undercuts', () => {
+        // The subject is the item, but the event is the listing — a digest
+        // that counted subjects reported this as "1 undercut (Cheese)"
+        notificationService.notify('market-undercut-11', 'Cheese undercut.', { subject: 'Cheese' });
+        notificationService.notify('market-undercut-12', 'Cheese undercut.', { subject: 'Cheese' });
+        notificationService.notify('market-undercut-13', 'Cheese undercut.', { subject: 'Cheese' });
+
+        vi.advanceTimersByTime(15 * 60 * 1000);
+
+        expect(toast.shown[0].message).toBe('Market: 3 undercuts (Cheese)');
+    });
+
+    test('a held notice with no subject is still counted', () => {
+        notificationService.notify('market-undercut-1', 'Cheese undercut.', { subject: 'Cheese' });
+        notificationService.notify('market-undercut-2', 'A listing was undercut.');
+
+        vi.advanceTimersByTime(15 * 60 * 1000);
+
+        expect(toast.shown[0].message).toBe('Market: 2 undercuts (Cheese)');
+    });
+
     test('each held notice is in the log individually, and the summary is not', () => {
         notificationService.notify('market-undercut-1', 'Cheese undercut.', { subject: 'Cheese' });
         notificationService.notify('market-undercut-2', 'Milk undercut.', { subject: 'Milk' });

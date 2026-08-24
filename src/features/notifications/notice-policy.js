@@ -214,13 +214,21 @@ export function isWithinQuietHours(when, start, end) {
  * batched notices went individually. Subjects are named up to a limit and then
  * counted, since a line that lists eleven item names is a line nobody finishes.
  *
- * @param {Array<{category: string, noun: {one: string, many: string}, subject?: string}>} entries - Held notices
+ * The count counts *events*, and the subjects only name them. Undercut notices
+ * are one per listing but carry the item as their subject, so counting distinct
+ * subjects reported three undercut Cheese listings as "1 undercut (Cheese)" —
+ * one listing, when three were undercut. Distinct event keys are the events;
+ * repeated subjects still collapse in the parenthesis, because naming Cheese
+ * three times is a transcript.
+ *
+ * @param {Array<{category: string, noun: {one: string, many: string}, subject?: string,
+ *   eventKey?: string}>} entries - Held notices
  * @returns {string} e.g. `Market: 3 undercuts (Cheese, Milk, Flax) · Buffs: 1 lapsing`
  */
 export function summarizeDigest(entries) {
     if (!Array.isArray(entries) || entries.length === 0) return '';
 
-    /** category → noun label → {count, subjects, noun} */
+    /** category → noun label → {events, unkeyed, subjects, noun} */
     const byCategory = new Map();
     for (const entry of entries) {
         if (!entry) continue;
@@ -229,28 +237,25 @@ export function summarizeDigest(entries) {
 
         const kinds = byCategory.get(category);
         const noun = entry.noun || { one: 'notice', many: 'notices' };
-        if (!kinds.has(noun.one)) kinds.set(noun.one, { count: 0, subjects: [], noun });
+        if (!kinds.has(noun.one)) kinds.set(noun.one, { events: new Set(), unkeyed: 0, subjects: [], noun });
 
         const kind = kinds.get(noun.one);
-        kind.count += 1;
-        // A repeated subject is one thing that keeps being reported, not two
-        // things — the same listing undercut twice is still one listing
+        // The same event key twice is one thing that kept being reported; an
+        // entry with no key at all is still an event and is counted on its own
+        if (entry.eventKey) kind.events.add(entry.eventKey);
+        else kind.unkeyed += 1;
+        // A repeated subject is one thing to name, however many events it covers
         if (entry.subject && !kind.subjects.includes(entry.subject)) kind.subjects.push(entry.subject);
     }
 
     const parts = [];
     for (const [category, kinds] of byCategory) {
         const pieces = [];
-        for (const { count, subjects, noun } of kinds.values()) {
+        for (const { events, unkeyed, subjects, noun } of kinds.values()) {
             const named = subjects.slice(0, DIGEST_SUBJECT_LIMIT).join(', ');
             const rest = subjects.length - DIGEST_SUBJECT_LIMIT;
             const tail = named ? ` (${named}${rest > 0 ? `, +${rest}` : ''})` : '';
-            // Distinct subjects when there are any, entries when there are not.
-            // The de-duplication above already decided that the same listing
-            // undercut twice is one listing; leaving the count at the number of
-            // entries said "3 undercuts (Cheese)", which names one thing and
-            // claims three
-            const shown = subjects.length ? subjects.length : count;
+            const shown = events.size + unkeyed;
             pieces.push(`${shown} ${shown === 1 ? noun.one : noun.many}${tail}`);
         }
         parts.push(`${categoryLabel(category)}: ${pieces.join(', ')}`);
