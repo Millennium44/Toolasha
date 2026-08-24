@@ -53,6 +53,16 @@ const KEY_GIST_ID = 'toolasha_sync_gistId';
 /** `exportedAt` of the payload this device last pushed or pulled */
 const KEY_LAST_SYNCED_AT = 'toolasha_sync_lastSyncedAt';
 
+/**
+ * When this device last pushed its own data to the gist.
+ *
+ * Separate from KEY_LAST_SYNCED_AT, which a pull overwrites with the *remote's*
+ * exportedAt: after a pull that stamp says "this device applied someone else's
+ * export", which is not the same question as "is this device's data in the gist".
+ * Written only on a successful push.
+ */
+const KEY_LAST_PUSHED_AT = 'toolasha_sync_lastPushedAt';
+
 /** Fingerprint of that payload, so local drift since then is detectable */
 const KEY_LAST_HASH = 'toolasha_sync_lastHash';
 
@@ -269,6 +279,7 @@ class SyncManager {
 
         const written = await writeSyncGist(token, gistId, manifest, chunks, previousChunks);
         await this._remember({ gistId: written.id, exportedAt, hash, chunkCount: chunks.length });
+        await storage.set(KEY_LAST_PUSHED_AT, exportedAt, STORE, true);
 
         if (!silent) {
             showToast(`Synced to GitHub (${scope === 'everything' ? 'everything' : 'settings only'}).`);

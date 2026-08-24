@@ -148,6 +148,27 @@ describe('push', () => {
         expect(stored.map.toolasha_sync_lastHash).toBe('h:{"local":1}');
     });
 
+    test('records when this device pushed, apart from the stamp a pull overwrites', async () => {
+        await syncManager.push();
+        expect(stored.map.toolasha_sync_lastPushedAt).toBe(stored.map.toolasha_sync_lastSyncedAt);
+    });
+
+    test('a pull moves the shared stamp but leaves the push stamp where it was', async () => {
+        await syncManager.push();
+        const pushedAt = stored.map.toolasha_sync_lastPushedAt;
+
+        gist.read = {
+            manifest: { exportedAt: '2027-02-01T00:00:00.000Z', chunks: 1, hash: 'h:remote' },
+            payload: '{"remote":1}',
+        };
+        await syncManager.pull();
+
+        // "This device applied someone else's export" is not "this device's data is
+        // in the gist", which is why the two stamps are kept apart
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBe('2027-02-01T00:00:00.000Z');
+        expect(stored.map.toolasha_sync_lastPushedAt).toBe(pushedAt);
+    });
+
     test('adopts a gist the account already has instead of making a second', async () => {
         gist.found = 'existing';
         stored.map.toolasha_sync_lastSyncedAt = '2026-08-01T00:00:00Z';
