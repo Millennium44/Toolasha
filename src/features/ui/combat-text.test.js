@@ -43,14 +43,31 @@ vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: vi.fn() }));
 
 const combatText = (await import('./combat-text.js')).default;
 
-/** Put a battle panel with two monster tiles and one player tile on screen */
+/**
+ * Put a battle panel on screen, shaped the way the game builds one.
+ *
+ * The two *Area wrappers matter: their class names contain the tile prefixes as
+ * substrings, so a plain `[class*=]` match picks them up alongside the tiles
+ * they contain. Every unit here is identifiable so a test can say which tile a
+ * number landed on.
+ */
 function mountBattlePanel() {
     document.body.innerHTML = `
+        <div class="BattlePanel_monstersArea__0a0b">
+            <div class="BattlePanel_monster__x1" data-unit="monster-0"></div>
+            <div class="BattlePanel_monster__x2" data-unit="monster-1"></div>
+        </div>
         <div class="BattlePanel_playersArea__1a2b">
-            <div class="BattlePanel_monster__x1"></div>
-            <div class="BattlePanel_monster__x2"></div>
-            <div class="BattlePanel_player__y1"></div>
+            <div class="BattlePanel_player__y1" data-unit="player-0"></div>
+            <div class="BattlePanel_player__y2" data-unit="player-1"></div>
         </div>`;
+}
+
+/** Which units currently carry a floating number */
+function floatedUnits() {
+    return Array.from(document.querySelectorAll('.toolasha-floating-combat-text')).map(
+        (node) => node.parentElement?.dataset.unit
+    );
 }
 
 let health = 1000;
@@ -151,5 +168,41 @@ describe('making a tile a positioning context', () => {
 
         // One tile took damage each tick; only the first pass may measure it
         expect(computed.mock.calls.length).toBeLessThanOrEqual(2);
+    });
+});
+
+/** Remove every floating number already on screen, so the next tick stands alone */
+function clearFloats() {
+    for (const node of document.querySelectorAll('.toolasha-floating-combat-text')) node.remove();
+}
+
+describe('which unit a number lands on', () => {
+    test('the wrapper divs do not take a slot in the join', () => {
+        // pMap key 0 is the first *player*. With the two *Area wrappers in the
+        // tile list the ally number landed on the monsters wrapper instead, and
+        // the wrapper is not a unit, so nothing identified it as wrong.
+        hooks.battle(tick()); // establishes the baseline health
+        clearFloats();
+        hooks.battle(tick());
+
+        expect(floatedUnits().sort()).toEqual(['monster-0', 'player-0']);
+    });
+
+    test('a re-rendered panel is not drawn onto the detached tiles', () => {
+        hooks.battle(tick());
+        hooks.battle(tick());
+        const stale = document.querySelector('[data-unit="player-0"]');
+        const before = stale.childElementCount;
+
+        // The game replaces the units but leaves the areas in place, which is
+        // exactly the case the old freshness check could not see: it held the
+        // wrapper, the wrapper was still connected, so the stale list stood.
+        document.querySelector('[class*="BattlePanel_playersArea"]').innerHTML =
+            '<div class="BattlePanel_player__z1" data-unit="player-0"></div>';
+        clearFloats();
+        hooks.battle(tick());
+
+        expect(stale.childElementCount).toBe(before);
+        expect(floatedUnits().sort()).toEqual(['monster-0', 'player-0']);
     });
 });

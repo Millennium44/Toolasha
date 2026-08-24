@@ -41,8 +41,20 @@ const SCROLLING_SETTING = 'combatText_scrolling';
 const FLOAT_CLASS = 'toolasha-floating-combat-text';
 const FLOAT_MS = 1100;
 
-/** The battle panel's own unit tiles, which is what the numbers sit over */
-const UNIT_SELECTOR = '[class*="BattlePanel_monster"], [class*="BattlePanel_player"]';
+/**
+ * The battle panel's own unit tiles, which is what the numbers sit over.
+ *
+ * The `:not(...)` halves are load-bearing. `BattlePanel_monstersArea__…` and
+ * `BattlePanel_playersArea__…` both contain `BattlePanel_monster` /
+ * `BattlePanel_player` as substrings, so the plain prefix match also selected
+ * the two *containers*. A container outlives the tiles inside it, so the cache's
+ * freshness check ("is the first thing I held still in the document?") stayed
+ * true across a re-render and every number after that was drawn onto detached
+ * nodes; and the containers sat at the front of the list, so the index the
+ * payload gives was one or two units off.
+ */
+const MONSTER_SELECTOR = '[class*="BattlePanel_monster"]:not([class*="BattlePanel_monstersArea"])';
+const PLAYER_SELECTOR = '[class*="BattlePanel_player"]:not([class*="BattlePanel_playersArea"])';
 
 const log = createCombatLog(200);
 const enemyHealth = new Map();
@@ -78,12 +90,27 @@ function invalidateTiles() {
 }
 
 /**
- * The battle panel's unit tiles.
- * @returns {Array<HTMLElement>} Tiles in the game's own order
+ * The battle panel's unit tiles, one list a side.
+ *
+ * Two lists rather than one, because the payload numbers the two sides
+ * separately: `mMap` key 0 is the first monster and `pMap` key 0 is the first
+ * player, and a single concatenated list makes one of those two the other's
+ * tile.
+ *
+ * @returns {{monsters: Array<HTMLElement>, players: Array<HTMLElement>}}
  */
 function unitTiles() {
-    if (tileCache && tileCache.length && tileCache[0].isConnected) return tileCache;
-    tileCache = Array.from(document.querySelectorAll(UNIT_SELECTOR));
+    // Freshness is judged on a real unit tile per side, never on a container:
+    // the containers survive a unit re-render, so holding one of those would
+    // keep a stale list alive forever. Both heads are checked because the game
+    // can replace one side's units and leave the other's standing.
+    const heads = [tileCache?.monsters[0], tileCache?.players[0]].filter(Boolean);
+    if (heads.length && heads.every((tile) => tile.isConnected)) return tileCache;
+
+    tileCache = {
+        monsters: Array.from(document.querySelectorAll(MONSTER_SELECTOR)),
+        players: Array.from(document.querySelectorAll(PLAYER_SELECTOR)),
+    };
     return tileCache;
 }
 
@@ -174,23 +201,28 @@ function drawFloating(events) {
     if (document.hidden) return;
 
     const tiles = unitTiles();
-    if (!tiles.length) return;
+    const anyTile = tiles.monsters[0] || tiles.players[0];
+    if (!anyTile) return;
     // A panel that is in the document but not laid out (another tab of the game
     // is open over it) gives every tile a zero-size box, so the numbers would
     // stack invisibly in a corner and still cost a node each
-    if (!tiles[0].getClientRects().length) return;
+    if (!anyTile.getClientRects().length) return;
 
+    // Keyed by side as well as index, because the two sides are numbered
+    // independently: monster 0 and player 0 are two units, not one
     const biggest = new Map();
     for (const event of events) {
-        const seen = biggest.get(event.id);
-        if (!seen || event.amount > seen.amount) biggest.set(event.id, event);
+        const key = `${event.side}:${event.id}`;
+        const seen = biggest.get(key);
+        if (!seen || event.amount > seen.amount) biggest.set(key, event);
     }
 
     // The game's tiles are in order and the maps are keyed by index, which is
     // the only join the payload offers — an id that is not an index simply finds
     // no tile and draws nothing, rather than drawing over the wrong unit
-    for (const [id, event] of biggest) {
-        const tile = tiles[Number(id)];
+    for (const event of biggest.values()) {
+        const side = event.side === 'ally' ? tiles.players : tiles.monsters;
+        const tile = side[Number(event.id)];
         if (!tile) continue;
         floatOver(tile, event);
     }
