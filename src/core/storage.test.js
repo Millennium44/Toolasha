@@ -190,7 +190,7 @@ describe('Storage.putAll when the transaction aborts', () => {
         };
     }
 
-    test('settles with what was written instead of hanging for ever', async () => {
+    test('settles at nothing written instead of hanging for ever', async () => {
         storage.db = createAbortingDb(2);
 
         const count = await Promise.race([
@@ -198,7 +198,51 @@ describe('Storage.putAll when the transaction aborts', () => {
             new Promise((resolve) => setTimeout(() => resolve('hung'), 50)),
         ]);
 
-        expect(count).toBe(2);
+        // Per-request onsuccess fires before the commit, so the two "written" keys were
+        // rolled back with the rest. Reporting them would tell flushAll they landed.
+        expect(count).toBe(0);
+    });
+
+    test('flushAll keeps an aborted key queued and tells its caller the write failed', async () => {
+        storage.db = createAbortingDb(1);
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage.pendingWrites.set('xpHistory:a', {
+            value: 1,
+            storeName: 'xpHistory',
+            resolvers: [],
+            generation: 1,
+        });
+        const outcome = new Promise((resolve) => storage.pendingWrites.get('xpHistory:a').resolvers.push(resolve));
+
+        await storage.flushAll();
+
+        expect(await outcome).toBe(false);
+        // Left queued with no timer, which is the requeue contract: the next flush or
+        // debounced write retries it rather than the value being dropped
+        expect(storage.pendingWrites.has('xpHistory:a')).toBe(true);
+        expect(storage.saveDebounceTimers.has('xpHistory:a')).toBe(false);
+    });
+
+    test('a confirmed flush drops the key generation, as the debounced write does', async () => {
+        const { db } = createFakeDb(['xpHistory']);
+        storage.db = db;
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage.pendingWrites.set('xpHistory:a', {
+            value: 1,
+            storeName: 'xpHistory',
+            resolvers: [],
+            generation: 1,
+        });
+        storage._writeGeneration.set('xpHistory:a', 1);
+
+        await storage.flushAll();
+
+        // visibilitychange fires over and over in a session; without this the map grows
+        // one entry per key written for the life of the page
+        expect(storage._writeGeneration.has('xpHistory:a')).toBe(false);
+        expect(storage.pendingWrites.has('xpHistory:a')).toBe(false);
     });
 
     test('a quota abort is reported through the quota path', async () => {

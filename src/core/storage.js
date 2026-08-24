@@ -960,14 +960,17 @@ class Storage {
                     if (this._isQuotaError(transaction.error)) {
                         this._handleQuotaExceeded(keys[0], storeName, transaction.error);
                     }
-                    resolve(written);
+                    // Per-request `onsuccess` fires before commit, so `written` lists keys
+                    // an abort has since rolled back. Reporting them as written would let
+                    // flushAll drop them from pendingWrites and tell callers they landed.
+                    resolve([]);
                 };
                 transaction.onerror = () => {
                     console.error(`[Storage] Bulk write transaction failed for store ${storeName}:`, transaction.error);
                     if (this._isQuotaError(transaction.error)) {
                         this._handleQuotaExceeded(keys[0], storeName, transaction.error);
                     }
-                    resolve(written);
+                    resolve([]);
                 };
             } catch (error) {
                 console.error(`[Storage] Bulk write transaction failed for store ${storeName}:`, error);
@@ -1035,6 +1038,12 @@ class Storage {
                         if (success && this.pendingWrites.get(timerKey) === pending) {
                             // Only remove if no newer write claimed the slot mid-flush.
                             this.pendingWrites.delete(timerKey);
+                            // Same reasoning as the debounced path: with no timer
+                            // outstanding the generation entry is dead weight, and
+                            // visibilitychange flushes repeatedly over a session.
+                            if (!this.saveDebounceTimers.has(timerKey)) {
+                                this._writeGeneration.delete(timerKey);
+                            }
                         }
                         for (const r of pending.resolvers || []) {
                             r(success);
