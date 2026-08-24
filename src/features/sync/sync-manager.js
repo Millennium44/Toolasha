@@ -427,6 +427,10 @@ class SyncManager {
         await storage.set(KEY_LAST_SYNCED_AT, null, STORE, true);
         await storage.set(KEY_LAST_HASH, null, STORE, true);
         await storage.set(KEY_CHUNK_COUNT, 0, STORE, true);
+        // The push stamp belongs to the gist we just forgot. Leaving it behind makes
+        // the next gist look like somewhere this device has already pushed to, which
+        // is exactly the check that decides whether a first push stops to ask.
+        await storage.set(KEY_LAST_PUSHED_AT, null, STORE, true);
     }
 
     /**

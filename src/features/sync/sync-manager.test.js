@@ -488,6 +488,26 @@ describe('describeStatus', () => {
     });
 });
 
+describe('forgetGist', () => {
+    test('clears every stamp that describes the old gist, the push stamp included', async () => {
+        stored.map.toolasha_sync_gistId = 'abc';
+        stored.map.toolasha_sync_lastSyncedAt = '2026-02-01T00:00:00.000Z';
+        stored.map.toolasha_sync_lastHash = 'h:something';
+        stored.map.toolasha_sync_chunkCount = 3;
+        stored.map.toolasha_sync_lastPushedAt = '2026-02-01T00:00:00.000Z';
+
+        await syncManager.forgetGist();
+
+        expect(stored.map.toolasha_sync_gistId).toBe(null);
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBe(null);
+        expect(stored.map.toolasha_sync_lastHash).toBe(null);
+        expect(stored.map.toolasha_sync_chunkCount).toBe(0);
+        // Left behind, this claims the device has already pushed to whatever gist it
+        // links to next — the check that decides whether a first push stops to ask
+        expect(stored.map.toolasha_sync_lastPushedAt).toBe(null);
+    });
+});
+
 describe('passphrase encryption', () => {
     test('a set passphrase uploads ciphertext with the encryption record in the manifest', async () => {
         settings.values.sync_passphrase = 'moo moo';
