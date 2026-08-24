@@ -169,6 +169,7 @@ describe('resolveSellSideValue', () => {
             value: 777,
             source: 'expectedValue',
             needsTax: false,
+            missingCount: 0,
         });
     });
 
@@ -354,6 +355,55 @@ describe('nested containers', () => {
 
         expect(Number.isFinite(result.expectedValue)).toBe(true);
         expect(result.expectedValue).toBeGreaterThan(0);
+    });
+});
+
+describe('nested partial containers', () => {
+    const OUTER = '/items/outer_chest';
+    const INNER = '/items/inner_crate';
+    const UNPRICEABLE = '/items/unpriceable_thing';
+
+    beforeEach(() => {
+        mocks.itemDetails[OUTER] = { name: 'Outer Chest', isOpenable: true };
+        mocks.itemDetails[INNER] = { name: 'Inner Crate', isOpenable: true };
+        mocks.itemDetails[UNPRICEABLE] = { name: 'Unpriceable Thing', isTradable: true };
+        mocks.initData.openableLootDropMap[OUTER] = [{ itemHrid: INNER, dropRate: 1, minCount: 1, maxCount: 1 }];
+        mocks.initData.openableLootDropMap[INNER] = [
+            { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+            { itemHrid: UNPRICEABLE, dropRate: 1, minCount: 1, maxCount: 1 },
+        ];
+    });
+
+    test("a nested crate's unpriceable drop makes the chest around it partial too", () => {
+        // The nested value used to come back as a bare number, so the crate's missing
+        // drop was dropped on the floor and the chest reported a confident figure
+        const result = expectedValueCalculator.calculateContainerValue(OUTER, mocks.initData);
+
+        expect(result.missingCount).toBe(1);
+        expect(result.isPartial).toBe(true);
+    });
+
+    test('a cache hit on the crate still reports the chest as partial', () => {
+        expectedValueCalculator.calculateContainerValue(INNER, mocks.initData);
+        const result = expectedValueCalculator.calculateContainerValue(OUTER, mocks.initData);
+
+        expect(result.missingCount).toBe(1);
+    });
+
+    test('a value the cycle guard truncated is not cached', () => {
+        // The chest contains the crate and the crate contains the chest, so whichever
+        // is asked for first has a branch cut off. Caching that figure would serve an
+        // artefact of where the recursion happened to start.
+        mocks.initData.openableLootDropMap[INNER] = [
+            { itemHrid: OUTER, dropRate: 1, minCount: 1, maxCount: 1 },
+            { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+        ];
+
+        const result = expectedValueCalculator.calculateContainerValue(OUTER, mocks.initData);
+
+        expect(result.expectedValue).toBeGreaterThan(0);
+        expect(expectedValueCalculator.containerCache.has(OUTER)).toBe(false);
+        expect(expectedValueCalculator.containerCache.has(INNER)).toBe(false);
     });
 });
 

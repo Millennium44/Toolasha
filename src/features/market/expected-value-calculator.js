@@ -24,6 +24,9 @@ class ExpectedValueCalculator {
 
         // Cache for container EVs
         this.containerCache = new Map();
+        // How many drops of each cached container could not be priced, so a nested
+        // lookup can report the parent as partial rather than silently confident
+        this.containerMissingCounts = new Map();
 
         // Special item HRIDs
         this.COIN_HRID = '/items/coin';
@@ -123,6 +126,14 @@ class ExpectedValueCalculator {
                 for (const result of results) {
                     if (result.ev !== null) {
                         this.containerCache.set(result.containerHrid, result.ev);
+                        // The worker only returns a number, so the "how much of this
+                        // is missing" half is recounted here against the same price
+                        // map it was handed — otherwise a cache hit would report a
+                        // partially priced container as a firm figure.
+                        this.containerMissingCounts.set(
+                            result.containerHrid,
+                            this.countUnpricedDrops(initData.openableLootDropMap[result.containerHrid], priceMap)
+                        );
                     }
                 }
             } catch (error) {
@@ -136,6 +147,31 @@ class ExpectedValueCalculator {
                 }
             }
         }
+    }
+
+    /**
+     * How many of a container's drops the price map could not value, counting a nested
+     * container's own unpriced drops too — the convergence iterations make that count
+     * available by the time the outer container is recomputed.
+     * @param {Array} dropTable - The container's drop table
+     * @param {Object} priceMap - Map of itemHrid to {price, canBeSold}
+     * @returns {number} Number of drops with no reachable price
+     */
+    countUnpricedDrops(dropTable, priceMap) {
+        if (!dropTable) return 0;
+
+        let missing = 0;
+        for (const drop of dropTable) {
+            const dropRate = drop.dropRate || 0;
+            const minCount = drop.minCount || 0;
+            const maxCount = drop.maxCount || 0;
+            if (dropRate <= 0 || (minCount === 0 && maxCount === 0)) continue;
+
+            const price = priceMap[drop.itemHrid]?.price ?? null;
+            if (price === null) missing++;
+            else missing += this.containerMissingCounts.get(drop.itemHrid) || 0;
+        }
+        return missing;
     }
 
     /**
@@ -194,11 +230,12 @@ class ExpectedValueCalculator {
      *
      * @param {string} containerHrid - Container item HRID
      * @param {Object} [initData] - Cached game data (optional, will fetch if not provided)
-     * @param {Set<string>} [visited] - Containers already being valued on this path
+     * @param {{path: Set<string>, truncated: boolean}} [context] - Recursion state for nested containers
      * @returns {{expectedValue: number|null, missingCount: number, isPartial: boolean}}
      */
-    calculateContainerValue(containerHrid, initData = null, visited = null) {
+    calculateContainerValue(containerHrid, initData = null, context = null) {
         const unavailable = { expectedValue: null, missingCount: 0, isPartial: false };
+        const ctx = context || { path: new Set(), truncated: false };
 
         // Use cached data if provided, otherwise fetch
         if (!initData) {
@@ -233,12 +270,17 @@ class ExpectedValueCalculator {
             const avgCount = (minCount + maxCount) / 2;
 
             // Get price for this drop
-            const price = this.getDropPrice(itemHrid, visited);
+            const resolved = this.resolveSellSideValue(itemHrid, 0, ctx);
+            const price = resolved?.value ?? null;
 
             if (price === null) {
                 missingCount++;
                 continue; // Skip drops with missing data — the total becomes a lower bound
             }
+
+            // A nested container carries its own unpriceable drops up: a chest holding a
+            // crate with an unpriceable drop is itself a lower bound, not a firm figure
+            missingCount += resolved.missingCount || 0;
 
             // Check if item is tradeable (for tax calculation)
             const itemDetails = dataManager.getItemDetails(itemHrid);
@@ -255,9 +297,12 @@ class ExpectedValueCalculator {
             totalExpectedValue += dropValue;
         }
 
-        // Cache the result for future lookups
-        if (totalExpectedValue > 0) {
+        // Cache the result for future lookups — but not when the cycle guard cut a
+        // branch off this pass, because the figure is then an artefact of where the
+        // recursion started rather than what the container is worth
+        if (totalExpectedValue > 0 && !ctx.truncated) {
             this.containerCache.set(containerHrid, totalExpectedValue);
+            this.containerMissingCounts.set(containerHrid, missingCount);
         }
 
         return { expectedValue: totalExpectedValue, missingCount, isPartial: missingCount > 0 };
@@ -271,9 +316,10 @@ class ExpectedValueCalculator {
      * are already net figures and would otherwise be taxed twice.
      * @param {string} itemHrid - Item HRID
      * @param {number} [enhancementLevel=0] - Enhancement level (ignored for special currencies)
-     * @returns {{value: number, source: string, needsTax: boolean}|null} Resolved value or null
+     * @param {{path: Set<string>, truncated: boolean}} [context] - Recursion state for nested containers
+     * @returns {{value: number, source: string, needsTax: boolean, missingCount?: number}|null} Resolved value or null
      */
-    resolveSellSideValue(itemHrid, enhancementLevel = 0, visited = null) {
+    resolveSellSideValue(itemHrid, enhancementLevel = 0, context = null) {
         // Special case: Coin (face value = 1, never taxed)
         if (itemHrid === this.COIN_HRID) {
             return { value: 1, source: 'coin', needsTax: false };
@@ -306,10 +352,15 @@ class ExpectedValueCalculator {
 
         // Nested container: worth its contents, computed on demand rather than read out of
         // whatever the cache happened to hold when this drop table's turn came round
-        const nested = this.resolveContainerValue(itemHrid, visited);
+        const nested = this.resolveContainerValue(itemHrid, context);
         if (nested !== null) {
             // Already tax-adjusted per drop inside
-            return { value: nested, source: 'expectedValue', needsTax: false };
+            return {
+                value: nested.value,
+                source: 'expectedValue',
+                needsTax: false,
+                missingCount: nested.missingCount,
+            };
         }
 
         // Regular market item - get price based on pricing mode (sell side - you're selling drops)
@@ -362,10 +413,11 @@ class ExpectedValueCalculator {
      * Get price for a drop item
      * Handles special cases (Coin, Cowbell, Dungeon Tokens, nested containers)
      * @param {string} itemHrid - Item HRID
+     * @param {{path: Set<string>, truncated: boolean}} [context] - Recursion state for nested containers
      * @returns {number|null} Price or null if unavailable
      */
-    getDropPrice(itemHrid, visited = null) {
-        return this.resolveSellSideValue(itemHrid, 0, visited)?.value ?? null;
+    getDropPrice(itemHrid, context = null) {
+        return this.resolveSellSideValue(itemHrid, 0, context)?.value ?? null;
     }
 
     /**
@@ -377,17 +429,21 @@ class ExpectedValueCalculator {
      * had not — the same chest, two answers, decided by iteration order. Computing it on
      * demand makes the answer the same whoever asks first.
      *
-     * `visited` is the cycle guard: a container that (directly or through a chain)
+     * `context.path` is the cycle guard: a container that (directly or through a chain)
      * contains itself would otherwise recurse forever. A container already on the path
-     * contributes nothing rather than looping.
+     * contributes nothing rather than looping, and marks the pass truncated so nothing
+     * computed under it is cached.
      *
      * @param {string} itemHrid - Possibly a container
-     * @param {Set<string>|null} visited - Containers already being valued on this path
-     * @returns {number|null} Expected value, or null when this is not a container
+     * @param {{path: Set<string>, truncated: boolean}|null} context - Recursion state
+     * @returns {{value: number, missingCount: number}|null} Value and unpriced-drop count, or null when this is not a container
      */
-    resolveContainerValue(itemHrid, visited = null) {
+    resolveContainerValue(itemHrid, context = null) {
         if (this.containerCache.has(itemHrid)) {
-            return this.containerCache.get(itemHrid);
+            return {
+                value: this.containerCache.get(itemHrid),
+                missingCount: this.containerMissingCounts.get(itemHrid) || 0,
+            };
         }
 
         const initData = dataManager.getInitClientData();
@@ -396,15 +452,18 @@ class ExpectedValueCalculator {
             return null;
         }
 
-        const path = visited || new Set();
-        if (path.has(itemHrid)) {
+        const ctx = context || { path: new Set(), truncated: false };
+        if (ctx.path.has(itemHrid)) {
+            ctx.truncated = true;
             return null; // Already being valued further up this chain
         }
-        path.add(itemHrid);
+        ctx.path.add(itemHrid);
         try {
-            return this.calculateContainerValue(itemHrid, initData, path).expectedValue;
+            const result = this.calculateContainerValue(itemHrid, initData, ctx);
+            if (result.expectedValue === null) return null;
+            return { value: result.expectedValue, missingCount: result.missingCount };
         } finally {
-            path.delete(itemHrid);
+            ctx.path.delete(itemHrid);
         }
     }
 
@@ -560,6 +619,7 @@ class ExpectedValueCalculator {
      */
     invalidateCache() {
         this.containerCache.clear();
+        this.containerMissingCounts.clear();
         this.isInitialized = false;
 
         // Re-initialize if data is available
@@ -578,6 +638,7 @@ class ExpectedValueCalculator {
         }
 
         this.containerCache.clear();
+        this.containerMissingCounts.clear();
         this.isInitialized = false;
 
         // The pool recreates itself on the next batch; idle workers should not
