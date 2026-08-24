@@ -240,6 +240,21 @@ class WorkerPool {
             // Drop the dead slot rather than keep a pool entry with no worker
             const index = this.workers.indexOf(workerWrapper);
             if (index !== -1) this.workers.splice(index, 1);
+
+            // Losing the last slot leaves anything already queued unreachable: no worker
+            // will pick it up, and a queued task has no deadline armed yet (deadlines
+            // start in assignTask), so its caller would await for the life of the page.
+            // Fail those callers and mark the pool uninitialized so the next execute()
+            // rebuilds it instead of early-returning from initialize() forever.
+            if (this.workers.length === 0) {
+                const abandoned = this.taskQueue;
+                this.taskQueue = [];
+                this.initialized = false;
+                for (const task of abandoned) {
+                    if (task.release && !task.release()) continue;
+                    task.reject(new Error('Worker pool has no workers available'));
+                }
+            }
         }
     }
 

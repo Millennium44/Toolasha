@@ -220,6 +220,54 @@ describe('WorkerPool with no workers left', () => {
         await expect(pool.execute({ work: 1 })).rejects.toThrow(/no workers/i);
         expect(pool.taskQueue).toHaveLength(0);
     });
+
+    test('losing the last worker rejects the queue and lets the next execute rebuild the pool', async () => {
+        vi.useFakeTimers();
+
+        // The replacement Worker construction fails — a browser out of threads, or a
+        // blob URL the page can no longer instantiate — which is what makes
+        // replaceWorker drop the slot instead of rebuilding it.
+        let failConstruction = false;
+        vi.stubGlobal(
+            'Worker',
+            class extends SilentWorker {
+                constructor(url) {
+                    if (failConstruction) throw new Error('cannot construct worker');
+                    super(url);
+                }
+            }
+        );
+
+        const pool = new WorkerPool({}, 1, { taskTimeoutMs: 1000 });
+        await pool.initialize();
+
+        const inFlight = pool.execute({ work: 1 });
+        const queued = pool.execute({ work: 2 });
+        const inFlightError = inFlight.catch((error) => error);
+        const queuedError = queued.catch((error) => error);
+        expect(pool.taskQueue).toHaveLength(1);
+
+        failConstruction = true;
+        await vi.advanceTimersByTimeAsync(1001);
+
+        // The in-flight task fails on its deadline as before; the queued one used to
+        // sit in taskQueue with no deadline armed and no worker left to pick it up,
+        // awaited by its caller for the rest of the session.
+        expect((await inFlightError).message).toMatch(/timed out/);
+        expect((await queuedError).message).toMatch(/no workers/i);
+        expect(pool.workers).toHaveLength(0);
+        expect(pool.taskQueue).toHaveLength(0);
+        // ...and `initialized` stayed true, so initialize() early-returned forever
+        expect(pool.initialized).toBe(false);
+
+        failConstruction = false;
+        const afterRebuild = pool.execute({ work: 3 });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(pool.workers).toHaveLength(1);
+        const rebuilt = created[created.length - 1];
+        rebuilt.reply({ taskId: rebuilt.posted[0].taskId, result: 'ok' });
+        await expect(afterRebuild).resolves.toBe('ok');
+    });
 });
 
 describe('WorkerPool object URLs', () => {
