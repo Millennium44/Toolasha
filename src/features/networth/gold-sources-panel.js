@@ -235,17 +235,17 @@ export function buildTotalsTable(attribution) {
     const delta = attribution?.totals?.delta ?? null;
     const residual = attribution?.totals?.residual ?? null;
 
-    // The share is against the *size* of the measured change, so the rows
-    // answer "how much of what happened was this". Dividing by the signed
-    // delta flipped every sign on a losing window — a source that genuinely
-    // earned coins read as a negative share of a loss, which points the wrong
-    // way. The magnitude is the denominator; the direction stays on the amount
-    // in the column beside it. With no measured change there is nothing honest
-    // to divide by
+    // Both sides of the share are magnitudes, so the rows answer "how much of
+    // what happened was this" and never a negative percentage. Dividing a
+    // signed amount by a signed delta flipped the sign on a losing window;
+    // dividing a signed amount by an unsigned delta fixed the gaining window
+    // and left the both-negative case reading -80% of a loss it in fact
+    // explains 80% of. The direction stays on the amount in the column beside
+    // it. With no measured change there is nothing honest to divide by
     const scale = Number.isFinite(delta) ? Math.abs(delta) : 0;
     const share = (value) => {
         if (!(scale > 0) || !Number.isFinite(value)) return '—';
-        return `${((value / scale) * 100).toFixed(0)}%`;
+        return `${((Math.abs(value) / scale) * 100).toFixed(0)}%`;
     };
 
     const addRow = (key, label, value, tooltip, basis, emphasis = false) => {
@@ -334,9 +334,10 @@ export function buildPanelBody(attribution) {
     const delta = attribution?.totals?.delta;
     const explained = attribution?.totals?.explained ?? 0;
     if (Number.isFinite(delta)) {
-        // Against the size of the change, for the same reason the table's share
-        // column is: a losing window would otherwise report a negative share
-        const pct = delta === 0 ? null : Math.round((explained / Math.abs(delta)) * 100);
+        // Magnitude over magnitude, for the same reason the table's share
+        // column is: -16M explained out of a -20M change is 80% accounted for,
+        // not -80%, and a signed numerator said the latter
+        const pct = delta === 0 ? null : Math.round((Math.abs(explained) / Math.abs(delta)) * 100);
         summary.textContent =
             `Net worth changed by ${networthFormatter(Math.round(delta))}; ` +
             `the recordings account for ${networthFormatter(Math.round(explained))}` +

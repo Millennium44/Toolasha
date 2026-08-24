@@ -83,6 +83,33 @@ describe('buildPanelBody', () => {
         expect(note.textContent).toContain('residual');
     });
 
+    test('the summary reports a loss explained by a loss as a positive share', () => {
+        const body = buildPanelBody(
+            attribution({
+                totals: {
+                    sources: { enhancement: -16_000_000 },
+                    explained: -16_000_000,
+                    delta: -20_000_000,
+                    residual: null,
+                },
+            })
+        );
+
+        const summary = body.querySelector('.mwi-gold-sources-summary').textContent;
+        expect(summary).toContain('(80%)');
+        expect(summary).not.toContain('-80%');
+    });
+
+    test('the summary keeps a mixed-sign window positive too', () => {
+        const body = buildPanelBody(
+            attribution({
+                totals: { sources: { combat: 5_000_000 }, explained: 5_000_000, delta: -20_000_000, residual: null },
+            })
+        );
+
+        expect(body.querySelector('.mwi-gold-sources-summary').textContent).toContain('(25%)');
+    });
+
     test('nothing is said when every production action was priced', () => {
         const body = buildPanelBody(attribution());
         expect(body.querySelector('.mwi-gold-sources-unpriced-production')).toBeNull();
@@ -250,6 +277,28 @@ describe('buildTotalsTable', () => {
         const combat = table.querySelector('.mwi-gold-sources-row-combat');
         expect(combat.textContent).toContain('25%');
         expect(combat.textContent).not.toContain('-25%');
+    });
+
+    test('a loss explained by a loss is a positive share of it', () => {
+        // Both sides negative: enhancement burned 16M of a 20M fall. The
+        // signed-numerator version printed -80%, which reads as "worked against
+        // the change" when it is in fact most of the change
+        const table = buildTotalsTable(
+            attribution({
+                totals: {
+                    sources: { enhancement: -16_000_000 },
+                    explained: -16_000_000,
+                    delta: -20_000_000,
+                    residual: null,
+                },
+            })
+        );
+
+        const enhancement = table.querySelector('.mwi-gold-sources-row-enhancement');
+        expect(enhancement.textContent).toContain('80%');
+        expect(enhancement.textContent).not.toContain('-80%');
+        // The direction is still on the amount beside it
+        expect(enhancement.textContent).toContain('-16');
     });
 
     test('the column says what the share is of', () => {
