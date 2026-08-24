@@ -408,6 +408,20 @@ describe('the changed-chunk hint', () => {
         expect(storageMock.store.has('rec_c1_2026-06')).toBe(false);
     });
 
+    test('a hinted save still writes an older chunk that lost only some of its entries', async () => {
+        const history = build();
+        await history.save('c1', [at(2026, 6), at(2026, 6, 2), at(2026, 7)]);
+        storageMock.set.mockClear();
+
+        // The trap the entry count is there for: a partial shrink of a chunk the hint
+        // does not name. Skipping it writes nothing and carries the stale serialisation
+        // forward, so the shrink would never reach disk at all.
+        await history.save('c1', [at(2026, 6), at(2026, 7), at(2026, 7, 2)], { changedChunks: '2026-07' });
+
+        expect(written().sort()).toEqual(['rec_c1_2026-06', 'rec_c1_2026-07']);
+        expect(storageMock.store.get('rec_c1_2026-06')).toHaveLength(1);
+    });
+
     test('the hint accepts an array or a Set as well as one id', async () => {
         const history = build();
         await history.save('c1', [at(2026, 6), at(2026, 7), at(2026, 8)]);

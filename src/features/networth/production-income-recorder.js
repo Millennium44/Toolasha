@@ -54,6 +54,14 @@ const RECORD_PREFIX = 'prodIncomeRec';
 const RETENTION_DAYS = 400;
 
 /**
+ * Which chunk a day row belongs to. Named so a row mutation can record the month it
+ * touched without reaching into the store.
+ * @param {Object} row - A day row
+ * @returns {string} Chunk id
+ */
+const rowChunkId = (row) => timeChunkId(dayStart(row?.d), 'month');
+
+/**
  * A day's production and offline income.
  *
  * `outputValue` and `inputValue` are kept apart rather than netted, so the panel
@@ -75,13 +83,15 @@ class ProductionIncomeRecorder {
             storeName: STORE_NAME,
             prefix: RECORD_PREFIX,
             legacyKey: (charId) => `prodIncome_${charId}`,
-            groupOf: (row) => timeChunkId(dayStart(row?.d), 'month'),
+            groupOf: rowChunkId,
             compare: (a, b) => String(a?.d || '').localeCompare(String(b?.d || '')),
             label: 'ProductionIncome',
         });
 
         /** The rows as they stand, which is the truth between debounced writes */
         this._rows = [];
+        /** Months whose rows moved since the last save, so the rest are not re-serialised */
+        this._touchedChunks = new Set();
         /** Whose rows those are */
         this._charId = null;
         /** The read in flight, so concurrent recordings wait on one of them */
@@ -138,6 +148,7 @@ class ProductionIncomeRecorder {
     _forget() {
         this._generation += 1;
         this._rows = [];
+        this._touchedChunks.clear();
         this._charId = null;
         this._loading = null;
         this._counts.clear();
@@ -193,6 +204,9 @@ class ProductionIncomeRecorder {
             row = { d: day, outputValue: 0, inputValue: 0, actions: 0, offlineProfit: 0 };
             this._rows.push(row);
         }
+        // Every mutation of a row goes through here, so this is the complete list of
+        // months the next save has to re-serialise
+        this._touchedChunks.add(rowChunkId(row));
         return row;
     }
 
@@ -210,7 +224,11 @@ class ProductionIncomeRecorder {
         const kept = this._rows.filter((row) => row.d >= floor);
         if (kept.length !== this._rows.length) this._rows = kept;
 
-        this._store.save(this._charId, this._rows);
+        // Retention can take days out of an older month without touching a row; the
+        // store's per-chunk entry count is what notices that behind the hint.
+        const changedChunks = this._touchedChunks;
+        this._touchedChunks = new Set();
+        this._store.save(this._charId, this._rows, { changedChunks });
     }
 
     /**

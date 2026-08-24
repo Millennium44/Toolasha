@@ -24,6 +24,14 @@ const MAX_ENTRIES = 500;
  */
 const RECORD_PREFIX = 'lootLogRec';
 
+/**
+ * Which chunk a loot entry belongs to. Named so a merge can name the hours it moved
+ * without reaching into the store.
+ * @param {Object} entry - A loot log entry
+ * @returns {string} Chunk id
+ */
+const entryChunkId = (entry) => timeChunkId(Date.parse(entry?.startTime), 'hour');
+
 class LootLogHistory {
     constructor() {
         /**
@@ -39,7 +47,7 @@ class LootLogHistory {
             storeName: STORE_NAME,
             prefix: RECORD_PREFIX,
             legacyKey: (charId) => `lootLog_${charId}`,
-            groupOf: (entry) => timeChunkId(Date.parse(entry?.startTime), 'hour'),
+            groupOf: entryChunkId,
             // Newest first, which is the order the loot panel reads them in
             compare: (a, b) => Date.parse(b?.startTime) - Date.parse(a?.startTime) || 0,
             label: 'LootLogHistory',
@@ -68,11 +76,13 @@ class LootLogHistory {
      * `beforeunload` `flushAll()` in the entrypoint is what makes the last one
      * land. Awaiting here would block the caller on the debounce timer itself.
      * @param {Array} entries - The history as it now stands, newest first
+     * @param {Set<string>} [changedChunks] - Chunks whose entries moved, so the rest
+     *   are carried over from the last snapshot instead of being re-serialised
      */
-    _save(entries) {
+    _save(entries, changedChunks) {
         const charId = this._charId();
         if (!charId) return;
-        this._store.save(charId, entries);
+        this._store.save(charId, entries, { changedChunks });
     }
 
     /**
@@ -90,10 +100,17 @@ class LootLogHistory {
         const existing = await this._load();
         const byId = new Map(existing.map((e) => [e.characterActionId, e]));
 
+        // A loot message is a handful of actions against a 500-entry window spread
+        // over hundreds of hourly chunks; naming the hours that moved is what keeps
+        // the save from re-serialising all of them
+        const touchedChunks = new Set();
         let changed = false;
         for (const entry of lootLog) {
             const stored = byId.get(entry.characterActionId);
             if (!stored || stored.endTime !== entry.endTime || stored.actionCount !== entry.actionCount) {
+                // A replaced entry whose startTime moved leaves one chunk and joins another
+                if (stored) touchedChunks.add(entryChunkId(stored));
+                touchedChunks.add(entryChunkId(entry));
                 byId.set(entry.characterActionId, entry);
                 changed = true;
             }
@@ -105,7 +122,7 @@ class LootLogHistory {
 
         // Entries past the cap fall out of the array here; the chunks they were
         // the last of are deleted by the save that notices they have gone
-        this._save(merged.slice(0, MAX_ENTRIES));
+        this._save(merged.slice(0, MAX_ENTRIES), touchedChunks);
     }
 
     /**

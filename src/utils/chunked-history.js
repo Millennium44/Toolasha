@@ -140,7 +140,7 @@ class ChunkedHistory {
         this._loaded = false;
         /** The assembled array, which is the truth between flushes */
         this._entries = [];
-        /** chunkId → the JSON last written for it, so a save can write only what moved */
+        /** chunkId → {json, count} last written for it, so a save can write only what moved */
         this._snapshot = new Map();
         /**
          * Whether the split failed and the legacy key is still the record.
@@ -257,17 +257,26 @@ class ChunkedHistory {
         for (const [chunkId, bucket] of grouped) {
             const previous = this._snapshot.get(chunkId);
 
-            // Only skip a chunk the caller vouched for AND that we have a
-            // previous serialisation of — a chunk we have never written has to
-            // be written whatever the hint says.
-            if (changedChunks && !changedChunks.has(chunkId) && previous !== undefined) {
+            // Only skip a chunk the caller vouched for AND that we have a previous
+            // serialisation of — a chunk we have never written has to be written
+            // whatever the hint says. The entry count is the safety net: a prune that
+            // took *some* entries out of an older chunk leaves it out of the hint of an
+            // appending caller, and skipping it would carry the stale serialisation
+            // forward so the shrink never reached disk. Counting is free next to
+            // serialising, and a chunk only ever shrinks by losing entries.
+            if (
+                changedChunks &&
+                !changedChunks.has(chunkId) &&
+                previous !== undefined &&
+                previous.count === bucket.length
+            ) {
                 next.set(chunkId, previous);
                 continue;
             }
 
             const serialized = JSON.stringify(bucket);
-            next.set(chunkId, serialized);
-            if (previous === serialized) continue;
+            next.set(chunkId, { json: serialized, count: bucket.length });
+            if (previous?.json === serialized) continue;
             const write = storage.set(this.keyFor(charId, chunkId), bucket, this.storeName, this.immediate);
             if (this.immediate) pending.push(write);
         }
@@ -372,7 +381,9 @@ class ChunkedHistory {
         }
 
         this._snapshot = new Map();
-        for (const [chunkId, bucket] of grouped) this._snapshot.set(chunkId, JSON.stringify(bucket));
+        for (const [chunkId, bucket] of grouped) {
+            this._snapshot.set(chunkId, { json: JSON.stringify(bucket), count: bucket.length });
+        }
         return true;
     }
 
@@ -404,7 +415,7 @@ class ChunkedHistory {
         for (const key of recordKeys) {
             const bucket = buckets.get(key);
             if (!Array.isArray(bucket)) continue;
-            this._snapshot.set(key.slice(prefixLength), JSON.stringify(bucket));
+            this._snapshot.set(key.slice(prefixLength), { json: JSON.stringify(bucket), count: bucket.length });
             entries.push(...bucket);
         }
 

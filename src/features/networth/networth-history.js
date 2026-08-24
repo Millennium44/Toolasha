@@ -47,11 +47,19 @@ export const GAP_THRESHOLD_MS = 2 * 60 * 60 * 1000;
  */
 const SERIES_PREFIX = 'networthSeries';
 
+/**
+ * Which chunk a series point belongs to. Named so an appending caller can hand the
+ * store the same id without reaching into it.
+ * @param {Object} point - A history point
+ * @returns {string} Chunk id
+ */
+const pointChunkId = (point) => timeChunkId(point?.t, 'month');
+
 const seriesStore = createChunkedHistory({
     storeName: STORE_NAME,
     prefix: SERIES_PREFIX,
     legacyKey: (charId) => `networth_${charId}`,
-    groupOf: (point) => timeChunkId(point?.t, 'month'),
+    groupOf: pointChunkId,
     compare: (a, b) => (a?.t || 0) - (b?.t || 0),
     label: 'NetworthHistory',
 });
@@ -250,7 +258,9 @@ class NetworthHistory {
         // seconds of waiting for timers that exist to postpone the write. This
         // runs hourly and at startup; nothing downstream needs the write landed.
         // Only the current month's record is written; the rest have not moved.
-        seriesStore.save(this.characterId, this.history);
+        // Compaction and thinning can still take points out of an older month —
+        // the store's per-chunk entry count catches that despite the hint.
+        seriesStore.save(this.characterId, this.history, { changedChunks: pointChunkId(snapshot) });
     }
 
     /**
