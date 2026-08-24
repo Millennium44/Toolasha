@@ -79,6 +79,7 @@ const {
     TABS,
     panelRows,
     panelText,
+    rotationVarianceText,
     drawBoard,
     getPanel,
     default: feature,
@@ -391,6 +392,65 @@ describe('the rotation tab', () => {
         const summary = summariseRotation(state);
         return { tracking: true, fight: summary, session: summary };
     }
+
+    test('Copy variances lists the deviations and leaves the working rows off', () => {
+        const text = rotationVarianceText(starvedAudit(), 'session');
+
+        // The starved one is a variance, with its verdict on the line
+        expect(text).toContain('pricey nova');
+        expect(text).toContain('never fired');
+        // The one doing its job is not
+        expect(text).not.toContain('cheap jab');
+        expect(text).toContain('Rotation variances (session)');
+    });
+
+    test('an ability seen firing that the bar never stated is called out', () => {
+        const state = newRotationState();
+        noteRotationKit(state, [CHEAP], DETAILS);
+        noteRotationFight(state);
+        const start = 1_700_000_000_000;
+        for (let index = 0; index < 10; index++) {
+            foldRotationTick(state, {
+                at: start + index * 500,
+                player: { cMP: 900, mMP: 1000, atkCounter: index },
+                action: PRICEY,
+                events: [{ action: PRICEY, amount: 100 }],
+                detailMap: DETAILS,
+            });
+        }
+        const summary = summariseRotation(state);
+        const text = rotationVarianceText({ tracking: true, fight: summary, session: summary }, 'session');
+
+        expect(text).toContain('never stated it on the bar');
+    });
+
+    test('with no battle named yet the copy says so instead of inventing rows', () => {
+        expect(rotationVarianceText({ tracking: false }, 'session')).toContain('waiting for a battle');
+    });
+
+    test('the button is on the rotation tab and puts the variances on the clipboard', () => {
+        opts.audit = starvedAudit();
+        feature._setTab('rotation');
+
+        const button = board().querySelector('[data-action="copy-variance"]');
+        expect(button).toBeTruthy();
+
+        const writes = [];
+        Object.defineProperty(navigator, 'clipboard', {
+            value: {
+                writeText: (text) => {
+                    writes.push(text);
+                    return Promise.resolve();
+                },
+            },
+            configurable: true,
+        });
+        button.click();
+
+        expect(writes).toHaveLength(1);
+        expect(writes[0]).toContain('Rotation variances');
+        expect(writes[0]).toContain('pricey nova');
+    });
 
     test('is a tab of its own, after the party ones', () => {
         expect(TABS.map((entry) => entry.key)).toEqual(['damage', 'taken', 'healed', 'rotation']);

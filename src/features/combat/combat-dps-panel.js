@@ -442,6 +442,66 @@ export function rotationText(audit, which) {
 }
 
 /**
+ * The gap between the bar the game states and what actually fired, as plain
+ * text for the clipboard.
+ *
+ * Only the deviating rows are listed — the point of this copy is the variance,
+ * not another full table. Three shapes qualify: an ability stated on the bar
+ * that never fired, one seen firing that the game never stated, and one whose
+ * own verdict already says it fires short of what it should (starved, idle,
+ * pinched, or uncomputable). A row doing what its numbers promise is left off,
+ * and an aura is skipped on the audit's own reasoning — cast once and kept up,
+ * it has no cadence to vary from.
+ *
+ * @param {Object} audit - From `rotationAudit`
+ * @param {string} which - A key of {@link ROTATION_SCOPES}
+ * @returns {string}
+ */
+export function rotationVarianceText(audit, which) {
+    if (!audit?.tracking) return 'Rotation variances: waiting for a battle to name your slot.';
+
+    const summary = audit[which] || audit.fight;
+    const label = which === 'session' ? 'session' : 'this fight';
+    const head =
+        `Rotation variances (${label}) — the stated bar against what fired, ` +
+        `over ${summary.seconds.toFixed(0)}s and ${summary.fights} fights`;
+
+    const lines = [];
+    for (const row of summary.abilities) {
+        if (row.verdict.kind === 'aura') continue;
+        const name = actionLabel(row.hrid);
+
+        if (!row.equipped && row.casts > 0) {
+            lines.push(`${name}: fired ${row.casts}x, but the game never stated it on the bar.`);
+            continue;
+        }
+        if (row.equipped && row.casts === 0) {
+            lines.push(`${name}: stated on the bar and never fired — ${row.verdict.text}`);
+            continue;
+        }
+        if (row.verdict.kind === 'starved' || row.verdict.kind === 'idle' || row.verdict.kind === 'pinched') {
+            // The casts its stated cooldown allowed, so the shortfall is a figure
+            // rather than only a verdict
+            const possible =
+                row.cooldownSeconds > 0 && summary.seconds > 0
+                    ? Math.floor(summary.seconds / row.cooldownSeconds)
+                    : null;
+            const cadence = possible !== null && possible > row.casts ? ` (≈${possible} allowed by cooldown)` : '';
+            lines.push(`${name}: ${row.casts} casts${cadence} — ${row.verdict.text}`);
+            continue;
+        }
+        if (row.verdict.kind === 'unknown' && row.casts > 0) {
+            lines.push(`${name}: ${row.casts} casts — ${row.verdict.text}`);
+        }
+    }
+
+    if (!lines.length) {
+        return `${head}\nNo variances: everything the game states on the bar fired, at a cadence its cooldown allows.`;
+    }
+    return [head, ...lines].join('\n');
+}
+
+/**
  * The panel's contents as plain text, for the clipboard.
  * @param {string} which - A key of {@link TABS}
  * @param {Object} [sources] - As {@link panelRows}
@@ -476,7 +536,10 @@ export function drawBoard(body, sources) {
         body.innerHTML =
             boardTabsHTML(TABS, tab) +
             rotationHTML((sources?.audit || rotationAudit)(), scope) +
-            boardButtonsHTML([{ key: 'copy', label: 'Copy stats' }]);
+            boardButtonsHTML([
+                { key: 'copy', label: 'Copy stats' },
+                { key: 'copy-variance', label: 'Copy variances' },
+            ]);
         wireBoard(body, sources);
         return;
     }
@@ -532,6 +595,11 @@ function wireBoard(body, sources) {
     });
     body.querySelector('[data-action="copy"]')?.addEventListener('click', () => {
         navigator.clipboard?.writeText?.(panelText(tab, sources))?.catch?.(() => {});
+    });
+    body.querySelector('[data-action="copy-variance"]')?.addEventListener('click', () => {
+        navigator.clipboard
+            ?.writeText?.(rotationVarianceText((sources?.audit || rotationAudit)(), scope))
+            ?.catch?.(() => {});
     });
 }
 
