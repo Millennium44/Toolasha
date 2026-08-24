@@ -34,6 +34,8 @@ beforeEach(() => {
     webSocketHook.processedMessages.clear();
     webSocketHook.recentActionCompleted.clear();
     vi.clearAllMocks();
+    storage.getJSON.mockImplementation(async () => []);
+    storage.setJSON.mockImplementation(async () => {});
 });
 
 describe('isGameSocket', () => {
@@ -307,9 +309,9 @@ describe('saveCombatSimData side effects', () => {
         const savedProfile = setCurrentProfile.mock.calls[0][0];
         expect(savedProfile.characterID).toBe('char-1');
         expect(savedProfile.characterName).toBe('Hero');
-        // Debounced, not immediate: opening several profiles in a row must not
-        // serialise the whole twenty-profile list on each one.
-        expect(storage.setJSON).toHaveBeenCalledWith('profile_list', expect.any(Array), 'combatExport');
+        // Immediate: the GM copy an external page reads is written right after, and a
+        // debounced IndexedDB write would leave the two disagreeing meanwhile.
+        expect(storage.setJSON).toHaveBeenCalledWith('profile_list', expect.any(Array), 'combatExport', true);
     });
 
     test('a profile_shared message with no profile at all is ignored without throwing', async () => {
@@ -320,24 +322,45 @@ describe('saveCombatSimData side effects', () => {
         expect(storage.setJSON).not.toHaveBeenCalled();
     });
 
-    test('the stored profile list is read once and reused across shares', async () => {
-        webSocketHook._profileList = null;
+    test('each share re-reads the stored list, so a second tab does not clobber the first', async () => {
+        // The list used to be cached on the hook after the first read, which meant a
+        // second game tab wrote its own copy over whatever the other tab had shared.
+        let onDisk = [];
+        storage.getJSON.mockImplementation(async (key) => (key === 'profile_list' ? onDisk : null));
+        storage.setJSON.mockImplementation(async (key, value) => {
+            if (key === 'profile_list') onDisk = value;
+        });
 
         webSocketHook.processMessage(
             msg('profile_shared', { profile: { sharableCharacter: { id: 'char-1', name: 'One' } } })
         );
         await new Promise((r) => setTimeout(r, 0));
+
+        // Stands in for the other tab writing while this one holds no lock
+        onDisk = [{ characterID: 'char-other', characterName: 'Other' }, ...onDisk];
+
         webSocketHook.processMessage(
             msg('profile_shared', { profile: { sharableCharacter: { id: 'char-2', name: 'Two' } } })
         );
         await new Promise((r) => setTimeout(r, 0));
 
-        // Twenty full profiles are not re-read from storage per click
-        expect(storage.getJSON.mock.calls.filter((c) => c[0] === 'profile_list')).toHaveLength(1);
-        expect(storage.setJSON.mock.calls.filter((c) => c[0] === 'profile_list')).toHaveLength(2);
+        expect(storage.getJSON.mock.calls.filter((c) => c[0] === 'profile_list')).toHaveLength(2);
+        expect(onDisk.map((p) => p.characterID)).toEqual(['char-2', 'char-other', 'char-1']);
+    });
 
-        const lastWritten = storage.setJSON.mock.calls.filter((c) => c[0] === 'profile_list').at(-1)[1];
-        expect(lastWritten.map((p) => p.characterID)).toEqual(['char-2', 'char-1']);
+    test('a repeat share of the same character moves it to the front rather than duplicating', async () => {
+        let onDisk = [];
+        storage.getJSON.mockImplementation(async (key) => (key === 'profile_list' ? onDisk : null));
+        storage.setJSON.mockImplementation(async (key, value) => {
+            if (key === 'profile_list') onDisk = value;
+        });
+
+        for (const id of ['char-1', 'char-2', 'char-1']) {
+            webSocketHook.processMessage(msg('profile_shared', { profile: { sharableCharacter: { id, name: id } } }));
+            await new Promise((r) => setTimeout(r, 0));
+        }
+
+        expect(onDisk.map((p) => p.characterID)).toEqual(['char-1', 'char-2']);
     });
 
     test('a profile_shared message with no resolvable character id is skipped without throwing', async () => {

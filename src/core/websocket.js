@@ -638,32 +638,25 @@ class WebSocketHook {
                 // Store in memory for Steam users (works without GM storage)
                 setCurrentProfile(parsed);
 
-                // Load the existing list once per session rather than once per
-                // shared profile: this is twenty full profiles, and clicking
-                // through a party's profiles re-read and rewrote all of them
-                // for each click. After the first read the list is held here
-                // and only ever written.
-                if (!this._profileList) {
-                    this._profileList = (await storage.getJSON('profile_list', 'combatExport', null)) || [];
-                }
+                // Re-read the stored list on every share rather than caching it on the
+                // hook: two game tabs are a supported setup, and a tab that held its own
+                // copy overwrote whatever the other tab had shared in the meantime. One
+                // getJSON per profile click is cheap next to that.
+                const stored = (await storage.getJSON('profile_list', 'combatExport', null)) || [];
 
-                // Remove old entry for same character
-                let profileList = this._profileList.filter((p) => p.characterID !== parsed.characterID);
-
-                // Add to front of list
-                profileList.unshift(parsed);
+                // Newest first, one entry per character
+                let profileList = [parsed, ...stored.filter((p) => p.characterID !== parsed.characterID)];
 
                 // Keep only last 20 profiles
                 if (profileList.length > MAX_STORED_PROFILES) {
                     profileList = profileList.slice(0, MAX_STORED_PROFILES);
                 }
-                this._profileList = profileList;
 
-                // Save updated profile list to IndexedDB (cross-session) and GM storage (cross-domain for Shykai).
-                // Debounced rather than immediate: opening several profiles in a
-                // row is the normal case, and each immediate write serialised
-                // the whole twenty-profile list to disk on the spot.
-                await storage.setJSON('profile_list', profileList, 'combatExport');
+                // Save updated profile list to IndexedDB (cross-session) and GM storage
+                // (cross-domain for Shykai). Immediate: the GM copy an external page reads
+                // is written right after, and a debounced write would leave the two
+                // disagreeing for the length of the debounce.
+                await storage.setJSON('profile_list', profileList, 'combatExport', true);
                 if (hasGM) {
                     try {
                         GM_setValue('toolasha_profile_list', JSON.stringify(profileList));
