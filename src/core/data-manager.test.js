@@ -29,12 +29,14 @@ const storageMock = vi.hoisted(() => ({
     data: new Map(),
     getJSON: null,
     setJSON: null,
+    flushAll: null,
 }));
 
 vi.mock('./storage.js', () => ({
     default: {
         getJSON: (key, storeName, fallback) => storageMock.getJSON(key, storeName, fallback),
         setJSON: (key, value, storeName) => storageMock.setJSON(key, value, storeName),
+        flushAll: () => storageMock.flushAll(),
     },
 }));
 
@@ -47,6 +49,7 @@ beforeEach(() => {
         storageMock.data.set(key, value);
         return true;
     });
+    storageMock.flushAll = vi.fn(async () => {});
 });
 
 /** A minimal init_character_data payload. */
@@ -175,9 +178,11 @@ describe('equipped abilities through a labyrinth run', () => {
      * @param {Object} dataManager - The singleton
      * @param {Array<Object>} combatAbilities - Equipped abilities at login
      */
-    function login(dataManager, combatAbilities) {
+    async function login(dataManager, combatAbilities) {
         resetCharacter(dataManager);
-        webSocketHandlers.get('init_character_data')(
+        // The handler queues its body behind a promise chain, so two inits cannot
+        // interleave mid-teardown; awaiting it is what makes the state visible here
+        return webSocketHandlers.get('init_character_data')(
             initPayload({
                 characterAbilities: combatAbilities.map((a) => ({ ...a, experience: 0 })),
                 combatUnit: { combatAbilities },
@@ -193,7 +198,7 @@ describe('equipped abilities through a labyrinth run', () => {
 
     test('a lab loadout replaces the kit and leaving restores it', async () => {
         const { default: dataManager } = await import('./data-manager.js');
-        login(dataManager, NORMAL);
+        await login(dataManager, NORMAL);
 
         expect(dataManager.getEquippedAbilities().map((a) => a.abilityHrid)).toEqual([
             '/abilities/aura',
@@ -239,7 +244,7 @@ describe('equipped abilities through a labyrinth run', () => {
 
     test('the raw characterData field the sim reads is the one that moved', async () => {
         const { default: dataManager } = await import('./data-manager.js');
-        login(dataManager, NORMAL);
+        await login(dataManager, NORMAL);
 
         webSocketHandlers.get('abilities_updated')({
             endCharacterAbilities: [{ abilityHrid: '/abilities/cleave', slotNumber: 0 }],
@@ -253,7 +258,7 @@ describe('equipped abilities through a labyrinth run', () => {
 
     test('a battle settles the kit even when no update message was understood', async () => {
         const { default: dataManager } = await import('./data-manager.js');
-        login(dataManager, NORMAL);
+        await login(dataManager, NORMAL);
 
         webSocketHandlers.get('new_battle')({
             players: [
@@ -281,7 +286,7 @@ describe('equipped abilities through a labyrinth run', () => {
 
     test('experience ticks raise a level without disturbing the kit', async () => {
         const { default: dataManager } = await import('./data-manager.js');
-        login(dataManager, NORMAL);
+        await login(dataManager, NORMAL);
 
         webSocketHandlers.get('action_completed')({
             endCharacterAction: { id: 1, isDone: true },
@@ -308,7 +313,7 @@ describe('guild shrine levels', () => {
     test('are captured off whatever message carries them, and persisted', async () => {
         const { default: dataManager } = await import('./data-manager.js');
         resetCharacter(dataManager);
-        webSocketHandlers.get('init_character_data')(initPayload());
+        await webSocketHandlers.get('init_character_data')(initPayload());
 
         expect(dataManager.getGuildBuildingLevel('/guild_shrines/force')).toBe(0);
 
@@ -333,7 +338,7 @@ describe('guild shrine levels', () => {
     test('a message carrying one map does not erase the other', async () => {
         const { default: dataManager } = await import('./data-manager.js');
         resetCharacter(dataManager);
-        webSocketHandlers.get('init_character_data')(initPayload());
+        await webSocketHandlers.get('init_character_data')(initPayload());
 
         webSocketHandlers.get('*')({ guildBuildingLevelMap: { '/guild_shrines/force': 6 } });
         webSocketHandlers.get('*')({ characterGuildBuffMap: { '/guild_buffs/force_combat': { level: 2 } } });
@@ -353,7 +358,7 @@ describe('guild shrine levels', () => {
         });
 
         resetCharacter(dataManager);
-        webSocketHandlers.get('init_character_data')(initPayload());
+        await webSocketHandlers.get('init_character_data')(initPayload());
         await dataManager.whenGuildShrineLevelsReady();
 
         expect(dataManager.getGuildBuildingLevel('/guild_shrines/force')).toBe(6);
@@ -372,7 +377,7 @@ describe('guild shrine levels', () => {
         });
 
         resetCharacter(dataManager);
-        webSocketHandlers.get('init_character_data')(initPayload());
+        await webSocketHandlers.get('init_character_data')(initPayload());
         await dataManager.whenGuildShrineLevelsReady();
         expect(dataManager.getGuildBuildingLevel('/guild_shrines/force')).toBe(6);
 
@@ -392,7 +397,7 @@ describe('guild shrine levels', () => {
         });
 
         resetCharacter(dataManager);
-        webSocketHandlers.get('init_character_data')(
+        await webSocketHandlers.get('init_character_data')(
             initPayload({
                 characterGuildBuffMap: { '/guild_buffs/force_combat': { level: 9 } },
                 guildBuildingLevelMap: { '/guild_shrines/force': 10 },
@@ -621,5 +626,74 @@ describe('guild shrine capture', () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(listener).toHaveBeenCalledTimes(1);
         dataManager.off('guild_shrine_levels_updated', listener);
+    });
+});
+
+describe('overlapping character switches', () => {
+    test('the switching flag is up before the pre-switch flush suspends the handler', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        await webSocketHandlers.get('init_character_data')(initPayload());
+
+        let releaseFlush;
+        storageMock.flushAll = vi.fn(
+            () =>
+                new Promise((resolve) => {
+                    releaseFlush = resolve;
+                })
+        );
+
+        const pending = webSocketHandlers.get('init_character_data')(
+            initPayload({ character: { id: 'char-2', name: 'Two' } })
+        );
+        await Promise.resolve();
+
+        // Anything arriving while the flush is in flight must see a switch under way,
+        // because the arrays it would write into still belong to the departing character
+        expect(dataManager.isCharacterSwitching).toBe(true);
+        expect(dataManager.getCurrentCharacterId()).toBe('char-1');
+
+        releaseFlush();
+        await pending;
+
+        expect(dataManager.isCharacterSwitching).toBe(false);
+        expect(dataManager.getCurrentCharacterId()).toBe('char-2');
+    });
+
+    test('a second init waits for the first to finish rather than interleaving with it', async () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        const { default: dataManager } = await import('./data-manager.js');
+        const order = [];
+        const onSwitching = (event) => order.push(`${event.oldId}->${event.newId}`);
+
+        try {
+            vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+            await webSocketHandlers.get('init_character_data')(initPayload());
+            dataManager.lastCharacterSwitchTime = 0; // the singleton carries earlier tests' clock
+
+            dataManager.on('character_switching', onSwitching);
+            // Suspends the handler part way through the teardown, which is where a
+            // second init used to run straight into the departing character's state
+            storageMock.flushAll = vi.fn(async () => {
+                await Promise.resolve();
+                await Promise.resolve();
+            });
+
+            const first = webSocketHandlers.get('init_character_data')(
+                initPayload({ character: { id: 'char-2', name: 'Two' } })
+            );
+            vi.setSystemTime(new Date('2026-01-01T00:00:02Z'));
+            const second = webSocketHandlers.get('init_character_data')(
+                initPayload({ character: { id: 'char-3', name: 'Three' } })
+            );
+            await Promise.all([first, second]);
+
+            // char-3 departs char-2, not char-1: the first switch had finished before
+            // the second started, so neither saw the other's half-torn-down state
+            expect(order).toEqual(['char-1->char-2', 'char-2->char-3']);
+            expect(dataManager.getCurrentCharacterId()).toBe('char-3');
+        } finally {
+            dataManager.off('character_switching', onSwitching);
+            vi.useRealTimers();
+        }
     });
 });

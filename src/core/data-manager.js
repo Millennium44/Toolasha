@@ -82,6 +82,7 @@ class DataManager {
         this.currentCharacterGameMode = null;
         this.isCharacterSwitching = false;
         this.lastCharacterSwitchTime = 0; // Prevent rapid-fire switch loops
+        this._switchChain = null; // Serialises overlapping init_character_data handling
 
         // Event listeners
         this.eventListeners = new Map();
@@ -238,178 +239,211 @@ class DataManager {
     }
 
     /**
+     * Handle one init_character_data message.
+     *
+     * Runs serialised behind {@link _switchChain}: the teardown below suspends,
+     * and a second init running through it concurrently would apply the newer
+     * character's data to the older character's arrays.
+     * @param {object} data - The init_character_data payload
+     * @param {number} arrivedAt - When the message arrived, for rapid-switch detection
+     * @private
+     */
+    async _handleInitCharacterData(data, arrivedAt) {
+        // Detect character switch
+        const newCharacterId = data.character?.id;
+        const newCharacterName = data.character?.name;
+
+        // Validate character data before processing
+        if (!newCharacterId || !newCharacterName) {
+            console.error('[DataManager] Invalid character data received:', {
+                hasCharacter: !!data.character,
+                hasId: !!newCharacterId,
+                hasName: !!newCharacterName,
+            });
+            return; // Don't process invalid character data
+        }
+
+        // Track whether this is a character switch or first load
+        let isCharacterSwitch = false;
+
+        // Check if this is a character switch (not first load)
+        if (this.currentCharacterId && this.currentCharacterId !== newCharacterId) {
+            isCharacterSwitch = true;
+
+            // Rapid-switch guard (loop protection).
+            //
+            // This used to `return`, which threw away the whole message:
+            // the new character's data was never stored, so every reader
+            // went on serving the previous character's skills, items and
+            // actions until another init arrived. What is expensive about a
+            // switch is the teardown — cleaning up and re-initialising a
+            // hundred features — not recording the data. So the data update
+            // and the lifecycle events below always happen; only the
+            // teardown is skipped when switches arrive faster than a second
+            // apart, which is exactly what the guard was defending.
+            const now = arrivedAt;
+            const isRapidSwitch = Boolean(
+                this.lastCharacterSwitchTime && now - this.lastCharacterSwitchTime < RAPID_SWITCH_WINDOW_MS
+            );
+
+            // Raised before the first await, not after: everything from here to
+            // the re-init belongs to the departing character, and a message
+            // landing in one of those suspension points must see that a switch
+            // is in flight rather than write into the old character's state.
+            this.isCharacterSwitching = true;
+
+            if (isRapidSwitch) {
+                console.warn(
+                    '[Toolasha] Rapid character switch (<1s since last); updating data but skipping feature teardown'
+                );
+            }
+            this.lastCharacterSwitchTime = now;
+
+            // Flush pending storage writes before anything tears down.
+            //
+            // This used to be a `setTimeout(…, 0)` whose promise nobody
+            // waited for, so the flush raced the switch: the writes it was
+            // draining belong to the *old* character, and a feature that
+            // rewrote its state during cleanup could land on top of them.
+            // Awaiting it costs one macrotask and makes the ordering real.
+            if (!isRapidSwitch) {
+                try {
+                    if (storage && typeof storage.flushAll === 'function') {
+                        await storage.flushAll();
+                    }
+                } catch (error) {
+                    console.error('[Toolasha] Failed to flush storage before character switch:', error);
+                }
+            }
+
+            // Emit character_switching event (cleanup phase)
+            if (!isRapidSwitch) {
+                // Awaited: a listener that persists the departing
+                // character's state must land before the teardown below
+                // starts clearing that state out from under it.
+                await this.emit('character_switching', {
+                    oldId: this.currentCharacterId,
+                    newId: newCharacterId,
+                    oldName: this.currentCharacterName,
+                    newName: newCharacterName,
+                });
+            }
+
+            // Update character tracking
+            this.currentCharacterId = newCharacterId;
+            this.currentCharacterName = newCharacterName;
+            this.currentCharacterGameMode = data.character?.gameMode || null;
+
+            // Clear old character data
+            this.characterData = null;
+            this.characterMonsters = null;
+            this.characterSkills = null;
+            this.characterItems = null;
+            this._itemIndexById = null;
+            this.characterActions = [];
+            this.characterQuests = [];
+            this.characterEquipment.clear();
+            this.characterHouseRooms.clear();
+            this.actionTypeDrinkSlotsMap.clear();
+            this.personalActionTypeBuffsMap = {};
+            this.characterGuildBuffMap = {};
+            this.guildBuildingLevelMap = {};
+            this.guildShrineCapturedAt = null;
+            this.guildShrineHydrated = false;
+            this.guildShrineHydration = null;
+            this.guildShrineGuildId = null;
+            this.battleData = null;
+
+            // Reset switching flag (cleanup complete, ready for re-init)
+            this.isCharacterSwitching = false;
+
+            // Emit character_switched event (ready for re-init).
+            // Paired with character_switching: a rapid switch skips both, so
+            // feature-registry never sees a re-init without a teardown.
+            if (!isRapidSwitch) {
+                this.emit('character_switched', {
+                    newId: newCharacterId,
+                    newName: newCharacterName,
+                });
+            }
+        } else if (!this.currentCharacterId) {
+            // First load - set character tracking
+            this.currentCharacterId = newCharacterId;
+            this.currentCharacterName = newCharacterName;
+            this.currentCharacterGameMode = data.character?.gameMode || null;
+        }
+
+        // Process new character data normally
+        this.characterData = data;
+        this.characterSkills = data.characterSkills;
+        this.characterItems = data.characterItems;
+        this._itemIndexById = null; // Rebuilt lazily against the new inventory
+        this.characterActions = [...data.characterActions];
+        this.characterQuests = data.characterQuests || [];
+
+        // Build equipment map
+        this.updateEquipmentMap(data.characterItems);
+
+        // Build house room map
+        this.updateHouseRoomMap(data.characterHouseRoomMap);
+
+        // Build drink slots map (tea buffs)
+        this.updateDrinkSlotsMap(data.actionTypeDrinkSlotsMap);
+
+        // Load personal buffs (seal buffs from Labyrinth, may be present on login)
+        if (data.personalActionTypeBuffsMap) {
+            this.personalActionTypeBuffsMap = data.personalActionTypeBuffsMap;
+        }
+
+        // Load guild buff levels and shrine/building levels
+        this.characterGuildBuffMap = data.characterGuildBuffMap || {};
+        this.guildBuildingLevelMap = data.guildBuildingLevelMap || {};
+        if (mapSize(this.characterGuildBuffMap) > 0 || mapSize(this.guildBuildingLevelMap) > 0) {
+            this.guildShrineCapturedAt = Date.now();
+            this.guildShrineHydrated = false;
+        }
+
+        // Login usually carries no shrine levels at all — they ride on guild
+        // traffic that may never arrive this session. Fill the gap from the
+        // last reading so the upgrade advisor has something to answer with;
+        // a live message later overwrites it. Not awaited, so a slow
+        // IndexedDB cannot hold up feature initialization.
+        this.guildShrineHydration = this.hydrateGuildShrineLevels();
+
+        // Clear switching flag
+        this.isCharacterSwitching = false;
+
+        // Emit character_initialized event (trigger feature initialization)
+        // Include flag to indicate if this is a character switch vs first load
+        // IMPORTANT: Mutate data object instead of spreading to avoid copying MB of data
+        data._isCharacterSwitch = isCharacterSwitch;
+        this.emit('character_initialized', data);
+        connectionState.handleCharacterInitialized(data);
+    }
+
+    /**
      * Setup WebSocket message handlers
      * Listens for game data updates
      */
     setupMessageHandlers() {
         // Handle init_character_data (player data on login/refresh)
-        this.webSocketHook.on('init_character_data', async (data) => {
-            // Detect character switch
-            const newCharacterId = data.character?.id;
-            const newCharacterName = data.character?.name;
-
-            // Validate character data before processing
-            if (!newCharacterId || !newCharacterName) {
-                console.error('[DataManager] Invalid character data received:', {
-                    hasCharacter: !!data.character,
-                    hasId: !!newCharacterId,
-                    hasName: !!newCharacterName,
+        //
+        // The body suspends (storage flush, awaited listeners), so two inits
+        // arriving close together would otherwise interleave mid-teardown.
+        // They are queued behind one another instead; the arrival timestamp is
+        // captured here so the rapid-switch guard still measures when the
+        // messages showed up, not when the queue got round to them.
+        this.webSocketHook.on('init_character_data', (data) => {
+            const arrivedAt = Date.now();
+            this._switchChain = (this._switchChain || Promise.resolve())
+                .then(() => this._handleInitCharacterData(data, arrivedAt))
+                .catch((error) => {
+                    console.error('[DataManager] init_character_data handling failed:', error);
+                    // The flag is raised before the teardown; a throw part way
+                    // through it would otherwise block feature init for good.
+                    this.isCharacterSwitching = false;
                 });
-                return; // Don't process invalid character data
-            }
-
-            // Track whether this is a character switch or first load
-            let isCharacterSwitch = false;
-
-            // Check if this is a character switch (not first load)
-            if (this.currentCharacterId && this.currentCharacterId !== newCharacterId) {
-                isCharacterSwitch = true;
-
-                // Rapid-switch guard (loop protection).
-                //
-                // This used to `return`, which threw away the whole message:
-                // the new character's data was never stored, so every reader
-                // went on serving the previous character's skills, items and
-                // actions until another init arrived. What is expensive about a
-                // switch is the teardown — cleaning up and re-initialising a
-                // hundred features — not recording the data. So the data update
-                // and the lifecycle events below always happen; only the
-                // teardown is skipped when switches arrive faster than a second
-                // apart, which is exactly what the guard was defending.
-                const now = Date.now();
-                const isRapidSwitch = Boolean(
-                    this.lastCharacterSwitchTime && now - this.lastCharacterSwitchTime < RAPID_SWITCH_WINDOW_MS
-                );
-                if (isRapidSwitch) {
-                    console.warn(
-                        '[Toolasha] Rapid character switch (<1s since last); updating data but skipping feature teardown'
-                    );
-                }
-                this.lastCharacterSwitchTime = now;
-
-                // Flush pending storage writes before anything tears down.
-                //
-                // This used to be a `setTimeout(…, 0)` whose promise nobody
-                // waited for, so the flush raced the switch: the writes it was
-                // draining belong to the *old* character, and a feature that
-                // rewrote its state during cleanup could land on top of them.
-                // Awaiting it costs one macrotask and makes the ordering real.
-                if (!isRapidSwitch) {
-                    try {
-                        if (storage && typeof storage.flushAll === 'function') {
-                            await storage.flushAll();
-                        }
-                    } catch (error) {
-                        console.error('[Toolasha] Failed to flush storage before character switch:', error);
-                    }
-                }
-
-                // Set switching flag to block feature initialization
-                this.isCharacterSwitching = true;
-
-                // Emit character_switching event (cleanup phase)
-                if (!isRapidSwitch) {
-                    // Awaited: a listener that persists the departing
-                    // character's state must land before the teardown below
-                    // starts clearing that state out from under it.
-                    await this.emit('character_switching', {
-                        oldId: this.currentCharacterId,
-                        newId: newCharacterId,
-                        oldName: this.currentCharacterName,
-                        newName: newCharacterName,
-                    });
-                }
-
-                // Update character tracking
-                this.currentCharacterId = newCharacterId;
-                this.currentCharacterName = newCharacterName;
-                this.currentCharacterGameMode = data.character?.gameMode || null;
-
-                // Clear old character data
-                this.characterData = null;
-                this.characterMonsters = null;
-                this.characterSkills = null;
-                this.characterItems = null;
-                this._itemIndexById = null;
-                this.characterActions = [];
-                this.characterQuests = [];
-                this.characterEquipment.clear();
-                this.characterHouseRooms.clear();
-                this.actionTypeDrinkSlotsMap.clear();
-                this.personalActionTypeBuffsMap = {};
-                this.characterGuildBuffMap = {};
-                this.guildBuildingLevelMap = {};
-                this.guildShrineCapturedAt = null;
-                this.guildShrineHydrated = false;
-                this.guildShrineHydration = null;
-                this.guildShrineGuildId = null;
-                this.battleData = null;
-
-                // Reset switching flag (cleanup complete, ready for re-init)
-                this.isCharacterSwitching = false;
-
-                // Emit character_switched event (ready for re-init).
-                // Paired with character_switching: a rapid switch skips both, so
-                // feature-registry never sees a re-init without a teardown.
-                if (!isRapidSwitch) {
-                    this.emit('character_switched', {
-                        newId: newCharacterId,
-                        newName: newCharacterName,
-                    });
-                }
-            } else if (!this.currentCharacterId) {
-                // First load - set character tracking
-                this.currentCharacterId = newCharacterId;
-                this.currentCharacterName = newCharacterName;
-                this.currentCharacterGameMode = data.character?.gameMode || null;
-            }
-
-            // Process new character data normally
-            this.characterData = data;
-            this.characterSkills = data.characterSkills;
-            this.characterItems = data.characterItems;
-            this._itemIndexById = null; // Rebuilt lazily against the new inventory
-            this.characterActions = [...data.characterActions];
-            this.characterQuests = data.characterQuests || [];
-
-            // Build equipment map
-            this.updateEquipmentMap(data.characterItems);
-
-            // Build house room map
-            this.updateHouseRoomMap(data.characterHouseRoomMap);
-
-            // Build drink slots map (tea buffs)
-            this.updateDrinkSlotsMap(data.actionTypeDrinkSlotsMap);
-
-            // Load personal buffs (seal buffs from Labyrinth, may be present on login)
-            if (data.personalActionTypeBuffsMap) {
-                this.personalActionTypeBuffsMap = data.personalActionTypeBuffsMap;
-            }
-
-            // Load guild buff levels and shrine/building levels
-            this.characterGuildBuffMap = data.characterGuildBuffMap || {};
-            this.guildBuildingLevelMap = data.guildBuildingLevelMap || {};
-            if (mapSize(this.characterGuildBuffMap) > 0 || mapSize(this.guildBuildingLevelMap) > 0) {
-                this.guildShrineCapturedAt = Date.now();
-                this.guildShrineHydrated = false;
-            }
-
-            // Login usually carries no shrine levels at all — they ride on guild
-            // traffic that may never arrive this session. Fill the gap from the
-            // last reading so the upgrade advisor has something to answer with;
-            // a live message later overwrites it. Not awaited, so a slow
-            // IndexedDB cannot hold up feature initialization.
-            this.guildShrineHydration = this.hydrateGuildShrineLevels();
-
-            // Clear switching flag
-            this.isCharacterSwitching = false;
-
-            // Emit character_initialized event (trigger feature initialization)
-            // Include flag to indicate if this is a character switch vs first load
-            // IMPORTANT: Mutate data object instead of spreading to avoid copying MB of data
-            data._isCharacterSwitch = isCharacterSwitch;
-            this.emit('character_initialized', data);
-            connectionState.handleCharacterInitialized(data);
+            return this._switchChain;
         });
 
         // Handle actions_updated (action queue changes)
