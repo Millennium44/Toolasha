@@ -163,7 +163,7 @@ class ProfitCalculator {
             if (upgradeChainTime > 0) {
                 const resolved = resolveItemPrice(actionDetails.upgradeItemHrid, { context: 'profit', side: 'buy' });
                 const craftCost = getProductionCost(actionDetails.upgradeItemHrid, 'ask');
-                if (craftCost > 0 && (resolved.price === 0 || craftCost < resolved.price)) {
+                if (craftCost > 0 && (!(resolved.price > 0) || craftCost < resolved.price)) {
                     const chainTimeWithSpeed = upgradeChainTime / (1 + equipmentSpeedBonus + personalSpeedBonus);
                     effectiveActionTime += chainTimeWithSpeed;
                 }
@@ -474,7 +474,7 @@ class ProfitCalculator {
                     const craftCost = craftEnabled ? getProductionCost(actionDetails.upgradeItemHrid, 'ask') : 0;
                     isCrafted = craftCost > 0 && (!(resolved.price > 0) || craftCost < resolved.price);
                     if (isCrafted) {
-                        resolved = { price: craftCost, custom: false, missing: false };
+                        resolved = { price: craftCost, custom: false, missing: false, estimated: true };
                     }
                 }
 

@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
     itemDetails: {},
     resolvedPrices: {},
     productionCosts: {},
+    chainTimes: {},
+    skills: null,
+    efficiencyContext: {},
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -23,15 +26,18 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => mocks.initData,
         getItemDetails: (hrid) => mocks.itemDetails[hrid] ?? null,
+        getSkills: () => mocks.skills,
+        getActionDetails: (hrid) => mocks.initData?.actionDetailMap?.[hrid] ?? null,
+        getCommunityBuffLevel: () => 0,
     },
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: { getPrice: () => null } }));
 vi.mock('../../utils/house-efficiency.js', () => ({ calculateHouseEfficiency: () => 0 }));
-vi.mock('../../utils/efficiency.js', () => ({ getActionEfficiencyContext: () => ({}) }));
+vi.mock('../../utils/efficiency.js', () => ({ getActionEfficiencyContext: () => mocks.efficiencyContext }));
 vi.mock('../../utils/bonus-revenue-calculator.js', () => ({ calculateBonusRevenue: () => null }));
 vi.mock('../enhancement/tooltip-enhancement.js', () => ({
     getProductionCost: (hrid) => mocks.productionCosts[hrid] ?? 0,
-    getProductionChainTime: () => 0,
+    getProductionChainTime: (hrid) => mocks.chainTimes[hrid] ?? 0,
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => null }));
 vi.mock('../../utils/profit-constants.js', () => ({ MARKET_TAX: 0.02 }));
@@ -45,7 +51,7 @@ vi.mock('../../utils/profit-helpers.js', () => ({
     resolveItemPrice: (hrid) =>
         hrid in mocks.resolvedPrices
             ? { price: mocks.resolvedPrices[hrid], custom: false, missing: false }
-            : { price: 0, custom: false, missing: true },
+            : { price: null, custom: false, missing: true },
 }));
 
 const { default: profitCalculator } = await import('./profit-calculator.js');
@@ -56,6 +62,9 @@ beforeEach(() => {
     mocks.itemDetails = {};
     mocks.resolvedPrices = {};
     mocks.productionCosts = {};
+    mocks.chainTimes = {};
+    mocks.skills = [];
+    mocks.efficiencyContext = {};
     profitCalculator._itemDetailMap = null;
     profitCalculator._actionDetailMap = null;
     profitCalculator._communityBuffMap = null;
@@ -311,5 +320,94 @@ describe('calculateCraftingCostFallback', () => {
     test('an item with no crafting action falls back to zero', () => {
         mocks.initData.actionDetailMap = {};
         expect(profitCalculator.calculateCraftingCostFallback('/items/nothing', () => 0)).toBe(0);
+    });
+});
+
+describe('calculateProfit — upgrade-item crafting chain time', () => {
+    /**
+     * Minimal but complete efficiency context: `calculateProfit` destructures it
+     * wholesale, so every field it reads has to exist even when it is zero.
+     * @returns {object} the mocked context
+     */
+    function baseEfficiencyContext() {
+        return {
+            equipment: [],
+            drinkSlots: [],
+            drinkConcentration: 0,
+            itemDetailMap: {},
+            actionTime: 20,
+            artisanBonus: 0,
+            gourmetBonus: 0,
+            processingBonus: 0,
+            equipmentEfficiency: 0,
+            equipmentEfficiencyItems: [],
+            houseEfficiency: 0,
+            teaEfficiency: 0,
+            achievementEfficiency: 0,
+            personalEfficiency: 0,
+            actionLevelBonus: 0,
+            teaSkillLevelBonus: 0,
+            baseRequirement: 1,
+            speedBonus: 0,
+            personalSpeedBonus: 0,
+            efficiencyBreakdown: { totalEfficiency: 0, levelEfficiency: 0, effectiveRequirement: 1 },
+            efficiencyMultiplier: 1,
+        };
+    }
+
+    /**
+     * An upgrade recipe whose upgrade item takes 30s of chain time to craft.
+     * @returns {void}
+     */
+    function upgradeRecipe() {
+        mocks.settings.profitCalc_craftUpgradeItems = true;
+        mocks.efficiencyContext = baseEfficiencyContext();
+        mocks.skills = [{ skillHrid: '/skills/cheesesmithing', level: 50 }];
+        mocks.itemDetails['/items/upgraded'] = { name: 'Upgraded' };
+        mocks.itemDetails['/items/rune'] = { name: 'Rune' };
+        mocks.initData.actionDetailMap = {
+            '/actions/cheesesmithing/upgrade': {
+                type: '/action_types/cheesesmithing',
+                baseTimeCost: 20e9,
+                upgradeItemHrid: '/items/rune',
+                inputItems: [],
+                outputItems: [{ itemHrid: '/items/upgraded', count: 1 }],
+            },
+        };
+        mocks.chainTimes['/items/rune'] = 30;
+        mocks.productionCosts['/items/rune'] = 400;
+    }
+
+    test('an unpriced upgrade item still charges the crafting chain time', async () => {
+        upgradeRecipe();
+        // no entry in resolvedPrices → resolveItemPrice returns price: null (unpriceable)
+
+        const result = await profitCalculator.calculateProfit('/items/upgraded');
+
+        // 20s action + 30s chain, not the bare 20s the null-price branch used to leave
+        expect(result.actionTime).toBeCloseTo(50, 6);
+    });
+
+    test('an upgrade item cheaper on the market than to craft is bought, so no chain time', async () => {
+        upgradeRecipe();
+        mocks.resolvedPrices['/items/rune'] = 100; // cheaper than the 400 craft cost
+
+        const result = await profitCalculator.calculateProfit('/items/upgraded');
+
+        expect(result.actionTime).toBeCloseTo(20, 6);
+    });
+});
+
+describe('calculateMaterialCosts — provenance of a craft-substituted upgrade price', () => {
+    test('the craft cost is flagged estimated, like the resolver flags its own fallback', () => {
+        mocks.settings.profitCalc_craftUpgradeItems = true;
+        mocks.itemDetails['/items/rune'] = { name: 'Rune' };
+        mocks.resolvedPrices['/items/rune'] = 1000;
+        mocks.productionCosts['/items/rune'] = 400;
+
+        const costs = profitCalculator.calculateMaterialCosts({ upgradeItemHrid: '/items/rune' }, 0);
+
+        expect(costs[0].isCrafted).toBe(true);
+        expect(costs[0].estimatedPrice).toBe(true);
     });
 });
