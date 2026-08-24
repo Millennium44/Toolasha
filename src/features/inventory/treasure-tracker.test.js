@@ -56,12 +56,16 @@ vi.mock('../../utils/adoption-consent.js', () => ({
     requestAdoptionConsent: () => Promise.resolve(null),
 }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
-const dm = vi.hoisted(() => ({ dropTables: {} }));
+const dm = vi.hoisted(() => ({ dropTables: {}, shop: {}, labyrinthShop: {} }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getItemDetails: (hrid) => (hrid === '/items/known' ? { name: 'Known Thing' } : null),
-        getInitClientData: () => ({ openableLootDropMap: dm.dropTables }),
+        getInitClientData: () => ({
+            openableLootDropMap: dm.dropTables,
+            shopItemDetailMap: dm.shop,
+            labyrinthShopItemDetailMap: dm.labyrinthShop,
+        }),
         getCurrentCharacterId: () => 'char-1',
         getCurrentCharacterGameMode: () => 'standard',
         on: () => {},
@@ -90,8 +94,14 @@ vi.mock('../../utils/panel-geometry.js', () => ({
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 1, getPricingMode: () => 'bid' }));
 // Pricing untradables at their token cost reaches the market API, which opens a
-// socket on import; the unit under test here is the formatting, not the pricing
-vi.mock('../../utils/token-valuation.js', () => ({ calculateDungeonTokenValue: () => 0 }));
+// socket on import; the unit under test here is the formatting, not the pricing.
+// The shop-line summing is the real implementation, because that is what the
+// two-cost test below is about.
+const tokenValue = vi.hoisted(() => ({ of: () => 0 }));
+vi.mock('../../utils/token-valuation.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    calculateDungeonTokenValue: (hrid) => tokenValue.of(hrid),
+}));
 vi.mock('../../utils/panel-z-index.js', () => ({
     registerFloatingPanel: () => {},
     unregisterFloatingPanel: () => {},
@@ -739,5 +749,82 @@ describe('the popup is shown only once it has somewhere to be', () => {
         vi.advanceTimersByTime(60 * 20);
         expect(treasureTracker.popup.style.visibility).toBe('');
         expect(treasureTracker.popup.style.left).toBeUndefined();
+    });
+});
+
+describe('_untradableValue at token value', () => {
+    afterEach(() => {
+        dm.shop = {};
+        dm.labyrinthShop = {};
+        tokenValue.of = () => 0;
+        treasureTracker.settings.capeValue = 'token';
+    });
+
+    test('a line paid for in two currencies is charged for both', () => {
+        treasureTracker.settings.capeValue = 'token';
+        dm.shop = {
+            cape: {
+                itemHrid: '/items/cape',
+                costs: [
+                    { itemHrid: '/items/chimerical_token', count: 10 },
+                    { itemHrid: '/items/sinister_token', count: 4 },
+                ],
+            },
+        };
+        tokenValue.of = (hrid) =>
+            ({ '/items/chimerical_token': 1000, '/items/sinister_token': 2500 })[hrid] ?? null;
+
+        // 10 x 1000 + 4 x 2500 = 20000. Reading only costs[0] gave 10000.
+        expect(treasureTracker._untradableValue('/items/cape')).toBe(20_000);
+    });
+
+    test('a line whose first cost is coins prices the coins at 1, not at a token rate', () => {
+        treasureTracker.settings.capeValue = 'token';
+        dm.shop = {
+            cape: {
+                itemHrid: '/items/cape',
+                costs: [
+                    { itemHrid: '/items/coin', count: 5000 },
+                    { itemHrid: '/items/chimerical_token', count: 3 },
+                ],
+            },
+        };
+        // If /items/coin ever reaches the token valuer it answers 1_000_000 a coin,
+        // which is the plausible-looking wrong number this guards against.
+        tokenValue.of = (hrid) =>
+            ({ '/items/coin': 1_000_000, '/items/chimerical_token': 1000 })[hrid] ?? null;
+
+        expect(treasureTracker._untradableValue('/items/cape')).toBe(8000); // 5000 + 3 x 1000
+    });
+
+    test('a line that hands over several splits the cost between them', () => {
+        treasureTracker.settings.capeValue = 'token';
+        dm.shop = {
+            bundle: {
+                itemHrid: '/items/cape',
+                outputCount: 2,
+                costs: [{ itemHrid: '/items/chimerical_token', count: 10 }],
+            },
+        };
+        tokenValue.of = (hrid) => (hrid === '/items/chimerical_token' ? 1000 : null);
+
+        expect(treasureTracker._untradableValue('/items/cape')).toBe(5000);
+    });
+
+    test('an unpriceable currency leaves the reward unvalued rather than cheap', () => {
+        treasureTracker.settings.capeValue = 'token';
+        dm.shop = {
+            cape: {
+                itemHrid: '/items/cape',
+                costs: [
+                    { itemHrid: '/items/chimerical_token', count: 10 },
+                    { itemHrid: '/items/mystery_currency', count: 1 },
+                ],
+            },
+        };
+        tokenValue.of = (hrid) => (hrid === '/items/chimerical_token' ? 1000 : null);
+
+        // market-data is mocked to price everything at 1, so the fallback answers 1
+        expect(treasureTracker._untradableValue('/items/cape')).toBe(10_001);
     });
 });

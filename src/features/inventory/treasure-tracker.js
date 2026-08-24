@@ -59,7 +59,7 @@ import {
     findEdibleToolsData,
     mergeTally,
 } from '../../utils/chest-import.js';
-import { calculateDungeonTokenValue, labyrinthRewardValue } from '../../utils/token-valuation.js';
+import { calculateDungeonTokenValue, labyrinthRewardValue, shopPurchasePrice } from '../../utils/token-valuation.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import { createPersistedRecord } from '../../utils/persisted-record.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
@@ -706,16 +706,21 @@ class TreasureTracker {
         if (mode === 'zero') return null;
         if (mode === 'mirror') return getItemPrice(MIRROR_HRID, { context: 'profit', side: 'sell' }) || null;
 
-        // Token value: what the tokens it costs would otherwise have bought
+        // Token value: what the tokens it costs would otherwise have bought.
+        //
+        // Every cost on the line, not `costs[0]`: a line whose first cost is coins
+        // used to have `/items/coin` handed to the dungeon-token valuer, which
+        // produced a plausible-looking number for a currency that is worth exactly
+        // 1, and a line paid for in two currencies was charged for one of them.
+        // `shopPurchasePrice` already sums a line properly and divides by
+        // `outputCount`; the currency valuation is this feature's own, so it goes
+        // in as the price lookup.
         const data = dataManager.getInitClientData();
         const shop = data?.shopItemDetailMap || {};
-        const entry = Object.values(shop).find((item) => item.itemHrid === itemHrid);
-        const cost = entry?.costs?.[0];
-
-        if (cost?.count) {
-            const perToken = calculateDungeonTokenValue(cost.itemHrid);
-            return perToken > 0 ? perToken * cost.count : null;
-        }
+        const shopPrice = shopPurchasePrice(itemHrid, [shop], (hrid) =>
+            hrid ? (calculateDungeonTokenValue(hrid) ?? getItemPrice(hrid, { context: 'profit', side: 'sell' })) : null
+        );
+        if (shopPrice > 0) return shopPrice;
 
         // The labyrinth keeps its own shop under its own map, and the scrolls a
         // combat chest drops are in it and nowhere else. Without this they price
