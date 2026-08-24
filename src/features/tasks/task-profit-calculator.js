@@ -164,6 +164,30 @@ export function calculateTaskTokenValue() {
 }
 
 /**
+ * How to say a token-derived figure out loud, given that some of it may be a floor.
+ *
+ * The best Task Shop line is usually a chest, and a chest whose own drop table has
+ * items nobody can price contributes only the part that could be priced. The figure
+ * is then a lower bound, and saying so is the difference between an estimate and a
+ * claim. The wording is the expected-value tooltip's, so the two agree.
+ *
+ * @param {number} value - The figure to render
+ * @param {{isPartial?: boolean, partialDrops?: number}|null} tokenData - From
+ *   {@link calculateTaskTokenValue}
+ * @param {Function} [format] - Number formatter, e.g. formatKMB
+ * @param {boolean} [compact] - Omit the drop count, for a space-constrained tile
+ * @returns {string} Display string
+ */
+export function formatTokenFigure(value, tokenData, format = (n) => String(Math.round(n)), compact = false) {
+    const figure = format(value);
+    if (!tokenData?.isPartial) return figure;
+    if (compact) return `\u2265 ${figure}`;
+
+    const drops = tokenData.partialDrops === 1 ? 'drop' : 'drops';
+    return `\u2265 ${figure} (${tokenData.partialDrops} ${drops} unpriced)`;
+}
+
+/**
  * Calculate task reward value (coins + tokens + Purple's Gift)
  *
  * Tokens scale with the token payout; Purple's Gift does not — the game hands

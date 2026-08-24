@@ -70,6 +70,7 @@ const {
     getCowbellValue,
     getBestAlternativeProfitPerHour,
     findBestTaskShopValue,
+    formatTokenFigure,
 } = await import('./task-profit-calculator.js');
 
 const TOKEN = '/items/task_token';
@@ -274,5 +275,33 @@ describe('marginal value against the best alternative', () => {
         const result = await calculateTaskProfit(milkingTask(100, 0));
         expect(result.marginalProfit).toBe(null);
         expect(result.opportunityCost).toBe(null);
+    });
+});
+
+describe('formatTokenFigure', () => {
+    const kmb = (n) => `${Math.round(n)}c`;
+
+    test('a firm valuation reads as a plain figure', () => {
+        expect(formatTokenFigure(1234, { isPartial: false, partialDrops: 0 }, kmb)).toBe('1234c');
+    });
+
+    test('a floor says how many drops it could not price', () => {
+        expect(formatTokenFigure(1234, { isPartial: true, partialDrops: 3 }, kmb)).toBe(
+            '≥ 1234c (3 drops unpriced)'
+        );
+    });
+
+    test('one unpriced drop is singular', () => {
+        expect(formatTokenFigure(1234, { isPartial: true, partialDrops: 1 }, kmb)).toBe(
+            '≥ 1234c (1 drop unpriced)'
+        );
+    });
+
+    test('the compact form keeps the marker and drops the count, for a tile', () => {
+        expect(formatTokenFigure(1234, { isPartial: true, partialDrops: 3 }, kmb, true)).toBe('≥ 1234c');
+    });
+
+    test('no valuation at all is treated as firm rather than throwing', () => {
+        expect(formatTokenFigure(1234, null, kmb)).toBe('1234c');
     });
 });

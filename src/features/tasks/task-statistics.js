@@ -13,6 +13,7 @@ import {
     calculateTaskTokenValue,
     calculateTaskRewardValue,
     getCowbellValue,
+    formatTokenFigure,
 } from './task-profit-calculator.js';
 import { calculateTaskCompletionSeconds } from './task-profit-display.js';
 import taskCompletionTracker from './task-completion-tracker.js';
@@ -20,6 +21,9 @@ import taskRerollTracker from './task-reroll-tracker.js';
 import { forecastTaskSlots } from './task-slot-forecast.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { TOOLASHA } from '../../utils/selectors.js';
+
+/** formatKMB, on a rounded figure — the shape every money row in this panel uses. */
+const roundedKMB = (value) => formatKMB(Math.round(value));
 
 class TaskStatistics {
     constructor() {
@@ -183,6 +187,9 @@ class TaskStatistics {
                 recent: recent.slice(0, 5),
                 rerollSpend: { gold, cowbells, totalValue: spendValue },
                 rewardValue,
+                // Carried so the section can mark a figure that is a floor rather
+                // than presenting a partial valuation as a firm one
+                tokenValuation: tokenValue,
                 netValue: rewardValue === null ? null : rewardValue - spendValue,
             };
         } catch (error) {
@@ -617,12 +624,16 @@ class TaskStatistics {
         section.appendChild(this.createRow('Total Task Tokens', String(rewards.totalTokens), textColor));
 
         if (!rewards.rewardValue.error) {
-            const tokenValueStr = `${formatKMB(Math.round(rewards.rewardValue.breakdown.tokenValue))} each`;
+            // The token valuation is a floor whenever the Task Shop line it came
+            // from is a chest with unpriceable contents. Every figure derived from
+            // it inherits that, so all three say so rather than only the tooltip.
+            const partial = rewards.tokenValue;
+            const tokenValueStr = `${formatTokenFigure(rewards.rewardValue.breakdown.tokenValue, partial, roundedKMB)} each`;
             section.appendChild(this.createRow('Token Value', tokenValueStr, config.COLOR_TEXT_SECONDARY));
             section.appendChild(
                 this.createRow(
                     'Tokens Value',
-                    formatKMB(Math.round(rewards.rewardValue.taskTokens)),
+                    formatTokenFigure(rewards.rewardValue.taskTokens, partial, roundedKMB),
                     config.COLOR_PROFIT
                 )
             );
@@ -642,7 +653,7 @@ class TaskStatistics {
             section.appendChild(
                 this.createRow(
                     'Total Reward Value',
-                    formatKMB(Math.round(rewards.rewardValue.total)),
+                    formatTokenFigure(rewards.rewardValue.total, partial, roundedKMB),
                     config.COLOR_ACCENT
                 )
             );
@@ -791,7 +802,9 @@ class TaskStatistics {
             section.appendChild(
                 this.createRow(
                     'Net Task Income',
-                    formatKMB(Math.round(completions.netValue)),
+                    // Priced through the same token valuation, so it carries the
+                    // same floor when that valuation has one
+                    formatTokenFigure(completions.netValue, completions.tokenValuation, roundedKMB),
                     completions.netValue >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS
                 )
             );

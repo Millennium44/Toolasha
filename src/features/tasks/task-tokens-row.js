@@ -29,7 +29,7 @@ import dataManager from '../../core/data-manager.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { rows, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
-import { calculateTaskTokenValue } from './task-profit-calculator.js';
+import { calculateTaskTokenValue, formatTokenFigure } from './task-profit-calculator.js';
 import taskCompletionTracker from './task-completion-tracker.js';
 import taskStatistics from './task-statistics.js';
 
@@ -182,7 +182,14 @@ registerRow({
                 { icon: TASK_TOKEN_HRID, size: 18 },
                 { text: formatWithSeparator(tokens), color: ROW_COLORS.violet, bold: true },
                 {
-                    text: worth === null ? '—' : formatLargeNumber(Math.round(worth)),
+                    // A token valued through a chest whose contents are not fully
+                    // priceable is a floor, and the tile says so with the same
+                    // "\u2265" the expected-value tooltip uses. The drop count itself
+                    // does not fit on a 200px tile; the statistics popup carries it.
+                    text:
+                        worth === null
+                            ? '\u2014'
+                            : formatTokenFigure(worth, valuation, (n) => formatLargeNumber(Math.round(n)), true),
                     color: worth === null ? ROW_COLORS.dim : ROW_COLORS.gold,
                     push: true,
                 },

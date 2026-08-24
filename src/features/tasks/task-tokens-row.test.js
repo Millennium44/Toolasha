@@ -44,7 +44,10 @@ vi.mock('../../core/data-manager.js', () => ({
     },
 }));
 
-vi.mock('./task-profit-calculator.js', () => ({
+// The wording helper is the real one — how a partial valuation reads is part of
+// what this tile is being tested for
+vi.mock('./task-profit-calculator.js', async (importOriginal) => ({
+    ...(await importOriginal()),
     calculateTaskTokenValue: () => game.valuation,
 }));
 
@@ -276,5 +279,39 @@ describe('the task tokens tile', () => {
         draw();
 
         expect(game.shown).toBe(0);
+    });
+});
+
+describe('a token valuation that is only a floor', () => {
+    beforeEach(() => {
+        game.quests = [task(3)];
+        game.popupOpen = false;
+        game.rates = null;
+    });
+
+    test('the tile marks the figure rather than presenting it as firm', () => {
+        game.valuation = {
+            tokenValue: 4000,
+            giftPerTask: 1000,
+            totalPerToken: 5000,
+            partialDrops: 2,
+            isPartial: true,
+            error: null,
+        };
+
+        expect(draw().textContent).toContain('≥');
+    });
+
+    test('a fully priced valuation carries no marker', () => {
+        game.valuation = {
+            tokenValue: 4000,
+            giftPerTask: 1000,
+            totalPerToken: 5000,
+            partialDrops: 0,
+            isPartial: false,
+            error: null,
+        };
+
+        expect(draw().textContent).not.toContain('≥');
     });
 });
