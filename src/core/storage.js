@@ -42,6 +42,13 @@ const STORE_KEY_BUDGETS = {
     marketListings: 2000,
 };
 
+/**
+ * How many consecutive failed flushes a single pending key gets before it is dropped.
+ * A transient failure (a reconnect gap, a quota the user then frees) recovers well
+ * inside this; a value the store will never accept stops coming back forever.
+ */
+const MAX_FLUSH_ATTEMPTS = 3;
+
 class Storage {
     constructor() {
         this.db = null;
@@ -51,6 +58,10 @@ class Storage {
         this.saveDebounceTimers = new Map(); // Per-key debounce timers
         this.pendingWrites = new Map(); // Per-key pending write data: {value, storeName, resolvers, generation}
         this._writeGeneration = new Map(); // Per-key monotonic generation counter, for write ownership
+        // Per-key consecutive flush failures. A value IndexedDB refuses to store at all
+        // (un-cloneable, or bigger than the space that will ever be free) is requeued by
+        // flushAll with no timer, so without a cap it comes back every flush forever.
+        this._flushFailures = new Map();
         this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
         this._reconnecting = false; // Guard against concurrent reconnection attempts
         this._dbNulledReason = null; // Track why db was last set to null
@@ -1033,6 +1044,28 @@ class Storage {
                         writtenKeys = new Set();
                     }
 
+                    // One key the store refuses — an un-cloneable value, or the key whose
+                    // size tipped the quota — aborts the whole transaction and takes every
+                    // healthy key in the same store down with it. Retry whatever the bulk
+                    // write did not cover one key at a time, so the poison is isolated and
+                    // its neighbours drain. (The bulk transaction still reports nothing
+                    // written on abort; this is a second pass, not a reinterpretation.)
+                    //
+                    // Each retry is its own one-key transaction through the same
+                    // `_putAllWritten`, not `_saveToIndexedDB`: that path settles on
+                    // whichever of request-success and abort arrives first, and a request
+                    // succeeds before the commit that then rolls it back — so it would
+                    // call an aborted key written.
+                    const stragglers = items.filter((item) => !writtenKeys.has(item.key));
+                    if (stragglers.length > 0) {
+                        const retried = await Promise.all(
+                            stragglers.map((item) => this._putAllWritten(storeName, { [item.key]: item.pending.value }))
+                        );
+                        stragglers.forEach((item, i) => {
+                            if (retried[i].length > 0) writtenKeys.add(item.key);
+                        });
+                    }
+
                     for (const { timerKey, key, pending } of items) {
                         const success = writtenKeys.has(key);
                         if (success && this.pendingWrites.get(timerKey) === pending) {
@@ -1044,10 +1077,32 @@ class Storage {
                             if (!this.saveDebounceTimers.has(timerKey)) {
                                 this._writeGeneration.delete(timerKey);
                             }
+                            this._flushFailures.delete(timerKey);
+                        } else if (!success) {
+                            const failures = (this._flushFailures.get(timerKey) || 0) + 1;
+                            if (failures >= MAX_FLUSH_ATTEMPTS) {
+                                console.warn(
+                                    `[Storage] Giving up on key ${key} in store ${storeName} after ${failures} failed flushes; the value is being dropped`
+                                );
+                                if (this.pendingWrites.get(timerKey) === pending) {
+                                    this.pendingWrites.delete(timerKey);
+                                    if (!this.saveDebounceTimers.has(timerKey)) {
+                                        this._writeGeneration.delete(timerKey);
+                                    }
+                                }
+                                this._flushFailures.delete(timerKey);
+                            } else {
+                                this._flushFailures.set(timerKey, failures);
+                            }
                         }
                         for (const r of pending.resolvers || []) {
                             r(success);
                         }
+                        // Same reasoning as the debounced failure path: the entry stays
+                        // queued for a later retry, but holding these callers' promises
+                        // open until that retry would hang them for the rest of the
+                        // session. They have just been told the write failed.
+                        if (!success) pending.resolvers = [];
                     }
                 })()
             );
@@ -1075,6 +1130,7 @@ class Storage {
         }
         this.pendingWrites.clear();
         this._writeGeneration.clear();
+        this._flushFailures.clear();
     }
 
     /**

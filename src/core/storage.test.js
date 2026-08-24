@@ -258,6 +258,132 @@ describe('Storage.putAll when the transaction aborts', () => {
     });
 });
 
+describe('Storage.flushAll with a key the store will not accept', () => {
+    beforeEach(() => {
+        storage.db = null;
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage._writeGeneration.clear();
+        storage._flushFailures.clear();
+    });
+
+    /**
+     * A database that refuses one particular key outright — the un-cloneable value
+     * whose `put` throws synchronously and takes the whole transaction with it.
+     * Every other key writes normally.
+     * @param {string} poisonKey - The key whose put() throws
+     * @returns {{db: object, written: Map<string, *>}} Fake db and what actually landed
+     */
+    function createPoisonDb(poisonKey) {
+        const written = new Map();
+        const db = {
+            objectStoreNames: ['xpHistory'],
+            transaction() {
+                const pending = [];
+                const txn = { oncomplete: null, onerror: null, onabort: null, error: null };
+                const store = {
+                    put(value, key) {
+                        if (key === poisonKey) throw new Error('DataCloneError');
+                        const request = { onsuccess: null, onerror: null };
+                        pending.push(() => {
+                            written.set(key, value);
+                            request.onsuccess?.();
+                        });
+                        return request;
+                    },
+                };
+                queueMicrotask(() => {
+                    for (const run of pending) run();
+                    queueMicrotask(() => txn.oncomplete?.());
+                });
+                return {
+                    objectStore: () => store,
+                    get error() {
+                        return txn.error;
+                    },
+                    set oncomplete(fn) {
+                        txn.oncomplete = fn;
+                    },
+                    set onerror(fn) {
+                        txn.onerror = fn;
+                    },
+                    set onabort(fn) {
+                        txn.onabort = fn;
+                    },
+                };
+            },
+        };
+        return { db, written };
+    }
+
+    /**
+     * Queue a debounced-style pending write and hand back the caller's promise.
+     * @param {string} key - Key within the xpHistory store
+     * @param {*} value - Value to write
+     * @returns {Promise<boolean>} What the caller of storage.set() would await
+     */
+    function queuePending(key, value) {
+        const pending = { value, storeName: 'xpHistory', resolvers: [], generation: 1 };
+        storage.pendingWrites.set(`xpHistory:${key}`, pending);
+        return new Promise((resolve) => pending.resolvers.push(resolve));
+    }
+
+    test('one poison key does not stop its healthy neighbours draining', async () => {
+        const { db, written } = createPoisonDb('bad');
+        storage.db = db;
+
+        const goodA = queuePending('a', 1);
+        const bad = queuePending('bad', 2);
+        const goodB = queuePending('b', 3);
+
+        await storage.flushAll();
+
+        // The bulk transaction reported nothing written (the throw killed it); the
+        // per-key second pass is what gets the healthy values in.
+        expect(await goodA).toBe(true);
+        expect(await goodB).toBe(true);
+        expect(await bad).toBe(false);
+        expect(Object.fromEntries(written)).toEqual({ a: 1, b: 3 });
+
+        expect(storage.pendingWrites.has('xpHistory:a')).toBe(false);
+        expect(storage.pendingWrites.has('xpHistory:b')).toBe(false);
+        // Still queued for a retry — but only for a bounded number of them
+        expect(storage.pendingWrites.has('xpHistory:bad')).toBe(true);
+        expect(storage._flushFailures.get('xpHistory:bad')).toBe(1);
+    });
+
+    test('the requeued entry keeps no resolvers, as the debounced failure path does', async () => {
+        const { db } = createPoisonDb('bad');
+        storage.db = db;
+
+        const bad = queuePending('bad', 2);
+        await storage.flushAll();
+
+        expect(await bad).toBe(false);
+        // Holding a settled resolver on the requeued entry would call it a second
+        // time on the next flush, and a resolved promise silently swallows that
+        expect(storage.pendingWrites.get('xpHistory:bad').resolvers).toEqual([]);
+    });
+
+    test('a key that fails every flush is dropped with a warning rather than retried forever', async () => {
+        const { db } = createPoisonDb('bad');
+        storage.db = db;
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        queuePending('bad', 2);
+        await storage.flushAll();
+        expect(storage.pendingWrites.has('xpHistory:bad')).toBe(true);
+        await storage.flushAll();
+        expect(storage.pendingWrites.has('xpHistory:bad')).toBe(true);
+        await storage.flushAll();
+
+        expect(storage.pendingWrites.has('xpHistory:bad')).toBe(false);
+        expect(storage._flushFailures.has('xpHistory:bad')).toBe(false);
+        expect(warn.mock.calls.some((call) => String(call[0]).includes('bad'))).toBe(true);
+        warn.mockRestore();
+    });
+});
+
 describe('Storage.getMany', () => {
     beforeEach(() => {
         storage.db = null;
