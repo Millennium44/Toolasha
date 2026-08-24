@@ -166,6 +166,46 @@ class DungeonTrackerStorage {
         this._persistChain = null;
         /** A deferred merge-and-write is armed, to tell a burst from a lone run */
         this._pendingTimer = null;
+
+        this._watchForTheEnd();
+    }
+
+    /**
+     * Make the coalescing window survive the page going away.
+     *
+     * For the 250 ms a deferred save is armed, the run exists only in this
+     * object: nothing has reached the store, so `storage.flushAll()` — which
+     * the switch path and the store's own unload handling call — has nothing
+     * of ours to drain. A tab closed, hidden or switched inside that window
+     * lost the run outright. These handlers turn the armed save into an
+     * immediate one first, which is the only point at which `flushAll` can
+     * see it.
+     *
+     * `pagehide` is the reliable one on mobile Safari, `beforeunload`
+     * elsewhere, and `visibilitychange` catches a tab that is backgrounded and
+     * then discarded without either firing. All three run the same idempotent
+     * flush, so firing two of them costs one no-op.
+     * @private
+     */
+    _watchForTheEnd() {
+        const flush = () => {
+            this.flushPendingSave();
+        };
+
+        if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+            window.addEventListener('pagehide', flush);
+            window.addEventListener('beforeunload', flush);
+        }
+        if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'hidden') flush();
+            });
+        }
+
+        // The switch tears the old character's features down; a run recorded in
+        // the last quarter-second belongs to the character leaving, and this is
+        // the last moment it can be written under them
+        if (typeof dataManager?.on === 'function') dataManager.on('character_switching', flush);
     }
 
     /**
@@ -525,6 +565,12 @@ class DungeonTrackerStorage {
      * @returns {Promise<boolean>} Whether the write landed
      */
     async clearAllRuns() {
+        // An armed deferred save would read the stored list back and merge the
+        // very runs this was asked to forget
+        if (this._pendingTimer !== null) {
+            clearTimeout(this._pendingTimer);
+            this._pendingTimer = null;
+        }
         this._index([]);
         this._deleted = new Set();
         return this._persistReplace();

@@ -1,3 +1,9 @@
+/** @vitest-environment happy-dom
+ *
+ * The store needs a DOM only for the page-lifecycle handlers that flush an
+ * armed save; everything else here is arithmetic over a stored list.
+ */
+
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
@@ -9,6 +15,8 @@ const game = vi.hoisted(() => ({
     unreadable: false,
     // Every write, as [key, immediate]
     writes: [],
+    // event name → handlers the store registered on the data manager
+    listeners: {},
 }));
 
 vi.mock('../../core/storage.js', () => ({
@@ -33,6 +41,9 @@ vi.mock('../../core/data-manager.js', () => ({
         getActionDetails: (hrid) => game.actionDetails[hrid],
         getCurrentCharacterId: () => game.characterId,
         getCurrentCharacterName: () => game.characterName,
+        on: (event, handler) => {
+            (game.listeners[event] = game.listeners[event] || []).push(handler);
+        },
     },
 }));
 
@@ -259,6 +270,57 @@ describe('saveTeamRun', () => {
 
         expect(game.writes.map(([, immediate]) => immediate)).toEqual([false]);
         expect(game.saved.unifiedRuns.allRuns).toHaveLength(1);
+    });
+
+    test('the page going away flushes a save still inside its coalescing window', async () => {
+        seedRuns([]);
+        await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T00:00:00Z', duration: 500 });
+
+        // Nothing has reached the store yet, so storage.flushAll() has nothing
+        // of ours to drain — the run exists only in this object
+        expect(game.writes).toEqual([]);
+
+        // No manual flush: the handler is the whole point
+        window.dispatchEvent(new Event('pagehide'));
+        await dungeonTrackerStorage._persistChain;
+
+        expect(game.writes).toEqual([['allRuns', true]]);
+        expect(game.saved.unifiedRuns.allRuns).toHaveLength(1);
+    });
+
+    test('a tab hidden inside the window flushes too', async () => {
+        seedRuns([]);
+        await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T00:00:00Z', duration: 500 });
+
+        expect(game.writes).toEqual([]);
+
+        Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+        document.dispatchEvent(new Event('visibilitychange'));
+        await dungeonTrackerStorage._persistChain;
+
+        expect(game.writes).toEqual([['allRuns', true]]);
+        expect(game.saved.unifiedRuns.allRuns).toHaveLength(1);
+    });
+
+    test('a character switch writes the departing character’s run first', async () => {
+        seedRuns([]);
+        await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T00:00:00Z', duration: 500 });
+
+        expect(game.listeners.character_switching || []).not.toHaveLength(0);
+        for (const handler of game.listeners.character_switching) handler({});
+        await dungeonTrackerStorage._persistChain;
+
+        expect(game.saved.unifiedRuns.allRuns).toHaveLength(1);
+    });
+
+    test('forgetting everything disarms a save that would have merged it back', async () => {
+        seedRuns([]);
+        await dungeonTrackerStorage.saveTeamRun('A,B', { timestamp: '2026-01-01T00:00:00Z', duration: 500 });
+        await dungeonTrackerStorage.clearAllRuns();
+
+        await new Promise((resolve) => setTimeout(resolve, PERSIST_COALESCE_MS + 20));
+
+        expect(game.saved.unifiedRuns.allRuns).toEqual([]);
     });
 
     test('a run is not written over a history that could not be read first', async () => {
