@@ -516,7 +516,8 @@ class ExpectedValueCalculator {
 
         // Drops nobody can price contribute nothing, so the total is a floor, not an estimate.
         // Callers that render it are expected to say so — see formatExpectedValue.
-        const missingCount = drops.filter((drop) => !drop.hasPriceData).length;
+        // Unpriced drops here, plus anything unpriceable inside a nested container
+        const missingCount = drops.reduce((n, drop) => n + (drop.hasPriceData ? 0 : 1) + (drop.missingCount || 0), 0);
 
         return {
             itemName: itemDetails.name,
@@ -574,8 +575,12 @@ class ExpectedValueCalculator {
             // Calculate average count
             const avgCount = (minCount + maxCount) / 2;
 
-            // Get price
-            const price = this.getDropPrice(itemHrid);
+            // Get price, keeping the count of anything unpriceable inside a
+            // nested container - a crate with three unpriced drops prices, but
+            // only partially, and the breakdown has to say so
+            const resolved = this.resolveSellSideValue(itemHrid, 0);
+            const price = resolved?.value ?? null;
+            const nestedMissing = resolved?.missingCount || 0;
 
             // Calculate expected value for this drop
             const itemCanBeSold = itemDetails.isTradable !== false;
@@ -600,6 +605,7 @@ class ExpectedValueCalculator {
                 priceEach: price || 0,
                 expectedValue: dropValue,
                 hasPriceData: price !== null,
+                missingCount: nestedMissing,
             });
         }
 

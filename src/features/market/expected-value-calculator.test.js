@@ -384,6 +384,21 @@ describe('nested partial containers', () => {
         expect(result.isPartial).toBe(true);
     });
 
+    test('the public path counts the nested missing drop too', () => {
+        // getDropBreakdown used to keep only the nested value and drop its
+        // missing count, so tooltips and task valuations read a partial chest
+        // as firm even after the container path had learned better
+        expectedValueCalculator.isInitialized = true;
+        try {
+            const result = expectedValueCalculator.calculateExpectedValue(OUTER);
+
+            expect(result.missingCount).toBe(1);
+            expect(result.isPartial).toBe(true);
+        } finally {
+            expectedValueCalculator.isInitialized = false;
+        }
+    });
+
     test('a cache hit on the crate still reports the chest as partial', () => {
         expectedValueCalculator.calculateContainerValue(INNER, mocks.initData);
         const result = expectedValueCalculator.calculateContainerValue(OUTER, mocks.initData);
