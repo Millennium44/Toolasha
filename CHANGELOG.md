@@ -6,7 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Audit round two: prices say where they came from, mathjs is gone, and idle timers go quiet
+### Audit round three: the flush path tells the truth and character switches stay in order
+
+- An aborted bulk write (quota, tab closing) no longer reports its keys as written — they stay queued for retry instead of being silently dropped, and the flush cleans up its bookkeeping.
+- Character switches are serialised: the switching flag is raised before any await, so a burst of updates arriving mid-teardown can no longer land on the departing character, and two rapid switches can no longer interleave.
+- A chest containing another container with unpriceable drops now reports "≥ X (N drops unpriced)" like a top-level one; a valuation truncated by a drop cycle is never cached.
+- A second game tab no longer wipes the first tab's shared combat profiles, and the externally readable copy updates immediately again.
+- The changed-chunk hint is actually wired into the append-only history writers (loot log, net worth, production income), and a partial prune of an older chunk can no longer be skipped as unchanged.
+- Terminating a worker pool rejects its abandoned tasks instead of leaving callers waiting forever.
+- Sync records when this device last pushed to the gist, separately from when it last applied a pull.
 
 - **Prices and valuations**: an item with no live listings is now valued from the game's official market value and marked as an estimate (≈) rather than passed off as a quote, which revives every "no price data" warning that had silently stopped firing; dungeon-token, task-token and net-worth valuations were rebuilt on the shop data (task tokens after tax like everything else; unvalued rather than an invented 30k when prices have not loaded); community-buff strength and house-room efficiency are read from game data in one shared helper instead of four hand-copied tables, so alchemy counts seal and guild buffs like every other skill; chest expected values handle nested containers consistently and say "≥ X (N drops unpriced)" when part cannot be priced; calibration days follow your calendar; a tea whose buff still runs is kept when the stack empties; short loot-log runs label their daily projection.
 - **No more mathjs**: the enhancement Markov inverse is a small built-in helper (verified to machine precision against math.js), dropping a ~600 KB library from every page load and from every calculation worker; the standalone enhancement library shrinks from ~700 KB to 27 KB. Worker pools time out a dead worker's task instead of waiting forever, release their blob URLs, and shut down after five minutes idle.
