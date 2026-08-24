@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The Rotation tab can copy just the variances
+
+A second button beside Copy stats puts only the deviations between the stated bar and what actually fired on the clipboard: abilities slotted but never cast, abilities seen firing the game never stated, and rows whose verdict says they fire short — each with the casts its stated cooldown allowed, so the shortfall is a figure.
+
 ### Audit round three: the flush path tells the truth and character switches stay in order
 
 - An aborted bulk write (quota, tab closing) no longer reports its keys as written — they stay queued for retry instead of being silently dropped, and the flush cleans up its bookkeeping.
