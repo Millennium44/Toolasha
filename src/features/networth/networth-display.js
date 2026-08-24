@@ -726,6 +726,11 @@ class NetworthInventoryDisplay {
                     if (item.isOpenable && item.itemHrid) {
                         return this.renderOpenableItemRow(item);
                     }
+                    // Nothing can price it yet, so the total below does not
+                    // include it — the same distinction the ability rows draw
+                    if (item.unpriced) {
+                        return `<div>${item.name} x${formatKMB(item.count)}: no price</div>`;
+                    }
                     return `<div>${item.name} x${formatKMB(item.count)}: ${networthFormatter(Math.round(item.value))}</div>`;
                 })
                 .join('');

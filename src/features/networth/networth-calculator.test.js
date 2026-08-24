@@ -89,8 +89,13 @@ vi.mock('../../utils/guild-credit-pricing.js', () => ({
     }),
 }));
 
-const { calculateItemValue, calculateAllHousesCost, calculateAllAbilitiesCost, calculateGuildShrinesCost } =
-    await import('./networth-calculator.js');
+const {
+    calculateItemValue,
+    calculateAllHousesCost,
+    calculateAllAbilitiesCost,
+    calculateGuildShrinesCost,
+    isUnpricedCurrency,
+} = await import('./networth-calculator.js');
 const { _resetMarketValues } = await import('../../utils/market-values.js');
 
 beforeEach(() => {
@@ -398,5 +403,33 @@ describe('calculateGuildShrinesCost', () => {
 
         expect(result.breakdown).toEqual([]);
         expect(result.totalCost).toBe(0);
+    });
+});
+
+describe('isUnpricedCurrency', () => {
+    test('task tokens are unpriced while the shop cannot be read', () => {
+        mocks.settings.networth_includeTaskTokens = true;
+        mocks.taskTokenValue = { tokenValue: null, error: 'Market data not loaded' };
+
+        // 0 and "no figure yet" look identical in a total; only one is worth saying
+        expect(isUnpricedCurrency('/items/task_token')).toBe(true);
+    });
+
+    test('a token the shop can price is not unpriced', () => {
+        mocks.settings.networth_includeTaskTokens = true;
+        mocks.taskTokenValue = { tokenValue: 2500 };
+
+        expect(isUnpricedCurrency('/items/task_token')).toBe(false);
+    });
+
+    test('tokens the user excluded on purpose are not reported as unpriced', () => {
+        mocks.settings.networth_includeTaskTokens = false;
+        mocks.taskTokenValue = { tokenValue: null, error: 'Market data not loaded' };
+
+        expect(isUnpricedCurrency('/items/task_token')).toBe(false);
+    });
+
+    test('an ordinary item is never a currency', () => {
+        expect(isUnpricedCurrency('/items/cheese')).toBe(false);
     });
 });

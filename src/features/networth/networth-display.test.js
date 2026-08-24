@@ -142,3 +142,44 @@ describe('guild shrines row', () => {
         expect(panelText()).not.toContain('Guild Shrines');
     });
 });
+
+describe('an inventory item nothing can price', () => {
+    test('says so rather than drawing a zero', () => {
+        // Task tokens are priced through the Task Shop, and before that can be read
+        // they contribute nothing — which is not the same as being worth nothing
+        const html = networthInventoryDisplay.renderInventoryBreakdown({
+            byCategory: {
+                Currencies: {
+                    totalValue: 0,
+                    items: [
+                        {
+                            name: 'Task Token',
+                            count: 400,
+                            value: 0,
+                            itemHrid: '/items/task_token',
+                            unpriced: true,
+                        },
+                    ],
+                },
+            },
+            breakdown: [],
+        });
+
+        expect(html).toContain('no price');
+        expect(html).not.toContain('Task Token x400: 0');
+    });
+
+    test('an item that really is worth nothing still draws its figure', () => {
+        const html = networthInventoryDisplay.renderInventoryBreakdown({
+            byCategory: {
+                Other: {
+                    totalValue: 0,
+                    items: [{ name: 'Junk', count: 2, value: 0, itemHrid: '/items/junk', unpriced: false }],
+                },
+            },
+            breakdown: [],
+        });
+
+        expect(html).not.toContain('no price');
+    });
+});

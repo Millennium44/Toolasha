@@ -148,6 +148,26 @@ function resolveNetworthPrices(itemHrid, enhancementLevel, priceCache = null) {
 }
 
 /**
+ * Is this a currency that priced at 0 because nothing could price it?
+ *
+ * A currency worth 0 and a currency nobody can value yet look identical in a
+ * total, and only one of the two is worth saying out loud. Task tokens are
+ * priced through the Task Shop, so before the shop and the market are both
+ * readable there is no figure — which is a different statement from "these are
+ * worth nothing", and the row says which one it is.
+ *
+ * @param {string} itemHrid - Item HRID
+ * @returns {boolean} True when the item is a currency with no obtainable price
+ */
+export function isUnpricedCurrency(itemHrid) {
+    if (itemHrid !== '/items/task_token') return false;
+    if (config.getSetting('networth_includeTaskTokens') === false) return false;
+
+    const tokenData = calculateTaskTokenValue();
+    return !(tokenData?.tokenValue > 0);
+}
+
+/**
  * Get market price for an item
  * @param {string} itemHrid - Item HRID
  * @param {number} enhancementLevel - Enhancement level
@@ -824,6 +844,9 @@ export async function calculateNetworth() {
             itemHrid: item.itemHrid,
             enhancementLevel: item.enhancementLevel || 0,
             isOpenable: itemDetails?.isOpenable === true,
+            // A currency the shop cannot price yet contributes 0 — the same
+            // situation the ability rows already distinguish from "worth nothing"
+            unpriced: value === 0 && isUnpricedCurrency(item.itemHrid),
         };
 
         // Check if this is an ability book
