@@ -80,6 +80,31 @@ import { readScoped } from '../../utils/character-key.js';
 const PANEL_ID = 'toolasha-consumables-panel';
 
 /**
+ * A member's burn forecast reduced to the one number the readiness card reads.
+ *
+ * The card takes the soonest-empty slot per member (`memberReadiness`), so that
+ * is what the memo has to notice moving. Rounded to a minute: consumption rates
+ * are measured, so the raw figure jitters in its last decimals every refresh
+ * and an exact stamp would defeat the memo entirely.
+ *
+ * @param {Array<Object>|null} forecasts - As `consumable-forecast` normalised them
+ * @returns {string} `'-'` when nothing was measured
+ */
+function burnStamp(forecasts) {
+    if (!Array.isArray(forecasts) || !forecasts.length) return '-';
+
+    let soonest = null;
+    for (const entry of forecasts) {
+        if (!Number.isFinite(entry?.secondsLeft)) continue;
+        if (!soonest || entry.secondsLeft < soonest.secondsLeft) soonest = entry;
+    }
+    if (!soonest) return '-';
+    // The limiter's name is on the card too, so a swap of which slot empties
+    // first has to invalidate even when the countdown lands on the same minute
+    return `${soonest.name || soonest.itemHrid || ''}@${Math.round(soonest.secondsLeft / 60)}`;
+}
+
+/**
  * The Buy-all walk's floating control — outside the panel, which hides itself to
  * go shopping, so the walk's next step and its rules stay reachable while the
  * marketplace is up.
@@ -485,25 +510,37 @@ class ConsumablesPanel {
             return null;
         }
 
-        // The panel redraws every five seconds and nothing this card reads
-        // moves on that clock: the party is fixed before the run, the profiles
-        // are a stored list, and the run target only changes when the button is
-        // clicked. Rebuilding meant walking every member's equipment through
-        // the item map and re-running the party lint sixty times an hour to
-        // produce the same card, so the model is kept until one of the things
-        // it is actually a function of changes
+        // The panel redraws every five seconds and the expensive half of this
+        // card — walking every member's equipment through the item map and
+        // re-running the party lint — usually produces the same answer, so the
+        // model is kept until something it actually reads changes. "Something
+        // it reads" is not a set of lengths: the key pile moves when you buy
+        // keys, the burn forecasts are rebuilt from the collector on every
+        // refresh, and a same-size roster swap is a different party. The
+        // signature therefore names identities and the two live numbers, not
+        // counts.
+        const keyHrid = dungeonEntryKey(context.actionHrid, dataManager.getActionDetails?.(context.actionHrid));
+        const keysHeld = keyHrid ? heldInInventory(dataManager.getInventory?.(), keyHrid) : 0;
+
         const signature = [
             context.actionHrid,
             context.tier,
             context.stale ? 1 : 0,
-            context.roster.length,
+            context.characterId,
+            context.roster.map((member) => member?.characterID ?? member?.characterName ?? '?').join(','),
             this.dungeonRuns,
-            (this._profiles || []).length,
-            (players || []).length,
+            (this._profiles || []).map((entry) => entry?.characterID ?? '?').join(','),
+            // What the member rows are a function of: who was measured, and how
+            // long their soonest-empty slot has left, rounded to a minute so a
+            // rate that wobbles in the last decimal does not rebuild the card
+            (players || [])
+                .map((player) => `${player?.name}=${burnStamp(player?.forecasts)}`)
+                .sort()
+                .join(','),
+            keysHeld,
         ].join('|');
         if (this._readinessMemo?.signature === signature) return this._readinessMemo.model;
 
-        const keyHrid = dungeonEntryKey(context.actionHrid, dataManager.getActionDetails?.(context.actionHrid));
         const runLength = typicalRunSeconds(this._dungeonHistory, { dungeonName: context.name, tier: context.tier });
         const measured = new Map((players || []).map((player) => [player.name, player]));
 
@@ -513,7 +550,7 @@ class ConsumablesPanel {
         const keys = keyReadiness({
             itemHrid: keyHrid,
             itemName: keyHrid ? dataManager.getItemDetails?.(keyHrid)?.name : '',
-            held: keyHrid ? heldInInventory(dataManager.getInventory?.(), keyHrid) : 0,
+            held: keysHeld,
             runsPlanned: this.dungeonRuns,
         });
 

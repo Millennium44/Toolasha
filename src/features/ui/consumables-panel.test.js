@@ -22,6 +22,8 @@ const game = vi.hoisted(() => ({
     inventory: [],
     latest: null,
     statsByName: {},
+    characterData: null,
+    currentActions: [],
 }));
 
 const settings = vi.hoisted(() => ({ values: {} }));
@@ -62,6 +64,11 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => game.items[hrid] || null,
         getActionDetails: () => game.actionDetail,
         getInventory: () => game.inventory,
+        getCurrentActions: () => game.currentActions,
+        get characterData() {
+            return game.characterData;
+        },
+        getSkills: () => [],
         // Per-character keys and the listeners that reload them: the panel's
         // open state is this character's, not the account's
         getCurrentCharacterId: () => 'char1',
@@ -97,6 +104,11 @@ beforeEach(async () => {
     game.inventory = [];
     game.latest = null;
     game.statsByName = {};
+    game.characterData = null;
+    game.currentActions = [];
+    consumablesPanel._readinessMemo = null;
+    consumablesPanel._profiles = [];
+    consumablesPanel._dungeonHistory = [];
     consumablesPanel.hide({ remember: false });
 });
 
@@ -291,5 +303,83 @@ describe('the Buy-all widget', () => {
         opens.checked = false;
         opens.dispatchEvent(new Event('change'));
         expect(settings.values.market_consumableBuyOpenRecommended).toBe(false);
+    });
+});
+
+describe('the readiness card is not stale', () => {
+    const DEN = '/actions/combat/chimerical_den';
+    const KEY = '/items/chimerical_entry_key';
+
+    /** A party standing outside the Den, with keys in the bag */
+    const partyAtTheDoor = (held = 4) => {
+        game.actionDetail = {
+            name: 'Chimerical Den',
+            combatZoneInfo: { isDungeon: true, dungeonInfo: { keyItemHrid: KEY } },
+        };
+        game.items[KEY] = { name: 'Chimerical Entry Key' };
+        game.inventory = [{ itemHrid: KEY, count: held, itemLocationHrid: '/item_locations/inventory' }];
+        game.currentActions = [{ actionHrid: DEN, isDone: false, difficultyTier: 0 }];
+        game.characterData = {
+            character: { id: 'char1', name: 'Me' },
+            partyInfo: {
+                partySlotMap: {
+                    1: { characterID: 'char1', characterName: 'Me' },
+                    2: { characterID: 'ally-a', characterName: 'Ally A' },
+                },
+            },
+        };
+    };
+
+    const players = (secondsLeft) => [
+        {
+            name: 'Me',
+            isCurrent: true,
+            forecasts: [{ itemHrid: '/items/power_coffee', name: 'Power Coffee', secondsLeft }],
+        },
+    ];
+
+    test('buying keys invalidates the memo', () => {
+        partyAtTheDoor(2);
+        const before = consumablesPanel._readinessModel(players(9000));
+        expect(before.keys.held).toBe(2);
+
+        // Same party, same dungeon, same run target — only the bag changed
+        game.inventory = [{ itemHrid: KEY, count: 20, itemLocationHrid: '/item_locations/inventory' }];
+        const after = consumablesPanel._readinessModel(players(9000));
+
+        expect(after).not.toBe(before);
+        expect(after.keys.held).toBe(20);
+    });
+
+    test('a same-size member swap invalidates the memo', () => {
+        partyAtTheDoor();
+        const before = consumablesPanel._readinessModel(players(9000));
+        expect(before.members.map((row) => row.name)).toContain('Ally A');
+
+        game.characterData.partyInfo.partySlotMap[2] = { characterID: 'ally-b', characterName: 'Ally B' };
+        const after = consumablesPanel._readinessModel(players(9000));
+
+        expect(after.members.map((row) => row.name)).toContain('Ally B');
+        expect(after.members.map((row) => row.name)).not.toContain('Ally A');
+    });
+
+    test('a fresh burn forecast invalidates the memo', () => {
+        partyAtTheDoor();
+        const before = consumablesPanel._readinessModel(players(9000));
+        expect(before.members.find((row) => row.isSelf).secondsLeft).toBe(9000);
+
+        // The collector rebuilds forecasts every refresh; drinking coffee moves
+        // this one without changing any count in the old signature
+        const after = consumablesPanel._readinessModel(players(600));
+
+        expect(after.members.find((row) => row.isSelf).secondsLeft).toBe(600);
+    });
+
+    test('nothing moving still reuses the model', () => {
+        partyAtTheDoor();
+        const first = consumablesPanel._readinessModel(players(9000));
+        const second = consumablesPanel._readinessModel(players(9000));
+
+        expect(second).toBe(first);
     });
 });
