@@ -91,6 +91,7 @@ beforeEach(() => {
         },
     };
     expectedValueCalculator.containerCache.clear();
+    expectedValueCalculator.containerMissingCounts.clear();
     expectedValueCalculator.isInitialized = false;
 });
 
@@ -450,6 +451,130 @@ describe('partially priceable containers', () => {
     test('calculateSingleContainer still answers with a bare number', () => {
         expect(expectedValueCalculator.calculateSingleContainer(PARTIAL, mocks.initData)).toBeGreaterThan(0);
         expect(expectedValueCalculator.calculateSingleContainer('/items/not_a_container', mocks.initData)).toBeNull();
+    });
+});
+
+describe('the main-thread fallback when the worker pool fails', () => {
+    const PARTIAL = '/items/partial_chest';
+    const UNPRICEABLE = '/items/unpriceable_thing';
+
+    beforeEach(async () => {
+        mocks.itemDetails[PARTIAL] = { name: 'Partial Chest', isOpenable: true };
+        mocks.itemDetails[UNPRICEABLE] = { name: 'Unpriceable Thing', isTradable: true };
+        mocks.initData.openableLootDropMap = {
+            [PARTIAL]: [
+                { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+                { itemHrid: UNPRICEABLE, dropRate: 1, minCount: 1, maxCount: 1 },
+            ],
+        };
+        const { calculateEVBatch } = await import('../../utils/ev-worker-manager.js');
+        // The pool now throws outright on an empty pool, and the idle reaper can
+        // terminate it mid-batch, so this branch is reachable rather than theoretical
+        calculateEVBatch.mockRejectedValue(new Error('worker pool gone'));
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    test('a fallback-cached container still knows how much of it could not be priced', async () => {
+        // The fallback used to set containerCache alone, so a later nested lookup hit
+        // the value cache, missed the count map, and called a partially priced chest
+        // a firm figure
+        await expectedValueCalculator.calculateNestedContainers();
+
+        expect(expectedValueCalculator.containerCache.has(PARTIAL)).toBe(true);
+        expect(expectedValueCalculator.containerMissingCounts.get(PARTIAL)).toBe(1);
+        expect(expectedValueCalculator.resolveContainerValue(PARTIAL)).toMatchObject({ missingCount: 1 });
+    });
+
+    test('the fallback does not cache a value the cycle guard truncated', async () => {
+        const OUTER = '/items/outer_chest';
+        const INNER = '/items/inner_crate';
+        mocks.itemDetails[OUTER] = { name: 'Outer Chest', isOpenable: true };
+        mocks.itemDetails[INNER] = { name: 'Inner Crate', isOpenable: true };
+        mocks.initData.openableLootDropMap = {
+            [OUTER]: [
+                { itemHrid: INNER, dropRate: 1, minCount: 1, maxCount: 1 },
+                { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+            ],
+            [INNER]: [
+                { itemHrid: OUTER, dropRate: 1, minCount: 1, maxCount: 1 },
+                { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+            ],
+        };
+
+        await expectedValueCalculator.calculateNestedContainers();
+
+        // Both figures are artefacts of where the recursion started
+        expect(expectedValueCalculator.containerCache.has(OUTER)).toBe(false);
+        expect(expectedValueCalculator.containerCache.has(INNER)).toBe(false);
+    });
+});
+
+describe('a nested container nothing in it can be priced', () => {
+    const OUTER = '/items/outer_chest';
+    const INNER = '/items/inner_crate';
+    const UNPRICEABLE = '/items/unpriceable_thing';
+
+    beforeEach(() => {
+        mocks.itemDetails[OUTER] = { name: 'Outer Chest', isOpenable: true };
+        mocks.itemDetails[INNER] = { name: 'Inner Crate', isOpenable: true };
+        mocks.itemDetails[UNPRICEABLE] = { name: 'Unpriceable Thing', isTradable: true };
+        mocks.initData.openableLootDropMap[OUTER] = [{ itemHrid: INNER, dropRate: 1, minCount: 1, maxCount: 1 }];
+        mocks.initData.openableLootDropMap[INNER] = [{ itemHrid: UNPRICEABLE, dropRate: 1, minCount: 1, maxCount: 1 }];
+    });
+
+    test('its missing count is recorded even though its value is zero', () => {
+        // Caching gated on a positive total, so an all-unpriced crate was never entered
+        // in containerMissingCounts at all — it resolves to 0 rather than null, so the
+        // chest around it saw a priced drop with nothing missing behind it
+        expectedValueCalculator.calculateContainerValue(INNER, mocks.initData);
+
+        expect(expectedValueCalculator.containerMissingCounts.get(INNER)).toBe(1);
+    });
+
+    test('the worker path and the main path agree on how much is missing', () => {
+        const mainPath = expectedValueCalculator.calculateContainerValue(OUTER, mocks.initData).missingCount;
+
+        const priceMap = expectedValueCalculator.buildPriceMap([OUTER, INNER], mocks.initData);
+        const workerPath = expectedValueCalculator.countUnpricedDrops(
+            mocks.initData.openableLootDropMap[OUTER],
+            priceMap
+        );
+
+        expect(mainPath).toBe(1);
+        expect(workerPath).toBe(mainPath);
+    });
+});
+
+describe('truncation is per branch, not per traversal', () => {
+    const PARENT = '/items/parent_chest';
+    const CYCLIC = '/items/cyclic_chest';
+    const SIBLING = '/items/sibling_crate';
+
+    beforeEach(() => {
+        for (const hrid of [PARENT, CYCLIC, SIBLING]) {
+            mocks.itemDetails[hrid] = { name: hrid, isOpenable: true };
+        }
+        mocks.initData.openableLootDropMap[PARENT] = [
+            { itemHrid: CYCLIC, dropRate: 1, minCount: 1, maxCount: 1 },
+            { itemHrid: SIBLING, dropRate: 1, minCount: 1, maxCount: 1 },
+        ];
+        // Contains itself: valuing it cuts a branch off
+        mocks.initData.openableLootDropMap[CYCLIC] = [
+            { itemHrid: CYCLIC, dropRate: 1, minCount: 1, maxCount: 1 },
+            { itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 },
+        ];
+        mocks.initData.openableLootDropMap[SIBLING] = [{ itemHrid: GEM_HRID, dropRate: 1, minCount: 1, maxCount: 1 }];
+    });
+
+    test('a cyclic sibling does not stop unrelated branches being cached', () => {
+        // The flag was never reset, so one self-cyclic container disabled caching for
+        // every container costed after it — the whole traversal recomputed from scratch
+        expectedValueCalculator.calculateContainerValue(PARENT, mocks.initData);
+
+        expect(expectedValueCalculator.containerCache.has(SIBLING)).toBe(true);
+        // ...while the two that genuinely had a branch cut off stay uncached
+        expect(expectedValueCalculator.containerCache.has(CYCLIC)).toBe(false);
+        expect(expectedValueCalculator.containerCache.has(PARENT)).toBe(false);
     });
 });
 

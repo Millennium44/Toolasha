@@ -139,11 +139,13 @@ class ExpectedValueCalculator {
             } catch (error) {
                 // Worker failed, fall back to main thread calculation
                 console.warn('[ExpectedValueCalculator] Worker failed, falling back to main thread:', error);
+                // Go through calculateContainerValue rather than writing the cache here:
+                // it is the one place that sets the value and its missing-drop count
+                // together, and that refuses to cache a figure the cycle guard truncated.
+                // Setting containerCache alone left resolveContainerValue hitting a value
+                // with no count, reporting a partially priced chest as a firm number.
                 for (const containerHrid of containerHrids) {
-                    const ev = this.calculateSingleContainer(containerHrid, initData);
-                    if (ev !== null) {
-                        this.containerCache.set(containerHrid, ev);
-                    }
+                    this.calculateContainerValue(containerHrid, initData);
                 }
             }
         }
@@ -269,8 +271,18 @@ class ExpectedValueCalculator {
             // Calculate average drop count
             const avgCount = (minCount + maxCount) / 2;
 
-            // Get price for this drop
+            // Get price for this drop.
+            //
+            // The truncation flag is saved and restored around each drop: it says "a
+            // cycle was cut inside THIS branch", and one self-cyclic sibling used to
+            // leave it raised for the rest of the traversal, so every later container
+            // refused to cache and the whole pass recomputed from scratch. The parent
+            // still inherits it afterwards — a container none of whose branches could
+            // be fully valued must not cache either.
+            const outerTruncated = ctx.truncated;
+            ctx.truncated = false;
             const resolved = this.resolveSellSideValue(itemHrid, 0, ctx);
+            ctx.truncated = outerTruncated || ctx.truncated;
             const price = resolved?.value ?? null;
 
             if (price === null) {
@@ -300,8 +312,15 @@ class ExpectedValueCalculator {
         // Cache the result for future lookups — but not when the cycle guard cut a
         // branch off this pass, because the figure is then an artefact of where the
         // recursion started rather than what the container is worth
-        if (totalExpectedValue > 0 && !ctx.truncated) {
-            this.containerCache.set(containerHrid, totalExpectedValue);
+        if (!ctx.truncated) {
+            // The value cache stays gated on a positive figure — a zero is indistinguishable
+            // from "not costed yet" to the readers that check `has()`. The missing count is
+            // not: a container whose drops are ALL unpriceable is worth 0 and has N missing,
+            // and skipping the count left an outer container reading 0 through
+            // countUnpricedDrops and calling itself confident.
+            if (totalExpectedValue > 0) {
+                this.containerCache.set(containerHrid, totalExpectedValue);
+            }
             this.containerMissingCounts.set(containerHrid, missingCount);
         }
 
