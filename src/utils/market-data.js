@@ -236,7 +236,10 @@ export function getItemPrices(itemHrid, enhancementLevel = 0) {
     return {
         ask,
         bid,
-        average: (ask + bid) / 2,
+        // A one-sided book averages to the side that exists. `(ask + bid) / 2`
+        // with one side null coerced it to 0 and quoted half the real price —
+        // a number that looks like a midpoint and is a fabrication.
+        average: ask !== null && bid !== null ? (ask + bid) / 2 : (ask ?? bid),
         askEstimated: askSource === 'value',
         bidEstimated: bidSource === 'value',
     };

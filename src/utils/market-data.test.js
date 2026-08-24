@@ -11,6 +11,7 @@ import {
     getPriceAgeString,
     getPricingMode,
     withProfitPricingMode,
+    getItemPrices,
 } from './market-data.js';
 
 vi.mock('../api/marketplace.js', () => ({
@@ -237,5 +238,34 @@ describe('price provenance', () => {
         expect(getItemPrice('/items/cheese', { mode: 'nonsense' })).toBeNull();
 
         warn.mockRestore();
+    });
+});
+
+describe('getItemPrices average', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        reconciled.result = null;
+        getCustomPrice.mockReturnValue(null);
+    });
+
+    test('a two-sided book averages the two sides', () => {
+        marketAPI.getPrice.mockReturnValue({ ask: 120, bid: 80 });
+        expect(getItemPrices('/items/thing').average).toBe(100);
+    });
+
+    test('a book with no bid averages to the ask, not to half of it', () => {
+        // `(ask + null) / 2` coerced null to 0 and quoted 60 for a 120 item
+        marketAPI.getPrice.mockReturnValue({ ask: 120, bid: null });
+        expect(getItemPrices('/items/thing').average).toBe(120);
+    });
+
+    test('a book with no ask averages to the bid', () => {
+        marketAPI.getPrice.mockReturnValue({ ask: null, bid: 80 });
+        expect(getItemPrices('/items/thing').average).toBe(80);
+    });
+
+    test('a book with neither side is no price at all', () => {
+        marketAPI.getPrice.mockReturnValue({ ask: null, bid: null });
+        expect(getItemPrices('/items/thing')).toBeNull();
     });
 });
