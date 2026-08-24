@@ -102,6 +102,7 @@ export function rotationAudit() {
 let onNewBattle = null;
 let onBattleUpdated = null;
 let onCharacterSwitching = null;
+let onCharacterInitialized = null;
 
 /**
  * Start watching. Idempotent — a second call while running does nothing.
@@ -176,6 +177,11 @@ export function startRotationTracker() {
     // across a character switch mixes two bars, two mana pools and two sets of
     // fights into one set of rows, and the rows are unlabelled — so the switch
     // starts the measurement again rather than quietly averaging two characters
+    //
+    // Nothing is seeded here: `character_switching` fires while
+    // `dataManager.characterData` still holds the *departing* character, so a
+    // seed on this event would fill the fresh scopes with the bar of the
+    // character being left. The arriving character's bar is picked up below.
     onCharacterSwitching = () => {
         try {
             resetRotationAudit();
@@ -184,9 +190,27 @@ export function startRotationTracker() {
         }
     };
 
+    // The re-seed, and the reason the reset above is safe on its own.
+    //
+    // `character_switched` is the wrong event for it: the data manager emits it
+    // after clearing the old character and *before* assigning the new one, so
+    // `characterData` is null and there is no bar to read. `character_initialized`
+    // is emitted once the new character's data is in place, which is the first
+    // moment the arriving bar exists. This used to be correct only because the
+    // panel's own lifecycle happened to re-seed after a switch; now the tracker
+    // does not depend on anything reopening it.
+    onCharacterInitialized = () => {
+        try {
+            seedKit();
+        } catch (error) {
+            console.error('[RotationTracker] Seeding the new character’s bar failed:', error);
+        }
+    };
+
     webSocketHook.on('new_battle', onNewBattle);
     webSocketHook.on('battle_updated', onBattleUpdated);
     dataManager.on?.('character_switching', onCharacterSwitching);
+    dataManager.on?.('character_initialized', onCharacterInitialized);
     // A panel opened in the middle of a run should list the kit at once
     seedKit();
 }
@@ -196,8 +220,10 @@ export function stopRotationTracker() {
     if (onNewBattle) webSocketHook.off('new_battle', onNewBattle);
     if (onBattleUpdated) webSocketHook.off('battle_updated', onBattleUpdated);
     if (onCharacterSwitching) dataManager.off?.('character_switching', onCharacterSwitching);
+    if (onCharacterInitialized) dataManager.off?.('character_initialized', onCharacterInitialized);
     onNewBattle = null;
     onBattleUpdated = null;
+    onCharacterInitialized = null;
     onCharacterSwitching = null;
     resetRotationAudit();
 }

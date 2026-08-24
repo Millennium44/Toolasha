@@ -128,8 +128,37 @@ describe('a character switch', () => {
         expect(after.session.abilities).toEqual([]);
     });
 
-    test('the listener is dropped when the tracker stops', () => {
+    test('does not seed the departing character’s bar over the fresh scopes', () => {
+        // `character_switching` fires while characterData still holds the
+        // character being left; seeding there would list their abilities as
+        // the new character's
+        game.characterData = { combatUnit: { combatAbilities: [{ abilityHrid: CHEAP }] } };
+        battle();
+
+        emitCharacter('character_switching', {});
+
+        expect(rotationAudit().session.abilities).toEqual([]);
+    });
+
+    test('the arriving character’s bar is seeded without the panel reopening', () => {
+        battle();
+        emitCharacter('character_switching', {});
+
+        // What the data manager does between the two events: the new character's
+        // data lands, and only then is there a bar to read
+        const OTHER = '/abilities/other_swing';
+        game.clientData = { abilityDetailMap: { [OTHER]: { manaCost: 25, cooldownDuration: 3e9 } } };
+        game.characterData = { combatUnit: { combatAbilities: [{ abilityHrid: OTHER }] } };
+        emitCharacter('character_initialized', {});
+
+        const session = rotationAudit().session;
+        expect(session.abilities.map((row) => row.hrid)).toEqual([OTHER]);
+        expect(session.castFloor).toBe(25);
+    });
+
+    test('the listeners are dropped when the tracker stops', () => {
         stopRotationTracker();
         expect((game.handlers.get('character_switching') || []).length).toBe(0);
+        expect((game.handlers.get('character_initialized') || []).length).toBe(0);
     });
 });
