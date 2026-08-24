@@ -638,7 +638,10 @@ class TransmuteHistoryViewer {
      */
     computeSessionProfit(session) {
         const itemDetails = dataManager.getItemDetails(session.inputItemHrid);
-        const bulkMultiplier = itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
+        // The session's own bulk size, when it has one. Sessions recorded before
+        // it was persisted have none, and the item's current value is the only
+        // answer available for those.
+        const bulkMultiplier = session.bulkMultiplier ?? itemDetails?.alchemyDetail?.bulkMultiplier ?? 1;
 
         let revenue = 0;
         let selfReturned = 0;
@@ -1488,6 +1491,8 @@ class TransmuteHistoryViewer {
 }
 
 const transmuteHistoryViewer = new TransmuteHistoryViewer();
+
+export { transmuteHistoryViewer };
 
 export default {
     name: 'Transmute History Viewer',

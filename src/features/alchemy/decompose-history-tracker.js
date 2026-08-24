@@ -263,6 +263,11 @@ class DecomposeHistoryTracker {
      * @param {number} timestamp - Start timestamp in ms
      */
     async startSession(inputItemHrid, enhancementLevel, timestamp) {
+        // Recorded, not recomputed at read time: the coin fee that was actually
+        // billed scales with the bulk size the item had while the session ran,
+        // and a later game change to that number would otherwise silently
+        // restate every past session's profit.
+        const itemDetails = dataManager.getItemDetails(inputItemHrid);
         this.activeSession = {
             id: `decompose_${timestamp}`,
             startTime: timestamp,
@@ -272,6 +277,7 @@ class DecomposeHistoryTracker {
             totalSuccesses: 0,
             catalystOfDecompositionUsed: 0,
             primeCatalystUsed: 0,
+            bulkMultiplier: itemDetails?.alchemyDetail?.bulkMultiplier ?? 1,
             results: {},
         };
         this.lastCurrentCount = null;
