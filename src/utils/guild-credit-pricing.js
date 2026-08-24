@@ -15,7 +15,7 @@
  */
 
 import dataManager from '../core/data-manager.js';
-import { getItemPrice, getItemPriceInfo } from './market-data.js';
+import { getItemPriceInfo } from './market-data.js';
 
 /**
  * Cheapest gold cost of one credit of each type, by conversion.
@@ -52,8 +52,9 @@ export function buildGoldPerCredit(mode = 'ask') {
 /**
  * Price a list of credit costs in gold.
  *
- * A credit item with a market listing of its own is taken at that price; every
- * other one falls back to the cheapest conversion. An item with neither is
+ * A credit item with a real market listing of its own is taken at that price;
+ * every other one — including one whose only price is an estimate off the value
+ * map — falls back to the cheapest conversion. An item with neither is
  * reported rather than counted as free — a total that quietly drops a line is
  * worse than no total.
  *
@@ -74,8 +75,11 @@ export function priceGuildCreditCosts(creditCosts, { mode = 'ask', goldPerCredit
     for (const { itemHrid, count } of creditCosts || []) {
         if (!itemHrid || !(count > 0)) continue;
         const name = itemDetailMap[itemHrid]?.name || itemHrid.split('/').pop().replace(/_/g, ' ');
-        const direct = getItemPrice(itemHrid, { mode });
-        const each = direct > 0 ? direct : rates[itemHrid] || null;
+        // Same gate as buildGoldPerCredit: a price derived from the official value
+        // map has no order book behind it, and taking it here let an invented figure
+        // beat the conversion rate that the rate map had already refused to use it for
+        const { price: direct, estimated } = getItemPriceInfo(itemHrid, { mode });
+        const each = direct > 0 && !estimated ? direct : rates[itemHrid] || null;
 
         lines.push({ itemHrid, name, count, goldEach: each, gold: each === null ? null : each * count });
         if (each === null) unpriced.push(name);

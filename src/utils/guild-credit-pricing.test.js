@@ -125,3 +125,27 @@ describe('pricing a level cost', () => {
         expect(priceGuildCreditCosts(undefined).total).toBe(0);
     });
 });
+
+describe('an estimated direct price for the credit item itself', () => {
+    test('does not beat the conversion rate it was already rejected for', () => {
+        // The value map invents 5 for the credit. Taking the estimate would price a
+        // shrine level at a fraction of what the conversions say it actually costs.
+        mocks.prices['/items/cheese'] = 1000;
+        mocks.prices[CREDIT] = 5;
+        mocks.estimated.add(CREDIT);
+
+        const conversionRate = buildGoldPerCredit()[CREDIT];
+        const { lines, total } = priceGuildCreditCosts([{ itemHrid: CREDIT, count: 2 }]);
+
+        expect(conversionRate).toBeGreaterThan(5);
+        expect(lines[0].goldEach).toBe(conversionRate);
+        expect(total).toBe(conversionRate * 2);
+    });
+
+    test('a real listing for the credit item is still taken directly', () => {
+        mocks.prices['/items/cheese'] = 1000;
+        mocks.prices[CREDIT] = 5;
+
+        expect(priceGuildCreditCosts([{ itemHrid: CREDIT, count: 2 }]).lines[0].goldEach).toBe(5);
+    });
+});
