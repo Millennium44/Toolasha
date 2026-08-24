@@ -97,6 +97,14 @@ export function newRotationState() {
         starved: false,
         /** The cheapest non-aura cost on the bar; null until one is known */
         castFloor: null,
+        /**
+         * Whether the loadout has ever been stated for this scope.
+         *
+         * Until it has, every row is one that was seen firing, `equipped` is
+         * false everywhere, and the equipped-only rules below would have
+         * nothing to work with. A spectator scope never states one.
+         */
+        kitStated: false,
         /** Time under a fifth of the bar, on the trial module's own line */
         lowManaMs: 0,
         lowMana: false,
@@ -188,6 +196,13 @@ function refreshFloor(state) {
     let floor = null;
     for (const row of Object.values(state.abilities)) {
         if (AURA_PATTERN.test(row.hrid)) continue;
+        // Once the bar has been stated, only what is on it can be cast, so only
+        // what is on it can set the floor. Minning over every row the scope had
+        // ever seen meant unslotting your cheapest ability mid-session left the
+        // floor pinned to an ability you can no longer cast — and starvation is
+        // time spent under the floor, so it went on being undercounted for the
+        // rest of the session
+        if (state.kitStated && !row.equipped) continue;
         if (!(row.manaCost > 0)) continue;
         floor = floor === null ? row.manaCost : Math.min(floor, row.manaCost);
     }
@@ -207,10 +222,23 @@ function refreshFloor(state) {
  * @param {Object} [detailMap] - `abilityDetailMap`
  */
 export function noteRotationKit(state, kit, detailMap) {
+    const stated = new Set();
     for (const entry of Array.isArray(kit) ? kit : []) {
         const hrid = typeof entry === 'string' ? entry : entry?.abilityHrid || entry?.hrid;
         if (!hrid) continue;
+        stated.add(hrid);
         abilityRow(state, hrid, detailMap).equipped = true;
+    }
+    if (!stated.size) return;
+
+    state.kitStated = true;
+    // A stated kit is the whole bar, so anything not in it is off the bar now.
+    // The row stays — it fired, and what it did is history worth keeping — but
+    // it stops counting as something this character can cast. Only ever setting
+    // the flag meant an unslotted ability held the cast floor down and kept
+    // being offered as the thing to drop
+    for (const row of Object.values(state.abilities)) {
+        if (!stated.has(row.hrid)) row.equipped = false;
     }
     refreshFloor(state);
 }
@@ -361,13 +389,26 @@ export function foldRotationTick(state, { at, player, action, events, detailMap 
  *
  * @param {Object} row - A summarised row
  * @param {number} seconds - Measured seconds in the scope
+ * @param {boolean} [kitStated] - Whether the loadout was ever stated for this scope;
+ *   without it `equipped` is false everywhere and means nothing
  * @returns {{kind: string, text: string}} A verdict and its reason
  */
-export function abilityVerdict(row, seconds) {
+export function abilityVerdict(row, seconds, kitStated = false) {
     // An aura is cast once and kept up for the whole fight; it has no rotation
     // slot to fire in, so uptime and starvation say nothing about it
     if (AURA_PATTERN.test(row.hrid || '')) {
         return { kind: 'aura', text: 'Aura — cast once and kept up; not part of the rotation.' };
+    }
+    // It fired earlier in the scope and is no longer on the bar. Its numbers are
+    // real history, but uptime over the whole scope and "drop it" advice are
+    // both about a slot it no longer occupies
+    if (kitStated && !row.equipped) {
+        return {
+            kind: 'unslotted',
+            text: row.casts
+                ? 'Cast earlier in this scope but is no longer on the bar — the figures here are history.'
+                : 'No longer on the bar, and never fired while it was.',
+        };
     }
     if (!(seconds >= MIN_SECONDS)) {
         return { kind: 'measuring', text: 'Not enough fighting measured yet to say.' };
@@ -421,6 +462,10 @@ export function abilityVerdict(row, seconds) {
 export function bestChange(summary) {
     if (!summary || summary.seconds < MIN_SECONDS) return null;
 
+    // Only what is on the bar can be dropped from it. A row that was unslotted
+    // mid-session still carries the starved time it accumulated while it was
+    // there, and "drop X" for an X already off the bar is advice with nothing
+    // behind it
     const starved = summary.abilities.filter((row) => row.verdict.kind === 'starved');
     if (starved.length) {
         // The least value per point of mana among the ones that cannot fire:
@@ -510,11 +555,11 @@ export function summariseRotation(state) {
         };
     });
 
-    for (const row of abilities) row.verdict = abilityVerdict(row, seconds);
+    for (const row of abilities) row.verdict = abilityVerdict(row, seconds, !!state?.kitStated);
 
     // Slotted and silent first, because the row worth reading is the one that is
     // not firing; everything else by what it actually produced
-    const order = { starved: 0, idle: 1, pinched: 2, unknown: 3, measuring: 4, fine: 5 };
+    const order = { starved: 0, idle: 1, pinched: 2, unknown: 3, measuring: 4, fine: 5, unslotted: 6 };
     abilities.sort(
         (a, b) =>
             (order[a.verdict.kind] ?? 9) - (order[b.verdict.kind] ?? 9) || b.output - a.output || b.casts - a.casts

@@ -129,6 +129,55 @@ describe('a starved ability', () => {
     });
 });
 
+describe('an ability taken off the bar mid-session', () => {
+    const ticks = Array.from({ length: 21 }, () => ({ mana: 100, action: CHEAP, cast: true }));
+
+    test('the cast floor recomputes to what is still slotted', () => {
+        const state = armed();
+        expect(summariseRotation(state).castFloor).toBe(10);
+
+        // Cheap comes off the bar. Its cost is no longer castable, so it is no
+        // longer the floor — starvation is time under what you can actually cast
+        noteRotationKit(state, [PRICEY], DETAILS);
+
+        expect(summariseRotation(state).castFloor).toBe(500);
+    });
+
+    test('the row and its history survive, marked as off the bar', () => {
+        const state = run(armed(), ticks);
+        noteRotationKit(state, [PRICEY], DETAILS);
+        const cheap = rowFor(summariseRotation(state), CHEAP);
+
+        expect(cheap.casts).toBeGreaterThan(0);
+        expect(cheap.equipped).toBe(false);
+        expect(cheap.verdict.kind).toBe('unslotted');
+        expect(cheap.verdict.text).toContain('no longer on the bar');
+    });
+
+    test('nothing suggests dropping an ability that is already gone', () => {
+        // Pricey was starved all fight; unslot it and the advice must go with it
+        const state = run(armed(), ticks);
+        expect(summariseRotation(state).suggestion.text).toContain('pricey');
+
+        noteRotationKit(state, [CHEAP], DETAILS);
+        const suggestion = summariseRotation(state).suggestion;
+
+        expect(suggestion === null || !suggestion.text.includes('drop pricey')).toBe(true);
+    });
+
+    test('a scope that never states a bar keeps every row it saw', () => {
+        // The spectator case: `equipped` is false everywhere because nothing
+        // stated a loadout, and the equipped-only rules must not fire
+        const state = newRotationState();
+        noteRotationFight(state);
+        run(state, ticks);
+        const summary = summariseRotation(state);
+
+        expect(summary.castFloor).toBe(10);
+        expect(rowFor(summary, CHEAP).verdict.kind).not.toBe('unslotted');
+    });
+});
+
 describe('an always-affordable ability', () => {
     test('cast off cooldown is on cooldown for the whole fight', () => {
         const ticks = Array.from({ length: 21 }, () => ({ mana: 100, action: CHEAP, cast: true }));
