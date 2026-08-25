@@ -86,7 +86,9 @@ export async function exportEverything() {
  * @param {{storeNames?: Array<string>}} [options] - Restore options
  * @param {Array<string>} [options.storeNames] - Restrict restore to these store names.
  *   Defaults to every store present in the payload.
- * @returns {Promise<{restored: Record<string, number>}>} Number of keys restored per store
+ * @returns {Promise<{restored: Record<string, number>, expected: Record<string, number>,
+ *   failed: Array<{store: string, expected: number, written: number}>, complete: boolean}>}
+ *   What landed, what was meant to, and whether every store wrote its full count
  */
 export async function importEverything(payload, options = {}) {
     if (!payload || payload.formatVersion !== FORMAT_VERSION) {
@@ -100,6 +102,14 @@ export async function importEverything(payload, options = {}) {
     const availableStoreSet = new Set(availableStores);
 
     const restored = {};
+    const expected = {};
+    const failed = [];
+    const written = new Set();
+
+    // Land everything already queued before the restore overwrites it: a
+    // debounced write that fires afterwards is the pre-restore value going
+    // straight back on top of the restored one
+    await storage.beginRestore?.();
 
     for (const storeName of targetStoreNames) {
         if (!Object.prototype.hasOwnProperty.call(payloadStores, storeName)) {
@@ -111,11 +121,30 @@ export async function importEverything(payload, options = {}) {
             continue;
         }
 
-        const count = await storage.putAll(storeName, payloadStores[storeName]);
+        const entries = payloadStores[storeName] || {};
+        const want = Object.keys(entries).length;
+        const count = await storage.putAll(storeName, entries);
         restored[storeName] = count;
+        expected[storeName] = want;
+
+        // One key the store refuses aborts the whole transaction and takes
+        // every healthy key with it, so a shortfall is not "most of it landed"
+        // — it is usually "none of this store landed". Saying so is what stops
+        // a caller recording the restore as done.
+        if (count !== want) {
+            console.error(`[FullBackup] Store ${storeName} restored ${count} of ${want} keys — the rest did not land`);
+            failed.push({ store: storeName, expected: want, written: count });
+        } else if (want > 0) {
+            written.add(storeName);
+        }
     }
 
-    return { restored };
+    // Only stores that wrote their full count are latched: a store that wrote
+    // nothing has not been restored, and refusing its writes would break a
+    // feature for nothing.
+    if (written.size > 0) storage.finishRestore?.(written);
+
+    return { restored, expected, failed, complete: failed.length === 0 };
 }
 
 export default {

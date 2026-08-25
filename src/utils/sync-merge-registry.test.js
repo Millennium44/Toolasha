@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from 'vitest';
+import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 import {
     registerSyncMerge,
@@ -115,5 +115,40 @@ describe('scopedKeyMatcher', () => {
         expect(match('xpHistory_char-A')).toBe(true);
         expect(match('xpHistoryOther')).toBe(false);
         expect(match('other_xpHistory')).toBe(false);
+    });
+});
+
+describe('overlapping matchers are a bug, and are reported as one', () => {
+    test('two registrations claiming the same key warn once, and the first still wins', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        clearSyncMerges();
+
+        registerSyncMerge({ store: 's', prefix: 'rec_', merge: () => 'first', label: 'first' });
+        registerSyncMerge({ store: 's', key: 'rec_one', merge: () => 'second', label: 'second' });
+
+        // Registration order is bundle import order, which is the build's
+        // decision rather than anyone's intent — hence the warning
+        expect(mergeForKey('s', 'rec_one').label).toBe('first');
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy.mock.calls[0][0]).toContain('must not overlap');
+
+        // The same pair again does not fill the console; a payload has
+        // thousands of keys
+        mergeForKey('s', 'rec_one');
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+
+        warnSpy.mockRestore();
+    });
+
+    test('a key claimed by exactly one registration says nothing', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        clearSyncMerges();
+
+        registerSyncMerge({ store: 's', prefix: 'rec_', merge: () => 'only', label: 'only' });
+
+        expect(mergeForKey('s', 'rec_one').label).toBe('only');
+        expect(warnSpy).not.toHaveBeenCalled();
+
+        warnSpy.mockRestore();
     });
 });

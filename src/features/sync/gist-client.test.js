@@ -5,6 +5,7 @@ import {
     MANIFEST_FILE,
     chunkPayload,
     chunkFileName,
+    chunkIndexFromName,
     findSyncGist,
     readSyncGist,
     writeSyncGist,
@@ -175,7 +176,7 @@ describe('error classification', () => {
                 documentation_url: 'https://docs.github.com/rest/gists/gists#update-a-gist',
             },
         });
-        await expect(writeSyncGist('tok', 'abc', { chunks: 1 }, ['data'])).rejects.toMatchObject({
+        await expect(writeSyncGist('tok', null, { chunks: 1 }, ['data'])).rejects.toMatchObject({
             kind: 'too-large',
         });
     });
@@ -188,14 +189,14 @@ describe('error classification', () => {
                 errors: [{ resource: 'Gist', code: 'missing_field', field: 'files' }],
             },
         });
-        const error = await writeSyncGist('tok', 'abc', { chunks: 1 }, ['data']).catch((caught) => caught);
+        const error = await writeSyncGist('tok', null, { chunks: 1 }, ['data']).catch((caught) => caught);
         expect(error.kind).toBe('http');
         expect(error.message).toContain('Gist.files');
     });
 
     test('a bare 422 with nothing structured still reads as too large, which is what it always is', async () => {
         responses.push({ status: 422, body: {} });
-        await expect(writeSyncGist('tok', 'abc', { chunks: 1 }, ['data'])).rejects.toMatchObject({
+        await expect(writeSyncGist('tok', null, { chunks: 1 }, ['data'])).rejects.toMatchObject({
             kind: 'too-large',
         });
     });
@@ -359,24 +360,74 @@ describe('writeSyncGist', () => {
     });
 
     test('patches an existing gist rather than making a second one', async () => {
+        responses.push({ status: 200, body: { files: {} } });
         responses.push({ status: 200, body: { id: 'abc', updated_at: 'T' } });
         await writeSyncGist('tok', 'abc', { chunks: 1 }, ['data']);
-        expect(calls[0].method).toBe('PATCH');
-        expect(calls[0].url).toContain('/gists/abc');
+        expect(calls[1].method).toBe('PATCH');
+        expect(calls[1].url).toContain('/gists/abc');
     });
 
-    test('deletes chunk files a shrinking payload no longer needs', async () => {
+    test('deletes every orphaned chunk the gist actually holds, not the number this device wrote', async () => {
+        // The gist grew to six chunks because another device pushed more than
+        // this one ever has; the local hint says three
+        responses.push({
+            status: 200,
+            body: {
+                files: {
+                    [MANIFEST_FILE]: { size: 100 },
+                    ...Object.fromEntries([0, 1, 2, 3, 4, 5].map((index) => [chunkFileName(index), { size: 10 }])),
+                },
+            },
+        });
         responses.push({ status: 200, body: { id: 'abc' } });
+
         await writeSyncGist('tok', 'abc', { chunks: 1 }, ['data'], 3);
-        const { files } = JSON.parse(calls[0].data);
+
+        const { files } = JSON.parse(calls[1].data);
         expect(files[chunkFileName(0)]).toEqual({ content: 'data' });
+        for (const index of [1, 2, 3, 4, 5]) expect(files[chunkFileName(index)]).toBeNull();
+    });
+
+    test('falls back to the remembered count when the gist cannot be listed', async () => {
+        responses.push({ status: 500, body: {} });
+        responses.push({ status: 200, body: { id: 'abc' } });
+
+        await writeSyncGist('tok', 'abc', { chunks: 1 }, ['data'], 3);
+
+        const { files } = JSON.parse(calls[1].data);
         expect(files[chunkFileName(1)]).toBeNull();
         expect(files[chunkFileName(2)]).toBeNull();
     });
 
+    test('counts files it is leaving in place towards the gist ceiling', async () => {
+        // A file that is not ours and not a chunk survives the write, and is
+        // just as real to the API's limit as the bytes being uploaded
+        responses.push({ status: 200, body: { files: { 'notes.md': { size: 8_900_000 } } } });
+
+        await expect(writeSyncGist('tok', 'abc', {}, ['x'.repeat(200_000)])).rejects.toMatchObject({
+            kind: 'too-large',
+        });
+        // Listed, then refused — no upload spent
+        expect(calls).toHaveLength(1);
+    });
+
     test('refuses a payload too large for one gist before spending the upload', async () => {
         const huge = ['x'.repeat(9_000_001)];
-        await expect(writeSyncGist('tok', 'abc', {}, huge)).rejects.toMatchObject({ kind: 'too-large' });
+        await expect(writeSyncGist('tok', null, {}, huge)).rejects.toMatchObject({ kind: 'too-large' });
         expect(calls).toHaveLength(0);
+    });
+});
+
+describe('chunkIndexFromName', () => {
+    test('reads the index back out of a chunk file name', () => {
+        expect(chunkIndexFromName(chunkFileName(0))).toBe(0);
+        expect(chunkIndexFromName(chunkFileName(42))).toBe(42);
+    });
+
+    test('is null for anything that is not a chunk file', () => {
+        expect(chunkIndexFromName(MANIFEST_FILE)).toBeNull();
+        expect(chunkIndexFromName('toolasha-data-notes.json')).toBeNull();
+        expect(chunkIndexFromName('notes.md')).toBeNull();
+        expect(chunkIndexFromName(undefined)).toBeNull();
     });
 });

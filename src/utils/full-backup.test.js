@@ -10,6 +10,8 @@ vi.mock('../core/storage.js', () => ({
     default: {
         listStores: vi.fn(() => Promise.resolve(Array.from(db.keys()))),
         getAll: vi.fn((storeName) => Promise.resolve(Object.fromEntries(db.get(storeName) || new Map()))),
+        beginRestore: vi.fn(() => Promise.resolve()),
+        finishRestore: vi.fn(),
         putAll: vi.fn((storeName, entries) => {
             const store = db.get(storeName) || new Map();
             for (const [key, value] of Object.entries(entries || {})) {
@@ -151,7 +153,12 @@ describe('exportEverythingJSON', () => {
         const parsed = JSON.parse(await exportEverythingJSON());
 
         expect(parsed.stores).toEqual({});
-        await expect(importEverything(parsed)).resolves.toEqual({ restored: {} });
+        await expect(importEverything(parsed)).resolves.toEqual({
+            restored: {},
+            expected: {},
+            failed: [],
+            complete: true,
+        });
     });
 
     test('round-trips through the text form back into the database', async () => {
@@ -244,5 +251,90 @@ describe('importEverything formatVersion rejection', () => {
 
     test('throws when payload is missing entirely', async () => {
         await expect(importEverything(undefined)).rejects.toThrow(/formatVersion/);
+    });
+});
+
+describe('importEverything reports what did not land', () => {
+    beforeEach(async () => {
+        seedDb();
+        const storage = (await import('../core/storage.js')).default;
+        // mockImplementation from a previous test outlives mockClear, and these
+        // tests exist to change putAll's answer — so the default is restored
+        storage.putAll.mockReset();
+        storage.putAll.mockImplementation((storeName, entries) => {
+            const store = db.get(storeName) || new Map();
+            for (const [key, value] of Object.entries(entries || {})) store.set(key, value);
+            db.set(storeName, store);
+            return Promise.resolve(Object.keys(entries || {}).length);
+        });
+        storage.beginRestore.mockClear();
+        storage.finishRestore.mockClear();
+    });
+
+    test('a store whose transaction wrote nothing is reported, not counted as restored', async () => {
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const storage = (await import('../core/storage.js')).default;
+        const payload = await exportEverything();
+
+        // What an aborted transaction looks like from here: nothing written,
+        // and no error thrown
+        storage.putAll.mockImplementationOnce(() => Promise.resolve(0));
+
+        const result = await importEverything(payload);
+
+        expect(result.complete).toBe(false);
+        expect(result.failed).toEqual([{ store: 'settings', expected: 1, written: 0 }]);
+        expect(result.restored.settings).toBe(0);
+        expect(result.expected.settings).toBe(1);
+        expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('settings'));
+
+        errorSpy.mockRestore();
+    });
+
+    test('a partial write is a shortfall too, however many keys landed', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const storage = (await import('../core/storage.js')).default;
+        const payload = await exportEverything();
+
+        storage.putAll.mockImplementation((storeName, entries) =>
+            Promise.resolve(storeName === 'xpHistory' ? 1 : Object.keys(entries).length)
+        );
+
+        const result = await importEverything(payload);
+
+        expect(result.complete).toBe(false);
+        expect(result.failed).toEqual([{ store: 'xpHistory', expected: 2, written: 1 }]);
+
+        vi.restoreAllMocks();
+    });
+
+    test('flushes pending writes before the restore and latches the stores it wrote', async () => {
+        seedDb();
+        const storage = (await import('../core/storage.js')).default;
+        const payload = await exportEverything();
+
+        const result = await importEverything(payload);
+
+        expect(result.complete).toBe(true);
+        expect(storage.beginRestore).toHaveBeenCalled();
+        // Every store took its keys, so every store is latched against
+        // pre-restore writes landing on top of it
+        expect(storage.finishRestore).toHaveBeenCalledWith(new Set(['settings', 'xpHistory', 'dungeonRuns']));
+    });
+
+    test('a store that wrote nothing is not latched — nothing was restored to protect', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const storage = (await import('../core/storage.js')).default;
+        const payload = await exportEverything();
+
+        storage.putAll.mockImplementation((storeName, entries) =>
+            Promise.resolve(storeName === 'settings' ? 0 : Object.keys(entries).length)
+        );
+
+        await importEverything(payload);
+
+        expect(storage.finishRestore).toHaveBeenCalledWith(new Set(['xpHistory', 'dungeonRuns']));
+
+        vi.restoreAllMocks();
     });
 });

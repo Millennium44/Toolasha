@@ -24,6 +24,12 @@ vi.mock('../../core/storage.js', () => ({
         set: async (key, value) => {
             stored.map[key] = value;
         },
+        // Sync bookkeeping goes down the bulk path, which the restore latch
+        // does not cover — see `rememberLocal` in sync-manager.js
+        putAll: async (_store, entries) => {
+            for (const [key, value] of Object.entries(entries)) stored.map[key] = value;
+            return Object.keys(entries).length;
+        },
     },
 }));
 
@@ -49,10 +55,19 @@ vi.mock('./sync-payload.js', () => ({
     buildPayloadJSON: async () => payload.text,
     applyPayload: async (json) => {
         payload.applied = json;
-        return { restored: {}, merged: payload.merged ?? [], exportedAt: null };
+        return {
+            restored: {},
+            failed: payload.failed ?? [],
+            complete: payload.complete ?? true,
+            merged: payload.merged ?? [],
+            exportedAt: null,
+            applied: payload.appliedText ?? json,
+        };
     },
     // Content hash, as the real one: the exportedAt stamp does not participate
     contentHash: (text) => `h:${String(text).replace(/"exportedAt":"[^"]*",/, '')}`,
+    // The older raw-text hash, which the manifest gate also accepts
+    hashPayload: (text) => `raw:${text}`,
 }));
 
 const gist = vi.hoisted(() => ({
@@ -96,7 +111,10 @@ beforeEach(() => {
     dialog.calls = 0;
     payload.text = '{"local":1}';
     payload.applied = undefined;
+    payload.appliedText = undefined;
     payload.merged = [];
+    payload.complete = true;
+    payload.failed = [];
     gist.found = null;
     gist.read = null;
     gist.readError = null;
@@ -158,7 +176,7 @@ describe('push', () => {
         const pushedAt = stored.map.toolasha_sync_lastPushedAt;
 
         gist.read = {
-            manifest: { exportedAt: '2027-02-01T00:00:00.000Z', chunks: 1, hash: 'h:remote' },
+            manifest: { exportedAt: '2027-02-01T00:00:00.000Z', chunks: 1, hash: 'h:{"remote":1}' },
             payload: '{"remote":1}',
         };
         await syncManager.pull();
@@ -236,7 +254,7 @@ describe('push', () => {
 
 describe('pull', () => {
     const remote = (exportedAt, body = '{"remote":1}') => ({
-        manifest: { exportedAt, chunks: 1, hash: 'h:remote' },
+        manifest: { exportedAt, chunks: 1, hash: `h:${body}`, bytes: body.length },
         payload: body,
     });
 
@@ -650,7 +668,7 @@ describe('the silent startup pull never raises a dialog', () => {
         stored.map.toolasha_sync_lastSyncedAt = '2026-01-01T00:00:00.000Z';
         stored.map.toolasha_sync_lastHash = 'h:what-we-pushed'; // local content differs
         gist.read = {
-            manifest: { exportedAt: '2026-02-01T00:00:00.000Z', chunks: 1, hash: 'h:remote' },
+            manifest: { exportedAt: '2026-02-01T00:00:00.000Z', chunks: 1, hash: 'h:{"remote":1}' },
             payload: '{"remote":1}',
         };
         dialog.answer = 'pull'; // would apply, if anything dared ask
@@ -694,5 +712,149 @@ describe('push on character switch', () => {
             pushes.mockRestore();
             vi.useRealTimers();
         }
+    });
+});
+
+describe('the busy lock survives a takeover', () => {
+    test('the wedged operation unlocking does not admit a third alongside the second', async () => {
+        let finishWedged;
+        const wedged = syncManager._run(
+            'push',
+            true,
+            () =>
+                new Promise((resolve) => {
+                    finishWedged = () => resolve({ ok: true });
+                })
+        );
+        // What being wedged looks like: an abandoned dialog, or a hung request
+        syncManager.busySince = Date.now() - 6 * 60 * 1000;
+
+        let finishTakeover;
+        const takeover = syncManager._run(
+            'pull',
+            true,
+            () =>
+                new Promise((resolve) => {
+                    finishTakeover = () => resolve({ ok: true });
+                })
+        );
+
+        // The wedged operation finally returns, mid-takeover. Before the
+        // ownership token its `finally` set `busy = false` — clearing a lock it
+        // no longer held, and admitting a third operation alongside the second.
+        finishWedged();
+        await wedged;
+
+        expect(await syncManager.pull({ silent: true })).toMatchObject({ ok: false, reason: 'busy' });
+
+        finishTakeover();
+        await takeover;
+        expect(syncManager.busy).toBe(false);
+    });
+});
+
+describe('a pull that did not apply', () => {
+    beforeEach(() => {
+        stored.map.toolasha_sync_gistId = 'gist-1';
+        gist.read = {
+            manifest: { exportedAt: '2027-03-01T00:00:00.000Z', chunks: 1, hash: 'h:{"remote":1}' },
+            payload: '{"remote":1}',
+        };
+    });
+
+    test('does not move the sync stamp, so the next pull still sees the remote as newer', async () => {
+        payload.complete = false;
+        payload.failed = [{ store: 'xpHistory', expected: 40, written: 0 }];
+
+        const result = await syncManager.pull();
+
+        expect(result).toMatchObject({ ok: false, reason: 'incomplete-apply' });
+        // Before: the stamp moved anyway, so every later pull answered
+        // 'not-newer' and the data never arrived
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBeUndefined();
+        expect(stored.map.toolasha_sync_lastHash).toBeUndefined();
+        expect(toasts.at(-1).kind).toBe('error');
+        expect(toasts.at(-1).message).toContain('xpHistory');
+    });
+
+    test('a clean apply still records the stamp', async () => {
+        const result = await syncManager.pull();
+
+        expect(result.ok).toBe(true);
+        expect(stored.map.toolasha_sync_lastSyncedAt).toBe('2027-03-01T00:00:00.000Z');
+    });
+});
+
+describe('what a pull remembers as this device’s state', () => {
+    test('is the hash of what was applied, not of the raw download', async () => {
+        stored.map.toolasha_sync_gistId = 'gist-1';
+        gist.read = {
+            manifest: { exportedAt: '2027-03-01T00:00:00.000Z', chunks: 1, hash: 'h:{"remote":1}' },
+            payload: '{"remote":1}',
+        };
+        // A merging pull rewrites the payload before importing it, so the
+        // downloaded text describes something that was never stored
+        payload.merged = [{ store: 'xpHistory', key: 'playerXP', label: 'XP' }];
+        payload.appliedText = '{"remote":1,"merged":1}';
+
+        await syncManager.pull();
+
+        // Before: 'h:{"remote":1}', which no local rebuild could ever equal —
+        // so every silent pull afterwards reported a conflict
+        expect(stored.map.toolasha_sync_lastHash).toBe('h:{"remote":1,"merged":1}');
+    });
+});
+
+describe('the manifest is checked against what came back', () => {
+    beforeEach(() => {
+        stored.map.toolasha_sync_gistId = 'gist-1';
+    });
+
+    test('a payload shorter than the manifest says fails the pull instead of applying', async () => {
+        gist.read = {
+            manifest: {
+                exportedAt: '2027-03-01T00:00:00.000Z',
+                chunks: 1,
+                bytes: 999,
+                hash: 'h:{"remote":1}',
+            },
+            payload: '{"remote":1}',
+        };
+
+        const result = await syncManager.pull();
+
+        expect(result).toMatchObject({ ok: false, reason: 'parse' });
+        expect(payload.applied).toBeUndefined();
+    });
+
+    test('a payload whose checksum does not match fails the pull', async () => {
+        gist.read = {
+            manifest: { exportedAt: '2027-03-01T00:00:00.000Z', chunks: 1, hash: 'h:something-else' },
+            payload: '{"remote":1}',
+        };
+
+        const result = await syncManager.pull();
+
+        expect(result).toMatchObject({ ok: false, reason: 'parse' });
+        expect(payload.applied).toBeUndefined();
+    });
+
+    test('the older raw-text hash is accepted, because older devices wrote it', async () => {
+        gist.read = {
+            manifest: { exportedAt: '2027-03-01T00:00:00.000Z', chunks: 1, hash: 'raw:{"remote":1}' },
+            payload: '{"remote":1}',
+        };
+
+        expect((await syncManager.pull()).ok).toBe(true);
+    });
+
+    test('a manifest from before the fields existed still reads', async () => {
+        gist.read = {
+            manifest: { exportedAt: '2027-03-01T00:00:00.000Z', chunks: 1 },
+            payload: '{"remote":1}',
+        };
+
+        expect((await syncManager.pull()).ok).toBe(true);
+        expect(payload.applied).toBe('{"remote":1}');
     });
 });

@@ -252,3 +252,48 @@ describe('standing down when storage is full', () => {
         expect(storageMock.get).not.toHaveBeenCalled();
     });
 });
+
+describe('two loot messages in quick succession', () => {
+    test('neither delta is lost to the other', async () => {
+        // Both used to read the same `existing` array before either had saved,
+        // merge their own entry onto it, and the second save win — so the first
+        // message's entry was gone
+        const first = lootLogHistory.mergeAndSave([entry(1, '2026-08-01T13:20:00Z')]);
+        const second = lootLogHistory.mergeAndSave([entry(2, '2026-08-01T13:40:00Z')]);
+        await Promise.all([first, second]);
+
+        const stored = storageMock.store.get('lootLogRec_char-1_2026-08-01T13');
+        expect(stored.map((e) => e.characterActionId).sort()).toEqual([1, 2]);
+    });
+
+    test('the merges run in the order they arrived', async () => {
+        const order = [];
+        const originalLoad = lootLogHistory._load.bind(lootLogHistory);
+        vi.spyOn(lootLogHistory, '_load').mockImplementation(async () => {
+            order.push('load');
+            return originalLoad();
+        });
+
+        await Promise.all([
+            lootLogHistory.mergeAndSave([entry(1, '2026-08-01T13:20:00Z')]),
+            lootLogHistory.mergeAndSave([entry(2, '2026-08-01T13:40:00Z')]),
+        ]);
+
+        // Two reads, one after the other, not two interleaved
+        expect(order).toEqual(['load', 'load']);
+        lootLogHistory._load.mockRestore();
+    });
+
+    test('a merge that throws does not wedge the chain', async () => {
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        vi.spyOn(lootLogHistory, '_load').mockRejectedValueOnce(new Error('read failed'));
+
+        await lootLogHistory.mergeAndSave([entry(1, '2026-08-01T13:20:00Z')]);
+        lootLogHistory._load.mockRestore();
+        await lootLogHistory.mergeAndSave([entry(2, '2026-08-01T13:40:00Z')]);
+
+        expect(errorSpy).toHaveBeenCalled();
+        expect(storageMock.store.get('lootLogRec_char-1_2026-08-01T13')).toHaveLength(1);
+        errorSpy.mockRestore();
+    });
+});

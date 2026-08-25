@@ -42,6 +42,16 @@
  */
 
 import storage from '../core/storage.js';
+import { registerSyncMerge } from './sync-merge-registry.js';
+
+/**
+ * Prefixes whose sync merge is already registered.
+ *
+ * Registration happens per constructed store, and a store is a module-scope
+ * singleton — but tests build several, and a duplicate registration would put
+ * a second identical entry in the registry's list for no gain.
+ */
+const registeredPrefixes = new Set();
 
 /** Two digits, for a date part */
 const pad = (value) => String(value).padStart(2, '0');
@@ -117,6 +127,11 @@ export function recordKeysFor(keys, prefix, charId) {
  * @param {Function} options.groupOf - `(entry) => string`, which chunk an entry belongs to
  * @param {Function} options.compare - Sort comparator for the assembled array
  * @param {boolean} [options.immediate] - Skip write debouncing, for recorders that did
+ * @param {Function} [options.identityOf] - `(entry) => string`, what makes two entries the
+ *   same entry when two copies of the history are folded together. Defaults to the entry's
+ *   JSON, which is a deep-equality test and is right for any history whose entries are plain
+ *   data; a recorder whose entries carry a mutable field (an in-progress session's `endTime`)
+ *   should name its stable id instead.
  * @param {string} [options.label] - Module name for log lines
  * @returns {ChunkedHistory} The store
  */
@@ -125,13 +140,23 @@ export function createChunkedHistory(options) {
 }
 
 class ChunkedHistory {
-    constructor({ storeName, prefix, legacyKey, groupOf, compare, immediate = false, label = 'ChunkedHistory' }) {
+    constructor({
+        storeName,
+        prefix,
+        legacyKey,
+        groupOf,
+        compare,
+        immediate = false,
+        identityOf,
+        label = 'ChunkedHistory',
+    }) {
         this.storeName = storeName;
         this.prefix = prefix;
         this.legacyKey = legacyKey;
         this.groupOf = groupOf;
         this.compare = compare;
         this.immediate = immediate;
+        this.identityOf = identityOf || defaultIdentity;
         this.label = label;
 
         /** Whose records are in memory */
@@ -150,6 +175,80 @@ class ChunkedHistory {
          * they always did, and the next session tries the split again.
          */
         this._legacy = false;
+
+        /** The read in flight, so two concurrent `load()`s share one */
+        this._loading = null;
+        /** Which read is current, so one abandoned by `forget()` does not commit */
+        this._loadToken = 0;
+
+        this._registerSyncMerge();
+    }
+
+    /**
+     * Teach a sync pull how to combine two devices' copies of one chunk.
+     *
+     * Without this, a chunk key arriving in a pull is written whole — the
+     * remote's entries for that hour/day/month replacing this device's,
+     * because `importEverything` writes keys and knows nothing about what is
+     * inside them. Every chunked history is append-only, so the union is the
+     * only reading of "apply the remote copy" that does not throw away entries
+     * one side has never seen.
+     *
+     * The matcher is the record prefix, which covers every character and every
+     * chunk of this history in one registration. The merge is pure: it reads
+     * nothing and writes nothing, which is what the registry requires.
+     * @private
+     */
+    _registerSyncMerge() {
+        if (!this.storeName || !this.prefix) return;
+        const scope = `${this.storeName}:${this.prefix}`;
+        if (registeredPrefixes.has(scope)) return;
+        registeredPrefixes.add(scope);
+
+        registerSyncMerge({
+            store: this.storeName,
+            prefix: `${this.prefix}_`,
+            label: `${this.label} records`,
+            merge: (local, incoming) => {
+                if (!Array.isArray(local)) return incoming;
+                if (!Array.isArray(incoming)) return local;
+                return this._union(local, incoming);
+            },
+        });
+    }
+
+    /**
+     * The union of two copies of one bucket, in the comparator's order.
+     *
+     * Base first: an entry both sides have keeps this device's copy, which for
+     * a session still being recorded is the one with the live figures in it.
+     * @param {Array<Object>} base - This device's entries
+     * @param {Array<Object>} extra - The entries being folded in
+     * @returns {Array<Object>} The union
+     * @private
+     */
+    _union(base, extra) {
+        const seen = new Set();
+        const out = [];
+        for (const entry of [...base, ...extra]) {
+            if (entry == null) continue;
+            let id;
+            try {
+                id = this.identityOf(entry);
+            } catch {
+                id = undefined;
+            }
+            // An entry with no usable identity cannot be deduplicated; keeping
+            // it is the safe half of the choice
+            if (id === undefined || id === null) {
+                out.push(entry);
+                continue;
+            }
+            if (seen.has(id)) continue;
+            seen.add(id);
+            out.push(entry);
+        }
+        return this._sorted(out);
     }
 
     /**
@@ -181,33 +280,66 @@ class ChunkedHistory {
         if (!charId) return [];
         if (this._loaded && this._charId === charId) return [...this._entries];
 
-        this._charId = charId;
-        this._loaded = true;
-        this._entries = [];
-        this._snapshot = new Map();
-        this._legacy = false;
+        // `_loaded` used to be set before the read, so a second caller arriving
+        // while the first was still awaiting storage was told the history was
+        // loaded and handed the empty array — and a recorder that merges onto
+        // what it was handed then wrote that emptiness back. Both callers wait
+        // on the same read instead.
+        if (this._loading && this._loadingCharId === charId) return [...(await this._loading)];
+
+        const token = (this._loadToken += 1);
+        this._loadingCharId = charId;
+        this._loading = this._read(charId, token);
+        try {
+            return [...(await this._loading)];
+        } finally {
+            if (this._loadToken === token) {
+                this._loading = null;
+                this._loadingCharId = null;
+            }
+        }
+    }
+
+    /**
+     * One read of a character's history, committed to memory only if it is
+     * still the read anyone is waiting for.
+     * @param {string} charId - Whose history
+     * @param {number} token - This read's identity, against `forget()` mid-read
+     * @returns {Promise<Array<Object>>} The assembled entries
+     * @private
+     */
+    async _read(charId, token) {
+        const state = { entries: [], snapshot: new Map(), legacy: false };
 
         try {
             const legacy = await storage.get(this.legacyKey(charId), this.storeName, null);
 
             if (Array.isArray(legacy) && legacy.length > 0) {
-                const split = await this._migrate(charId, legacy);
-                this._legacy = !split;
-                this._entries = this._sorted(legacy);
-                return [...this._entries];
+                const split = await this._migrate(charId, legacy, state);
+                state.legacy = !split.ok;
+                state.entries = this._sorted(split.entries);
+            } else {
+                if (Array.isArray(legacy)) {
+                    // An empty legacy array is nothing to split and nothing to keep
+                    await storage.delete(this.legacyKey(charId), this.storeName);
+                }
+                state.entries = await this._readRecords(charId, state.snapshot);
             }
-
-            if (Array.isArray(legacy)) {
-                // An empty legacy array is nothing to split and nothing to keep
-                await storage.delete(this.legacyKey(charId), this.storeName);
-            }
-
-            this._entries = await this._readRecords(charId);
         } catch (error) {
             console.error(`[${this.label}] Reading the history failed:`, error);
-            this._entries = [];
+            state.entries = [];
         }
 
+        // A character switch during the read means these entries belong to
+        // nobody now; handing them back is fine, writing them into the store's
+        // memory under the arriving character is not
+        if (this._loadToken !== token) return state.entries;
+
+        this._charId = charId;
+        this._entries = state.entries;
+        this._snapshot = state.snapshot;
+        this._legacy = state.legacy;
+        this._loaded = true;
         return [...this._entries];
     }
 
@@ -277,7 +409,25 @@ class ChunkedHistory {
             const serialized = JSON.stringify(bucket);
             next.set(chunkId, { json: serialized, count: bucket.length });
             if (previous?.json === serialized) continue;
-            const write = storage.set(this.keyFor(charId, chunkId), bucket, this.storeName, this.immediate);
+
+            // The snapshot is what makes an identical future save skip this
+            // chunk, so recording the write before knowing it landed is a claim
+            // that a dropped write turns into a permanent one: the chunk is
+            // never written again, because it always looks already written.
+            // A refused write evicts its own entry so the next save retries it.
+            // The write itself stays debounced — the promise a debounced write
+            // returns resolves with the outcome when its timer fires, which is
+            // exactly the answer needed and is not worth waiting for here.
+            const write = Promise.resolve(
+                storage.set(this.keyFor(charId, chunkId), bucket, this.storeName, this.immediate)
+            ).then((ok) => {
+                if (ok === false) this._evictSnapshot(chunkId, serialized);
+                return ok;
+            });
+            write.catch((error) => {
+                console.error(`[${this.label}] Writing chunk ${chunkId} failed:`, error);
+                this._evictSnapshot(chunkId, serialized);
+            });
             if (this.immediate) pending.push(write);
         }
 
@@ -292,6 +442,21 @@ class ChunkedHistory {
 
         if (pending.length > 0) await Promise.all(pending);
         return true;
+    }
+
+    /**
+     * Drop a chunk's snapshot entry, so the next save writes it again.
+     *
+     * Guarded on the serialisation: a later save that changed the chunk has
+     * already replaced the entry, and that newer claim is about a different
+     * write whose own outcome will arrive separately.
+     * @param {string} chunkId - Which bucket
+     * @param {string} serialized - The serialisation whose write failed
+     * @returns {void}
+     * @private
+     */
+    _evictSnapshot(chunkId, serialized) {
+        if (this._snapshot.get(chunkId)?.json === serialized) this._snapshot.delete(chunkId);
     }
 
     /**
@@ -332,43 +497,85 @@ class ChunkedHistory {
         this._entries = [];
         this._snapshot = new Map();
         this._legacy = false;
+        // A read still in flight was for the departing character. Moving the
+        // token past it is what stops it committing its entries into the
+        // memory the arriving character is about to use.
+        this._loadToken += 1;
+        this._loading = null;
+        this._loadingCharId = null;
     }
 
     /**
-     * Split a legacy array into records and remove it.
+     * Fold a legacy single-array key into the records and remove it.
+     *
+     * Merge, never replace. The old shape of this wrote the legacy array's
+     * chunks and then deleted every *other* record key belonging to the
+     * character, on the reasoning that anything else was debris from an
+     * interrupted earlier attempt. That reasoning stopped holding the moment a
+     * legacy key could arrive from somewhere other than this device's own past:
+     * a sync pull from a device whose split had stalled writes one, it lands
+     * beside a full set of this device's records, and the next `load()` saw a
+     * non-empty legacy key and deleted a year of local history to make room for
+     * the five hundred entries the other device had.
+     *
+     * So the records are read first and the legacy entries are folded into
+     * them, and no key that still carries entries is deleted — only the legacy
+     * key itself. This is the shape `trade-ledger-store.js#_absorbLegacy`
+     * already used for exactly the same situation.
      *
      * @param {string} charId - Whose history
      * @param {Array<Object>} legacy - The single-array value as stored
-     * @returns {Promise<boolean>} True when the records are now the record
+     * @param {{snapshot: Map<string, Object>}} state - The read being assembled
+     * @returns {Promise<{ok: boolean, entries: Array<Object>}>} Whether the records
+     *   are now the record, and the entries either way
      * @private
      */
-    async _migrate(charId, legacy) {
+    async _migrate(charId, legacy, state) {
         const grouped = this._group(legacy);
-        if (grouped.size === 0) return false;
+        if (grouped.size === 0) return { ok: false, entries: legacy };
 
-        const records = {};
-        for (const [chunkId, bucket] of grouped) records[this.keyFor(charId, chunkId)] = bucket;
-
-        const written = await storage.putAll(this.storeName, records);
-        if (written !== grouped.size || storage.isQuotaExceeded()) {
-            console.warn(
-                `[${this.label}] Splitting the stored history stalled (${written}/${grouped.size} chunks) — ` +
-                    'keeping the single key and reading from it'
-            );
-            return false;
-        }
-
-        // Records from an interrupted earlier attempt would otherwise show up
-        // beside the ones just written, as entries nothing put there
+        // What is already on disk. A stalled split elsewhere, a pull, or an
+        // interrupted earlier attempt all look the same from here, and all of
+        // them are entries somebody recorded.
+        const existing = new Map();
         try {
             const keys = await storage.getAllKeys(this.storeName);
-            await Promise.all(
-                recordKeysFor(keys, this.prefix, charId)
-                    .filter((key) => !(key in records))
-                    .map((key) => storage.delete(key, this.storeName))
-            );
+            const recordKeys = recordKeysFor(keys, this.prefix, charId);
+            if (recordKeys.length > 0) {
+                const buckets = await storage.getMany(recordKeys, this.storeName);
+                const prefixLength = `${this.prefix}_${charId}_`.length;
+                for (const key of recordKeys) {
+                    const bucket = buckets.get(key);
+                    if (Array.isArray(bucket)) existing.set(key.slice(prefixLength), bucket);
+                }
+            }
         } catch (error) {
-            console.error(`[${this.label}] Clearing stale chunks failed:`, error);
+            // Reading failed, so what is on disk is unknown — and merging into
+            // the unknown would mean writing chunks that silently drop it
+            console.error(`[${this.label}] Reading existing chunks before the split failed:`, error);
+            return { ok: false, entries: legacy };
+        }
+
+        /** chunkId → the union of what is stored and what the legacy key held */
+        const merged = new Map(existing);
+        for (const [chunkId, bucket] of grouped) {
+            const base = merged.get(chunkId);
+            merged.set(chunkId, base ? this._union(base, bucket) : bucket);
+        }
+
+        // Only the chunks the legacy entries actually touch are rewritten;
+        // the rest are already on disk exactly as they are in `merged`
+        const records = {};
+        for (const chunkId of grouped.keys()) records[this.keyFor(charId, chunkId)] = merged.get(chunkId);
+
+        const wanted = Object.keys(records).length;
+        const written = await storage.putAll(this.storeName, records);
+        if (written !== wanted || storage.isQuotaExceeded()) {
+            console.warn(
+                `[${this.label}] Splitting the stored history stalled (${written}/${wanted} chunks) — ` +
+                    'keeping the single key and reading from it'
+            );
+            return { ok: false, entries: legacy };
         }
 
         const removed = await storage.delete(this.legacyKey(charId), this.storeName);
@@ -376,15 +583,30 @@ class ChunkedHistory {
             // The legacy key outliving the split is the one state that loses
             // data: the next load would read it and overwrite everything
             // recorded since. Stay on it until it can actually be removed.
+            //
+            // The fold above is still on disk, and is harmless: the next load
+            // reads this key again and folds it into records that now already
+            // contain it, which the identity dedupe makes a no-op.
             console.warn(`[${this.label}] The legacy key could not be removed — continuing to use it`);
-            return false;
+            return { ok: false, entries: this._flatten(merged) };
         }
 
-        this._snapshot = new Map();
-        for (const [chunkId, bucket] of grouped) {
-            this._snapshot.set(chunkId, { json: JSON.stringify(bucket), count: bucket.length });
+        state.snapshot = new Map();
+        for (const [chunkId, bucket] of merged) {
+            state.snapshot.set(chunkId, { json: JSON.stringify(bucket), count: bucket.length });
         }
-        return true;
+        return { ok: true, entries: this._flatten(merged) };
+    }
+
+    /**
+     * @param {Map<string, Array<Object>>} chunks - chunkId → its entries
+     * @returns {Array<Object>} Every entry, in chunk-id order
+     * @private
+     */
+    _flatten(chunks) {
+        const entries = [];
+        for (const chunkId of [...chunks.keys()].sort()) entries.push(...chunks.get(chunkId));
+        return entries;
     }
 
     /**
@@ -398,10 +620,11 @@ class ChunkedHistory {
      * hourly records was paying several hundred round trips to open a panel.
      *
      * @param {string} charId - Whose records
+     * @param {Map<string, Object>} snapshot - Filled in with what each chunk holds
      * @returns {Promise<Array<Object>>} The assembled entries
      * @private
      */
-    async _readRecords(charId) {
+    async _readRecords(charId, snapshot) {
         const keys = await storage.getAllKeys(this.storeName);
         const recordKeys = recordKeysFor(keys, this.prefix, charId);
         if (recordKeys.length === 0) return [];
@@ -415,7 +638,7 @@ class ChunkedHistory {
         for (const key of recordKeys) {
             const bucket = buckets.get(key);
             if (!Array.isArray(bucket)) continue;
-            this._snapshot.set(key.slice(prefixLength), { json: JSON.stringify(bucket), count: bucket.length });
+            snapshot.set(key.slice(prefixLength), { json: JSON.stringify(bucket), count: bucket.length });
             entries.push(...bucket);
         }
 
@@ -448,6 +671,22 @@ class ChunkedHistory {
      */
     _sorted(entries) {
         return this.compare ? [...entries].sort(this.compare) : [...entries];
+    }
+}
+
+/**
+ * What makes two entries the same entry, when the caller has not said.
+ *
+ * The entry's own JSON — a deep-equality test, which is right for a history of
+ * plain records and is the only identity a generic store can derive.
+ * @param {Object} entry - A history entry
+ * @returns {string|undefined} An identity, or undefined when there is none
+ */
+function defaultIdentity(entry) {
+    try {
+        return JSON.stringify(entry);
+    } catch {
+        return undefined;
     }
 }
 

@@ -190,8 +190,9 @@ async function mergeLocalHistories(payload) {
  * those still take the remote wholesale.
  *
  * @param {string} json - Payload text as produced by `buildPayloadJSON()`
- * @returns {Promise<{restored: Record<string, number>, merged: Array<Object>, exportedAt: string|null}>}
- *   What landed
+ * @returns {Promise<{restored: Record<string, number>, failed: Array<Object>, complete: boolean,
+ *   merged: Array<Object>, exportedAt: string|null, applied: string}>}
+ *   What landed, whether all of it did, and the payload text as actually applied
  */
 export async function applyPayload(json) {
     const payload = JSON.parse(json);
@@ -212,8 +213,18 @@ export async function applyPayload(json) {
 
     const merged = await mergeLocalHistories(payload);
 
-    const { restored } = await importEverything(payload);
-    return { restored, merged, exportedAt: payload?.exportedAt ?? null };
+    // What is remembered as "the state of this device" has to be what was
+    // actually written. `mergeLocalHistories` (and the settings fix-ups above)
+    // mutate the payload, so the downloaded text no longer describes what
+    // landed — hashing it made every later rebuild compare unequal, which read
+    // as "this device has changed" and raised a conflict on every silent pull
+    // until an auto-push happened to reset it. Re-serialising only when
+    // something was rewritten keeps the common no-op pull free.
+    const rewrote = merged.length > 0 || Boolean(settingsStore);
+    const applied = rewrote ? JSON.stringify(payload) : json;
+
+    const { restored, failed, complete } = await importEverything(payload);
+    return { restored, failed, complete, merged, exportedAt: payload?.exportedAt ?? null, applied };
 }
 
 /**

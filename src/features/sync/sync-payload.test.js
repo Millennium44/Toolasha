@@ -17,10 +17,15 @@ vi.mock('../../core/storage.js', () => ({
 }));
 
 const importedPayloads = vi.hoisted(() => []);
+const importOutcome = vi.hoisted(() => ({ failed: [], complete: true }));
 vi.mock('../../utils/full-backup.js', () => ({
     importEverything: async (payload) => {
         importedPayloads.push(payload);
-        return { restored: { settings: Object.keys(payload.stores?.settings || {}).length } };
+        return {
+            restored: { settings: Object.keys(payload.stores?.settings || {}).length },
+            failed: importOutcome.failed,
+            complete: importOutcome.complete,
+        };
     },
 }));
 
@@ -36,6 +41,8 @@ const { buildPayloadJSON, applyPayload, hashPayload, readExportedAt, redactSetti
 
 beforeEach(() => {
     importedPayloads.length = 0;
+    importOutcome.failed = [];
+    importOutcome.complete = true;
     storeState.unreadable = false;
     storeState.stores = {
         settings: {
@@ -289,5 +296,51 @@ describe('applyPayload merges additive records', () => {
     test('every merge the shipped modules register is reachable by its real key', () => {
         expect(mergeForKey('settings', 'treasureTally_char-A')?.label).toBe('Treasure tally');
         expect(mergeForKey('settings', 'tradeHistory_char-A')?.label).toBe('Personal trade prices');
+    });
+});
+
+describe('what applyPayload reports as applied', () => {
+    const payloadWith = (store, key, value) =>
+        JSON.stringify({
+            formatVersion: 1,
+            exportedAt: '2026-01-01T00:00:00.000Z',
+            stores: { [store]: { [key]: value } },
+        });
+
+    test('a merging pull reports the merged payload, not the raw download', async () => {
+        const off = registerSyncMerge({
+            store: 'dungeonRuns',
+            base: 'run',
+            merge: (local, incoming) => [...local, ...incoming],
+            label: 'fake',
+        });
+        storeState.stores.dungeonRuns = { run_char: ['local'] };
+
+        const json = payloadWith('dungeonRuns', 'run_char', ['remote']);
+        const result = await applyPayload(json);
+
+        // The stamp that says "this is what this device now holds" has to be of
+        // what was written; the download describes something never stored
+        expect(result.applied).not.toBe(json);
+        expect(JSON.parse(result.applied).stores.dungeonRuns.run_char).toEqual(['local', 'remote']);
+        off();
+    });
+
+    test('a pull with nothing to rewrite hands back the text it was given', async () => {
+        const json = payloadWith('dungeonRuns', 'unmergeable_key', ['remote']);
+
+        const result = await applyPayload(json);
+
+        expect(result.applied).toBe(json);
+    });
+
+    test('a shortfall from the import is carried through, so the caller can refuse to record it', async () => {
+        importOutcome.complete = false;
+        importOutcome.failed = [{ store: 'dungeonRuns', expected: 1, written: 0 }];
+
+        const result = await applyPayload(payloadWith('dungeonRuns', 'unmergeable_key', ['remote']));
+
+        expect(result.complete).toBe(false);
+        expect(result.failed).toEqual([{ store: 'dungeonRuns', expected: 1, written: 0 }]);
     });
 });

@@ -420,6 +420,18 @@ export function chunkFileName(index) {
 }
 
 /**
+ * The chunk index a gist file name encodes, or null when it is not a chunk.
+ * @param {string} name - Gist file name
+ * @returns {number|null} Zero-based chunk index
+ */
+export function chunkIndexFromName(name) {
+    if (typeof name !== 'string' || !name.startsWith(CHUNK_PREFIX)) return null;
+    const match = /^(\d+)\.json$/.exec(name.slice(CHUNK_PREFIX.length));
+    if (!match) return null;
+    return Number(match[1]);
+}
+
+/**
  * Find an existing sync gist belonging to the token's owner.
  *
  * The point is a second device: the user pastes the same token and the gist id
@@ -526,29 +538,58 @@ async function readFileContent(token, file) {
  * payload would leave stale trailing chunks in place and the next reader would
  * happily splice them onto the end.
  *
+ * *Which* files are left over is read from the gist, not from what this device
+ * remembers writing. The remembered count is per-device: device A that last
+ * pushed two chunks has no idea device B has since grown the gist to six, so
+ * pushing two again used to leave files 2-5 in place — counting towards the
+ * gist ceiling, and invisible to a size guard that only knew about the two
+ * being written. The count survives as a fallback for a gist that cannot be
+ * listed.
+ *
  * @param {string} token - GitHub personal access token
  * @param {string|null} gistId - Existing gist id, or null to create one
  * @param {Object} manifest - Manifest object, stored as pretty JSON
  * @param {Array<string>} chunks - Payload chunks in order
- * @param {number} [previousChunkCount=0] - How many chunks the gist held before
+ * @param {number} [previousChunkCount=0] - How many chunks this device last wrote, as a hint
  * @returns {Promise<{id: string, updatedAt: string}>} The gist that was written
  */
 export async function writeSyncGist(token, gistId, manifest, chunks, previousChunkCount = 0) {
-    const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    if (totalBytes > MAX_GIST_BYTES) {
-        throw new GistError(
-            'too-large',
-            'This backup is too big for a single gist. Switch Sync scope to "Settings only".'
-        );
-    }
+    // Listed before the size guard, because what survives the write counts
+    // towards the ceiling as much as what is being written
+    const existingFiles = gistId ? await listGistFiles(token, gistId) : null;
 
     const files = { [MANIFEST_FILE]: { content: JSON.stringify(manifest, null, 2) } };
     chunks.forEach((chunk, index) => {
         // A gist file may not be empty; a single space keeps an empty payload legal
         files[chunkFileName(index)] = { content: chunk === '' ? ' ' : chunk };
     });
-    for (let index = chunks.length; index < previousChunkCount; index += 1) {
-        files[chunkFileName(index)] = null;
+
+    let survivingBytes = 0;
+    if (existingFiles) {
+        for (const [name, file] of Object.entries(existingFiles)) {
+            if (Object.hasOwn(files, name)) continue; // being overwritten
+            const index = chunkIndexFromName(name);
+            if (index !== null) {
+                // A chunk this payload does not reach is an orphan, whoever wrote it
+                files[name] = null;
+                continue;
+            }
+            // Something else lives in this gist. Not ours to delete, but its
+            // bytes are just as real to the API's ceiling.
+            survivingBytes += Number(file?.size) || 0;
+        }
+    } else {
+        for (let index = chunks.length; index < previousChunkCount; index += 1) {
+            files[chunkFileName(index)] = null;
+        }
+    }
+
+    const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0) + survivingBytes;
+    if (totalBytes > MAX_GIST_BYTES) {
+        throw new GistError(
+            'too-large',
+            'This backup is too big for a single gist. Switch Sync scope to "Settings only".'
+        );
     }
 
     const body = { description: 'Toolasha cross-device sync (do not edit by hand)', files };
@@ -561,6 +602,29 @@ export async function writeSyncGist(token, gistId, manifest, chunks, previousChu
     const created = await apiCall(token, 'POST', '/gists', { ...body, public: false });
     if (!created?.id) throw new GistError('parse', 'GitHub created a gist but did not say which one.');
     return { id: created.id, updatedAt: created.updated_at ?? null };
+}
+
+/**
+ * The files a gist currently holds, or null when they cannot be read.
+ *
+ * A failure here must not fail the push: the listing is an improvement on the
+ * remembered chunk count, not a prerequisite for writing. A transport error
+ * that would fail the push anyway will fail it a moment later on the PATCH,
+ * with its own classification intact.
+ *
+ * @param {string} token - GitHub personal access token
+ * @param {string} gistId - Gist id
+ * @returns {Promise<Record<string, Object>|null>} File entries by name
+ */
+async function listGistFiles(token, gistId) {
+    try {
+        const gist = await apiCall(token, 'GET', `/gists/${encodeURIComponent(gistId)}`);
+        const files = gist?.files;
+        return files && typeof files === 'object' ? files : null;
+    } catch (error) {
+        console.warn('[GistClient] Could not list the gist before writing it:', error?.message || error);
+        return null;
+    }
 }
 
 export default {

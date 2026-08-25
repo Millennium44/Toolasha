@@ -63,6 +63,22 @@ class Storage {
         // flushAll with no timer, so without a cap it comes back every flush forever.
         this._flushFailures = new Map();
         this.SAVE_DEBOUNCE_DELAY = 3000; // 3 seconds
+
+        /**
+         * Restore quiescing — see `beginRestore()`/`finishRestore()`.
+         *
+         * A restore (a manual "Restore Backup", or a sync pull) replaces whole
+         * keys under a running page. Everything above this module is still
+         * holding pre-restore values: a debounce timer that has not fired, a
+         * write requeued after a failure, an in-memory array a recorder will
+         * merge onto and write back. Any of those landing after the restore
+         * silently undoes it, which is what these two counters exist to stop.
+         */
+        this._restoreGeneration = 0;
+        /** Store names whose writes are refused until the page reloads */
+        this._restorePendingStores = new Set();
+        /** Keys already warned about under the latch, so the console is not flooded */
+        this._restoreWarned = new Set();
         this._reconnecting = false; // Guard against concurrent reconnection attempts
         this._dbNulledReason = null; // Track why db was last set to null
         this._lastReconnectFailureAt = 0; // When a reconnect last gave up, so waits do not pile up
@@ -408,6 +424,8 @@ class Storage {
      * @returns {Promise<boolean>} Success status
      */
     async set(key, value, storeName = 'settings', immediate = false) {
+        if (this._refuseDuringRestore(key, storeName, 'save')) return false;
+
         if (!this.db && !(await this._awaitConnection())) {
             console.warn(`[Storage] Database not available, cannot save key: ${key}`);
             return false;
@@ -636,6 +654,11 @@ class Storage {
     _debouncedSave(key, value, storeName) {
         const timerKey = `${storeName}:${key}`;
 
+        // The restore generation this write was scheduled under. A restore that
+        // lands before the timer fires makes this value pre-restore state, and
+        // writing it would put the old copy back over the restored one.
+        const restoreGeneration = this._restoreGeneration;
+
         const existing = this.pendingWrites.get(timerKey);
         const resolvers = existing?.resolvers || [];
 
@@ -657,6 +680,21 @@ class Storage {
                 if (!pending || pending.generation !== generation) {
                     // A newer write owns this slot — its timer persists the value and
                     // resolves every caller coalesced into it, including ours.
+                    return;
+                }
+
+                if (this._restoreGeneration !== restoreGeneration) {
+                    // A restore replaced this key while the timer was running.
+                    // Standing down is the whole point: the value in hand is the
+                    // pre-restore one, and the callers were told to reload.
+                    console.warn(
+                        `[Storage] Dropping a debounced write to ${storeName}/${key} — it predates a restore. ` +
+                            'Reload the page; changes made before reloading are not kept.'
+                    );
+                    this.pendingWrites.delete(timerKey);
+                    this._writeGeneration.delete(timerKey);
+                    this._flushFailures.delete(timerKey);
+                    for (const r of pending.resolvers) r(false);
                     return;
                 }
 
@@ -701,6 +739,11 @@ class Storage {
                 if (this._writeGeneration.get(timerKey) === generation && !this.saveDebounceTimers.has(timerKey)) {
                     this._writeGeneration.delete(timerKey);
                 }
+
+                // The failure counter counts *consecutive* failures. Left standing
+                // after a success, one transient early-session failure means the
+                // next single failure hours later hits the cap and drops the value.
+                this._flushFailures.delete(timerKey);
 
                 for (const r of pending.resolvers) {
                     r(true);
@@ -759,6 +802,11 @@ class Storage {
      * @returns {Promise<boolean>} Success status
      */
     async delete(key, storeName = 'settings') {
+        // A restored store must not lose keys to a pre-restore prune either —
+        // a rolling window that dropped its oldest chunk from *memory* would
+        // otherwise delete the chunk the restore just put back
+        if (this._refuseDuringRestore(key, storeName, 'delete')) return false;
+
         if (!this.db && !(await this._awaitConnection())) {
             console.warn(`[Storage] Database not available, cannot delete key: ${key}`);
             return false;
@@ -931,7 +979,10 @@ class Storage {
      * @private
      */
     async _putAllWritten(storeName, entries) {
-        if (!this.db) {
+        // Every other write path waits out a reconnect gap; this one used not to,
+        // so a ~500ms dropped connection turned a whole store's restore into a
+        // silent no-op that still reported "restored".
+        if (!this.db && !(await this._awaitConnection())) {
             console.warn(`[Storage] Database not available, cannot bulk write to store: ${storeName}`);
             return [];
         }
@@ -1112,6 +1163,107 @@ class Storage {
     }
 
     /**
+     * Quiesce live writers before a restore replaces whole keys.
+     *
+     * Everything already queued is pre-restore state by definition, so it is
+     * landed *now*, before the restore overwrites it — a pending write flushed
+     * after the restore would be the old value going back on top of the new one.
+     * Flushing rather than dropping is deliberate: until the restore has
+     * actually written, the queued values are still the truth.
+     *
+     * @returns {Promise<void>}
+     */
+    async beginRestore() {
+        await this.flushAll();
+    }
+
+    /**
+     * Latch the stores a restore just replaced, so nothing pre-restore lands on
+     * top of them before the reload the UI asks for.
+     *
+     * Three routes clobber a restored key, and all three are cut here:
+     *
+     * - a debounce timer scheduled before the restore, which stands down when
+     *   it sees the generation has moved (see `_debouncedSave`);
+     * - a write requeued after a failure, which has no timer at all and would
+     *   be written by the next `flushAll()` — hours later, on unload;
+     * - a recorder holding the store's contents in memory, which will merge its
+     *   pre-restore array onto whatever it reads and write the result back.
+     *
+     * Only the first two are storage's to fix outright. The third is a module's
+     * own memory, which this cannot reach into, so the honest answer is to
+     * refuse its writes and say so: every `set`/`setJSON`/`delete` to a latched
+     * store logs and does nothing until the page reloads. The pull toast and the
+     * restore alert both say the same thing, because a silent drop would be a
+     * worse bug than the one this replaces.
+     *
+     * @param {Iterable<string>} storeNames - Stores the restore wrote
+     * @returns {void}
+     */
+    finishRestore(storeNames) {
+        const affected = new Set(storeNames || []);
+        if (affected.size === 0) return;
+
+        this._restoreGeneration += 1;
+        for (const name of affected) this._restorePendingStores.add(name);
+
+        // Anything still queued for an affected store predates the restore.
+        // Dropping it is the point; its callers are resolved false so nothing
+        // is left awaiting a write that will never happen.
+        for (const [timerKey, pending] of Array.from(this.pendingWrites.entries())) {
+            if (!affected.has(pending.storeName)) continue;
+            const timer = this.saveDebounceTimers.get(timerKey);
+            if (timer) clearTimeout(timer);
+            this.saveDebounceTimers.delete(timerKey);
+            this.pendingWrites.delete(timerKey);
+            this._writeGeneration.delete(timerKey);
+            this._flushFailures.delete(timerKey);
+            for (const r of pending.resolvers || []) r(false);
+        }
+
+        console.warn(
+            `[Storage] Restored ${affected.size} store(s): ${Array.from(affected).join(', ')}. ` +
+                'Writes to them are refused until the page reloads, so nothing from before the restore ' +
+                'lands on top of it. Reload now — changes made before reloading will not be kept.'
+        );
+    }
+
+    /**
+     * @param {string} [storeName] - Ask about one store, or omit for any
+     * @returns {boolean} True while a restore is waiting for a reload
+     */
+    isRestorePending(storeName) {
+        if (storeName === undefined) return this._restorePendingStores.size > 0;
+        return this._restorePendingStores.has(storeName);
+    }
+
+    /** @returns {Array<string>} Stores a restore has latched */
+    restorePendingStores() {
+        return Array.from(this._restorePendingStores);
+    }
+
+    /**
+     * Whether a write must be refused because a restore replaced its store.
+     * @param {string} key - Storage key
+     * @param {string} storeName - Object store name
+     * @param {string} what - 'save' or 'delete', for the log line
+     * @returns {boolean} True when the caller should do nothing
+     * @private
+     */
+    _refuseDuringRestore(key, storeName, what) {
+        if (!this._restorePendingStores.has(storeName)) return false;
+        const seen = `${storeName}:${key}`;
+        if (!this._restoreWarned.has(seen)) {
+            this._restoreWarned.add(seen);
+            console.warn(
+                `[Storage] Refusing to ${what} ${storeName}/${key}: a restore replaced this store and the page ` +
+                    'has not reloaded yet. Reload now — changes made before reloading will not be kept.'
+            );
+        }
+        return true;
+    }
+
+    /**
      * Cleanup pending debounced writes without flushing
      */
     cleanupPendingWrites() {
@@ -1230,6 +1382,7 @@ class Storage {
             lastNullReason: this._dbNulledReason,
             pendingWrites: this.pendingWrites.size,
             activeTimers: this.saveDebounceTimers.size,
+            restorePendingStores: this.restorePendingStores(),
             quotaExceeded: this.quotaExceeded,
             quotaExceededAt: this._quotaExceededAt,
             quotaFailures: this._quotaFailures,

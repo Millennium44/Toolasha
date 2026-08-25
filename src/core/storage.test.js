@@ -967,3 +967,159 @@ describe('read transactions that abort', () => {
         await expect(orHang(storage.getAll('settings'))).resolves.toEqual({});
     });
 });
+
+describe('putAll waits out a lost connection like every other write', () => {
+    afterEach(() => {
+        storage.db = null;
+        storage._dbNulledReason = null;
+        storage._reconnecting = false;
+        storage._lastReconnectFailureAt = 0;
+        vi.useRealTimers();
+    });
+
+    test('a bulk write during a reconnect gap lands instead of silently writing nothing', async () => {
+        vi.useFakeTimers();
+        storage.db = null;
+        storage._dbNulledReason = 'onclose';
+        storage._reconnecting = true;
+
+        let dataByStore;
+        setTimeout(() => {
+            ({ db: storage.db, dataByStore } = createFakeDb(['xpHistory']));
+            storage._reconnecting = false;
+        }, 500);
+
+        const write = storage.putAll('xpHistory', { a: 1, b: 2 });
+        await vi.advanceTimersByTimeAsync(1000);
+
+        // Before: 0, and a restore reported success having written nothing
+        expect(await write).toBe(2);
+        expect(Object.fromEntries(dataByStore.get('xpHistory'))).toEqual({ a: 1, b: 2 });
+    });
+});
+
+describe('Storage restore quiescing', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        storage.db = {};
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage._writeGeneration.clear();
+        storage._flushFailures.clear();
+        storage._restorePendingStores.clear();
+        storage._restoreWarned.clear();
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage._writeGeneration.clear();
+        storage._flushFailures.clear();
+        storage._restorePendingStores.clear();
+        storage._restoreWarned.clear();
+        storage._saveToIndexedDB.mockRestore?.();
+        storage.db = null;
+        vi.restoreAllMocks();
+    });
+
+    test('a debounced write scheduled before a restore stands down instead of undoing it', async () => {
+        const saves = [];
+        vi.spyOn(storage, '_saveToIndexedDB').mockImplementation(async (key, value) => {
+            saves.push([key, value]);
+            return true;
+        });
+
+        // The 3-second window the audit names: a value written just before the
+        // restore, whose timer has not fired yet
+        const write = storage.set('watchlist', 'pre-restore', 'settings');
+        storage.finishRestore(['settings']);
+        await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 1);
+
+        expect(saves).toEqual([]);
+        expect(await write).toBe(false);
+    });
+
+    test('writes requeued after a failure are dropped, not carried to a later flush', async () => {
+        vi.spyOn(storage, '_saveToIndexedDB').mockImplementation(async () => false);
+
+        storage.set('watchlist', 'pre-restore', 'settings');
+        await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 1);
+        // A failed write is requeued with no timer; without this it would be
+        // written by the next flushAll, hours later
+        expect(storage.pendingWrites.has('settings:watchlist')).toBe(true);
+
+        storage.finishRestore(['settings']);
+
+        expect(storage.pendingWrites.has('settings:watchlist')).toBe(false);
+    });
+
+    test('later writes to a restored store are refused and say why', async () => {
+        const saves = [];
+        vi.spyOn(storage, '_saveToIndexedDB').mockImplementation(async (key) => {
+            saves.push(key);
+            return true;
+        });
+
+        storage.finishRestore(['settings']);
+
+        expect(await storage.set('watchlist', 'after', 'settings', true)).toBe(false);
+        expect(await storage.setJSON('plans', {}, 'settings', true)).toBe(false);
+        expect(await storage.delete('watchlist', 'settings')).toBe(false);
+        expect(saves).toEqual([]);
+        expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('changes made before reloading'));
+    });
+
+    test('only the stores the restore wrote are latched', async () => {
+        vi.spyOn(storage, '_saveToIndexedDB').mockImplementation(async () => true);
+        storage.finishRestore(['settings']);
+
+        expect(storage.isRestorePending('settings')).toBe(true);
+        expect(storage.isRestorePending('xpHistory')).toBe(false);
+        expect(await storage.set('run', 1, 'xpHistory', true)).toBe(true);
+        expect(storage.restorePendingStores()).toEqual(['settings']);
+    });
+
+    test('the bulk path is exempt, so the restore itself and its bookkeeping can write', async () => {
+        const { db, dataByStore } = createFakeDb(['settings']);
+        storage.db = db;
+        storage.finishRestore(['settings']);
+
+        expect(await storage.putAll('settings', { toolasha_sync_lastSyncedAt: 'T' })).toBe(1);
+        expect(dataByStore.get('settings').get('toolasha_sync_lastSyncedAt')).toBe('T');
+    });
+});
+
+describe('Storage flush-failure counting', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        storage.db = {};
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage._writeGeneration.clear();
+        storage._flushFailures.clear();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        storage.saveDebounceTimers.clear();
+        storage.pendingWrites.clear();
+        storage._writeGeneration.clear();
+        storage._flushFailures.clear();
+        storage._saveToIndexedDB.mockRestore?.();
+        storage.db = null;
+    });
+
+    test('a successful debounced write clears the key’s failure count', async () => {
+        // A transient early-session failure left the counter at 1 (or 2)
+        // forever, so the next single failure hit the cap and dropped the value
+        storage._flushFailures.set('settings:loot', 2);
+        vi.spyOn(storage, '_saveToIndexedDB').mockImplementation(async () => true);
+
+        storage.set('loot', [1], 'settings');
+        await vi.advanceTimersByTimeAsync(storage.SAVE_DEBOUNCE_DELAY + 1);
+
+        expect(storage._flushFailures.has('settings:loot')).toBe(false);
+    });
+});

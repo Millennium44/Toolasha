@@ -1496,10 +1496,28 @@ class SettingsUI {
                     ],
                 });
                 if (confirmed !== 'restore') return;
-                const { restored } = await importEverything(payload);
+                const { restored, failed, complete } = await importEverything(payload);
                 const total = Object.values(restored).reduce((sum, n) => sum + n, 0);
+
+                // "Restored 0 entries" used to be reported as success. A store
+                // whose transaction aborts writes nothing, and one bad key aborts
+                // the whole store — so the number that mattered was never the one
+                // shown. Say which stores did not land, and do not call it done.
+                if (!complete) {
+                    const detail = failed
+                        .map((entry) => `${entry.store} (${entry.written}/${entry.expected})`)
+                        .join(', ');
+                    alert(
+                        `The restore did not finish. These stores did not take their data: ${detail}. ` +
+                            `${total} entries were written elsewhere. The console has the detail; freeing disk ` +
+                            'space and restoring again is the usual fix.'
+                    );
+                    return;
+                }
+
                 alert(
-                    `Restored ${total} entries across ${Object.keys(restored).length} stores. Reload the page to pick everything up.`
+                    `Restored ${total} entries across ${Object.keys(restored).length} stores. ` +
+                        'Reload now — changes made before reloading will not be kept.'
                 );
             } catch (error) {
                 console.error('[SettingsUI] Restoring backup failed:', error);

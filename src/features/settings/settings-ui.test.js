@@ -36,6 +36,10 @@ const mocks = vi.hoisted(() => ({
     coarsePointer: false,
     /** Held open to keep `loadSettings` in flight while the test moves the DOM */
     loadGate: null,
+    /** What `askChoice` answers, for the flows that confirm first */
+    choiceAnswer: null,
+    /** What `importEverything` reports back to the restore flow */
+    importResult: { restored: {}, expected: {}, failed: [], complete: true },
 }));
 
 vi.mock('../../utils/mobile.js', () => ({
@@ -204,10 +208,10 @@ vi.mock('../../utils/enhancement-config.js', () => ({
 }));
 vi.mock('../../utils/full-backup.js', () => ({
     exportEverythingJSON: async () => '{}',
-    importEverything: async () => ({ restored: {} }),
+    importEverything: async () => mocks.importResult,
 }));
 vi.mock('../../utils/csv-export.js', () => ({ downloadFile: () => {} }));
-vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => null }));
+vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => mocks.choiceAnswer }));
 
 const { default: settingsUI, SEARCH_DEBOUNCE_MS } = await import('./settings-ui.js');
 const { IRON_COW_SETTINGS } = await import('./iron-cow-mode.js');
@@ -818,5 +822,79 @@ describe('injecting the tab into a panel React may take away', () => {
         await settingsUI.injectSettingsTab();
 
         expect(second.tabs.querySelector('#toolasha-settings-tab')).not.toBeNull();
+    });
+});
+
+describe('restoring a backup says whether it worked', () => {
+    /**
+     * Drive `handleFullRestore` end to end: the file input it builds is
+     * detached, so it is caught on the way out of `createElement` and handed a
+     * file the way a picker would.
+     * @param {Object} payload - The backup file's contents
+     * @returns {Promise<void>}
+     */
+    async function restore(payload) {
+        const created = [];
+        const realCreate = document.createElement.bind(document);
+        const spy = vi.spyOn(document, 'createElement').mockImplementation((tag) => {
+            const element = realCreate(tag);
+            if (tag === 'input') created.push(element);
+            return element;
+        });
+
+        settingsUI.handleFullRestore();
+        spy.mockRestore();
+
+        const input = created.at(-1);
+        Object.defineProperty(input, 'files', {
+            configurable: true,
+            value: [{ text: async () => JSON.stringify(payload) }],
+        });
+        input.dispatchEvent(new Event('change'));
+        // Let the handler's awaits settle
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    beforeEach(() => {
+        mocks.choiceAnswer = 'restore';
+        mocks.importResult = { restored: {}, expected: {}, failed: [], complete: true };
+        globalThis.alert = vi.fn();
+    });
+
+    afterEach(() => {
+        mocks.choiceAnswer = null;
+    });
+
+    test('a store that took nothing is named, and the restore is not called done', async () => {
+        // "Restored 0 entries across 1 stores" used to be the success message
+        // for a restore that wrote nothing at all
+        mocks.importResult = {
+            restored: { xpHistory: 0 },
+            expected: { xpHistory: 40 },
+            failed: [{ store: 'xpHistory', expected: 40, written: 0 }],
+            complete: false,
+        };
+
+        await restore({ formatVersion: 1, stores: { xpHistory: {} } });
+
+        const said = globalThis.alert.mock.calls.at(-1)[0];
+        expect(said).toContain('did not finish');
+        expect(said).toContain('xpHistory (0/40)');
+        expect(said).not.toContain('Reload');
+    });
+
+    test('a clean restore asks for a reload, and says what a delayed one costs', async () => {
+        mocks.importResult = {
+            restored: { settings: 12 },
+            expected: { settings: 12 },
+            failed: [],
+            complete: true,
+        };
+
+        await restore({ formatVersion: 1, stores: { settings: {} } });
+
+        const said = globalThis.alert.mock.calls.at(-1)[0];
+        expect(said).toContain('Restored 12 entries');
+        expect(said).toContain('changes made before reloading will not be kept');
     });
 });

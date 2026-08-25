@@ -43,7 +43,7 @@ import { askChoice } from '../../utils/choice-dialog.js';
 import { GistError, findSyncGist, readSyncGist, writeSyncGist, chunkPayload } from './gist-client.js';
 import { compressionAvailable, gzipText, gunzipToText } from './sync-compress.js';
 import { encryptText, encryptBytes, decryptText, decryptBytes, bytesToBase64, base64ToBytes } from './sync-crypto.js';
-import { buildPayloadJSON, applyPayload, contentHash } from './sync-payload.js';
+import { buildPayloadJSON, applyPayload, contentHash, hashPayload } from './sync-payload.js';
 
 const STORE = 'settings';
 
@@ -279,7 +279,7 @@ class SyncManager {
 
         const written = await writeSyncGist(token, gistId, manifest, chunks, previousChunks);
         await this._remember({ gistId: written.id, exportedAt, hash, chunkCount: chunks.length });
-        await storage.set(KEY_LAST_PUSHED_AT, exportedAt, STORE, true);
+        await rememberLocal({ [KEY_LAST_PUSHED_AT]: exportedAt });
 
         if (!silent) {
             showToast(`Synced to GitHub (${scope === 'everything' ? 'everything' : 'settings only'}).`);
@@ -337,6 +337,8 @@ class SyncManager {
             payload = await gunzipToText(base64ToBytes(payload));
         }
 
+        verifyAgainstManifest(manifest, payload);
+
         const remoteAt = manifest?.exportedAt ?? null;
         const lastSyncedAt = await storage.get(KEY_LAST_SYNCED_AT, STORE, null);
 
@@ -387,22 +389,48 @@ class SyncManager {
             pushBack = answer === 'merge';
         }
 
-        const { merged } = await applyPayload(payload);
+        const { merged, complete, failed, applied } = await applyPayload(payload);
+
+        // A pull that wrote nothing must not move the stamp. Remembering the
+        // remote's `exportedAt` after a failed apply makes every later pull
+        // answer 'not-newer' — the data never arrives and sync reports success
+        // for ever. One store aborting its transaction is enough to get here.
+        if (complete === false) {
+            const stores = (failed || []).map((entry) => entry.store).join(', ');
+            console.error('[Sync] The pull did not apply cleanly; leaving the sync stamp alone.', failed);
+            showToast(
+                `Sync pull could not write ${stores || 'some stores'}. Nothing was recorded as synced — ` +
+                    'free some space or reload and try again.',
+                { kind: 'error', duration: 0 }
+            );
+            return { ok: false, reason: 'incomplete-apply' };
+        }
+
         await this._remember({
             gistId,
             exportedAt: remoteAt,
-            // The CONTENT hash of what was applied — remembered so the next
-            // local rebuild of the same content compares equal. The manifest's
-            // own hash (older devices hashed the raw text, stamp included)
-            // could never match a rebuild and manufactured a permanent conflict
-            hash: contentHash(payload),
+            // The CONTENT hash of what was APPLIED — remembered so the next
+            // local rebuild of the same content compares equal. Not the raw
+            // download: a merging pull rewrites the payload before importing
+            // it, so the downloaded text describes something that was never
+            // stored. The manifest's own hash (older devices hashed the raw
+            // text, stamp included) could never match a rebuild either, and
+            // manufactured a permanent conflict.
+            hash: contentHash(applied ?? payload),
             chunkCount: Number(manifest?.chunks) || 0,
         });
 
         const combined = merged?.length
             ? ` ${merged.length} ${merged.length === 1 ? 'record was' : 'records were'} combined rather than replaced.`
             : '';
-        showToast(`Synced from GitHub.${combined} Reload the page to pick everything up.`, { duration: 0 });
+        // Not politeness: the stores this pull replaced stop accepting writes
+        // until the reload (see `storage.finishRestore`), because anything this
+        // session still holds in memory is the pre-pull copy and writing it
+        // back would undo the pull. Saying so is the difference between a
+        // reload the player chooses and changes they lose without being told.
+        showToast(`Synced from GitHub.${combined} Reload now — changes made before reloading will not be kept.`, {
+            duration: 0,
+        });
 
         // The union only exists on this device until it is sent up. Pushing it
         // now is what stops the other device pulling the pre-merge copy back
@@ -423,14 +451,16 @@ class SyncManager {
      * @returns {Promise<void>}
      */
     async forgetGist() {
-        await storage.set(KEY_GIST_ID, null, STORE, true);
-        await storage.set(KEY_LAST_SYNCED_AT, null, STORE, true);
-        await storage.set(KEY_LAST_HASH, null, STORE, true);
-        await storage.set(KEY_CHUNK_COUNT, 0, STORE, true);
-        // The push stamp belongs to the gist we just forgot. Leaving it behind makes
-        // the next gist look like somewhere this device has already pushed to, which
-        // is exactly the check that decides whether a first push stops to ask.
-        await storage.set(KEY_LAST_PUSHED_AT, null, STORE, true);
+        await rememberLocal({
+            [KEY_GIST_ID]: null,
+            [KEY_LAST_SYNCED_AT]: null,
+            [KEY_LAST_HASH]: null,
+            [KEY_CHUNK_COUNT]: 0,
+            // The push stamp belongs to the gist we just forgot. Leaving it behind makes
+            // the next gist look like somewhere this device has already pushed to, which
+            // is exactly the check that decides whether a first push stops to ask.
+            [KEY_LAST_PUSHED_AT]: null,
+        });
     }
 
     /**
@@ -554,7 +584,7 @@ class SyncManager {
 
         const found = await findSyncGist(token);
         if (found) {
-            await storage.set(KEY_GIST_ID, found, STORE, true);
+            await rememberLocal({ [KEY_GIST_ID]: found });
             return found;
         }
 
@@ -567,17 +597,27 @@ class SyncManager {
      * @private
      */
     async _remember({ gistId, exportedAt, hash, chunkCount }) {
-        await storage.set(KEY_GIST_ID, gistId, STORE, true);
-        await storage.set(KEY_LAST_SYNCED_AT, exportedAt, STORE, true);
-        await storage.set(KEY_LAST_HASH, hash, STORE, true);
-        await storage.set(KEY_CHUNK_COUNT, chunkCount, STORE, true);
+        await rememberLocal({
+            [KEY_GIST_ID]: gistId,
+            [KEY_LAST_SYNCED_AT]: exportedAt,
+            [KEY_LAST_HASH]: hash,
+            [KEY_CHUNK_COUNT]: chunkCount,
+        });
     }
 
     /**
      * Guard, classify and report one sync operation.
      *
-     * The single `busy` flag is not politeness: two pushes racing can interleave
-     * chunk writes and leave a gist whose manifest describes neither payload.
+     * The `busy` lock is not politeness: two pushes racing can interleave chunk
+     * writes and leave a gist whose manifest describes neither payload, and a
+     * push racing a pull tears `buildPayloadJSON`, which reads the stores one
+     * after another while the pull is rewriting them.
+     *
+     * It holds a token rather than `true` because of the takeover below. When a
+     * wedged operation is taken over, the wedged one is still running — and its
+     * own `finally` would clear a flag it no longer owns, unlocking mid-takeover
+     * and admitting a third operation alongside the second. Each operation
+     * clears the lock only if the token in it is still the one it took.
      *
      * @param {string} label - 'push' or 'pull', for messages
      * @param {boolean} silent - Suppress the "nothing to do" chatter
@@ -608,7 +648,8 @@ class SyncManager {
             }
         }
 
-        this.busy = true;
+        const token = (this._busySeq = (this._busySeq || 0) + 1);
+        this.busy = token;
         this.busySince = Date.now();
         try {
             return await operation();
@@ -635,7 +676,9 @@ class SyncManager {
             }
             return { ok: false, reason: error instanceof GistError ? error.kind : 'error' };
         } finally {
-            this.busy = false;
+            // Only if nobody took over: the wedged operation this one replaced
+            // may still be in flight, and its `finally` must not unlock ours
+            if (this.busy === token) this.busy = false;
         }
     }
 }
@@ -670,6 +713,70 @@ const ACTIONABLE_KINDS = new Set(Object.keys(REMEDIES));
 function describeFailure(label, error) {
     const remedy = REMEDIES[error.kind];
     return `Sync ${label} failed: ${error.message}${remedy ? ` ${remedy}` : ''}`;
+}
+
+/**
+ * Write this device's sync bookkeeping.
+ *
+ * Through `putAll` rather than `set`, for one reason: applying a pull latches
+ * the stores it replaced against pre-restore writes (see
+ * `storage.finishRestore`), and the settings store is always one of them. This
+ * bookkeeping is written *after* the apply and is not pre-restore state — it is
+ * the record that the apply happened — so it goes down the bulk path, which the
+ * latch does not cover. Written through `set` it would be silently refused, and
+ * a pull that cannot record its own stamp re-applies the same payload for ever.
+ *
+ * One transaction for the lot is also simply what these four keys want.
+ *
+ * @param {Record<string, *>} entries - Bookkeeping keys to write
+ * @returns {Promise<void>}
+ */
+async function rememberLocal(entries) {
+    const written = await storage.putAll(STORE, entries);
+    const expected = Object.keys(entries).length;
+    if (written !== expected) {
+        console.error(`[Sync] Only ${written}/${expected} sync bookkeeping keys were written`);
+    }
+}
+
+/**
+ * Check a reassembled payload against what the manifest says it should be.
+ *
+ * The manifest already carries the plaintext length and a content hash, and
+ * nothing was checking either — so a chunk file truncated by a hand edit, a
+ * half-written push, or a gist the API returned short would be parsed as far as
+ * it went and applied. A pull that fails loudly is recoverable; a pull that
+ * applies half a database is not.
+ *
+ * Both fields are optional: a gist written by a build from before they existed
+ * has neither, and must still read. `hash` is accepted in either of the two
+ * forms this script has written — the content hash, and the older raw-text hash
+ * that included the `exportedAt` stamp.
+ *
+ * @param {Object} manifest - The gist's manifest
+ * @param {string} payload - The decrypted, decompressed payload text
+ * @returns {void}
+ * @throws {GistError} With kind 'parse' when the payload is not what was pushed
+ */
+function verifyAgainstManifest(manifest, payload) {
+    const expectedBytes = Number(manifest?.bytes);
+    if (Number.isFinite(expectedBytes) && expectedBytes > 0 && payload.length !== expectedBytes) {
+        throw new GistError(
+            'parse',
+            `The sync gist is incomplete: its manifest describes ${expectedBytes} characters but ` +
+                `${payload.length} came back.`
+        );
+    }
+
+    const expectedHash = manifest?.hash;
+    if (typeof expectedHash === 'string' && expectedHash) {
+        if (contentHash(payload) !== expectedHash && hashPayload(payload) !== expectedHash) {
+            throw new GistError(
+                'parse',
+                'The sync gist does not match its own manifest checksum — it looks corrupted or edited by hand.'
+            );
+        }
+    }
 }
 
 /**

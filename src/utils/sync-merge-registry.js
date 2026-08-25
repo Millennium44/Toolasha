@@ -110,26 +110,56 @@ export function registerSyncMerge({ store, key, base, prefix, match, merge, labe
     };
 }
 
+/** Overlaps already reported, so one bad pair does not log per key */
+const reportedOverlaps = new Set();
+
 /**
  * The merge for one storage key, if it has one.
  *
- * First registration wins, so a feature that registers a narrow key before a
- * broad prefix gets the narrow one.
+ * **The contract is that matchers do not overlap.** First registration wins,
+ * and registration order is import order — which is bundle order, decided by
+ * the build rather than by anything a feature controls. So two registrations
+ * that both match a key do not resolve to "the narrow one" or "the specific
+ * one"; they resolve to whichever bundle happened to load first, and that can
+ * change when a module moves. A key must be owned by exactly one registration.
+ *
+ * An overlap is a bug in the registrations, not a case to handle, so it is
+ * reported rather than resolved — once per pair of labels, since a payload has
+ * thousands of keys and the same pair would otherwise fill the console.
+ *
  * @param {string} store - Object store name
  * @param {string} key - Storage key
  * @returns {SyncMergeRegistration|null} The registration, or null for a key that must be written whole
  */
 export function mergeForKey(store, key) {
     if (!store || typeof key !== 'string') return null;
+
+    let found = null;
     for (const registration of registrations) {
         if (registration.store !== store) continue;
         try {
-            if (registration.match(key)) return registration;
+            if (!registration.match(key)) continue;
         } catch (error) {
             console.error(`[SyncMergeRegistry] Matcher for ${registration.label} threw:`, error);
+            continue;
         }
+
+        if (!found) {
+            found = registration;
+            continue;
+        }
+
+        const pair = `${store}|${found.label}|${registration.label}`;
+        if (!reportedOverlaps.has(pair)) {
+            reportedOverlaps.add(pair);
+            console.warn(
+                `[SyncMergeRegistry] "${found.label}" and "${registration.label}" both claim ${store}/${key}. ` +
+                    'Matchers must not overlap — which one wins is bundle import order, not intent.'
+            );
+        }
+        break;
     }
-    return null;
+    return found;
 }
 
 /**
@@ -147,6 +177,7 @@ export function listSyncMerges() {
  */
 export function clearSyncMerges() {
     registrations.length = 0;
+    reportedOverlaps.clear();
 }
 
 export default { registerSyncMerge, mergeForKey, listSyncMerges, clearSyncMerges, scopedKeyMatcher };

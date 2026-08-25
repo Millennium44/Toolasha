@@ -232,15 +232,43 @@ describe('the one-time split of the legacy key', () => {
         expect(again).toHaveLength(1);
     });
 
-    test('records left by an interrupted earlier split do not survive the next one', async () => {
-        // What a half-finished migration looks like: a record beside the array
-        storageMock.store.set('rec_c1_1999-01', [{ t: Date.UTC(1999, 0, 1), v: 'stale' }]);
+    test('records already on disk are merged into, not deleted', async () => {
+        // This is the pulled-legacy-key case as much as the interrupted-split
+        // one: a device whose split stalled syncs its single key over, it lands
+        // beside a full set of local records, and deleting them to make room
+        // for its five hundred entries is how a year of history disappeared
+        storageMock.store.set('rec_c1_1999-01', [{ t: Date.UTC(1999, 0, 1), v: 'kept' }]);
         storageMock.store.set('legacy_c1', [at(2026, 6)]);
 
         const loaded = await build().load('c1');
 
-        expect(loaded.map((p) => p.v)).toEqual(['2026-6-1']);
-        expect(storageMock.store.has('rec_c1_1999-01')).toBe(false);
+        expect(loaded.map((p) => p.v).sort()).toEqual(['2026-6-1', 'kept']);
+        expect(storageMock.store.has('rec_c1_1999-01')).toBe(true);
+        expect(storageMock.store.has('legacy_c1')).toBe(false);
+    });
+
+    test('a legacy entry the records already hold is folded in once, not twice', async () => {
+        const shared = at(2026, 6);
+        storageMock.store.set('rec_c1_2026-06', [shared]);
+        storageMock.store.set('legacy_c1', [shared, at(2026, 7)]);
+
+        const loaded = await build().load('c1');
+
+        expect(loaded.map((p) => p.v)).toEqual(['2026-6-1', '2026-7-1']);
+        expect(storageMock.store.get('rec_c1_2026-06')).toHaveLength(1);
+    });
+
+    test('a chunk the legacy key never touches is left exactly where it was', async () => {
+        storageMock.store.set('rec_c1_2020-01', [{ t: Date.UTC(2020, 0, 1), v: 'old' }]);
+        storageMock.store.set('legacy_c1', [at(2026, 6)]);
+
+        await build().load('c1');
+
+        // Untouched chunks are not rewritten; only the ones the legacy entries
+        // land in are, which is what keeps a split off a year of records
+        const written = storageMock.putAll.mock.calls.at(-1)[1];
+        expect(Object.keys(written)).toEqual(['rec_c1_2026-06']);
+        expect(storageMock.store.get('rec_c1_2020-01')).toHaveLength(1);
     });
 
     test('an empty legacy array is removed rather than left as a permanent no-op', async () => {
@@ -432,5 +460,155 @@ describe('the changed-chunk hint', () => {
         });
 
         expect(written().sort()).toEqual(['rec_c1_2026-06', 'rec_c1_2026-08']);
+    });
+});
+
+describe('two loads at once', () => {
+    test('a second load in flight waits for the read rather than being told the history is empty', async () => {
+        storageMock.store.set('rec_c1_2026-06', [at(2026, 6)]);
+
+        // The read is slow, as a real IndexedDB round trip is
+        let release;
+        const held = new Promise((resolve) => {
+            release = resolve;
+        });
+        storageMock.getAllKeys.mockImplementation(async () => {
+            await held;
+            return [...storageMock.store.keys()];
+        });
+
+        const store = build();
+        const first = store.load('c1');
+        const second = store.load('c1');
+        release();
+
+        // Before: the second caller saw `_loaded` already true and got [],
+        // which a recorder would then merge onto and write back as the truth
+        expect((await second).map((p) => p.v)).toEqual(['2026-6-1']);
+        expect((await first).map((p) => p.v)).toEqual(['2026-6-1']);
+    });
+
+    test('a character switch mid-read does not commit the departing character’s entries', async () => {
+        storageMock.store.set('rec_c1_2026-06', [at(2026, 6)]);
+
+        let release;
+        const held = new Promise((resolve) => {
+            release = resolve;
+        });
+        storageMock.getAllKeys.mockImplementation(async () => {
+            await held;
+            return [...storageMock.store.keys()];
+        });
+
+        const store = build();
+        const reading = store.load('c1');
+        store.forget();
+        release();
+        await reading;
+
+        expect(store._loaded).toBe(false);
+        expect(store._charId).toBeNull();
+    });
+});
+
+describe('the snapshot only claims what was written', () => {
+    test('a refused write is retried by the next save instead of being skipped for ever', async () => {
+        const store = build();
+        await store.load('c1');
+
+        storageMock.set.mockImplementation(async () => false);
+        await store.save('c1', [at(2026, 6)]);
+
+        // Before: the snapshot said the chunk was on disk, so an identical
+        // future save compared equal and never wrote it again
+        storageMock.set.mockImplementation(async (key, value) => {
+            storageMock.store.set(key, value);
+            return true;
+        });
+        storageMock.set.mockClear();
+        await store.save('c1', [at(2026, 6)]);
+
+        expect(written()).toEqual(['rec_c1_2026-06']);
+        expect(storageMock.store.get('rec_c1_2026-06')).toHaveLength(1);
+    });
+
+    test('a confirmed write is still skipped the second time, which is the whole point', async () => {
+        const store = build();
+        await store.load('c1');
+        await store.save('c1', [at(2026, 6)]);
+        storageMock.set.mockClear();
+
+        await store.save('c1', [at(2026, 6)]);
+
+        expect(written()).toEqual([]);
+    });
+});
+
+describe('the sync merge every chunked history registers', () => {
+    test('a pulled chunk is combined with this device’s copy rather than replacing it', async () => {
+        const { mergeForKey, clearSyncMerges } = await import('./sync-merge-registry.js');
+
+        // Registration happens when the store is constructed, and the module
+        // deduplicates by prefix — so a fresh registry needs a fresh prefix
+        clearSyncMerges();
+        const store = createChunkedHistory({
+            storeName: 'testStore',
+            prefix: 'mergeRec',
+            legacyKey: (charId) => `legacy_${charId}`,
+            groupOf: (point) => timeChunkId(point?.t, 'month'),
+            compare: (a, b) => a.t - b.t,
+            label: 'MergeTest',
+        });
+        expect(store).toBeTruthy();
+
+        const registration = mergeForKey('testStore', 'mergeRec_c1_2026-06');
+        expect(registration).toBeTruthy();
+
+        const local = [at(2026, 6, 1)];
+        const incoming = [at(2026, 6, 2)];
+        const merged = registration.merge(local, incoming);
+
+        expect(merged.map((p) => p.v)).toEqual(['2026-6-1', '2026-6-2']);
+        // Pure: neither side is mutated
+        expect(local).toHaveLength(1);
+        expect(incoming).toHaveLength(1);
+    });
+
+    test('an entry both devices have survives once', async () => {
+        const { mergeForKey, clearSyncMerges } = await import('./sync-merge-registry.js');
+        clearSyncMerges();
+        createChunkedHistory({
+            storeName: 'testStore',
+            prefix: 'dupeRec',
+            legacyKey: (charId) => `legacy_${charId}`,
+            groupOf: (point) => timeChunkId(point?.t, 'month'),
+            compare: (a, b) => a.t - b.t,
+            label: 'DupeTest',
+        });
+
+        const { merge } = mergeForKey('testStore', 'dupeRec_c1_2026-06');
+        expect(merge([at(2026, 6)], [at(2026, 6), at(2026, 7)]).map((p) => p.v)).toEqual(['2026-6-1', '2026-7-1']);
+    });
+
+    test('a caller-named identity beats deep equality, for entries that are rewritten in place', async () => {
+        const { mergeForKey, clearSyncMerges } = await import('./sync-merge-registry.js');
+        clearSyncMerges();
+        createChunkedHistory({
+            storeName: 'testStore',
+            prefix: 'idRec',
+            legacyKey: (charId) => `legacy_${charId}`,
+            groupOf: (point) => timeChunkId(point?.t, 'month'),
+            compare: (a, b) => a.t - b.t,
+            identityOf: (point) => point?.id,
+            label: 'IdTest',
+        });
+
+        const { merge } = mergeForKey('testStore', 'idRec_c1_2026-06');
+        const local = [{ id: 7, t: 1, count: 12 }];
+        const incoming = [{ id: 7, t: 1, count: 9 }];
+
+        // The same action, recorded twice with different running totals: one
+        // entry out, and it is this device's — the live one
+        expect(merge(local, incoming)).toEqual([{ id: 7, t: 1, count: 12 }]);
     });
 });

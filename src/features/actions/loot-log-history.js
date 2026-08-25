@@ -50,8 +50,28 @@ class LootLogHistory {
             groupOf: entryChunkId,
             // Newest first, which is the order the loot panel reads them in
             compare: (a, b) => Date.parse(b?.startTime) - Date.parse(a?.startTime) || 0,
+            // An entry's identity is its action, not its contents: a session
+            // still running has its `endTime` and `actionCount` rewritten on
+            // every loot message, so a deep-equality dedupe would keep two
+            // copies of the same action whenever two copies of the history are
+            // folded together (a sync pull, or a legacy key being absorbed).
+            identityOf: (entry) => entry?.characterActionId,
             label: 'LootLogHistory',
         });
+
+        /**
+         * One merge at a time, in order.
+         *
+         * `mergeAndSave` is a read-merge-write, and it is called straight off
+         * the `loot_log_updated` message with no await: two messages a few
+         * hundred milliseconds apart both read the same `existing` array, both
+         * merge their own delta onto it, and the second save overwrites the
+         * first — so the first message's entries are gone. Chaining costs
+         * nothing (the second merge starts against the first one's result) and
+         * is what `trade-ledger-store.js` and `persisted-record.js` already do
+         * for the same reason.
+         */
+        this._chain = Promise.resolve();
     }
 
     /** @returns {string|null} Whose loot log, or null before login */
@@ -90,8 +110,37 @@ class LootLogHistory {
      * Deduplicates by characterActionId (incoming entries replace stored copies, so ongoing
      * sessions stay fresh), keeps newest first, caps at MAX_ENTRIES.
      * @param {Array} lootLog - Array from the WebSocket message
+     * @returns {Promise<void>} Resolves when this merge has been queued for writing
      */
     async mergeAndSave(lootLog) {
+        const run = () => this._mergeAndSave(lootLog);
+        this._chain = this._chain.then(run, run);
+        return this._chain;
+    }
+
+    /**
+     * The merge itself, run one at a time by `mergeAndSave`.
+     * @param {Array} lootLog - Array from the WebSocket message
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _mergeAndSave(lootLog) {
+        try {
+            await this._merge(lootLog);
+        } catch (error) {
+            // Never rejected: the chain is what the next message extends, and a
+            // rejected link would surface as an unhandled rejection in a caller
+            // that deliberately does not await
+            console.error('[LootLogHistory] Merging the loot log failed:', error);
+        }
+    }
+
+    /**
+     * @param {Array} lootLog - Array from the WebSocket message
+     * @returns {Promise<void>}
+     * @private
+     */
+    async _merge(lootLog) {
         if (!lootLog || lootLog.length === 0) return;
         // Nothing that follows can be stored, and building it costs a full
         // merge over 500 entries per loot message
