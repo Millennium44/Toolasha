@@ -14,6 +14,15 @@
  * over an hour is a build problem. Both are folded on the same tick, so they can
  * never disagree about what happened — only about how much of it they remember.
  *
+ * ## And a history, which is neither
+ *
+ * Folding the fight scope into a ring of the last twenty finished fights at the
+ * moment it is cleared costs nothing extra to measure and answers the question
+ * neither scope can: *which* fight it went wrong in. A session average of eight
+ * waves hides the one wave the bar ran dry on, and the fight scope has already
+ * forgotten it by the time you look. Short fights are left out — under
+ * `MIN_SECONDS` a row is one lucky swing rather than a figure.
+ *
  * ## Whose slot
  *
  * `new_battle` names every player, so the index whose name matches this
@@ -37,6 +46,7 @@ import {
     noteRotationFight,
     foldRotationTick,
     summariseRotation,
+    pushFightRecord,
 } from '../../utils/rotation-audit.js';
 
 /** The counters this tick is measured against — this module's own, never shared */
@@ -47,6 +57,15 @@ let fight = newRotationState();
 
 /** Kept across battles: what the run says about the build */
 let session = newRotationState();
+
+/**
+ * The last {@link HISTORY_LIMIT} finished fights, newest first.
+ *
+ * In memory only, and cleared with the session scope: it is the same claim the
+ * session makes — "this run, this build, this character" — sliced per fight
+ * instead of averaged, so it must not survive anything the session does not.
+ */
+let history = [];
 
 /** Which slot is this character's, from `new_battle`; null until a name matched */
 let ownIndex = null;
@@ -83,6 +102,7 @@ export function resetRotationAudit() {
     state = newAttributionState();
     fight = newRotationState();
     session = newRotationState();
+    history = [];
     ownIndex = null;
     battleId = null;
 }
@@ -90,13 +110,22 @@ export function resetRotationAudit() {
 /**
  * The audit as it stands.
  *
- * @returns {{fight: Object, session: Object, tracking: boolean}} Two summaries from
- *   `summariseRotation`, and whether this character's slot has been identified —
- *   which is the difference between "nothing has happened" and "nothing is being
- *   watched", and the panel says which
+ * @returns {{fight: Object, session: Object, history: Array<Object>, tracking: boolean}} Two
+ *   summaries from `summariseRotation`, the finished-fight history newest first, and
+ *   whether this character's slot has been identified — which is the difference between
+ *   "nothing has happened" and "nothing is being watched", and the panel says which
+ *
+ *   The history is handed out by reference rather than copied: it is a read-only
+ *   view for the panel, redrawn every time the board is, and copying twenty
+ *   records on every redraw would buy nothing.
  */
 export function rotationAudit() {
-    return { fight: summariseRotation(fight), session: summariseRotation(session), tracking: ownIndex !== null };
+    return {
+        fight: summariseRotation(fight),
+        session: summariseRotation(session),
+        history,
+        tracking: ownIndex !== null,
+    };
 }
 
 let onNewBattle = null;
@@ -131,6 +160,12 @@ export function startRotationTracker() {
 
             // The fight on screen is a new one, so what was measured belongs to
             // the last one. The session keeps both.
+            //
+            // The ending fight is folded into the history *before* the scope is
+            // replaced — this is the only moment its totals still exist, and a
+            // fight with nothing measurable in it is dropped rather than
+            // recorded as a row of zeroes
+            pushFightRecord(history, fight);
             fight = newRotationState();
             noteRotationFight(fight);
             noteRotationFight(session);

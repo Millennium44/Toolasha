@@ -19,7 +19,11 @@ import {
     summariseRotation,
     abilityVerdict,
     bestChange,
+    fightRecord,
+    pushFightRecord,
     MAX_TICK_GAP_MS,
+    MIN_SECONDS,
+    HISTORY_LIMIT,
 } from './rotation-audit.js';
 
 const CHEAP = '/abilities/cheap';
@@ -415,5 +419,75 @@ describe('auras', () => {
         const verdict = abilityVerdict({ hrid: '/abilities/mystic_aura', uptime: 0, starvedShare: 0, casts: 0 }, 600);
         expect(verdict.kind).toBe('aura');
         expect(verdict.text).toMatch(/Aura/);
+    });
+});
+
+describe('the per-fight history', () => {
+    /** A fight of `ticks` half-second steps, every one casting the cheap ability */
+    function fought(ticks) {
+        const state = armed([CHEAP]);
+        run(
+            state,
+            Array.from({ length: ticks }, () => ({ mana: 900, action: CHEAP, cast: true }))
+        );
+        return state;
+    }
+
+    test('a fight is reduced to totals and per-ability casts, not rates and verdicts', () => {
+        const record = fightRecord(fought(21));
+
+        expect(record.seconds).toBeCloseTo(10, 5);
+        expect(record.casts).toBe(20);
+        expect(record.abilities).toEqual([{ hrid: CHEAP, casts: 20 }]);
+        expect(record.starvedSeconds).toBe(0);
+        // Nothing a summary carries: a history row is four numbers and a cast list
+        expect(record.verdict).toBeUndefined();
+        expect(record.uptime).toBeUndefined();
+    });
+
+    test('a fight under the measurable floor is not a record at all', () => {
+        // Four gaps of half a second is 2s, under MIN_SECONDS
+        expect(fightRecord(fought(5))).toBeNull();
+        expect(MIN_SECONDS).toBe(3);
+        // And an empty scope is not a fight of nothing
+        expect(fightRecord(newRotationState())).toBeNull();
+    });
+
+    test('a short fight leaves the buffer alone rather than pushing a row of zeroes', () => {
+        const history = [];
+
+        pushFightRecord(history, fought(5));
+        expect(history).toEqual([]);
+
+        pushFightRecord(history, fought(21));
+        expect(history).toHaveLength(1);
+    });
+
+    test('the buffer is a ring of the last twenty, newest first', () => {
+        const history = [];
+        for (let index = 0; index < HISTORY_LIMIT + 7; index += 1) pushFightRecord(history, fought(9 + index));
+
+        expect(history).toHaveLength(HISTORY_LIMIT);
+        // The most recent push is the longest fight, and it is at the front
+        expect(history[0].seconds).toBeGreaterThan(history[HISTORY_LIMIT - 1].seconds);
+        // The seven oldest fell off the back rather than the newest being refused
+        expect(history[HISTORY_LIMIT - 1].casts).toBe(9 + 7 - 1);
+    });
+
+    test('mana is carried across as measured, not as a rate', () => {
+        const state = armed([CHEAP]);
+        run(state, [
+            { mana: 900, action: CHEAP, cast: true },
+            { mana: 800, action: CHEAP, cast: true },
+            { mana: 900, action: CHEAP, cast: true },
+            { mana: 850, action: CHEAP, cast: true },
+            { mana: 850, action: CHEAP, cast: true },
+            { mana: 850, action: CHEAP, cast: true },
+            { mana: 850, action: CHEAP, cast: true },
+        ]);
+
+        const record = fightRecord(state);
+        expect(record.manaSpent).toBe(150);
+        expect(record.manaRestored).toBe(100);
     });
 });

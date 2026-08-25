@@ -39,7 +39,9 @@
  *   paid for, and what each one buys per cast, per point of mana and per second
  *   of the cooldown it occupies. The starvation arithmetic is the guild trial
  *   support module's, generalised in `utils/rotation-audit.js` rather than
- *   written twice.
+ *   written twice. Its third scope, History, is the tracker's ring of finished
+ *   fights: a session average hides the wave the bar ran dry on, and the fight
+ *   scope has already been cleared by the time you look at it.
  *
  * ## Everything is the party's, and in a party nothing says who struck
  *
@@ -77,6 +79,7 @@ import {
     rankRows,
 } from '../../utils/damage-board.js';
 import { classTagIconHTML } from '../../utils/class-weapon.js';
+import { MIN_SECONDS } from '../../utils/rotation-audit.js';
 import { formatKMB, formatWithSeparator } from '../../utils/formatters.js';
 import { GAME } from '../../utils/selectors.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -121,10 +124,17 @@ let tab = 'damage';
  */
 let scope = 'session';
 
-/** The Rotation tab's two scopes, in display order */
+/**
+ * The Rotation tab's scopes, in display order.
+ *
+ * `history` is not a summary like the other two: it draws the tracker's ring of
+ * finished fights, one row each, and answers *which* fight rather than what the
+ * run averages to.
+ */
 export const ROTATION_SCOPES = [
     { key: 'fight', label: 'This fight' },
     { key: 'session', label: 'Session' },
+    { key: 'history', label: 'History' },
 ];
 
 /**
@@ -341,6 +351,102 @@ export function rotationSummaryHTML(summary) {
 }
 
 /**
+ * The summary a scope key names.
+ *
+ * `history` has none of its own — it is a list of fights, not an audit — so the
+ * things that need a summary while it is showing (the variance copy, and the
+ * head) read the session's, which is the scope the history is a slice of.
+ *
+ * @param {Object} audit - From `rotationAudit`
+ * @param {string} which - A key of {@link ROTATION_SCOPES}
+ * @returns {Object|undefined} The summary
+ */
+function scopeSummary(audit, which) {
+    if (which === 'history') return audit?.session || audit?.fight;
+    return audit?.[which] || audit?.fight;
+}
+
+/**
+ * One finished fight, as a history row.
+ *
+ * Two lines rather than an expander: the per-ability casts are the reason to
+ * look at a history at all — "which fight was the one it stopped firing in" —
+ * and a count behind a click is a count nobody reads.
+ *
+ * @param {Object} record - From `fightRecord`
+ * @param {number} index - Its place in the buffer, newest first
+ * @returns {string} HTML
+ */
+export function rotationHistoryRowHTML(record, index) {
+    const { dim, warn } = BOARD_COLORS;
+    const manaPerMinute = record.seconds > 0 ? (record.manaSpent / record.seconds) * 60 : null;
+    const casts = record.abilities.length
+        ? record.abilities.map((row) => `${actionLabel(row.hrid)} ${row.casts}`).join(' · ')
+        : 'no casts seen';
+
+    return (
+        `<div style="margin:3px 0; padding:3px 6px; border-radius:3px; background:rgba(255,255,255,0.04);">` +
+        `<div style="display:flex; gap:6px; align-items:baseline; font-size:11px;">` +
+        `<span style="color:${dim}; width:22px;">#${index + 1}</span>` +
+        `<span style="font-weight:600;">${record.seconds.toFixed(0)}s</span>` +
+        `<span style="color:${dim};">${formatWithSeparator(record.casts)} casts</span>` +
+        `<span style="margin-left:auto; color:${dim};">${figure(manaPerMinute)} mana/min</span>` +
+        `<span style="color:${record.starvedSeconds > 0 ? warn : dim}; width:56px; text-align:right;">` +
+        `starved ${record.starvedSeconds.toFixed(1)}s</span>` +
+        `</div>` +
+        `<div style="color:${dim}; font-size:10px; line-height:1.4;">${escapeText(casts)}</div>` +
+        `</div>`
+    );
+}
+
+/**
+ * The History scope's body: the finished fights, newest first.
+ *
+ * @param {Array<Object>} history - From `rotationAudit`
+ * @returns {string} HTML
+ */
+export function rotationHistoryHTML(history) {
+    const fights = Array.isArray(history) ? history : [];
+
+    return (
+        boardNoteHTML('The last fights, newest first — one row each.', {
+            color: BOARD_COLORS.good,
+            strong: true,
+        }) +
+        boardNoteHTML(
+            `Kept in memory only, for this character and this session: switching character or resetting the run ` +
+                `empties it. A fight shorter than ${MIN_SECONDS}s is left out, because every figure over it is one ` +
+                'lucky swing rather than a measurement. The second line is what fired, and how often.'
+        ) +
+        (fights.length
+            ? fights.map(rotationHistoryRowHTML).join('')
+            : boardNoteHTML('No finished fights yet — a fight is recorded when the next one begins.'))
+    );
+}
+
+/**
+ * The history as plain text, one line per fight.
+ * @param {Array<Object>} history - From `rotationAudit`
+ * @returns {string}
+ */
+export function rotationHistoryText(history) {
+    const fights = Array.isArray(history) ? history : [];
+    const head = `Rotation history — the last ${fights.length} fights, newest first`;
+    if (!fights.length) return `${head}\nNo finished fights recorded yet.`;
+
+    const lines = fights.map((record, index) => {
+        const manaPerMinute = record.seconds > 0 ? (record.manaSpent / record.seconds) * 60 : null;
+        const casts = record.abilities.map((row) => `${actionLabel(row.hrid)} ${row.casts}`).join(', ') || 'none';
+        return (
+            `#${index + 1}: ${record.seconds.toFixed(0)}s, ${record.casts} casts, ` +
+            `${figure(manaPerMinute)} mana/min spent, starved ${record.starvedSeconds.toFixed(1)}s — ${casts}`
+        );
+    });
+
+    return [head, ...lines].join('\n');
+}
+
+/**
  * The Rotation tab's whole body.
  *
  * @param {Object} audit - From `rotationAudit`
@@ -348,7 +454,7 @@ export function rotationSummaryHTML(summary) {
  * @returns {string} HTML
  */
 export function rotationHTML(audit, which) {
-    const summary = audit?.[which] || audit?.fight;
+    const summary = scopeSummary(audit, which);
     const { dim } = BOARD_COLORS;
 
     const scopes =
@@ -363,6 +469,10 @@ export function rotationHTML(audit, which) {
             );
         }).join('') +
         `</div>`;
+
+    // The history stands on its own: it needs no slot to have been named — a
+    // fight it recorded already had one — and it has no verdicts to draw
+    if (which === 'history') return scopes + rotationHistoryHTML(audit?.history);
 
     if (!audit?.tracking) {
         // Rows can exist before a battle names the slot — a previous session's
@@ -423,6 +533,9 @@ export function rotationHTML(audit, which) {
  * @returns {string}
  */
 export function rotationText(audit, which) {
+    // The history is a record of fights that already happened, so it copies
+    // whether or not a slot is named right now
+    if (which === 'history') return rotationHistoryText(audit?.history);
     if (!audit?.tracking) return 'Rotation: waiting for a battle to name your slot.';
 
     const summary = audit[which] || audit.fight;
@@ -460,8 +573,8 @@ export function rotationText(audit, which) {
 export function rotationVarianceText(audit, which) {
     if (!audit?.tracking) return 'Rotation variances: waiting for a battle to name your slot.';
 
-    const summary = audit[which] || audit.fight;
-    const label = which === 'session' ? 'session' : 'this fight';
+    const summary = scopeSummary(audit, which);
+    const label = which === 'fight' ? 'this fight' : 'session';
     const head =
         `Rotation variances (${label}) — the stated bar against what fired, ` +
         `over ${summary.seconds.toFixed(0)}s and ${summary.fights} fights`;

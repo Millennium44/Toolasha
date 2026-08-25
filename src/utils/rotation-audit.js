@@ -589,3 +589,73 @@ export function summariseRotation(state) {
     summary.suggestion = bestChange(summary);
     return summary;
 }
+
+/**
+ * How many finished fights the history keeps.
+ *
+ * A ring rather than a log: the tab is read between pulls, and the fight that
+ * explains what just went wrong is one of the last few. Twenty is deep enough
+ * to cover a dungeon's worth of waves and shallow enough that the rows stay
+ * scannable — and it is in memory only, so nothing outlives the tab.
+ */
+export const HISTORY_LIMIT = 20;
+
+/**
+ * One finished fight, reduced to what a history row can show.
+ *
+ * Deliberately not a `summariseRotation`: a per-fight row wants totals, not
+ * rates and verdicts, and keeping twenty full summaries alive would hold twenty
+ * copies of every ability's timing for the sake of four numbers. Per-ability
+ * casts are kept because "which fight was the one where it stopped firing" is
+ * the question a history answers that a session average cannot.
+ *
+ * Null for a fight with nothing measurable in it — under {@link MIN_SECONDS}
+ * every figure is one lucky swing, which is the same rule the verdicts keep.
+ *
+ * @param {Object} state - A fight scope, from {@link newRotationState}
+ * @returns {{at: number|null, seconds: number, casts: number, manaSpent: number,
+ *   manaRestored: number, starvedSeconds: number, abilities: Array<{hrid: string,
+ *   casts: number}>}|null} The record, or null when the fight is too short to record
+ */
+export function fightRecord(state) {
+    const seconds = (state?.ms || 0) / 1000;
+    if (!(seconds >= MIN_SECONDS)) return null;
+
+    const abilities = Object.values(state?.abilities || {})
+        .filter((row) => row.casts > 0)
+        .map((row) => ({ hrid: row.hrid, casts: row.casts }))
+        .sort((a, b) => b.casts - a.casts || a.hrid.localeCompare(b.hrid));
+
+    return {
+        // When the fight's last tick landed — the only clock the scope carries
+        at: state?.lastAt ?? null,
+        seconds,
+        casts: abilities.reduce((total, row) => total + row.casts, 0),
+        manaSpent: state?.manaSpent || 0,
+        manaRestored: state?.manaRestored || 0,
+        starvedSeconds: (state?.starvedMs || 0) / 1000,
+        abilities,
+    };
+}
+
+/**
+ * Fold a finished fight onto the front of the history.
+ *
+ * Newest-first in the buffer itself rather than at draw time, so the array the
+ * panel is handed is already the order it reads in and nothing has to remember
+ * to reverse it.
+ *
+ * @param {Array<Object>} history - The buffer, mutated
+ * @param {Object} state - The fight scope that is ending
+ * @param {number} [limit] - How many to keep
+ * @returns {Array<Object>} The same buffer
+ */
+export function pushFightRecord(history, state, limit = HISTORY_LIMIT) {
+    if (!Array.isArray(history)) return history;
+    const record = fightRecord(state);
+    if (!record) return history;
+
+    history.unshift(record);
+    while (history.length > limit) history.pop();
+    return history;
+}

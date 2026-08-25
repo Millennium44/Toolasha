@@ -77,9 +77,11 @@ const {
     BUTTON_ID,
     PANEL_ID,
     TABS,
+    ROTATION_SCOPES,
     panelRows,
     panelText,
     rotationVarianceText,
+    rotationHistoryText,
     drawBoard,
     getPanel,
     default: feature,
@@ -564,5 +566,117 @@ describe('the rotation tab', () => {
 
         feature.cleanup();
         expect(opts.stopped).toBe(1);
+    });
+});
+
+describe('the rotation tab’s history scope', () => {
+    const CHEAP = '/abilities/cheap_jab';
+    const PRICEY = '/abilities/pricey_nova';
+
+    /** Two finished fights as the tracker's ring holds them, newest first */
+    const HISTORY = [
+        {
+            at: 1_700_000_020_000,
+            seconds: 12,
+            casts: 9,
+            manaSpent: 600,
+            manaRestored: 120,
+            starvedSeconds: 2.5,
+            abilities: [
+                { hrid: CHEAP, casts: 7 },
+                { hrid: PRICEY, casts: 2 },
+            ],
+        },
+        {
+            at: 1_700_000_000_000,
+            seconds: 30,
+            casts: 20,
+            manaSpent: 200,
+            manaRestored: 400,
+            starvedSeconds: 0,
+            abilities: [{ hrid: CHEAP, casts: 20 }],
+        },
+    ];
+
+    test('is a third scope, after the fight and the session', () => {
+        expect(ROTATION_SCOPES.map((entry) => entry.key)).toEqual(['fight', 'session', 'history']);
+    });
+
+    test('lists every fight, newest first, with its per-ability casts on the row', () => {
+        opts.audit = { tracking: true, fight: null, session: null, history: HISTORY };
+        feature._setTab('rotation', 'history');
+
+        const text = board().textContent;
+
+        expect(text).toContain('12s');
+        expect(text).toContain('30s');
+        expect(text).toContain('9 casts');
+        expect(text).toContain('starved 2.5s');
+        // The second line: what fired in that fight, and how often
+        expect(text).toContain('cheap jab 7');
+        expect(text).toContain('pricey nova 2');
+        // Newest first
+        expect(text.indexOf('12s')).toBeLessThan(text.indexOf('30s'));
+    });
+
+    test('says the buffer is empty rather than drawing nothing', () => {
+        opts.audit = { tracking: true, fight: null, session: null, history: [] };
+        feature._setTab('rotation', 'history');
+
+        expect(board().textContent).toContain('No finished fights yet');
+    });
+
+    test('draws without a slot named, because a recorded fight already had one', () => {
+        opts.audit = { tracking: false, fight: null, session: null, history: HISTORY };
+        feature._setTab('rotation', 'history');
+
+        const text = board().textContent;
+        expect(text).not.toContain('Waiting for a battle to name your slot');
+        expect(text).toContain('cheap jab 7');
+    });
+
+    test('the copy is one line per fight', () => {
+        const text = rotationHistoryText(HISTORY);
+        const lines = text.split('\n');
+
+        expect(lines).toHaveLength(3); // a heading and the two fights
+        expect(lines[0]).toContain('the last 2 fights, newest first');
+        expect(lines[1]).toContain('#1: 12s, 9 casts');
+        expect(lines[1]).toContain('starved 2.5s');
+        expect(lines[1]).toContain('cheap jab 7, pricey nova 2');
+        expect(lines[2]).toContain('#2: 30s, 20 casts');
+    });
+
+    test('an empty buffer copies as a heading and a note, not a bare heading', () => {
+        expect(rotationHistoryText([])).toContain('No finished fights recorded yet');
+        expect(rotationHistoryText(undefined)).toContain('No finished fights recorded yet');
+    });
+
+    test('the Copy stats button on this scope puts the history on the clipboard', () => {
+        opts.audit = { tracking: true, fight: null, session: null, history: HISTORY };
+        feature._setTab('rotation', 'history');
+
+        const writes = [];
+        Object.defineProperty(navigator, 'clipboard', {
+            value: {
+                writeText: (text) => {
+                    writes.push(text);
+                    return Promise.resolve();
+                },
+            },
+            configurable: true,
+        });
+        board().querySelector('[data-action="copy"]').click();
+
+        expect(writes).toHaveLength(1);
+        expect(writes[0]).toContain('Rotation history');
+        expect(writes[0]).toContain('#1: 12s, 9 casts');
+    });
+
+    test('panelText routes the rotation tab’s history scope to it', () => {
+        opts.audit = { tracking: true, fight: null, session: null, history: HISTORY };
+        feature._setTab('rotation', 'history');
+
+        expect(panelText('rotation', { audit: () => opts.audit })).toContain('Rotation history');
     });
 });
