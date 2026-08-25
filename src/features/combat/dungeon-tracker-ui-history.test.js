@@ -19,6 +19,7 @@ vi.mock('./dungeon-tracker-storage.js', () => ({
     },
     filterRunsForCharacter: (runs) => runs,
     currentCharacter: () => 'me',
+    runIdentity: (run) => `${run?.teamKey ?? ''}|${run?.timestamp ?? ''}|${run?.duration ?? ''}`,
 }));
 vi.mock('../../utils/formatters.js', () => ({ formatDateTime: () => '04/08 10:00' }));
 

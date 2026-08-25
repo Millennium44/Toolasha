@@ -3,7 +3,12 @@
  * Handles grouping, filtering, and rendering of run history
  */
 
-import dungeonTrackerStorage, { filterRunsForCharacter, currentCharacter } from './dungeon-tracker-storage.js';
+import dungeonTrackerStorage, {
+    filterRunsForCharacter,
+    currentCharacter,
+    runIdentity,
+} from './dungeon-tracker-storage.js';
+import { trendsFor, directionMarker, NOT_ENOUGH_RUNS, TREND_WINDOW } from './dungeon-tracker-trends.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { formatDateTime } from '../../utils/formatters.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
@@ -210,8 +215,16 @@ class DungeonTrackerUIHistory {
             const groups =
                 this.state.groupBy === 'team' ? this.groupByTeam(filteredRuns) : this.groupByDungeon(filteredRuns);
 
+            // Trends are per dungeon+tier, so they are computed from the runs
+            // the filters allowed rather than from whichever grouping the
+            // panel happens to be showing. Memoised on the run list, so a
+            // redraw that changed nothing recomputes nothing.
+            const { groups: trendGroups, deltas } = trendsFor(filteredRuns);
+
             // Render grouped runs
-            this.renderGroupedRuns(runList, groups);
+            this.renderGroupedRuns(runList, groups, deltas);
+
+            runList.prepend(this.trendsBlock(trendGroups));
 
             // The export bar sits inside the list it describes, so the redraw
             // that replaces the list replaces the bar with it. The rows come
@@ -307,6 +320,108 @@ class DungeonTrackerUIHistory {
     }
 
     /**
+     * The trends block: one compact line per dungeon+tier.
+     *
+     * Duration only. The stored run shape records how long a run took and who
+     * spent which keys, and says nothing about what a run paid out, so this
+     * block makes no claim about earnings — see `dungeon-tracker-trends.js`.
+     *
+     * @param {Array<Object>} trendGroups - From `trendsFor`
+     * @returns {HTMLElement} The block
+     */
+    trendsBlock(trendGroups) {
+        const block = document.createElement('div');
+        block.dataset.dungeonTrends = 'true';
+        block.style.cssText =
+            'border: 1px solid #444; border-radius: 4px; padding: 6px; margin: 0 0 6px 0; font-size: 10px;';
+
+        const heading = document.createElement('div');
+        heading.textContent = 'Trends';
+        heading.title =
+            `Average run time over the last ${TREND_WINDOW} runs against the ${TREND_WINDOW} before, ` +
+            'per dungeon and tier.';
+        heading.style.cssText = 'font-weight: bold; color: #4a9eff; margin-bottom: 4px;';
+        block.appendChild(heading);
+
+        if (!trendGroups.length) {
+            const empty = document.createElement('div');
+            empty.textContent = NOT_ENOUGH_RUNS;
+            empty.style.cssText = 'color: #888; font-style: italic;';
+            block.appendChild(empty);
+            return block;
+        }
+
+        for (const group of trendGroups) {
+            const row = document.createElement('div');
+            row.dataset.trendKey = group.key;
+            row.style.cssText = 'display: flex; justify-content: space-between; gap: 6px; padding: 1px 0;';
+
+            const label = document.createElement('span');
+            label.textContent = group.label;
+            label.style.cssText = 'color: #ddd;';
+            row.appendChild(label);
+
+            const figures = document.createElement('span');
+            figures.style.cssText = 'color: #aaa; text-align: right;';
+            figures.textContent = this.trendFigures(group.trend);
+            row.appendChild(figures);
+
+            block.appendChild(row);
+        }
+
+        return block;
+    }
+
+    /**
+     * One group's figures as text.
+     *
+     * A group without enough runs says so instead of quoting a rate, and a
+     * group with no earlier window quotes its rate without inventing a
+     * comparison for it.
+     *
+     * @param {Object} trend - From `computeTrend`
+     * @returns {string} The figures
+     */
+    trendFigures(trend) {
+        if (!trend.enough) return `${NOT_ENOUGH_RUNS} (${trend.runCount})`;
+
+        const parts = [`avg ${this.formatTime(trend.recentAvgMs)}`];
+
+        if (trend.direction) {
+            const percent = Math.abs(trend.changePercent).toFixed(1);
+            const word = trend.direction === 'flat' ? 'flat' : `${percent}% ${trend.direction}`;
+            parts.push(`${directionMarker(trend.direction)} ${word} vs earlier runs`);
+        } else {
+            parts.push('no earlier window yet');
+        }
+
+        if (trend.runsPerHour !== null) parts.push(`${trend.runsPerHour.toFixed(1)} runs/hr`);
+
+        return parts.join(' | ');
+    }
+
+    /**
+     * A single run against the rolling average of the five before it.
+     *
+     * @param {Object|null} delta - From `buildRunDeltas`, or null when the run
+     *   has too little history behind it to be compared
+     * @returns {string} HTML for the marker, or an empty string
+     */
+    renderDeltaMarker(delta) {
+        if (!delta) return '';
+
+        const colors = { faster: '#6bcf7f', slower: '#ff6b6b', flat: '#888' };
+        const percent = Math.abs(delta.percent).toFixed(0);
+        const text = delta.direction === 'flat' ? '→ even' : `${directionMarker(delta.direction)} ${percent}%`;
+
+        return (
+            `<span class="mwi-dt-run-delta" style="color: ${colors[delta.direction]}; font-size: 9px; ` +
+            `margin-right: 6px;" title="Against the rolling average of the previous 5 runs">` +
+            `${this.escapeHtml(text)}</span>`
+        );
+    }
+
+    /**
      * An Export CSV bar for the run list.
      *
      * Only built when there are runs to write — `update` bails out before this
@@ -346,8 +461,9 @@ class DungeonTrackerUIHistory {
      * Render grouped runs
      * @param {HTMLElement} runList - Run list container
      * @param {Array} groups - Grouped runs with stats
+     * @param {Map<string, Object>} [deltas] - Per-run deltas, keyed by `runIdentity`
      */
-    renderGroupedRuns(runList, groups) {
+    renderGroupedRuns(runList, groups, deltas) {
         let html = '';
 
         for (const group of groups) {
@@ -390,7 +506,7 @@ class DungeonTrackerUIHistory {
                         padding-top: 6px;
                         margin-top: 4px;
                     ">
-                        ${this.renderRunList(group.runs)}
+                        ${this.renderRunList(group.runs, deltas)}
                     </div>
                 </div>
             `;
@@ -445,9 +561,10 @@ class DungeonTrackerUIHistory {
     /**
      * Render individual run list
      * @param {Array} runs - Array of runs
+     * @param {Map<string, Object>} [deltas] - Per-run deltas, keyed by `runIdentity`
      * @returns {string} HTML for run list
      */
-    renderRunList(runs) {
+    renderRunList(runs, deltas) {
         let html = '';
         runs.forEach((run, index) => {
             const runNumber = runs.length - index;
@@ -455,6 +572,7 @@ class DungeonTrackerUIHistory {
             const dateObj = new Date(run.timestamp);
             const dateTime = formatDateTime(dateObj);
             const dungeonLabel = run.dungeonName || 'Unknown';
+            const delta = deltas?.get(runIdentity(run)) || null;
 
             html += `
                 <div style="
@@ -469,6 +587,7 @@ class DungeonTrackerUIHistory {
                     <span style="color: #fff; flex: 1; text-align: center;">
                         ${timeStr} <span style="color: #888; font-size: 9px;">(${dateTime})</span>
                     </span>
+                    ${this.renderDeltaMarker(delta)}
                     <span style="color: #888; margin-right: 6px; font-size: 9px;">${this.escapeHtml(dungeonLabel)}</span>
                     <button class="mwi-dt-delete-run" style="
                         background: none;
