@@ -6,6 +6,13 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Four quality-of-life additions
+
+- **Settings search, finished**: the settings filter box now debounces, clears on Escape, keeps a whole section visible when its heading matches, and no longer leaks keystrokes to the game.
+- **Rotation fight history**: a third History scope on the Rotation tab lists the last 20 measurable fights — length, casts, mana/min, starved seconds, per-ability casts — newest first, and Copy stats copies it.
+- **Dungeon run trends**: the run history shows per-dungeon/tier duration trends (last 10 runs vs the 10 before), implied runs/hr, and a per-run faster/slower marker against the rolling average. Duration only — recorded runs carry no token payouts, so no earnings are invented.
+- **Daily net-worth calendar**: a collapsible 8-week day grid in the gold-sources panel, colored by each local day's net-worth change, with gap days marked rather than misattributed and days without snapshots shown as no-data, never zero.
+
 ### Audit round four: three reviewers, twenty-nine fixes
 
 - **Valuations**: an upgrade item with no market price gets its crafting-chain time counted again (actions/hr had been overstated by the whole chain) and its craft-substituted price is marked as the estimate it is; house buffs are read from the rooms' own stated buffs instead of a flat 1.5%/level for any listed room — skilling rooms are unchanged, enhancing loses a phantom efficiency bonus and gains the real house action-speed term the queue-time estimate had always missed; treasure valuations charge every cost of a shop line instead of assuming the token is first; expected values count unpriced drops inside nested containers on every path (tooltips, task valuations, worker fallback, zero-value containers), a cyclic container no longer stops unrelated siblings being cached, and task surfaces say "≥ X (N drops unpriced)"; net-worth task tokens say "no price" instead of contributing nothing silently; a one-sided market quote no longer averages against zero; alchemy history records the bulk multiplier that was billed so a rebalance stops re-pricing old sessions; guild-credit costing skips value-derived prices on both of its roads; a retired profile-export module was deleted outright.
