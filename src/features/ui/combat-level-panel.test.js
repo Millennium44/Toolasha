@@ -26,10 +26,22 @@ import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
  */
 const game = vi.hoisted(() => ({ skills: [], table: [] }));
 
+/** The data manager's event bus, reduced to the one event the panel listens for */
+const bus = vi.hoisted(() => ({ handlers: {} }));
+
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getSkills: () => game.skills,
         getInitClientData: () => ({ levelExperienceTable: game.table }),
+        on: (event, handler) => {
+            (bus.handlers[event] ||= []).push(handler);
+        },
+        off: (event, handler) => {
+            bus.handlers[event] = (bus.handlers[event] || []).filter((h) => h !== handler);
+        },
+        emit: (event, payload) => {
+            for (const handler of bus.handlers[event] || []) handler(payload);
+        },
     },
 }));
 
@@ -40,6 +52,8 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     savedSize: async () => null,
     restoreGeometry: () => {},
     saveGeometry: () => {},
+    clampPanelToViewport: () => null,
+    markPanelInteracted: () => {},
     saveOpenState: async () => {},
     wasOpen: async () => false,
     reopenIfLeftOpen: async () => {},
@@ -81,6 +95,9 @@ vi.mock('../../utils/experience-parser.js', () => ({
 
 const config = (await import('../../core/config.js')).default;
 
+const { default: dataManager } = await import('../../core/data-manager.js');
+const { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } =
+    await import('../../utils/panel-z-index.js');
 const {
     combatLevelPanel,
     combatSkillState,
@@ -746,5 +763,79 @@ describe('the session starts when combat does', () => {
 
         expect(sessionText()).toContain('0h 01m 00s');
         expect(sessionText()).toContain('50,000');
+    });
+});
+
+describe('opening, folding and switching', () => {
+    const REFRESH_MS = 5000;
+
+    test('a panel created after another was raised opens above it', () => {
+        // Created panels take the base z-index, which is underneath every panel
+        // raised since the page loaded — so the panel you just asked for opened
+        // behind the ones you did not
+        const other = document.createElement('div');
+        other.style.zIndex = String(config.Z_FLOATING_PANEL);
+        document.body.appendChild(other);
+        registerFloatingPanel(other);
+        bringPanelToFront(other);
+
+        combatLevelPanel.show();
+
+        expect(parseInt(combatLevelPanel.panel.style.zIndex, 10)).toBeGreaterThan(parseInt(other.style.zIndex, 10));
+
+        unregisterFloatingPanel(other);
+        other.remove();
+    });
+
+    test('showing it after its element was taken off the page rebuilds it once', () => {
+        combatLevelPanel.show();
+        const first = combatLevelPanel.panel;
+        first.remove();
+
+        combatLevelPanel.show();
+
+        expect(document.querySelectorAll('#toolasha-combat-level-panel')).toHaveLength(1);
+        expect(combatLevelPanel.panel).not.toBe(first);
+    });
+
+    test('a folded panel is not rebuilt, but its rates keep accruing', () => {
+        combatLevelPanel.show();
+        combatLevelPanel.minimizeCtl = { collapsed: true, destroy: () => {} };
+        const render = vi.spyOn(combatLevelPanel, '_render');
+
+        fire('new_battle');
+        grant('melee', 600_000);
+        vi.advanceTimersByTime(REFRESH_MS * 12);
+
+        expect(render).not.toHaveBeenCalled();
+
+        // Unfolding shows the rate that has been running all along rather than
+        // one starting from nothing: the sampling is outside the render guard
+        combatLevelPanel.minimizeCtl = { collapsed: false, destroy: () => {} };
+        combatLevelPanel._render();
+
+        expect(combatLevelPanel.headerRate.textContent).toContain('exp/hr');
+    });
+
+    test('switching character rebuilds the panel and forgets its targets', () => {
+        combatLevelPanel.show();
+        const before = combatLevelPanel.panel;
+        combatLevelPanel.targets['/skills/melee'] = 150;
+
+        dataManager.emit('character_switched', {});
+
+        expect(combatLevelPanel.panel).not.toBe(null);
+        expect(combatLevelPanel.panel).not.toBe(before);
+        expect(before.isConnected).toBe(false);
+        expect(combatLevelPanel.targets).toEqual({});
+        expect(document.querySelectorAll('#toolasha-combat-level-panel')).toHaveLength(1);
+    });
+
+    test('switching character does not open a panel that was closed', () => {
+        expect(combatLevelPanel.panel).toBe(null);
+
+        dataManager.emit('character_switched', {});
+
+        expect(combatLevelPanel.panel).toBe(null);
     });
 });

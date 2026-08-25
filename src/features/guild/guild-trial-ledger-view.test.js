@@ -23,7 +23,12 @@ const world = vi.hoisted(() => ({
 
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100, getSetting: () => true } }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getCurrentCharacterId: () => 7, getInitClientData: () => ({ abilityDetailMap: {} }) },
+    default: {
+        getCurrentCharacterId: () => 7,
+        getInitClientData: () => ({ abilityDetailMap: {} }),
+        on: () => {},
+        off: () => {},
+    },
 }));
 vi.mock('../../utils/panel-geometry.js', () => ({
     saveCollapsed: async () => {},
@@ -33,6 +38,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveGeometry: () => {},
     saveOpenState: async () => {},
     reopenIfLeftOpen: async () => {},
+    markPanelInteracted: () => {},
 }));
 vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: (definition) => world.rows.push(definition) }));
 vi.mock('./guild-xp-tracker.js', () => ({

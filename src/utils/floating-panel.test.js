@@ -16,6 +16,10 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 vi.mock('./panel-z-index.js', () => ({ bringPanelToFront: () => {} }));
 vi.mock('./mobile.js', () => ({ hasCoarsePointer: vi.fn(() => false) }));
 
+// The real one lives in IndexedDB; only the interaction stamp is wanted here
+const grabbed = vi.hoisted(() => vi.fn());
+vi.mock('./panel-geometry.js', () => ({ markPanelInteracted: grabbed }));
+
 const { makeDraggable, makeResizable } = await import('./floating-panel.js');
 const { hasCoarsePointer } = await import('./mobile.js');
 
@@ -123,5 +127,35 @@ describe('the resize grip', () => {
 
         expect(panel.lastElementChild.style.width).toBe('26px');
         hasCoarsePointer.mockReturnValue(false);
+    });
+});
+
+describe('telling a slow geometry restore that it is out of date', () => {
+    test('taking hold of the header stamps the panel', () => {
+        grabbed.mockClear();
+
+        press(120, 120);
+
+        expect(grabbed).toHaveBeenCalledWith(panel);
+    });
+
+    test('a press on a control in the header is not taking hold of the panel', () => {
+        grabbed.mockClear();
+
+        const button = document.createElement('button');
+        handle.appendChild(button);
+        button.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 120, clientY: 120, bubbles: true }));
+
+        expect(grabbed).not.toHaveBeenCalled();
+    });
+
+    test('taking hold of the resize grip stamps it too', () => {
+        grabbed.mockClear();
+
+        makeResizable(panel, {});
+        const grip = panel.querySelector('.toolasha-resize-grip');
+        grip.dispatchEvent(new MouseEvent('pointerdown', { button: 0, clientX: 400, clientY: 300 }));
+
+        expect(grabbed).toHaveBeenCalledWith(panel);
     });
 });

@@ -28,6 +28,9 @@ const game = vi.hoisted(() => ({
 
 const settings = vi.hoisted(() => ({ values: {} }));
 
+/** Who is logged in, and the data manager's event bus */
+const bus = vi.hoisted(() => ({ characterId: 'char1', handlers: {} }));
+
 vi.mock('../../core/config.js', () => ({
     default: {
         Z_FLOATING_PANEL: 1100,
@@ -71,10 +74,17 @@ vi.mock('../../core/data-manager.js', () => ({
         getSkills: () => [],
         // Per-character keys and the listeners that reload them: the panel's
         // open state is this character's, not the account's
-        getCurrentCharacterId: () => 'char1',
+        getCurrentCharacterId: () => bus.characterId,
         getCurrentCharacterGameMode: () => 'standard',
-        on: () => {},
-        off: () => {},
+        on: (event, handler) => {
+            (bus.handlers[event] ||= []).push(handler);
+        },
+        off: (event, handler) => {
+            bus.handlers[event] = (bus.handlers[event] || []).filter((h) => h !== handler);
+        },
+        emit: (event, payload) => {
+            for (const handler of bus.handlers[event] || []) handler(payload);
+        },
     },
 }));
 vi.mock('../../utils/market-data.js', () => ({ getItemPrices: () => ({}) }));
@@ -92,7 +102,8 @@ vi.mock('../combat-stats/combat-stats-calculator.js', () => ({
 }));
 
 const { consumablesPanel } = await import('./consumables-panel.js');
-const { wasOpen } = await import('../../utils/panel-geometry.js');
+const { wasOpen, _resetCaches } = await import('../../utils/panel-geometry.js');
+const { default: dataManager } = await import('../../core/data-manager.js');
 
 const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -110,6 +121,8 @@ beforeEach(async () => {
     consumablesPanel._profiles = [];
     consumablesPanel._dungeonHistory = [];
     consumablesPanel.hide({ remember: false });
+    bus.characterId = 'char1';
+    _resetCaches();
 });
 
 describe('whether the panel was open', () => {
@@ -439,5 +452,111 @@ describe('the readiness card is not stale', () => {
         const second = consumablesPanel._readinessModel(players(9000));
 
         expect(second).toBe(first);
+    });
+});
+
+describe('the five-second redraw', () => {
+    const REFRESH_MS = 5000;
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        consumablesPanel.hide({ remember: false });
+        vi.useRealTimers();
+    });
+
+    test('a folded panel is not rebuilt', () => {
+        consumablesPanel.show({ remember: false });
+        const render = vi.spyOn(consumablesPanel, '_render');
+
+        consumablesPanel.minimizeCtl = { collapsed: true, destroy: () => {} };
+        vi.advanceTimersByTime(REFRESH_MS * 3);
+
+        expect(render).not.toHaveBeenCalled();
+    });
+
+    test('an open dropdown is not pulled out from under the pointer', async () => {
+        consumablesPanel.show({ remember: false });
+        const render = vi.spyOn(consumablesPanel, '_render');
+        // The stored-readings re-read draws once on its own; let it
+        await vi.advanceTimersByTimeAsync(0);
+        render.mockClear();
+
+        // A `<select>` inside the panel with the keyboard in it: the section
+        // source pickers are exactly this, and rebuilding one shuts its list
+        const picker = document.createElement('select');
+        consumablesPanel.bodyEl.appendChild(picker);
+        picker.focus();
+
+        vi.advanceTimersByTime(REFRESH_MS * 2);
+        expect(render).not.toHaveBeenCalled();
+
+        picker.blur();
+        vi.advanceTimersByTime(REFRESH_MS);
+        expect(render).toHaveBeenCalled();
+    });
+
+    test('a hidden tab is not rebuilt', async () => {
+        consumablesPanel.show({ remember: false });
+        const render = vi.spyOn(consumablesPanel, '_render');
+        await vi.advanceTimersByTimeAsync(0);
+        render.mockClear();
+
+        const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+        vi.advanceTimersByTime(REFRESH_MS * 3);
+        expect(render).not.toHaveBeenCalled();
+
+        hidden.mockReturnValue(false);
+        vi.advanceTimersByTime(REFRESH_MS);
+        expect(render).toHaveBeenCalled();
+    });
+});
+
+describe('switching character', () => {
+    test('the departing character’s panel is torn down without recording a close', async () => {
+        consumablesPanel.show();
+        await settled();
+        const departing = consumablesPanel.panel;
+        expect(departing).not.toBe(null);
+
+        // char2 has nothing flagged open, so the pass finds nothing to reopen
+        bus.characterId = 'char2';
+        _resetCaches();
+        dataManager.emit('character_switched', {});
+        await settled();
+
+        expect(consumablesPanel.panel).toBe(null);
+        expect(departing.isConnected).toBe(false);
+
+        // char1's flag is untouched: a switch is not the user putting the panel
+        // away, and recording it as one would write into char2's flags instead
+        bus.characterId = 'char1';
+        _resetCaches();
+        await expect(wasOpen('consumablesPanel')).resolves.toBe(true);
+    });
+
+    test('the arriving character’s panel reopens', async () => {
+        // char2 left it open last time
+        bus.characterId = 'char2';
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel.hide({ remember: false });
+
+        // char1 is the one logged in, and did not leave it open
+        bus.characterId = 'char1';
+        _resetCaches();
+        dataManager.emit('character_switched', {});
+        await settled();
+        expect(consumablesPanel.panel).toBe(null);
+
+        // now back to char2
+        bus.characterId = 'char2';
+        _resetCaches();
+        dataManager.emit('character_switched', {});
+        await settled();
+
+        expect(consumablesPanel.panel).not.toBe(null);
     });
 });

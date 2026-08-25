@@ -34,6 +34,8 @@ const mocks = vi.hoisted(() => ({
     toggled: [],
     /** What the pointer looks like to auto-detection */
     coarsePointer: false,
+    /** Held open to keep `loadSettings` in flight while the test moves the DOM */
+    loadGate: null,
 }));
 
 vi.mock('../../utils/mobile.js', () => ({
@@ -165,7 +167,10 @@ vi.mock('../../core/storage.js', () => ({
 
 vi.mock('../../core/settings-storage.js', () => ({
     default: {
-        loadSettings: async () => mocks.settingsMap,
+        loadSettings: async () => {
+            if (mocks.loadGate) await mocks.loadGate;
+            return mocks.settingsMap;
+        },
         setSetting: async () => {},
         exportSettings: async () => '{}',
         importSettings: async () => null,
@@ -273,6 +278,7 @@ beforeEach(() => {
     mocks.syncResult = { success: true, count: 0 };
     mocks.toggled = [];
     mocks.coarsePointer = false;
+    mocks.loadGate = null;
     mocks.settingsMap = {};
     for (const group of Object.values(schema)) {
         for (const [id, definition] of Object.entries(group.settings)) {
@@ -756,5 +762,61 @@ describe('the search box', () => {
         expect(applied).toHaveBeenCalledTimes(1);
         expect(row('networth').style.display).toBe('flex');
         applied.mockRestore();
+    });
+});
+
+describe('injecting the tab into a panel React may take away', () => {
+    /**
+     * The game's settings panel, as the selectors expect to find it.
+     * @returns {{host: HTMLElement, tabs: HTMLElement, panels: HTMLElement}}
+     */
+    function gameSettingsPanel() {
+        const host = document.createElement('div');
+        host.className = 'SettingsPanel_tabsComponentContainer__abc';
+        const tabs = document.createElement('div');
+        tabs.className = 'MuiTabs-flexContainer';
+        const panels = document.createElement('div');
+        panels.className = 'TabsComponent_tabPanelsContainer__def';
+        host.append(tabs, panels);
+        document.body.appendChild(host);
+        return { host, tabs, panels };
+    }
+
+    test('the tab lands in the live panel', async () => {
+        const { tabs, panels } = gameSettingsPanel();
+
+        await settingsUI.injectSettingsTab();
+
+        expect(tabs.querySelector('#toolasha-settings-tab')).not.toBeNull();
+        expect(panels.children.length).toBeGreaterThan(0);
+    });
+
+    test('a remount while the settings load is in flight is not appended into', async () => {
+        // The containers are captured before the await; React can replace the
+        // whole panel while storage answers, and appending into the orphans
+        // loses the tab until some later mutation happens to trigger another pass
+        const first = gameSettingsPanel();
+
+        let release;
+        mocks.loadGate = new Promise((resolve) => {
+            release = resolve;
+        });
+
+        const injecting = settingsUI.injectSettingsTab();
+
+        first.host.remove();
+        const second = gameSettingsPanel();
+
+        release();
+        await injecting;
+
+        expect(first.tabs.querySelector('#toolasha-settings-tab')).toBeNull();
+        expect(second.tabs.querySelector('#toolasha-settings-tab')).toBeNull();
+
+        // And the next pass, against the live panel, works
+        mocks.loadGate = null;
+        await settingsUI.injectSettingsTab();
+
+        expect(second.tabs.querySelector('#toolasha-settings-tab')).not.toBeNull();
     });
 });

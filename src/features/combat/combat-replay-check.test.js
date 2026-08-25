@@ -69,6 +69,8 @@ vi.mock('../../core/data-manager.js', () => ({
         // The panel's draw reaches storage through the character key
         getCurrentCharacterId: () => 'char1',
         getCurrentCharacterGameMode: () => 'standard',
+        on: () => {},
+        off: () => {},
     },
 }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
@@ -99,6 +101,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveOpenState: async () => {},
     wasOpen: async () => false,
     reopenIfLeftOpen: async () => {},
+    markPanelInteracted: () => {},
 }));
 
 import replayCheck, {

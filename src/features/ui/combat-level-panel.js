@@ -527,7 +527,15 @@ class CombatLevelPanel {
             bringPanelToFront(this.panel);
             return;
         }
+        // Held but no longer in the document — torn down rather than abandoned,
+        // or its refresh timer and its listeners would still be running and each
+        // reopen would leave another set behind
+        if (this.panel) this._remove();
         this._create();
+        // A new panel opens at the base z-index, which is *underneath* every
+        // panel raised since the page loaded — so the panel you just asked for
+        // appears behind the ones you did not
+        bringPanelToFront(this.panel);
     }
 
     hide() {
@@ -601,6 +609,17 @@ class CombatLevelPanel {
         this._render();
         this.refreshId = setInterval(() => {
             if (document.hidden) return;
+            // Sampled here as well as in `_render`, and before the fold guard:
+            // the exp/hr figures are a rate measured between readings, so a
+            // panel folded away for ten minutes would come back with a hole in
+            // its history and a rate starting from nothing. `sample` is rate
+            // limited to one reading per SAMPLE_MS, so the reading `_render`
+            // takes a line later on an expanded panel is the same one.
+            sample();
+            // Nobody can see a folded panel, and rebuilding its body every five
+            // seconds for the rest of the session buys nothing — expanding
+            // re-renders on the way out
+            if (this.minimizeCtl?.collapsed) return;
             this._refresh();
         }, REFRESH_MS);
     }
@@ -1647,6 +1666,20 @@ class CombatLevelPanel {
 }
 
 export const combatLevelPanel = new CombatLevelPanel();
+
+// The panel reads one character's skills, so it cannot simply carry on into the
+// next one. Torn down and rebuilt rather than left to redraw, because the levels
+// it is aiming at and the two ends of its experience lookup are answers about
+// the character that has just been left. Which sections are folded is not — that
+// is how you like the panel laid out — so it stays. Reopened only if it was
+// already up: a switch is not the user opening a panel, or closing one.
+dataManager.on('character_switched', () => {
+    if (!combatLevelPanel.panel) return;
+    combatLevelPanel.hide();
+    combatLevelPanel.targets = {};
+    combatLevelPanel.lookup = { from: null, to: null };
+    combatLevelPanel.show();
+});
 
 registerRow({
     key: 'combatLevel',

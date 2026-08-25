@@ -44,6 +44,43 @@ const openLoading = new Map();
 const EDGE_KEEP = 30;
 
 /**
+ * How many times each panel has been grabbed, so a slow restore can tell whether
+ * it is still describing the panel it was called about.
+ *
+ * `restoreGeometry` is called and not awaited, and what it waits on is an
+ * IndexedDB read. On a cold database that read can land seconds after the panel
+ * opened — long enough for the panel to have been dragged somewhere and resized
+ * — and it then writes the *stored* left/top/width/height over the top, so the
+ * panel jumps back under the pointer and the drag reads as having been refused.
+ * A counter rather than a flag: a panel opened, dragged, closed and reopened is
+ * a fresh restore that should apply again, and the counter compares only against
+ * the value taken when this particular call started.
+ */
+const interactions = new WeakMap();
+
+/**
+ * Note that the user has just taken hold of a panel.
+ *
+ * Called by the drag and resize handles on pointerdown, which is before the
+ * panel has actually moved — taking hold of it is already enough to say that
+ * whatever storage is about to answer is out of date.
+ *
+ * @param {HTMLElement} panel - The panel being grabbed
+ */
+export function markPanelInteracted(panel) {
+    if (!panel) return;
+    interactions.set(panel, (interactions.get(panel) || 0) + 1);
+}
+
+/**
+ * @param {HTMLElement} panel - The panel
+ * @returns {number} How many times it has been grabbed
+ */
+function interactionCount(panel) {
+    return (panel && interactions.get(panel)) || 0;
+}
+
+/**
  * Hold a saved geometry inside the current window.
  *
  * Size is capped at the viewport, since a panel restored wider than the screen
@@ -295,11 +332,17 @@ export async function savedSize(panelKey) {
  * @returns {Promise<void>}
  */
 export async function restoreGeometry(panel, panelKey, min, { position = true } = {}) {
+    const grabsBefore = interactionCount(panel);
     const all = await allGeometry();
     const clamped = clampGeometry(all[panelKey], { width: window.innerWidth, height: window.innerHeight }, min);
     if (!panel?.isConnected) return;
 
-    if (clamped) {
+    // Moved or resized while the read was in flight — where the panel is now is
+    // what the user just asked for, and is newer than anything stored. The clamp
+    // below still runs: a panel dragged off the edge should come back either way.
+    const grabbed = interactionCount(panel) !== grabsBefore;
+
+    if (clamped && !grabbed) {
         if (clamped.width) panel.style.width = `${clamped.width}px`;
         if (clamped.height) panel.style.height = `${clamped.height}px`;
         if (position && clamped.left !== undefined) {

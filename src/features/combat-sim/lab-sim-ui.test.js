@@ -93,6 +93,8 @@ vi.mock('../../core/data-manager.js', () => ({
                 characterSetting: game.characterSetting,
             };
         },
+        on: () => {},
+        off: () => {},
     },
 }));
 
@@ -131,6 +133,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     reopenIfLeftOpen: async (panelKey, reopen) => {
         if (geometry.wasOpen) reopen();
     },
+    markPanelInteracted: () => {},
 }));
 
 vi.mock('./combat-sim-adapter.js', () => ({

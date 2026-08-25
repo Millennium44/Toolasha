@@ -40,6 +40,7 @@ function fakeErrorLog(initial = []) {
             listeners.add(fn);
             return () => listeners.delete(fn);
         },
+        listenerCount: () => listeners.size,
         push: (entry) => {
             entries = [entry, ...entries];
             for (const fn of listeners) fn([...entries]);
@@ -308,5 +309,53 @@ describe('helpers', () => {
         expect(allClear({ canary: [], schema: [], selectorAudit: { broken: [] }, errors: [] })).toBe(true);
         expect(allClear({ canary: [], schema: [], selectorAudit: null, errors: [] })).toBe(true);
         expect(allClear({ canary: [{}], schema: [], selectorAudit: null, errors: [] })).toBe(false);
+    });
+});
+
+describe('letting go once the settings tab is gone', () => {
+    test('React taking the tab away unsubscribes on the next error', () => {
+        // `destroy` only runs on a character switch or a re-injection, and React
+        // unmounts the settings panel long before either — so the subscription
+        // outlived the section and rebuilt a list inside a detached tree for the
+        // rest of the session, once per section ever opened
+        const log = fakeErrorLog([]);
+        const { element, open } = draw({ errorLog: log });
+        open();
+        expect(log.listenerCount()).toBe(1);
+
+        element.remove();
+        log.push({ ts: NOW, kind: 'console', module: 'Tasks', message: '[Tasks] oops', stack: '', count: 1 });
+
+        expect(log.listenerCount()).toBe(0);
+        expect(element.querySelectorAll('.toolasha-diagnostics-error')).toHaveLength(0);
+    });
+
+    test('a section still on the page keeps following the log', () => {
+        const log = fakeErrorLog([]);
+        const { element, open } = draw({ errorLog: log });
+        open();
+
+        log.push({ ts: NOW, kind: 'console', module: 'Tasks', message: '[Tasks] oops', stack: '', count: 1 });
+
+        expect(log.listenerCount()).toBe(1);
+        expect(element.querySelectorAll('.toolasha-diagnostics-error')).toHaveLength(1);
+    });
+
+    test('building a section the caller has not appended yet still draws', () => {
+        // The guard must not fire during `build`: the section is legitimately
+        // detached until whoever asked for it puts it on the page
+        const section = createDiagnosticsSection({
+            status,
+            checks: cleanChecks(),
+            errorLog: fakeErrorLog([
+                { ts: NOW, kind: 'console', module: 'Tasks', message: '[Tasks] oops', stack: '', count: 1 },
+            ]),
+            writeClipboard,
+            now: () => NOW,
+        });
+        section.open();
+
+        expect(section.element.querySelectorAll('.toolasha-diagnostics-error')).toHaveLength(1);
+        section.destroy();
     });
 });

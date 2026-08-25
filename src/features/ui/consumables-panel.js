@@ -188,7 +188,15 @@ class ConsumablesPanel {
             bringPanelToFront(this.panel);
             return;
         }
+        // Held but no longer in the document — torn down rather than abandoned,
+        // or its refresh timer and its listeners would still be running and each
+        // reopen would leave another set behind
+        if (this.panel) this._remove();
         this._create();
+        // A new panel opens at the base z-index, which is *underneath* every
+        // panel raised since the page loaded — so the panel you just asked for
+        // appears behind the ones you did not
+        bringPanelToFront(this.panel);
     }
 
     /**
@@ -1213,10 +1221,32 @@ class ConsumablesPanel {
 
         this._render();
         // Stock and rates both move as you play, and prices move under them
-        this.refreshId = setInterval(() => {
-            if (document.hidden) return;
-            this._render();
-        }, REFRESH_MS);
+        this.refreshId = setInterval(() => this._tick(), REFRESH_MS);
+    }
+
+    /**
+     * The five-second redraw, which leaves alone a panel nobody can see and a
+     * control somebody is in the middle of.
+     *
+     * A redraw here rebuilds the whole body, and this panel is full of `<select>`
+     * elements — the zone picker, the per-section source pickers. Rebuilding one
+     * closes its dropdown, so a list read for more than five seconds shut itself
+     * under the pointer, which reads as the panel refusing to be used rather than
+     * as a redraw. A hidden tab and a folded panel are the other half: both draw
+     * a body that is not on screen, and both end by drawing again — `show` and
+     * expanding each re-render, and the interval picks the panel back up on its
+     * next tick once the tab is visible.
+     *
+     * @private
+     */
+    _tick() {
+        if (document.hidden) return;
+        if (this.minimizeCtl?.collapsed) return;
+
+        const active = document.activeElement;
+        if (this.panel?.contains(active) && ['INPUT', 'SELECT', 'TEXTAREA'].includes(active.tagName)) return;
+
+        this._render();
     }
 
     _header() {
@@ -2143,6 +2173,18 @@ export const consumablesPanel = new ConsumablesPanel();
 // has to reopen if the page was left with it up.
 consumablesPanel.loadSettings();
 consumablesPanel.restore();
+
+// And restored again on every character switch. The open flags are per
+// character, so running the pass once at module scope meant only the character
+// logged in first ever had its panel come back — while the previous character's
+// panel simply carried on, showing their stock against their plan. The teardown
+// passes `remember: false` on purpose: a switch is not the user closing the
+// panel, and recording it as one would write the departing character's
+// arrangement into the arriving character's flags.
+dataManager.on('character_switched', () => {
+    consumablesPanel.hide({ remember: false });
+    consumablesPanel.restore();
+});
 
 /** Console handle, since a panel that only opens from the overlay is hard to reach */
 if (typeof window !== 'undefined') {

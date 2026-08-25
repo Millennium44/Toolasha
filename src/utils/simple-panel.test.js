@@ -3,15 +3,32 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Geometry lives in IndexedDB and is never what these tests are about
+const geometry = vi.hoisted(() => ({ saveOpenState: vi.fn(async () => {}), reopen: vi.fn(async () => {}) }));
 vi.mock('./panel-geometry.js', () => ({
     restoreGeometry: vi.fn(),
     saveGeometry: vi.fn(),
-    saveOpenState: async () => {},
+    saveOpenState: geometry.saveOpenState,
     wasOpen: async () => false,
-    reopenIfLeftOpen: async () => {},
+    reopenIfLeftOpen: (key, reopen) => geometry.reopen(key, reopen),
     saveCollapsed: async () => {},
     wasCollapsed: async () => false,
     savedSize: async () => null,
+}));
+
+/** The data manager's event bus, reduced to the one event these panels listen for */
+const bus = vi.hoisted(() => ({ handlers: {} }));
+vi.mock('../core/data-manager.js', () => ({
+    default: {
+        on: (event, handler) => {
+            (bus.handlers[event] ||= []).push(handler);
+        },
+        off: (event, handler) => {
+            bus.handlers[event] = (bus.handlers[event] || []).filter((h) => h !== handler);
+        },
+        emit: (event, payload) => {
+            for (const handler of bus.handlers[event] || []) handler(payload);
+        },
+    },
 }));
 
 vi.mock('./panel-z-index.js', () => ({
@@ -41,6 +58,8 @@ vi.mock('./panel-minimize.js', () => ({
 }));
 
 const { createPanel, panelCard, panelLine, panelNote } = await import('./simple-panel.js');
+const { bringPanelToFront } = await import('./panel-z-index.js');
+const { default: dataManager } = await import('../core/data-manager.js');
 
 const SIZE = { width: 300, height: 200 };
 
@@ -221,5 +240,98 @@ describe('a body nobody can see is not redrawn', () => {
         minimize.collapsed = false;
         minimize.onToggle(false);
         expect(draw).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('where a newly opened panel sits', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        document.body.replaceChildren();
+        bringPanelToFront.mockClear();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('a panel created after another was raised is brought to the front too', () => {
+        // The bug: a panel takes the base z-index at create, and every panel
+        // raised since the page loaded is already above it — so the panel you
+        // just asked for opens behind the ones you did not
+        const panel = createPanel({ id: 'late', title: 'Late', size: SIZE, draw: () => {} });
+
+        panel.show();
+
+        expect(bringPanelToFront).toHaveBeenCalledWith(panel.panel);
+    });
+
+    test('showing a panel whose element was taken out of the document rebuilds it once', () => {
+        const draw = vi.fn();
+        const panel = createPanel({ id: 'detached', title: 'Detached', size: SIZE, draw });
+
+        panel.show();
+        const first = panel.panel;
+        // What the game does to a docked panel when it takes the column away
+        first.remove();
+
+        panel.show();
+        draw.mockClear();
+
+        vi.advanceTimersByTime(3000);
+
+        // One interval, not two: the old panel's timer was cleared rather than
+        // left running alongside the new one
+        expect(draw).toHaveBeenCalledTimes(1);
+        expect(panel.panel).not.toBe(first);
+    });
+});
+
+describe('switching character', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        document.body.replaceChildren();
+        bus.handlers = {};
+        geometry.saveOpenState.mockClear();
+        geometry.reopen.mockClear();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('the departing character’s panel is closed without recording a close', () => {
+        const panel = createPanel({ id: 'switch', title: 'Switch', size: SIZE, draw: () => {} });
+        panel.show();
+        geometry.saveOpenState.mockClear();
+
+        dataManager.emit('character_switched', {});
+
+        expect(panel.panel).toBe(null);
+        // A switch is not the user closing the panel; writing `false` here would
+        // put the departing character's arrangement into the arriving one's flags
+        expect(geometry.saveOpenState).not.toHaveBeenCalled();
+    });
+
+    test('the arriving character’s reopen pass runs again', () => {
+        createPanel({ id: 'switch', title: 'Switch', size: SIZE, draw: () => {} });
+        geometry.reopen.mockClear();
+
+        dataManager.emit('character_switched', {});
+
+        expect(geometry.reopen).toHaveBeenCalledWith('switch', expect.any(Function));
+    });
+
+    test('a panel the arriving character left open comes back', () => {
+        const panel = createPanel({ id: 'switch', title: 'Switch', size: SIZE, draw: () => {} });
+        geometry.reopen.mockClear();
+
+        dataManager.emit('character_switched', {});
+
+        // What `reopenIfLeftOpen` does once it has read the new character's flags
+        const [, reopen] = geometry.reopen.mock.calls.at(-1);
+        reopen();
+
+        expect(panel.panel).not.toBe(null);
+        expect(geometry.saveOpenState).not.toHaveBeenCalled();
     });
 });

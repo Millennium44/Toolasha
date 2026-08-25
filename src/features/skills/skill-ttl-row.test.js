@@ -18,6 +18,9 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getSkills: () => game.skills,
         getInitClientData: () => ({ levelExperienceTable: game.table }),
+        on: () => {},
+        off: () => {},
+        getCurrentCharacterId: () => 'char1',
     },
 }));
 
@@ -34,6 +37,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveOpenState: async () => {},
     wasOpen: async () => false,
     reopenIfLeftOpen: async () => {},
+    markPanelInteracted: () => {},
 }));
 
 vi.mock('../../utils/experience-parser.js', () => ({

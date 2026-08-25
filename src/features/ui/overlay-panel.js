@@ -685,7 +685,12 @@ class OverlayPanel {
         });
 
         document.body.appendChild(this.panel);
-        registerFloatingPanel(this.panel);
+        // `managedZ: false`: this panel's z-index is `_refreshStacking`'s to set
+        // and nobody else's. It is registered only for the viewport clamp — the
+        // shared bring-to-front would raise an always-on readout over the game's
+        // own UI, and the cap-overflow renumber would do it on its own after
+        // enough raises in a long session
+        registerFloatingPanel(this.panel, { managedZ: false });
         // Unlocked across a reload means the panel comes back mid-arrangement,
         // and it should come back raised rather than underneath the game
         this._refreshStacking();

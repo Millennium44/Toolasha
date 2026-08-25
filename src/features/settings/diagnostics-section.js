@@ -408,7 +408,29 @@ export function createDiagnosticsSection(options = {}) {
         }
     };
 
+    /**
+     * Let go of the error log once the section is no longer on the page.
+     *
+     * `destroy` is only called on a character switch or a re-injection, and
+     * React takes the settings tab away long before either — so the subscription
+     * outlived the section, and every captured error afterwards rebuilt a list
+     * inside a detached tree, once per section the settings panel had ever been
+     * opened with. There is no unmount hook to hang this on, so it heals itself
+     * on the first event that arrives after the section has gone.
+     *
+     * Only after `build` has subscribed: before that the section is legitimately
+     * detached, because the caller has not appended it yet.
+     *
+     * @returns {boolean} Whether the section has been let go
+     */
+    const stopIfDetached = () => {
+        if (!unsubscribe || group.isConnected) return false;
+        destroy();
+        return true;
+    };
+
     const renderStatus = () => {
+        if (stopIfDetached()) return;
         if (!statusEl) return;
         try {
             statusEl.textContent = statusLine(status(), currentErrors().length);
@@ -418,6 +440,7 @@ export function createDiagnosticsSection(options = {}) {
     };
 
     const renderErrors = () => {
+        if (stopIfDetached()) return;
         if (!errorsEl) return;
         const entries = currentErrors();
         errorsTitle.textContent = entries.length

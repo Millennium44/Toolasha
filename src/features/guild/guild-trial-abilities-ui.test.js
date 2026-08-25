@@ -18,6 +18,8 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => ({ abilityDetailMap: game.abilityDetailMap }),
         getCurrentCharacterId: () => 'me',
+        on: () => {},
+        off: () => {},
     },
 }));
 
@@ -41,6 +43,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveOpenState: async () => {},
     wasOpen: async () => false,
     reopenIfLeftOpen: async () => {},
+    markPanelInteracted: () => {},
 }));
 
 /** The loadout capture, reduced to the two calls the panel makes */

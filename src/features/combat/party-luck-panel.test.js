@@ -25,6 +25,9 @@ vi.mock('../../core/data-manager.js', () => ({
         getActionDetails: () => game.actionDetail,
         getInitClientData: () => ({ combatMonsterDetailMap: game.monsters }),
         getItemDetails: (hrid) => ({ '/items/a': { name: 'Apple' } })[hrid],
+        on: () => {},
+        off: () => {},
+        getCurrentCharacterId: () => 'char1',
     },
 }));
 vi.mock('../../core/config.js', () => ({
@@ -57,6 +60,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveOpenState: async () => {},
     wasOpen: async () => false,
     reopenIfLeftOpen: async () => {},
+    markPanelInteracted: () => {},
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 

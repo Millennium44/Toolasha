@@ -10,6 +10,7 @@
  */
 
 import { bringPanelToFront } from './panel-z-index.js';
+import { markPanelInteracted } from './panel-geometry.js';
 import { hasCoarsePointer } from './mobile.js';
 
 /**
@@ -72,6 +73,9 @@ export function makeDraggable(panel, handle, onDrop) {
         if (event.button !== 0 || event.target.closest('button, input, select')) return;
 
         bringPanelToFront(panel);
+        // Before the panel has moved, so a `restoreGeometry` still waiting on
+        // storage knows its answer is stale and does not snap the panel back
+        markPanelInteracted(panel);
         dragging = true;
         moved = false;
         const rect = panel.getBoundingClientRect();
@@ -160,6 +164,7 @@ export function makeResizable(panel, { minWidth = 200, minHeight = 80, onResize 
 
     const onPointerDown = (event) => {
         if (event.button !== 0) return;
+        markPanelInteracted(panel);
         resizing = true;
         const rect = panel.getBoundingClientRect();
         startX = event.clientX;

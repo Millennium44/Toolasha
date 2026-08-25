@@ -11,6 +11,19 @@ import { clampPanelToViewport } from './panel-geometry.js';
 const panels = new Set();
 
 /**
+ * Panels that keep their own z-index.
+ *
+ * The overlay is the one of these: it is always up, so at rest it deliberately
+ * sits at `Z_HUD` — *below* the game's own interactive UI — and rises to the
+ * panel band only while it is being arranged. The cap-overflow renumber below
+ * rewrites every registered panel from the base upward, which would promote that
+ * always-on panel over the game's tabs and ability bar after enough raises in a
+ * session, and would stamp an inline z-index on a docked panel that has no
+ * business having one. A panel registered with `managedZ: false` is left alone.
+ */
+const selfManaged = new WeakSet();
+
+/**
  * The highest z-index any registered floating panel may reach.
  *
  * Exported so anything that must sit above every panel — the choice dialog's
@@ -32,9 +45,15 @@ const RESIZE_DEBOUNCE_MS = 200;
  * appended, and an element the browser has not laid out yet measures as nothing.
  *
  * @param {HTMLElement} el - The panel element
+ * @param {Object} [options] - Options
+ * @param {boolean} [options.managedZ=true] - `false` for a panel that decides
+ *   its own z-index; it still gets the viewport clamp, but is never renumbered
+ *   and never raised by {@link bringPanelToFront}
  */
-export function registerFloatingPanel(el) {
+export function registerFloatingPanel(el, { managedZ = true } = {}) {
     panels.add(el);
+    if (managedZ) selfManaged.delete(el);
+    else selfManaged.add(el);
     afterLayout(() => {
         try {
             if (panels.has(el)) clampPanelToViewport(el);
@@ -59,6 +78,7 @@ function afterLayout(run) {
  */
 export function unregisterFloatingPanel(el) {
     panels.delete(el);
+    selfManaged.delete(el);
 }
 
 /**
@@ -67,11 +87,18 @@ export function unregisterFloatingPanel(el) {
  * @param {HTMLElement} el - The panel to bring forward
  */
 export function bringPanelToFront(el) {
+    // A panel that owns its own stacking is not raised by anyone else — the
+    // overlay drops back to Z_HUD the moment it is locked again, so a raise here
+    // would be undone at best and would leave a docked panel with a stray inline
+    // z-index at worst
+    if (selfManaged.has(el)) return;
+
     const base = config.Z_FLOATING_PANEL;
     const cap = PANEL_Z_CAP;
 
     let maxZ = base;
     for (const p of panels) {
+        if (selfManaged.has(p)) continue;
         const z = parseInt(p.style.zIndex) || base;
         if (z > maxZ) maxZ = z;
     }
@@ -81,7 +108,8 @@ export function bringPanelToFront(el) {
         // Overflow — reassign all from base upward, put el last
         let i = base;
         for (const p of panels) {
-            if (p !== el) p.style.zIndex = String(i++);
+            if (p === el || selfManaged.has(p)) continue;
+            p.style.zIndex = String(i++);
         }
         el.style.zIndex = String(i);
     } else {

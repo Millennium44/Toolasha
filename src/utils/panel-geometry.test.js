@@ -60,6 +60,7 @@ const {
     restoreGeometry,
     clampGeometry,
     clampPanelToViewport,
+    markPanelInteracted,
     _resetCaches,
 } = await import('./panel-geometry.js');
 const { _resetAdoptionCache } = await import('./character-key.js');
@@ -244,6 +245,63 @@ describe('holding a panel that is already on screen inside the window', () => {
 
         expect(panel.style.width).toBe('400px');
         expect(parseFloat(panel.style.left)).toBe(0);
+    });
+
+    test('a panel grabbed while the read was in flight keeps where the drag left it', async () => {
+        // A wide window, so nothing here is the viewport clamp's doing
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
+        Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+
+        await saveGeometry('slow', { left: 900, top: 60, width: 500, height: 300 });
+        _resetCaches();
+
+        const panel = panelAt({ left: 900, top: 60, width: 500, height: 300 });
+
+        // Not awaited, exactly as every panel shell calls it — the storage read
+        // is still outstanding when the user takes hold of the panel
+        const restoring = restoreGeometry(panel, 'slow', { width: 200, height: 80 });
+
+        markPanelInteracted(panel);
+        panel.style.left = '120px';
+        panel.style.top = '400px';
+        panel.style.width = '640px';
+
+        await restoring;
+
+        expect(panel.style.left).toBe('120px');
+        expect(panel.style.top).toBe('400px');
+        expect(panel.style.width).toBe('640px');
+    });
+
+    test('an untouched panel is still restored', async () => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
+        Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+
+        await saveGeometry('quiet', { left: 900, top: 60, width: 500, height: 300 });
+        _resetCaches();
+
+        const panel = panelAt({ left: 20, top: 20, width: 500, height: 300 });
+        await restoreGeometry(panel, 'quiet', { width: 200, height: 80 });
+
+        expect(panel.style.left).toBe('900px');
+        expect(panel.style.top).toBe('60px');
+    });
+
+    test('a panel grabbed on a previous open is restored on the next one', async () => {
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
+        Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+
+        await saveGeometry('again', { left: 700, top: 90, width: 500, height: 300 });
+        _resetCaches();
+
+        const panel = panelAt({ left: 20, top: 20, width: 500, height: 300 });
+        markPanelInteracted(panel);
+
+        // The count is compared against what it was when *this* call started, so
+        // a grab that happened before it does not veto it
+        await restoreGeometry(panel, 'again', { width: 200, height: 80 });
+
+        expect(panel.style.left).toBe('700px');
     });
 });
 

@@ -10,7 +10,12 @@ vi.mock('../../core/config.js', () => ({
     default: { getSetting: (key) => (key === 'manaTracker' ? game.manaTracker : false) },
 }));
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getInitClientData: () => ({ abilityDetailMap: game.abilityDetailMap }) },
+    default: {
+        getInitClientData: () => ({ abilityDetailMap: game.abilityDetailMap }),
+        getCurrentCharacterId: () => 'char1',
+        on: () => {},
+        off: () => {},
+    },
 }));
 vi.mock('../../core/websocket.js', () => ({
     default: {

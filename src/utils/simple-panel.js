@@ -13,6 +13,7 @@
  */
 
 import config from '../core/config.js';
+import dataManager from '../core/data-manager.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from './panel-z-index.js';
 import { makeDraggable, makeResizable } from './floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from './panel-geometry.js';
@@ -186,7 +187,15 @@ export function createPanel({ id, title, size, draw, accent = '#8fb4ff', refresh
                 bringPanelToFront(panel);
                 return;
             }
+            // Held but no longer in the document — torn down rather than
+            // abandoned, or its refresh timer and its listeners would still be
+            // running and each reopen would leave another set behind
+            if (panel) api.hide({ remember: false });
             create();
+            // A new panel opens at the base z-index, which is *underneath* every
+            // panel that has been raised since the page loaded — so the panel you
+            // just asked for appears behind the ones you did not
+            bringPanelToFront(panel);
         },
         hide({ remember = true } = {}) {
             if (remember) saveOpenState(id, false);
@@ -219,6 +228,18 @@ export function createPanel({ id, title, size, draw, accent = '#8fb4ff', refresh
     // the panel appears a moment after the rest of the page, which is what a
     // remembered panel looks like anyway.
     reopenIfLeftOpen(id, () => api.show({ remember: false }));
+
+    // And again on every character switch. The open flags are per character, so
+    // running this once at module scope meant the panels the *first* character
+    // logged in as had left open were the only ones that ever came back. The
+    // teardown is the other half and the reason `remember: false` matters: a
+    // switch is not the user closing the panel, and recording it as one would
+    // write the departing character's arrangement into the arriving character's
+    // flags.
+    dataManager.on('character_switched', () => {
+        api.hide({ remember: false });
+        reopenIfLeftOpen(id, () => api.show({ remember: false }));
+    });
 
     return api;
 }

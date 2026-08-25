@@ -19,6 +19,9 @@ vi.mock('../../core/data-manager.js', () => ({
     default: {
         getEquipment: () => game.equipment,
         getItemDetails: () => undefined,
+        on: () => {},
+        off: () => {},
+        getCurrentCharacterId: () => 'char1',
     },
 }));
 vi.mock('../../core/config.js', () => ({ default: { Z_FLOATING_PANEL: 1100 } }));
@@ -31,6 +34,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveOpenState: async () => {},
     wasOpen: async () => false,
     reopenIfLeftOpen: async () => {},
+    markPanelInteracted: () => {},
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../utils/market-data.js', () => ({

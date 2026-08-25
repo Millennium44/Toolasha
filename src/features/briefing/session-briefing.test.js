@@ -54,6 +54,8 @@ vi.mock('../../core/data-manager.js', () => ({
         get characterQuests() {
             return game.characterQuests;
         },
+        on: () => {},
+        off: () => {},
     },
 }));
 
@@ -76,6 +78,7 @@ vi.mock('../../utils/panel-geometry.js', () => ({
     saveOpenState: async () => {},
     wasOpen: async () => false,
     reopenIfLeftOpen: async () => {},
+    markPanelInteracted: () => {},
 }));
 
 vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: () => {} }));

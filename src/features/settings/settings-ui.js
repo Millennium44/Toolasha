@@ -392,6 +392,15 @@ class SettingsUI {
             const [currentSettings] = await Promise.all([settingsStorage.loadSettings(), this.loadPanelState()]);
             this.currentSettings = currentSettings;
 
+            // React can remount the settings panel while that read is in flight,
+            // and the two containers captured above are then orphaned nodes. The
+            // tab would be appended into a tree nobody is looking at and stay
+            // missing until the next mutation happened to trigger another pass.
+            // Bailing leaves the observer to fire again against the live panel.
+            if (!tabsContainer.isConnected || !tabPanelsContainer.isConnected) {
+                return;
+            }
+
             // Get existing tabs for reference
             const existingTabs = Array.from(tabsContainer.querySelectorAll('button[role="tab"]'));
 

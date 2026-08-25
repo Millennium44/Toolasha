@@ -41,6 +41,73 @@ describe('PANEL_Z_CAP', () => {
     });
 });
 
+describe('a panel that keeps its own z-index', () => {
+    const registered = [];
+
+    afterEach(() => {
+        registered.forEach((el) => {
+            unregisterFloatingPanel(el);
+            el.remove();
+        });
+        registered.length = 0;
+    });
+
+    /** @param {HTMLElement} el - Panel @param {Object} [opts] - Registration options */
+    function keep(el, opts) {
+        registerFloatingPanel(el, opts);
+        registered.push(el);
+        return el;
+    }
+
+    test('the cap-overflow renumber leaves it alone', () => {
+        // The overlay: always up, so it deliberately sits below the game's own
+        // UI rather than over the tabs and the ability bar
+        const overlay = keep(makePanel(), { managedZ: false });
+        overlay.style.zIndex = String(config.Z_HUD);
+
+        const a = keep(makePanel());
+        const b = keep(makePanel());
+
+        // Enough raises to walk past the cap and force the renumber
+        for (let i = 0; i < 120; i += 1) {
+            bringPanelToFront(i % 2 ? a : b);
+        }
+
+        expect(parseInt(overlay.style.zIndex, 10)).toBe(config.Z_HUD);
+        expect(parseInt(a.style.zIndex, 10)).toBeLessThanOrEqual(PANEL_Z_CAP);
+        expect(parseInt(b.style.zIndex, 10)).toBeLessThanOrEqual(PANEL_Z_CAP);
+    });
+
+    test('is not raised by bringPanelToFront either', () => {
+        const overlay = keep(makePanel(), { managedZ: false });
+        overlay.style.zIndex = String(config.Z_HUD);
+
+        bringPanelToFront(overlay);
+
+        expect(overlay.style.zIndex).toBe(String(config.Z_HUD));
+    });
+
+    test('a docked panel never picks up an inline z-index from the renumber', () => {
+        const overlay = keep(makePanel(), { managedZ: false });
+        overlay.dataset.docked = 'true';
+        overlay.style.zIndex = 'auto';
+
+        const other = keep(makePanel());
+        for (let i = 0; i < 120; i += 1) bringPanelToFront(other);
+
+        expect(overlay.style.zIndex).toBe('auto');
+    });
+
+    test('re-registering the same element as managed puts it back in the band', () => {
+        const panel = keep(makePanel(), { managedZ: false });
+        registerFloatingPanel(panel);
+
+        bringPanelToFront(panel);
+
+        expect(parseInt(panel.style.zIndex, 10)).toBeGreaterThan(config.Z_FLOATING_PANEL);
+    });
+});
+
 describe('bringPanelToFront', () => {
     const registered = [];
 

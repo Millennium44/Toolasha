@@ -2765,6 +2765,10 @@ export const settingsGroups = {
                 label: 'Session briefing: One card on login saying what needs you',
                 type: 'checkbox',
                 default: true,
+                // The briefing is drawn once, at login. Turning it on mid-session
+                // has nothing left to draw and turning it off leaves the card
+                // that is already up — so say so rather than look broken.
+                requiresRefresh: true,
                 help:
                     'Every other warning in the script fires while you are here, so the one thing none of them can ' +
                     'cover is the time you were away. This meets you at the door with only the lines that have ' +
@@ -2780,6 +2784,11 @@ export const settingsGroups = {
                 label: 'Overlay Panel: One floating panel other features add a row to',
                 type: 'checkbox',
                 default: true,
+                // The overlay's `initialize` returns immediately when the switch
+                // is off, and there is no matching teardown — turning it on does
+                // nothing until the page reloads, and turning it off leaves the
+                // panel running. Both are honest only with a reload.
+                requiresRefresh: true,
                 help: 'A configurable overlay. Open it from the Overlay tab beside Inventory, then use the gear to choose which rows show and in what order. Rows appear as features gain them. Its ⇲ button docks it below the character tabs, where it takes its own space instead of covering the game',
             },
             overlayTabButton: {
