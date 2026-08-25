@@ -68,6 +68,14 @@ export function nextRerollCostInRatingUnits(coinRerollCount, ratingMode, tokenVa
  * compared in the rating's own per-hour units: the task has to trail the board
  * by more than the reroll costs before replacing it is worth doing.
  *
+ * Those hours are the FULL task's, which is the same span the ratings and the
+ * board median are computed over. Amortising over the hours *remaining* looked
+ * like the same thing and was not: as a task neared completion its remaining
+ * hours went to zero, the per-hour cost went to infinity, and a 90%-done task
+ * paying badly could never be flagged however bad it was — the one case the
+ * rule exists for. `task-profit-display.js` writes the rating's own span onto
+ * the rating line so both sides of this comparison come off one basis.
+ *
  * @param {{value: number, hours: number|null}|undefined} entry - The card's rating
  * @param {number|null} boardMedian - Median rating across the visible board
  * @param {number|null} rerollCost - Next reroll's cost in rating units

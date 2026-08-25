@@ -20,7 +20,7 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 const game = vi.hoisted(() => ({
     rows: {},
     quests: [],
-    valuation: { tokenValue: 4000, giftPerTask: 1000, totalPerToken: 5000, error: null },
+    valuation: { tokenValue: 4000, giftPerTask: 1000, error: null },
     popupOpen: false,
     shown: 0,
     closed: 0,
@@ -130,7 +130,7 @@ function draw() {
 describe('the task tokens tile', () => {
     beforeEach(() => {
         game.quests = [];
-        game.valuation = { tokenValue: 4000, giftPerTask: 1000, totalPerToken: 5000, error: null };
+        game.valuation = { tokenValue: 4000, giftPerTask: 1000, error: null };
         game.popupOpen = false;
         game.shown = 0;
         game.closed = 0;
@@ -155,7 +155,23 @@ describe('the task tokens tile', () => {
 
         const container = draw();
         expect(container.textContent).toContain('6');
-        expect(container.textContent).toContain('30.00K');
+        // 6 tokens at 4,000 plus one prorated gift per TASK, not per token
+        expect(container.textContent).toContain('27.00K');
+    });
+
+    test('the gift is prorated per task, so a multi-token board is not credited a gift a token', () => {
+        // 3 tasks paying 4, 3 and 1 tokens: 8 x 4,000 + 3 x 1,000
+        game.quests = [task(4), task(3), task(1)];
+
+        expect(boardTokens()).toEqual({ tasks: 3, tokens: 8 });
+        expect(draw().textContent).toContain('35.00K');
+    });
+
+    test('one task paying many tokens is credited exactly one gift', () => {
+        game.quests = [task(10)];
+
+        // 10 x 4,000 + 1 x 1,000 — not 10 x 5,000
+        expect(draw().textContent).toContain('41.00K');
     });
 
     test('only random tasks in progress are on the board', () => {
@@ -180,7 +196,7 @@ describe('the task tokens tile', () => {
 
     test('without a token price the tile draws a dash, never a zero', () => {
         game.quests = [task(3)];
-        game.valuation = { tokenValue: null, totalPerToken: null, error: 'Market data not loaded' };
+        game.valuation = { tokenValue: null, giftPerTask: null, error: 'Market data not loaded' };
 
         const container = draw();
         expect(container.textContent).toContain('3');
@@ -293,7 +309,6 @@ describe('a token valuation that is only a floor', () => {
         game.valuation = {
             tokenValue: 4000,
             giftPerTask: 1000,
-            totalPerToken: 5000,
             partialDrops: 2,
             isPartial: true,
             error: null,
@@ -306,7 +321,6 @@ describe('a token valuation that is only a floor', () => {
         game.valuation = {
             tokenValue: 4000,
             giftPerTask: 1000,
-            totalPerToken: 5000,
             partialDrops: 0,
             isPartial: false,
             error: null,

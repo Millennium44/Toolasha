@@ -42,6 +42,9 @@ const HISTORY_KEY = 'taskRerollHistory';
 const HISTORY_CAP = 500;
 const STORE_NAME = 'rerollSpending';
 
+/** How long a task the server has just named is held back from retirement. */
+const RECENT_TASK_GRACE_MS = 5 * 60 * 1000;
+
 /**
  * Fold a stored history under the in-memory one: the union by task, oldest
  * first, capped at {@link HISTORY_CAP}.
@@ -224,11 +227,18 @@ class TaskRerollTracker {
      * drops is written to the history first so the spend stays analysable.
      */
     cleanupOldTasks() {
-        if (!dataManager.characterData || !dataManager.characterData.characterQuests) {
+        // `dataManager.characterQuests` is the live list — the claimed-quest
+        // filter rebinds it to a NEW array, and `characterData.characterQuests`
+        // keeps pointing at the array as it stood when the character loaded.
+        // Reading the frozen snapshot made every task drawn after the first
+        // claim look retired: bogus history rows, live tasks dropped from the
+        // map, and the spend summed into the statistics tiles.
+        const activeQuests = dataManager.characterQuests;
+        if (!Array.isArray(activeQuests)) {
             return;
         }
 
-        const activeTaskIds = new Set(dataManager.characterData.characterQuests.map((quest) => quest.id));
+        const activeTaskIds = new Set(activeQuests.map((quest) => quest.id));
 
         const retired = [];
         const retiredAt = Date.now();
@@ -236,6 +246,10 @@ class TaskRerollTracker {
         // Remove tasks that are no longer active
         for (const [taskId, taskData] of this.taskRerollData.entries()) {
             if (activeTaskIds.has(taskId)) continue;
+            // A task the server named moments ago is live whatever this list
+            // says: cleanup can run from the same message that introduced it,
+            // before the data manager has folded it in.
+            if (taskData.seenAt && retiredAt - taskData.seenAt < RECENT_TASK_GRACE_MS) continue;
 
             retired.push({
                 taskId,
@@ -269,6 +283,7 @@ class TaskRerollTracker {
             let hasChanges = false;
 
             // Update our task reroll data from server data
+            const seenAt = Date.now();
             for (const quest of data.endCharacterQuests) {
                 const existingData = this.taskRerollData.get(quest.id);
                 const newCoinCount = quest.coinRerollCount || 0;
@@ -286,8 +301,12 @@ class TaskRerollTracker {
                         monsterHrid: quest.monsterHrid || '',
                         actionHrid: quest.actionHrid || '',
                         goalCount: quest.goalCount || 0,
+                        seenAt,
                     });
                     hasChanges = true;
+                } else {
+                    // Not a change worth a write, but it is proof the task is live
+                    existingData.seenAt = seenAt;
                 }
             }
 
@@ -323,6 +342,7 @@ class TaskRerollTracker {
             let hasChanges = false;
 
             // Load all quest data into the map
+            const seenAt = Date.now();
             for (const quest of data.characterQuests) {
                 const existingData = this.taskRerollData.get(quest.id);
                 const newCoinCount = quest.coinRerollCount || 0;
@@ -340,8 +360,11 @@ class TaskRerollTracker {
                         monsterHrid: quest.monsterHrid || '',
                         actionHrid: quest.actionHrid || '',
                         goalCount: quest.goalCount || 0,
+                        seenAt,
                     });
                     hasChanges = true;
+                } else {
+                    existingData.seenAt = seenAt;
                 }
             }
 

@@ -14,6 +14,7 @@ import {
     calculateTaskRewardValue,
     getCowbellValue,
     formatTokenFigure,
+    valueTaskRewards,
 } from './task-profit-calculator.js';
 import { calculateTaskCompletionSeconds } from './task-profit-display.js';
 import taskCompletionTracker from './task-completion-tracker.js';
@@ -165,8 +166,13 @@ class TaskStatistics {
             const week = rates.week;
 
             const tokenValue = calculateTaskTokenValue();
-            const perToken = tokenValue?.totalPerToken;
-            const rewardValue = Number.isFinite(perToken) ? week.coins + week.tokens * perToken : null;
+            // Purple's Gift accrues per claimed task, not per token, so the
+            // window's completion count is what prorates it
+            const rewardValue = valueTaskRewards(tokenValue, {
+                coins: week.coins,
+                tokens: week.tokens,
+                taskCount: week.completions,
+            });
 
             // Only the rerolls paid on tasks retired inside the same window, so
             // the two halves of the net are measuring the same seven days
@@ -335,7 +341,19 @@ class TaskStatistics {
                         };
                         const profitData = await calculateTaskProfit(taskData);
                         if (profitData && profitData.action) {
-                            actionProfit = profitData.action.totalValue || profitData.action.totalProfit || 0;
+                            // Both calculators report "could not be priced" as
+                            // null, on whichever of the two keys they use —
+                            // gathering has `totalValue`, production has
+                            // `totalProfit`. Coercing that to 0 drew an unpriced
+                            // task as a green break-even and summed it into the
+                            // totals; the N/A rendering below was unreachable.
+                            // The calculator's own failure path reports a 0
+                            // alongside `hasMissingPrices`, which is the same
+                            // "no figure" said a second way.
+                            const action = profitData.action;
+                            actionProfit = action.hasMissingPrices
+                                ? null
+                                : (action.totalValue ?? action.totalProfit ?? null);
                             completionSeconds = calculateTaskCompletionSeconds(profitData);
                         }
                     }
@@ -364,15 +382,20 @@ class TaskStatistics {
         // What the board on screen has already cost in rerolls
         const rerollSpend = this.calculateRerollSpend(activeTasks);
 
-        // Sum action profits
+        // Sum action profits. A non-combat task whose action could not be priced
+        // is left out rather than counted as zero, and the count of them travels
+        // with the total so it can be shown as the floor it is.
         let totalActionProfit = 0;
         let totalCompletionSeconds = 0;
         let hasActionProfit = false;
+        let unpricedActionTasks = 0;
 
         for (const detail of taskDetails) {
             if (detail.actionProfit !== null) {
                 totalActionProfit += detail.actionProfit;
                 hasActionProfit = true;
+            } else if (!detail.isCombat) {
+                unpricedActionTasks += 1;
             }
             if (detail.completionSeconds !== null) {
                 totalCompletionSeconds += detail.completionSeconds;
@@ -389,6 +412,7 @@ class TaskStatistics {
             rerollSpend,
             totalActionProfit: hasActionProfit ? totalActionProfit : null,
             totalCompletionSeconds: totalCompletionSeconds > 0 ? totalCompletionSeconds : null,
+            unpricedActionTasks,
             combinedTotal,
             netTotal: combinedTotal - rerollSpend.totalValue,
             taskDetails,
@@ -695,7 +719,14 @@ class TaskStatistics {
         separator.style.cssText = 'border-top: 1px solid #3a3a3a; margin: 6px 0;';
         section.appendChild(separator);
 
-        const totalStr = rewards.totalActionProfit !== null ? formatKMB(Math.round(rewards.totalActionProfit)) : 'N/A';
+        // A total missing an unpriceable task is a floor, and says so with the
+        // same "≥" the token valuation uses rather than passing for a firm figure
+        const unpriced = rewards.unpricedActionTasks || 0;
+        const partialSuffix = unpriced > 0 ? ` (${unpriced} unpriced)` : '';
+        const totalStr =
+            rewards.totalActionProfit !== null
+                ? `${unpriced > 0 ? '≥ ' : ''}${formatKMB(Math.round(rewards.totalActionProfit))}${partialSuffix}`
+                : `N/A${unpriced > 0 ? ` (${unpriced} unpriced)` : ''}`;
         const totalColor =
             rewards.totalActionProfit !== null && rewards.totalActionProfit >= 0
                 ? config.COLOR_PROFIT
@@ -711,7 +742,11 @@ class TaskStatistics {
         section.appendChild(separator2);
 
         section.appendChild(
-            this.createRow('Combined Total', formatKMB(Math.round(rewards.combinedTotal)), config.COLOR_ACCENT)
+            this.createRow(
+                'Combined Total',
+                `${unpriced > 0 ? '≥ ' : ''}${formatKMB(Math.round(rewards.combinedTotal))}${partialSuffix}`,
+                config.COLOR_ACCENT
+            )
         );
 
         // Reroll spend already sunk into this board, and the total net of it
@@ -736,7 +771,13 @@ class TaskStatistics {
             );
 
             const netColor = rewards.netTotal >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
-            section.appendChild(this.createRow('Net of Rerolls', formatKMB(Math.round(rewards.netTotal)), netColor));
+            section.appendChild(
+                this.createRow(
+                    'Net of Rerolls',
+                    `${unpriced > 0 ? '≥ ' : ''}${formatKMB(Math.round(rewards.netTotal))}${partialSuffix}`,
+                    netColor
+                )
+            );
         }
 
         return section;

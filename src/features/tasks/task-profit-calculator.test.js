@@ -71,6 +71,7 @@ const {
     getBestAlternativeProfitPerHour,
     findBestTaskShopValue,
     formatTokenFigure,
+    valueTaskRewards,
 } = await import('./task-profit-calculator.js');
 
 const TOKEN = '/items/task_token';
@@ -163,6 +164,38 @@ describe("Purple's Gift accrual", () => {
     test('prorates the gift across a whole board of tasks', () => {
         const board = calculateTaskRewardValue(0, 12, 4);
         expect(board.purpleGift).toBe(4 * (500000 / 50));
+    });
+
+    test('the valuation hands the two rates back apart, so neither can stand in for the other', () => {
+        const valuation = calculateTaskTokenValue();
+        expect(valuation.tokenValue).toBe(2000);
+        expect(valuation.giftPerTask).toBe(500000 / 50);
+        // There is no pre-added per-token figure to multiply a gift by
+        expect(valuation.totalPerToken).toBeUndefined();
+    });
+});
+
+describe('pricing coins, tokens and tasks together', () => {
+    test('tokens scale with the token count and the gift with the task count', () => {
+        const valuation = calculateTaskTokenValue();
+
+        // 3 tasks, 8 tokens between them, 5,000 coins
+        expect(valueTaskRewards(valuation, { coins: 5000, tokens: 8, taskCount: 3 })).toBe(5000 + 8 * 2000 + 3 * 10000);
+    });
+
+    test('one task paying many tokens is credited exactly one gift', () => {
+        const valuation = calculateTaskTokenValue();
+        expect(valueTaskRewards(valuation, { tokens: 10, taskCount: 1 })).toBe(10 * 2000 + 10000);
+    });
+
+    test('an unpriced token gives null, never a zero', () => {
+        game.initClientData = {};
+        expect(valueTaskRewards(calculateTaskTokenValue(), { tokens: 10, taskCount: 1 })).toBe(null);
+        expect(valueTaskRewards(null, { tokens: 10 })).toBe(null);
+    });
+
+    test('counts left out default to nothing', () => {
+        expect(valueTaskRewards(calculateTaskTokenValue(), {})).toBe(0);
     });
 });
 
@@ -286,15 +319,11 @@ describe('formatTokenFigure', () => {
     });
 
     test('a floor says how many drops it could not price', () => {
-        expect(formatTokenFigure(1234, { isPartial: true, partialDrops: 3 }, kmb)).toBe(
-            '≥ 1234c (3 drops unpriced)'
-        );
+        expect(formatTokenFigure(1234, { isPartial: true, partialDrops: 3 }, kmb)).toBe('≥ 1234c (3 drops unpriced)');
     });
 
     test('one unpriced drop is singular', () => {
-        expect(formatTokenFigure(1234, { isPartial: true, partialDrops: 1 }, kmb)).toBe(
-            '≥ 1234c (1 drop unpriced)'
-        );
+        expect(formatTokenFigure(1234, { isPartial: true, partialDrops: 1 }, kmb)).toBe('≥ 1234c (1 drop unpriced)');
     });
 
     test('the compact form keeps the marker and drops the count, for a tile', () => {

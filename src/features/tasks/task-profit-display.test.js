@@ -44,7 +44,7 @@ const createProfitData = ({
 });
 
 /** Build a task card carrying a rendered rating, as the display leaves it */
-const createRatedCard = ({ value, mode = 'gold', completionSeconds = 3600 } = {}) => {
+const createRatedCard = ({ value, mode = 'gold', completionSeconds = 3600, ratingHours = null } = {}) => {
     const card = document.createElement('div');
     const container = document.createElement('div');
     if (completionSeconds !== null) {
@@ -55,6 +55,7 @@ const createRatedCard = ({ value, mode = 'gold', completionSeconds = 3600 } = {}
         rating.className = 'mwi-task-profit-rating';
         rating.dataset.ratingValue = `${value}`;
         rating.dataset.ratingMode = mode;
+        if (ratingHours !== null) rating.dataset.ratingHours = `${ratingHours}`;
         container.appendChild(rating);
     }
     card.appendChild(container);
@@ -99,7 +100,7 @@ describe('calculateTaskEfficiencyRating', () => {
         });
 
         const result = calculateTaskEfficiencyRating(profitData, 'tokens');
-        expect(result).toEqual({ value: 30, unitLabel: 'tokens/hr', error: null });
+        expect(result).toEqual({ value: 30, hours: 1, unitLabel: 'tokens/hr', error: null });
     });
 
     test('calculates gold efficiency per hour', () => {
@@ -111,7 +112,7 @@ describe('calculateTaskEfficiencyRating', () => {
         });
 
         const result = calculateTaskEfficiencyRating(profitData, 'gold');
-        expect(result).toEqual({ value: 600, unitLabel: 'gold/hr', error: null });
+        expect(result).toEqual({ value: 600, hours: 2, unitLabel: 'gold/hr', error: null });
     });
 
     test('returns warning when gold rewards are unavailable', () => {
@@ -122,7 +123,7 @@ describe('calculateTaskEfficiencyRating', () => {
         });
 
         const result = calculateTaskEfficiencyRating(profitData, 'gold');
-        expect(result).toEqual({ value: null, unitLabel: 'gold/hr', error: 'Market data not loaded' });
+        expect(result).toEqual({ value: null, hours: 1, unitLabel: 'gold/hr', error: 'Market data not loaded' });
     });
 
     test('returns warning when total profit is unavailable', () => {
@@ -133,7 +134,7 @@ describe('calculateTaskEfficiencyRating', () => {
         });
 
         const result = calculateTaskEfficiencyRating(profitData, 'gold');
-        expect(result).toEqual({ value: null, unitLabel: 'gold/hr', error: 'Missing price data' });
+        expect(result).toEqual({ value: null, hours: 1, unitLabel: 'gold/hr', error: 'Missing price data' });
     });
 });
 
@@ -157,7 +158,7 @@ describe('calculateTaskEfficiencyRating over a partly-done task', () => {
         profitData.fullTotalProfit = 1200; // what the whole task is worth
 
         const result = calculateTaskEfficiencyRating(profitData, 'gold');
-        expect(result).toEqual({ value: 600, unitLabel: 'gold/hr', error: null });
+        expect(result).toEqual({ value: 600, hours: 2, unitLabel: 'gold/hr', error: null });
     });
 
     test('falls back to the remaining figure when no whole-task figure exists', () => {
@@ -184,6 +185,22 @@ describe('readVisibleTaskRatings', () => {
         expect(board.ratingMode).toBe('gold');
         expect(board.median).toBe(200);
         expect(board.entries.get(cards[0])).toEqual({ value: 100, hours: 1 });
+    });
+
+    test('the hours are the rating’s own span, not the time left on the card', () => {
+        // A task 90% done: 0.4h left, but the rate it is quoted at is over the
+        // whole 4h. Amortising a reroll over the 0.4h would make its per-hour
+        // cost ten times what the rate it is compared against was built on —
+        // which is why a nearly-finished bad task could never be flagged.
+        const card = createRatedCard({ value: 100, completionSeconds: 1440, ratingHours: 4 });
+
+        expect(readVisibleTaskRatings([card]).entries.get(card)).toEqual({ value: 100, hours: 4 });
+    });
+
+    test('paint from before the rating carried its span still reads its remaining time', () => {
+        const card = createRatedCard({ value: 100, completionSeconds: 7200 });
+
+        expect(readVisibleTaskRatings([card]).entries.get(card)).toEqual({ value: 100, hours: 2 });
     });
 
     test('averages the middle pair for an even board', () => {

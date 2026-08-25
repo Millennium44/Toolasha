@@ -107,6 +107,13 @@ function medianOf(values) {
  * compares tasks against each other on exactly the numbers the player can see,
  * and costs nothing — the ratings are already on the page.
  *
+ * `hours` is the span the rating was computed over — the FULL task, which is
+ * what makes a rate comparable between a fresh card and a nearly-finished one.
+ * It is read off the rating line itself. The remaining-time host is only a
+ * fallback for paint from before the rating carried its own basis; a caller
+ * amortising anything over those hours would be setting a part-task cost
+ * against whole-task rates.
+ *
  * @param {Iterable<HTMLElement>} cards - Visible task cards
  * @returns {{ratingMode: string, median: number|null, entries: Map<HTMLElement, {value: number, hours: number|null}>}}
  */
@@ -122,9 +129,13 @@ function readVisibleTaskRatings(cards) {
         const value = Number.parseFloat(ratingLine.dataset.ratingValue ?? '');
         if (!Number.isFinite(value)) continue;
 
-        const secondsHost = card.querySelector('[data-completion-seconds]');
-        const seconds = Number.parseFloat(secondsHost?.dataset.completionSeconds ?? '');
-        const hours = Number.isFinite(seconds) && seconds > 0 ? seconds / 3600 : null;
+        const ratedHours = Number.parseFloat(ratingLine.dataset.ratingHours ?? '');
+        let hours = Number.isFinite(ratedHours) && ratedHours > 0 ? ratedHours : null;
+        if (hours === null) {
+            const secondsHost = card.querySelector('[data-completion-seconds]');
+            const seconds = Number.parseFloat(secondsHost?.dataset.completionSeconds ?? '');
+            hours = Number.isFinite(seconds) && seconds > 0 ? seconds / 3600 : null;
+        }
 
         entries.set(card, { value, hours });
         values.push(value);
@@ -221,6 +232,7 @@ function calculateTaskEfficiencyRating(profitData, ratingMode) {
         if (profitData.rewards?.error || ratedProfit === null || ratedProfit === undefined) {
             return {
                 value: null,
+                hours,
                 unitLabel: 'gold/hr',
                 error: profitData.rewards?.error || 'Missing price data',
             };
@@ -228,6 +240,7 @@ function calculateTaskEfficiencyRating(profitData, ratingMode) {
 
         return {
             value: ratedProfit / hours,
+            hours,
             unitLabel: 'gold/hr',
             error: null,
         };
@@ -236,6 +249,7 @@ function calculateTaskEfficiencyRating(profitData, ratingMode) {
     const tokensReceived = profitData.rewards?.breakdown?.tokensReceived ?? 0;
     return {
         value: tokensReceived / hours,
+        hours,
         unitLabel: 'tokens/hr',
         error: null,
     };
@@ -1677,6 +1691,9 @@ class TaskProfitDisplay {
             } else {
                 ratingLine.dataset.ratingValue = `${ratingValue}`;
                 ratingLine.dataset.ratingMode = ratingMode;
+                // The span the rate was computed over, so anything amortising a
+                // cost against it uses the same basis the rate has
+                ratingLine.dataset.ratingHours = `${totalHours}`;
                 ratingLine.style.color = config.COLOR_ACCENT;
                 ratingLine.textContent = `⚡ ${formatKMB(ratingValue)} ${unitLabel}`;
             }
@@ -1928,6 +1945,7 @@ class TaskProfitDisplay {
                 const ratingValue = formatKMB(ratingData.value);
                 ratingLine.dataset.ratingValue = `${ratingData.value}`;
                 ratingLine.dataset.ratingMode = ratingMode;
+                if (ratingData.hours > 0) ratingLine.dataset.ratingHours = `${ratingData.hours}`;
                 ratingLine.style.color = config.COLOR_ACCENT;
                 ratingLine.textContent = `⚡ ${ratingValue} ${ratingData.unitLabel}`;
             }

@@ -115,7 +115,15 @@ export function findBestTaskShopValue() {
 
 /**
  * Calculate Task Token value from Task Shop items
+ *
  * Uses the best coins-per-token line the Task Shop actually offers.
+ *
+ * The two halves are handed back separately and never pre-added: `tokenValue`
+ * is per TOKEN and `giftPerTask` is per TASK, and a single combined
+ * "per token" figure invited callers to multiply the gift by a token count.
+ * They did — a five-token task was credited five gifts. {@link valueTaskRewards}
+ * is the way to put them together.
+ *
  * @returns {Object} Token value breakdown or error state
  */
 export function calculateTaskTokenValue() {
@@ -124,7 +132,6 @@ export function calculateTaskTokenValue() {
         return {
             tokenValue: null,
             giftPerTask: null,
-            totalPerToken: null,
             error: 'Market data not loaded',
         };
     }
@@ -134,7 +141,6 @@ export function calculateTaskTokenValue() {
         return {
             tokenValue: null,
             giftPerTask: null,
-            totalPerToken: null,
             error: 'Task Shop data unavailable',
         };
     }
@@ -154,13 +160,31 @@ export function calculateTaskTokenValue() {
         giftPerTask: giftPerTask,
         bestShopItemHrid: best.itemHrid,
         bestShopTokenCost: best.tokenCost,
-        totalPerToken: taskTokenValue + giftPerTask,
         // The best shop line was an openable whose own contents are not fully priceable, so
         // the token value is a floor
         partialDrops: best.partialDrops || 0,
         isPartial: (best.partialDrops || 0) > 0,
         error: null,
     };
+}
+
+/**
+ * Coins, tokens and tasks priced together.
+ *
+ * Tokens scale with the token count and Purple's Gift scales with the task
+ * count — the game hands one out every 50 tasks however many tokens each paid.
+ * Every caller that has both counts goes through here so the two multipliers
+ * cannot be crossed.
+ *
+ * @param {{tokenValue: number|null, giftPerTask: number|null, error: string|null}|null} tokenData -
+ *   From {@link calculateTaskTokenValue}
+ * @param {{coins?: number, tokens?: number, taskCount?: number}} counts - What was earned
+ * @returns {number|null} Total coin value, or null when a token cannot be priced
+ */
+export function valueTaskRewards(tokenData, { coins = 0, tokens = 0, taskCount = 0 } = {}) {
+    if (!tokenData || tokenData.error || !Number.isFinite(tokenData.tokenValue)) return null;
+    const giftPerTask = Number.isFinite(tokenData.giftPerTask) ? tokenData.giftPerTask : 0;
+    return coins + tokens * tokenData.tokenValue + taskCount * giftPerTask;
 }
 
 /**

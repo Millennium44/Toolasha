@@ -29,7 +29,7 @@ import dataManager from '../../core/data-manager.js';
 import { registerRow } from '../../utils/overlay-rows.js';
 import { rows, blank, ROW_COLORS } from '../../utils/overlay-format.js';
 import { formatLargeNumber, formatWithSeparator } from '../../utils/formatters.js';
-import { calculateTaskTokenValue, formatTokenFigure } from './task-profit-calculator.js';
+import { calculateTaskTokenValue, formatTokenFigure, valueTaskRewards } from './task-profit-calculator.js';
 import taskCompletionTracker from './task-completion-tracker.js';
 import taskStatistics from './task-statistics.js';
 
@@ -170,8 +170,10 @@ registerRow({
         if (!tasks) return blank(container);
 
         const valuation = calculateTaskTokenValue();
-        const perToken = valuation?.totalPerToken;
-        const worth = Number.isFinite(perToken) ? tokens * perToken : null;
+        const perToken = valuation?.tokenValue;
+        // The gift is one per 50 tasks however many tokens each pays, so the
+        // board's task count prorates it — not its token count
+        const worth = valueTaskRewards(valuation, { tokens, taskCount: tasks });
 
         const rates = measuredRates();
         const week = rates?.week;
@@ -211,7 +213,8 @@ registerRow({
             `${formatWithSeparator(tokens)} task tokens across ${tasks} task${tasks === 1 ? '' : 's'} in progress.\n` +
             (Number.isFinite(perToken)
                 ? `A token is worth about ${Math.round(perToken).toLocaleString()} coins, ` +
-                  'from the best line in the Task Shop plus a prorated Purple’s Gift.'
+                  'from the best line in the Task Shop. The figure above adds a prorated ' +
+                  'Purple’s Gift, one per 50 tasks, for each task on the board.'
                 : `Token value unavailable: ${valuation?.error || 'the Task Shop has not loaded'}.`) +
             '\nThat figure is what the board will pay when it is finished, not a rate.' +
             rateTooltip(rates) +

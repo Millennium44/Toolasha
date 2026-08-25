@@ -60,6 +60,14 @@ describe('ratesBelowBoard', () => {
         expect(ratesBelowBoard(twoHourTask(90000), 100000, 320000)).toBe(false);
     });
 
+    test('a nearly-finished bad task is still flagged, since the basis is the whole task', () => {
+        // 4h task, 90% done. Both sides are the whole task's: a 10K reroll over
+        // 4h is 2.5K/hr, and the card trails the 100K/hr median by 10K/hr.
+        // Amortising over the 0.4h remaining made the cost 25K/hr and the rule
+        // unable to fire on exactly the tasks worth rerolling.
+        expect(ratesBelowBoard({ value: 90000, hours: 4 }, 100000, 10000)).toBe(true);
+    });
+
     test('stays quiet without a board, a rating time, or a priced reroll', () => {
         expect(ratesBelowBoard(twoHourTask(1), null, 10000)).toBe(false);
         expect(ratesBelowBoard({ value: 1, hours: null }, 100000, 10000)).toBe(false);

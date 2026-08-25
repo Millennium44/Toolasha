@@ -76,6 +76,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getCurrentCharacterGameMode: () => game.gameMode,
         getInitClientData: () => ({}),
         characterData: null,
+        characterQuests: [],
         on: () => {},
         off: () => {},
     },
@@ -86,6 +87,7 @@ vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => 
 vi.mock('../../utils/dom.js', () => ({ addStyles: () => {} }));
 
 const { default: tracker } = await import('./task-reroll-tracker.js');
+const { default: dataManager } = await import('../../core/data-manager.js');
 const { _resetAdoptionCache } = await import('../../utils/character-key.js');
 
 const spend = () => storageMock.storeFor('rerollSpending');
@@ -98,6 +100,72 @@ beforeEach(() => {
     tracker.taskRerollData.clear();
     tracker.dataRecord.reset();
     tracker.historyRecord.reset();
+    dataManager.characterData = null;
+    dataManager.characterQuests = [];
+});
+
+/**
+ * Retirement reads the live quest list.
+ *
+ * `characterData.characterQuests` is the array as it stood when the character
+ * loaded; the claimed-quest filter rebinds `characterQuests` to a new one, so
+ * the snapshot stops moving after the first claim. Reading it retired every
+ * task drawn afterwards.
+ */
+describe('retiring tasks against the live quest list', () => {
+    test('a task the snapshot never saw is not retired', () => {
+        const stale = [{ id: 1 }];
+        // The character loaded with task 1; a claim rebound the live list and
+        // task 7 was drawn since. The snapshot still holds only task 1.
+        dataManager.characterData = { characterQuests: stale };
+        dataManager.characterQuests = [{ id: 7 }];
+        tracker.taskRerollData.set(7, { coinRerollCount: 3, cowbellRerollCount: 0 });
+
+        tracker.cleanupOldTasks();
+
+        expect(tracker.taskRerollData.has(7)).toBe(true);
+    });
+
+    test('a task gone from the live list is still retired', () => {
+        dataManager.characterQuests = [{ id: 7 }];
+        tracker.taskRerollData.set(1, { coinRerollCount: 2, cowbellRerollCount: 0 });
+        tracker.taskRerollData.set(7, { coinRerollCount: 1, cowbellRerollCount: 0 });
+
+        tracker.cleanupOldTasks();
+
+        expect([...tracker.taskRerollData.keys()]).toEqual([7]);
+    });
+
+    test('a task the server named moments ago survives a list that has not caught up', () => {
+        dataManager.characterQuests = [];
+        tracker.taskRerollData.set(7, { coinRerollCount: 1, cowbellRerollCount: 0, seenAt: Date.now() });
+
+        tracker.cleanupOldTasks();
+
+        expect(tracker.taskRerollData.has(7)).toBe(true);
+    });
+
+    test('the grace runs out, and a long-unseen task retires', () => {
+        dataManager.characterQuests = [];
+        tracker.taskRerollData.set(7, {
+            coinRerollCount: 1,
+            cowbellRerollCount: 0,
+            seenAt: Date.now() - 60 * 60 * 1000,
+        });
+
+        tracker.cleanupOldTasks();
+
+        expect(tracker.taskRerollData.has(7)).toBe(false);
+    });
+
+    test('no quest list at all retires nothing', () => {
+        dataManager.characterQuests = null;
+        tracker.taskRerollData.set(7, { coinRerollCount: 1, cowbellRerollCount: 0 });
+
+        tracker.cleanupOldTasks();
+
+        expect(tracker.taskRerollData.has(7)).toBe(true);
+    });
 });
 
 describe('scoping', () => {
