@@ -57,9 +57,25 @@ const {
     getBaseHrid,
     collectItemsAboveTab,
     LINEBREAK_HRID,
+    TOMBSTONE_MAX_AGE_MS,
     loadConfig,
     saveConfig,
     flushConfigWrites,
+    addTab,
+    removeTab,
+    renameTab,
+    setTabColor,
+    moveTab,
+    addItem,
+    insertItem,
+    moveItem,
+    addLineBreak,
+    reorderItem,
+    removeItem,
+    removeItemAtIndex,
+    setTabOpen,
+    setAllTabsOpen,
+    findTab,
 } = await import('./custom-tabs-data.js');
 
 function buildConfig(tab) {
@@ -384,5 +400,293 @@ describe('the sync merge', () => {
 
         expect(merged.tabs.map((tab) => tab.id)).toEqual(['x']);
         expect(merged.selectedTabId).toBe('x');
+    });
+});
+
+describe('modification stamps', () => {
+    const node = (id, extra = {}) => ({
+        id,
+        name: id,
+        color: null,
+        open: false,
+        items: [],
+        children: [],
+        ...extra,
+    });
+    const base = () => ({
+        version: 1,
+        selectedTabId: null,
+        tabs: [node('a', { items: ['/items/hat', '/items/boots'] }), node('b')],
+    });
+    const stampOf = (config, id) => findTab(config, id)?.tab.updatedAt;
+
+    test.each([
+        ['renameTab', (c) => renameTab(c, 'a', 'Renamed')],
+        ['setTabColor', (c) => setTabColor(c, 'a', '#fff')],
+        ['addItem', (c) => addItem(c, 'a', '/items/ore')],
+        ['insertItem', (c) => insertItem(c, 'a', '/items/ore', 0)],
+        ['addLineBreak', (c) => addLineBreak(c, 'a')],
+        ['reorderItem', (c) => reorderItem(c, 'a', 0, 1)],
+        ['removeItem', (c) => removeItem(c, 'a', '/items/hat')],
+        ['removeItemAtIndex', (c) => removeItemAtIndex(c, 'a', 0)],
+    ])('%s stamps the tab it changed', (_name, mutate) => {
+        const before = Date.now();
+        const next = mutate(base());
+        expect(stampOf(next, 'a')).toBeGreaterThanOrEqual(before);
+        // Untouched tabs stay as they were
+        expect(stampOf(next, 'b')).toBeUndefined();
+    });
+
+    test('addTab stamps the new tab, and its parent when it is nested', () => {
+        const before = Date.now();
+        const { config: rooted, tabId } = addTab(base(), null, 'Root tab');
+        expect(stampOf(rooted, tabId)).toBeGreaterThanOrEqual(before);
+        expect(stampOf(rooted, 'a')).toBeUndefined();
+
+        const { config: nested, tabId: childId } = addTab(base(), 'a', 'Child');
+        expect(stampOf(nested, childId)).toBeGreaterThanOrEqual(before);
+        expect(stampOf(nested, 'a')).toBeGreaterThanOrEqual(before);
+    });
+
+    test('moveItem stamps both the source and the target tab', () => {
+        const before = Date.now();
+        const next = moveItem(base(), 'a', 'b', '/items/hat');
+        expect(stampOf(next, 'a')).toBeGreaterThanOrEqual(before);
+        expect(stampOf(next, 'b')).toBeGreaterThanOrEqual(before);
+    });
+
+    test('an edit to a nested tab stamps the root that carries it', () => {
+        const { config, tabId } = addTab(base(), 'a', 'Child');
+        const before = Date.now();
+        const next = renameTab({ ...config, tabs: config.tabs.map((t) => ({ ...t })) }, tabId, 'New name');
+        expect(stampOf(next, tabId)).toBeGreaterThanOrEqual(before);
+        expect(stampOf(next, 'a')).toBeGreaterThanOrEqual(before);
+    });
+
+    test('moveTab stamps the list, not the tab', () => {
+        const before = Date.now();
+        const next = moveTab(base(), 'b', 0);
+        expect(next.tabs.map((t) => t.id)).toEqual(['b', 'a']);
+        expect(next.orderUpdatedAt).toBeGreaterThanOrEqual(before);
+        expect(stampOf(next, 'a')).toBeUndefined();
+        expect(stampOf(next, 'b')).toBeUndefined();
+    });
+
+    test('opening and closing tabs is not a modification', () => {
+        const opened = setTabOpen(base(), 'a', true);
+        expect(opened.tabs[0].open).toBe(true);
+        expect(stampOf(opened, 'a')).toBeUndefined();
+        expect(opened.orderUpdatedAt).toBeUndefined();
+
+        const all = setAllTabsOpen(base(), true);
+        expect(all.tabs.every((t) => t.updatedAt === undefined)).toBe(true);
+    });
+
+    test('removeTab records a tombstone for the tab and its descendants', () => {
+        const { config: withChild, tabId: childId } = addTab(base(), 'a', 'Child');
+        const before = Date.now();
+        const next = removeTab(withChild, 'a');
+
+        expect(next.tabs.map((t) => t.id)).toEqual(['b']);
+        expect(next.removed.a).toBeGreaterThanOrEqual(before);
+        expect(next.removed[childId]).toBeGreaterThanOrEqual(before);
+        expect(next.removed.b).toBeUndefined();
+    });
+
+    test('removeTab of a nested tab stamps the parent that lost it', () => {
+        const { config: withChild, tabId: childId } = addTab(base(), 'a', 'Child');
+        const before = Date.now();
+        const next = removeTab(withChild, childId);
+        expect(findTab(next, childId)).toBeNull();
+        expect(stampOf(next, 'a')).toBeGreaterThanOrEqual(before);
+        expect(next.removed[childId]).toBeGreaterThanOrEqual(before);
+    });
+
+    test('a re-created id outlives its own tombstone', () => {
+        const removedConfig = removeTab(base(), 'a');
+        const { config, tabId } = addTab(removedConfig, null, 'Fresh');
+        expect(config.removed[tabId]).toBeUndefined();
+        expect(config.removed.a).toBeDefined();
+    });
+});
+
+describe('the merge with stamps and tombstones', () => {
+    const tab = (id, extra = {}) => ({ id, name: id, items: [], children: [], ...extra });
+
+    let merge;
+    beforeEach(async () => {
+        const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
+        // The registry hands (local, incoming) and local is the side that wins ties
+        merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
+    });
+
+    test('a newer remote rename beats an older local copy', () => {
+        const local = { version: 1, tabs: [tab('a', { name: 'Here', updatedAt: 100 })], selectedTabId: null };
+        const incoming = { version: 1, tabs: [tab('a', { name: 'There', updatedAt: 200 })], selectedTabId: null };
+        expect(merge(local, incoming).tabs[0].name).toBe('There');
+    });
+
+    test('an older remote rename loses', () => {
+        const local = { version: 1, tabs: [tab('a', { name: 'Here', updatedAt: 300 })], selectedTabId: null };
+        const incoming = { version: 1, tabs: [tab('a', { name: 'There', updatedAt: 200 })], selectedTabId: null };
+        expect(merge(local, incoming).tabs[0].name).toBe('Here');
+    });
+
+    test('a stamped copy beats an unstamped one, whichever side it is on', () => {
+        const stamped = { version: 1, tabs: [tab('a', { name: 'Stamped', updatedAt: 5 })], selectedTabId: null };
+        const bare = { version: 1, tabs: [tab('a', { name: 'Bare' })], selectedTabId: null };
+        expect(merge(bare, stamped).tabs[0].name).toBe('Stamped');
+        expect(merge(stamped, bare).tabs[0].name).toBe('Stamped');
+    });
+
+    test('two unstamped copies keep ours', () => {
+        const local = { version: 1, tabs: [tab('a', { name: 'Ours' })], selectedTabId: null };
+        const incoming = { version: 1, tabs: [tab('a', { name: 'Theirs' })], selectedTabId: null };
+        expect(merge(local, incoming).tabs[0].name).toBe('Ours');
+    });
+
+    test('a deletion newer than the tab sticks, in both directions', () => {
+        const deleted = { version: 1, tabs: [], selectedTabId: null, removed: { a: 500 } };
+        const carrier = { version: 1, tabs: [tab('a', { updatedAt: 100 })], selectedTabId: null };
+
+        // Deleted locally, the other device still carries it
+        const kept = merge(deleted, carrier);
+        expect(kept.tabs).toEqual([]);
+        expect(kept.removed).toEqual({ a: 500 });
+
+        // Deleted remotely, this device still carries it — same answer
+        const swapped = merge(carrier, deleted);
+        expect(swapped.tabs).toEqual([]);
+        expect(swapped.removed).toEqual({ a: 500 });
+    });
+
+    test('a tab edited after the deletion survives and drops the tombstone', () => {
+        const deleted = { version: 1, tabs: [], selectedTabId: null, removed: { a: 500 } };
+        const revived = { version: 1, tabs: [tab('a', { name: 'Back', updatedAt: 900 })], selectedTabId: null };
+
+        for (const merged of [merge(deleted, revived), merge(revived, deleted)]) {
+            expect(merged.tabs.map((t) => t.id)).toEqual(['a']);
+            expect(merged.tabs[0].name).toBe('Back');
+            expect(merged.removed).toBeUndefined();
+        }
+    });
+
+    test('a tombstone reaches a nested tab too', () => {
+        const carrier = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [tab('root', { updatedAt: 900, children: [tab('kid', { updatedAt: 100 })] })],
+        };
+        const deleted = { version: 1, tabs: [], selectedTabId: null, removed: { kid: 500 } };
+        const merged = merge(carrier, deleted);
+        expect(merged.tabs.map((t) => t.id)).toEqual(['root']);
+        expect(merged.tabs[0].children).toEqual([]);
+    });
+
+    test('tombstones union to the newest deletion per id', () => {
+        const older = { version: 1, tabs: [], selectedTabId: null, removed: { a: 100, b: 700 } };
+        const newer = { version: 1, tabs: [], selectedTabId: null, removed: { a: 400 } };
+        expect(merge(older, newer).removed).toEqual({ a: 400, b: 700 });
+    });
+
+    test('order comes from the side with the newer orderUpdatedAt', () => {
+        const local = {
+            version: 1,
+            selectedTabId: null,
+            orderUpdatedAt: 100,
+            tabs: [tab('a'), tab('b'), tab('c')],
+        };
+        const incoming = {
+            version: 1,
+            selectedTabId: null,
+            orderUpdatedAt: 900,
+            tabs: [tab('c'), tab('b'), tab('a'), tab('d')],
+        };
+
+        const merged = merge(local, incoming);
+        // Remote reordered last, and the id only it has appends after
+        expect(merged.tabs.map((t) => t.id)).toEqual(['c', 'b', 'a', 'd']);
+        expect(merged.orderUpdatedAt).toBe(900);
+
+        // The other way round: local reordered last
+        const localLatest = { ...local, orderUpdatedAt: 1000 };
+        expect(merge(localLatest, incoming).tabs.map((t) => t.id)).toEqual(['a', 'b', 'c', 'd']);
+    });
+
+    test('without orderUpdatedAt the order is stored-then-new, as it always was', () => {
+        const local = { version: 1, selectedTabId: null, tabs: [tab('b'), tab('z')] };
+        const incoming = { version: 1, selectedTabId: null, tabs: [tab('a'), tab('b')] };
+        // mergeConfigs(incoming, local): incoming is "stored", so its order leads
+        expect(merge(local, incoming).tabs.map((t) => t.id)).toEqual(['a', 'b', 'z']);
+    });
+
+    test('selectedTabId falls back when its tab was tombstoned', () => {
+        const local = { version: 1, selectedTabId: 'a', tabs: [tab('a', { updatedAt: 100 })] };
+        const incoming = { version: 1, selectedTabId: 'b', tabs: [tab('b')], removed: { a: 500 } };
+        expect(merge(local, incoming).selectedTabId).toBe('b');
+
+        const nothingLeft = { version: 1, selectedTabId: 'b', tabs: [], removed: { a: 500, b: 500 } };
+        expect(merge(local, nothingLeft).selectedTabId).toBeNull();
+    });
+
+    test('a config with none of the new fields merges to exactly the old shape', () => {
+        const local = {
+            version: 1,
+            selectedTabId: 'b',
+            tabs: [
+                { id: 'a', name: 'Ores (renamed here)', items: ['/items/iron_ore'] },
+                { id: 'b', name: 'New tab the gist never saw', items: [] },
+            ],
+        };
+        const incoming = {
+            version: 1,
+            selectedTabId: 'a',
+            tabs: [
+                { id: 'a', name: 'Ores', items: [] },
+                { id: 'c', name: 'Tab only the other device has', items: [] },
+            ],
+        };
+
+        const merged = merge(local, incoming);
+        expect(merged).toEqual({
+            version: 1,
+            selectedTabId: 'b',
+            // Stored order leads, ids only the local side has append after
+            tabs: [local.tabs[0], incoming.tabs[1], local.tabs[1]],
+        });
+        expect(Object.keys(merged).sort()).toEqual(['selectedTabId', 'tabs', 'version']);
+    });
+});
+
+describe('tombstone pruning', () => {
+    const KEY = 'char1_inventoryTabs_config';
+
+    beforeEach(() => {
+        storageMock.reset();
+    });
+
+    test('a load forgets deletions older than the max age and keeps the rest', async () => {
+        const now = Date.now();
+        storageMock.storeFor('settings').set(KEY, {
+            version: 1,
+            selectedTabId: null,
+            tabs: [],
+            removed: { stale: now - TOMBSTONE_MAX_AGE_MS - 1000, fresh: now - 1000 },
+        });
+
+        const config = await loadConfig('char1');
+        expect(config.removed).toEqual({ fresh: now - 1000 });
+    });
+
+    test('a load with every tombstone expired drops the map entirely', async () => {
+        const now = Date.now();
+        storageMock.storeFor('settings').set(KEY, {
+            version: 1,
+            selectedTabId: null,
+            tabs: [],
+            removed: { stale: now - TOMBSTONE_MAX_AGE_MS - 1 },
+        });
+
+        expect(await loadConfig('char1')).toEqual({ version: 1, selectedTabId: null, tabs: [] });
     });
 });
