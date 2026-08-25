@@ -32,6 +32,85 @@ let tooltipObserverUnregister = null;
 let contextMenuHandler = null;
 let isActive = false;
 
+/** The item an auto-advance is waiting to navigate to, once the way is clear */
+let pendingNavigationHrid = null;
+/** The poller watching for the obstruction to clear */
+let pendingNavigationPoll = null;
+/** How often the deferred navigation re-checks */
+const NAV_DEFER_POLL_MS = 400;
+/** How long it waits before giving up rather than yanking the panel later */
+const NAV_DEFER_GIVE_UP_MS = 20000;
+
+/**
+ * Whether now is a bad moment to change what the marketplace panel is showing.
+ *
+ * The auto-advance is driven by websocket messages, so it fires whenever the
+ * server says an item ran out — which can be in the middle of the player typing
+ * a price into a modal for something else entirely. Navigating then throws away
+ * what they were doing. The two things worth not interrupting are a modal being
+ * open and a text or number field having focus.
+ *
+ * @param {Document} [doc] - Injectable for tests
+ * @returns {boolean} True while navigation should wait
+ */
+export function navigationBlocked(doc = typeof document !== 'undefined' ? document : null) {
+    if (!doc) return false;
+    if (doc.querySelector('[class*="Modal_modalContainer"]')) return true;
+
+    const active = doc.activeElement;
+    if (!active) return false;
+    if (active.isContentEditable) return true;
+    const tag = active.tagName;
+    if (tag === 'TEXTAREA') return true;
+    if (tag !== 'INPUT') return false;
+    const type = (active.getAttribute('type') || 'text').toLowerCase();
+    return type === 'text' || type === 'number' || type === 'search';
+}
+
+/** Forget any deferred navigation and stop watching for its moment. */
+function clearPendingNavigation() {
+    if (pendingNavigationPoll) {
+        clearInterval(pendingNavigationPoll);
+        pendingNavigationPoll = null;
+    }
+    pendingNavigationHrid = null;
+}
+
+/**
+ * Auto-advance to an item, waiting out anything the player is in the middle of.
+ *
+ * Never synthesizes a click: this is the same programmatic navigation the queue
+ * already did, only deferred. If the way has not cleared within
+ * NAV_DEFER_GIVE_UP_MS the advance is dropped rather than sprung on the player
+ * long after the fill that caused it.
+ *
+ * @param {string} itemHrid - Where to go
+ */
+function navigateWhenClear(itemHrid) {
+    if (!navigationBlocked()) {
+        clearPendingNavigation();
+        navigateToMarketplace(itemHrid, 0);
+        return;
+    }
+
+    pendingNavigationHrid = itemHrid;
+    if (pendingNavigationPoll) return;
+
+    const startedAt = Date.now();
+    pendingNavigationPoll = setInterval(() => {
+        const hrid = pendingNavigationHrid;
+        // Gone from the queue, or waited too long to still be what the player expects
+        if (!hrid || !queue.some((entry) => entry.itemHrid === hrid) || Date.now() - startedAt > NAV_DEFER_GIVE_UP_MS) {
+            clearPendingNavigation();
+            return;
+        }
+        if (navigationBlocked()) return;
+        clearPendingNavigation();
+        navigateToMarketplace(hrid, 0);
+    }, NAV_DEFER_POLL_MS);
+    timerRegistry.registerInterval(pendingNavigationPoll);
+}
+
 /**
  * Get total inventory count for an item hrid.
  * @param {string} itemHrid
@@ -170,9 +249,10 @@ function updateTabsOnInventoryChange() {
         }
     }
 
-    // After removing sold-out tabs, navigate to the first remaining queued item
+    // After removing sold-out tabs, navigate to the first remaining queued item —
+    // but not out from under a modal or a half-typed field
     if (toRemove.length > 0 && queue.length > 0) {
-        navigateToMarketplace(queue[0].itemHrid, 0);
+        navigateWhenClear(queue[0].itemHrid);
     }
 }
 
@@ -201,6 +281,7 @@ function setupInventoryListener() {
  * Handle cleanup when user leaves the marketplace.
  */
 function handleMarketplaceCleanup() {
+    clearPendingNavigation();
     removeMaterialTabs();
     currentTabs.length = 0;
     queue.length = 0;
@@ -320,6 +401,7 @@ function cleanup() {
             cleanupObserver = null;
         }
         handleMarketplaceCleanup();
+        clearPendingNavigation();
         timerRegistry.clearAll();
         currentItemHrid = null;
         isActive = false;

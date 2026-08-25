@@ -14,21 +14,33 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ listings: null, styles: new Map() }));
+const game = vi.hoisted(() => ({ listings: null, styles: new Map(), handlers: [], notified: [] }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { register: () => () => {} } }));
 // The badge and the "a listing finished" notification read the same count.
 // These tests are about the badge, so the telling half is stubbed out — the
 // alternative is a real toast for every listing this file invents.
-vi.mock('../notifications/notification-service.js', () => ({ default: { notify: () => ({ fired: true }) } }));
+vi.mock('../notifications/notification-service.js', () => ({
+    default: {
+        notify: (id, message) => {
+            game.notified.push({ id, message });
+            return { fired: true };
+        },
+    },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         get characterData() {
             return game.listings === null ? null : { myMarketListings: game.listings };
         },
-        on: () => {},
-        off: () => {},
+        // Recorded rather than dropped: what the handler is *given* is half of
+        // what these tests are about
+        on: (event, handler) => game.handlers.push({ event, handler }),
+        off: (event, handler) => {
+            const at = game.handlers.findIndex((entry) => entry.event === event && entry.handler === handler);
+            if (at !== -1) game.handlers.splice(at, 1);
+        },
     },
 }));
 vi.mock('../../utils/dom.js', () => ({
@@ -318,6 +330,110 @@ describe('what number the badge shows', () => {
         game.listings = [listing()];
 
         expect(() => badgeFilter.initialize()).not.toThrow();
+    });
+});
+
+describe('which listing array the handler believes', () => {
+    const css = () => game.styles.get('mwi-marketplace-badge-filter') || '';
+    const hiding = () => css().includes('display: none');
+    /** Push one `market_listings_updated` payload through every live handler */
+    const emit = (payload) =>
+        game.handlers.filter((e) => e.event === 'market_listings_updated').forEach((e) => e.handler(payload));
+
+    beforeEach(() => {
+        game.styles.clear();
+        game.handlers.length = 0;
+        game.notified.length = 0;
+        game.listings = null;
+        badgeFilter.disable();
+        buildSidebar();
+    });
+
+    test('a delta does not shrink the remembered book', () => {
+        // `endMarketListings` is the one or two listings that just changed. Read
+        // in preference to the merged book it arrives with, it made `lastSeen` a
+        // partial snapshot — and `book()` falls back to `lastSeen` whenever the
+        // character's own copy is empty, so one fill silently shrank the badge.
+        badgeFilter.initialize();
+
+        const whole = [listing({ id: 1 }), listing({ id: 2 }), listing({ id: 3 })];
+        emit({ endMarketListings: whole, myMarketListings: whole });
+        expect(badgeFilter.book()).toHaveLength(3);
+
+        const delta = [listing({ id: 2 })];
+        emit({ endMarketListings: delta, myMarketListings: whole });
+
+        expect(badgeFilter.book()).toHaveLength(3);
+        expect(marketBadge().textContent).toBe('3');
+    });
+
+    test('a payload carrying only a delta is still better than nothing', () => {
+        badgeFilter.initialize();
+
+        emit({ endMarketListings: [listing({ id: 9 })] });
+
+        expect(badgeFilter.book()).toHaveLength(1);
+    });
+
+    test('switching character does not carry the old one’s listings over', () => {
+        badgeFilter.initialize();
+        emit({ myMarketListings: [listing({ id: 1 }), listing({ id: 2 })] });
+        expect(badgeFilter.book()).toHaveLength(2);
+
+        badgeFilter.disable();
+
+        expect(badgeFilter.lastSeen).toBe(null);
+        expect(badgeFilter.book()).toEqual([]);
+    });
+
+    test('a second initialize does not leave two handler pairs behind', () => {
+        // The feature registry retries features that failed to start, and
+        // `this.unregister` only ever remembers the newest pair
+        badgeFilter.initialize();
+        const after = game.handlers.length;
+
+        badgeFilter.initialize();
+        expect(game.handlers.length).toBe(after);
+
+        badgeFilter.disable();
+        expect(game.handlers.length).toBe(0);
+    });
+
+    test('a cancelled order holding its refund badges, and is announced', () => {
+        badgeFilter.initialize();
+
+        const refunded = listing({
+            id: 4,
+            status: '/market_listing_status/cancelled',
+            orderQuantity: 100,
+            filledQuantity: 20,
+            unclaimedItemCount: 80,
+            unclaimedCoinCount: 1900,
+        });
+        emit({ endMarketListings: [refunded], myMarketListings: [refunded] });
+
+        expect(hiding()).toBe(false);
+        expect(marketBadge().textContent).toBe('1');
+        expect(game.notified).toEqual([{ id: 'market-listing-filled', message: '1 market listing has finished.' }]);
+    });
+
+    test('and stops once the refund has been claimed', () => {
+        badgeFilter.initialize();
+        const refunded = listing({
+            id: 4,
+            status: '/market_listing_status/cancelled',
+            unclaimedItemCount: 80,
+            unclaimedCoinCount: 0,
+        });
+        const working = listing({ id: 5, filledQuantity: 30, unclaimedItemCount: 30 });
+        emit({ myMarketListings: [refunded, working] });
+        expect(hiding()).toBe(false);
+
+        // Claimed: the merge drops it from the book entirely, leaving the order
+        // that is still working — which is exactly what this badge hides
+        emit({ myMarketListings: [working] });
+
+        expect(hiding()).toBe(true);
     });
 });
 

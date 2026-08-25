@@ -100,10 +100,15 @@ class AutoFillPrice {
      */
     handleOrderModal(modal) {
         // Prevent duplicate processing (dom-observer can fire multiple times for same modal)
+        //
+        // Marked only once the work has actually happened. The observer can fire
+        // on a modal React has committed the shell of but not yet the controls,
+        // and marking on entry spent the one shot on that fire — every later
+        // fire, including the one that would have worked, was then refused and
+        // the price was never filled.
         if (this.processedModals.has(modal)) {
             return;
         }
-        this.processedModals.add(modal);
 
         // Find the "Best Price" button/label
         const bestPriceLabel = modal.querySelector('span[class*="MarketplacePanel_bestPrice"]');
@@ -123,6 +128,7 @@ class AutoFillPrice {
         }
 
         // Click the best price label to populate the suggested price
+        this.processedModals.add(modal);
         bestPriceLabel.click();
 
         // Adjust price after clicking to be optimally competitive

@@ -695,6 +695,58 @@ class EstimatedListingAge {
     }
 
     /**
+     * A listing carrying our own status stamp, as a copy.
+     *
+     * The payload objects the data manager hands out are the same objects it
+     * stores in `characterData.myMarketListings` and re-emits on every later
+     * market message. Stamping one is therefore permanent: a listing marked
+     * 'unknown' here, later promoted to 'active' by the My Listings table, was
+     * re-stamped 'unknown' by the next unrelated market message, because the
+     * stamp outranks the tracked status in `recordListings`. That took the
+     * listing out of the retention exemption, out of expiry matching, and out
+     * of the Market History display. So the stamp goes on a shallow copy and
+     * the payload is left exactly as it arrived.
+     *
+     * @param {Object} listing - Wire listing (not modified)
+     * @param {string} status - unknown / active / filled / canceled / expired
+     * @param {Object} [overrides] - Further fields, for the copy only
+     * @returns {Object} A copy carrying the stamp
+     */
+    _stamped(listing, status, overrides = {}) {
+        return { ...listing, ...overrides, _toolashaStatus: status };
+    }
+
+    /**
+     * What the game's status HRID says happened to a listing, as a stamped copy.
+     * @param {Object} listing - Wire listing from `endMarketListings` (not modified)
+     * @returns {Object} A copy carrying `_toolashaStatus`
+     */
+    _classify(listing) {
+        if (listing.status === '/market_listing_status/active') {
+            // New listing being created - mark as unknown (history viewer will set to active)
+            return this._stamped(listing, 'unknown');
+        }
+        if (listing.status === '/market_listing_status/cancelled') {
+            if (listing.filledQuantity > 0) {
+                // Partially filled before cancel (e.g. Missing Materials split) - recorded as
+                // filled for the amount received. The narrowed order quantity goes on the copy
+                // only; the payload keeps the quantity the player actually ordered
+                return this._stamped(listing, 'filled', { orderQuantity: listing.filledQuantity });
+            }
+            // User canceled the listing with nothing filled
+            return this._stamped(listing, 'canceled');
+        }
+        if (listing.status === '/market_listing_status/filled') {
+            return this._stamped(listing, 'filled');
+        }
+        if (listing.status === '/market_listing_status/expired') {
+            return this._stamped(listing, 'expired');
+        }
+        // Unknown status - fallback to old logic
+        return this._stamped(listing, listing.filledQuantity >= listing.orderQuantity ? 'filled' : 'canceled');
+    }
+
+    /**
      * Setup WebSocket listeners to collect your listing IDs and order book data
      */
     setupWebSocketListeners() {
@@ -711,11 +763,9 @@ class EstimatedListingAge {
         const updateHandler = (data) => {
             // Handle newly created listings (user just placed an order)
             if (data.newMarketListings) {
-                for (const listing of data.newMarketListings) {
-                    // New listings should start as 'unknown' (will be marked 'active' by history viewer)
-                    listing._toolashaStatus = 'unknown';
-                }
-                this.recordListings(data.newMarketListings);
+                // New listings start as 'unknown' (the history viewer marks them
+                // 'active'). Stamped onto copies, never the payload — see `_stamped`
+                this.recordListings(data.newMarketListings.map((listing) => this._stamped(listing, 'unknown')));
             }
 
             // Update all active listings (if provided)
@@ -728,34 +778,7 @@ class EstimatedListingAge {
 
             // Handle endMarketListings (confusing name - contains both new AND ending listings)
             if (data.endMarketListings) {
-                for (const listing of data.endMarketListings) {
-                    // Use game's status HRID to determine what happened
-                    if (listing.status === '/market_listing_status/active') {
-                        // New listing being created - mark as unknown (history viewer will set to active)
-                        listing._toolashaStatus = 'unknown';
-                    } else if (listing.status === '/market_listing_status/cancelled') {
-                        if (listing.filledQuantity > 0) {
-                            // Partially filled before cancel (e.g. Missing Materials split) — record as filled for the amount received
-                            listing._toolashaStatus = 'filled';
-                            listing.orderQuantity = listing.filledQuantity;
-                        } else {
-                            // User canceled the listing with nothing filled
-                            listing._toolashaStatus = 'canceled';
-                        }
-                    } else if (listing.status === '/market_listing_status/filled') {
-                        // Listing was filled
-                        listing._toolashaStatus = 'filled';
-                    } else if (listing.status === '/market_listing_status/expired') {
-                        // Listing expired
-                        listing._toolashaStatus = 'expired';
-                    } else if (listing.filledQuantity >= listing.orderQuantity) {
-                        // Unknown status - fallback to old logic
-                        listing._toolashaStatus = 'filled';
-                    } else {
-                        listing._toolashaStatus = 'canceled';
-                    }
-                }
-                this.recordListings(data.endMarketListings);
+                this.recordListings(data.endMarketListings.map((listing) => this._classify(listing)));
             }
         };
 
@@ -1701,6 +1724,10 @@ class EstimatedListingAge {
      * Clear all injected displays
      */
     clearDisplays() {
+        // Disable runs in contexts with no DOM at all (tests, a teardown after
+        // the page has gone); without this the throw took the rest of disable
+        // down with it
+        if (typeof document === 'undefined') return;
         document.querySelectorAll('.mwi-estimated-age-set').forEach((container) => {
             container.classList.remove('mwi-estimated-age-set');
         });
@@ -1740,10 +1767,26 @@ class EstimatedListingAge {
             this.flushPendingSave();
 
             this.clearDisplays();
+
             this.isInitialized = false;
         } catch (error) {
             console.error('[Estimated Listing Age] Disable failed part-way:', error);
         } finally {
+            // Per-character memory, dropped once the flush above has written it
+            // out — and in the `finally` because it must go even if some earlier
+            // step threw. The listing log and the order-book cache are stored
+            // under the *current* character's key; kept in memory across a
+            // switch, they were merged into the next character's stored log
+            // (memory winning) and saved back under the new character's key.
+            // That is a permanent cross-character pollution no later correct
+            // load can undo. The anchor pool is deliberately kept: it is shared
+            // calibration data, keyed globally rather than per character.
+            this.knownListings = [];
+            this.estimationPoints = [];
+            this.orderBooksCache = {};
+            this.currentItemHrid = null;
+            this._recordedSinceRetention = 0;
+            this.rebuildEstimationPoints();
             this.isInitialized = false;
         }
     }

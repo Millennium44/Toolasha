@@ -348,3 +348,97 @@ describe('the insta-vs-listing decision', () => {
         });
     });
 });
+
+describe('the cowbell bag is taxed at 18%, not 5%', () => {
+    // Every sibling calculation in the codebase branches on this item; two here
+    // did not, so both the vendor-vs-market and the patient-premium decisions
+    // valued a bag as if it kept 95% of the sale instead of 82%.
+    const COWBELL = '/items/bag_of_10_cowbells';
+
+    beforeEach(() => {
+        for (const key of Object.keys(settings)) delete settings[key];
+        shortcuts.insta.length = 0;
+        shortcuts.listing.length = 0;
+        settings['market_bulkSellSupplyRatio'] = 0;
+        settings['market_bulkSellQueueDays'] = 0;
+        settings['market_bulkSellMinListingValue'] = 0;
+        settings['market_bulkSellMaxSpreadPct'] = 0;
+        settings['market_bulkSellMinPatientPremium'] = 0;
+        band.value = null;
+        bulkSell.state = 'preparing';
+    });
+
+    describe('the vendor comparison', () => {
+        beforeEach(() => {
+            settings['market_bulkSellVendorCheck'] = true;
+            game.details = {
+                '/items/cheese': { name: 'Cheese', sellPrice: 85 },
+                [COWBELL]: { name: 'Bag Of 10 Cowbells', sellPrice: 85 },
+            };
+        });
+
+        test('an ordinary item nets 95% of the ask, so an 85 vendor loses', () => {
+            bulkSell.current = { itemHrid: '/items/cheese', enhancementLevel: 0, count: 1 };
+            const open = vi.spyOn(bulkSell, '_openVendorSell').mockReturnValue(true);
+
+            expect(bulkSell._tryVendorSell()).toBe(false);
+            expect(open).not.toHaveBeenCalled();
+            open.mockRestore();
+        });
+
+        test('a bag of cowbells nets 82%, so the same 85 vendor wins', () => {
+            bulkSell.current = { itemHrid: COWBELL, enhancementLevel: 0, count: 1 };
+            const open = vi.spyOn(bulkSell, '_openVendorSell').mockReturnValue(true);
+
+            expect(bulkSell._tryVendorSell()).toBe(true);
+            expect(open).toHaveBeenCalledWith(85, 82);
+            open.mockRestore();
+        });
+    });
+
+    describe('the patient premium', () => {
+        const book = (askPrice, bidPrice) => ({
+            asks: [
+                { price: askPrice, orderQuantity: 10, filledQuantity: 0, createdTimestamp: new Date().toISOString() },
+            ],
+            bids: [{ price: bidPrice, orderQuantity: 10, filledQuantity: 0 }],
+        });
+
+        test('waiting on a bag earns 18% less, and can fall under the threshold', () => {
+            // (100 − 90) × 5 = 50 gross. Cheese keeps 47.5, a bag keeps 41.
+            settings['market_bulkSellMinPatientPremium'] = 45;
+
+            bulkSell.current = { itemHrid: '/items/cheese', enhancementLevel: 0, count: 5 };
+            bulkSell._decideAndOpen(book(100, 90));
+            expect(bulkSell.decision.insta).toBe(false);
+
+            bulkSell.current = { itemHrid: COWBELL, enhancementLevel: 0, count: 5 };
+            bulkSell._decideAndOpen(book(100, 90));
+            expect(bulkSell.decision.insta).toBe(true);
+        });
+    });
+});
+
+describe('watching for the modal to close', () => {
+    test('a second watch does not leave the first poller running', () => {
+        vi.useFakeTimers();
+        try {
+            const cleared = vi.spyOn(globalThis, 'clearInterval');
+            bulkSell.modalPoll = null;
+            bulkSell.state = 'awaiting_confirm';
+
+            bulkSell._watchClose();
+            const first = bulkSell.modalPoll;
+            bulkSell._watchClose();
+
+            expect(cleared).toHaveBeenCalledWith(first);
+            expect(bulkSell.modalPoll).not.toBe(first);
+
+            clearInterval(bulkSell.modalPoll);
+            bulkSell.modalPoll = null;
+            cleared.mockRestore();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});

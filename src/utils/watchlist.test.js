@@ -213,6 +213,23 @@ describe('listedCounts', () => {
     test('nothing listed is nothing counted', () => {
         expect(listedCounts(null)).toEqual({});
     });
+
+    test('a cancelled sell counts its returned items once, not twice', () => {
+        // The book now keeps a cancelled listing while it is still holding a
+        // refund. Its unsold units have moved into `unclaimedItemCount`, so
+        // counting the order's remainder as still listed would double them
+        const counts = listedCounts([
+            {
+                itemHrid: '/items/a',
+                isSell: true,
+                status: '/market_listing_status/cancelled',
+                orderQuantity: 100,
+                filledQuantity: 20,
+                unclaimedItemCount: 80,
+            },
+        ]);
+        expect(counts['/items/a']).toEqual({ listed: 0, unclaimed: 80 });
+    });
 });
 
 describe('valueWatchlist counts what is on the market', () => {

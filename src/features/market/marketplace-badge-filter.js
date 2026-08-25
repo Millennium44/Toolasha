@@ -124,9 +124,16 @@ class MarketplaceBadgeFilter {
          * has to work in that case too.
          */
         this.lastFinishedCount = null;
+        /** Whether the listeners are already wired, so a retry does not double them */
+        this.isInitialized = false;
     }
 
     initialize() {
+        // The feature registry retries features that failed to start, and a
+        // second run here would register a second handler pair and orphan the
+        // first — `this.unregister` only ever remembers the newest
+        if (this.isInitialized) return;
+
         // Two features now read the same listings: this filter, and the "a
         // listing finished" notification. Either being on is reason enough to
         // listen, and each decides for itself what to do with the count
@@ -134,12 +141,21 @@ class MarketplaceBadgeFilter {
         const wantsNotification = config.getSetting('notifications_marketListingFilled');
         if (!wantsBadge && !wantsNotification) return;
 
+        this.isInitialized = true;
+
         // The payload is kept as well as read from the character's book, because
         // the two have disagreed: whichever of them has listings is the one to
         // believe. Trusting only the book meant that if it ever came back empty
         // the badge was hidden with no way to tell from the outside why.
+        //
+        // `myMarketListings` and not `endMarketListings`: the data manager emits
+        // both, and only the first is the merged book. `endMarketListings` is
+        // the delta — the one or two listings that just changed — so preferring
+        // it made `lastSeen` a partial snapshot, and `book()` falls back to
+        // `lastSeen` whenever the character's own copy is empty. A single fill
+        // would then shrink the badge to what that one message mentioned.
         const updateHandler = (data) => {
-            const listings = data?.endMarketListings || data?.myMarketListings;
+            const listings = data?.myMarketListings || data?.endMarketListings;
             if (Array.isArray(listings) && listings.length) this.lastSeen = listings;
             this.refresh();
         };
@@ -365,6 +381,11 @@ class MarketplaceBadgeFilter {
         this.hidden = false;
         this.showing = null;
         this.lastFinishedCount = null;
+        // The book is per-character. Left behind, the previous character's
+        // listings are what `book()` falls back to while the new one's own copy
+        // is still empty — badging a sidebar for orders that are not theirs
+        this.lastSeen = null;
+        this.isInitialized = false;
     }
 }
 

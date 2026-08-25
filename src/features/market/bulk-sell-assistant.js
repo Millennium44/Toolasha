@@ -21,7 +21,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import domObserver from '../../core/dom-observer.js';
 import storage from '../../core/storage.js';
-import { MARKET_TAX } from '../../utils/profit-constants.js';
+import { MARKET_TAX, COWBELL_BAG_HRID, COWBELL_BAG_TAX } from '../../utils/profit-constants.js';
 import { clampToBand } from '../../utils/market-values.js';
 import marketAPI from '../../api/marketplace.js';
 import {
@@ -817,9 +817,10 @@ class BulkSellAssistant {
 
     /**
      * Vendor beats the market when its flat price matches or exceeds the
-     * cached market price net of the 5% tax (e.g. ask 100 → 95 net = 95
-     * vendor). Cached prices are plenty accurate for this comparison and let
-     * the decision happen without navigating the marketplace.
+     * cached market price net of the market tax (e.g. ask 100 → 95 net = 95
+     * vendor; a bag of cowbells is taxed 18% rather than 5%, so 100 → 82).
+     * Cached prices are plenty accurate for this comparison and let the
+     * decision happen without navigating the marketplace.
      * @returns {boolean} True when the vendor flow was opened
      */
     _tryVendorSell() {
@@ -842,7 +843,11 @@ class BulkSellAssistant {
         const wouldInsta = minListingValue > 0 && stackValue < minListingValue;
         const referencePrice = (wouldInsta ? (bid ?? ask) : (ask ?? bid)) || 0;
         if (referencePrice <= 0) return false;
-        const marketNet = Math.floor(referencePrice * (1 - MARKET_TAX));
+        // Cowbell bags are taxed at 18%, everything else at 5% — a flat 5% here
+        // overstated the market side by 13% of the price and sent bags to the
+        // market that the vendor actually beat
+        const tax = this.current.itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
+        const marketNet = Math.floor(referencePrice * (1 - tax));
         if (vendorPrice < marketNet) return false;
         return this._openVendorSell(vendorPrice, marketNet);
     }
@@ -920,9 +925,10 @@ class BulkSellAssistant {
         // both ways: as a share of the ask, and as the after-tax coins the
         // whole stack would earn by waiting.
         const spreadPct = askPrice > 0 && bidPrice > 0 ? ((askPrice - bidPrice) / askPrice) * 100 : null;
+        const patientTax = this.current.itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
         const patientPremium =
             askPrice > 0 && bidPrice > 0
-                ? Math.max(0, (askPrice - bidPrice) * this.current.count * (1 - MARKET_TAX))
+                ? Math.max(0, (askPrice - bidPrice) * this.current.count * (1 - patientTax))
                 : null;
         const supplyTriggered = supplyRatio > 0 && askQty > bidQty * supplyRatio;
         const ageTriggered = queueDaysLimit > 0 && frontAskDays > queueDaysLimit;
@@ -1097,6 +1103,13 @@ class BulkSellAssistant {
      * @param {string} [selector] - Element whose disappearance means done
      */
     _watchClose(selector = '[class*="Modal_modalContainer"]') {
+        // A second call would otherwise strand the first poller: it keeps its own
+        // `seen` and keeps firing, and the two together can advance the run's
+        // state twice for one closed modal
+        if (this.modalPoll) {
+            clearInterval(this.modalPoll);
+            this.modalPoll = null;
+        }
         let seen = false;
         this.modalPoll = setInterval(() => {
             if (this.state !== 'awaiting_confirm') {

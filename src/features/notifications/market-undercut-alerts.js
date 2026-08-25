@@ -88,6 +88,8 @@ class MarketUndercutAlerts {
         this.refreshInFlight = false;
         /** True while a Mooket refresh is in flight, so an overlapping tick is skipped */
         this.mooketRefreshInFlight = false;
+        /** Whether the listeners and the refresh timer are already up */
+        this.isInitialized = false;
     }
 
     /**
@@ -95,9 +97,19 @@ class MarketUndercutAlerts {
      * @returns {Promise<void>}
      */
     async initialize() {
+        // The feature registry retries features that failed to start. A second
+        // run here would add a second handler pair, a second 15-minute refresh
+        // timer, and a second stream of third-party Mooket requests — the last
+        // of which is somebody else's rate limit being spent twice over.
+        if (this.isInitialized) {
+            return;
+        }
+
         if (!config.getSetting(MASTER_SETTING)) {
             return;
         }
+
+        this.isInitialized = true;
 
         const handler = () => {
             try {
@@ -402,6 +414,7 @@ class MarketUndercutAlerts {
         this.timers.clearAll();
         this.refreshInFlight = false;
         this.mooketRefreshInFlight = false;
+        this.isInitialized = false;
     }
 }
 

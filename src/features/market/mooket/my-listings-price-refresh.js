@@ -240,7 +240,11 @@ class MyListingsPriceRefresh {
                     const existing = marketAPI.getPrice(item.itemHrid, item.enhancementLevel);
                     const ask = sighting.ask !== null ? sighting.ask : (existing?.ask ?? null);
                     const bid = sighting.bid !== null ? sighting.bid : (existing?.bid ?? null);
-                    marketAPI.updatePrice(item.itemHrid, item.enhancementLevel, ask, bid);
+                    // The sighting's own time, not now: everything downstream that
+                    // compares freshness (undercut alerts, the Top Order Price
+                    // column) reads this timestamp, and a Mooket row can be the
+                    // better part of an hour old
+                    marketAPI.updatePrice(item.itemHrid, item.enhancementLevel, ask, bid, sighting.time);
                     applied += 1;
                 } catch (error) {
                     console.error('[MooketListingsRefresh] Refreshing an item failed:', item.itemHrid, error);

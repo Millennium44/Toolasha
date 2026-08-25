@@ -434,9 +434,10 @@ class MarketAPI {
      * @param {number} enhancementLevel - Enhancement level
      * @param {number|null} ask - Top ask price (null if no asks)
      * @param {number|null} bid - Top bid price (null if no bids)
+     * @param {number} [observedAt] - When the figure was true, if not now
      */
-    updatePrice(itemHrid, enhancementLevel, ask, bid) {
-        this.updatePrices([{ itemHrid, enhancementLevel, ask, bid }]);
+    updatePrice(itemHrid, enhancementLevel, ask, bid, observedAt) {
+        this.updatePrices([{ itemHrid, enhancementLevel, ask, bid, observedAt }]);
     }
 
     /**
@@ -446,22 +447,30 @@ class MarketAPI {
      * to twenty-one of them — and patching each separately used to notify the
      * listeners that many times, each re-ingesting the whole price table. The
      * patches are written together and the listeners told once.
-     * @param {Array<{itemHrid: string, enhancementLevel: number, ask: number|null, bid: number|null}>} entries
+     * A patch's `timestamp` is when the price was *true*, not when it was
+     * written. Order books are read live, so `Date.now()` is right for them and
+     * stays the default; a third-party sighting that is fifty minutes old is
+     * not, and stamping it "now" let stale data beat a genuinely fresh figure
+     * and print as "as of just now". Such callers pass `observedAt`.
+     * @param {Array<{itemHrid: string, enhancementLevel: number, ask: number|null,
+     *   bid: number|null, observedAt?: number}>} entries
      */
     updatePrices(entries) {
         if (!Array.isArray(entries) || entries.length === 0) {
             return;
         }
 
-        const timestamp = Date.now();
+        const now = Date.now();
         let changed = false;
         for (const entry of entries) {
             if (!entry || !entry.itemHrid) continue;
             const key = `${entry.itemHrid}:${entry.enhancementLevel}`;
+            // A sighting from the future is a clock disagreement, not fresher data
+            const observed = Number.isFinite(entry.observedAt) ? Math.min(entry.observedAt, now) : now;
             this.pricePatchs[key] = {
                 a: entry.ask,
                 b: entry.bid,
-                timestamp,
+                timestamp: observed,
             };
             changed = true;
         }

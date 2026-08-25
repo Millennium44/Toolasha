@@ -1,5 +1,25 @@
-import { describe, it, expect } from 'vitest';
-import { shouldApplySighting, distinctListedItems } from './my-listings-price-refresh.js';
+/** @vitest-environment happy-dom */
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const api = vi.hoisted(() => ({
+    updatePrice: vi.fn(),
+    dataAge: 60 * 60 * 1000,
+    rows: [],
+}));
+
+vi.mock('../../../core/config.js', () => ({ default: { getSetting: () => true, onSettingChange: () => {} } }));
+vi.mock('../../../core/data-manager.js', () => ({ default: { getMarketListings: () => [] } }));
+vi.mock('../../../core/dom-observer.js', () => ({ default: { register: () => () => {}, onClass: () => () => {} } }));
+vi.mock('../../../api/marketplace.js', () => ({
+    default: {
+        updatePrice: (...args) => api.updatePrice(...args),
+        getPrice: () => ({ ask: 999, bid: 888 }),
+        getDataAge: () => api.dataAge,
+    },
+}));
+vi.mock('./market-history-api.js', () => ({ default: { fetchHistory: async () => api.rows } }));
+
+import myListingsPriceRefresh, { shouldApplySighting, distinctListedItems } from './my-listings-price-refresh.js';
 
 describe('shouldApplySighting', () => {
     it('applies a sighting that is strictly newer than the snapshot', () => {
@@ -48,5 +68,29 @@ describe('distinctListedItems', () => {
         const coinRow = makeRow('coin', 0);
         const emptyRow = { querySelectorAll: () => [], querySelector: () => null };
         expect(distinctListedItems([coinRow, emptyRow])).toEqual([]);
+    });
+});
+
+describe('a Mooket sighting is patched in at the time it was seen', () => {
+    beforeEach(() => {
+        api.updatePrice.mockClear();
+    });
+
+    it('passes the sighting’s own time through rather than letting it read as now', async () => {
+        // Stamped `Date.now()`, a sighting nearly an hour old printed as "as of
+        // just now" and outranked genuinely fresher figures downstream
+        const seenAt = Date.now() - 45 * 60 * 1000;
+        api.rows = [{ time: Math.floor(seenAt / 1000), a: 120, b: 100 }];
+        // The game's own snapshot is older still, so the sighting does apply
+        api.dataAge = 55 * 60 * 1000;
+
+        myListingsPriceRefresh.gatherListedItems = () => [{ itemHrid: '/items/cheese', enhancementLevel: 0 }];
+        await myListingsPriceRefresh.runRefresh();
+
+        expect(api.updatePrice).toHaveBeenCalledTimes(1);
+        const [, , ask, bid, observedAt] = api.updatePrice.mock.calls[0];
+        expect(ask).toBe(120);
+        expect(bid).toBe(100);
+        expect(observedAt).toBe(Math.floor(seenAt / 1000) * 1000);
     });
 });

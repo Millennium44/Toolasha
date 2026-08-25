@@ -134,7 +134,11 @@ export function listedCounts(listings) {
     };
 
     for (const listing of listings || []) {
-        const remaining = Math.max(0, (listing?.orderQuantity || 0) - (listing?.filledQuantity || 0));
+        // A listing the game has ended is no longer on the market: whatever it
+        // did not sell has moved into `unclaimedItemCount`, so counting the
+        // remainder as still listed would count the same items twice
+        const ended = listing?.status && listing.status !== '/market_listing_status/active';
+        const remaining = ended ? 0 : Math.max(0, (listing?.orderQuantity || 0) - (listing?.filledQuantity || 0));
         // Only a sell order is holding items; a buy order's remainder is coin
         if (listing?.isSell) bump(listing.itemHrid, 'listed', remaining);
         bump(listing?.itemHrid, 'unclaimed', listing?.unclaimedItemCount || 0);

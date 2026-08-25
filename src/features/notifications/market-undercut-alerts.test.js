@@ -497,6 +497,29 @@ describe('market undercut alerts', () => {
             releaseFetch();
         });
 
+        test('a second initialize does not double the timers or the handlers', async () => {
+            // The feature registry retries features that failed to start. Without
+            // a guard the second run added a second handler pair, a second
+            // 15-minute timer, and a second stream of third-party Mooket requests
+            const handlersBefore = Object.keys(game.dmHandlers).length;
+            const listenersBefore = game.priceListeners.length;
+            marketAPI.fetch.mockClear();
+
+            await marketUndercutAlerts.initialize();
+
+            expect(Object.keys(game.dmHandlers)).toHaveLength(handlersBefore);
+            expect(game.priceListeners).toHaveLength(listenersBefore);
+
+            await vi.advanceTimersByTimeAsync(CACHE);
+            expect(marketAPI.fetch).toHaveBeenCalledTimes(1);
+
+            // And the one teardown still tears everything down
+            marketUndercutAlerts.disable();
+            expect(game.priceListeners).toHaveLength(0);
+            await vi.advanceTimersByTimeAsync(4 * CACHE);
+            expect(marketAPI.fetch).toHaveBeenCalledTimes(1);
+        });
+
         test('disable clears the refresh timer', async () => {
             await vi.advanceTimersByTimeAsync(CACHE);
             expect(marketAPI.fetch).toHaveBeenCalledTimes(1);

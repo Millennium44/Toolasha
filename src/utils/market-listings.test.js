@@ -115,6 +115,66 @@ describe('mergeMarketListings', () => {
         ]);
     });
 
+    test('keeps a cancelled listing that is still holding its refund', () => {
+        const current = [{ id: 1, price: 100, status: '/market_listing_status/active' }];
+        const updates = [
+            {
+                id: 1,
+                price: 100,
+                isSell: true,
+                orderQuantity: 100,
+                filledQuantity: 20,
+                status: '/market_listing_status/cancelled',
+                unclaimedItemCount: 80,
+                unclaimedCoinCount: 1900,
+            },
+        ];
+
+        const result = mergeMarketListings(current, updates);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].status).toBe('/market_listing_status/cancelled');
+        expect(result[0].unclaimedItemCount).toBe(80);
+    });
+
+    test('drops a cancelled listing once its refund has been claimed', () => {
+        const current = [
+            {
+                id: 1,
+                price: 100,
+                status: '/market_listing_status/cancelled',
+                unclaimedItemCount: 80,
+                unclaimedCoinCount: 0,
+            },
+        ];
+        const updates = [
+            {
+                id: 1,
+                price: 100,
+                status: '/market_listing_status/cancelled',
+                unclaimedItemCount: 0,
+                unclaimedCoinCount: 0,
+            },
+        ];
+
+        expect(mergeMarketListings(current, updates)).toEqual([]);
+    });
+
+    test('drops an expired listing even when it reports something unclaimed', () => {
+        const current = [{ id: 1, price: 100, status: '/market_listing_status/active' }];
+        const updates = [
+            {
+                id: 1,
+                price: 100,
+                status: '/market_listing_status/expired',
+                unclaimedItemCount: 5,
+                unclaimedCoinCount: 0,
+            },
+        ];
+
+        expect(mergeMarketListings(current, updates)).toEqual([]);
+    });
+
     test('keeps filled listings with unclaimed coins', () => {
         const current = [{ id: 1, price: 100, status: '/market_listing_status/active' }];
         const updates = [

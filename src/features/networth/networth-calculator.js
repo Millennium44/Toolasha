@@ -911,17 +911,28 @@ export async function calculateNetworth() {
     const clientData = dataManager.getInitClientData();
 
     for (const listing of marketListings) {
-        const quantity = listing.orderQuantity - listing.filledQuantity;
+        // A listing the game has ended is no longer holding anything on the
+        // market: whatever it did not trade has already moved into the
+        // unclaimed counts, and taxing it again (or counting the remainder as
+        // still locked) would value the same coins twice.
+        const ended = listing.status && listing.status !== '/market_listing_status/active';
+        const quantity = ended ? 0 : listing.orderQuantity - listing.filledQuantity;
         const enhancementLevel = listing.enhancementLevel || 0;
         const itemName = clientData?.itemDetailMap?.[listing.itemHrid]?.name || listing.itemHrid;
 
         if (listing.isSell) {
             // Selling: value is locked in listing + unclaimed coins
             // Apply marketplace fee (cowbells are taxed higher than everything else)
-            const fee = listing.itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
+            const fee = ended ? 0 : listing.itemHrid === COWBELL_BAG_HRID ? COWBELL_BAG_TAX : MARKET_TAX;
 
+            // Still on the market: the units yet to sell, taxed at what they
+            // would net. Ended: the units handed back, untaxed and yours
             const value = await calculateItemValue(
-                { itemHrid: listing.itemHrid, enhancementLevel, count: quantity },
+                {
+                    itemHrid: listing.itemHrid,
+                    enhancementLevel,
+                    count: ended ? listing.unclaimedItemCount || 0 : quantity,
+                },
                 priceCache
             );
 
@@ -941,7 +952,8 @@ export async function calculateNetworth() {
                 priceCache
             );
 
-            const listingValue = quantity * listing.price + unclaimedValue;
+            const listingValue =
+                quantity * listing.price + unclaimedValue + (ended ? listing.unclaimedCoinCount || 0 : 0);
             listingsValue += listingValue;
             listingsBreakdown.push({
                 itemHrid: listing.itemHrid,

@@ -887,6 +887,124 @@ describe('recordListings — one pass for a batch', () => {
     });
 });
 
+describe('the wire payload is never written on', () => {
+    const wire = (id, extra = {}) => ({
+        id,
+        createdTimestamp: new Date(id * 1000).toISOString(),
+        itemHrid: '/items/a',
+        orderQuantity: 100,
+        filledQuantity: 0,
+        ...extra,
+    });
+
+    beforeEach(() => {
+        estimatedListingAge.knownListings = [];
+        estimatedListingAge.rebuildEstimationPoints();
+    });
+
+    test('classifying an ended listing leaves the object the data manager holds alone', () => {
+        estimatedListingAge.setupWebSocketListeners();
+        const payload = wire(7, { status: '/market_listing_status/cancelled', filledQuantity: 40 });
+
+        dataManagerMock.handlers.market_listings_updated({ endMarketListings: [payload] });
+
+        // The log learned what happened...
+        expect(estimatedListingAge.knownListings.find((l) => l.id === 7).status).toBe('filled');
+        expect(estimatedListingAge.knownListings.find((l) => l.id === 7).orderQuantity).toBe(40);
+        // ...without the shared object being touched
+        expect(payload._toolashaStatus).toBeUndefined();
+        expect(payload.orderQuantity).toBe(100);
+
+        estimatedListingAge.unregisterWebSocket();
+    });
+
+    test('a new listing is stamped on a copy too', () => {
+        estimatedListingAge.setupWebSocketListeners();
+        const payload = wire(8);
+
+        dataManagerMock.handlers.market_listings_updated({ newMarketListings: [payload] });
+
+        expect(estimatedListingAge.knownListings.find((l) => l.id === 8).status).toBe('unknown');
+        expect(payload._toolashaStatus).toBeUndefined();
+
+        estimatedListingAge.unregisterWebSocket();
+    });
+
+    test('a promotion to active survives a later, unrelated market message', () => {
+        // The bug this pins: the data manager stores the payload objects it
+        // emitted and re-emits them on every later market message. A stamp left
+        // on one outranked the tracked status, so a listing the My Listings
+        // table had promoted to 'active' was knocked back to 'unknown' by the
+        // next fill of some other order — losing it its retention exemption, its
+        // expiry matching, and its place in the Market History display.
+        estimatedListingAge.setupWebSocketListeners();
+        const mine = wire(9);
+
+        dataManagerMock.handlers.market_listings_updated({ newMarketListings: [mine] });
+        estimatedListingAge.knownListings.find((l) => l.id === 9).status = 'active';
+
+        // Some other listing fills; the merged book re-carries ours
+        dataManagerMock.handlers.market_listings_updated({
+            endMarketListings: [wire(10, { status: '/market_listing_status/filled', filledQuantity: 100 })],
+            myMarketListings: [mine],
+        });
+
+        expect(estimatedListingAge.knownListings.find((l) => l.id === 9).status).toBe('active');
+
+        estimatedListingAge.unregisterWebSocket();
+    });
+});
+
+describe('disable drops what is keyed to the character', () => {
+    test('the log and the order-book cache do not outlive the character', async () => {
+        estimatedListingAge.knownListings = [
+            {
+                id: 1,
+                timestamp: 1000,
+                createdTimestamp: '1970-01-01T00:00:01Z',
+                itemHrid: '/items/a',
+                status: 'active',
+            },
+        ];
+        estimatedListingAge.rebuildEstimationPoints();
+        estimatedListingAge._cacheOrderBook('/items/a', { itemHrid: '/items/a', orderBooks: [] });
+        const anchorsBefore = estimatedListingAge.anchors.length;
+
+        estimatedListingAge.disable();
+
+        expect(estimatedListingAge.knownListings).toEqual([]);
+        expect(estimatedListingAge.orderBooksCache).toEqual({});
+        expect(estimatedListingAge.estimationPoints.every((point) => point.id !== 1)).toBe(true);
+        // Anchors are global calibration data, not this character's
+        expect(estimatedListingAge.anchors).toHaveLength(anchorsBefore);
+    });
+
+    test('character A’s ids are not written into character B’s key', async () => {
+        storageMock.reset();
+        dataManagerMock.characterId = 'charA';
+        estimatedListingAge.knownListings = [];
+        estimatedListingAge.recordListings([
+            { id: 4242, createdTimestamp: '2026-01-01T00:00:00Z', itemHrid: '/items/a' },
+        ]);
+        await estimatedListingAge.saveHistoricalData();
+
+        estimatedListingAge.disable();
+
+        dataManagerMock.characterId = 'charB';
+        await estimatedListingAge.loadHistoricalData();
+        estimatedListingAge.recordListings([
+            { id: 77, createdTimestamp: '2026-01-02T00:00:00Z', itemHrid: '/items/b' },
+        ]);
+        await estimatedListingAge.saveHistoricalData();
+
+        const bKey = [...storageMock.storeFor('marketListings').keys()].find((key) => key.includes('charB'));
+        const stored = storageMock.storeFor('marketListings').get(bKey) || [];
+        expect(stored.map((entry) => entry.id)).not.toContain(4242);
+
+        dataManagerMock.characterId = 'market123';
+    });
+});
+
 describe('order-book messages — stash now, repaint and persist once per burst', () => {
     const row = (listingId) => ({ listingId, price: 100, quantity: 1 });
     const book = (itemHrid, levels = 1, rows = 20) => ({

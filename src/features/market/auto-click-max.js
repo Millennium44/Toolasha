@@ -68,11 +68,14 @@ class AutoClickMax {
             return;
         }
 
-        // Mark as processed
-        this.processedModals.add(modal);
-
-        // Click the Max/All button
-        this.findAndClickMaxButton(modal);
+        // Click the Max/All button, and only count the modal as dealt with once
+        // that has actually happened. The observer can fire on a modal whose
+        // shell React has committed but whose quantity row it has not; marking
+        // on sight spent the one shot on that fire and refused the later one
+        // that would have worked, leaving the quantity un-maxed.
+        if (this.findAndClickMaxButton(modal)) {
+            this.processedModals.add(modal);
+        }
     }
 
     /**
@@ -87,10 +90,11 @@ class AutoClickMax {
      * quantity inputs, and belt-and-braces exclude anything in the price row.
      *
      * @param {HTMLElement} modal - Modal container element
+     * @returns {boolean} Whether the button was there and was clicked
      */
     findAndClickMaxButton(modal) {
         if (!modal) {
-            return;
+            return false;
         }
 
         // "Max" on a Sell Listing quantity, "All" on a Sell Now quantity
@@ -105,19 +109,21 @@ class AutoClickMax {
         });
 
         if (!maxButton) {
-            return;
+            return false;
         }
 
         // Don't click if button is disabled
         if (maxButton.disabled) {
-            return;
+            return false;
         }
 
         // Click the quantity Max/All button
         try {
             maxButton.click();
+            return true;
         } catch (error) {
             console.error('[AutoClickMax] Failed to click Max/All button:', error);
+            return false;
         }
     }
 

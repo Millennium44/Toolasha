@@ -82,3 +82,32 @@ describe('auto-click-max targets the quantity, not the price', () => {
         expect(clicks).toEqual([]);
     });
 });
+
+describe('the one-shot is spent on work done, not on a modal being seen', () => {
+    test('a fire before the quantity row exists does not burn the one chance', () => {
+        // The observer can fire on a modal React has committed the shell of but
+        // not the controls. Marking it processed then meant the later fire that
+        // would have worked was refused, and the quantity stayed at one.
+        const { modal, clicks } = sellModal('All');
+        const quantityRow = modal.querySelector('[class*="MarketplacePanel_quantityInputs"]');
+        quantityRow.remove();
+
+        autoClickMax.handleOrderModal(modal);
+        expect(clicks).toEqual([]);
+        expect(autoClickMax.processedModals.has(modal)).toBe(false);
+
+        // React finishes committing, the observer fires again
+        modal.appendChild(quantityRow);
+        autoClickMax.handleOrderModal(modal);
+        expect(clicks).toEqual(['qty-max']);
+    });
+
+    test('and once it has worked it does not work twice', () => {
+        const { modal, clicks } = sellModal('All');
+
+        autoClickMax.handleOrderModal(modal);
+        autoClickMax.handleOrderModal(modal);
+
+        expect(clicks).toEqual(['qty-max']);
+    });
+});

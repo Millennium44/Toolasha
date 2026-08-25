@@ -1,4 +1,5 @@
-/**
+/** @vitest-environment happy-dom
+ *
  * The Top Order Price column preferred the last-opened order book, which excludes
  * your own orders but goes stale the moment you leave the item. A fresh snapshot
  * undercut then stayed hidden until you re-opened the item. `_getTopOrderPrice`
@@ -11,7 +12,13 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
 const { marketMock, ageMock } = vi.hoisted(() => ({
-    marketMock: { getPrice: vi.fn(), getPriceTimestamp: vi.fn(), on: vi.fn(), off: vi.fn() },
+    marketMock: {
+        getPrice: vi.fn(),
+        getPriceTimestamp: vi.fn(),
+        getPricesBatch: vi.fn(() => new Map()),
+        on: vi.fn(),
+        off: vi.fn(),
+    },
     ageMock: {
         orderBooksCache: {},
         estimateTimestamp: vi.fn(() => 0),
@@ -22,12 +29,17 @@ const { marketMock, ageMock } = vi.hoisted(() => ({
 
 vi.mock('../../core/data-manager.js', () => ({ default: {} }));
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+const settings = vi.hoisted(() => ({}));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => false, getSettingValue: () => 1, COLOR_TEXT_SECONDARY: '#999' },
+    default: {
+        getSetting: (key) => settings[key] ?? false,
+        getSettingValue: () => 1,
+        COLOR_TEXT_SECONDARY: '#999',
+    },
 }));
 vi.mock('../../api/marketplace.js', () => ({ default: marketMock }));
 vi.mock('./estimated-listing-age.js', () => ({ default: ageMock }));
-vi.mock('./listing-markers.js', () => ({ default: {}, markerStateFor: () => ({}) }));
+vi.mock('./listing-markers.js', () => ({ default: { all: () => [] }, markerStateFor: () => ({}) }));
 
 import listingPriceDisplay from './listing-price-display.js';
 
@@ -116,5 +128,56 @@ describe('_getTopOrderPrice — fresh undercut over a stale book', () => {
 
         const price = listingPriceDisplay._getTopOrderPrice(ITEM, 0, false, new Map(), new Set([1]), null);
         expect(price).toBe(15_000_000);
+    });
+});
+
+describe('a processed table is left alone on the next order-book message', () => {
+    /**
+     * The My Listings table, cut down to what `updateTable` reads: a header row
+     * to insert columns into and one body row per listing.
+     * @returns {HTMLElement} The table
+     */
+    const table = () => {
+        const node = document.createElement('table');
+        node.innerHTML =
+            '<thead><tr><th>Item</th><th>Type</th><th>Price</th><th>Quantity</th><th>Cancel</th></tr></thead>' +
+            '<tbody><tr data-listing-id="1"><td>a</td><td>b</td><td>c</td><td>d</td><td>e</td></tr></tbody>';
+        return node;
+    };
+
+    beforeEach(() => {
+        for (const key of Object.keys(settings)) delete settings[key];
+        // The setting that gates the "is every book in hand?" check
+        settings['market_showTopOrderAge'] = true;
+        listingPriceDisplay.allListings = {
+            1: { id: 1, itemHrid: ITEM, enhancementLevel: 0, price: 100, orderQuantity: 1, filledQuantity: 0 },
+        };
+        listingPriceDisplay.originalRowOrder = [];
+        listingPriceDisplay.sortHeaders = new Map();
+        ageMock.orderBooksCache = {};
+        marketMock.getPrice.mockReturnValue(null);
+        marketMock.getPriceTimestamp.mockReturnValue(null);
+    });
+
+    test('with the book in the cache the table is marked done and short-circuits', () => {
+        // The cache entry is `{data, lastUpdated}`. Reading `.orderBooks` off the
+        // entry rather than off `.data` was always undefined, so this never
+        // became true — every one of the ~21 order-book messages an item open
+        // produces rebuilt the whole table and discarded the chosen sort.
+        ageMock.orderBooksCache[ITEM] = { lastUpdated: 1000, data: { orderBooks: { 0: { asks: [], bids: [] } } } };
+
+        const node = table();
+        listingPriceDisplay.updateTable(node);
+        expect(node.classList.contains('mwi-listing-prices-set')).toBe(true);
+
+        const headers = node.querySelectorAll('.mwi-listing-price-header').length;
+        listingPriceDisplay.updateTable(node);
+        expect(node.querySelectorAll('.mwi-listing-price-header')).toHaveLength(headers);
+    });
+
+    test('with no book yet it stays unmarked, so the next message can finish the job', () => {
+        const node = table();
+        listingPriceDisplay.updateTable(node);
+        expect(node.classList.contains('mwi-listing-prices-set')).toBe(false);
     });
 });

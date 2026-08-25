@@ -35,17 +35,21 @@ export const mergeMarketListings = (currentListings = [], updatedListings = []) 
         }
     }
 
-    // Remove dead listings: cancelled/expired immediately, filled once fully claimed
+    // Remove dead listings. A listing that has ended still belongs in the book
+    // while it is holding something for you: a filled order holds its proceeds,
+    // and a cancelled one holds the refund — coins for a buy, the unsold items
+    // for a sell. Both are a click away from being yours and both are what the
+    // sidebar badge is legitimately for, so dropping them on arrival made a
+    // refund structurally invisible. They go once there is nothing left to
+    // claim. Expiries carry nothing back and go immediately.
     return merged.filter((listing) => {
         if (!listing) return false;
-        if (
-            listing.status === '/market_listing_status/cancelled' ||
-            listing.status === '/market_listing_status/expired'
-        ) {
+        if (listing.status === '/market_listing_status/expired') {
             return false;
         }
         if (
-            listing.status === '/market_listing_status/filled' &&
+            (listing.status === '/market_listing_status/cancelled' ||
+                listing.status === '/market_listing_status/filled') &&
             (listing.unclaimedItemCount || 0) === 0 &&
             (listing.unclaimedCoinCount || 0) === 0
         ) {

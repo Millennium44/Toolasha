@@ -410,7 +410,14 @@ class ListingPriceDisplay {
         if (config.getSetting('market_showTopOrderAge')) {
             // Only mark as processed if cache has data for all listings
             for (const listing of Object.values(this.allListings)) {
-                const orderBookData = estimatedListingAge.orderBooksCache[listing.itemHrid];
+                // The cache entry is `{data, lastUpdated}`; the book is one level
+                // in. Reading `.orderBooks` off the entry was always undefined,
+                // so this never became true and every order-book message (about
+                // twenty-one per item opened) rebuilt the whole table and threw
+                // away the sort the player had chosen. The `|| entry` fallback
+                // matches the other four readers, for cache blobs of the old shape
+                const cacheEntry = estimatedListingAge.orderBooksCache[listing.itemHrid];
+                const orderBookData = cacheEntry ? cacheEntry.data || cacheEntry : null;
                 if (!orderBookData || !orderBookData.orderBooks || orderBookData.orderBooks.length === 0) {
                     fullyProcessed = false;
                     break;

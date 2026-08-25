@@ -36,7 +36,7 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({
     visibleTabsContainer: () => null,
 }));
 
-const { default: sellQueue } = await import('./sell-queue.js');
+const { default: sellQueue, navigationBlocked } = await import('./sell-queue.js');
 const { default: tooltipObserver } = await import('../../core/tooltip-observer.js');
 
 /**
@@ -106,5 +106,41 @@ describe('hovered item tracking through the tooltip observer', () => {
     test('cleanup unsubscribes', () => {
         sellQueue.cleanup();
         expect(tooltipObserver.subscribers.has('SellQueue-Tooltip')).toBe(false);
+    });
+});
+
+describe('the auto-advance waits for the player', () => {
+    /**
+     * A document stub: the queue's gate only asks two things of it.
+     * @param {Object} over - What this document has open / focused
+     * @returns {Document} Enough of one
+     */
+    const doc = ({ modal = false, activeElement = null } = {}) => ({
+        querySelector: (selector) => (modal && selector.includes('Modal_modalContainer') ? {} : null),
+        activeElement,
+    });
+
+    test('an open modal blocks it', () => {
+        // The advance is driven by a websocket message, so it can land in the
+        // middle of the player pricing something else entirely
+        expect(navigationBlocked(doc({ modal: true }))).toBe(true);
+    });
+
+    test('a focused text or number field blocks it', () => {
+        expect(navigationBlocked(doc({ activeElement: { tagName: 'INPUT', getAttribute: () => 'number' } }))).toBe(
+            true
+        );
+        expect(navigationBlocked(doc({ activeElement: { tagName: 'INPUT', getAttribute: () => null } }))).toBe(true);
+        expect(navigationBlocked(doc({ activeElement: { tagName: 'TEXTAREA', getAttribute: () => null } }))).toBe(true);
+        expect(navigationBlocked(doc({ activeElement: { tagName: 'DIV', isContentEditable: true } }))).toBe(true);
+    });
+
+    test('an ordinary page is not blocked', () => {
+        expect(navigationBlocked(doc())).toBe(false);
+        expect(navigationBlocked(doc({ activeElement: { tagName: 'BODY', getAttribute: () => null } }))).toBe(false);
+        expect(navigationBlocked(doc({ activeElement: { tagName: 'BUTTON', getAttribute: () => null } }))).toBe(false);
+        expect(navigationBlocked(doc({ activeElement: { tagName: 'INPUT', getAttribute: () => 'checkbox' } }))).toBe(
+            false
+        );
     });
 });

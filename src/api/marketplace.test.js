@@ -323,6 +323,65 @@ describe('MarketAPI getPriceTimestamp', () => {
     });
 });
 
+describe('MarketAPI patch observation times', () => {
+    beforeEach(() => {
+        vi.resetModules();
+        vi.stubGlobal('fetch', vi.fn());
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    test('a patch with no observation time is stamped now, as order books are', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        const before = Date.now();
+
+        marketAPI.updatePrices([{ itemHrid: '/items/plank', enhancementLevel: 0, ask: 50, bid: 40 }]);
+
+        const stamped = marketAPI.pricePatchs['/items/plank:0'].timestamp;
+        expect(stamped).toBeGreaterThanOrEqual(before);
+        expect(stamped).toBeLessThanOrEqual(Date.now());
+    });
+
+    test('a sighting carries its own time, so a stale one stays stale', async () => {
+        // The whole point: a fifty-minute-old third-party sighting stamped
+        // `Date.now()` read as "just now" and beat a genuinely fresh figure
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        const fiftyMinutesAgo = Date.now() - 50 * 60 * 1000;
+        marketAPI.lastFetchTimestamp = Date.now() - 10 * 60 * 1000;
+
+        marketAPI.updatePrice('/items/plank', 0, 50, 40, fiftyMinutesAgo);
+
+        expect(marketAPI.pricePatchs['/items/plank:0'].timestamp).toBe(fiftyMinutesAgo);
+        // Older than the snapshot, so the snapshot's own time is what is reported
+        expect(marketAPI.getPriceTimestamp('/items/plank', 0)).toBe(marketAPI.lastFetchTimestamp);
+    });
+
+    test('a sighting newer than the snapshot still wins, at its own time', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+        const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+        marketAPI.lastFetchTimestamp = Date.now() - 40 * 60 * 1000;
+
+        marketAPI.updatePrice('/items/plank', 0, 50, 40, fiveMinutesAgo);
+
+        expect(marketAPI.getPriceTimestamp('/items/plank', 0)).toBe(fiveMinutesAgo);
+        expect(marketAPI.getPrice('/items/plank', 0)).toMatchObject({ ask: 50, bid: 40 });
+    });
+
+    test('an observation from the future is a clock disagreement, not fresher data', async () => {
+        createMocks(true);
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        marketAPI.updatePrice('/items/plank', 0, 50, 40, Date.now() + 60 * 60 * 1000);
+
+        expect(marketAPI.pricePatchs['/items/plank:0'].timestamp).toBeLessThanOrEqual(Date.now());
+    });
+});
+
 describe('MarketAPI price patch notifications', () => {
     beforeEach(() => {
         vi.resetModules();
