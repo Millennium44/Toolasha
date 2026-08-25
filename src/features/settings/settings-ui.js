@@ -57,6 +57,14 @@ import { askChoice } from '../../utils/choice-dialog.js';
 
 const COLLAPSED_GROUPS_KEY = 'toolasha_collapsedGroups';
 
+/**
+ * How long the search box waits after the last keystroke before filtering.
+ *
+ * Every keystroke otherwise walks several hundred rows; a typist outruns that
+ * long before they have typed a word worth matching.
+ */
+export const SEARCH_DEBOUNCE_MS = 100;
+
 /** Game mode → the abbreviation the backup filename carries. */
 const BACKUP_MODE_ABBR = { standard: 'MC', ironcow: 'IC', legacy_ironcow: 'LC' };
 
@@ -107,6 +115,7 @@ class SettingsUI {
         this.panelStateReady = null; // Lazily started read of panel-only state (collapsed groups)
         this.searchQuery = '';
         this.changedOnly = false;
+        this.searchFilterTimer = null; // Pending debounced search filter pass
         this.restoreButton = null;
         this.diagnosticsSection = null; // The Diagnostics group, built lazily on open
     }
@@ -507,6 +516,9 @@ class SettingsUI {
             const groupContainer = document.createElement('div');
             groupContainer.className = 'toolasha-settings-group';
             groupContainer.dataset.group = groupKey;
+            // The search matches section headings too, and the header's own text
+            // carries the collapse arrow and the icon with it
+            groupContainer.dataset.groupTitle = group.title;
 
             // Add section header with collapse toggle
             const header = document.createElement('h3');
@@ -980,6 +992,7 @@ class SettingsUI {
         // inactive button over a filtered list
         this.searchQuery = '';
         this.changedOnly = false;
+        this.cancelPendingSettingsFilter();
 
         const searchContainer = document.createElement('div');
         searchContainer.className = 'toolasha-search-container';
@@ -1056,21 +1069,36 @@ class SettingsUI {
         collapseAllButton.addEventListener('click', () => this.setAllGroupsCollapsed(container, true));
         expandAllButton.addEventListener('click', () => this.setAllGroupsCollapsed(container, false));
 
-        // Input event listener
-        searchInput.addEventListener('input', (e) => {
-            this.searchQuery = e.target.value;
-            clearButton.style.display = this.searchQuery.trim() ? 'block' : 'none';
+        /** Empty the box and put the panel back the way it was. */
+        const clearSearch = () => {
+            searchInput.value = '';
+            clearButton.style.display = 'none';
+            this.cancelPendingSettingsFilter();
+            this.searchQuery = '';
             this.applySettingsFilter();
+            searchInput.focus();
+        };
+
+        // Input event listener. The clear button follows the box immediately —
+        // it is one element — while the filter itself waits out the typing.
+        searchInput.addEventListener('input', (e) => {
+            const value = e.target.value;
+            clearButton.style.display = value.trim() ? 'block' : 'none';
+            this.scheduleSettingsFilter(value);
+        });
+
+        // The game listens for bare keys as shortcuts, and a settings search is
+        // the one place where every letter is meant for the box
+        searchInput.addEventListener('keydown', (e) => {
+            e.stopPropagation();
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                clearSearch();
+            }
         });
 
         // Clear button event listener
-        clearButton.addEventListener('click', () => {
-            searchInput.value = '';
-            this.searchQuery = '';
-            clearButton.style.display = 'none';
-            this.applySettingsFilter();
-            searchInput.focus();
-        });
+        clearButton.addEventListener('click', clearSearch);
 
         changedButton.addEventListener('click', () => {
             this.changedOnly = !this.changedOnly;
@@ -1084,6 +1112,30 @@ class SettingsUI {
         searchContainer.appendChild(expandAllButton);
         searchContainer.appendChild(clearButton);
         container.appendChild(searchContainer);
+    }
+
+    /**
+     * Take a new search string and filter once the typing stops.
+     * @param {string} value - The raw text now in the search box
+     */
+    scheduleSettingsFilter(value) {
+        this.cancelPendingSettingsFilter();
+        this.searchFilterTimer = setTimeout(() => {
+            this.searchFilterTimer = null;
+            this.searchQuery = value;
+            this.applySettingsFilter();
+        }, SEARCH_DEBOUNCE_MS);
+    }
+
+    /**
+     * Drop a filter pass that has not run yet, so a clear is not undone by the
+     * keystroke that preceded it.
+     */
+    cancelPendingSettingsFilter() {
+        if (this.searchFilterTimer) {
+            clearTimeout(this.searchFilterTimer);
+            this.searchFilterTimer = null;
+        }
     }
 
     /**
@@ -1143,11 +1195,14 @@ class SettingsUI {
 
         document.querySelectorAll('.toolasha-settings-group').forEach((group) => {
             let visibleCount = 0;
+            // Naming the section is a way of asking for everything in it — the
+            // heading is how the panel is organised, not decoration on the rows
+            const groupMatches = Boolean(query) && (group.dataset.groupTitle || '').toLowerCase().includes(query);
 
             group.querySelectorAll('.toolasha-setting').forEach((setting) => {
                 let visible = true;
 
-                if (query) {
+                if (query && !groupMatches) {
                     const label = setting.querySelector('.toolasha-setting-label')?.textContent || '';
                     const help = setting.querySelector('.toolasha-setting-help')?.textContent || '';
                     visible = (label + ' ' + help).toLowerCase().includes(query);
@@ -1162,7 +1217,10 @@ class SettingsUI {
                 if (visible) visibleCount++;
             });
 
-            group.style.display = visibleCount === 0 ? 'none' : 'block';
+            // A section named by the search stays up even if it has no rows of
+            // its own to show, so the search points somewhere rather than nowhere
+            const keep = visibleCount > 0 || (groupMatches && !changedOnly);
+            group.style.display = keep ? 'block' : 'none';
         });
     }
 
@@ -3519,6 +3577,8 @@ class SettingsUI {
     cleanup() {
         // Clean up DOM elements first
         this.cleanupDOM();
+
+        this.cancelPendingSettingsFilter();
 
         if (this.characterSwitchHandler) {
             dataManager.off('character_initialized', this.characterSwitchHandler);

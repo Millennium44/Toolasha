@@ -87,7 +87,13 @@ const schema = {
                 type: 'checkbox',
                 default: true,
             },
-            networth: { id: 'networth', label: 'Net worth', type: 'checkbox', default: true },
+            networth: {
+                id: 'networth',
+                label: 'Net worth',
+                type: 'checkbox',
+                default: true,
+                help: 'Total value of your stash, counted across every character.',
+            },
         },
     },
 };
@@ -198,7 +204,7 @@ vi.mock('../../utils/full-backup.js', () => ({
 vi.mock('../../utils/csv-export.js', () => ({ downloadFile: () => {} }));
 vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => null }));
 
-const { default: settingsUI } = await import('./settings-ui.js');
+const { default: settingsUI, SEARCH_DEBOUNCE_MS } = await import('./settings-ui.js');
 const { IRON_COW_SETTINGS } = await import('./iron-cow-mode.js');
 const { CHARACTER_MODES_KEY } = await import('./character-modes.js');
 
@@ -215,6 +221,18 @@ function drawPanel() {
     document.body.appendChild(panel);
     settingsUI.applyDisabledByState();
     return panel.querySelector('#toolasha-settings-content');
+}
+
+/**
+ * Type into the search box and let the debounce elapse.
+ * @param {string} text - What the box now contains
+ * @returns {Promise<void>} Resolves once the filter has run
+ */
+async function typeSearch(text) {
+    const search = document.querySelector('.toolasha-search-input');
+    search.value = text;
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, SEARCH_DEBOUNCE_MS + 20));
 }
 
 /** @returns {HTMLElement|null} The Iron Cow chip */
@@ -327,22 +345,20 @@ describe('the Iron Cow chip', () => {
         expect(document.querySelector('[data-setting-id="ironCow_enabled"]')).toBe(chip());
     });
 
-    test('searching for it points at the chip, since there is no row to find', () => {
+    test('searching for it points at the chip, since there is no row to find', async () => {
         const card = drawPanel();
-        const search = card.querySelector('.toolasha-search-input');
 
-        search.value = 'iron cow';
-        search.dispatchEvent(new Event('input', { bubbles: true }));
+        await typeSearch('iron cow');
 
         expect(chip().dataset.searchMatch).toBe('true');
         expect(chip().style.outline).toContain('2px');
         // Every ordinary group has been filtered away — the chip is all there is
         for (const group of card.querySelectorAll('.toolasha-settings-group')) {
+            if (group.dataset.group === 'ironCow') continue;
             expect(group.style.display).toBe('none');
         }
 
-        search.value = 'action';
-        search.dispatchEvent(new Event('input', { bubbles: true }));
+        await typeSearch('action');
         expect(chip().dataset.searchMatch).toBe('false');
         expect(chip().style.outline).toBe('');
     });
@@ -613,5 +629,132 @@ describe('collapse all and expand all', () => {
         panel.querySelector('.toolasha-expand-all').click();
         expect(groups.some((g) => g.classList.contains('collapsed'))).toBe(false);
         expect(settingsUI.collapsedGroups.size).toBe(0);
+    });
+});
+
+describe('the search box', () => {
+    test('it is the first thing in the panel, ahead of everything else', () => {
+        const card = drawPanel();
+        expect(card.children[0].querySelector('.toolasha-search-input')).not.toBe(null);
+    });
+
+    test('typing narrows to the rows whose label matches', async () => {
+        drawPanel();
+
+        await typeSearch('net worth');
+
+        expect(row('networth').style.display).toBe('flex');
+        expect(row('actionBar_enabled').style.display).toBe('none');
+        expect(row('itemTooltip_profit').style.display).toBe('none');
+    });
+
+    test('the match is case-insensitive and a substring, not a whole word', async () => {
+        drawPanel();
+
+        await typeSearch('OMBAT SIM');
+
+        expect(row('combatSim').style.display).toBe('flex');
+        expect(row('networth').style.display).toBe('none');
+    });
+
+    test('help text counts as searchable, not just the label', async () => {
+        drawPanel();
+
+        // "stash" appears only in the Net worth help line
+        await typeSearch('stash');
+
+        expect(row('networth').style.display).toBe('flex');
+        expect(row('itemTooltip_profit').style.display).toBe('none');
+    });
+
+    test('a section heading matches, and takes its whole section with it', async () => {
+        const card = drawPanel();
+
+        await typeSearch('market');
+
+        const market = card.querySelector('.toolasha-settings-group[data-group="market"]');
+        expect(market.style.display).toBe('block');
+        expect(row('networth').style.display).toBe('flex');
+        expect(row('itemTooltip_profit').style.display).toBe('flex');
+        expect(card.querySelector('.toolasha-settings-group[data-group="general"]').style.display).toBe('none');
+    });
+
+    test('a section with nothing matching is hidden, the one with a match stays up', async () => {
+        const card = drawPanel();
+
+        await typeSearch('net worth');
+
+        expect(card.querySelector('.toolasha-settings-group[data-group="market"]').style.display).toBe('block');
+        expect(card.querySelector('.toolasha-settings-group[data-group="general"]').style.display).toBe('none');
+    });
+
+    test('clearing puts every row and group back', async () => {
+        const card = drawPanel();
+        await typeSearch('net worth');
+        expect(row('actionBar_enabled').style.display).toBe('none');
+
+        card.querySelector('.toolasha-search-clear').click();
+
+        for (const setting of card.querySelectorAll('.toolasha-setting')) {
+            expect(setting.style.display).toBe('flex');
+        }
+        for (const group of card.querySelectorAll('.toolasha-settings-group')) {
+            expect(group.style.display).toBe('block');
+        }
+        expect(card.querySelector('.toolasha-search-input').value).toBe('');
+    });
+
+    test('filtering only touches display — a toggle keeps the value it had', async () => {
+        const card = drawPanel();
+        const box = card.querySelector('#actionBar_enabled');
+        const before = box.checked;
+
+        await typeSearch('net worth');
+        await typeSearch('');
+
+        // The same element, not a redrawn one, still carrying its state
+        expect(card.querySelector('#actionBar_enabled')).toBe(box);
+        expect(box.checked).toBe(before);
+    });
+
+    test('Escape empties the box and restores the panel', async () => {
+        const card = drawPanel();
+        const search = card.querySelector('.toolasha-search-input');
+        await typeSearch('net worth');
+        expect(row('actionBar_enabled').style.display).toBe('none');
+
+        search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+
+        expect(search.value).toBe('');
+        expect(row('actionBar_enabled').style.display).toBe('flex');
+    });
+
+    test('keys typed in the box never reach the game', () => {
+        const card = drawPanel();
+        const search = card.querySelector('.toolasha-search-input');
+        const heard = [];
+        document.addEventListener('keydown', (e) => heard.push(e.key));
+
+        search.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true }));
+        search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+
+        expect(heard).toEqual([]);
+    });
+
+    test('a burst of keystrokes filters once, at the end', async () => {
+        drawPanel();
+        const search = document.querySelector('.toolasha-search-input');
+        const applied = vi.spyOn(settingsUI, 'applySettingsFilter');
+
+        for (const text of ['n', 'ne', 'net', 'net ', 'net w']) {
+            search.value = text;
+            search.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        expect(applied).not.toHaveBeenCalled();
+
+        await new Promise((resolve) => setTimeout(resolve, SEARCH_DEBOUNCE_MS + 20));
+        expect(applied).toHaveBeenCalledTimes(1);
+        expect(row('networth').style.display).toBe('flex');
+        applied.mockRestore();
     });
 });
