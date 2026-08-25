@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Custom tabs know when they changed, so a sync fold picks the right copy
+
+Every real tab edit now stamps the tab (view state like collapsing deliberately does not), reorders stamp the list, and a removed tab leaves a 30-day tombstone. The sync fold uses them: the genuinely newer copy of a tab wins, a deletion sticks across devices unless the tab was edited after it, and the tab order follows whichever device reordered last. Configs from before the stamps merge exactly as before.
+
 ### Custom inventory tabs survive a sync pull
 
 A pull used to replace the tab config wholesale with the gist's copy, so a device whose gist was days behind reverted your tabs — newer tabs gone, items back in Unorganized. Pulls now fold the two configs together: tabs are unioned by id, the local copy wins where both have one, and your selection stays. The trade is stated in the code: without per-tab timestamps a tab deleted here can return from a device that still carries it, which is the recoverable direction — losing tabs was not.
