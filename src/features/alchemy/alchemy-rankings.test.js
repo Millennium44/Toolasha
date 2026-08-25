@@ -31,10 +31,20 @@ const mocks = vi.hoisted(() => ({
     experienceMultiplier: 1,
     /** What is in the bag — the ceiling on every alchemy rate */
     inventory: [],
+    /** Settings the fingerprint reads */
+    settings: {},
+    /** House rooms, whose levels feed efficiency and rare find */
+    houseRooms: new Map(),
+    /** Community buffs, which anyone donating can move */
+    communityBuffs: [],
 }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => true, getSettingValue: (key, fallback) => fallback },
+    default: {
+        getSetting: () => true,
+        getSettingValue: (key, fallback) => mocks.settings[key] ?? fallback,
+        onSettingChange: () => {},
+    },
 }));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -44,9 +54,12 @@ vi.mock('../../core/data-manager.js', () => ({
         getEquipment: () => new Map(),
         getInventory: () => mocks.inventory,
         getActionDrinkSlots: () => mocks.drinkSlots,
-        characterData: {},
+        get characterData() {
+            return { communityBuffs: mocks.communityBuffs };
+        },
         getAchievementBuffFlatBoost: () => 0,
         getPersonalBuffFlatBoost: () => 0,
+        getHouseRooms: () => mocks.houseRooms,
     },
 }));
 vi.mock('../../utils/tea-parser.js', () => ({ getDrinkConcentration: () => 0 }));
@@ -161,6 +174,9 @@ beforeEach(() => {
     };
     mocks.actionStats = { actionTime: ACTION_TIME, totalEfficiency: 0, efficiencyBreakdown: {} };
     mocks.experienceMultiplier = 1;
+    mocks.settings = {};
+    mocks.houseRooms = new Map();
+    mocks.communityBuffs = [];
     mocks.inventory = [
         { itemHrid: '/items/cheese', itemLocationHrid: INVENTORY, count: 100, enhancementLevel: 0 },
         { itemHrid: '/items/milk', itemLocationHrid: INVENTORY, count: 100, enhancementLevel: 0 },
@@ -340,6 +356,38 @@ describe('alchemyGoldRates', () => {
         // A new fetch, or an explicit clear, and it looks again
         expect(alchemyGoldRates({ priceStamp: 2 })[0].goldPerHour).toBeGreaterThan(first);
         clearAlchemyRateCache();
+        expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBeGreaterThan(first);
+    });
+
+    test('the pricing mode is part of the state, so switching it looks again', () => {
+        const first = alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour;
+
+        // A price moved under a fixed stamp — only a fingerprint change sees it
+        mocks.itemPrices['/items/gem'] = 4000;
+        expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBe(first);
+
+        // The mode decides what every output is worth, so it is part of the state
+        mocks.settings.profitCalc_pricingMode = 'ask';
+        expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBeGreaterThan(first);
+    });
+
+    test('the house is part of the state — its rooms feed efficiency and rare find', () => {
+        const first = alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour;
+
+        mocks.itemPrices['/items/gem'] = 4000;
+        expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBe(first);
+
+        mocks.houseRooms = new Map([['/house_rooms/laboratory', { level: 8 }]]);
+        expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBeGreaterThan(first);
+    });
+
+    test('a community buff level anyone can donate to is part of it too', () => {
+        const first = alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour;
+
+        mocks.itemPrices['/items/gem'] = 4000;
+        expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBe(first);
+
+        mocks.communityBuffs = [{ hrid: '/community_buff_types/production_efficiency', level: 5 }];
         expect(alchemyGoldRates({ priceStamp: 1 })[0].goldPerHour).toBeGreaterThan(first);
     });
 

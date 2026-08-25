@@ -499,7 +499,12 @@ class AlchemyProfitCalculator {
         const catalystUse = document.querySelector(
             '[class*="SkillActionDetail_catalystItemInputContainer"] [class*="Item_itemContainer"] svg use'
         );
-        const iconName = catalystUse?.getAttribute('href')?.match(/#(.+)$/)?.[1] || null;
+        // Item icons carry the sprite id on `xlink:href`; only some carry a
+        // plain `href`. `alchemy-profit.js` reads this same node with both, and
+        // reading one alone left the live catalyst unseen — worth 15% or 25% of
+        // the success rate — on whichever the game happens to emit.
+        const catalystHref = catalystUse?.getAttribute('href') || catalystUse?.getAttribute('xlink:href') || null;
+        const iconName = catalystHref?.match(/#(.+)$/)?.[1] || null;
         const liveCatalystHrid = iconName ? `/items/${iconName}` : null;
 
         let catalystBonus = 0;

@@ -12,6 +12,7 @@ import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
+import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 
 /**
  * Check whether any mutation added nodes that are, contain, or sit under a tablist.
@@ -633,6 +634,14 @@ class TransmuteHistoryViewer {
      * inputs (at current buy price — historical input prices were not recorded)
      * and the transmute coin fee. Catalysts and teas are not tracked, so they
      * are excluded.
+     *
+     * The recorded output values are RAW sell prices — a record of what the
+     * market said, which is what a record should be — while the forecast in
+     * `alchemy-profit-calculator.js` quotes everything after the marketplace
+     * cut. Comparing the two put history ahead of forecast by the tax on every
+     * session. The tax is applied here, at read, so the stored figures stay a
+     * record and every session ever saved is restated the same way.
+     *
      * @param {Object} session
      * @returns {{profit: number, revenue: number, inputCost: number, coinCost: number, netConsumed: number}}
      */
@@ -649,7 +658,7 @@ class TransmuteHistoryViewer {
             if (result.isSelfReturn) {
                 selfReturned += result.count || 0;
             } else {
-                revenue += result.totalValue || 0;
+                revenue += calculatePriceAfterTax(result.totalValue || 0);
             }
         }
 

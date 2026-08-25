@@ -68,6 +68,7 @@
  * conservative reading, and every rate says that is what it is.
  */
 
+import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import alchemyProfitCalculator from '../market/alchemy-profit-calculator.js';
 import { calculateExperienceMultiplier } from '../../utils/experience-parser.js';
@@ -282,13 +283,24 @@ export function rankAlchemyType(type) {
  *
  * Alchemy profit moves with the alchemy level (the under-level penalty), the
  * teas in the slots (success rate and cost) and the gear (speed, efficiency,
- * rare and essence find). Any of those changing has to invalidate the cache;
- * nothing else in the character does.
+ * rare and essence find).
  *
  * Since the rates began carrying a stock cap, the bag does too — decomposing
  * the last crossbow has to stop the rate being offered, and a cached answer
  * from before it went would go on offering it. Counted rather than digested:
  * one number over the inventory is cheap, and any consumption moves it.
+ *
+ * Three more inputs are in here because they move a rate and were not being
+ * noticed: the **pricing mode**, which decides what every output is worth; the
+ * **house**, whose rooms feed efficiency and rare find (the note below about a
+ * house level not being able to move an alchemy rate was simply wrong); and the
+ * **community buffs**, which anyone donating can change under you.
+ *
+ * Still uncovered: achievement, personal, guild and seal buffs. They are read by
+ * the calculator but change rarely and only through events that also move
+ * something above — a fingerprint over each of them would cost more per call
+ * than the misses are worth. {@link clearAlchemyRateCache} is the way out when
+ * one of them does change.
  *
  * @param {number} priceStamp - When the caller's market data was fetched
  * @returns {string} A cache key
@@ -311,14 +323,27 @@ function stateFingerprint(priceStamp) {
               .join(',')
         : '';
 
-    return `${level}|${priceStamp}|${drinks}|${gear}|${stock}`;
+    const pricingMode = config.getSettingValue('profitCalc_pricingMode', 'hybrid');
+
+    const houseRooms = dataManager.getHouseRooms();
+    const house = houseRooms ? Array.from(houseRooms.values()).reduce((sum, room) => sum + (room?.level || 0), 0) : 0;
+
+    const community = (dataManager.characterData?.communityBuffs || [])
+        .map((buff) => `${buff?.hrid || ''}:${buff?.level || 0}`)
+        .sort()
+        .join(',');
+
+    return `${level}|${priceStamp}|${drinks}|${gear}|${stock}|${pricingMode}|${house}|${community}`;
 }
 
 /**
  * Throw away the memoised aggregate.
  *
- * For anything that changes the world in a way the fingerprint cannot see — a
- * settings change to the pricing mode, say.
+ * For anything that changes the world in a way the fingerprint cannot see — an
+ * achievement, guild or seal buff. Registered against the pricing-mode setting
+ * below as well, which the fingerprint does cover: the setting is what the cache
+ * was most visibly wrong about, and a stale ranking after a deliberate settings
+ * change is the one nobody would think to blame on a cache.
  *
  * @returns {void}
  */
@@ -326,13 +351,17 @@ export function clearAlchemyRateCache() {
     rateCache = { fingerprint: null, rates: null };
 }
 
+// The pricing mode decides what every alchemy output is worth. Registered once,
+// at import, because this module has no lifecycle of its own to hang it on.
+config.onSettingChange?.('profitCalc_pricingMode', clearAlchemyRateCache);
+
 /**
  * What alchemy pays per hour, best first, in the shape the planner ranks.
  *
  * Memoised on the character state and the caller's price stamp, because the
  * ranking is three passes over `itemDetailMap` and the planner asks for it on
- * every refresh — including refreshes that happen because a *house* level
- * changed and cannot have moved an alchemy rate.
+ * every refresh — including refreshes that happen because something changed
+ * that {@link stateFingerprint} can see has not moved an alchemy rate.
  *
  * Each rate carries a `sustainable` cap: alchemy eats one copy of its item per
  * action, so what the method is worth in total is the margin times what is in

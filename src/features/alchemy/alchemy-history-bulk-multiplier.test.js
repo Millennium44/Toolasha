@@ -29,6 +29,11 @@ vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: () => 0,
     getItemPrices: () => null,
 }));
+// The real helper drags the marketplace API — and with it a live socket — into
+// a suite about arithmetic. The formula is one line and is what is under test.
+vi.mock('../../utils/profit-helpers.js', () => ({
+    calculatePriceAfterTax: (price) => price * (1 - 0.05),
+}));
 vi.mock('./alchemy-session-store.js', () => ({
     createAlchemySessionStore: () => ({
         load: async () => [],
@@ -124,5 +129,67 @@ describe('transmute viewer: which multiplier the fee is billed at', () => {
         const session = { inputItemHrid: '/items/thing', totalAttempts: 3, bulkMultiplier: 5, results: {} };
 
         expect(transmuteHistoryViewer.computeSessionProfit(session).netConsumed).toBe(15);
+    });
+});
+
+/**
+ * Recorded profit is quoted the way the forecast is.
+ *
+ * The trackers record raw sell prices — a record of what the market said, which
+ * is what a record should be. The forecast in `alchemy-profit-calculator.js`
+ * takes the marketplace cut off everything. Set side by side, history therefore
+ * beat forecast by the tax on every single session, on nothing but bookkeeping.
+ * The tax is taken at read, so the stored figures stay raw and sessions saved
+ * before this are restated the same way.
+ */
+describe('the marketplace cut on recorded output', () => {
+    test('a decompose session’s revenue is quoted after tax', () => {
+        const session = {
+            inputItemHrid: '/items/thing',
+            totalAttempts: 0,
+            results: { '/items/shard': { count: 10, totalValue: 1_000_000 } },
+        };
+
+        const profit = decomposeHistoryViewer.computeSessionProfit(session);
+
+        expect(profit.revenue).toBe(1_000_000 * 0.95);
+        expect(profit.revenue).toBeLessThan(1_000_000);
+    });
+
+    test('a transmute session’s revenue is too', () => {
+        const session = {
+            inputItemHrid: '/items/thing',
+            totalAttempts: 0,
+            results: { '/items/shard': { count: 10, totalValue: 1_000_000 } },
+        };
+
+        const profit = transmuteHistoryViewer.computeSessionProfit(session);
+
+        expect(profit.revenue).toBe(1_000_000 * 0.95);
+    });
+
+    test('a self-returned input is not revenue, taxed or otherwise', () => {
+        const session = {
+            inputItemHrid: '/items/thing',
+            totalAttempts: 4,
+            bulkMultiplier: 5,
+            results: {
+                '/items/thing': { count: 10, totalValue: 0, isSelfReturn: true },
+                '/items/shard': { count: 2, totalValue: 200_000 },
+            },
+        };
+
+        const profit = transmuteHistoryViewer.computeSessionProfit(session);
+
+        expect(profit.revenue).toBe(200_000 * 0.95);
+        // The returned copies still come off what the session consumed
+        expect(profit.netConsumed).toBe(4 * 5 - 10);
+    });
+
+    test('a session with nothing recorded still reads as nothing', () => {
+        const session = { inputItemHrid: '/items/thing', totalAttempts: 0, results: {} };
+
+        expect(decomposeHistoryViewer.computeSessionProfit(session).revenue).toBe(0);
+        expect(transmuteHistoryViewer.computeSessionProfit(session).revenue).toBe(0);
     });
 });

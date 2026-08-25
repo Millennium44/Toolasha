@@ -8,6 +8,7 @@ import config from '../../core/config.js';
 import dataManager from '../../core/data-manager.js';
 import { decomposeHistoryTracker } from './decompose-history-tracker.js';
 import { getAlchemyCoinCost } from '../../utils/alchemy-fees.js';
+import { calculatePriceAfterTax } from '../../utils/profit-helpers.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
@@ -438,6 +439,15 @@ class DecomposeHistoryViewer {
      * Compute session profit: recorded output value minus consumed inputs (at
      * current buy price for the session's enhancement level — historical input
      * prices were not recorded), catalysts consumed, and the alchemy coin fee.
+     *
+     * The recorded output values are RAW sell prices — a record of what the
+     * market said, which is what a record should be — while the forecast in
+     * `alchemy-profit-calculator.js` quotes everything after the marketplace
+     * cut. Comparing the two put history ahead of forecast by the tax on every
+     * session. The tax is applied here, at read, so the stored figures stay a
+     * record and every session ever saved is restated the same way. Coinify is
+     * exempt: its output is coins, which no marketplace takes a cut of.
+     *
      * @param {Object} session
      * @returns {{profit: number, revenue: number, inputCost: number, catalystCost: number, coinCost: number, netConsumed: number}}
      */
@@ -451,7 +461,7 @@ class DecomposeHistoryViewer {
 
         let revenue = 0;
         for (const result of Object.values(session.results || {})) {
-            revenue += result.totalValue || 0;
+            revenue += calculatePriceAfterTax(result.totalValue || 0);
         }
 
         const netConsumed = attempts * bulkMultiplier;
