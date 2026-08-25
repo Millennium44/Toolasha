@@ -75,16 +75,25 @@ class DecomposeHistoryTracker {
     }
 
     /**
-     * Disable the tracker
+     * Disable the tracker.
+     *
+     * Async, and the session is awaited before anything else is torn down: an
+     * unawaited `endSession()` resumed after `characterId` had been nulled and
+     * `sessionStore.forget()` had run, so the record was saved under the
+     * 'default' scope — over whatever was already there — while the forget
+     * raced the load it was meant to cancel. `handleCharacterSwitched` has
+     * always awaited it; this is the same order.
+     *
+     * @returns {Promise<void>}
      */
-    disable() {
+    async disable() {
         webSocketHook.off('actions_updated', this.handlers.actionsUpdated);
         webSocketHook.off('action_completed', this.handlers.actionCompleted);
         webSocketHook.off('init_character_data', this.handlers.initCharacterData);
         dataManager.off('character_switched', this.handlers.characterSwitched);
 
         if (this.activeSession) {
-            this.endSession();
+            await this.endSession();
         }
 
         sessionStore.forget();
@@ -421,9 +430,11 @@ export { decomposeHistoryTracker };
 export default {
     name: 'Decompose History Tracker',
     initialize: () => decomposeHistoryTracker.initialize(),
-    cleanup: () => {
+    // Awaited, so a rejection from the now-async disable is caught here rather
+    // than escaping as an unhandled promise
+    cleanup: async () => {
         try {
-            return decomposeHistoryTracker.disable();
+            await decomposeHistoryTracker.disable();
         } catch (error) {
             console.error('[Decompose History Tracker] Disable failed part-way:', error);
         } finally {

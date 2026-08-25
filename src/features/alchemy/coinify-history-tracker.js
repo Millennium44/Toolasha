@@ -8,8 +8,10 @@
  * - End: actions_updated with no coinify action, or different input item/enhancement level
  *
  * Result detection:
- * - Success: endCharacterItems contains a coin item (presence indicates success)
- * - Failure: no coin output in endCharacterItems
+ * - Success: coins gained, read as a delta on the coin stack's total — one
+ *   message can carry a batch of attempts, and coins are a single stack, so the
+ *   presence of a coin row says only "at least one", never how many
+ * - Failure: no coins gained
  *
  * Coins earned per success: itemDetails.sellPrice * 5 * bulkMultiplier
  */
@@ -18,6 +20,7 @@ import config from '../../core/config.js';
 import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
+import { createItemCountLedger } from './alchemy-item-deltas.js';
 
 const COINIFY_ACTION_HRID = '/actions/alchemy/coinify';
 const COIN_ITEM_HRID = '/items/coin';
@@ -36,6 +39,10 @@ class CoinifyHistoryTracker {
         this.isInitialized = false;
         this.characterId = null;
         this.activeSession = null; // Current in-progress session object
+        // `endCharacterItems` rows carry a stack's NEW total, one row per
+        // changed stack — not one row per action. A count delta is the only
+        // thing in the message that scales with a batch.
+        this.itemCounts = createItemCountLedger();
         this.handlers = {
             actionsUpdated: (data) => this.handleActionsUpdated(data),
             actionCompleted: (data) => this.handleActionCompleted(data),
@@ -74,16 +81,25 @@ class CoinifyHistoryTracker {
     }
 
     /**
-     * Disable the tracker
+     * Disable the tracker.
+     *
+     * Async, and the session is awaited before anything else is torn down: an
+     * unawaited `endSession()` resumed after `characterId` had been nulled and
+     * `sessionStore.forget()` had run, so the record was saved under the
+     * 'default' scope — over whatever was already there — while the forget
+     * raced the load it was meant to cancel. `handleCharacterSwitched` has
+     * always awaited it; this is the same order.
+     *
+     * @returns {Promise<void>}
      */
-    disable() {
+    async disable() {
         webSocketHook.off('actions_updated', this.handlers.actionsUpdated);
         webSocketHook.off('action_completed', this.handlers.actionCompleted);
         webSocketHook.off('init_character_data', this.handlers.initCharacterData);
         dataManager.off('character_switched', this.handlers.characterSwitched);
 
         if (this.activeSession) {
-            this.endSession();
+            await this.endSession();
         }
 
         sessionStore.forget();
@@ -151,20 +167,39 @@ class CoinifyHistoryTracker {
             await this.startSession(inputItemHrid, enhancementLevel, Date.now());
         }
 
-        // Count successes by number of coin entries (supports efficiency procs)
-        const coinEntries = (data.endCharacterItems || []).filter((item) => item.itemHrid === COIN_ITEM_HRID);
-        const successCount = coinEntries.length;
-
         // Derive actual attempt count from currentCount delta (handles batched efficiency procs)
         const currentCount = action.currentCount || 0;
+        const coinRows = (data.endCharacterItems || []).filter((item) => item.itemHrid === COIN_ITEM_HRID);
+        const coinsGained = this.itemCounts.note(coinRows);
+
         let attemptCount;
         if (this.lastCurrentCount !== null && currentCount > this.lastCurrentCount) {
             attemptCount = currentCount - this.lastCurrentCount;
         } else {
-            // First tick or counter reset — fall back to at least the success count
-            attemptCount = Math.max(successCount, 1);
+            // First tick or counter reset — one attempt is the least it can have been
+            attemptCount = 1;
         }
         this.lastCurrentCount = currentCount;
+
+        // Successes come from the coins actually gained, not from the number of
+        // changed stacks: coins are ONE stack, so counting rows could only ever
+        // answer 0 or 1 while `attemptCount` above exists precisely because the
+        // game batches several attempts into one message. A batch of five
+        // successes was recorded as one, and the session's success rate with it.
+        //
+        // Coinify has no coin fee (see utils/alchemy-fees.js), so the gain is
+        // exactly successes x coinsPerSuccess. Without a baseline for the coin
+        // stack — the first message of a session — there is no delta to read and
+        // the stack count is all there is; it is a floor, and marked as one by
+        // being capped at the attempts it cannot exceed.
+        const coinsPerSuccess = this.activeSession.coinsPerSuccess;
+        let successCount;
+        if (coinsGained !== null && coinsPerSuccess > 0) {
+            successCount = Math.round(coinsGained / coinsPerSuccess);
+        } else {
+            successCount = coinRows.length;
+        }
+        successCount = Math.min(Math.max(successCount, 0), attemptCount);
 
         this.activeSession.totalAttempts += attemptCount;
 
@@ -234,6 +269,7 @@ class CoinifyHistoryTracker {
             bulkMultiplier,
         };
         this.lastCurrentCount = null;
+        this.itemCounts.reset();
     }
 
     /**
@@ -364,9 +400,11 @@ export { coinifyHistoryTracker };
 export default {
     name: 'Coinify History Tracker',
     initialize: () => coinifyHistoryTracker.initialize(),
-    cleanup: () => {
+    // Awaited, so a rejection from the now-async disable is caught here rather
+    // than escaping as an unhandled promise
+    cleanup: async () => {
         try {
-            return coinifyHistoryTracker.disable();
+            await coinifyHistoryTracker.disable();
         } catch (error) {
             console.error('[Coinify History Tracker] Disable failed part-way:', error);
         } finally {

@@ -8,8 +8,10 @@
  * - End: actions_updated with no transmute action, or different input item
  *
  * Result detection:
- * - Success: endCharacterItems contains an item listed in the input item's transmuteDropTable
- * - Failure: no items from the transmuteDropTable appear in endCharacterItems
+ * - Success: a drop-table item's stack total went UP. One message can cover a
+ *   batch of attempts and carries one row per changed stack, so the count delta
+ *   — not the number of rows — is what says how many actions produced output
+ * - Failure: no drop-table item gained
  * - Incidental drops (essences on non-essence transmutes, artisan's crates) are excluded
  *   because they are not listed in the input item's transmuteDropTable
  */
@@ -19,6 +21,7 @@ import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
+import { createItemCountLedger } from './alchemy-item-deltas.js';
 
 const TRANSMUTE_ACTION_HRID = '/actions/alchemy/transmute';
 const COIN_ITEM_HRID = '/items/coin';
@@ -35,6 +38,10 @@ class TransmuteHistoryTracker {
         this.isInitialized = false;
         this.characterId = null;
         this.activeSession = null; // Current in-progress session object
+        // `endCharacterItems` rows carry a stack's NEW total, one row per
+        // changed stack — not one row per action. A count delta is the only
+        // thing in the message that scales with a batch.
+        this.itemCounts = createItemCountLedger();
         this.handlers = {
             actionsUpdated: (data) => this.handleActionsUpdated(data),
             actionCompleted: (data) => this.handleActionCompleted(data),
@@ -73,16 +80,25 @@ class TransmuteHistoryTracker {
     }
 
     /**
-     * Disable the tracker
+     * Disable the tracker.
+     *
+     * Async, and the session is awaited before anything else is torn down: an
+     * unawaited `endSession()` resumed after `characterId` had been nulled and
+     * `sessionStore.forget()` had run, so the record was saved under the
+     * 'default' scope — over whatever was already there — while the forget
+     * raced the load it was meant to cancel. `handleCharacterSwitched` has
+     * always awaited it; this is the same order.
+     *
+     * @returns {Promise<void>}
      */
-    disable() {
+    async disable() {
         webSocketHook.off('actions_updated', this.handlers.actionsUpdated);
         webSocketHook.off('action_completed', this.handlers.actionCompleted);
         webSocketHook.off('init_character_data', this.handlers.initCharacterData);
         dataManager.off('character_switched', this.handlers.characterSwitched);
 
         if (this.activeSession) {
-            this.endSession();
+            await this.endSession();
         }
 
         sessionStore.forget();
@@ -152,43 +168,68 @@ class TransmuteHistoryTracker {
         const dropTable = itemDetailsForBulk?.alchemyDetail?.transmuteDropTable || [];
         const validOutputHrids = new Set(dropTable.map((entry) => entry.itemHrid));
 
-        // Exclude coins and items not in the drop table (incidental drops)
-        const nonCoinItems = (data.endCharacterItems || []).filter(
-            (item) => item.itemHrid !== COIN_ITEM_HRID && validOutputHrids.has(item.itemHrid)
+        // Every row is recorded so the next message has a baseline; only the
+        // drop-table rows say anything about what this action produced, since
+        // incidental drops (essences, artisan's crates) arrive even on failure.
+        const noted = this.itemCounts.noteEach(data.endCharacterItems || []);
+        const outputRows = noted.filter(
+            ({ row }) => row.itemHrid !== COIN_ITEM_HRID && validOutputHrids.has(row.itemHrid)
         );
 
-        // The game always sends one entry for the consumed input item.
-        // If the input is also returned (self-return), it sends additional entries.
-        // Only the extra entries (beyond the first consumed one) represent actual returns.
-        const inputItemEntries = nonCoinItems.filter((item) => item.itemHrid === inputItemHrid);
-        const inputReturned = inputItemEntries.length > 1;
-        const selfReturnEntries = inputReturned ? inputItemEntries.slice(1) : [];
-
-        // Other non-input outputs
-        const otherOutputs = nonCoinItems.filter((item) => item.itemHrid !== inputItemHrid);
-
-        // Collect all output items — the game sends one entry per action per output item,
-        // so entry count correctly represents number of actions for that output.
-        const outputItems = [...selfReturnEntries, ...otherOutputs];
-
-        // Each entry corresponds to one successful action; failures produce no output.
         // Derive actual attempt count from currentCount delta (handles batched efficiency procs)
         const currentCount = action.currentCount || 0;
         let attemptCount;
         if (this.lastCurrentCount !== null && currentCount > this.lastCurrentCount) {
             attemptCount = currentCount - this.lastCurrentCount;
         } else {
-            attemptCount = Math.max(outputItems.length, 1);
+            attemptCount = Math.max(outputRows.length, 1);
         }
         this.lastCurrentCount = currentCount;
 
         this.activeSession.totalAttempts += attemptCount;
 
-        if (outputItems.length > 0) {
-            this.activeSession.totalSuccesses += outputItems.length;
+        // How many actions produced each output.
+        //
+        // Counting rows was only ever right while one message meant one action:
+        // `endCharacterItems` carries one row per changed STACK, holding that
+        // stack's new absolute total, so a batch of five successes on the same
+        // output still arrives as a single row. The count delta is what scales
+        // with the batch, and `bulkMultiplier` items arrive per successful
+        // action, so the delta divided by it is the number of actions.
+        //
+        // The input's own row is both consumed and — on a self-return — handed
+        // back, so its delta is `(returned - attempts) * bulk`; adding the
+        // attempts back recovers the returns. A row with no baseline yet (the
+        // first message of a session) can only be read the old way, as one
+        // action, and is capped below so it cannot exceed the attempts made.
+        const producedActions = new Map();
+        for (const { row, delta } of outputRows) {
+            const isSelfReturn = row.itemHrid === inputItemHrid;
+            let actions;
+            if (delta === null) {
+                // No baseline: the row says "at least one", and nothing more.
+                // A self-return row with no baseline is indistinguishable from
+                // the plain consumption of the input, so it is not counted.
+                actions = isSelfReturn ? 0 : 1;
+            } else if (isSelfReturn) {
+                actions = Math.round(delta / bulkMultiplier) + attemptCount;
+            } else {
+                actions = Math.round(delta / bulkMultiplier);
+            }
+            actions = Math.min(Math.max(actions, 0), attemptCount);
+            if (actions > 0) producedActions.set(row.itemHrid, (producedActions.get(row.itemHrid) || 0) + actions);
+        }
 
-            for (const outputItem of outputItems) {
-                const outputItemHrid = outputItem.itemHrid;
+        // One action produces one output, so the successes cannot outnumber the
+        // attempts however the deltas came out
+        let successCount = 0;
+        for (const actions of producedActions.values()) successCount += actions;
+        successCount = Math.min(successCount, attemptCount);
+
+        if (successCount > 0) {
+            this.activeSession.totalSuccesses += successCount;
+
+            for (const [outputItemHrid, actions] of producedActions) {
                 const isOutputSelfReturn = outputItemHrid === inputItemHrid;
 
                 if (!this.activeSession.results[outputItemHrid]) {
@@ -200,14 +241,15 @@ class TransmuteHistoryTracker {
                     };
                 }
 
-                // Each entry represents bulkMultiplier items received
-                this.activeSession.results[outputItemHrid].count += bulkMultiplier;
+                // Each producing action hands over bulkMultiplier items
+                const received = actions * bulkMultiplier;
+                this.activeSession.results[outputItemHrid].count += received;
 
                 // Record market price at time of result
                 if (!isOutputSelfReturn) {
                     const price = getItemPrice(outputItemHrid, { context: 'profit', side: 'sell' }) || 0;
                     this.activeSession.results[outputItemHrid].priceEach = price;
-                    this.activeSession.results[outputItemHrid].totalValue += price * bulkMultiplier;
+                    this.activeSession.results[outputItemHrid].totalValue += price * received;
                 }
             }
         }
@@ -258,6 +300,7 @@ class TransmuteHistoryTracker {
             results: {},
         };
         this.lastCurrentCount = null;
+        this.itemCounts.reset();
     }
 
     /**
@@ -374,9 +417,11 @@ export { transmuteHistoryTracker };
 export default {
     name: 'Transmute History Tracker',
     initialize: () => transmuteHistoryTracker.initialize(),
-    cleanup: () => {
+    // Awaited, so a rejection from the now-async disable is caught here rather
+    // than escaping as an unhandled promise
+    cleanup: async () => {
         try {
-            return transmuteHistoryTracker.disable();
+            await transmuteHistoryTracker.disable();
         } catch (error) {
             console.error('[Transmute History Tracker] Disable failed part-way:', error);
         } finally {
