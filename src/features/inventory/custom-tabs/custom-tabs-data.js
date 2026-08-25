@@ -5,6 +5,7 @@
  */
 
 import { createCuratedRecord, mergeById } from '../../../utils/persisted-record.js';
+import { registerSyncMerge } from '../../../utils/sync-merge-registry.js';
 
 const STORAGE_KEY = 'inventoryTabs_config';
 const STORE = 'settings';
@@ -67,6 +68,26 @@ function mergeConfigs(stored, memory) {
         selectedTabId: ours.selectedTabId ?? theirs.selectedTabId ?? null,
     };
 }
+
+/**
+ * A pull folds the gist's config into the one on disk instead of replacing it.
+ *
+ * The key is character-scoped with the id FIRST (`<charId>_inventoryTabs_config`),
+ * so the registry's `base` matcher cannot say it and a predicate does. Local
+ * wins per tab id and the union keeps everything either side has: without
+ * per-tab timestamps, "which side is newer" is unknowable, and a pull that
+ * replaced the key wholesale was reverting days of tab work to whatever the
+ * gist last saw. The cost is bounded and honest - a tab deleted here can come
+ * back from a device that still carries it, until that device pushes.
+ */
+registerSyncMerge({
+    store: STORE,
+    match: (key) => key === STORAGE_KEY || key.endsWith(`_${STORAGE_KEY}`),
+    // The registry hands (local, incoming); mergeConfigs favours its second
+    // argument per tab, and local is the side a pull must not erase
+    merge: (local, incoming) => mergeConfigs(incoming, local),
+    label: 'Custom inventory tabs',
+});
 
 /**
  * One curated record per character, under the exact key the config has always

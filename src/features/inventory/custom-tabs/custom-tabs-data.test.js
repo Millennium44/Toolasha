@@ -340,3 +340,49 @@ describe('the stored config', () => {
         expect(storageMock.storeFor('settings').has('char2_inventoryTabs_config')).toBe(true);
     });
 });
+
+describe('the sync merge', () => {
+    test('a pull folds the gist copy in instead of replacing the key', async () => {
+        const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
+        const registration = mergeForKey('settings', 'char1_inventoryTabs_config');
+        expect(registration).toBeTruthy();
+
+        const local = {
+            version: 1,
+            selectedTabId: 'b',
+            tabs: [
+                { id: 'a', name: 'Ores (renamed here)', items: ['/items/iron_ore'] },
+                { id: 'b', name: 'New tab the gist never saw', items: [] },
+            ],
+        };
+        const incoming = {
+            version: 1,
+            selectedTabId: 'a',
+            tabs: [
+                { id: 'a', name: 'Ores', items: [] },
+                { id: 'c', name: 'Tab only the other device has', items: [] },
+            ],
+        };
+
+        const merged = registration.merge(local, incoming);
+        const ids = merged.tabs.map((tab) => tab.id).sort();
+
+        // Union keeps everything either side has; the local copy wins per id
+        expect(ids).toEqual(['a', 'b', 'c']);
+        expect(merged.tabs.find((tab) => tab.id === 'a').name).toBe('Ores (renamed here)');
+        expect(merged.selectedTabId).toBe('b');
+    });
+
+    test('a blank local side adopts the gist copy whole', async () => {
+        const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
+        const registration = mergeForKey('settings', 'char9_inventoryTabs_config');
+
+        const merged = registration.merge(
+            { version: 1, tabs: [], selectedTabId: null },
+            { version: 1, tabs: [{ id: 'x', name: 'Kept', items: [] }], selectedTabId: 'x' }
+        );
+
+        expect(merged.tabs.map((tab) => tab.id)).toEqual(['x']);
+        expect(merged.selectedTabId).toBe('x');
+    });
+});

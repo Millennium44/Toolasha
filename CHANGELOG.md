@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Custom inventory tabs survive a sync pull
+
+A pull used to replace the tab config wholesale with the gist's copy, so a device whose gist was days behind reverted your tabs — newer tabs gone, items back in Unorganized. Pulls now fold the two configs together: tabs are unioned by id, the local copy wins where both have one, and your selection stays. The trade is stated in the code: without per-tab timestamps a tab deleted here can return from a device that still carries it, which is the recoverable direction — losing tabs was not.
+
 ### Audit round five: six reviewers over the corners no round had reached
 
 - **Combat sim engine**: a dungeon wipe right after a wave clear no longer spawns a phantom wave that attacks for the rest of the run (long dungeon sims degraded monotonically per wipe); a pierce that kills cannot count the same player dead twice; a revived monster drops once, not twice; a wipe and a wave credit can no longer both be charged for one pass; ordinary-zone deaths keep boss progress; fractional sim hours run exactly, not rounded up; the zone reads boss cadence from game data without mutating it; multi-target buff triggers count units instead of concatenating objects.
