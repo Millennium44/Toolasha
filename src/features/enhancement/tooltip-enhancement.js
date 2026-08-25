@@ -662,9 +662,13 @@ export function getEnhancementMaterialPrice(itemHrid, side = 'ask') {
         let ask = marketPrice.ask;
         let bid = marketPrice.bid;
 
-        // Match MCS behavior: when only one side is quoted, both sides use it
-        if (ask > 0 && bid < 0) bid = ask;
-        if (bid > 0 && ask < 0) ask = bid;
+        // Match MCS behavior: when only one side is quoted, both sides use it.
+        // A missing side reads as null, and `null < 0` is false, so testing for
+        // a negative sentinel never fired: a one-sided book fell through to the
+        // production-cost/vendor fallback below instead of using the quote it
+        // did have. "Not a positive number" is what missing looks like.
+        if (ask > 0 && !(bid > 0)) bid = ask;
+        if (bid > 0 && !(ask > 0)) ask = bid;
 
         const price = side === 'bid' ? bid : ask;
         if (price > 0) return price;
@@ -929,7 +933,17 @@ function _computeProductionChainTime(itemHrid) {
 
 /**
  * Get cheapest protection item price
- * Tests: item itself, mirror of protection, and specific protection items
+ *
+ * Tests: item itself, mirror of protection, and specific protection items.
+ *
+ * `price` is null when none of the options could be priced — not 0. A zero read
+ * as a price makes protection free, and the upgrade advisor duly ranked the
+ * most-protected path first on an under-quote it had no basis for. Callers that
+ * gate on `price > 0` are unaffected; the ones that want a number take
+ * `?.price || 0` and get the same 0 they always did.
+ *
+ * @param {string} itemHrid - The item being enhanced
+ * @returns {{price: number|null, itemHrid: string|null}} The cheapest option
  * @private
  */
 export function getCheapestProtectionPrice(itemHrid) {
@@ -956,7 +970,7 @@ export function getCheapestProtectionPrice(itemHrid) {
     }
 
     return {
-        price: cheapestPrice === Infinity ? 0 : cheapestPrice,
+        price: cheapestPrice === Infinity ? null : cheapestPrice,
         itemHrid: cheapestItemHrid,
     };
 }

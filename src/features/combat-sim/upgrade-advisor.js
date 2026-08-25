@@ -455,8 +455,13 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData, o
             if (marketPrice) {
                 let ask = marketPrice.ask;
                 let bid = marketPrice.bid;
-                if (ask > 0 && bid < 0) bid = ask;
-                if (bid > 0 && ask < 0) ask = bid;
+                // A missing side is null, not a negative sentinel, and
+                // `null < 0` is false — so the cross-fill never ran and a
+                // bid-only book fell through to production cost or the vendor
+                // sell price, both far under what the material actually goes
+                // for. Anything that is not a positive quote is a missing side.
+                if (ask > 0 && !(bid > 0)) bid = ask;
+                if (bid > 0 && !(ask > 0)) ask = bid;
                 if (ask > 0) {
                     price = ask;
                 }
@@ -470,7 +475,10 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData, o
         perAttemptCost += price * material.count;
     }
 
-    // Get cheapest protection price
+    // Get cheapest protection price. Null when nothing that could protect this
+    // item has a price — which makes every protecting strategy unpriceable
+    // below, not free. Quoting protection at zero made the most-protected path
+    // the cheapest by construction and put it top of the rankings.
     const { price: protPrice } = getCheapestProtectionPrice(itemHrid);
 
     // Calculate full path cost for each level from 1 to targetLevel
@@ -505,8 +513,14 @@ function calculateEnhancementCost(itemHrid, startLevel, targetLevel, gameData, o
                     blessedTeaBonus: enhancingParams.blessedTeaBonus,
                 });
 
+                const protectionCount = result.protectionCount || 0;
+                // A strategy that consumes protection nobody can price has no
+                // cost to compare; skipping it leaves the unprotected path,
+                // which is priceable, rather than crowning a free one
+                if (protectionCount > 0 && !(protPrice > 0)) continue;
+
                 const materialCost = perAttemptCost * result.attempts;
-                const protectionCost = protPrice * (result.protectionCount || 0);
+                const protectionCost = (protPrice || 0) * protectionCount;
                 const totalForLevel = materialCost + protectionCost;
 
                 if (totalForLevel < bestCost) {

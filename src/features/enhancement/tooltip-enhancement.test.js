@@ -104,6 +104,8 @@ let buildEnhancementTooltipHTML;
 let buildEnhancementMilestonesHTML;
 let calculateMinimumSellPrice;
 let calculatePerAttemptMaterialCost;
+let getCheapestProtectionPrice;
+let getRealisticBaseItemPrice;
 
 beforeAll(async () => {
     globalThis.math = mathjs;
@@ -113,6 +115,8 @@ beforeAll(async () => {
         buildEnhancementMilestonesHTML,
         calculateMinimumSellPrice,
         calculatePerAttemptMaterialCost,
+        getCheapestProtectionPrice,
+        getRealisticBaseItemPrice,
     } = await import('./tooltip-enhancement.js'));
 });
 
@@ -526,6 +530,60 @@ describe('production cost memo', () => {
             for (const listener of priceListeners) listener();
             delete gameData.itemDetailMap[CRAFTED];
             gameData.actionDetailMap = {};
+        }
+    });
+});
+
+/**
+ * What a price is when there is not one.
+ *
+ * Both of these read a missing figure as a number: the cheapest protection came
+ * back as 0 when nothing could be priced, which makes protection free to
+ * anything that multiplies by it; and a one-sided market book was tested with
+ * `bid < 0`, which is never true of a null, so the quote that did exist was
+ * thrown away in favour of the vendor price.
+ */
+describe('a price that is not there', () => {
+    test('protection nobody can price comes back as null, not as free', () => {
+        const original = { ...prices[PROTECTION] };
+        const originalItem = { ...prices[ITEM] };
+        delete prices[PROTECTION];
+        delete prices[ITEM];
+
+        try {
+            const result = getCheapestProtectionPrice(ITEM);
+            expect(result.price).toBe(null);
+            expect(result.itemHrid).toBe(null);
+        } finally {
+            prices[PROTECTION] = original;
+            prices[ITEM] = originalItem;
+        }
+    });
+
+    test('a priced option still comes back as a number', () => {
+        expect(getCheapestProtectionPrice(ITEM).price).toBeGreaterThan(0);
+    });
+
+    test('a bid-only book is read at the bid rather than the vendor price', () => {
+        const original = { ...prices[MATERIAL] };
+        prices[MATERIAL] = { ask: null, bid: 4800 };
+
+        try {
+            // The vendor sell price is 100; the fallback would have picked it
+            expect(getRealisticBaseItemPrice(MATERIAL, 'ask')).toBe(4800);
+        } finally {
+            prices[MATERIAL] = original;
+        }
+    });
+
+    test('an ask-only book is read at the ask on the bid side too', () => {
+        const original = { ...prices[MATERIAL] };
+        prices[MATERIAL] = { ask: 5000, bid: null };
+
+        try {
+            expect(getRealisticBaseItemPrice(MATERIAL, 'bid')).toBe(5000);
+        } finally {
+            prices[MATERIAL] = original;
         }
     });
 });

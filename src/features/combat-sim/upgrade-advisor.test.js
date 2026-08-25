@@ -187,7 +187,7 @@ const {
 const { resolveItemPrice } = await import('../../utils/profit-helpers.js');
 const { getItemPrices } = await import('../../utils/market-data.js');
 const { calculateEnhancement } = await import('../../utils/enhancement-calculator.js');
-const { getCheapestProtectionPrice } = await import('../enhancement/tooltip-enhancement.js');
+const { getCheapestProtectionPrice, getProductionCost } = await import('../enhancement/tooltip-enhancement.js');
 const { getEnhancingParams } = await import('../../utils/enhancement-config.js');
 const { explainAbilityLevelUpCost } = await import('../../utils/ability-cost-calculator.js');
 const { runSimulation, plannedWorkerCount } = await import('./combat-sim-runner.js');
@@ -2839,6 +2839,133 @@ describe('calculateUpgradeCost for items without high-level listings', () => {
         );
 
         expect(cost).toBeNull();
+    });
+});
+
+/**
+ * What an enhancement path is quoted at.
+ *
+ * Two sentinels were wrong in the same direction — downwards.
+ *
+ * A missing market side reads as null, so the cross-fill guarded by `bid < 0`
+ * never ran: a bid-only book fell through to production cost or the vendor sell
+ * price, both far under what the material goes for.
+ *
+ * And protection nobody could price came back as 0, which made every protecting
+ * strategy free by construction — the most-protected path won every comparison
+ * on a quote it had no basis for.
+ */
+describe('pricing an enhancement path', () => {
+    /** Wire the mocks this suite shares. */
+    function setup() {
+        resolveItemPrice.mockImplementation((hrid, { side }) =>
+            side === 'sell' ? { price: 1_000_000 } : { price: 5_000_000 }
+        );
+        // The advisor prices the whole path 1..level and subtracts, so the
+        // attempt count has to grow with the level for the difference to be
+        // anything: one attempt per level makes +5 → +6 exactly one attempt.
+        calculateEnhancement.mockImplementation(({ targetLevel }) => ({
+            attempts: targetLevel,
+            protectionCount: 0,
+        }));
+        getCheapestProtectionPrice.mockReturnValue({ price: null, itemHrid: null });
+        getProductionCost.mockReturnValue(0);
+        getEnhancingParams.mockReturnValue({
+            enhancingLevel: 100,
+            toolBonus: 0,
+            speedBonus: 0,
+            teas: {},
+            guzzlingBonus: 1,
+        });
+
+        const gameData = buildGameData();
+        gameData.itemDetailMap['/items/fine_sword'].enhancementCosts = [{ itemHrid: '/items/enhance_mat', count: 1 }];
+        gameData.itemDetailMap['/items/enhance_mat'] = { name: 'Mat', sellPrice: 100 };
+        return gameData;
+    }
+
+    /**
+     * The cost of taking the fine sword from +5 to +6.
+     * @param {Object} gameData - Game data payload
+     * @returns {number|null} Cost, or null when it cannot be priced
+     */
+    function enhanceCost(gameData) {
+        return calculateUpgradeCost(
+            {
+                type: 'enhancement',
+                slot: MAIN_HAND,
+                currentHrid: '/items/fine_sword',
+                currentLevel: 5,
+                upgradeHrid: '/items/fine_sword',
+                upgradeLevel: 6,
+            },
+            gameData
+        );
+    }
+
+    test('a bid-only book is priced at the bid, not at the vendor price', () => {
+        const gameData = setup();
+        // The game sends null for a side with no listing. Only the material has
+        // a book at all, so the cost is the enhancement path's.
+        getItemPrices.mockImplementation((hrid) => (hrid === '/items/enhance_mat' ? { ask: null, bid: 90_000 } : null));
+        getProductionCost.mockReturnValue(500);
+
+        const cost = enhanceCost(gameData);
+
+        // One more attempt at 90,000 a material — the production cost of 500 and
+        // the 100 vendor price are what the dead sentinel used to pick instead
+        expect(cost).toBe(90_000);
+    });
+
+    test('an ask-only book still uses the ask', () => {
+        const gameData = setup();
+        getItemPrices.mockImplementation((hrid) => (hrid === '/items/enhance_mat' ? { ask: 90_000, bid: null } : null));
+
+        expect(enhanceCost(gameData)).toBe(90_000);
+    });
+
+    test('a book with neither side falls back, as it always did', () => {
+        const gameData = setup();
+        getItemPrices.mockReturnValue({ ask: null, bid: null });
+        getProductionCost.mockImplementation((hrid) => (hrid === '/items/enhance_mat' ? 500 : 0));
+
+        expect(enhanceCost(gameData)).toBe(500);
+    });
+
+    test('unpriceable protection does not make a protected path free', () => {
+        const gameData = setup();
+        // Only the material is listed — the sword itself is not, so the cost
+        // falls through to the enhancement path rather than a market delta
+        getItemPrices.mockImplementation((hrid) =>
+            hrid === '/items/enhance_mat' ? { ask: 90_000, bid: 80_000 } : null
+        );
+        // Protecting costs fewer attempts, so with protection at zero it would
+        // undercut the unprotected path every time
+        calculateEnhancement.mockImplementation(({ protectFrom, targetLevel }) =>
+            protectFrom > 0
+                ? { attempts: 1, protectionCount: targetLevel }
+                : { attempts: targetLevel, protectionCount: 0 }
+        );
+        getCheapestProtectionPrice.mockReturnValue({ price: null, itemHrid: null });
+
+        // Only the unprotected path can be priced: one more attempt at 90,000
+        expect(enhanceCost(gameData)).toBe(90_000);
+    });
+
+    test('protection that has a price is used, and can win', () => {
+        const gameData = setup();
+        getItemPrices.mockImplementation((hrid) =>
+            hrid === '/items/enhance_mat' ? { ask: 90_000, bid: 80_000 } : null
+        );
+        calculateEnhancement.mockImplementation(({ protectFrom, targetLevel }) =>
+            protectFrom > 0
+                ? { attempts: 1, protectionCount: targetLevel }
+                : { attempts: targetLevel, protectionCount: 0 }
+        );
+        getCheapestProtectionPrice.mockReturnValue({ price: 10_000, itemHrid: '/items/mirror_of_protection' });
+
+        // Protecting is cheaper here and is now priced: one more protection
+        expect(enhanceCost(gameData)).toBe(10_000);
     });
 });
 
