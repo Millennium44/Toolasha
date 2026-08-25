@@ -1201,6 +1201,76 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.22.0](https://github.com/Millennium44/Toolasha/compare/v3.21.1...v3.22.0) (2026-08-25)
+
+### Features
+
+- daily net worth calendar in the gold sources panel ([c45057c](https://github.com/Millennium44/Toolasha/commit/c45057c596163b584c0ada6cfbc8fc6d420fde07))
+- per-fight history on the combat panel's Rotation tab ([a0bbf55](https://github.com/Millennium44/Toolasha/commit/a0bbf5571fee3dc2c14ae6e5dab5a6e1b3abe79a))
+- record when this device last pushed, apart from when it last synced ([b58da59](https://github.com/Millennium44/Toolasha/commit/b58da59fdf9db482aac530bdecc4b48ec1138817))
+- run-over-run duration trends in dungeon run history ([9198942](https://github.com/Millennium44/Toolasha/commit/9198942fc032122d7cc5a78a7962ee8864accfb3))
+- settings search matches section headings, debounces, and clears on Escape ([eee8d10](https://github.com/Millennium44/Toolasha/commit/eee8d109fe4675e11c722a756651524d3d593efb))
+- stamp custom inventory tabs so the sync merge stops guessing ([27230bb](https://github.com/Millennium44/Toolasha/commit/27230bbee257f47114c3e5011080f6cb9a279855))
+- task surfaces say when a token valuation is only a floor ([b7ae34d](https://github.com/Millennium44/Toolasha/commit/b7ae34dd544ba57ca4c5fc10564a7f5355e34885))
+- the Rotation tab can copy just the variances ([198a36a](https://github.com/Millennium44/Toolasha/commit/198a36abfca9e9f4b75bcf8a0ddf22e097f57af5))
+
+### Bug Fixes
+
+- a combat restock shows in the consumables list at once ([1985782](https://github.com/Millennium44/Toolasha/commit/1985782dc2b23d485f36cacce9d6ffbbd6cb4369))
+- a nested container's unpriceable drops make the outer one partial ([c4f7d8f](https://github.com/Millennium44/Toolasha/commit/c4f7d8fbda38a546931a12336e0659098a336221))
+- a one-sided order book averages to the side that exists ([b097ef1](https://github.com/Millennium44/Toolasha/commit/b097ef19b24ce94d9aff1d7b315ceced9c807fd3))
+- a second game tab no longer clobbers the first tab's shared profiles ([9189916](https://github.com/Millennium44/Toolasha/commit/91899161de494caf61df6e5ea5229e20319011f4))
+- a sync pull that writes nothing no longer reports success ([4d0492a](https://github.com/Millennium44/Toolasha/commit/4d0492a6335834284b80a9318a9af20886aadaeb))
+- alchemy history bills the multiplier the session actually ran at ([d032a0f](https://github.com/Millennium44/Toolasha/commit/d032a0fb3b56d543ab419a74bfacd2e96559f387))
+- alchemy rates go stale, and recorded profit is quoted pre-tax ([64d1efe](https://github.com/Millennium44/Toolasha/commit/64d1efe5d246b19e9bffbda730e5b7f6b6348b12))
+- alchemy trackers lose a session on disable and miscount batched procs ([e337640](https://github.com/Millennium44/Toolasha/commit/e3376401da7338127d8294b6482b9996c7643bab))
+- an aborted bulk write no longer reports its keys as written ([492edfe](https://github.com/Millennium44/Toolasha/commit/492edfe195db176bffd14e600c38c521db18731a))
+- an estimated credit price no longer beats the conversion rate ([5d393a9](https://github.com/Millennium44/Toolasha/commit/5d393a91d7ca91167ebf7b90affcba2bd0a27211))
+- an untradable reward is priced by every currency its shop line costs ([c919d6e](https://github.com/Millennium44/Toolasha/commit/c919d6edca8562daed229ed6bf512ccdbf91aa71))
+- character switches are serialised instead of interleaving mid-teardown ([dcdae1e](https://github.com/Millennium44/Toolasha/commit/dcdae1e6df880defd81bf725176ac4137b5c40b3))
+- combat numbers land on units, not on the battle panel's wrappers ([3fa7c20](https://github.com/Millennium44/Toolasha/commit/3fa7c206ca329b23cfb5789abe52349b54f36f87))
+- combat sim wipe phantoms, double deaths and boss-progress resets ([c497b9b](https://github.com/Millennium44/Toolasha/commit/c497b9b8402e9c70bd186fc2a99352fd1a2f06f9))
+- custom inventory tabs survive a sync pull ([c3a6ce5](https://github.com/Millennium44/Toolasha/commit/c3a6ce5b0a8640675e6797582e24d0e55fb8d2e5))
+- drop the session briefing's structurally-empty expired-listing count ([1c1a223](https://github.com/Millennium44/Toolasha/commit/1c1a223e758c264a508c855bcd88f2c42941e001))
+- dungeon readiness card refreshes when keys, party or burn move ([7876b73](https://github.com/Millennium44/Toolasha/commit/7876b73c76fcb7468e7f7d6ee0e0cd15d8ce2c07))
+- dungeon run saves survive the page going away mid-coalesce ([b8771d1](https://github.com/Millennium44/Toolasha/commit/b8771d10743809eeba8b88d2d264495248b3c003))
+- enhancement paths quoted below what they cost ([d6716a0](https://github.com/Millennium44/Toolasha/commit/d6716a00fb5612f8d535040da9edb4d20ce2164c))
+- expected value cache discipline for the fallback, zero-value and cyclic cases ([1655d15](https://github.com/Millennium44/Toolasha/commit/1655d15067fc04efe6f3822fbdaded5ad3c7c905))
+- forgetGist clears the last-pushed stamp along with the rest ([7579ca1](https://github.com/Millennium44/Toolasha/commit/7579ca19b998f6325c84a9cb78a98e0ea75a5cc0))
+- four wrong figures in the task panel and tiles ([8ce176e](https://github.com/Millennium44/Toolasha/commit/8ce176e7b5e5e5150dc33b969d5bd09255e05a70))
+- gold-sources coverage share is a magnitude on both sides ([22a25d7](https://github.com/Millennium44/Toolasha/commit/22a25d73c96ba9940462e4cf67c77a64f8d08473))
+- guild trial coverage excludes the week still running ([9d080bd](https://github.com/Millennium44/Toolasha/commit/9d080bdd3dace2876b04acfed9f01e007de4eb81))
+- house rooms credit efficiency only for real efficiency buffs ([3a53b95](https://github.com/Millennium44/Toolasha/commit/3a53b950683a95735b70911666b0121d12eb6492))
+- **market:** keep cancelled listings holding a refund, and eight other market bugs ([12af594](https://github.com/Millennium44/Toolasha/commit/12af5946c9ff685f3aa8efe9dc93bb38374d2f19))
+- net worth says why an unpriceable token contributes nothing ([d779df5](https://github.com/Millennium44/Toolasha/commit/d779df5ae3153580147410a1bfa86022e9ea8932))
+- notification digest counts events, not distinct subjects ([fa1871e](https://github.com/Millennium44/Toolasha/commit/fa1871e2ff9002f8f248e4d9767f2223c618076e))
+- one unwritable key no longer blocks a whole store's flush forever ([c424147](https://github.com/Millennium44/Toolasha/commit/c424147f6b3654cbdb34ac786de33e50cd512753))
+- panels open in front, stay put, and follow the character switch ([8e4b080](https://github.com/Millennium44/Toolasha/commit/8e4b0803e9885de06d5b596df097fdd850955add))
+- rotation audit notices an ability leaving the bar ([4bbe547](https://github.com/Millennium44/Toolasha/commit/4bbe547287008768f540b65b4202574ef0ac8ee7))
+- rotation tracker re-seeds the arriving character's bar itself ([5b81644](https://github.com/Millennium44/Toolasha/commit/5b8164481258c41848dfe5086ba9b2810fbcbe71))
+- serialise profile_shared persistence so a burst of shares keeps them all ([dc40fcb](https://github.com/Millennium44/Toolasha/commit/dc40fcbfbd5245695dc1cae49d578f6470fd341a))
+- terminating a worker pool rejects the tasks it abandons ([7be88ae](https://github.com/Millennium44/Toolasha/commit/7be88ae45be30c91e5dfb3ae71643bf01289dccc))
+- the public expected-value path counts nested unpriced drops ([e97095f](https://github.com/Millennium44/Toolasha/commit/e97095f868fb6df68374804ea55224611ddd9fc8))
+- unpriced upgrade item no longer skips its crafting chain time ([eb05f6d](https://github.com/Millennium44/Toolasha/commit/eb05f6d2ed0c2cb11fbdbcc4c01fbf09b7a0eb0f))
+- worker pool no longer bricks itself when the last worker cannot be replaced ([ecb6659](https://github.com/Millennium44/Toolasha/commit/ecb6659df19050154ffa0891755b7afbbbad65da))
+
+### Code Refactoring
+
+- drop the retired profile export button ([8c595d7](https://github.com/Millennium44/Toolasha/commit/8c595d7f8d712d62b5ab1e91f068257928969896))
+
+### Performance Improvements
+
+- the changed-chunk hint is wired into the append-only history writers ([fbd5f8f](https://github.com/Millennium44/Toolasha/commit/fbd5f8f3d892215fe34adbdcd5bfb73cab4557e8))
+
+### Documentation
+
+- changelog for audit round five ([99aff1a](https://github.com/Millennium44/Toolasha/commit/99aff1a47697f5afa59c7df5a1e5657e5632289a))
+- changelog for audit round four ([d66bffe](https://github.com/Millennium44/Toolasha/commit/d66bffe0de409ba1ad96aaf09754ad5349dde57d))
+- changelog for audit round three ([557ab3f](https://github.com/Millennium44/Toolasha/commit/557ab3f5a16bbd7b00b869c9b5955af731c50f9b))
+- changelog for the four quality-of-life additions ([589a60b](https://github.com/Millennium44/Toolasha/commit/589a60b77b6322f84b35e196ba0f7cc780237528))
+- changelog for the rotation variance copy ([f167274](https://github.com/Millennium44/Toolasha/commit/f167274efe1a1204739e43b196150e1ea10f1e2d))
+- changelog for the tab modification stamps ([3a5636e](https://github.com/Millennium44/Toolasha/commit/3a5636e4e973d79af581bcef47b7618e152e395f))
+
 ## [3.21.1](https://github.com/Millennium44/Toolasha/compare/v3.21.0...v3.21.1) (2026-08-23)
 
 ### Bug Fixes

@@ -771,8 +771,7 @@ describe('_untradableValue at token value', () => {
                 ],
             },
         };
-        tokenValue.of = (hrid) =>
-            ({ '/items/chimerical_token': 1000, '/items/sinister_token': 2500 })[hrid] ?? null;
+        tokenValue.of = (hrid) => ({ '/items/chimerical_token': 1000, '/items/sinister_token': 2500 })[hrid] ?? null;
 
         // 10 x 1000 + 4 x 2500 = 20000. Reading only costs[0] gave 10000.
         expect(treasureTracker._untradableValue('/items/cape')).toBe(20_000);
@@ -791,8 +790,7 @@ describe('_untradableValue at token value', () => {
         };
         // If /items/coin ever reaches the token valuer it answers 1_000_000 a coin,
         // which is the plausible-looking wrong number this guards against.
-        tokenValue.of = (hrid) =>
-            ({ '/items/coin': 1_000_000, '/items/chimerical_token': 1000 })[hrid] ?? null;
+        tokenValue.of = (hrid) => ({ '/items/coin': 1_000_000, '/items/chimerical_token': 1000 })[hrid] ?? null;
 
         expect(treasureTracker._untradableValue('/items/cape')).toBe(8000); // 5000 + 3 x 1000
     });
