@@ -61,6 +61,42 @@ class SimResult {
         this.deaths[unit.hrid] += 1;
     }
 
+    /**
+     * Take back a death a revive undid, for a monster.
+     *
+     * `deaths` is read as a kill count — the combat adapter multiplies
+     * `deaths[monsterHrid]` by the drop table to price a run's loot, and
+     * `utils/expected-kills.js` models the same quantity as spawns per battle,
+     * not as times a unit hit zero. A revived monster is still the one spawn:
+     * it drops once, when it finally stays down. Leaving the first death on the
+     * books made every revived monster drop twice.
+     *
+     * Player deaths are deliberately not undone here — each time a player goes
+     * down is a real event the run should report, and nothing prices loot off
+     * them.
+     *
+     * @param {Object} unit - The revived unit
+     * @param {number} time - Current simulation time in nanoseconds
+     */
+    undoDeath(unit, time) {
+        if (unit.isPlayer) {
+            return;
+        }
+
+        if (this.deaths[unit.hrid] > 0) {
+            this.deaths[unit.hrid] -= 1;
+        }
+
+        // The death also closed this unit's alive window and counted it. Reopen
+        // the window at the revive and take the count back, so `count` stays a
+        // count of spawns that finished, matching `deaths`.
+        const i = this.timeSpentAlive.findIndex((e) => e.name === unit.hrid);
+        if (i !== -1 && this.timeSpentAlive[i].count > 0) {
+            this.timeSpentAlive[i].count -= 1;
+        }
+        this.updateTimeSpentAlive(unit.hrid, true, time);
+    }
+
     updateTimeSpentAlive(name, alive, time) {
         const i = this.timeSpentAlive.findIndex((e) => e.name === name);
         if (alive) {

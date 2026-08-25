@@ -84,12 +84,26 @@ class Trigger {
                             return currentHpPercentage < prev ? currentHpPercentage : prev;
                         }, 2) * 100;
                 break;
-            default:
-                dependencyValue = dependency
+            default: {
+                // Per living unit, exactly what the single-target path reads,
+                // then combined. Buff conditions return the buff OBJECT (see
+                // getDependencyValue) — summing those produced the string
+                // "0[object Object]", which is_active read as truthy for every
+                // ally and >= read as false for all of them. Counting units
+                // instead gives both comparators the reading the single-target
+                // path would give: is_active/is_inactive become any/none, and
+                // >= n becomes "at least n of them have it".
+                const values = dependency
                     .filter((unit) => unit.combatDetails.currentHitpoints > 0)
-                    .map((unit) => this.getDependencyValue(unit, currentTime))
-                    .reduce((prev, cur) => prev + cur, 0);
+                    .map((unit) => this.getDependencyValue(unit, currentTime));
+                dependencyValue = values.reduce((prev, cur) => {
+                    // Numbers (current_hp, missing_mp, ...) still add up; a buff
+                    // object or a status boolean counts as one unit.
+                    const numeric = typeof cur === 'number' ? cur : cur ? 1 : 0;
+                    return prev + numeric;
+                }, 0);
                 break;
+            }
         }
 
         return this.compareValue(dependencyValue);

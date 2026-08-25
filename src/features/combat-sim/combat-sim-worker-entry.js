@@ -56,7 +56,10 @@ onmessage = function (event) {
                 labyrinthData.roomLevel,
                 labyrinthData.crates || [],
                 labyrinthData.liveState || null,
-                labyrinthData.fullAbilities === true,
+                // Raw, not coerced: labyrinth.js defaults an absent field ON
+                // via `!== false`, and `=== true` here turned "not specified"
+                // into the stripped tier-0 monster, inverting that default.
+                labyrinthData.fullAbilities,
                 { zoneFight: labyrinthData.zoneFight === true, difficultyTier: labyrinthData.difficultyTier }
             );
         }

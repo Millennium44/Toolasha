@@ -539,9 +539,25 @@ class CombatSimulator {
         // random state in every run sharing the seed (no-op when unseeded)
         syncEncounterRng(this.encounterIndex++);
 
+        // Belt and braces for a wave that is still standing when the next one
+        // spawns: this.enemies is about to be overwritten, and checkEncounterEnd
+        // only ever looks at this.enemies, so anything the outgoing units still
+        // have queued would keep swinging forever with nothing able to retire
+        // them. Retire their events with them.
+        if (this.enemies) {
+            for (const enemy of this.enemies) {
+                this.eventQueue.clearEventsForUnit(enemy);
+            }
+        }
+
         if (this.allPlayersDead) {
             this.allPlayersDead = false;
-            if (!this.labyrinth) {
+            // Only a dungeon has a wave run to fail. Zone.failWave() counts a
+            // dungeon failure and resets encountersKilled, which outside a
+            // dungeon is the counter to the next boss — a death there used to
+            // wipe boss progress the game does not reset (see expected-kills,
+            // which models no death reset).
+            if (!this.labyrinth && this.zone.isDungeon) {
                 this.zone.failWave();
             }
         }
@@ -648,22 +664,39 @@ class CombatSimulator {
 
         for (let i = 0; i < aliveTargets.length; i++) {
             let target = aliveTargets[i];
-            if (!event.source.isPlayer && aliveTargets.length > 1) {
-                let cumulativeThreat = 0;
-                const cumulativeRanges = [];
-                aliveTargets.forEach((player) => {
-                    const playerThreat = player.combatDetails.combatStats.threat;
-                    cumulativeThreat += playerThreat;
-                    cumulativeRanges.push({
-                        player: player,
-                        rangeStart: cumulativeThreat - playerThreat,
-                        rangeEnd: cumulativeThreat,
+            if (!event.source.isPlayer) {
+                // The threat roll has to see the living, not the snapshot taken
+                // before the first pierce: rolling against the stale list can
+                // pick a player this same attack already killed, hitting a
+                // corpse for 0 and counting the death a second time.
+                const liveTargets = aliveTargets.filter((unit) => unit.combatDetails.currentHitpoints > 0);
+                if (liveTargets.length === 0) {
+                    break;
+                }
+                if (liveTargets.length === 1) {
+                    target = liveTargets[0];
+                } else {
+                    let cumulativeThreat = 0;
+                    const cumulativeRanges = [];
+                    liveTargets.forEach((player) => {
+                        const playerThreat = player.combatDetails.combatStats.threat;
+                        cumulativeThreat += playerThreat;
+                        cumulativeRanges.push({
+                            player: player,
+                            rangeStart: cumulativeThreat - playerThreat,
+                            rangeEnd: cumulativeThreat,
+                        });
                     });
-                });
-                const randomValueHit = random() * cumulativeThreat;
-                target = cumulativeRanges.find(
-                    (range) => randomValueHit >= range.rangeStart && randomValueHit < range.rangeEnd
-                ).player;
+                    const randomValueHit = random() * cumulativeThreat;
+                    target = cumulativeRanges.find(
+                        (range) => randomValueHit >= range.rangeStart && randomValueHit < range.rangeEnd
+                    ).player;
+                }
+            } else if (!target || target.combatDetails.currentHitpoints <= 0) {
+                // Player pierce walks the enemies positionally, so index i is
+                // untouched by earlier iterations — but it can still have died
+                // to a damage-over-time tick between the two. Nothing to pierce.
+                break;
             }
             let source = event.source;
 
@@ -672,6 +705,10 @@ class CombatSimulator {
                 target = source;
                 source = parryTarget;
             }
+
+            // Whether this blow is what put the target down — read before the
+            // attack so a corpse can never be credited as a fresh death.
+            const targetWasAlive = target.combatDetails.currentHitpoints > 0;
 
             const attackResult = CombatUtilities.processAttack(source, target, null, this.isTaskFight);
             if (this.zone.isDungeon && target.isPlayer && attackResult.didHit && attackResult.damageDone > 0) {
@@ -775,7 +812,7 @@ class CombatSimulator {
                 this.addToWipeLogs(log);
             }
 
-            if (target.combatDetails.currentHitpoints === 0) {
+            if (targetWasAlive && target.combatDetails.currentHitpoints === 0) {
                 this.eventQueue.clearEventsForUnit(target);
                 this.simResult.addDeath(target);
                 if (!target.isPlayer) {
@@ -840,10 +877,22 @@ class CombatSimulator {
 
         let encounterEnded = false;
 
+        // Read once, up front: a pass where thorns kill the last monster and the
+        // last player in the same blow satisfies both the wave-cleared branch
+        // and the wipe branch, and the two must not both do their accounting.
+        const allPlayersDown = !this.players.some((player) => player.combatDetails.currentHitpoints > 0);
+
         if (this.enemies && !this.enemies.some((enemy) => enemy.combatDetails.currentHitpoints > 0)) {
             this.eventQueue.clearEventsOfType(AutoAttackEvent.type);
 
-            if (this.labyrinth) {
+            if (!this.labyrinth && this.zone.isDungeon && allPlayersDown) {
+                // Wipe wins in a dungeon. A dungeon run ends the moment the
+                // party is down: the game does not carry a party out of a wave
+                // it did not survive, so there is no wave credit, no respawn
+                // timer and no experience for it. The wipe branch below does
+                // the accounting for this pass, once.
+                this.enemies = null;
+            } else if (this.labyrinth) {
                 // Labyrinth win: immediate restart (no respawn delay)
                 this.labyrinth.resolvedCount++;
                 this.enemies = null;
@@ -852,35 +901,35 @@ class CombatSimulator {
                 const combatStartEvent = new CombatStartEvent(this.simulationTime);
                 this.eventQueue.addEvent(combatStartEvent);
                 return true;
+            } else {
+                const enemyRespawnEvent = new EnemyRespawnEvent(this.simulationTime + ENEMY_RESPAWN_INTERVAL);
+                this.eventQueue.addEvent(enemyRespawnEvent);
+
+                // calc exp before clear
+                if (this.enemies.some((enemy) => enemy.experienceRate <= 0)) {
+                    console.warn('[CombatSimulator] Some enemies have no experience rate');
+                }
+
+                const totalExp = this.enemies
+                    .map((enemy) => enemy.experience * enemy.experienceRate)
+                    .reduce((a, b) => a + b, 0);
+                this.players.forEach((player) => {
+                    this.simResult.addExperienceGain(player, totalExp / this.players.length);
+                });
+
+                this.enemies = null;
+
+                if (this.zone.isDungeon) {
+                    this.simResult.updateTimeSpentAlive(
+                        '#' + (this.zone.encountersKilled - 1).toString(),
+                        false,
+                        this.simulationTime
+                    );
+                }
+                this.simResult.addEncounterEnd();
+
+                encounterEnded = true;
             }
-
-            const enemyRespawnEvent = new EnemyRespawnEvent(this.simulationTime + ENEMY_RESPAWN_INTERVAL);
-            this.eventQueue.addEvent(enemyRespawnEvent);
-
-            // calc exp before clear
-            if (this.enemies.some((enemy) => enemy.experienceRate <= 0)) {
-                console.warn('[CombatSimulator] Some enemies have no experience rate');
-            }
-
-            const totalExp = this.enemies
-                .map((enemy) => enemy.experience * enemy.experienceRate)
-                .reduce((a, b) => a + b, 0);
-            this.players.forEach((player) => {
-                this.simResult.addExperienceGain(player, totalExp / this.players.length);
-            });
-
-            this.enemies = null;
-
-            if (this.zone.isDungeon) {
-                this.simResult.updateTimeSpentAlive(
-                    '#' + (this.zone.encountersKilled - 1).toString(),
-                    false,
-                    this.simulationTime
-                );
-            }
-            this.simResult.addEncounterEnd();
-
-            encounterEnded = true;
         }
 
         this.players.forEach((player) => {
@@ -899,7 +948,7 @@ class CombatSimulator {
             }
         });
 
-        if (!this.players.some((player) => player.combatDetails.currentHitpoints > 0)) {
+        if (allPlayersDown) {
             if (this.labyrinth) {
                 // Labyrinth death = loss. Immediate restart.
                 this.labyrinth.resolvedCount++;
@@ -924,6 +973,14 @@ class CombatSimulator {
                 this.eventQueue.clearEventsOfType(BlindExpirationEvent.type);
                 this.eventQueue.clearEventsOfType(SilenceExpirationEvent.type);
                 this.eventQueue.clearEventsOfType(AwaitCooldownEvent.type);
+                // A wave cleared moments before the party went down leaves an
+                // EnemyRespawnEvent queued. It fires before the restart below,
+                // spawning a wave against a dead party and then having that wave
+                // overwritten by the restart's own — the overwritten monsters
+                // keep attacking from outside this.enemies, one more phantom per
+                // wipe. The run restarts from CombatStartEvent; nothing here
+                // should still be waiting to respawn.
+                this.eventQueue.clearEventsOfType(EnemyRespawnEvent.type);
                 this.enemies = null;
 
                 const combatStartEvent = new CombatStartEvent(this.simulationTime + RESTART_INTERVAL);
@@ -1909,9 +1966,10 @@ class CombatSimulator {
 
             this.addNextAttackEvent(reviveTarget);
 
-            if (!source.isPlayer) {
-                this.simResult.updateTimeSpentAlive(reviveTarget.hrid, true, this.simulationTime);
-            }
+            // A monster back on its feet has not been killed yet: take the
+            // recorded death back so the adapter's kill count (and the loot it
+            // prices from it) counts the spawn once, when it stays down.
+            this.simResult.undoDeath(reviveTarget, this.simulationTime);
         }
     }
 

@@ -408,17 +408,33 @@ export async function runSimulation(params, onProgress, { preempt = true, worker
     // pay the worker startup and the game-data clone four times over, and
     // measured against a queue of one-worker runs it is 1.1× to 3.3× slower —
     // worst when the runs are short, never better at any length.
-    const workerCount = workers > 0 ? Math.max(1, Math.floor(workers)) : plannedWorkerCount(hours);
+    const plannedWorkers = workers > 0 ? Math.max(1, Math.floor(workers)) : plannedWorkerCount(hours);
 
-    // Split hours across workers
-    const baseHours = Math.floor(hours / workerCount);
-    const remainder = hours - baseHours * workerCount;
+    // Split hours across workers. The chunks must sum to exactly `hours`:
+    // handing out whole hours and rounding the leftover up gave a half-hour run
+    // a full simulated hour, and every rate a caller derived by dividing by the
+    // hours it asked for came out low by the same factor.
+    const baseHours = Math.floor(hours / plannedWorkers);
+    let leftover = hours - baseHours * plannedWorkers;
 
     const chunks = [];
-    for (let i = 0; i < workerCount; i++) {
-        const chunkHours = baseHours + (i < remainder ? 1 : 0);
-        chunks.push(chunkHours);
+    for (let i = 0; i < plannedWorkers; i++) {
+        let chunkHours = baseHours;
+        if (i < plannedWorkers - 1) {
+            // Whole hours first, so the chunks stay as even as they can be...
+            const extra = Math.min(1, Math.floor(leftover));
+            chunkHours += extra;
+            leftover -= extra;
+        } else {
+            // ...and whatever fraction is left rides on the last chunk.
+            chunkHours += leftover;
+            leftover = 0;
+        }
+        if (chunkHours > 0) chunks.push(chunkHours);
     }
+    if (chunks.length === 0) chunks.push(hours);
+
+    const workerCount = chunks.length;
 
     // Track per-worker progress
     const workerProgress = new Array(workerCount).fill(0);

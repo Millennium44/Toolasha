@@ -195,3 +195,66 @@ describe('whether the labyrinth monster gets its full ability kit', () => {
         expect(messages[0].labyrinth.fullAbilities).toBe(false);
     });
 });
+
+/**
+ * How the requested hours are divided.
+ *
+ * Callers turn the merged result into rates by dividing by the hours they
+ * asked for, so the chunks have to add up to exactly that. Rounding each chunk
+ * up to a whole hour gave a half-hour request a full simulated hour and left
+ * every rate derived from it overstated by a factor of two.
+ */
+describe('splitting the requested hours', () => {
+    /** Hours each worker was actually told to simulate. */
+    const chunkHours = (messages) => messages.map((m) => m.simulationTimeLimit / (3600 * 1e9));
+
+    test('half an hour is half an hour', async () => {
+        const messages = captureWorkerMessages();
+
+        await runSimulation({ zoneHrid: '/actions/combat/fly', difficultyTier: 0, hours: 0.5 });
+
+        expect(messages).toHaveLength(1);
+        expect(chunkHours(messages)[0]).toBeCloseTo(0.5, 9);
+    });
+
+    test('and an hour and a half is an hour and a half', async () => {
+        const messages = captureWorkerMessages();
+
+        await runSimulation({ zoneHrid: '/actions/combat/fly', difficultyTier: 0, hours: 1.5 });
+
+        expect(chunkHours(messages).reduce((a, b) => a + b, 0)).toBeCloseTo(1.5, 9);
+    });
+
+    test('however many workers it is split across', async () => {
+        const messages = captureWorkerMessages();
+
+        await runSimulation({ zoneHrid: '/actions/combat/fly', difficultyTier: 0, hours: 1.5 }, null, {
+            workers: 2,
+        });
+
+        expect(messages).toHaveLength(2);
+        expect(chunkHours(messages).reduce((a, b) => a + b, 0)).toBeCloseTo(1.5, 9);
+    });
+
+    test('a whole-hour run still divides evenly', async () => {
+        const messages = captureWorkerMessages();
+
+        await runSimulation({ zoneHrid: '/actions/combat/fly', difficultyTier: 0, hours: 100 });
+
+        expect(messages).toHaveLength(4);
+        expect(chunkHours(messages)).toEqual([25, 25, 25, 25]);
+    });
+
+    test('and no worker is started with nothing to do', async () => {
+        // Four workers asked for, half an hour to share: three empty chunks
+        // would each pay the worker startup and the game-data clone for nothing
+        const messages = captureWorkerMessages();
+
+        await runSimulation({ zoneHrid: '/actions/combat/fly', difficultyTier: 0, hours: 0.5 }, null, {
+            workers: 4,
+        });
+
+        expect(messages).toHaveLength(1);
+        expect(chunkHours(messages)[0]).toBeCloseTo(0.5, 9);
+    });
+});

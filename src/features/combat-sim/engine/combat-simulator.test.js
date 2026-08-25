@@ -18,8 +18,12 @@
 import { describe, test, expect, afterEach } from 'vitest';
 
 import CombatSimulator, { getCapturedPlayerDetails, setPlayerDetailsCapture } from './combat-simulator.js';
-import { setGameData } from './game-data.js';
+import AutoAttackEvent from './events/auto-attack-event.js';
+import CombatStartEvent from './events/combat-start-event.js';
+import EnemyRespawnEvent from './events/enemy-respawn-event.js';
+import { getGameData, setGameData } from './game-data.js';
 import Labyrinth from './labyrinth.js';
+import Monster from './monster.js';
 import Player from './player.js';
 import { clearSimRng, seedSimRng } from './rng.js';
 import Zone from './zone.js';
@@ -468,5 +472,313 @@ describe('player build snapshot folds buffs as per-type targets', () => {
         expect(held.base.maxHitpoints).toBe(Math.floor(800 * 1.1));
         expect(held.buffed.maxHitpoints).toBe(Math.floor(800 * 1.3));
         expect(held.deltas['/buff_types/max_hitpoints'].ratioBoost).toBeCloseTo(0.2, 9);
+    });
+});
+
+/**
+ * What a pass of checkEncounterEnd leaves behind.
+ *
+ * The event queue outlives the encounter, so anything still queued when
+ * this.enemies is replaced keeps acting from outside the fight — and
+ * checkEncounterEnd only ever looks at this.enemies, so nothing can ever
+ * retire it. These tests pin the two ways that used to happen.
+ */
+describe('encounter teardown', () => {
+    const DUNGEON_HRID = '/actions/combat/golden_crypt';
+
+    /** A simulator sitting in a two-wave dungeon with the first wave spawned. */
+    function dungeonSim() {
+        installGameData();
+        const gameData = getGameData();
+        gameData.actionDetailMap[DUNGEON_HRID] = {
+            buffs: null,
+            combatZoneInfo: {
+                isDungeon: true,
+                fightInfo: null,
+                dungeonInfo: {
+                    maxWaves: 2,
+                    fixedSpawnsMap: {
+                        1: [{ combatMonsterHrid: RAT_HRID, difficultyTier: 0 }],
+                        2: [{ combatMonsterHrid: TOAD_HRID, difficultyTier: 0 }],
+                    },
+                    randomSpawnInfoMap: null,
+                },
+            },
+        };
+        seedSimRng(7);
+        const zone = new Zone(DUNGEON_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+        const sim = new CombatSimulator([player], zone);
+        sim.reset();
+        sim.simulationTime = 10 * ONE_SECOND;
+        player.reset(sim.simulationTime);
+        sim.enemies = zone.getNextWave();
+        sim.enemies.forEach((enemy) => enemy.reset(sim.simulationTime));
+        // startNewEncounter opens the wave's alive window; this fixture spawns
+        // the wave by hand, so open it here too
+        sim.simResult.updateTimeSpentAlive('#' + (zone.encountersKilled - 1).toString(), true, sim.simulationTime);
+        return sim;
+    }
+
+    afterEach(() => {
+        clearSimRng();
+        setGameData(null);
+    });
+
+    test('a wipe moments after a wave was cleared leaves nothing queued to respawn', () => {
+        const sim = dungeonSim();
+
+        // The wave dies...
+        sim.enemies.forEach((enemy) => (enemy.combatDetails.currentHitpoints = 0));
+        expect(sim.checkEncounterEnd()).toBe(true);
+        expect(sim.eventQueue.containsEventOfType(EnemyRespawnEvent.type)).toBe(true);
+
+        // ...and a damage-over-time tick finishes the party before it fires
+        sim.simulationTime += ONE_SECOND;
+        sim.players.forEach((player) => (player.combatDetails.currentHitpoints = 0));
+        expect(sim.checkEncounterEnd()).toBe(true);
+
+        expect(sim.eventQueue.containsEventOfType(EnemyRespawnEvent.type)).toBe(false);
+    });
+
+    test('and no phantom attacker survives the restart', () => {
+        const sim = dungeonSim();
+
+        sim.enemies.forEach((enemy) => (enemy.combatDetails.currentHitpoints = 0));
+        sim.checkEncounterEnd();
+        sim.simulationTime += ONE_SECOND;
+        sim.players.forEach((player) => (player.combatDetails.currentHitpoints = 0));
+        sim.checkEncounterEnd();
+
+        // Drive the queue until the restart has spawned the next wave
+        for (let i = 0; i < 50 && !sim.enemies; i++) {
+            sim.processEvent(sim.eventQueue.getNextEvent());
+        }
+        expect(sim.enemies).toBeTruthy();
+
+        const known = new Set([...sim.players, ...sim.enemies]);
+        const stray = sim.eventQueue.getMatching((event) => event.source && !known.has(event.source));
+        expect(stray).toBeNull();
+    });
+
+    test('a pass that both clears the wave and wipes the party counts once, as a wipe', () => {
+        // Thorns can kill the last monster and the last player in the same blow.
+        // A dungeon run ends when the party is down, so the wave is not credited
+        const sim = dungeonSim();
+
+        sim.enemies.forEach((enemy) => (enemy.combatDetails.currentHitpoints = 0));
+        sim.players.forEach((player) => (player.combatDetails.currentHitpoints = 0));
+
+        expect(sim.checkEncounterEnd()).toBe(true);
+
+        // No wave credit, no experience, nothing waiting to respawn
+        expect(sim.simResult.encounters).toBe(0);
+        expect(sim.simResult.experienceGained.player1).toBeUndefined();
+        expect(sim.eventQueue.containsEventOfType(EnemyRespawnEvent.type)).toBe(false);
+
+        // Exactly one restart, and one failure once it runs
+        const restarts = sim.eventQueue.minHeap.data.filter((e) => e.type === CombatStartEvent.type);
+        expect(restarts).toHaveLength(1);
+        expect(sim.allPlayersDead).toBe(true);
+        sim.startNewEncounter();
+        expect(sim.zone.dungeonsFailed).toBe(1);
+        expect(sim.zone.dungeonsCompleted).toBe(0);
+    });
+});
+
+/**
+ * Deaths counted by the auto-attack path.
+ *
+ * Pierce keeps one attack swinging, and a monster picks its next victim by
+ * threat. Rolling that against the list of targets alive when the attack
+ * *started* can pick a player this same attack already killed: the corpse takes
+ * a second 0-damage hit and is counted dead twice.
+ */
+describe('pierce does not kill anyone twice', () => {
+    afterEach(() => {
+        clearSimRng();
+        setGameData(null);
+    });
+
+    /**
+     * One monster auto-attack with guaranteed pierce into a two-player party
+     * standing at a single hitpoint each.
+     * @param {number} seed - RNG seed
+     * @returns {CombatSimulator}
+     */
+    function pierceSwing(seed) {
+        installGameData();
+        seedSimRng(seed);
+        const zone = new Zone(ZONE_HRID, 0);
+        const players = ['player1', 'player2'].map((hrid) => {
+            const player = fixturePlayer();
+            player.hrid = hrid;
+            player.zoneBuffs = zone.buffs;
+            player.extraBuffs = [];
+            return player;
+        });
+        const sim = new CombatSimulator(players, zone);
+        sim.reset();
+        sim.simulationTime = ONE_SECOND;
+        players.forEach((player) => {
+            player.reset(sim.simulationTime);
+            player.combatDetails.currentHitpoints = 1;
+        });
+        sim.enemies = [new Monster(TOAD_HRID, 0)];
+        sim.enemies[0].reset(sim.simulationTime);
+        // Always pierce, so one swing walks the whole party
+        sim.enemies[0].combatDetails.combatStats.pierce = 1;
+
+        sim.processAutoAttackEvent(new AutoAttackEvent(sim.simulationTime, sim.enemies[0]));
+        return sim;
+    }
+
+    test('a player is counted dead once, however many times the swing pierces', () => {
+        for (let seed = 1; seed <= 40; seed++) {
+            const sim = pierceSwing(seed);
+            for (const player of sim.players) {
+                const down = player.combatDetails.currentHitpoints === 0;
+                expect(sim.simResult.deaths[player.hrid] ?? 0).toBe(down ? 1 : 0);
+            }
+            clearSimRng();
+            setGameData(null);
+        }
+    });
+
+    test('and no corpse takes a zero-damage hit', () => {
+        for (let seed = 1; seed <= 40; seed++) {
+            const sim = pierceSwing(seed);
+            const landed = sim.simResult.attacks[TOAD_HRID] ?? {};
+            for (const byTarget of Object.values(landed)) {
+                expect(byTarget.autoAttack?.[0] ?? 0).toBe(0);
+            }
+            clearSimRng();
+            setGameData(null);
+        }
+    });
+});
+
+/**
+ * A revived monster is still one spawn.
+ *
+ * `simResult.deaths[monsterHrid]` is read as a kill count: the combat adapter
+ * prices a run's loot by multiplying it against the drop table, and
+ * utils/expected-kills.js models the same quantity as spawns per battle. Loot
+ * is a spawn's, not a knockdown's, so a monster raised and killed again must
+ * still be one.
+ */
+describe('revive takes the death back', () => {
+    afterEach(() => {
+        clearSimRng();
+        setGameData(null);
+    });
+
+    const REVIVE_EFFECT = {
+        targetType: 'deadAlly',
+        combatStyleHrid: '/combat_styles/magic',
+        damageFlat: 100,
+        damageRatio: 0,
+    };
+
+    test('killed, revived, killed again is one kill for drops', () => {
+        installGameData();
+        seedSimRng(3);
+        const zone = new Zone(ZONE_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+        const sim = new CombatSimulator([player], zone);
+        sim.reset();
+        sim.simulationTime = ONE_SECOND;
+
+        const healer = new Monster(RAT_HRID, 0);
+        const victim = new Monster(TOAD_HRID, 0);
+        [healer, victim].forEach((monster) => monster.reset(sim.simulationTime));
+        sim.enemies = [healer, victim];
+        sim.simResult.updateTimeSpentAlive(victim.hrid, true, sim.simulationTime);
+
+        // First death
+        victim.combatDetails.currentHitpoints = 0;
+        sim.simResult.addDeath(victim);
+        sim.simResult.updateTimeSpentAlive(victim.hrid, false, sim.simulationTime);
+
+        // Raised
+        sim.simulationTime += ONE_SECOND;
+        sim.processAbilityReviveEffect(healer, { hrid: '/abilities/revive' }, REVIVE_EFFECT);
+        expect(victim.combatDetails.currentHitpoints).toBeGreaterThan(0);
+        expect(sim.simResult.deaths[TOAD_HRID] ?? 0).toBe(0);
+
+        // And killed for good
+        sim.simulationTime += ONE_SECOND;
+        victim.combatDetails.currentHitpoints = 0;
+        sim.simResult.addDeath(victim);
+        sim.simResult.updateTimeSpentAlive(victim.hrid, false, sim.simulationTime);
+
+        expect(sim.simResult.deaths[TOAD_HRID]).toBe(1);
+        const entry = sim.simResult.timeSpentAlive.find((e) => e.name === TOAD_HRID);
+        expect(entry.count).toBe(1);
+    });
+
+    test('but a revived player still shows every time they went down', () => {
+        installGameData();
+        seedSimRng(3);
+        const zone = new Zone(ZONE_HRID, 0);
+        const players = ['player1', 'player2'].map((hrid) => {
+            const p = fixturePlayer();
+            p.hrid = hrid;
+            p.zoneBuffs = zone.buffs;
+            p.extraBuffs = [];
+            return p;
+        });
+        const sim = new CombatSimulator(players, zone);
+        sim.reset();
+        sim.simulationTime = ONE_SECOND;
+        players.forEach((p) => p.reset(sim.simulationTime));
+
+        players[1].combatDetails.currentHitpoints = 0;
+        sim.simResult.addDeath(players[1]);
+
+        sim.processAbilityReviveEffect(players[0], { hrid: '/abilities/revive' }, REVIVE_EFFECT);
+
+        expect(sim.simResult.deaths.player2).toBe(1);
+    });
+});
+
+/**
+ * Boss progress in an ordinary zone.
+ *
+ * Zone.failWave() counts a dungeon failure and resets encountersKilled — which
+ * outside a dungeon is the count towards the next boss. Running it on any death
+ * wiped boss progress in ordinary zones, a reset the game does not do
+ * (utils/expected-kills.js models none either).
+ */
+describe('dying in an ordinary zone', () => {
+    afterEach(() => {
+        clearSimRng();
+        setGameData(null);
+    });
+
+    test('keeps the progress towards the next boss', () => {
+        installGameData();
+        seedSimRng(11);
+        const zone = new Zone(ZONE_HRID, 0);
+        const player = fixturePlayer();
+        player.zoneBuffs = zone.buffs;
+        player.extraBuffs = [];
+        const sim = new CombatSimulator([player], zone);
+        sim.reset();
+
+        zone.getRandomEncounter();
+        zone.getRandomEncounter();
+        const progress = zone.encountersKilled;
+        expect(progress).toBeGreaterThan(1);
+
+        sim.allPlayersDead = true;
+        sim.startNewEncounter();
+
+        expect(zone.encountersKilled).toBeGreaterThan(progress);
+        expect(zone.dungeonsFailed).toBe(0);
     });
 });

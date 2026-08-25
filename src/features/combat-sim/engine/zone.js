@@ -19,9 +19,12 @@ class Zone {
         this.dungeonsFailed = 0;
         this.finalWave = false;
 
-        if (this.monsterSpawnInfo) {
-            this.monsterSpawnInfo.battlesPerBoss = 10;
-        }
+        // Read, never written: monsterSpawnInfo is a live reference into the
+        // shared actionDetailMap, so assigning here rewrote the game data every
+        // other reader sees. The zone's own value wins, 10 is the fallback —
+        // the same default utils/combat-drop-model.js and utils/expected-kills.js
+        // apply to the fight's real battlesPerBoss.
+        this.battlesPerBoss = this.monsterSpawnInfo?.battlesPerBoss || 10;
     }
 
     getRandomEncounter() {
@@ -29,7 +32,7 @@ class Zone {
             return [];
         }
 
-        if (this.monsterSpawnInfo.bossSpawns && this.encountersKilled === this.monsterSpawnInfo.battlesPerBoss) {
+        if (this.monsterSpawnInfo.bossSpawns && this.encountersKilled === this.battlesPerBoss) {
             this.encountersKilled = 1;
             return this.monsterSpawnInfo.bossSpawns.map(
                 (monster) => new Monster(monster.combatMonsterHrid, monster.difficultyTier + this.difficultyTier)
