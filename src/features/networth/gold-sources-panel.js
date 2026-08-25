@@ -30,6 +30,7 @@ import config from '../../core/config.js';
 import { networthFormatter } from '../../utils/formatters.js';
 import { attributeGoldSources, SOURCE_KEYS, SOURCE_META, dayStart } from './gold-sources.js';
 import { collectGoldSourceInputs } from './gold-sources-collect.js';
+import { buildNetworthCalendar, CALENDAR_WEEKS } from './networth-calendar.js';
 
 export const MODAL_ID = 'mwi-gold-sources-modal';
 export const BUTTON_ID = 'mwi-gold-sources-btn';
@@ -322,9 +323,12 @@ export function buildTotalsTable(attribution) {
  * Split out from the modal so a test can render it without opening anything.
  *
  * @param {Object} attribution - From `attributeGoldSources`
+ * @param {Object} [options] - Extras the attribution does not carry
+ * @param {Array<Object>} [options.series] - Net worth snapshots, for the calendar section
+ * @param {number} [options.now] - Clock, injectable for tests
  * @returns {HTMLElement} The body element
  */
-export function buildPanelBody(attribution) {
+export function buildPanelBody(attribution, { series = null, now = undefined } = {}) {
     const body = document.createElement('div');
     body.className = 'mwi-gold-sources-body';
 
@@ -381,7 +385,218 @@ export function buildPanelBody(attribution) {
         body.appendChild(warning);
     }
 
+    if (Array.isArray(series)) {
+        body.appendChild(buildCalendarSection(series, now === undefined ? {} : { now }));
+    }
+
     return body;
+}
+
+/** Row labels down the side of the grid, Sunday first */
+const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+/** Colour classing is by sign; the depth of the colour is by magnitude */
+const CALENDAR_COLORS = { gain: '#22c55e', loss: '#f87171' };
+
+/**
+ * Which of the four kinds of cell a day is.
+ * @param {Object|null} cell - A calendar cell
+ * @returns {string} `gain`, `loss`, `flat` or `nodata`
+ */
+export function calendarCellKind(cell) {
+    if (!cell || !Number.isFinite(cell.delta)) return 'nodata';
+    if (cell.delta > 0) return 'gain';
+    if (cell.delta < 0) return 'loss';
+    return 'flat';
+}
+
+/**
+ * The tooltip on one day cell.
+ * @param {Object} cell - A calendar cell
+ * @returns {string} Tooltip text
+ */
+export function calendarCellTitle(cell) {
+    if (!cell) return '';
+    if (!Number.isFinite(cell.delta)) {
+        return (
+            `${cell.day} — no data. There is no snapshot on this day and an earlier one to measure it against, ` +
+            'so no change can be shown. It is not a day of zero change.'
+        );
+    }
+    const amount = (cell.delta > 0 ? '+' : '') + networthFormatter(Math.round(cell.delta));
+    let text = `${cell.day} — ${amount}`;
+    if (cell.spansGap) {
+        text +=
+            `\nThe snapshot before this one is ${cell.gapDays} days back, so this cell holds the whole change ` +
+            'since then rather than one day of it.';
+    }
+    return text;
+}
+
+/**
+ * The one line above the grid: the two extremes and the up/down split.
+ * @param {Object} summary - From `buildNetworthCalendar`
+ * @returns {string} The line
+ */
+export function calendarSummaryText(summary) {
+    if (!summary || !summary.measured) {
+        return 'No day in this window has a measured change yet.';
+    }
+    const figure = (cell) => (cell.delta > 0 ? '+' : '') + networthFormatter(Math.round(cell.delta));
+    return (
+        `Best ${figure(summary.best)} on ${summary.best.day} · ` +
+        `worst ${figure(summary.worst)} on ${summary.worst.day} · ` +
+        `${summary.positive} up / ${summary.negative} down`
+    );
+}
+
+/**
+ * The grid itself, one column per week and one cell per day.
+ * @param {Object} calendar - From `buildNetworthCalendar`
+ * @returns {HTMLElement} The grid block
+ */
+export function buildCalendarGrid(calendar) {
+    const block = document.createElement('div');
+    block.className = 'mwi-nw-calendar-grid';
+    block.style.cssText = 'display: flex; gap: 3px; margin: 6px 0;';
+
+    const labels = document.createElement('div');
+    labels.className = 'mwi-nw-calendar-labels';
+    labels.style.cssText = 'display: flex; flex-direction: column; gap: 3px;';
+    for (const label of WEEKDAY_LABELS) {
+        const cell = document.createElement('div');
+        cell.textContent = label;
+        cell.style.cssText = 'width: 12px; height: 12px; font-size: 9px; line-height: 12px; color: #6b7280;';
+        labels.appendChild(cell);
+    }
+    block.appendChild(labels);
+
+    const scale = calendar?.maxMagnitude > 0 ? calendar.maxMagnitude : 1;
+
+    for (const week of calendar?.weeks || []) {
+        const column = document.createElement('div');
+        column.className = 'mwi-nw-calendar-week';
+        column.style.cssText = 'display: flex; flex-direction: column; gap: 3px;';
+
+        for (const cell of week) {
+            const box = document.createElement('div');
+            const kind = calendarCellKind(cell);
+            box.className = `mwi-nw-calendar-cell mwi-nw-calendar-cell-${kind}`;
+            // A floor under the opacity so a small but real day is still
+            // visibly coloured rather than fading into the no-data grey
+            const weight = kind === 'gain' || kind === 'loss' ? 0.28 + 0.72 * (Math.abs(cell.delta) / scale) : 1;
+            const background =
+                CALENDAR_COLORS[kind] || (kind === 'flat' ? 'rgba(156,163,175,0.45)' : 'rgba(255,255,255,0.05)');
+            box.style.cssText = [
+                'width: 12px; height: 12px; border-radius: 2px',
+                `background: ${background}`,
+                `opacity: ${weight.toFixed(2)}`,
+                cell?.isToday ? 'outline: 1px solid rgba(255,255,255,0.45)' : '',
+            ]
+                .filter(Boolean)
+                .join('; ');
+            if (cell) {
+                box.dataset.day = cell.day;
+                box.title = calendarCellTitle(cell);
+                if (cell.spansGap) {
+                    // The mark says "this is more than one day of change", which
+                    // is the only thing separating it from a spectacular day
+                    box.classList.add('mwi-nw-calendar-cell-gap');
+                    box.textContent = '·';
+                    box.style.cssText += '; font-size: 12px; line-height: 9px; text-align: center; color: #111827';
+                }
+            }
+            column.appendChild(box);
+        }
+
+        block.appendChild(column);
+    }
+
+    return block;
+}
+
+/**
+ * The calendar section's contents: summary line, grid, and what a cell means.
+ * @param {Array<Object>} series - Net worth snapshots `{t, total}`
+ * @param {Object} [options] - Passed through to `buildNetworthCalendar`
+ * @returns {HTMLElement} The block
+ */
+export function buildCalendarBody(series, options = {}) {
+    const holder = document.createElement('div');
+    holder.className = 'mwi-nw-calendar';
+
+    const calendar = buildNetworthCalendar(series, options);
+
+    const summary = document.createElement('div');
+    summary.className = 'mwi-nw-calendar-summary';
+    summary.style.cssText = 'font-size: 11px; color: #d1d5db;';
+    summary.textContent = calendarSummaryText(calendar.summary);
+    holder.appendChild(summary);
+
+    holder.appendChild(buildCalendarGrid(calendar));
+
+    const note = document.createElement('div');
+    note.className = 'mwi-nw-calendar-note';
+    note.style.cssText = 'font-size: 10px; color: #9ca3af;';
+    note.textContent =
+        'One cell per day in your own timezone, the day’s last snapshot against the previous day’s. ' +
+        'Dim means no data, never a day of zero change; a dot means the snapshot before it is more than a day ' +
+        'back, so that cell carries the whole change across the gap.';
+    holder.appendChild(note);
+
+    return holder;
+}
+
+/**
+ * The collapsible calendar section.
+ *
+ * Collapsed until asked for, and the grid is built on expand rather than with
+ * the rest of the body: the panel is redrawn whenever it opens or the window
+ * changes, and a section nobody has opened should not cost a pass over the
+ * whole history each time.
+ *
+ * @param {Array<Object>} series - Net worth snapshots `{t, total}`
+ * @param {Object} [options] - Passed through to `buildNetworthCalendar`
+ * @returns {HTMLElement} The section
+ */
+export function buildCalendarSection(series, options = {}) {
+    const section = document.createElement('div');
+    section.className = 'mwi-nw-calendar-section';
+    section.style.cssText = 'margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.12); padding-top: 6px;';
+
+    const weeks = Math.round(options.weeks || CALENDAR_WEEKS);
+    const toggle = document.createElement('button');
+    toggle.className = 'mwi-nw-calendar-toggle';
+    toggle.type = 'button';
+    toggle.style.cssText = `background: none; border: none; padding: 0; cursor: pointer; color: #d1d5db;
+        font-size: 12px; font-weight: 600;`;
+
+    const body = document.createElement('div');
+    body.className = 'mwi-nw-calendar-holder';
+    body.style.display = 'none';
+
+    let drawn = false;
+    const label = (open) => `${open ? '▾' : '▸'} Daily net worth calendar (last ${weeks} weeks)`;
+    toggle.textContent = label(false);
+
+    toggle.addEventListener('click', () => {
+        const open = body.style.display === 'none';
+        body.style.display = open ? '' : 'none';
+        toggle.textContent = label(open);
+        if (open && !drawn) {
+            drawn = true;
+            try {
+                body.appendChild(buildCalendarBody(series, options));
+            } catch (error) {
+                console.error('[GoldSources] The calendar could not be drawn:', error);
+                body.textContent = 'The calendar could not be drawn.';
+            }
+        }
+    });
+
+    section.appendChild(toggle);
+    section.appendChild(body);
+    return section;
 }
 
 class GoldSourcesPanel {
@@ -404,14 +619,22 @@ class GoldSourcesPanel {
 
     /**
      * Build the attribution for the active window.
-     * @returns {Promise<Object>} From `attributeGoldSources`
+     *
+     * The series comes back beside it because the calendar section covers eight
+     * weeks whatever window the rest of the panel is on, and re-reading the
+     * history for it would be a second pass over the same array.
+     *
+     * @returns {Promise<{attribution: Object, series: Array<Object>}>} The attribution and the snapshots behind it
      */
     async buildAttribution() {
         const days = WINDOWS.find((entry) => entry.key === this.activeWindow)?.days || 7;
         const to = Date.now();
         const from = dayStart(new Date(to - (days - 1) * DAY_MS).toISOString().slice(0, 10));
         const inputs = await collectGoldSourceInputs();
-        return attributeGoldSources({ ...inputs, from, to });
+        return {
+            attribution: attributeGoldSources({ ...inputs, from, to }),
+            series: Array.isArray(inputs?.series) ? inputs.series : [],
+        };
     }
 
     /**
@@ -471,10 +694,10 @@ class GoldSourcesPanel {
         this.modal = modal;
 
         try {
-            const attribution = await this.buildAttribution();
+            const { attribution, series } = await this.buildAttribution();
             if (!this.modal) return;
             bodyHolder.textContent = '';
-            bodyHolder.appendChild(buildPanelBody(attribution));
+            bodyHolder.appendChild(buildPanelBody(attribution, { series }));
         } catch (error) {
             console.error('[GoldSources] The panel could not be drawn:', error);
             bodyHolder.textContent = 'The attribution could not be drawn.';
