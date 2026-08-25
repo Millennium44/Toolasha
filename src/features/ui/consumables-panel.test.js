@@ -149,7 +149,11 @@ describe('the dungeon entry-key row', () => {
     const denSession = () => {
         game.actionDetail = { combatZoneInfo: { isDungeon: true, dungeonInfo: { keyItemHrid: KEY } } };
         game.items[KEY] = { name: 'Chimerical Entry Key' };
-        game.inventory = [{ itemHrid: KEY, count: 4, itemLocationHrid: '/item_locations/inventory' }];
+        game.inventory = [
+            { itemHrid: KEY, count: 4, itemLocationHrid: '/item_locations/inventory' },
+            // The live inventory is what the panel now reads the coffee from
+            { itemHrid: '/items/power_coffee', count: 1000, itemLocationHrid: '/item_locations/inventory' },
+        ];
         game.latest = {
             durationSeconds: 3600,
             actionHrid: DEN,
@@ -303,6 +307,60 @@ describe('the Buy-all widget', () => {
         opens.checked = false;
         opens.dispatchEvent(new Event('change'));
         expect(settings.values.market_consumableBuyOpenRecommended).toBe(false);
+    });
+});
+
+describe('a restock shows at once', () => {
+    test("the character's own held count reads the live inventory, party members keep the battle snapshot", () => {
+        game.items['/items/coffee'] = { name: 'Coffee', consumableDetail: {} };
+        game.inventory = [{ itemHrid: '/items/coffee', count: 25 }];
+        game.latest = {
+            durationSeconds: 600,
+            players: [
+                { name: 'Me', isCurrentPlayer: true },
+                { name: 'Pal', isCurrentPlayer: false },
+            ],
+        };
+        const entry = {
+            itemHrid: '/items/coffee',
+            itemName: 'Coffee',
+            currentCount: 5,
+            inventoryAmount: 5,
+            consumptionRate: 0.001,
+        };
+        game.statsByName = {
+            Me: { consumableBreakdown: [{ ...entry }] },
+            Pal: { consumableBreakdown: [{ ...entry, currentCount: 7, inventoryAmount: 7 }] },
+        };
+
+        const players = consumablesPanel._players();
+        const me = players.find((p) => p.isCurrent);
+        const pal = players.find((p) => !p.isCurrent);
+
+        // The battle snapshot said 5; the purchase already landed in the inventory
+        expect(me.forecasts[0].held).toBe(25);
+        // A party member's inventory is not visible, so the snapshot stands
+        expect(pal.forecasts[0].held).toBe(7);
+    });
+
+    test('an empty inventory read leaves the snapshot counts alone', () => {
+        game.inventory = [];
+        game.latest = { durationSeconds: 600, players: [{ name: 'Me', isCurrentPlayer: true }] };
+        game.statsByName = {
+            Me: {
+                consumableBreakdown: [
+                    {
+                        itemHrid: '/items/coffee',
+                        itemName: 'Coffee',
+                        currentCount: 5,
+                        inventoryAmount: 5,
+                        consumptionRate: 0.001,
+                    },
+                ],
+            },
+        };
+
+        expect(consumablesPanel._players()[0].forecasts[0].held).toBe(5);
     });
 });
 

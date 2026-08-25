@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A combat restock shows at once
+
+The combat consumables list read your held counts from battle snapshots, which the game sends when a fight starts or something is consumed — buying more updated neither, so a mid-run restock sat stale until the next fight began. Your own character's counts now read the live inventory, which updates the moment the purchase lands; party members keep the snapshot figure, since theirs is the only count their battles state.
+
 ### Four quality-of-life additions
 
 - **Settings search, finished**: the settings filter box now debounces, clears on Escape, keeps a whole section visible when its heading matches, and no longer leaks keystrokes to the game.

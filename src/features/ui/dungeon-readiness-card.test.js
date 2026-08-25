@@ -157,6 +157,11 @@ const measuredSelf = () => {
             keyBreakdown: [],
         },
     };
+    // The panel reads the character's own held counts from the live inventory
+    game.inventory = [
+        ...game.inventory,
+        { itemHrid: '/items/power_coffee', count: 3600, itemLocationHrid: '/item_locations/inventory' },
+    ];
 };
 
 const render = async () => {

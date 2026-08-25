@@ -295,7 +295,7 @@ class ConsumablesPanel {
             .map((player) => {
                 const stats = calculatePlayerStats(player, duration);
                 const forecasts = forecastAll(
-                    this._exactRates(stats?.consumableBreakdown, player),
+                    this._liveCounts(this._exactRates(stats?.consumableBreakdown, player), player),
                     (hrid) => getItemPrices(hrid),
                     {
                         keepOrder: true,
@@ -804,6 +804,31 @@ class ConsumablesPanel {
             if (perDay === null) return entry;
 
             return { ...entry, consumptionRate: perDay / 86400, consumedPerDay: Math.ceil(perDay) };
+        });
+    }
+
+    /**
+     * Refresh the character's own held counts from the live inventory.
+     *
+     * The collector's counts come from battle snapshots, which the game sends
+     * when a fight starts and when something is consumed - a purchase updates
+     * neither, so a restock mid-run read as unchanged until the next fight
+     * began. The inventory message lands the moment the purchase does, and it
+     * is visible only for this character - which is why party members keep the
+     * snapshot figure: theirs is the only count their battles state.
+     *
+     * @param {Array<Object>} breakdown - Entries as `_exactRates` left them
+     * @param {Object} player - The collector's player entry
+     * @returns {Array<Object>} The same entries, own counts read live
+     */
+    _liveCounts(breakdown, player) {
+        if (!player?.isCurrentPlayer) return breakdown;
+        const inventory = dataManager.getInventory?.();
+        if (!Array.isArray(inventory) || !inventory.length) return breakdown;
+
+        return (breakdown || []).map((entry) => {
+            if (!entry?.itemHrid) return entry;
+            return { ...entry, inventoryAmount: heldInInventory(inventory, entry.itemHrid) };
         });
     }
 
