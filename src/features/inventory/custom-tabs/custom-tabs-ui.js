@@ -1364,6 +1364,22 @@ export default class CustomTabsUI {
      * clock outranks the importer's own ordering for no reason. A layout file
      * is the tabs and where they sit — nothing else.
      */
+    /**
+     * Build the export download name: character, game-mode tag and date keep
+     * files from different characters (or days) from overwriting each other.
+     * Any half that isn't known yet is simply left off.
+     * @returns {string} e.g. "toolasha-tabs-Millennium44-IC-2026-08-27.json"
+     */
+    _exportFileName() {
+        const modeCodes = { standard: 'MC', ironcow: 'IC', legacy_ironcow: 'LC' };
+        const modeKey = (dataManager.getCurrentCharacterGameMode() || '').split('/').pop();
+        const name = (dataManager.getCurrentCharacterName() || '').replace(/[^\w-]+/g, '');
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+        return ['toolasha-tabs', name || null, modeCodes[modeKey] || null, date].filter(Boolean).join('-') + '.json';
+    }
+
     _exportLayout() {
         const { removed: _removed, orderUpdatedAt: _orderUpdatedAt, ...config } = this._config || {};
         const payload = { _toolasha: 'tabs-v1', ...config };
@@ -1372,7 +1388,7 @@ export default class CustomTabsUI {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'toolasha-tabs.json';
+        a.download = this._exportFileName();
         a.click();
         URL.revokeObjectURL(url);
     }

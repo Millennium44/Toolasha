@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Tab exports name themselves
+
+An exported custom-tabs layout now downloads as `toolasha-tabs-<character>-<mode>-<date>.json` (mode tagged MC/IC/LC), so exports from different characters or days stop overwriting each other in the downloads folder.
+
 ### Small sharpenings across the sims, trials and shrine planner
 
 Deaths/hr in the single-zone combat sim overview now shows three decimals, so a rare death stops rounding to 0.0. Character names in the trial results table are clickable and open the player's profile. The shrine planner's missing-mats view re-renders when an upgrade or inventory change makes materials newly missing (or newly covered), instead of only on open. And the "remembered results" banner on both the combat and lab sim Upgrade tabs now says whose run it was — character name, and for the combat sim the zone and tier it simulated — so a restored set can't be mistaken for the character or zone currently selected.

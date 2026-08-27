@@ -58,9 +58,12 @@ const dm = vi.hoisted(() => {
     const listeners = new Map();
     return {
         charId: null,
+        characterName: null,
+        gameMode: 'standard',
         characterItems: [],
         getCurrentCharacterId: () => dm.charId,
-        getCurrentCharacterGameMode: () => 'standard',
+        getCurrentCharacterName: () => dm.characterName,
+        getCurrentCharacterGameMode: () => dm.gameMode,
         getInitClientData: () => ({}),
         on: (event, fn) => {
             if (!listeners.has(event)) listeners.set(event, new Set());
@@ -145,6 +148,8 @@ beforeEach(async () => {
     storageMock.reset();
     dm.listeners.clear();
     dm.charId = 'ironChar';
+    dm.characterName = null;
+    dm.gameMode = 'standard';
     dm.characterItems = [];
 });
 
@@ -407,5 +412,44 @@ describe('Export / Import across characters', () => {
 
         expect(ui._config.tabs.map((t) => t.name)).toEqual(['Ores', 'Gear']);
         expect(ui._config.removed).toBeUndefined();
+    });
+});
+
+describe('export filename', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date(2026, 7, 27, 12, 0, 0));
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('carries the character, mode tag and date', async () => {
+        dm.characterName = 'Millennium44';
+        dm.gameMode = 'ironcow';
+        await startUI();
+        expect(ui._exportFileName()).toBe('toolasha-tabs-Millennium44-IC-2026-08-27.json');
+    });
+
+    test('standard mode reads MC, and an hrid-shaped mode still maps', async () => {
+        dm.characterName = 'Steez';
+        dm.gameMode = '/game_modes/standard';
+        await startUI();
+        expect(ui._exportFileName()).toBe('toolasha-tabs-Steez-MC-2026-08-27.json');
+    });
+
+    test('unknown halves are left off rather than guessed', async () => {
+        dm.characterName = null;
+        dm.gameMode = 'some_future_mode';
+        await startUI();
+        expect(ui._exportFileName()).toBe('toolasha-tabs-2026-08-27.json');
+    });
+
+    test('a name with filesystem-hostile characters is sanitized', async () => {
+        dm.characterName = 'We/ird:Na*me';
+        dm.gameMode = 'standard';
+        await startUI();
+        expect(ui._exportFileName()).toBe('toolasha-tabs-WeirdName-MC-2026-08-27.json');
     });
 });
