@@ -105,6 +105,16 @@ function unionTombstones(a, b) {
  *
  * Applied through the whole tree, not just the top level: `removeTab` takes a
  * subtree with it, so a nested id can be tombstoned while its root survives.
+ *
+ * An UNSTAMPED tab is never deleted by a tombstone. `stampOf` answers 0 for
+ * every tab written before stamps existed (pre-3.22.0), and a tombstone's
+ * `deletedAt` is a Date.now()-scale number, so the plain comparison made ANY
+ * tombstone beat EVERY legacy tab — and this runs at LOAD, not only on sync, so
+ * a stored `removed` map naming legacy tabs pruned them off disk on the next
+ * page load. When the stamp is 0 the ordering is genuinely unknowable, and for
+ * a list the user authored by hand the safe answer is to keep the tab and drop
+ * the tombstone: reviving one deleted tab costs a second click, losing a
+ * curated tree costs an evening.
  * @param {Object} tab
  * @param {Object<string, number>} removed - Mutated: surviving ids are cleared
  * @returns {Object|null} The tab (a new copy only if a descendant was dropped)
@@ -113,14 +123,43 @@ function applyTombstones(tab, removed) {
     if (!tab || typeof tab !== 'object') return null;
     const deletedAt = removed[tab.id];
     if (deletedAt !== undefined) {
-        if (deletedAt > stampOf(tab)) return null;
-        delete removed[tab.id];
+        if (stampOf(tab) === 0 || deletedAt <= stampOf(tab)) delete removed[tab.id];
+        else return null;
     }
     const children = Array.isArray(tab.children) ? tab.children : null;
     if (!children || children.length === 0) return tab;
     const kept = children.map((child) => applyTombstones(child, removed)).filter(Boolean);
     if (kept.length === children.length && kept.every((child, i) => child === children[i])) return tab;
     return { ...tab, children: kept };
+}
+
+/**
+ * Every tab in a tree, nested ones included.
+ * @param {Array} tabs
+ * @returns {number}
+ */
+function _countTabs(tabs) {
+    let n = 0;
+    for (const tab of tabs) {
+        if (!tab || typeof tab !== 'object') continue;
+        n += 1;
+        if (Array.isArray(tab.children)) n += _countTabs(tab.children);
+    }
+    return n;
+}
+
+/**
+ * Every tab id in a tree, nested ones included.
+ * @param {Array} tabs
+ * @param {Set<string>} [into]
+ * @returns {Set<string>}
+ */
+function _collectIds(tabs, into = new Set()) {
+    for (const tab of Array.isArray(tabs) ? tabs : []) {
+        if (tab?.id != null) into.add(tab.id);
+        if (Array.isArray(tab?.children)) _collectIds(tab.children, into);
+    }
+    return into;
 }
 
 /**
@@ -168,12 +207,42 @@ function mergeConfigs(stored, memory) {
         byId.set(tab.id, rival && stampOf(rival) > stampOf(tab) ? rival : tab);
     }
 
-    // Tombstones: the union of both sides, newest deletion per id
-    const removed = unionTombstones(tombstonesOf(theirs), tombstonesOf(ours));
-    for (const [id, tab] of [...byId]) {
-        const kept = applyTombstones(tab, removed);
-        if (kept) byId.set(id, kept);
-        else byId.delete(id);
+    // Tombstones: the union of both sides, newest deletion per id. Applied to a
+    // TRIAL copy first, so the mass-delete cap below can decline the whole
+    // application rather than half of it (`applyTombstones` mutates the map it
+    // is handed, clearing the ids that survived).
+    const union = unionTombstones(tombstonesOf(theirs), tombstonesOf(ours));
+    const trialRemoved = { ...union };
+    const trialById = new Map();
+    for (const [id, tab] of byId) {
+        const kept = applyTombstones(tab, trialRemoved);
+        if (kept) trialById.set(id, kept);
+    }
+
+    // A single fold must never empty a curated list. Tombstones are the one
+    // thing in this merge that can delete, they arrive from a store or a peer
+    // that may be wrong about them, and "most of the user's tabs vanished at
+    // once" is never the outcome the user wanted from a load. So a fold that
+    // would drop more than half the tabs — and more than two, since a
+    // two-tab list has no majority worth protecting — keeps every tab and
+    // holds the tombstones back UN-APPLIED. They stay in the map, so a
+    // genuinely widespread deletion still wins later, once the surviving tabs
+    // carry stamps that prove the deletion came after them.
+    const before = _countTabs([...byId.values()]);
+    const after = _countTabs([...trialById.values()]);
+    const dropped = before - after;
+    const capped = dropped > 2 && dropped * 2 > before;
+    let removed = union;
+    if (capped) {
+        console.warn(
+            `[CustomTabs] Refusing a fold that would delete ${dropped} of ${before} tabs at once; ` +
+                `keeping every tab and holding ${Object.keys(union).length} tombstone(s) back un-applied. ` +
+                'If the deletions are real they will apply again once the surviving tabs are edited.'
+        );
+    } else {
+        byId.clear();
+        for (const [id, tab] of trialById) byId.set(id, tab);
+        removed = trialRemoved;
     }
 
     // Order: from the side that reordered last, ids only one side has appended
@@ -219,6 +288,34 @@ function pruneTombstones(config, now = Date.now()) {
     if (Object.keys(kept).length === Object.keys(removed).length) return config;
     if (Object.keys(kept).length === 0) {
         const { removed: _expired, ...rest } = config;
+        return rest;
+    }
+    return { ...config, removed: kept };
+}
+
+/**
+ * Forget deletions for ids that are not in the config any more.
+ *
+ * Once the tombstones have been applied at load, a tombstone whose id names no
+ * tab in the tree has nothing left to do here: it can only ever delete
+ * something later, never restore anything, and the id it names is one this
+ * config has already stopped carrying. Keeping it is all downside — it is what
+ * turns a re-imported or re-synced copy of that tab into a tab that deletes
+ * itself on the next load.
+ *
+ * Deliberately separate from `pruneTombstones` (which is about age) and pure,
+ * so both can be composed at the one call site that has an applied config.
+ * @param {Object} config
+ * @returns {Object} The config, tombstone map replaced only if some were dead
+ */
+function pruneDeadTombstones(config) {
+    const removed = config?.removed;
+    if (!removed || typeof removed !== 'object') return config;
+    const live = _collectIds(config.tabs);
+    const kept = Object.fromEntries(Object.entries(removed).filter(([id]) => live.has(id)));
+    if (Object.keys(kept).length === Object.keys(removed).length) return config;
+    if (Object.keys(kept).length === 0) {
+        const { removed: _dead, ...rest } = config;
         return rest;
     }
     return { ...config, removed: kept };
@@ -284,19 +381,29 @@ function recordFor(characterId) {
  * A readable load returns what is stored; one that cannot be made returns the
  * config last held for this character (the default when there is none) and
  * leaves the next save merging rather than overwriting.
+ *
+ * The record is SHARED — the panel, the bulk-sell assistant, and the reload on
+ * every `character_initialized` all reach the same handle through `records` —
+ * so this must never blank its memory and then go away to await a probe. It
+ * used to: `record.set(defaultConfig())` ran before `record.load()`, and for
+ * the length of an IndexedDB round trip the shared record held an empty
+ * config. Anything that saved in that window folded its write against
+ * emptiness, and a second `loadConfig` overlapping the first captured the
+ * blank as its own "previous" and handed the panel an empty config back.
+ * `authoritative: true` gets the same result — stored wins over held — with
+ * the discarding moved to after the probe returns, so the window never exists
+ * and an edit that lands mid-load is still folded in.
  * @param {string} characterId
  * @returns {Promise<Object>} { version, tabs, selectedTabId }
  */
 export async function loadConfig(characterId) {
     if (!characterId) return defaultConfig();
     const record = recordFor(characterId);
-    const previous = record.get();
-    record.set(defaultConfig());
-    const readable = await record.load();
-    if (!readable) record.set(previous);
+    await record.load({ authoritative: true });
     const saved = record.get();
     const raw = !saved || !Array.isArray(saved.tabs) ? defaultConfig() : { ...defaultConfig(), ...saved };
-    const config = pruneTombstones(raw);
+    // Age first, then the ids the applied config no longer carries
+    const config = pruneDeadTombstones(pruneTombstones(raw));
     record.set(config);
     return config;
 }
@@ -312,6 +419,52 @@ export async function saveConfig(characterId, config) {
     const record = recordFor(characterId);
     record.set(config);
     return record.save();
+}
+
+/**
+ * Make an imported layout file safe to adopt as this character's config.
+ *
+ * A file used to be restored verbatim, which produced a config that destroyed
+ * itself:
+ *
+ * - It carried the exporter's `removed` map. Tombstones name ids, the file
+ *   names the same ids, and the next `loadConfig` applied one to the other —
+ *   the imported tabs deleted themselves on the next page load. Stripped.
+ * - Its tabs were unstamped, so every fold treated them as beginning-of-time
+ *   and any tombstone or rival copy outranked them. Every imported tab is
+ *   stamped `updatedAt = now`: it IS the newest thing that happened to this
+ *   config, which is exactly what an import is.
+ * - Its ids were the exporter's ids. Two characters importing one file — the
+ *   ordinary way a layout is shared, including with yourself — ended up with
+ *   different tabs under the same id, and any merge that saw both treated them
+ *   as one tab and picked a winner. Fresh ids per tab end that at the source.
+ *   Structure is preserved (children stay under their parent) and
+ *   `selectedTabId` is remapped; nothing else in a config references a tab id
+ *   (loadout bindings are keyed by loadout NAME and hold item hrids), so the
+ *   remap is complete.
+ *
+ * `orderUpdatedAt` is left to the caller's config shape: the export no longer
+ * writes one, and a file that still carries an old one is stamped forward here
+ * so the imported order is the current order.
+ *
+ * @param {Object} parsed - The parsed layout file, minus its `_toolasha` marker
+ * @param {number} [now]
+ * @returns {Object} A config safe to hold and save
+ */
+export function sanitizeImportedConfig(parsed, now = Date.now()) {
+    const { removed: _removed, ...rest } = parsed && typeof parsed === 'object' ? parsed : {};
+    const idMap = new Map();
+    const rebuild = (tabs) =>
+        (Array.isArray(tabs) ? tabs : [])
+            .filter((tab) => tab && typeof tab === 'object')
+            .map((tab) => {
+                const id = makeId();
+                if (tab.id != null) idMap.set(tab.id, id);
+                return { ...tab, id, updatedAt: now, children: rebuild(tab.children) };
+            });
+    const tabs = rebuild(rest.tabs);
+    const selectedTabId = rest.selectedTabId != null ? (idMap.get(rest.selectedTabId) ?? null) : null;
+    return { ...defaultConfig(), ...rest, tabs, selectedTabId, orderUpdatedAt: now };
 }
 
 /** @returns {Promise<*>} The pending writes, for tests and shutdown */

@@ -76,6 +76,7 @@ const {
     setTabOpen,
     setAllTabsOpen,
     findTab,
+    sanitizeImportedConfig,
 } = await import('./custom-tabs-data.js');
 
 function buildConfig(tab) {
@@ -665,17 +666,50 @@ describe('tombstone pruning', () => {
         storageMock.reset();
     });
 
+    /**
+     * Five stamped tabs and four tombstones trips the mass-delete cap, which
+     * holds the tombstones back un-applied — the one situation in which a
+     * tombstone is still live after a load, and so the one that can show the
+     * age prune and the dead prune apart.
+     */
+    const cappedConfig = (removed) => ({
+        version: 1,
+        selectedTabId: null,
+        tabs: ['a', 'b', 'c', 'd', 'e'].map((id) => ({
+            id,
+            name: id,
+            items: [],
+            children: [],
+            updatedAt: 100,
+        })),
+        removed,
+    });
+
     test('a load forgets deletions older than the max age and keeps the rest', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const now = Date.now();
-        storageMock.storeFor('settings').set(KEY, {
-            version: 1,
-            selectedTabId: null,
-            tabs: [],
-            removed: { stale: now - TOMBSTONE_MAX_AGE_MS - 1000, fresh: now - 1000 },
-        });
+        storageMock
+            .storeFor('settings')
+            .set(
+                KEY,
+                cappedConfig({ a: now - TOMBSTONE_MAX_AGE_MS - 1000, b: now - 1000, c: now - 2000, d: now - 3000 })
+            );
 
         const config = await loadConfig('char1');
-        expect(config.removed).toEqual({ fresh: now - 1000 });
+        expect(config.removed).toEqual({ b: now - 1000, c: now - 2000, d: now - 3000 });
+        warn.mockRestore();
+    });
+
+    test('a load forgets deletions for ids the config does not carry', async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const now = Date.now();
+        storageMock
+            .storeFor('settings')
+            .set(KEY, cappedConfig({ a: now - 10, b: now - 10, c: now - 10, ghost: now - 1000 }));
+
+        const config = await loadConfig('char1');
+        expect(config.removed).toEqual({ a: now - 10, b: now - 10, c: now - 10 });
+        warn.mockRestore();
     });
 
     test('a load with every tombstone expired drops the map entirely', async () => {
@@ -688,5 +722,340 @@ describe('tombstone pruning', () => {
         });
 
         expect(await loadConfig('char1')).toEqual({ version: 1, selectedTabId: null, tabs: [] });
+    });
+
+    test('a load drops tombstones for ids the config no longer carries', async () => {
+        const now = Date.now();
+        storageMock.storeFor('settings').set(KEY, {
+            version: 1,
+            selectedTabId: null,
+            tabs: [{ id: 'here', name: 'Here', items: [], children: [], updatedAt: now }],
+            removed: { gone: now - 1000 },
+        });
+
+        const config = await loadConfig('char1');
+        expect(config.tabs.map((t) => t.id)).toEqual(['here']);
+        expect(config.removed).toBeUndefined();
+    });
+});
+
+// -------------------------------------------------------------------------
+// FIX 1 — a tombstone must never delete an unstamped tab
+// -------------------------------------------------------------------------
+
+describe('tombstones against unstamped tabs', () => {
+    const KEY = 'char1_inventoryTabs_config';
+    const tab = (id, extra = {}) => ({ id, name: id, items: [], children: [], ...extra });
+
+    let merge;
+    beforeEach(async () => {
+        storageMock.reset();
+        const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
+        merge = mergeForKey('settings', KEY).merge;
+    });
+
+    test('an unstamped tab survives a tombstone, and the tombstone is dropped', () => {
+        // stampOf() is 0 for every tab written before stamps existed, and a
+        // deletedAt is a Date.now()-scale number, so the old rule made EVERY
+        // tombstone beat EVERY legacy tab
+        const carrier = { version: 1, selectedTabId: null, tabs: [tab('a')] };
+        const deleted = { version: 1, selectedTabId: null, tabs: [], removed: { a: Date.now() } };
+
+        for (const merged of [merge(carrier, deleted), merge(deleted, carrier)]) {
+            expect(merged.tabs.map((t) => t.id)).toEqual(['a']);
+            expect(merged.removed).toBeUndefined();
+        }
+    });
+
+    test('an unstamped NESTED tab survives a tombstone too', () => {
+        const carrier = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [tab('root', { updatedAt: 900, children: [tab('kid')] })],
+        };
+        const deleted = { version: 1, selectedTabId: null, tabs: [], removed: { kid: 500 } };
+        const merged = merge(carrier, deleted);
+        expect(merged.tabs[0].children.map((t) => t.id)).toEqual(['kid']);
+        expect(merged.removed).toBeUndefined();
+    });
+
+    test('a stamped tab older than the tombstone is still deleted', () => {
+        const carrier = { version: 1, selectedTabId: null, tabs: [tab('a', { updatedAt: 100 })] };
+        const deleted = { version: 1, selectedTabId: null, tabs: [], removed: { a: 500 } };
+        expect(merge(carrier, deleted).tabs).toEqual([]);
+    });
+
+    test('regression: a stored config of unstamped tabs plus a removed map naming them loads intact', async () => {
+        // The reported loss, exactly: pre-3.22.0 tabs on disk, a tombstone map
+        // naming them, and loadConfig — not a sync — pruning them at page load
+        storageMock.storeFor('settings').set(KEY, {
+            version: 1,
+            selectedTabId: 'ores',
+            tabs: [
+                { id: 'ores', name: 'Ores', items: ['/items/iron_ore'], children: [] },
+                { id: 'gear', name: 'Gear', items: [], children: [{ id: 'weapons', name: 'W', items: [] }] },
+            ],
+            removed: { ores: Date.now(), weapons: Date.now() },
+        });
+
+        const config = await loadConfig('char1');
+        expect(config.tabs.map((t) => t.id)).toEqual(['ores', 'gear']);
+        expect(config.tabs[1].children.map((t) => t.id)).toEqual(['weapons']);
+        expect(config.selectedTabId).toBe('ores');
+        expect(config.removed).toBeUndefined();
+    });
+});
+
+// -------------------------------------------------------------------------
+// FIX 2 — one fold may not empty a curated list
+// -------------------------------------------------------------------------
+
+describe('the mass-delete cap', () => {
+    const tab = (id, extra = {}) => ({ id, name: id, updatedAt: 100, items: [], children: [], ...extra });
+
+    let merge;
+    beforeEach(async () => {
+        const { mergeForKey } = await import('../../../utils/sync-merge-registry.js');
+        merge = mergeForKey('settings', 'char1_inventoryTabs_config').merge;
+    });
+
+    test('a fold that would drop most of the list keeps every tab and holds the tombstones', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const carrier = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [tab('a'), tab('b'), tab('c'), tab('d'), tab('e')],
+        };
+        const deleted = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [],
+            removed: { a: 500, b: 500, c: 500, d: 500 },
+        };
+
+        const merged = merge(carrier, deleted);
+        expect(merged.tabs.map((t) => t.id)).toEqual(['a', 'b', 'c', 'd', 'e']);
+        // Un-applied, not forgotten: a real widespread deletion can still win
+        expect(merged.removed).toEqual({ a: 500, b: 500, c: 500, d: 500 });
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('4 of 5'));
+        warn.mockRestore();
+    });
+
+    test('a fold under the threshold applies normally', () => {
+        const carrier = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [tab('a'), tab('b'), tab('c'), tab('d'), tab('e')],
+        };
+        const deleted = { version: 1, selectedTabId: null, tabs: [], removed: { a: 500, b: 500 } };
+
+        const merged = merge(carrier, deleted);
+        expect(merged.tabs.map((t) => t.id)).toEqual(['c', 'd', 'e']);
+        expect(merged.removed).toEqual({ a: 500, b: 500 });
+    });
+
+    test('a short list is not protected — three of three is more than two', () => {
+        const carrier = { version: 1, selectedTabId: null, tabs: [tab('a'), tab('b'), tab('c')] };
+        const deleted = { version: 1, selectedTabId: null, tabs: [], removed: { a: 500, b: 500, c: 500 } };
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        expect(merge(carrier, deleted).tabs.map((t) => t.id)).toEqual(['a', 'b', 'c']);
+        warn.mockRestore();
+    });
+
+    test('two of two still applies — nothing worth protecting in a majority of two', () => {
+        const carrier = { version: 1, selectedTabId: null, tabs: [tab('a'), tab('b')] };
+        const deleted = { version: 1, selectedTabId: null, tabs: [], removed: { a: 500, b: 500 } };
+        expect(merge(carrier, deleted).tabs).toEqual([]);
+    });
+});
+
+// -------------------------------------------------------------------------
+// FIX 3 — an imported file must not be adopted verbatim
+// -------------------------------------------------------------------------
+
+describe('sanitizeImportedConfig', () => {
+    beforeEach(() => {
+        storageMock.reset();
+    });
+
+    const file = () => ({
+        version: 1,
+        selectedTabId: 'ores',
+        removed: { ores: Date.now(), gear: Date.now() },
+        orderUpdatedAt: 1,
+        tabs: [
+            { id: 'ores', name: 'Ores', items: ['/items/iron_ore'], children: [] },
+            { id: 'gear', name: 'Gear', items: [], children: [{ id: 'weapons', name: 'W', items: [] }] },
+        ],
+    });
+
+    test('the tombstone map never comes in', () => {
+        expect(sanitizeImportedConfig(file()).removed).toBeUndefined();
+    });
+
+    test('every imported tab is stamped, nested ones included', () => {
+        const now = 5_000;
+        const config = sanitizeImportedConfig(file(), now);
+        expect(config.tabs.map((t) => t.updatedAt)).toEqual([now, now]);
+        expect(config.tabs[1].children[0].updatedAt).toBe(now);
+        expect(config.orderUpdatedAt).toBe(now);
+    });
+
+    test('every tab gets a fresh id, and structure and selection follow it', () => {
+        const config = sanitizeImportedConfig(file());
+        const [ores, gear] = config.tabs;
+        const weapons = gear.children[0];
+        expect([ores.id, gear.id, weapons.id]).not.toContain('ores');
+        expect([ores.id, gear.id, weapons.id]).not.toContain('gear');
+        expect([ores.id, gear.id, weapons.id]).not.toContain('weapons');
+        expect(new Set([ores.id, gear.id, weapons.id]).size).toBe(3);
+        expect(config.selectedTabId).toBe(ores.id);
+        expect(ores.items).toEqual(['/items/iron_ore']);
+    });
+
+    test('two imports of one file produce disjoint ids — the shared-id problem at its source', () => {
+        const a = sanitizeImportedConfig(file());
+        const b = sanitizeImportedConfig(file());
+        expect(a.tabs[0].id).not.toBe(b.tabs[0].id);
+    });
+
+    test('loadout bindings survive the re-id — they are keyed by loadout name', () => {
+        const config = sanitizeImportedConfig({
+            version: 1,
+            selectedTabId: null,
+            tabs: [
+                {
+                    id: 'x',
+                    name: 'X',
+                    items: ['/items/sword+3'],
+                    children: [],
+                    loadoutBindings: { Melee: ['/items/sword+3'] },
+                },
+            ],
+        });
+        expect(config.tabs[0].loadoutBindings).toEqual({ Melee: ['/items/sword+3'] });
+    });
+
+    test('a sanitized import survives the next loadConfig intact', async () => {
+        const config = sanitizeImportedConfig(file());
+        await saveConfig('char1', config);
+        await flushConfigWrites();
+
+        const reloaded = await loadConfig('char1');
+        expect(reloaded.tabs.map((t) => t.name)).toEqual(['Ores', 'Gear']);
+        expect(reloaded.tabs[1].children.map((t) => t.name)).toEqual(['W']);
+        expect(reloaded.removed).toBeUndefined();
+    });
+});
+
+// -------------------------------------------------------------------------
+// FIX 5 — loading must not blank the shared record before the probe returns
+// -------------------------------------------------------------------------
+
+describe('the loadConfig wipe window', () => {
+    const KEY = 'char1_inventoryTabs_config';
+
+    beforeEach(() => {
+        storageMock.reset();
+    });
+
+    const stored = () => ({
+        version: 1,
+        selectedTabId: null,
+        tabs: [
+            { id: 'a', name: 'Ores', items: ['/items/iron_ore'], children: [], updatedAt: 100 },
+            { id: 'b', name: 'Gear', items: ['/items/hat'], children: [], updatedAt: 100 },
+        ],
+    });
+
+    /**
+     * Hold every tryGet open until released, so the load's probe and the
+     * save's probe can be made to overlap the way they do in the browser.
+     */
+    function gateProbes() {
+        const pending = [];
+        const original = storageMock.tryGet.getMockImplementation();
+        storageMock.tryGet.mockImplementation(
+            (key, store) => new Promise((resolve) => pending.push(() => resolve(original(key, store))))
+        );
+        return {
+            /** Drain, letting each release schedule the probes queued behind it */
+            releaseAll: async () => {
+                for (let pass = 0; pass < 20; pass++) {
+                    while (pending.length) pending.shift()();
+                    await new Promise((resolve) => setTimeout(resolve, 0));
+                }
+            },
+            restore: () => storageMock.tryGet.mockImplementation(original),
+        };
+    }
+
+    test('an edit made inside the load window survives it, and lands on disk', async () => {
+        // The exact interleaving the old code lost: `loadConfig` blanked the
+        // SHARED record and then went away to await its probe, so an edit that
+        // arrived in that window folded itself against an empty config.
+        storageMock.storeFor('settings').set(KEY, stored());
+        const first = await loadConfig('char1');
+        expect(first.tabs).toHaveLength(2);
+
+        const gate = gateProbes();
+        // A reload starts — the panel's character_initialized handler, or the
+        // bulk-sell assistant, both of which share this exact record
+        const loading = loadConfig('char1');
+        // …and the user renames a tab before its probe has come back
+        const saving = saveConfig('char1', renameTab(first, 'a', 'Ores (renamed)'));
+
+        await gate.releaseAll();
+        await Promise.all([loading, saving]);
+        await flushConfigWrites();
+        gate.restore();
+
+        const onDisk = storageMock.storeFor('settings').get(KEY);
+        expect(onDisk.tabs.map((t) => t.id).sort()).toEqual(['a', 'b']);
+        expect(onDisk.tabs.find((t) => t.id === 'a').name).toBe('Ores (renamed)');
+    });
+
+    test('a save whose probe resolves inside the load window never writes an empty config', async () => {
+        storageMock.storeFor('settings').set(KEY, stored());
+        const first = await loadConfig('char1');
+
+        const gate = gateProbes();
+        const saving = saveConfig('char1', first);
+        const loading = loadConfig('char1');
+
+        await gate.releaseAll();
+        await Promise.all([loading, saving]);
+        await flushConfigWrites();
+        gate.restore();
+
+        const onDisk = storageMock.storeFor('settings').get(KEY);
+        expect(onDisk.tabs.map((t) => t.id).sort()).toEqual(['a', 'b']);
+        expect((await loading).tabs).toHaveLength(2);
+    });
+
+    test('two overlapping loads both answer with the stored tabs, never an empty config', async () => {
+        storageMock.storeFor('settings').set(KEY, stored());
+        await loadConfig('char1');
+
+        const gate = gateProbes();
+        const a = loadConfig('char1');
+        const b = loadConfig('char1');
+        await gate.releaseAll();
+        const [first, second] = await Promise.all([a, b]);
+        gate.restore();
+
+        expect(first.tabs).toHaveLength(2);
+        expect(second.tabs).toHaveLength(2);
+    });
+
+    test('an unreadable load still answers with the config last held', async () => {
+        storageMock.storeFor('settings').set(KEY, stored());
+        const held = await loadConfig('char1');
+        expect(held.tabs).toHaveLength(2);
+
+        storageMock.unavailable = true;
+        const again = await loadConfig('char1');
+        storageMock.unavailable = false;
+        expect(again.tabs.map((t) => t.id)).toEqual(['a', 'b']);
     });
 });

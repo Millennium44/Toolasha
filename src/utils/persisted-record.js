@@ -124,6 +124,12 @@ export function createPersistedRecord({
 
     let memory = empty();
     let loaded = false;
+    /**
+     * Bumped every time something replaces the in-memory record. An
+     * `authoritative` load compares it across its own probe to tell "nothing
+     * touched this while I was reading" from "an edit landed mid-load".
+     */
+    let memoryVersion = 0;
     let saveChain = Promise.resolve();
     let saving = false;
     /** The merge-save waiting behind the running one, which later saves join */
@@ -158,6 +164,7 @@ export function createPersistedRecord({
          */
         set(value) {
             memory = value == null ? empty() : value;
+            memoryVersion += 1;
         },
 
         /** @returns {boolean} Whether a readable load has completed */
@@ -169,10 +176,24 @@ export function createPersistedRecord({
          * Load from storage. An unreadable probe leaves memory as it is — the
          * whole point — and reports `false`; a readable one folds the stored
          * record under memory and reports `true`.
+         *
+         * `authoritative` is for a caller that wants what is STORED rather than
+         * what is stored folded under what it happens to be holding — a
+         * re-read of the whole record, as a character switch or a panel reopen
+         * wants. The naive way to get that is to blank memory before starting
+         * the load, and that is a hole: the record is shared, so between the
+         * blanking and the probe returning, anything else that saves is folding
+         * against an empty record. So the discarding happens HERE, after the
+         * probe, and only when nothing replaced the record while the read was
+         * in flight — an edit that landed mid-load is still folded in, exactly
+         * as an ordinary load would.
+         * @param {Object} [options]
+         * @param {boolean} [options.authoritative=false] - Prefer stored over held
          * @returns {Promise<boolean>} Whether storage could be read
          */
-        async load() {
+        async load({ authoritative = false } = {}) {
             const started = generation;
+            const startedVersion = memoryVersion;
             try {
                 const probed = await probe();
                 if (probed === null) {
@@ -192,7 +213,9 @@ export function createPersistedRecord({
                 } else {
                     stored = null;
                 }
-                memory = stored == null ? merge(empty(), memory) : merge(stored, memory);
+                const under = authoritative && memoryVersion === startedVersion ? empty() : memory;
+                memory = stored == null ? merge(empty(), under) : merge(stored, under);
+                memoryVersion += 1;
                 loaded = true;
                 return true;
             } catch (error) {
@@ -228,7 +251,10 @@ export function createPersistedRecord({
                             return false;
                         }
                         if (started !== generation) return false;
-                        if (probed.found) memory = merge(probed.value, memory);
+                        if (probed.found) {
+                            memory = merge(probed.value, memory);
+                            memoryVersion += 1;
+                        }
                     }
                     return scoped
                         ? await writeScoped(base, memory, store, immediate)
@@ -267,6 +293,7 @@ export function createPersistedRecord({
          */
         async clear() {
             memory = empty();
+            memoryVersion += 1;
             return record.save({ overwrite: true });
         },
 
@@ -277,6 +304,7 @@ export function createPersistedRecord({
          */
         reset() {
             memory = empty();
+            memoryVersion += 1;
             loaded = false;
             generation += 1;
         },
@@ -315,9 +343,9 @@ export function createCuratedRecord({ merge = mergeMaps(), ...options }) {
         merge: (stored, memory) => (trustMemory ? memory : merge(stored, memory)),
     });
     const { load, reset } = record;
-    record.load = async () => {
+    record.load = async (options) => {
         trustMemory = false;
-        const readable = await load();
+        const readable = await load(options);
         trustMemory = readable;
         return readable;
     };
