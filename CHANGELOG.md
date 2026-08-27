@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Custom tabs survive a rapid character switch, and crafting prices can be forced fresh
+
+The sync-pull fix wasn't the whole story: switching characters quickly skips this feature's own re-init as a performance optimisation, and it kept saving under whoever the *current* character had become while still holding the *previous* one's tabs in memory — merging one character's tabs into another's, and deleting a shared tab (from Export/Import) if either side had removed it. The feature now refuses to save under a mismatched character and reloads its own tabs the moment the arriving character's data is ready, independent of that skip. Also: a "Refresh Prices" button next to Sort/Mode/Craft on crafting and gathering panels force-refetches the market and updates every visible Profit/hr figure in place, instead of having to open the marketplace per item.
+
 ### Custom tabs know when they changed, so a sync fold picks the right copy
 
 Every real tab edit now stamps the tab (view state like collapsing deliberately does not), reorders stamp the list, and a removed tab leaves a 30-day tombstone. The sync fold uses them: the genuinely newer copy of a tab wins, a deletion sticks across devices unless the tab was edited after it, and the tab order follows whichever device reordered last. Configs from before the stamps merge exactly as before.
