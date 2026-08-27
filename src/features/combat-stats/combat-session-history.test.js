@@ -181,6 +181,14 @@ describe('describing one in a picker', () => {
     test('a session with no start time still gets a line', () => {
         expect(describeSession({ durationSeconds: 0 })).toContain('Unknown time');
     });
+
+    test('a negative stored duration (clock skew, before it was clamped) reads as zero, not nothing', () => {
+        const line = describeSession(session('2026-08-03T01:00:00Z'), (s) => `${s}s`);
+        const skewed = describeSession({ ...session('2026-08-03T01:00:00Z'), durationSeconds: -2 }, (s) => `${s}s`);
+
+        expect(line).toContain('600s');
+        expect(skewed).toContain('(0s)');
+    });
 });
 
 describe('the list survives a failed read and a second tab', () => {

@@ -116,12 +116,18 @@ let sessions = [];
  * Take a fresh copy of the archive.
  *
  * Async and fire-and-forget, because `draw` is synchronous and a storage read
- * has no business blocking a redraw. The picker is a frame behind on the first
- * open and correct on every one after, which nobody notices.
+ * has no business blocking a redraw. The first open used to show only "Live
+ * Session" until the next 5s refresh; now the read triggers one redraw when it
+ * actually changed the list, so the history appears as soon as it is readable.
+ * Keyed on the newest run rather than the length so a same-size turnover still
+ * redraws, and no change at all never re-renders (which would loop).
  */
 async function refreshSessions() {
     try {
-        sessions = await loadSessions();
+        const fresh = await loadSessions();
+        const changed = fresh.length !== sessions.length || fresh[0]?.key !== sessions[0]?.key;
+        sessions = fresh;
+        if (changed) partyLootPanel.render();
     } catch (error) {
         console.error('[PartyLoot] Reading the session list failed:', error);
     }
@@ -174,7 +180,10 @@ function lootRow(item) {
     const line = document.createElement('div');
     Object.assign(line.style, {
         display: 'grid',
-        gridTemplateColumns: '18px minmax(0, 1fr) 62px 44px',
+        // The count column sizes to its content — a coin count in the millions
+        // used to overflow a fixed column and give the whole panel a horizontal
+        // scrollbar. The name is the column that gives way (it ellipsizes).
+        gridTemplateColumns: '18px minmax(0, 1fr) 62px auto',
         gap: '6px',
         alignItems: 'center',
         padding: '1px 0',
@@ -199,7 +208,9 @@ function lootRow(item) {
     });
 
     const count = document.createElement('span');
-    count.textContent = `× ${formatWithSeparator(item.count)}`;
+    // A seven-digit count (coins, mostly) is compacted; the tooltip keeps the
+    // exact figure
+    count.textContent = `× ${item.count >= 100000 ? formatKMB(item.count) : formatWithSeparator(item.count)}`;
     Object.assign(count.style, { textAlign: 'right', whiteSpace: 'nowrap', color: ROW_COLORS.dim });
 
     line.append(icon, name, value, count);

@@ -494,10 +494,13 @@ class CombatStatsDataCollector {
 
             const battleId = data.battleId || 0;
 
-            // Calculate duration from combat start time
+            // Calculate duration from combat start time. Clamped at zero: the
+            // start time is the server's clock and "now" is ours, so a short
+            // run on a client a second or two behind measured negative — which
+            // the session picker then rendered as no duration at all.
             const combatStartTime = new Date(data.combatStartTime).getTime() / 1000;
             const currentTime = Date.now() / 1000;
-            const durationSeconds = currentTime - combatStartTime;
+            const durationSeconds = Number.isFinite(combatStartTime) ? Math.max(0, currentTime - combatStartTime) : 0;
 
             // Calculate elapsed tracking time (MCS-style)
             const elapsedSeconds = this.calcElapsedSeconds();

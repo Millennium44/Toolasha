@@ -256,5 +256,7 @@ export function describeSession(session, formatDuration = (s) => `${Math.round(s
         ? started.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
         : 'Unknown time';
 
-    return `${when} (${formatDuration(session?.durationSeconds || 0)})`;
+    // Clamped for runs archived before durations were clamped at the source —
+    // a clock-skewed short run stored a small negative, which read as "(—)"
+    return `${when} (${formatDuration(Math.max(0, session?.durationSeconds || 0))})`;
 }

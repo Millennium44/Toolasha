@@ -131,6 +131,16 @@ describe('the panel renders', () => {
         expect(text()).toContain('—');
     });
 
+    test('a coin-sized count is compacted rather than overflowing its column', () => {
+        game.data.players[1].lootList = [
+            { itemHrid: '/items/coin', itemName: 'Coin', count: 2_581_181, totalValue: 2_581_181 },
+        ];
+        partyLootPanel.show();
+
+        expect(text()).toContain('× 2.6M');
+        expect(text()).not.toContain('2,581,181');
+    });
+
     test('a character who looted nothing says so', () => {
         game.data.players[0].lootList = [];
         partyLootPanel.show();
@@ -213,6 +223,16 @@ describe('the top bar', () => {
         game.sessions = [archived('a|1', '2026-08-02T22:00:00Z')];
         await settle();
         expect(button()).toBeTruthy();
+    });
+
+    test('the history appears on the first open without waiting for a refresh', async () => {
+        game.sessions = [archived('a|1', '2026-08-02T22:00:00Z')];
+        partyLootPanel.show();
+
+        // No manual re-render: the archive read itself must trigger the redraw
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(values()).toContain('a|1');
     });
 
     test('a chosen run that has since fallen off the list falls back to live', async () => {

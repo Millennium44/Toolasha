@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Party Loot: no more sideways scroll, instant history, and honest durations
+
+A coin count in the millions overflowed its fixed column and gave the whole panel a horizontal scrollbar — the count column now sizes to its content and counts past 100K compact to K/M form (exact figure in the tooltip). The session picker used to show only "Live Session" on first open until the next 5-second refresh; the archive read now redraws as soon as it lands. And sessions that showed "(—)" for their duration were short runs whose recorded duration went slightly negative from client/server clock skew — durations are now clamped at zero when recorded, and old skewed entries display as 0s instead of nothing.
+
 ### Custom tabs: two more holes closed by an adversarial audit
 
 An audit of the merge and load paths against every known failure mode found two real bugs, now fixed. First, reviving a deleted tab subtree by editing one of its children brought back the subtree without its untouched siblings — the revival now carries the whole removal back with it, while a genuinely later deletion inside it still applies. Second, a tab record missing its `items` or `children` arrays — reachable via an imported file, a sync pull, or the co-installed upstream script writing the shared key — crashed the panel on every load until the key was cleared by hand; loads and imports now normalize the shape instead of trusting it. Every other invariant from the previous fix rounds was verified to hold.
