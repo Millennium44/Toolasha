@@ -23,9 +23,25 @@ import { ROW_COLORS } from '../../utils/overlay-format.js';
 import { isAuraAbility } from '../../utils/party-lint.js';
 import { createPanel, panelCard, panelLine, panelNote } from '../../utils/simple-panel.js';
 import { classTagIcon } from '../../utils/class-weapon.js';
+import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 import storage from '../../core/storage.js';
 
 const ACCENT = '#a8d6a0';
+
+/**
+ * Make an element open a player's profile on click.
+ * @param {HTMLElement} el - What to wire
+ * @param {string} name - The player's name; an invalid one gets no click
+ */
+function wireProfileClick(el, name) {
+    if (!name || !VALID_PLAYER_NAME_RE.test(name)) return;
+    el.style.cursor = 'pointer';
+    el.title = `${el.title ? `${el.title}\n` : ''}Click to open ${name}'s profile.`;
+    el.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openPlayerProfile(name, { logPrefix: 'TrialAbilities' });
+    });
+}
 
 /** Which cards are folded, by key; loaded once in `initialize` */
 const collapsedCards = new Set();
@@ -351,14 +367,14 @@ function drawAuraCoverage(body, state, abilityDetailMap) {
             const providers = aura.providers
                 .map((provider) => `${provider.name}${provider.level !== null ? ` Lv${provider.level}` : ''}`)
                 .join(', ');
-            card.appendChild(
-                panelLine(
-                    name,
-                    `${level} — ${aura.provider}${extra}`,
-                    ROW_COLORS.good,
-                    `Highest equipped copy, not an effective value.\nProviders: ${providers}`
-                )
+            const line = panelLine(
+                name,
+                `${level} — ${aura.provider}${extra}`,
+                ROW_COLORS.good,
+                `Highest equipped copy, not an effective value.\nProviders: ${providers}`
             );
+            wireProfileClick(line, aura.provider);
+            card.appendChild(line);
         } else if (state.coverage[hrid] === 'missing') {
             card.appendChild(
                 panelLine(name, 'MISSING', ROW_COLORS.bad, 'Every participant is captured and nobody equips it.')
@@ -622,6 +638,7 @@ export function classChecksLine(checks) {
  */
 function playerLine(row, value, color, title = '') {
     const line = panelLine(row.name, value, color, title);
+    wireProfileClick(line, row.name);
     const tag = classTagText(row.classTag);
     if (!tag) return line;
 
@@ -719,14 +736,14 @@ function drawPlayers(body, state, abilityDetailMap) {
     }
 
     for (const player of state.notCurrent) {
-        card.appendChild(
-            panelLine(
-                player.name || '(unnamed)',
-                'not in the current roster',
-                ROW_COLORS.dim,
-                'Captured this session, then left the trial — the capture is kept.'
-            )
+        const line = panelLine(
+            player.name || '(unnamed)',
+            'not in the current roster',
+            ROW_COLORS.dim,
+            'Captured this session, then left the trial — the capture is kept.'
         );
+        wireProfileClick(line, player.name);
+        card.appendChild(line);
     }
 }
 
@@ -760,7 +777,13 @@ function drawUtilityCounts(body, state, abilityDetailMap) {
                 )
             );
             const who = document.createElement('div');
-            who.textContent = users.join(', ');
+            users.forEach((user, index) => {
+                if (index) who.appendChild(document.createTextNode(', '));
+                const span = document.createElement('span');
+                span.textContent = user;
+                wireProfileClick(span, user);
+                who.appendChild(span);
+            });
             Object.assign(who.style, {
                 color: 'rgba(232, 236, 245, 0.6)',
                 fontSize: '0.9em',
@@ -855,12 +878,13 @@ export const guildTrialAbilitiesPanel = createPanel({
         adoptStoredCaptures();
         const state = guildTrialAbilities.state(abilityDetailMap);
         drawHeader(body, state);
+        // Controls right under the header on purpose: everything below grows —
+        // the plan, the coverage lists, a row per capture — and buttons that
+        // keep moving down are buttons you miss
+        drawControls(body, state);
         drawPlan(body, state);
         drawAuraCoverage(body, state, abilityDetailMap);
         drawUtilityCounts(body, state, abilityDetailMap);
-        // Controls above the player list on purpose: the list grows a row per
-        // capture, and buttons that keep moving down are buttons you miss
-        drawControls(body, state);
         drawPlayers(body, state, abilityDetailMap);
     },
 });

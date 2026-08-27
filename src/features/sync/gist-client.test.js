@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import {
     GistError,
@@ -386,6 +386,48 @@ describe('writeSyncGist', () => {
         const { files } = JSON.parse(calls[1].data);
         expect(files[chunkFileName(0)]).toEqual({ content: 'data' });
         for (const index of [1, 2, 3, 4, 5]) expect(files[chunkFileName(index)]).toBeNull();
+    });
+
+    test('a push that loses the race retries with a fresh listing and wins the next one', async () => {
+        vi.useFakeTimers();
+        try {
+            responses.push({ status: 200, body: { files: {} } });
+            responses.push({ status: 409, body: { message: 'Conflict' } });
+            responses.push({ status: 200, body: { files: {} } });
+            responses.push({ status: 200, body: { id: 'abc', updated_at: 'T2' } });
+
+            const pending = writeSyncGist('tok', 'abc', { chunks: 1 }, ['data']);
+            await vi.advanceTimersByTimeAsync(3000);
+            const result = await pending;
+
+            expect(result.id).toBe('abc');
+            // Four calls: list, losing PATCH, fresh list, winning PATCH
+            expect(calls).toHaveLength(4);
+            expect(calls[2].method).toBe('GET');
+            expect(calls[3].method).toBe('PATCH');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a conflict that never clears is surfaced as one, after its retries', async () => {
+        vi.useFakeTimers();
+        try {
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                responses.push({ status: 200, body: { files: {} } });
+                responses.push({ status: 409, body: { message: 'Conflict' } });
+            }
+
+            const pending = writeSyncGist('tok', 'abc', { chunks: 1 }, ['data']).catch((caught) => caught);
+            await vi.advanceTimersByTimeAsync(10_000);
+            const error = await pending;
+
+            expect(error).toBeInstanceOf(GistError);
+            expect(error.kind).toBe('conflict');
+            expect(calls).toHaveLength(6);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     test('falls back to the remembered count when the gist cannot be listed', async () => {

@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial Abilities and Guild Roster: names click through, controls stay put
+
+Player names across the Trial Abilities panel (aura holders, the utility rosters, the player list) and the Guild Roster panel (seen loadouts, contribution, gone-quiet) now open that player's profile on click. The Trial Abilities controls moved up under the header, so the buttons stop drifting down as the lists below them grow.
+
+### Sync: two characters pushing at once no longer fails with HTTP 409
+
+Two tabs on the sync interval — different characters, same gist — could land their pushes at the same moment, and GitHub answers the loser with a 409. That push now retries up to twice with a short jittered pause and a fresh file listing, and only a conflict that never clears is surfaced, named as what it is.
+
 ### Trade Ledger: instant sales finally count, and rows open the marketplace
 
 A sell listing priced to fill the moment it was placed — how loot usually gets dumped — arrived already completed with no baseline to diff against, so the ledger silently recorded none of it; only listings that rested were ever counted. A live event whose listing is born terminal is now recorded in full, with a tombstone so claiming the proceeds can't count it twice (a completed listing first seen in a startup snapshot stays uncounted — there it can be history from before the ledger was watching). Item names in the ledger are also clickable now and open the marketplace at the item's enhancement level.

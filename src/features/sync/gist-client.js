@@ -59,7 +59,7 @@ const API_ROOT = 'https://api.github.com';
  */
 export class GistError extends Error {
     /**
-     * @param {'auth'|'rate-limit'|'offline'|'not-found'|'too-large'|'http'|'parse'} kind - What went wrong
+     * @param {'auth'|'rate-limit'|'offline'|'not-found'|'too-large'|'conflict'|'http'|'parse'} kind - What went wrong
      * @param {string} message - Human-readable, safe to show in a toast
      * @param {Object} [details] - Extra context, e.g. `{ resetAt }` for a rate limit
      */
@@ -337,6 +337,12 @@ function classify(response) {
             context
         );
     }
+    if (status === 409) {
+        // The gist changed between this request being built and landing —
+        // another device (or another character's tab) pushed at the same
+        // moment. Transient by nature; writeSyncGist retries it.
+        return new GistError('conflict', 'Another device pushed at the same moment (HTTP 409).', context);
+    }
     if (status >= 500) {
         return new GistError('http', `GitHub is having trouble (HTTP ${status}). Try again in a few minutes.`, context);
     }
@@ -554,54 +560,75 @@ async function readFileContent(token, file) {
  * @returns {Promise<{id: string, updatedAt: string}>} The gist that was written
  */
 export async function writeSyncGist(token, gistId, manifest, chunks, previousChunkCount = 0) {
-    // Listed before the size guard, because what survives the write counts
-    // towards the ceiling as much as what is being written
-    const existingFiles = gistId ? await listGistFiles(token, gistId) : null;
+    const attempt = async () => {
+        // Listed before the size guard, because what survives the write counts
+        // towards the ceiling as much as what is being written. Inside the
+        // attempt so a conflict retry sees the file set that just beat it.
+        const existingFiles = gistId ? await listGistFiles(token, gistId) : null;
 
-    const files = { [MANIFEST_FILE]: { content: JSON.stringify(manifest, null, 2) } };
-    chunks.forEach((chunk, index) => {
-        // A gist file may not be empty; a single space keeps an empty payload legal
-        files[chunkFileName(index)] = { content: chunk === '' ? ' ' : chunk };
-    });
+        const files = { [MANIFEST_FILE]: { content: JSON.stringify(manifest, null, 2) } };
+        chunks.forEach((chunk, index) => {
+            // A gist file may not be empty; a single space keeps an empty payload legal
+            files[chunkFileName(index)] = { content: chunk === '' ? ' ' : chunk };
+        });
 
-    let survivingBytes = 0;
-    if (existingFiles) {
-        for (const [name, file] of Object.entries(existingFiles)) {
-            if (Object.hasOwn(files, name)) continue; // being overwritten
-            const index = chunkIndexFromName(name);
-            if (index !== null) {
-                // A chunk this payload does not reach is an orphan, whoever wrote it
-                files[name] = null;
-                continue;
+        let survivingBytes = 0;
+        if (existingFiles) {
+            for (const [name, file] of Object.entries(existingFiles)) {
+                if (Object.hasOwn(files, name)) continue; // being overwritten
+                const index = chunkIndexFromName(name);
+                if (index !== null) {
+                    // A chunk this payload does not reach is an orphan, whoever wrote it
+                    files[name] = null;
+                    continue;
+                }
+                // Something else lives in this gist. Not ours to delete, but its
+                // bytes are just as real to the API's ceiling.
+                survivingBytes += Number(file?.size) || 0;
             }
-            // Something else lives in this gist. Not ours to delete, but its
-            // bytes are just as real to the API's ceiling.
-            survivingBytes += Number(file?.size) || 0;
+        } else {
+            for (let index = chunks.length; index < previousChunkCount; index += 1) {
+                files[chunkFileName(index)] = null;
+            }
         }
-    } else {
-        for (let index = chunks.length; index < previousChunkCount; index += 1) {
-            files[chunkFileName(index)] = null;
+
+        const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0) + survivingBytes;
+        if (totalBytes > MAX_GIST_BYTES) {
+            throw new GistError(
+                'too-large',
+                'This backup is too big for a single gist. Switch Sync scope to "Settings only".'
+            );
+        }
+
+        const body = { description: 'Toolasha cross-device sync (do not edit by hand)', files };
+
+        if (gistId) {
+            const updated = await apiCall(token, 'PATCH', `/gists/${encodeURIComponent(gistId)}`, body);
+            return { id: updated.id ?? gistId, updatedAt: updated.updated_at ?? null };
+        }
+
+        const created = await apiCall(token, 'POST', '/gists', { ...body, public: false });
+        if (!created?.id) throw new GistError('parse', 'GitHub created a gist but did not say which one.');
+        return { id: created.id, updatedAt: created.updated_at ?? null };
+    };
+
+    // A 409 is two pushes landing on the same gist at the same moment — two
+    // characters' tabs both on the sync interval, mostly. The loser's state is
+    // no less worth writing for having lost the race, so it retries after a
+    // short jittered pause with a fresh listing; whole-gist overwrite plus
+    // newest-wins pulls make replaying the same payload safe. Only conflicts
+    // retry — every other failure means the same request would fail the same way.
+    const CONFLICT_RETRIES = 2;
+    for (let tries = 0; ; tries += 1) {
+        try {
+            return await attempt();
+        } catch (error) {
+            if (!(error instanceof GistError) || error.kind !== 'conflict' || tries >= CONFLICT_RETRIES) {
+                throw error;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 800 + Math.random() * 1200));
         }
     }
-
-    const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0) + survivingBytes;
-    if (totalBytes > MAX_GIST_BYTES) {
-        throw new GistError(
-            'too-large',
-            'This backup is too big for a single gist. Switch Sync scope to "Settings only".'
-        );
-    }
-
-    const body = { description: 'Toolasha cross-device sync (do not edit by hand)', files };
-
-    if (gistId) {
-        const updated = await apiCall(token, 'PATCH', `/gists/${encodeURIComponent(gistId)}`, body);
-        return { id: updated.id ?? gistId, updatedAt: updated.updated_at ?? null };
-    }
-
-    const created = await apiCall(token, 'POST', '/gists', { ...body, public: false });
-    if (!created?.id) throw new GistError('parse', 'GitHub created a gist but did not say which one.');
-    return { id: created.id, updatedAt: created.updated_at ?? null };
 }
 
 /**

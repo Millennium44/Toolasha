@@ -212,6 +212,27 @@ export function memberLabel(member) {
 }
 
 /**
+ * Make a member's line open their profile on click.
+ *
+ * The same one-keypress trick the profile cycler uses — `/profile <name>` when
+ * the game core is not reachable. A name that fails validation gets no click
+ * rather than a broken one.
+ *
+ * @param {HTMLElement} line - The row to wire
+ * @param {string} name - The member's name
+ */
+export function wireProfileClick(line, name) {
+    if (!name || !VALID_PLAYER_NAME_RE.test(name)) return;
+    line.style.cursor = 'pointer';
+    line.title = `${line.title ? `${line.title}\n` : ''}Click to open ${name}'s profile.`;
+    line.addEventListener('click', () => {
+        if (!openPlayerProfile(name, { logPrefix: 'GuildRoster' })) {
+            line.title = 'Could not open the profile — open the chat panel and try again.';
+        }
+    });
+}
+
+/**
  * The roster as the panel and the tile both need it, read from the tracker.
  * @returns {{guildName: string|null, rows: Array<Object>, level: Object|null, guildRate: number|null}|null}
  */
@@ -452,18 +473,18 @@ export function drawSeenLoadouts(
                   .join(', ')}`
             : '\nAbilities: not carried by this reading.';
 
-        card.appendChild(
-            panelLine(
-                // A captured combat level is a weighted average and arrives as
-                // floating point — "Lv.151.60000000000002" reached the screen —
-                // so one decimal is as much as it means
-                `${player.name}${player.level ? ` Lv.${Math.round(player.level * 10) / 10}` : ''}`,
-                describeLoadoutAge(player.at, now),
-                ROW_COLORS.gold,
-                `${headline || 'No stat rows in this reading.'}${abilities}\n` +
-                    `A snapshot from when it was read (${player.source}) — not a live figure.`
-            )
+        const line = panelLine(
+            // A captured combat level is a weighted average and arrives as
+            // floating point — "Lv.151.60000000000002" reached the screen —
+            // so one decimal is as much as it means
+            `${player.name}${player.level ? ` Lv.${Math.round(player.level * 10) / 10}` : ''}`,
+            describeLoadoutAge(player.at, now),
+            ROW_COLORS.gold,
+            `${headline || 'No stat rows in this reading.'}${abilities}\n` +
+                `A snapshot from when it was read (${player.source}) — not a live figure.`
         );
+        wireProfileClick(line, player.name);
+        card.appendChild(line);
     }
 
     if (hidden) {
@@ -526,18 +547,7 @@ export const guildRosterPanel = createPanel({
                     `${xp(member.dayRate)}/h today vs ${xp(member.weekRate)}/h this week`,
                     ROW_COLORS.bad
                 );
-                // Click a quiet member to load /profile <name> in chat (Enter to
-                // send) — the same one-keypress trick the profile cycler uses,
-                // handy for checking on someone who dropped off.
-                if (member.name && VALID_PLAYER_NAME_RE.test(member.name)) {
-                    line.style.cursor = 'pointer';
-                    line.title = `Click to open ${member.name}'s profile.`;
-                    line.addEventListener('click', () => {
-                        if (!openPlayerProfile(member.name, { logPrefix: 'GuildRoster' })) {
-                            line.title = 'Could not open the profile — open the chat panel and try again.';
-                        }
-                    });
-                }
+                wireProfileClick(line, member.name);
                 card.appendChild(line);
             }
         }
@@ -551,14 +561,14 @@ export const guildRosterPanel = createPanel({
             card.appendChild(panelNote('No member has two samples in the last week yet.'));
         }
         for (const member of contributing) {
-            card.appendChild(
-                panelLine(
-                    `${memberLabel(member)}${member.quiet ? ' ·' : ''}`,
-                    `${percent(member.share7d)} 7d · ${percent(member.share30d)} 30d · ${xp(member.delta7d)} XP`,
-                    member.quiet ? ROW_COLORS.bad : ROW_COLORS.gold,
-                    `${member.samples} samples recorded.\nShares are of the XP actually observed, not of career totals.`
-                )
+            const line = panelLine(
+                `${memberLabel(member)}${member.quiet ? ' ·' : ''}`,
+                `${percent(member.share7d)} 7d · ${percent(member.share30d)} 30d · ${xp(member.delta7d)} XP`,
+                member.quiet ? ROW_COLORS.bad : ROW_COLORS.gold,
+                `${member.samples} samples recorded.\nShares are of the XP actually observed, not of career totals.`
             );
+            wireProfileClick(line, member.name);
+            card.appendChild(line);
         }
     },
 });
