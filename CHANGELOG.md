@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trade Ledger: instant sales finally count, and rows open the marketplace
+
+A sell listing priced to fill the moment it was placed — how loot usually gets dumped — arrived already completed with no baseline to diff against, so the ledger silently recorded none of it; only listings that rested were ever counted. A live event whose listing is born terminal is now recorded in full, with a tombstone so claiming the proceeds can't count it twice (a completed listing first seen in a startup snapshot stays uncounted — there it can be history from before the ledger was watching). Item names in the ledger are also clickable now and open the marketplace at the item's enhancement level.
+
 ### Party Loot: no more sideways scroll, instant history, and honest durations
 
 A coin count in the millions overflowed its fixed column and gave the whole panel a horizontal scrollbar — the count column now sizes to its content and counts past 100K compact to K/M form (exact figure in the tooltip). The session picker used to show only "Live Session" on first open until the next 5-second refresh; the archive read now redraws as soon as it lands. And sessions that showed "(—)" for their duration were short runs whose recorded duration went slightly negative from client/server clock skew — durations are now clamped at zero when recorded, and old skewed entries display as 0s instead of nothing.

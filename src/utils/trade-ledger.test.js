@@ -90,21 +90,54 @@ describe('detectFills', () => {
         expect(second.changed).toBe(false);
     });
 
-    test('a cancel after a partial fill still records the fill, then drops the state', () => {
+    test('a cancel after a partial fill still records the fill, then tombstones the state', () => {
         const first = detectFills({}, [listing({ filledQuantity: 5 })], { now: 1 });
         const { fills, states } = detectFills(first.states, [listing({ filledQuantity: 12, status: CANCELLED })], {
             now: 2,
         });
 
         expect(fills[0].quantity).toBe(7);
-        expect(states['1']).toBeUndefined();
+        expect(states['1']).toEqual({ done: true });
     });
 
-    test('a terminal listing never seen before leaves no fill and no state', () => {
-        const { fills, states } = detectFills({}, [listing({ filledQuantity: 100, status: FILLED })], { now: 1 });
+    test('an instant fill — placed and terminal in one live event — is recorded in full', () => {
+        const { fills, states } = detectFills({}, [listing({ isSell: true, filledQuantity: 100, status: FILLED })], {
+            now: 1,
+        });
+
+        expect(fills).toHaveLength(1);
+        expect(fills[0]).toMatchObject({ side: 'sell', quantity: 100 });
+        expect(states['1']).toEqual({ done: true });
+    });
+
+    test('claiming a counted listing does not count it again', () => {
+        const first = detectFills({}, [listing({ filledQuantity: 100, status: FILLED })], { now: 1 });
+        const { fills, changed } = detectFills(first.states, [listing({ filledQuantity: 100, status: FILLED })], {
+            now: 2,
+        });
 
         expect(fills).toEqual([]);
+        expect(changed).toBe(false);
+    });
+
+    test('a terminal listing first seen on a snapshot is history, not a fill — and stays uncounted', () => {
+        const snap = detectFills({}, [listing({ filledQuantity: 100, status: FILLED })], { now: 1, snapshot: true });
+        expect(snap.fills).toEqual([]);
+
+        // A later live event for it (the claim) must not invent the fill either
+        const live = detectFills(snap.states, [listing({ filledQuantity: 100, status: FILLED })], { now: 2 });
+        expect(live.fills).toEqual([]);
+    });
+
+    test('snapshot cleanup sweeps tombstones for listings no longer on the wire', () => {
+        const first = detectFills({}, [listing({ filledQuantity: 100, status: FILLED })], { now: 1 });
+        const { states } = detectFills(first.states, [listing({ id: 2, filledQuantity: 0 })], {
+            now: 2,
+            snapshot: true,
+        });
+
         expect(states['1']).toBeUndefined();
+        expect(states['2']).toBeDefined();
     });
 
     test('snapshot mode drops stale states without inventing fills', () => {

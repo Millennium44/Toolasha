@@ -79,8 +79,18 @@ function isDiffableListing(listing) {
  *
  * Listings whose status is terminal (cancelled / expired / filled) are diffed
  * one last time — a cancel after a partial fill still reports the fill — and
- * then dropped from the state map, which is what keeps it bounded by the
- * number of concurrently open listings.
+ * then replaced in the state map by a small `{done}` tombstone. The tombstone
+ * is what lets a later event for the same listing (claiming its proceeds sends
+ * one) be recognised as already counted; snapshot passes sweep them out along
+ * with every other id no longer on the wire, which is what keeps the map
+ * bounded.
+ *
+ * The one no-baseline case that IS recorded: a live (non-snapshot) event whose
+ * listing arrives already terminal with fills on it. That is a listing that
+ * filled the moment it was placed — priced at the market, the way loot gets
+ * dumped — and this tab watched it happen; skipping it left every instant
+ * sale out of the ledger. On a snapshot the same shape stays baseline-only,
+ * because there it can be history from before the ledger was watching.
  *
  * @param {Object<string, Object>} prevStates - Listing id → last observed
  *   `{filledQuantity, itemHrid, enhancementLevel, price, isSell}` (JSON-safe)
@@ -111,8 +121,19 @@ export function detectFills(prevStates, listings, options = {}) {
         seenIds.add(key);
         const prev = states[key];
 
-        if (prev && listing.filledQuantity > prev.filledQuantity) {
-            const quantity = listing.filledQuantity - prev.filledQuantity;
+        // Already counted to its end — a claim or a re-send of a terminal
+        // listing must not count it again
+        if (prev?.done) {
+            continue;
+        }
+
+        const terminal = TERMINAL_STATUSES.has(listing.status);
+        // The baseline, or zero for a listing whose whole life happened inside
+        // this one live event (placed and instantly filled)
+        const basis = prev ? prev.filledQuantity : terminal && !snapshot ? 0 : null;
+
+        if (basis !== null && listing.filledQuantity > basis) {
+            const quantity = listing.filledQuantity - basis;
             const isSell = Boolean(listing.isSell);
             fills.push({
                 t: now,
@@ -126,11 +147,9 @@ export function detectFills(prevStates, listings, options = {}) {
             });
         }
 
-        if (TERMINAL_STATUSES.has(listing.status)) {
-            if (prev) {
-                delete states[key];
-                changed = true;
-            }
+        if (terminal) {
+            states[key] = { done: true };
+            changed = true;
         } else if (!prev || prev.filledQuantity !== listing.filledQuantity) {
             states[key] = {
                 filledQuantity: listing.filledQuantity,

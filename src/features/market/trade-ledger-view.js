@@ -16,7 +16,7 @@ import tradeLedgerStore from './trade-ledger-store.js';
 import { aggregateLedger } from '../../utils/trade-ledger.js';
 import { formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { createMutationWatcher } from '../../utils/dom-observer-helpers.js';
-import { visibleTabsContainer } from '../../utils/marketplace-tabs.js';
+import { visibleTabsContainer, navigateToMarketplace } from '../../utils/marketplace-tabs.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
 
@@ -458,7 +458,14 @@ class TradeLedgerView {
 
             const itemCell = document.createElement('td');
             itemCell.textContent = this.getItemName(item.itemHrid);
-            itemCell.style.padding = '4px 10px';
+            itemCell.style.cssText = 'padding: 4px 10px; cursor: pointer;';
+            itemCell.title = 'Open this item in the marketplace at its enhancement level.';
+            itemCell.addEventListener('mouseenter', () => (itemCell.style.textDecoration = 'underline'));
+            itemCell.addEventListener('mouseleave', () => (itemCell.style.textDecoration = ''));
+            itemCell.addEventListener('click', () => {
+                navigateToMarketplace(item.itemHrid, item.enhancementLevel || 0);
+                this.closeModal();
+            });
             row.appendChild(itemCell);
 
             const enhCell = document.createElement('td');
