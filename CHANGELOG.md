@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The shrine planner stays inside its window and follows through to the exchange
+
+The Suggested Next Buys rows wrapped badly and ran off the modal's right edge; they now wrap within it, with credit names shortened in context ("12,000 Blue") and the full list in the tooltip. The affordable buys get their own Missing Mats Marketplace button plus a "then convert:" plan naming exactly what to exchange after buying. And spare guild tokens now count toward credit gaps: where the exchange rate has been seen, a buy short on credits shows the ≈token top-up that covers it, the spend-everything walk ranks by effective token cost, and the still-needed box says "or convert ≈N tokens" — a colour whose rate has never been captured says so instead of guessing.
+
 ### Custom tabs: tombstones can no longer eat your tabs, and lost ones come back
 
 The deletion tombstones added two releases ago could delete every tab created before them — an unstamped tab counted as infinitely old, so any deletion record beat it, and this ran on every load. Since the pruned config only becomes permanent on the next save, affected tabs reappear on their own with this fix. Also: a merge can never empty most of a curated list any more (a mass-delete is held back and logged instead); exports no longer carry the tombstone map and imports strip it, stamp every tab, and give them fresh ids, so an imported file can't delete itself and two characters can't share tab ids; two load-race windows from the previous fix are closed (a reload that could leave the panel blank until refresh, and a save that could land against a half-loaded config); and running a second Toolasha userscript alongside this one — which shares its database and silently rewrites shared settings — is now detected and loudly warned about.
