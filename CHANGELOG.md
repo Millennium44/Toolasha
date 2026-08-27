@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The suggestions fold away, and you choose how missing credits are paid
+
+Suggested Next Buys collapses from its heading and remembers the fold per character. A new Missing credits: Auto · Tokens · Gold control picks how credit gaps are covered — Auto keeps the cheapest path per colour, Tokens forces the guild exchange wherever a rate exists, Gold forces the market wherever mats are priceable — with honest fallbacks either way and a tooltip naming the overpay when a forced path costs more than Auto would have. One mode drives the whole panel: rankings, affordability, the spend-everything walk, both mats buttons, the convert lines and the still-needed box all move together — which also fixed Auto double-billing the same shortfall as both a purchase and an exchange.
+
 ### Combat income is measured from your own battles, not just the Loot & XP Log
 
 The combat row read only the Loot & XP Log history, which the game syncs when that log is opened — a character who never opened it showed a confident "Combat drops: 0" while the whole week's income sat in the residual. Each day now uses the game's own log when it recorded that day and falls back to your battle-feed session loot when it didn't (own character only, never both), the basis says which fed what, and a day where combat demonstrably ran but neither source covered it is disclosed as a gap instead of read as zero. Coin drops are also finally worth their face value in both paths instead of pricing to nothing. Labyrinth end-of-run rewards remain invisible to both sources and stay in the residual — the gap note will say so on lab-heavy days.
