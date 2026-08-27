@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The shrine upgrade planner remembers your targets and suggests what to buy next
+
+Target levels typed into the guild credit exchange's Shrine Upgrade Planner used to reset every time the modal closed; they now persist per character, and a stale target below your current level is dropped automatically as you level up. A new "Suggested Next Buys" list shows every shrine buff's next level only, cheapest in guild tokens first, marked against your current token balance, with a running total of what you could afford to buy right now.
+
 ### Custom tabs survive a rapid character switch, and crafting prices can be forced fresh
 
 The sync-pull fix wasn't the whole story: switching characters quickly skips this feature's own re-init as a performance optimisation, and it kept saving under whoever the _current_ character had become while still holding the _previous_ one's tabs in memory — merging one character's tabs into another's, and deleting a shared tab (from Export/Import) if either side had removed it. The feature now refuses to save under a mismatched character and reloads its own tabs the moment the arriving character's data is ready, independent of that skip. Also: a "Refresh Prices" button next to Sort/Mode/Craft on crafting and gathering panels force-refetches the market and updates every visible Profit/hr figure in place, instead of having to open the marketplace per item.
