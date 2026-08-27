@@ -113,6 +113,7 @@ import * as consumableForecast from '../utils/consumable-forecast.js';
 import * as csvExport from '../utils/csv-export.js';
 import * as deferredLoad from '../utils/deferred-load.js';
 import * as dropSources from '../utils/drop-sources.js';
+import * as dungeonKeyForecast from '../utils/dungeon-key-forecast.js';
 import * as dungeonKeys from '../utils/dungeon-keys.js';
 import * as dungeonLevelGap from '../utils/dungeon-level-gap.js';
 import * as equipmentSavings from '../utils/equipment-savings.js';
@@ -242,6 +243,7 @@ toolashaRoot.Utils = {
     csvExport,
     deferredLoad,
     dropSources,
+    dungeonKeyForecast,
     dungeonKeys,
     dungeonLevelGap,
     equipmentSavings,

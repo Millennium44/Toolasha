@@ -178,6 +178,7 @@ const utilsExternalGlobals = new Map([
     [normalize(join(__dirname, 'src/utils/csv-export.js')), 'Toolasha.Utils.csvExport'],
     [normalize(join(__dirname, 'src/utils/deferred-load.js')), 'Toolasha.Utils.deferredLoad'],
     [normalize(join(__dirname, 'src/utils/drop-sources.js')), 'Toolasha.Utils.dropSources'],
+    [normalize(join(__dirname, 'src/utils/dungeon-key-forecast.js')), 'Toolasha.Utils.dungeonKeyForecast'],
     [normalize(join(__dirname, 'src/utils/dungeon-keys.js')), 'Toolasha.Utils.dungeonKeys'],
     [normalize(join(__dirname, 'src/utils/dungeon-level-gap.js')), 'Toolasha.Utils.dungeonLevelGap'],
     [normalize(join(__dirname, 'src/utils/equipment-savings.js')), 'Toolasha.Utils.equipmentSavings'],
