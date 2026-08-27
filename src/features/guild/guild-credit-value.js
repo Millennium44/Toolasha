@@ -29,9 +29,10 @@ import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js'
 import { heldInInventory } from '../../utils/dungeon-key-forecast.js';
 import { renderTierBadge, TIER_BADGE_CLASS } from './guild-trial-tier-badge.js';
 import { GUILD_BUILDING_MAX_LEVEL } from './guild-trials-store.js';
-import { describeGuildTokenGold } from './guild-token-value.js';
+import { describeGuildTokenGold, explainGuildTokenValue } from './guild-token-value.js';
 import {
     capturedTokenExchange,
+    capturedTokenExchanges,
     captureTokenExchangeFromModal,
     hydrateCapturedTokenExchanges,
 } from './guild-token-exchange-capture.js';
@@ -125,7 +126,236 @@ export function shortCreditName(name) {
 }
 
 /**
- * The guild tokens it takes to buy a number of credits at a captured rate.
+ * The Guild Shop's token→credit exchange, as the game states it.
+ *
+ * Eight colours, four rates, confirmed against the in-game exchange dialog — the
+ * gold credit's is the one it is hardest to believe and easiest to check: the
+ * modal says 60 tokens → 1. Keyed by the colour word rather than the whole hrid
+ * so the table survives an hrid being spelled differently, and so a colour the
+ * game adds later falls through to {@link NO_RATE_NOTE} instead of quietly
+ * inheriting a neighbour's rate.
+ *
+ * These are constants, not readings, and they are exact: nothing derived from
+ * one carries the `≈` a captured reading does. A capture still beats them —
+ * see {@link tokenRateFor} — because the game can rebalance and an observation
+ * of today's shop is worth more than yesterday's constant.
+ */
+export const DEFAULT_TOKEN_RATES = {
+    green: { tokensPerExchange: 1, creditsPerExchange: 10 },
+    brown: { tokensPerExchange: 1, creditsPerExchange: 10 },
+    white: { tokensPerExchange: 1, creditsPerExchange: 10 },
+    blue: { tokensPerExchange: 1, creditsPerExchange: 10 },
+    purple: { tokensPerExchange: 1, creditsPerExchange: 1 },
+    red: { tokensPerExchange: 1, creditsPerExchange: 1 },
+    silver: { tokensPerExchange: 10, creditsPerExchange: 1 },
+    gold: { tokensPerExchange: 60, creditsPerExchange: 1 },
+};
+
+/**
+ * How close the two paths may be and still count as level.
+ *
+ * `0.1 × 1500` is `150.00000000000003`, and the colour a token is worth the most
+ * on prices out at exactly that against its own market cost — so without a
+ * tolerance the recommendation would turn on the last bit of a double.
+ */
+const PATH_TIE_TOLERANCE = 1e-9;
+
+/** The colour word in a credit hrid — `/items/gold_guild_credit` → `gold` */
+const CREDIT_COLOUR = /(?:^|[/_])([a-z]+)_guild_credit(?:$|[/_])/;
+
+/**
+ * The standard exchange for one credit colour, from {@link DEFAULT_TOKEN_RATES}.
+ *
+ * Shaped exactly like a captured reading so the rest of this file cannot tell
+ * the two apart except by `source`, which is the one thing the captions care
+ * about.
+ *
+ * @param {string} creditItemHrid - Credit hrid
+ * @returns {Object|null} The rate, or null for an hrid no colour in the table names
+ */
+export function defaultTokenRate(creditItemHrid) {
+    const colour = CREDIT_COLOUR.exec(String(creditItemHrid || '').toLowerCase())?.[1];
+    const rate = colour ? DEFAULT_TOKEN_RATES[colour] : null;
+    if (!rate) return null;
+    return {
+        creditItemHrid,
+        creditsPerToken: rate.creditsPerExchange / rate.tokensPerExchange,
+        tokensPerExchange: rate.tokensPerExchange,
+        creditsPerExchange: rate.creditsPerExchange,
+        via: 'default',
+        source: 'default',
+    };
+}
+
+/**
+ * The Guild Shop's token→credit rate for one colour: what was seen, else what is
+ * standard.
+ *
+ * Precedence is observation over constant. A capture is a reading of the shop as
+ * it is now; the table is a reading of the shop as it was when the rates were
+ * written down, and the game can rebalance. Everything below the capture is
+ * still answered, which is why the "rate not seen yet" annotation now only
+ * belongs to a colour the table does not name either.
+ *
+ * @param {string} creditHrid - Credit hrid
+ * @returns {Object|null} The rate, tagged with its `source`, or null
+ */
+export function tokenRateFor(creditHrid) {
+    try {
+        const seen = capturedTokenExchange(creditHrid);
+        if (seen && Number(seen.creditsPerToken) > 0) return { ...seen, source: 'captured' };
+    } catch {
+        // A capture module that cannot answer is not a reason to lose the default
+    }
+    return defaultTokenRate(creditHrid);
+}
+
+/**
+ * Every token→credit exchange this script believes in, captures first.
+ *
+ * The list the gold-per-token bridge is maximised over. One entry per colour:
+ * a captured reading shadows the standard rate for its own colour and nothing
+ * else, so the defaults fill every gap the shop has not been opened for.
+ *
+ * @param {Object} [itemDetailMap] - The game's items, for the credit hrids to default
+ * @returns {Array<Object>} Exchanges, in the shape `guild-token-value.js` reads
+ */
+export function mergedTokenExchanges(itemDetailMap = {}) {
+    const exchanges = [];
+    const seen = new Set();
+
+    let captures = [];
+    try {
+        captures = capturedTokenExchanges() || [];
+    } catch {
+        captures = [];
+    }
+    for (const entry of captures) {
+        if (!entry?.creditItemHrid || !(Number(entry.creditsPerToken) > 0)) continue;
+        exchanges.push({ ...entry, source: 'captured' });
+        seen.add(entry.creditItemHrid);
+    }
+
+    for (const hrid of Object.keys(itemDetailMap || {})) {
+        if (!hrid.includes('guild_credit') || seen.has(hrid)) continue;
+        const rate = defaultTokenRate(hrid);
+        if (rate) exchanges.push(rate);
+    }
+
+    return exchanges;
+}
+
+/**
+ * What a token is worth in gold, so a token cost and a gold cost can be compared.
+ *
+ * Not computed here: `guild-token-value.js` already answers exactly this
+ * question — the best gold-per-token across colours, `credits per token × that
+ * colour's cheapest gold-per-credit`, maximised — and answering it twice is how
+ * two parts of one modal end up disagreeing. All this adds is the exchange list
+ * to maximise over, which is this file's merged captures-over-defaults table
+ * rather than the capture module's captures alone.
+ *
+ * The pricing side is `ask` to match everything else the planner buys with: the
+ * alternative to spending a token is buying the materials at their ask price, so
+ * the token has to be valued against the same side of the book.
+ *
+ * @param {Object} itemDetailMap - The game's items
+ * @param {string} [pricingMode='ask'] - Pricing side for the credit half
+ * @returns {number|null} Gold per token, or null when nothing is priceable
+ */
+export function goldPerTokenFor(itemDetailMap, pricingMode = 'ask') {
+    try {
+        const valuation = explainGuildTokenValue(pricingMode, {
+            capturedExchanges: mergedTokenExchanges(itemDetailMap),
+        });
+        return Number(valuation?.gold) > 0 ? valuation.gold : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Tokens per single credit at a rate, un-rounded.
+ *
+ * The marginal cost, which is the figure a comparison wants —
+ * {@link tokensForCredits} rounds up to whole exchanges, and rounding a single
+ * blue credit up to a whole token would price it at ten times what the next one
+ * costs.
+ *
+ * @param {Object|null} rate - A rate, captured or standard
+ * @returns {number|null} Tokens per credit, or null without a usable rate
+ */
+export function tokensPerCredit(rate) {
+    const tokens = Number(rate?.tokensPerExchange);
+    const credits = Number(rate?.creditsPerExchange);
+    if (tokens > 0 && credits > 0) return tokens / credits;
+    const perToken = Number(rate?.creditsPerToken);
+    return perToken > 0 ? 1 / perToken : null;
+}
+
+/**
+ * The cheaper of the two ways to get one credit of a colour.
+ *
+ * The rates make token costs wildly asymmetric — a blue credit is a tenth of a
+ * token and a gold one is sixty — so a flat "convert tokens" assumption is a
+ * recommendation to burn sixty tokens on something the market sells for less
+ * than one is worth. Both paths are priced in gold: the token path through the
+ * token's own opportunity cost, the market path through the cheapest conversion
+ * into that colour.
+ *
+ * Ties go to the token, and a tie is not a rare case: the token is valued at its
+ * *best* use, so the colour that best use names prices out exactly level with
+ * its own market cost. Sending that colour through the shop and every other one
+ * to the market is the whole recommendation in one sentence — spend tokens where
+ * they buy the most, buy the rest with gold — and it falls out of the comparison
+ * rather than being asserted over it. Breaking the tie the other way would send
+ * every colour to the market and leave the tokens with nothing to do; a token
+ * cannot be sold, so at equal value the one already held beats gold that has to
+ * be found. The tolerance is there because the tie is a floating-point one.
+ *
+ * @param {Object} [options]
+ * @param {Object|null} [options.rate] - The colour's token→credit rate
+ * @param {number|null} [options.marketGoldPerCredit] - Cheapest gold per credit on the market
+ * @param {number|null} [options.goldPerToken] - What a token is worth, from {@link goldPerTokenFor}
+ * @returns {{path: string, tokensPerCredit: number|null, tokenGold: number|null,
+ *   marketGold: number|null}} `path` is `'tokens'`, `'market'` or `'unknown'`
+ */
+export function chooseCreditPath({ rate = null, marketGoldPerCredit = null, goldPerToken = null } = {}) {
+    const perCredit = tokensPerCredit(rate);
+    const market = Number(marketGoldPerCredit) > 0 ? Number(marketGoldPerCredit) : null;
+    const perToken = Number(goldPerToken) > 0 ? Number(goldPerToken) : null;
+
+    // No rate: the market is the only path there is, and when it has no price
+    // either there is nothing to recommend and the row says so
+    if (!(perCredit > 0))
+        return {
+            path: market === null ? 'unknown' : 'market',
+            tokensPerCredit: null,
+            tokenGold: null,
+            marketGold: market,
+        };
+
+    // No price for this colour's conversions, or no token valuation to compare
+    // against: fall back to the token path rather than invent a gold figure
+    if (market === null || perToken === null)
+        return {
+            path: 'tokens',
+            tokensPerCredit: perCredit,
+            tokenGold: perToken === null ? null : perCredit * perToken,
+            marketGold: market,
+        };
+
+    const tokenGold = perCredit * perToken;
+    return {
+        path: tokenGold <= market * (1 + PATH_TIE_TOLERANCE) ? 'tokens' : 'market',
+        tokensPerCredit: perCredit,
+        tokenGold,
+        marketGold: market,
+    };
+}
+
+/**
+ * The guild tokens it takes to buy a number of credits at a known rate.
  *
  * The guild shop trades in whole exchanges — "1 → 10" is one token for ten green
  * credits, and there is no way to hand over a third of a token — so a part-filled
@@ -153,48 +383,71 @@ export function tokensForCredits(credits, rate) {
 }
 
 /**
- * What one single-level buy actually costs in tokens, given what is already held.
+ * What one single-level buy costs under its cheapest acquisition plan.
  *
- * Two kinds of token cost, added together: the level's own `guildTokenCost`, and
- * the tokens it would take to convert away whatever credit shortfall is left
- * after the inventory is netted off. The second half only exists for a colour
- * whose exchange rate has been read off the Guild Shop. A colour that has never
- * been seen adds nothing to the total and is reported in `unknown` instead, to be
- * said out loud on the row — a guessed rate would turn a number this script does
- * not have into one it appears to. Such a buy is then judged on its direct token
- * cost alone, which is how every buy was judged before any of this existed;
- * declaring it unaffordable would be its own overclaim from the same ignorance.
+ * The level's own `guildTokenCost` is unavoidable. Its credit shortfall — what
+ * is left after the inventory is netted off — is not: each colour is settled the
+ * cheaper of the two ways, and `pathFor` is what says which
+ * ({@link chooseCreditPath}). A colour the plan sends through the guild shop adds
+ * its whole-exchange token cost to `effective`; a colour it sends to the market
+ * adds gold to `marketGold` and nothing to the token bill.
+ *
+ * `effective` stays a *token* figure on purpose: it is what the token balance is
+ * spent against, so it is what the ✓ and the ranking can honestly be judged on.
+ * The gold half is carried beside it rather than folded in, because gold and
+ * tokens are not the same pocket.
+ *
+ * A colour with neither a rate nor a market price adds nothing to either total
+ * and is reported in `unknown` instead, to be said out loud on the row — a
+ * guessed rate would turn a number this script does not have into one it appears
+ * to. Such a buy is then judged on its direct token cost alone; declaring it
+ * unaffordable would be its own overclaim from the same ignorance.
  *
  * @param {{tokenCost: number, creditCosts: Array<{itemHrid: string, count: number}>}} buy - One buy
  * @param {Object<string, number>} creditBalances - creditHrid → credits on hand
- * @param {Function} rateFor - creditHrid → captured exchange or null
- * @returns {{direct: number, conversionTokens: number, effective: number,
- *   conversions: Array<Object>, unknown: Array<Object>}} The breakdown
+ * @param {Function} rateFor - creditHrid → token→credit rate or null
+ * @param {Function} [pathFor] - creditHrid → decision from {@link chooseCreditPath};
+ *   defaults to the token path, which is what a caller with no market data has
+ * @returns {{direct: number, conversionTokens: number, effective: number, marketGold: number,
+ *   conversions: Array<Object>, market: Array<Object>, unknown: Array<Object>}} The breakdown
  */
-export function buyTokenCost(buy, creditBalances = {}, rateFor = () => null) {
+export function buyTokenCost(buy, creditBalances = {}, rateFor = () => null, pathFor = () => ({ path: 'tokens' })) {
     const direct = Number(buy?.tokenCost) || 0;
     const conversions = [];
+    const market = [];
     const unknown = [];
     let conversionTokens = 0;
+    let marketGold = 0;
 
     for (const { itemHrid, count } of buy?.creditCosts || []) {
         const gap = Math.max(0, (Number(count) || 0) - (Number(creditBalances?.[itemHrid]) || 0));
         if (gap <= 0) continue;
         const rate = rateFor(itemHrid) || null;
+        const decision = pathFor(itemHrid) || { path: 'tokens' };
+
+        if (decision.path === 'market' && Number(decision.marketGold) > 0) {
+            const gold = decision.marketGold * gap;
+            marketGold += gold;
+            market.push({ itemHrid, gap, goldPerCredit: decision.marketGold, gold, decision });
+            continue;
+        }
+
         const tokens = tokensForCredits(gap, rate);
         if (!(tokens > 0)) {
             unknown.push({ itemHrid, gap });
             continue;
         }
         conversionTokens += tokens;
-        conversions.push({ itemHrid, gap, tokens, rate });
+        conversions.push({ itemHrid, gap, tokens, rate, decision });
     }
 
     return {
         direct,
         conversionTokens,
         effective: direct + conversionTokens,
+        marketGold,
         conversions,
+        market,
         unknown,
     };
 }
@@ -215,9 +468,12 @@ export function buyTokenCost(buy, creditBalances = {}, rateFor = () => null) {
  * remaining balance cannot cover is the last, since nothing further down is
  * cheaper.
  *
- * `owedCredits` comes back with what the taken buys are still short of after the
- * inventory and each other — the bill the marketplace hand-off under the list is
- * drawn from, so the two are the same arithmetic and cannot disagree.
+ * What the taken buys are still short of comes back split by which path the
+ * recommendation sends it down: `owedCredits` for the colours the market wins —
+ * the bill the marketplace hand-off under the list is drawn from — and
+ * `owedTokenCredits` for the colours the guild shop wins, which the hand-off
+ * lists as exchanges rather than shopping. The same arithmetic feeds both, so
+ * the list and the plan under it cannot disagree.
  *
  * Still deliberately single-level-ahead: buying a level changes what that buff's
  * next level costs, so this is "if you spent everything right now" and not a
@@ -227,14 +483,19 @@ export function buyTokenCost(buy, creditBalances = {}, rateFor = () => null) {
  * @param {Object} [context] - What is held and what is known
  * @param {number} [context.tokenBalance=0] - Guild tokens on hand
  * @param {Object<string, number>} [context.creditBalances={}] - creditHrid → credits on hand
- * @param {Function} [context.rateFor] - creditHrid → captured exchange or null
+ * @param {Function} [context.rateFor] - creditHrid → token→credit rate or null
+ * @param {Function} [context.pathFor] - creditHrid → decision from {@link chooseCreditPath}
  * @returns {{rows: Array<Object>, count: number, spent: number, conversionSpent: number,
- *   directSpent: number, owedCredits: Object<string, number>}} The ranked rows and the walk
+ *   directSpent: number, marketSpent: number, owedCredits: Object<string, number>,
+ *   owedTokenCredits: Object<string, number>}} The ranked rows and the walk
  */
-export function planNextBuys(buys, { tokenBalance = 0, creditBalances = {}, rateFor = () => null } = {}) {
+export function planNextBuys(
+    buys,
+    { tokenBalance = 0, creditBalances = {}, rateFor = () => null, pathFor = () => ({ path: 'tokens' }) } = {}
+) {
     const rows = (Array.isArray(buys) ? buys : []).map((buy) => ({
         buy,
-        ...buyTokenCost(buy, creditBalances, rateFor),
+        ...buyTokenCost(buy, creditBalances, rateFor, pathFor),
         affordable: false,
     }));
     rows.sort(
@@ -243,18 +504,21 @@ export function planNextBuys(buys, { tokenBalance = 0, creditBalances = {}, rate
 
     const remaining = { ...creditBalances };
     const owedCredits = {};
+    const owedTokenCredits = {};
     let tokens = Number(tokenBalance) || 0;
     let count = 0;
     let spent = 0;
     let conversionSpent = 0;
+    let marketSpent = 0;
 
     for (const row of rows) {
-        const cost = buyTokenCost(row.buy, remaining, rateFor);
+        const cost = buyTokenCost(row.buy, remaining, rateFor, pathFor);
         if (cost.effective > tokens) break;
 
         tokens -= cost.effective;
         spent += cost.effective;
         conversionSpent += cost.conversionTokens;
+        marketSpent += cost.marketGold;
         count += 1;
         row.affordable = true;
 
@@ -263,11 +527,26 @@ export function planNextBuys(buys, { tokenBalance = 0, creditBalances = {}, rate
             const used = Math.min(held, Number(needed) || 0);
             remaining[itemHrid] = held - used;
             const gap = (Number(needed) || 0) - used;
-            if (gap > 0) owedCredits[itemHrid] = (owedCredits[itemHrid] || 0) + gap;
+            if (gap <= 0) continue;
+            // A colour with no path at all lands on the market side: the shopping
+            // list skips what nothing converts into, which is the same silence it
+            // gave before, and the token side must not claim a conversion it
+            // cannot price
+            const owed = (pathFor(itemHrid) || {}).path === 'tokens' ? owedTokenCredits : owedCredits;
+            owed[itemHrid] = (owed[itemHrid] || 0) + gap;
         }
     }
 
-    return { rows, count, spent, conversionSpent, directSpent: spent - conversionSpent, owedCredits };
+    return {
+        rows,
+        count,
+        spent,
+        conversionSpent,
+        directSpent: spent - conversionSpent,
+        marketSpent,
+        owedCredits,
+        owedTokenCredits,
+    };
 }
 
 /**
@@ -426,39 +705,72 @@ export function creditConversionPlan(owedCredits, topConversions, itemDetailMap 
 }
 
 /**
- * The Guild Shop's token→credit rate for one colour, if it has ever been seen.
- * @param {string} creditHrid - Credit hrid
- * @returns {Object|null} The captured reading, or null
+ * The exchanges to make with tokens rather than with gold.
+ *
+ * The token-path twin of {@link creditConversionPlan}: same rounding rule —
+ * whole exchanges, so a part-filled one costs a full one — applied to the
+ * shortfall the recommendation sends through the guild shop instead of the
+ * marketplace. The credits handed back are the whole trade's, not the owed
+ * amount, for the same reason the market plan quotes the whole trade: the
+ * counter does not make change.
+ *
+ * @param {Object<string, number>} owedTokenCredits - creditHrid → credits owed on the token path
+ * @param {Object} [itemDetailMap] - The game's items, for display names
+ * @param {Function} [rateFor] - creditHrid → token→credit rate
+ * @returns {Array<{creditItemHrid: string, creditName: string, tokens: number, credits: number,
+ *   owed: number, rate: Object}>} One step per credit
  */
-function tokenRateFor(creditHrid) {
-    try {
-        return capturedTokenExchange(creditHrid);
-    } catch {
-        return null;
+export function tokenConversionPlan(owedTokenCredits, itemDetailMap = {}, rateFor = tokenRateFor) {
+    const steps = [];
+    for (const [creditHrid, owed] of Object.entries(owedTokenCredits || {})) {
+        if (!(owed > 0)) continue;
+        const rate = rateFor(creditHrid);
+        const tokens = tokensForCredits(owed, rate);
+        if (!(tokens > 0)) continue;
+        const perExchange = Number(rate.creditsPerExchange);
+        const tokensPer = Number(rate.tokensPerExchange);
+        const credits = perExchange > 0 && tokensPer > 0 ? Math.ceil(owed / perExchange) * perExchange : owed;
+        steps.push({
+            creditItemHrid: creditHrid,
+            creditName: itemDetailMap?.[creditHrid]?.name || creditHrid.split('/').pop().replace(/_/g, ' '),
+            tokens,
+            credits,
+            owed,
+            rate,
+        });
     }
+    steps.sort((a, b) => a.creditName.localeCompare(b.creditName));
+    return steps;
 }
 
-/** What a colour with no captured rate is annotated with, and why */
+/** What a colour with no rate at all is annotated with, and why */
 const NO_RATE_NOTE = 'rate not seen yet';
 const NO_RATE_TITLE =
-    'No token→credit rate has been read for this credit. Open this exchange once with Guild Token selected ' +
-    'on the give side and the rate is recorded — until then it is left out of the affordability math rather ' +
-    'than guessed at.';
+    'No token→credit rate is known for this credit: it is not one of the eight colours whose standard rate ' +
+    'is built in, and its exchange has never been opened here. Open it once with Guild Token selected on the ' +
+    'give side and the rate is recorded — until then it is left out of the affordability math rather than ' +
+    'guessed at.';
 
 /**
- * How a captured rate should be spoken about.
+ * How a rate should be spoken about, which depends on where it came from.
  *
- * Every figure derived from one is approximate and says so with a `≈`: the
- * reading is a number scraped off a dialog, kept with the strategy that read it
- * (`via`) and when it was taken (`capturedAt`), and neither of those is a
- * guarantee that the shop still says the same thing. A reading taken from the
- * item tiles rather than the dialog's own stated arrow, or one with no capture
- * time at all, carries that caveat into the tooltip as well.
+ * A **captured** reading is approximate and says so with a `≈`: it is a number
+ * scraped off a dialog, kept with the strategy that read it (`via`) and when it
+ * was taken (`capturedAt`), and neither of those is a guarantee that the shop
+ * still says the same thing. A reading taken from the item tiles rather than the
+ * dialog's own stated arrow, or one with no capture time at all, carries that
+ * caveat into the tooltip as well.
  *
- * @param {Object|null} rate - A captured exchange
- * @returns {{rateText: string, title: string}|null} Captions, or null without a rate
+ * A **standard** rate from {@link DEFAULT_TOKEN_RATES} is exact — it is the rate
+ * the game charges, checked against the exchange dialog — so figures derived
+ * from one drop the `≈`. The tooltip still names it as the standard rate rather
+ * than as something observed, because the difference is the whole reason a
+ * capture outranks it.
+ *
+ * @param {Object|null} rate - A rate, captured or standard
+ * @returns {{rateText: string, title: string, approx: boolean}|null} Captions, or null without a rate
  */
-function describeCapturedRate(rate) {
+function describeRate(rate) {
     if (!rate || !(Number(rate.creditsPerToken) > 0)) return null;
 
     const per = Number(rate.creditsPerToken);
@@ -466,6 +778,14 @@ function describeCapturedRate(rate) {
         Number(rate.tokensPerExchange) > 0 && Number(rate.creditsPerExchange) > 0
             ? `${rate.tokensPerExchange} token${rate.tokensPerExchange === 1 ? '' : 's'} → ${rate.creditsPerExchange}`
             : `${Number(per.toPrecision(3))} credits per token`;
+
+    if (rate.source === 'default') {
+        return {
+            rateText,
+            approx: false,
+            title: `Standard exchange rate: the guild shop trades ${rateText}. Whole exchanges only, so a part-filled one costs a full one.`,
+        };
+    }
 
     const caveats = [];
     if (rate.via && rate.via !== 'arrow')
@@ -475,8 +795,20 @@ function describeCapturedRate(rate) {
 
     return {
         rateText,
+        approx: true,
         title: `Approximate: the guild shop was seen exchanging ${rateText} (${caveats.join('; ')}). Whole exchanges only, so a part-filled one costs a full one.`,
     };
+}
+
+/**
+ * Why one path beat the other, for a tooltip.
+ * @param {string} label - The credit's short name
+ * @param {Object} decision - From {@link chooseCreditPath}
+ * @returns {string} One sentence, or '' when there was no comparison to make
+ */
+function describeDecision(label, decision) {
+    if (!(Number(decision?.tokenGold) > 0) || !(Number(decision?.marketGold) > 0)) return '';
+    return `${label} — tokens: ${formatKMB(decision.tokenGold)} gold-equiv/credit vs market: ${formatKMB(decision.marketGold)}/credit.`;
 }
 
 class GuildCreditValue {
@@ -955,6 +1287,18 @@ class GuildCreditValue {
             const heldTokens = tokenHrid ? heldInInventory(inventory, tokenHrid) : 0;
             const spareTokens = Math.max(0, heldTokens - tokens.total);
 
+            // Which way each colour is cheapest to get, for the annotation below.
+            // Built here rather than per row so the button under the box and the
+            // notes inside it are drawn from the same prices.
+            const topConversions = buildTopConversions(itemDetailMap, 1);
+            const goldPerToken = goldPerTokenFor(itemDetailMap);
+            const pathFor = (creditHrid) =>
+                chooseCreditPath({
+                    rate: tokenRateFor(creditHrid),
+                    marketGoldPerCredit: (topConversions?.[creditHrid] || [])[0]?.askGPC ?? null,
+                    goldPerToken,
+                });
+
             // Credit costs
             const owedCredits = {};
             for (const [itemHrid, count] of Object.entries(credits)) {
@@ -971,10 +1315,14 @@ class GuildCreditValue {
                 totalsEl.appendChild(row);
 
                 // The other way to settle this row: the guild shop sells credits
-                // for tokens. Only said when a rate has actually been read, and
-                // only when the tokens the plan is not already spending cover it.
+                // for tokens. Only said where that is the *cheaper* way — a gold
+                // credit costs sixty tokens and the market sells its materials
+                // for a fraction of what sixty tokens are worth, so offering the
+                // exchange there would be advice to lose money — and only when
+                // the tokens the plan is not already spending cover it. Where the
+                // market wins, the row above it already says what the gold costs.
                 const rate = tokenRateFor(itemHrid);
-                const described = describeCapturedRate(rate);
+                const described = describeRate(rate);
                 const note = document.createElement('div');
                 note.className = 'mwi-shrine-credit-convert';
                 note.dataset.creditHrid = itemHrid;
@@ -986,10 +1334,14 @@ class GuildCreditValue {
                     totalsEl.appendChild(note);
                     continue;
                 }
+                const decision = pathFor(itemHrid);
+                if (decision.path !== 'tokens') continue;
                 const tokensNeeded = tokensForCredits(owed, rate);
                 if (!(tokensNeeded > 0) || tokensNeeded > spareTokens) continue;
-                note.textContent = `or convert ≈${tokensNeeded.toLocaleString()} tokens`;
-                note.title = described.title;
+                note.textContent = `or convert ${described.approx ? '≈' : ''}${tokensNeeded.toLocaleString()} tokens`;
+                note.title = [described.title, describeDecision(shortCreditName(name), decision)]
+                    .filter(Boolean)
+                    .join(' ');
                 totalsEl.appendChild(note);
             }
 
@@ -1149,15 +1501,21 @@ class GuildCreditValue {
          * is objective, and which of the cheap ones is worth having stays the
          * player's call.
          *
-         * What changed is what "cheapest" counts. The guild shop also sells
-         * credits for tokens, so a level whose credits are short is not simply
-         * unaffordable — it costs its token price *plus* the tokens that would
-         * make up the shortfall, and that total is what the balance is spent
-         * against. A level costing 100 tokens and 50 credits you do not hold can
-         * easily be dearer than one costing 300 tokens and nothing else. See
-         * {@link planNextBuys}. A colour whose rate has never been read off the
-         * Guild Shop is left out of that arithmetic entirely and said so on the
-         * row, because a guessed rate makes an unaffordable buy look affordable.
+         * What changed is what "cheapest" counts. A level whose credits are short
+         * is not simply unaffordable: the shortfall can be settled two ways, and
+         * each row shows the cheaper one. The guild shop sells credits for
+         * tokens, and the marketplace sells the materials that convert into them,
+         * so every colour is a small comparison — tokens-per-credit times what a
+         * token is worth in gold, against the cheapest gold-per-credit on the
+         * market. The rates make that comparison lopsided and worth making: a
+         * blue credit is a tenth of a token and a gold one is sixty, so burning
+         * tokens on gold credits is almost never right while its materials are
+         * buyable. What the row then prices, ranks and ticks is that one
+         * recommended plan — the tokens it really needs, with the gold half said
+         * beside it. See {@link planNextBuys} and {@link chooseCreditPath}. A
+         * colour with neither a rate nor a market price is left out of the
+         * arithmetic entirely and said so on the row, because a guess there makes
+         * an unaffordable buy look affordable.
          *
          * ## Layout
          *
@@ -1183,9 +1541,10 @@ class GuildCreditValue {
             heading.style.cssText =
                 'display:flex; justify-content:space-between; align-items:center; gap:6px; font-size:11px; color:#9ca3af; margin-bottom:5px;';
             heading.title =
-                'Cheapest first by effective token cost: the level’s own token price plus the tokens the ' +
-                'guild shop would charge to make up any credit shortfall. Colours with no rate read yet are ' +
-                'left out of that sum.';
+                'Cheapest first by effective token cost: the level’s own token price plus the tokens its ' +
+                'recommended plan spends converting credits. Credits the marketplace supplies more cheaply ' +
+                'than the guild shop are bought there instead, and cost gold rather than tokens. Colours ' +
+                'with neither a rate nor a market price are left out of the sum.';
             heading.innerHTML = `<span>Suggested Next Buys</span><span style="color:#e0e0e0; white-space:nowrap;">${tokenName}: <b>${balance.toLocaleString()}</b></span>`;
             suggestEl.appendChild(heading);
 
@@ -1204,7 +1563,28 @@ class GuildCreditValue {
                 }
             }
 
-            const plan = planNextBuys(nextBuys, { tokenBalance: balance, creditBalances, rateFor: tokenRateFor });
+            // The market half of every comparison, built once: the same ranked
+            // conversions the hand-off below buys from, so the path a row
+            // recommends and the shopping list it produces are one decision.
+            const topConversions = buildTopConversions(itemDetailMap, 1);
+            const goldPerToken = goldPerTokenFor(itemDetailMap);
+            const decisions = {};
+            const pathFor = (creditHrid) => {
+                if (!(creditHrid in decisions))
+                    decisions[creditHrid] = chooseCreditPath({
+                        rate: tokenRateFor(creditHrid),
+                        marketGoldPerCredit: (topConversions?.[creditHrid] || [])[0]?.askGPC ?? null,
+                        goldPerToken,
+                    });
+                return decisions[creditHrid];
+            };
+
+            const plan = planNextBuys(nextBuys, {
+                tokenBalance: balance,
+                creditBalances,
+                rateFor: tokenRateFor,
+                pathFor,
+            });
 
             const creditLabel = (itemHrid, short) => {
                 const name = itemDetailMap[itemHrid]?.name || itemHrid.split('/').pop().replace(/_/g, ' ');
@@ -1236,11 +1616,19 @@ class GuildCreditValue {
                 tok.className = 'mwi-shrine-next-buy-tok';
                 tok.style.cssText = `margin-left:auto; flex:0 0 auto; white-space:nowrap; color:${affordable ? '#e0e0e0' : '#6b7280'};`;
                 tok.textContent = `${entry.effective.toLocaleString()} tok`;
-                tok.title =
-                    entry.conversionTokens > 0
-                        ? `${entry.direct.toLocaleString()} tokens for the level, plus about ` +
-                          `${entry.conversionTokens.toLocaleString()} to convert into the credits it is short`
-                        : `${entry.direct.toLocaleString()} tokens for the level`;
+                // "about" only where a captured reading is doing the converting:
+                // a standard rate is exact, so hedging it would be a caveat about
+                // nothing. The gold half is named too, so the token figure is not
+                // mistaken for the whole bill.
+                const hedged = entry.conversions.some((c) => describeRate(c.rate)?.approx);
+                const parts = [`${entry.direct.toLocaleString()} tokens for the level`];
+                if (entry.conversionTokens > 0)
+                    parts.push(
+                        `plus ${hedged ? 'about ' : ''}${entry.conversionTokens.toLocaleString()} to convert into the credits it is short`
+                    );
+                if (entry.marketGold > 0)
+                    parts.push(`plus ≈${formatKMB(entry.marketGold)} gold of materials bought on the market`);
+                tok.title = parts.join(', ');
                 row.appendChild(tok);
 
                 if (buy.creditCosts?.length) {
@@ -1257,32 +1645,42 @@ class GuildCreditValue {
                     row.appendChild(credits);
                 }
 
-                if (entry.conversions.length > 0 || entry.unknown.length > 0) {
+                if (entry.conversions.length > 0 || entry.market.length > 0 || entry.unknown.length > 0) {
                     const note = document.createElement('span');
                     note.className = 'mwi-shrine-next-buy-convert';
                     note.style.cssText =
                         'flex:1 1 100%; min-width:0; white-space:normal; overflow-wrap:anywhere; font-size:10px;';
-                    const parts = [];
+                    const noteParts = [];
                     const titles = [];
                     if (entry.conversions.length > 0) {
                         const covered = entry.conversions
                             .map(({ itemHrid, gap }) => creditText(itemHrid, gap, true))
                             .join(', ');
-                        parts.push(
-                            `via tokens: +${entry.conversionTokens.toLocaleString()} tok converts to the missing ${covered}`
-                        );
-                        for (const { rate } of entry.conversions) {
-                            const described = describeCapturedRate(rate);
+                        noteParts.push(`convert ${entry.conversionTokens.toLocaleString()} tok → ${covered}`);
+                        for (const { itemHrid, rate, decision } of entry.conversions) {
+                            const described = describeRate(rate);
                             if (described) titles.push(described.title);
+                            const why = describeDecision(creditLabel(itemHrid, true), decision);
+                            if (why) titles.push(why);
+                        }
+                    }
+                    if (entry.market.length > 0) {
+                        const covered = entry.market
+                            .map(({ itemHrid, gap }) => creditText(itemHrid, gap, true))
+                            .join(', ');
+                        noteParts.push(`buy ≈${formatKMB(entry.marketGold)} gold of mats → ${covered}`);
+                        for (const { itemHrid, decision } of entry.market) {
+                            const why = describeDecision(creditLabel(itemHrid, true), decision);
+                            if (why) titles.push(why);
                         }
                     }
                     if (entry.unknown.length > 0) {
-                        parts.push(
+                        noteParts.push(
                             `${entry.unknown.map(({ itemHrid }) => creditLabel(itemHrid, true)).join(', ')}: ${NO_RATE_NOTE} — select Guild Token in this exchange once to record it`
                         );
                         titles.push(NO_RATE_TITLE);
                     }
-                    note.textContent = parts.join(' · ');
+                    note.textContent = noteParts.join(' · ');
                     note.title = titles.join(' ');
                     note.style.color = entry.unknown.length > 0 ? '#9ca3af' : '#c4b5fd';
                     row.appendChild(note);
@@ -1299,13 +1697,17 @@ class GuildCreditValue {
                 plan.conversionSpent > 0
                     ? `, ${plan.conversionSpent.toLocaleString()} of them converted into credits`
                     : '';
+            // The gold half of the same walk. Named separately because it is a
+            // different pocket: the token figure is what the balance covers, this
+            // is what the marketplace charges on top.
+            const bought = plan.marketSpent > 0 ? ` plus ≈${formatKMB(plan.marketSpent)} gold of mats` : '';
             walk.textContent =
                 plan.count === 0
                     ? `Nothing on this list is affordable with ${balance.toLocaleString()} tokens`
-                    : `Spending everything now: ${plan.count} of ${plan.rows.length} next levels for ${plan.spent.toLocaleString()} tokens${converted}`;
+                    : `Spending everything now: ${plan.count} of ${plan.rows.length} next levels for ${plan.spent.toLocaleString()} tokens${converted}${bought}`;
             suggestEl.appendChild(walk);
 
-            renderNextBuyFlow(plan.owedCredits, itemDetailMap, inventory);
+            renderNextBuyFlow(plan.owedCredits, plan.owedTokenCredits, itemDetailMap, inventory);
         }
 
         /**
@@ -1318,23 +1720,32 @@ class GuildCreditValue {
          * The credits it covers are the ones the ✓ walk found short after the
          * inventory was netted off and the earlier buys had taken their share.
          *
-         * Two halves, from the same conversion option so they cannot disagree:
-         * the marketplace hand-off for the raw materials
-         * ({@link creditShortfallMaterials}, inventory netted off), and the
-         * exchange itself ({@link creditConversionPlan}, whole trades). The
-         * second half is guidance, not navigation — this modal *is* the exchange,
-         * so there is nowhere to send the player.
+         * Scoped, too, to the colours the recommendation actually sends to the
+         * marketplace. A colour the guild shop supplies more cheaply has no
+         * materials to go and buy — it has an exchange to make — so it is listed
+         * as one instead of turned into a shopping trip that costs more than the
+         * tokens it saves.
          *
-         * @param {Object<string, number>} owedCredits - creditHrid → credits the ✓ set is short
+         * Three parts, all from the same decision so they cannot disagree: the
+         * marketplace hand-off for the raw materials
+         * ({@link creditShortfallMaterials}, inventory netted off), the exchange
+         * that follows it ({@link creditConversionPlan}, whole trades), and the
+         * token exchanges for the colours that went the other way
+         * ({@link tokenConversionPlan}). The last two are guidance, not navigation
+         * — this modal *is* the exchange, so there is nowhere to send the player.
+         *
+         * @param {Object<string, number>} owedCredits - creditHrid → credits the ✓ set buys on the market
+         * @param {Object<string, number>} owedTokenCredits - creditHrid → credits it converts with tokens
          * @param {Object} itemDetailMap - The game's items
          * @param {Array<Object>} inventory - The character's items
          * @returns {void}
          */
-        function renderNextBuyFlow(owedCredits, itemDetailMap, inventory) {
+        function renderNextBuyFlow(owedCredits, owedTokenCredits, itemDetailMap, inventory) {
             const topConversions = buildTopConversions(itemDetailMap, 1);
             const mats = creditShortfallMaterials(owedCredits, topConversions, inventory);
             const steps = creditConversionPlan(owedCredits, topConversions, itemDetailMap);
-            if (mats.length === 0 && steps.length === 0) return;
+            const tokenSteps = tokenConversionPlan(owedTokenCredits, itemDetailMap);
+            if (mats.length === 0 && steps.length === 0 && tokenSteps.length === 0) return;
 
             const flow = document.createElement('div');
             flow.className = 'mwi-shrine-next-buy-flow';
@@ -1363,11 +1774,28 @@ class GuildCreditValue {
                 flow.appendChild(button);
             }
 
-            if (steps.length > 0) {
+            if (steps.length > 0 || tokenSteps.length > 0) {
                 const title = document.createElement('div');
                 title.style.cssText = 'margin-top:5px; font-size:10px; color:#9ca3af;';
                 title.textContent = 'then convert:';
                 flow.appendChild(title);
+
+                for (const step of tokenSteps) {
+                    const described = describeRate(step.rate);
+                    const line = document.createElement('div');
+                    line.className = 'mwi-shrine-token-convert-step';
+                    line.dataset.creditHrid = step.creditItemHrid;
+                    line.style.cssText =
+                        'font-size:10px; color:#c4b5fd; white-space:normal; overflow-wrap:anywhere; padding:1px 0;';
+                    line.textContent = `convert ${step.tokens.toLocaleString()} tok → ${step.credits.toLocaleString()} ${shortCreditName(step.creditName)}`;
+                    line.title = [
+                        `${step.tokens.toLocaleString()} guild tokens exchange here for ${step.credits.toLocaleString()} ${step.creditName} — the ${step.owed.toLocaleString()} still owed, rounded up to whole exchanges. Cheaper than buying its materials.`,
+                        described?.title,
+                    ]
+                        .filter(Boolean)
+                        .join(' ');
+                    flow.appendChild(line);
+                }
 
                 for (const step of steps) {
                     const line = document.createElement('div');

@@ -128,6 +128,14 @@ const {
     tokensForCredits,
     buyTokenCost,
     planNextBuys,
+    DEFAULT_TOKEN_RATES,
+    defaultTokenRate,
+    tokenRateFor,
+    tokensPerCredit,
+    chooseCreditPath,
+    goldPerTokenFor,
+    mergedTokenExchanges,
+    tokenConversionPlan,
 } = creditValueModule;
 const { TRIAL_MAX_TIER, levelFromTier, tierFromLevel } = await import('./guild-trials-math.js');
 
@@ -764,8 +772,10 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         ];
         const modal = openModal();
 
+        // The Force level's 50 Trade Credit is bought on the market — that colour
+        // has no token rate at all — so the walk says both halves of the bill
         expect(modal.querySelector('.mwi-shrine-spend-all').textContent).toBe(
-            'Spending everything now: 2 of 2 next levels for 400 tokens'
+            'Spending everything now: 2 of 2 next levels for 400 tokens plus ≈7.5K gold of mats'
         );
     });
 
@@ -1153,9 +1163,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             const row = forceRow(modal);
 
             expect(row.querySelector('.mwi-shrine-next-buy-tok').textContent).toBe('305 tok');
-            expect(row.querySelector('.mwi-shrine-next-buy-convert').textContent).toBe(
-                'via tokens: +5 tok converts to the missing 50 Trade'
-            );
+            expect(row.querySelector('.mwi-shrine-next-buy-convert').textContent).toBe('convert 5 tok → 50 Trade');
             expect(row.dataset.affordable).toBe('yes');
         });
 
@@ -1222,10 +1230,17 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             expect(plan.count).toBe(2);
             expect(plan.spent).toBe(25);
             expect(plan.conversionSpent).toBe(5);
-            expect(plan.owedCredits).toEqual({ '/c': 50 });
+            // The default path is the token one, so the shortfall is owed to the
+            // guild shop rather than to the marketplace
+            expect(plan.owedTokenCredits).toEqual({ '/c': 50 });
+            expect(plan.owedCredits).toEqual({});
         });
 
-        test('an unseen colour is named on the row rather than silently priced', () => {
+        test('a colour with neither a rate nor a market price is named on the row rather than priced', () => {
+            // Level 4 costs Craft Credit: no colour in the standard table names
+            // it, no exchange has been seen for it, and nothing on the market
+            // converts into it
+            game.buffLevels[FORCE] = 3;
             game.inventory = [
                 { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 5000 },
             ];
@@ -1233,11 +1248,11 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             const note = forceRow(modal).querySelector('.mwi-shrine-next-buy-convert');
 
             expect(note.textContent).toBe(
-                'Trade: rate not seen yet — select Guild Token in this exchange once to record it'
+                'Craft: rate not seen yet — select Guild Token in this exchange once to record it'
             );
             expect(note.title).toContain('Guild Token');
             // And nothing was added to the cost on the strength of not knowing
-            expect(forceRow(modal).querySelector('.mwi-shrine-next-buy-tok').textContent).toBe('300 tok');
+            expect(forceRow(modal).querySelector('.mwi-shrine-next-buy-tok').textContent).toBe('400 tok');
         });
 
         test('a converted figure is never presented as exact', () => {
@@ -1294,6 +1309,388 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                 const note = convertNote(modal, '/items/guild_credit_1');
                 expect(note.textContent).toBe('Trade: token rate not seen yet');
                 expect(note.title).toContain('Guild Token');
+            });
+        });
+    });
+
+    describe('the standard token→credit rates', () => {
+        /** Colour → [tokens handed over, credits received], as the exchange dialog states it */
+        const STATED = {
+            green: [1, 10],
+            brown: [1, 10],
+            white: [1, 10],
+            blue: [1, 10],
+            purple: [1, 1],
+            red: [1, 1],
+            silver: [10, 1],
+            gold: [60, 1],
+        };
+
+        test('all eight colours resolve, at the rate the game charges', () => {
+            expect(Object.keys(DEFAULT_TOKEN_RATES).sort()).toEqual(Object.keys(STATED).sort());
+
+            for (const [colour, [tokens, credits]] of Object.entries(STATED)) {
+                const rate = tokenRateFor(`/items/${colour}_guild_credit`);
+                expect(rate).toMatchObject({
+                    tokensPerExchange: tokens,
+                    creditsPerExchange: credits,
+                    source: 'default',
+                });
+                expect(tokensPerCredit(rate)).toBeCloseTo(tokens / credits, 10);
+                // One whole exchange is the smallest purchase there is
+                expect(tokensForCredits(1, rate)).toBe(tokens);
+            }
+        });
+
+        test('the asymmetry is the point: a blue credit is a tenth of a token, a gold one sixty', () => {
+            expect(tokensPerCredit(defaultTokenRate('/items/blue_guild_credit'))).toBeCloseTo(0.1, 10);
+            expect(tokensPerCredit(defaultTokenRate('/items/gold_guild_credit'))).toBe(60);
+        });
+
+        test('a colour the table does not name has no rate at all', () => {
+            expect(defaultTokenRate('/items/guild_credit_1')).toBeNull();
+            expect(defaultTokenRate('/items/octarine_guild_credit')).toBeNull();
+            expect(defaultTokenRate('')).toBeNull();
+            expect(tokenRateFor('/items/guild_credit_1')).toBeNull();
+        });
+
+        test('a captured reading overrides the standard rate, for its own colour only', () => {
+            game.rates['/items/gold_guild_credit'] = {
+                creditItemHrid: '/items/gold_guild_credit',
+                creditsPerToken: 1,
+                tokensPerExchange: 1,
+                creditsPerExchange: 1,
+                via: 'arrow',
+                capturedAt: Date.UTC(2026, 0, 1),
+            };
+
+            // The shop was seen rebalancing gold credits; an observation beats a constant
+            expect(tokenRateFor('/items/gold_guild_credit')).toMatchObject({
+                source: 'captured',
+                tokensPerExchange: 1,
+                creditsPerExchange: 1,
+            });
+            // And says nothing about any other colour
+            expect(tokenRateFor('/items/green_guild_credit')).toMatchObject({
+                source: 'default',
+                creditsPerExchange: 10,
+            });
+        });
+
+        test('the merged exchange list is captures first, defaults for every gap', () => {
+            game.rates['/items/green_guild_credit'] = {
+                creditItemHrid: '/items/green_guild_credit',
+                creditsPerToken: 4,
+                tokensPerExchange: 1,
+                creditsPerExchange: 4,
+                via: 'arrow',
+            };
+            const itemDetailMap = {
+                '/items/green_guild_credit': { name: 'Green Guild Credit' },
+                '/items/gold_guild_credit': { name: 'Gold Guild Credit' },
+                '/items/guild_credit_1': { name: 'Trade Credit' },
+                '/items/iron_bar': { name: 'Iron Bar' },
+            };
+
+            const merged = mergedTokenExchanges(itemDetailMap);
+            const byHrid = Object.fromEntries(merged.map((e) => [e.creditItemHrid, e]));
+
+            expect(byHrid['/items/green_guild_credit']).toMatchObject({ source: 'captured', creditsPerToken: 4 });
+            expect(byHrid['/items/gold_guild_credit']).toMatchObject({ source: 'default', tokensPerExchange: 60 });
+            // A credit no colour names and no capture covers is simply absent
+            expect(byHrid['/items/guild_credit_1']).toBeUndefined();
+            expect(merged).toHaveLength(2);
+        });
+    });
+
+    describe('choosing the cheaper way to a credit', () => {
+        const gold = () => defaultTokenRate('/items/gold_guild_credit');
+
+        test('the path follows the gold comparison', () => {
+            // A gold credit is 60 tokens. At 100 gold a token that is 6,000 gold
+            expect(chooseCreditPath({ rate: gold(), marketGoldPerCredit: 1_000, goldPerToken: 100 })).toMatchObject({
+                path: 'market',
+                tokenGold: 6_000,
+                marketGold: 1_000,
+            });
+            expect(chooseCreditPath({ rate: gold(), marketGoldPerCredit: 100_000, goldPerToken: 100 })).toMatchObject({
+                path: 'tokens',
+            });
+        });
+
+        test('a tie goes to the token, which is what makes the best colour the one tokens buy', () => {
+            expect(chooseCreditPath({ rate: gold(), marketGoldPerCredit: 6_000, goldPerToken: 100 }).path).toBe(
+                'tokens'
+            );
+            // And the tie survives the arithmetic that produces it: 0.1 × 1500 is
+            // not exactly 150 in a double
+            const blue = defaultTokenRate('/items/blue_guild_credit');
+            expect(chooseCreditPath({ rate: blue, marketGoldPerCredit: 150, goldPerToken: 1_500 }).path).toBe('tokens');
+        });
+
+        test('missing market data falls back to the token path rather than an invented figure', () => {
+            expect(chooseCreditPath({ rate: gold(), marketGoldPerCredit: null, goldPerToken: 100 })).toMatchObject({
+                path: 'tokens',
+                marketGold: null,
+            });
+            expect(chooseCreditPath({ rate: gold(), marketGoldPerCredit: 1_000, goldPerToken: null })).toMatchObject({
+                path: 'tokens',
+                tokenGold: null,
+            });
+        });
+
+        test('no rate leaves the market, and no market either leaves nothing', () => {
+            expect(chooseCreditPath({ rate: null, marketGoldPerCredit: 1_000, goldPerToken: 100 }).path).toBe('market');
+            expect(chooseCreditPath({ rate: null, marketGoldPerCredit: null }).path).toBe('unknown');
+            expect(chooseCreditPath().path).toBe('unknown');
+        });
+
+        test('the gold-per-token bridge is the best colour on offer, not the first', () => {
+            // Silk yields a blue credit one for one at 200 gold; a rune yields a
+            // gold credit one for one at 6,000
+            Object.assign(game.clientData.itemDetailMap, {
+                '/items/blue_guild_credit': { name: 'Blue Guild Credit', guildCreditConversions: [] },
+                '/items/gold_guild_credit': { name: 'Gold Guild Credit', guildCreditConversions: [] },
+                '/items/silk': {
+                    name: 'Silk',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/blue_guild_credit', itemCount: 1, creditCount: 1 },
+                    ],
+                },
+                '/items/rune': {
+                    name: 'Rune',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/gold_guild_credit', itemCount: 1, creditCount: 1 },
+                    ],
+                },
+            });
+            game.prices['/items/silk'] = { ask: 200, bid: 150 };
+            game.prices['/items/rune'] = { ask: 6_000, bid: 5_000 };
+
+            // Blue: 10 credits per token × 200 = 2,000. Gold: a sixtieth of a
+            // credit per token × 6,000 = 100. The blue route wins the maximum
+            expect(goldPerTokenFor(game.clientData.itemDetailMap)).toBe(2_000);
+
+            // And that is what prices both paths: gold credits cost 60 × 2,000 of
+            // token value against 6,000 on the market, so they are bought
+            const marketFor = (hrid, price) =>
+                chooseCreditPath({
+                    rate: tokenRateFor(hrid),
+                    marketGoldPerCredit: price,
+                    goldPerToken: goldPerTokenFor(game.clientData.itemDetailMap),
+                });
+            expect(marketFor('/items/gold_guild_credit', 6_000).path).toBe('market');
+            expect(marketFor('/items/blue_guild_credit', 200).path).toBe('tokens');
+        });
+    });
+
+    describe('the recommended plan drives the whole section', () => {
+        const BLUE = '/items/blue_guild_credit';
+        const GOLD = '/items/gold_guild_credit';
+
+        function tokenConvertSteps(modal) {
+            return Array.from(modal.querySelectorAll('.mwi-shrine-token-convert-step')).map((el) => el.textContent);
+        }
+        function matConvertSteps(modal) {
+            return Array.from(modal.querySelectorAll('.mwi-shrine-convert-step')).map((el) => el.textContent);
+        }
+        function rowFor(modal, label) {
+            return nextBuyRows(modal).find((r) => r.textContent.includes(label));
+        }
+
+        beforeEach(() => {
+            Object.assign(game.clientData.itemDetailMap, {
+                [BLUE]: { name: 'Blue Guild Credit', guildCreditConversions: [] },
+                [GOLD]: { name: 'Gold Guild Credit', guildCreditConversions: [] },
+                '/items/silk': {
+                    name: 'Silk',
+                    guildCreditConversions: [{ creditItemHrid: BLUE, itemCount: 1, creditCount: 1 }],
+                },
+                '/items/rune': {
+                    name: 'Rune',
+                    guildCreditConversions: [{ creditItemHrid: GOLD, itemCount: 1, creditCount: 1 }],
+                },
+            });
+            game.prices['/items/silk'] = { ask: 200, bid: 150 };
+            game.prices['/items/rune'] = { ask: 6_000, bid: 5_000 };
+            // Force's next level wants gold credits (60 tokens each — the market
+            // is far cheaper); Tempo's wants blue ones (a tenth of a token each)
+            game.clientData.guildBuffDetailMap[FORCE].levelCosts['3'] = {
+                guildTokenCost: 100,
+                creditCosts: [{ itemHrid: GOLD, count: 5 }],
+            };
+            game.clientData.guildBuffDetailMap[TEMPO].levelCosts['1'] = {
+                guildTokenCost: 100,
+                creditCosts: [{ itemHrid: BLUE, count: 20 }],
+            };
+            game.inventory = [
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 1_000 },
+            ];
+        });
+
+        test('each row shows only the plan it recommends', () => {
+            const modal = openModal();
+
+            expect(rowFor(modal, 'Tempo').querySelector('.mwi-shrine-next-buy-convert').textContent).toBe(
+                'convert 2 tok → 20 Blue'
+            );
+            expect(rowFor(modal, 'Force').querySelector('.mwi-shrine-next-buy-convert').textContent).toBe(
+                'buy ≈30.0K gold of mats → 5 Gold'
+            );
+        });
+
+        test('the tooltip says why the path won', () => {
+            const modal = openModal();
+            const title = rowFor(modal, 'Force').querySelector('.mwi-shrine-next-buy-convert').title;
+
+            expect(title).toContain('Gold — tokens: 120.0K gold-equiv/credit');
+            expect(title).toContain('market: 6.0K/credit');
+        });
+
+        test('the effective cost, and so the ranking, counts only the tokens the plan spends', () => {
+            const modal = openModal();
+            const rows = nextBuyRows(modal);
+
+            // Force pays 100 tokens and buys its credits with gold; Tempo pays
+            // 100 plus the 2 tokens its blue credits cost
+            expect(rows[0].textContent).toContain('Force');
+            expect(rows[0].querySelector('.mwi-shrine-next-buy-tok').textContent).toBe('100 tok');
+            expect(rows[1].querySelector('.mwi-shrine-next-buy-tok').textContent).toBe('102 tok');
+            expect(rows[1].querySelector('.mwi-shrine-next-buy-tok').title).toContain(
+                'plus 2 to convert into the credits it is short'
+            );
+            // No hedging on a standard rate — it is the rate the game charges
+            expect(rows[1].querySelector('.mwi-shrine-next-buy-tok').title).not.toContain('about');
+        });
+
+        test('the greedy walk spends the recommended plan, tokens and gold named apart', () => {
+            const modal = openModal();
+
+            expect(modal.querySelector('.mwi-shrine-spend-all').textContent).toBe(
+                'Spending everything now: 2 of 2 next levels for 202 tokens, 2 of them converted into credits plus ≈30.0K gold of mats'
+            );
+        });
+
+        test('affordability is judged on the recommended plan, not on converting everything', () => {
+            // 201 tokens covers Force (100) and not Tempo (102). Converting the
+            // five gold credits instead would have cost 300 tokens on its own
+            game.inventory = [
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 201 },
+            ];
+            const modal = openModal();
+
+            expect(nextBuyRows(modal)[0].dataset.affordable).toBe('yes');
+            expect(nextBuyRows(modal)[1].dataset.affordable).toBe('no');
+        });
+
+        test('the mats button covers only the colours the plan sends to the market', () => {
+            const modal = openModal();
+            modal.querySelector('.mwi-shrine-next-buy-mats-btn').click();
+
+            expect(shopping.calls).toHaveLength(1);
+            expect(shopping.calls[0].items).toEqual([{ itemHrid: '/items/rune', name: 'Rune', count: 5 }]);
+        });
+
+        test('the plan lines split the same way the button does', () => {
+            const modal = openModal();
+
+            expect(matConvertSteps(modal)).toEqual(['convert 5× Rune → 5 Gold']);
+            expect(tokenConvertSteps(modal)).toEqual(['convert 2 tok → 20 Blue']);
+        });
+
+        test('a token conversion line explains itself with the standard rate', () => {
+            const modal = openModal();
+            const line = modal.querySelector('.mwi-shrine-token-convert-step');
+
+            expect(line.dataset.creditHrid).toBe(BLUE);
+            expect(line.title).toContain('Standard exchange rate');
+            expect(line.title).toContain('1 token → 10');
+            expect(line.title).not.toContain('Approximate');
+        });
+
+        test('cheap materials move the token path onto the other colour', () => {
+            // Silk collapses to 5 gold a credit. Blue credits are then worth 50
+            // gold a token against gold credits' 100, so a token is best spent on
+            // gold ones after all — and the blue ones are bought instead.
+            game.prices['/items/silk'] = { ask: 5, bid: 4 };
+            const modal = openModal();
+
+            expect(tokenConvertSteps(modal)).toEqual(['convert 300 tok → 5 Gold']);
+            expect(matConvertSteps(modal)).toEqual(['convert 20× Silk → 20 Blue']);
+            expect(rowFor(modal, 'Tempo').querySelector('.mwi-shrine-next-buy-tok').textContent).toBe('100 tok');
+            expect(rowFor(modal, 'Force').querySelector('.mwi-shrine-next-buy-tok').textContent).toBe('400 tok');
+        });
+
+        test('tokenConversionPlan rounds a part-filled exchange up to a whole one', () => {
+            // 25 blue credits at ten a token is three exchanges: 3 tokens, 30 credits
+            expect(tokenConversionPlan({ [BLUE]: 25 }, game.clientData.itemDetailMap)).toEqual([
+                {
+                    creditItemHrid: BLUE,
+                    creditName: 'Blue Guild Credit',
+                    tokens: 3,
+                    credits: 30,
+                    owed: 25,
+                    rate: defaultTokenRate(BLUE),
+                },
+            ]);
+            // A colour with no rate contributes no step rather than a guess
+            expect(tokenConversionPlan({ '/items/guild_credit_1': 10 }, game.clientData.itemDetailMap)).toEqual([]);
+        });
+
+        test('a colour the market cannot supply goes back to the tokens', () => {
+            // No rune on the market: the gold credits have nothing to be bought
+            // with, so the plan converts them however dear that is
+            delete game.prices['/items/rune'];
+            const modal = openModal();
+
+            expect(rowFor(modal, 'Force').querySelector('.mwi-shrine-next-buy-convert').textContent).toBe(
+                'convert 300 tok → 5 Gold'
+            );
+            expect(rowFor(modal, 'Force').querySelector('.mwi-shrine-next-buy-tok').textContent).toBe('400 tok');
+        });
+
+        describe('the still-needed box', () => {
+            function convertNote(modal, creditHrid) {
+                return modal.querySelector(`.mwi-shrine-credit-convert[data-credit-hrid="${creditHrid}"]`);
+            }
+
+            test('only a token-path colour is offered the exchange', () => {
+                const modal = openModal();
+                setTarget(modal, FORCE, 3);
+                setTarget(modal, TEMPO, 1);
+
+                expect(convertNote(modal, BLUE).textContent).toBe('or convert 2 tokens');
+                // Gold credits are bought, so the row above is the whole story
+                expect(convertNote(modal, GOLD)).toBeNull();
+            });
+
+            test('a standard rate drops the ≈ and says it is the standard rate', () => {
+                const modal = openModal();
+                setTarget(modal, TEMPO, 1);
+                const note = convertNote(modal, BLUE);
+
+                expect(note.textContent).not.toContain('≈');
+                expect(note.title).toContain('Standard exchange rate');
+                expect(note.title).not.toContain('Approximate');
+            });
+
+            test('a captured rate keeps the ≈ and its provenance', () => {
+                game.rates[BLUE] = {
+                    creditItemHrid: BLUE,
+                    creditsPerToken: 10,
+                    tokensPerExchange: 1,
+                    creditsPerExchange: 10,
+                    via: 'tiles',
+                    capturedAt: 0,
+                };
+                const modal = openModal();
+                setTarget(modal, TEMPO, 1);
+                const note = convertNote(modal, BLUE);
+
+                expect(note.textContent).toBe('or convert ≈2 tokens');
+                expect(note.title).toContain('Approximate');
+                expect(note.title).toContain('item tiles');
+                expect(note.title).toContain('capture time unknown');
             });
         });
     });
