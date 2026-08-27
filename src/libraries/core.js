@@ -19,6 +19,7 @@ import settingsStorage from '../core/settings-storage.js';
 import { settingsGroups, getAllSettingIds, getSettingDefinition } from '../core/settings-schema.js';
 import { setCurrentProfile, getCurrentProfile, clearCurrentProfile } from '../core/profile-manager.js';
 import tooltipObserver from '../core/tooltip-observer.js';
+import * as dualInstallGuard from '../core/dual-install-guard.js';
 import performanceMonitor from '../utils/performance-monitor.js';
 
 // API modules
@@ -45,6 +46,7 @@ toolashaRoot.Core = {
     getAllSettingIds,
     getSettingDefinition,
     tooltipObserver,
+    dualInstallGuard,
     profileManager: {
         setCurrentProfile,
         getCurrentProfile,

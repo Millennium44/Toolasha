@@ -146,7 +146,34 @@ const {
     performanceMonitor,
     marketAPI,
     errorLog,
+    dualInstallGuard,
 } = Core;
+
+// Claim the page before anything else can. Two Toolasha userscripts share one
+// database and one settings map, and the loser of that race has its settings
+// and custom tabs deleted — so the earliest possible moment is the right one to
+// find out. See dual-install-guard.js for what each signal can and cannot see.
+let dualInstallClaimed = false;
+try {
+    dualInstallClaimed = dualInstallGuard?.claimPage?.() || false;
+} catch (error) {
+    console.error('[Toolasha] Dual-install claim failed:', error);
+}
+
+/** Say it once, however many signals fired */
+let dualInstallWarned = false;
+function warnDualInstall() {
+    if (dualInstallWarned) return;
+    dualInstallWarned = true;
+    console.warn(`[Toolasha] ${dualInstallGuard.DUAL_INSTALL_MESSAGE}`);
+    // duration 0 — this one stays until the user dismisses it, because the
+    // damage keeps happening for as long as both copies are enabled
+    try {
+        showToast(dualInstallGuard.DUAL_INSTALL_MESSAGE, { kind: 'error', duration: 0 });
+    } catch (error) {
+        console.error('[Toolasha] Dual-install warning could not be shown:', error);
+    }
+}
 
 // Start catching our own errors before anything below can produce one. The
 // hooks only ever record and never throw, so nothing here is made riskier by
@@ -1960,6 +1987,22 @@ if (isCombatSimulatorPage()) {
                 await config.loadSettings();
                 config.applyColorSettings();
                 performanceMonitor.mark('settings:character');
+
+                // Both dual-install signals, once the settings map has been
+                // read: the page claim (a second copy that ran before or after
+                // this one) and the fingerprint (setting ids that vanished from
+                // the stored map between two loads of this same build, which
+                // only another script sharing the storage can do).
+                try {
+                    const missing = await dualInstallGuard.checkSettingsFingerprint(
+                        Core.settingsStorage.getCharacterStorageKey(),
+                        await config.storedSettingIds(),
+                        Utils.scriptVersion.scriptVersion() || 'unknown'
+                    );
+                    if (dualInstallClaimed || dualInstallGuard.claimLost() || missing.length > 0) warnDualInstall();
+                } catch (error) {
+                    console.error('[Toolasha] Dual-install check failed:', error);
+                }
 
                 // Before features initialise: the conservative-defaults policy
                 // has to turn a new switch off before anything reads it — a
