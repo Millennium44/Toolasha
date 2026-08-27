@@ -31,6 +31,25 @@
  *
  * A balancing plug hides all four. The residual names them.
  *
+ * ## Combat has two recordings, and they must not be added together
+ *
+ * The loot log is the game's own record of what an action produced, but the
+ * game only *sends* it while the Loot & XP Log panel is open. A character that
+ * fights all week and never opens that panel records nothing at all, and the
+ * combat row reported a confident measured zero while the consumables row —
+ * fed from the archived combat runs — proved the fighting happened.
+ *
+ * So the row reads both. Per UTC day: if the loot log has any combat entry that
+ * day, that day is the loot log's, because it includes runs this client never
+ * watched. Otherwise the day falls back to the archived runs' own loot maps.
+ * Never both for one day — the same drop is in both recordings, and summing
+ * them would double it.
+ *
+ * The fallback is bounded in a way the loot log is not: only the twenty most
+ * recent runs are kept, so a busy week reaches back further than they do. Days
+ * that neither recording covers are counted and reported rather than left to
+ * look like days of no combat, and what they were worth stays in the residual.
+ *
  * ## Days are UTC
  *
  * Every recorder this reads buckets on UTC day boundaries (see
@@ -48,6 +67,14 @@
 
 /** Milliseconds in a day */
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How many archived combat runs the history keeps, when the caller does not
+ * say. The real bound is `MAX_SESSIONS` in `combat-session-history.js`; it is
+ * passed in rather than imported so this module stays free of storage, and
+ * mirrored here so a caller that forgets still reports an honest limit.
+ */
+export const DEFAULT_SESSION_CAP = 20;
 
 /** Gathering action types, whose loot log entries are gathered output */
 export const GATHERING_ACTION_TYPES = ['/action_types/foraging', '/action_types/woodcutting', '/action_types/milking'];
@@ -70,8 +97,11 @@ export const SOURCE_META = {
     combat: {
         label: 'Combat drops',
         measured: true,
-        source: 'Loot log history',
-        note: 'Every drop the loot log recorded for a combat action, priced at today’s market.',
+        source: 'Loot log history, and the battle feed where it is silent',
+        note:
+            'Every drop the loot log recorded for a combat action, priced at today’s market. The game only sends ' +
+            'the loot log while its panel is open, so on a day it recorded nothing the archived combat runs are ' +
+            'read instead — your own share of their loot, from the twenty most recent runs. Never both for one day.',
     },
     gathering: {
         label: 'Gathering',
@@ -198,6 +228,53 @@ export function lootEntryValue(entry, price) {
         total += num(price(itemHrid, enhancementLevel)) * num(count);
     }
     return total;
+}
+
+/**
+ * The archived run's own player.
+ *
+ * A run is a party's run and its `players` array holds everybody in it, but the
+ * gold attribution is one character's ledger: counting the party's loot would
+ * credit this account with four people's drops. The current player is flagged,
+ * and a solo run recorded before the flag existed falls back to the only player
+ * there is — which is exactly how the consumables row scopes itself, and the
+ * two rows must not disagree about whose run it was.
+ *
+ * @param {Object} session - An archived combat run
+ * @returns {Object|null} The player entry, or null
+ */
+export function ownCombatPlayer(session) {
+    const players = session?.players || [];
+    return players.find((player) => player?.isCurrentPlayer) || players[0] || null;
+}
+
+/**
+ * What one archived combat run's loot was worth to this character.
+ *
+ * The run's loot map is keyed by the game's own slot key with the item inside,
+ * so two slots of one item are two entries; every entry is priced the way
+ * {@link lootEntryValue} prices a loot log drop — at today's market, with no
+ * tax deducted, because the loot log side does not deduct one either and a row
+ * fed from both sources must not change character with its source.
+ *
+ * `items` is how many priced-or-not loot entries the run held, which is what
+ * separates "this run dropped nothing worth anything" from "this run recorded
+ * no loot at all" — the second is a gap and gets said out loud.
+ *
+ * @param {Object} session - An archived combat run
+ * @param {Function} price - `(itemHrid, enhancementLevel) => number|null`
+ * @returns {{value: number, items: number}} Coins, and how many loot entries there were
+ */
+export function combatSessionLootValue(session, price) {
+    const me = ownCombatPlayer(session);
+    let value = 0;
+    let items = 0;
+    for (const entry of Object.values(me?.loot || {})) {
+        if (!entry?.itemHrid) continue;
+        items += 1;
+        value += num(price(entry.itemHrid, num(entry.enhancementLevel))) * num(entry.count);
+    }
+    return { value, items };
 }
 
 /**
@@ -372,6 +449,18 @@ function earliest(items, timeOf) {
 }
 
 /**
+ * The earlier of two timestamps, either of which may be missing.
+ * @param {number|null} a - Milliseconds, or null
+ * @param {number|null} b - Milliseconds, or null
+ * @returns {number|null} The earlier one, or whichever exists
+ */
+function earlierOf(a, b) {
+    if (!Number.isFinite(a)) return Number.isFinite(b) ? b : null;
+    if (!Number.isFinite(b)) return a;
+    return Math.min(a, b);
+}
+
+/**
  * Split a window's net worth delta across the activity that is recorded for it.
  *
  * @param {Object} input - Everything the attribution reads
@@ -386,6 +475,7 @@ function earliest(items, timeOf) {
  * @param {Array<Object>} [input.enhancementSessions] - Stored enhancement sessions
  * @param {Array<Object>} [input.tradeFills] - Trade ledger fill records
  * @param {Array<Object>} [input.combatSessions] - Archived combat runs
+ * @param {number} [input.sessionCap] - How many runs the history keeps
  * @param {Function} input.price - `(itemHrid, enhancementLevel) => number|null`
  * @param {number} [input.marketTax] - Sell tax rate
  * @returns {{
@@ -394,7 +484,10 @@ function earliest(items, timeOf) {
  *   totals: {sources: Object, explained: number, delta: number|null, residual: number|null},
  *   coverage: Object<string, number|null>,
  *   unpricedEnhancementSessions: number,
- *   unpricedProductionActions: number
+ *   unpricedProductionActions: number,
+ *   combatBasis: {lootLogDays: number, sessionDays: number, uncoveredDays: number, sessions: number,
+ *     emptySessions: number, sessionsHeld: number, sessionCap: number, lastLootLog: number|null,
+ *     combatRan: boolean}
  * }} The attribution
  */
 export function attributeGoldSources(input) {
@@ -409,6 +502,7 @@ export function attributeGoldSources(input) {
         enhancementSessions = [],
         tradeFills = [],
         combatSessions = [],
+        sessionCap = DEFAULT_SESSION_CAP,
         price = () => null,
         marketTax = 0.05,
     } = input || {};
@@ -429,15 +523,27 @@ export function attributeGoldSources(input) {
 
     // Loot log: combat and gathering. Production actions are deliberately not
     // read from here — the log records what an action produced but not what it
-    // consumed, and the production recorder below has both halves
+    // consumed, and the production recorder below has both halves.
+    //
+    // Gathering is added straight away; combat is held aside, because the day
+    // it lands on may instead be served by the archived runs and the two must
+    // never be summed. A day is *the loot log's* as soon as it has one combat
+    // entry, worth anything or not: the log recorded that day, and what it
+    // recorded is the answer for it
+    const combatLootDays = new Map();
+    let lastCombatLootLog = null;
     for (const entry of lootEntries || []) {
         const t = Date.parse(entry?.startTime);
         if (!Number.isFinite(t)) continue;
         const type = actionType(entry.actionHrid);
-        const key =
-            type === '/action_types/combat' ? 'combat' : GATHERING_ACTION_TYPES.includes(type) ? 'gathering' : null;
-        if (!key) continue;
-        add(utcDayId(t), key, lootEntryValue(entry, price));
+        if (type === '/action_types/combat') {
+            if (lastCombatLootLog === null || t > lastCombatLootLog) lastCombatLootLog = t;
+            const day = utcDayId(t);
+            combatLootDays.set(day, (combatLootDays.get(day) || 0) + lootEntryValue(entry, price));
+            continue;
+        }
+        if (!GATHERING_ACTION_TYPES.includes(type)) continue;
+        add(utcDayId(t), 'gathering', lootEntryValue(entry, price));
     }
 
     // Production recorder: already per UTC day, already valued
@@ -477,17 +583,61 @@ export function attributeGoldSources(input) {
         add(day, 'marketTax', -figures.tax);
     }
 
+    // The archived runs, which pay for two rows: the consumables burned in them,
+    // and — where the loot log was closed and so recorded nothing — the drops
+    const combatSessionDays = new Map();
+    let sessionsInWindow = 0;
+    let emptyLootSessions = 0;
+    let consumablesAttributed = false;
+    let earliestSession = null;
     for (const session of combatSessions || []) {
         const t = Date.parse(session?.combatStartTime);
         if (!Number.isFinite(t)) continue;
-        const me = (session.players || []).find((player) => player?.isCurrentPlayer) || session.players?.[0];
+        if (earliestSession === null || t < earliestSession) earliestSession = t;
+
+        const me = ownCombatPlayer(session);
         let cost = 0;
         for (const consumable of me?.consumables || []) {
             const consumed = num(consumable?.consumed);
             if (consumed <= 0) continue;
             cost += consumed * num(price(consumable.itemHrid, 0));
         }
-        add(utcDayId(t), 'consumables', -cost);
+        const day = utcDayId(t);
+        add(day, 'consumables', -cost);
+
+        if (!inWindow.has(day)) continue;
+        sessionsInWindow += 1;
+        if (cost > 0) consumablesAttributed = true;
+
+        const loot = combatSessionLootValue(session, price);
+        if (loot.items === 0) emptyLootSessions += 1;
+        const held = combatSessionDays.get(day) || { value: 0, items: 0 };
+        held.value += loot.value;
+        held.items += loot.items;
+        combatSessionDays.set(day, held);
+    }
+
+    // The precedence rule, one day at a time: the loot log where it spoke, the
+    // archived runs where it did not, and a counted gap where neither did
+    let lootLogCombatDays = 0;
+    let sessionCombatDays = 0;
+    let uncoveredCombatDays = 0;
+    const combatRan = sessionsInWindow > 0 || consumablesAttributed;
+    for (const day of days) {
+        if (combatLootDays.has(day)) {
+            add(day, 'combat', combatLootDays.get(day));
+            lootLogCombatDays += 1;
+            continue;
+        }
+        const session = combatSessionDays.get(day);
+        if (session && session.items > 0) {
+            add(day, 'combat', session.value);
+            sessionCombatDays += 1;
+            continue;
+        }
+        // Only a gap when something proves combat happened this window at all;
+        // a character who does not fight has no gap, it has no combat
+        if (combatRan) uncoveredCombatDays += 1;
     }
 
     // The net worth each day closed at, and what the day before closed at, so a
@@ -563,9 +713,17 @@ export function attributeGoldSources(input) {
             // Split the same way the attribution loop above splits them: the
             // loot log holds both, and answering "combat has been recorded
             // since" with the date of a foraging entry claims coverage for a
-            // source that has never been seen
-            combat: earliest(lootEntries, (entry) =>
-                actionType(entry?.actionHrid) === '/action_types/combat' ? Date.parse(entry?.startTime) : NaN
+            // source that has never been seen.
+            //
+            // Combat now has two recordings, so its coverage is the earlier of
+            // them: a character who never opened the loot log is covered from
+            // its oldest archived run, and saying "nothing recorded" there
+            // would be as wrong as the zero this replaced
+            combat: earlierOf(
+                earliest(lootEntries, (entry) =>
+                    actionType(entry?.actionHrid) === '/action_types/combat' ? Date.parse(entry?.startTime) : NaN
+                ),
+                earliestSession
             ),
             gathering: earliest(lootEntries, (entry) =>
                 GATHERING_ACTION_TYPES.includes(actionType(entry?.actionHrid)) ? Date.parse(entry?.startTime) : NaN
@@ -580,5 +738,18 @@ export function attributeGoldSources(input) {
         },
         unpricedEnhancementSessions,
         unpricedProductionActions,
+        // What actually fed the combat row, so the panel can say so rather than
+        // calling a fallback and a gap alike "Measured"
+        combatBasis: {
+            lootLogDays: lootLogCombatDays,
+            sessionDays: sessionCombatDays,
+            uncoveredDays: uncoveredCombatDays,
+            sessions: sessionsInWindow,
+            emptySessions: emptyLootSessions,
+            sessionsHeld: (combatSessions || []).length,
+            sessionCap,
+            lastLootLog: lastCombatLootLog,
+            combatRan,
+        },
     };
 }

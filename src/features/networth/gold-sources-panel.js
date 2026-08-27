@@ -24,6 +24,11 @@
  * starts, because "you earned nothing from production last week" and "nothing
  * was recording production last week" are completely different statements and
  * the numbers alone cannot tell them apart.
+ *
+ * That distinction is why the combat row's Basis cell no longer says a flat
+ * "Measured": combat is fed by the loot log where it spoke and by the archived
+ * battle runs where it did not, and a day neither covered is a gap the row says
+ * out loud rather than a zero it reports with confidence.
  */
 
 import config from '../../core/config.js';
@@ -82,17 +87,88 @@ export function coverageText(since) {
     return `Covers activity since ${new Date(since).toISOString().slice(0, 10)}, when recording began.`;
 }
 
+/** `n thing` / `n things` */
+function plural(count, word) {
+    return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+
+/**
+ * What the combat row's Basis cell says.
+ *
+ * "Measured" alone was the whole bug in one word: it read the same whether the
+ * loot log had recorded the week, whether the archived runs had filled in for
+ * it, or whether nothing had recorded anything and the zero was ignorance. The
+ * vocabulary is kept — a measured figure still says Measured — and what
+ * measured it is said after it.
+ *
+ * @param {Object|null} basis - `attribution.combatBasis`
+ * @returns {string|null} The cell text, or null when there is nothing extra to say
+ */
+export function combatBasisLabel(basis) {
+    if (!basis) return null;
+    const loot = basis.lootLogDays || 0;
+    const feed = basis.sessionDays || 0;
+    if (loot > 0 && feed > 0) return `Measured — loot log ${loot}d, battle feed ${feed}d`;
+    if (loot > 0) return 'Measured — loot log';
+    if (feed > 0) return 'Measured — battle feed';
+    return basis.combatRan ? 'Not recorded' : 'Measured';
+}
+
+/**
+ * The combat row's coverage sentences: which recording spoke, when it last did,
+ * and what neither of them covers.
+ *
+ * @param {Object|null} basis - `attribution.combatBasis`
+ * @returns {string} A sentence or three, or '' when there is nothing to add
+ */
+export function combatCoverageText(basis) {
+    if (!basis) return '';
+    const parts = [];
+
+    parts.push(
+        Number.isFinite(basis.lastLootLog)
+            ? `The loot log last recorded combat on ${new Date(basis.lastLootLog).toISOString().slice(0, 10)}.`
+            : 'The loot log has never recorded combat — the game only sends it while its own panel is open.'
+    );
+
+    if (basis.sessionDays > 0) {
+        parts.push(`The battle feed filled ${plural(basis.sessionDays, 'day')} the loot log did not.`);
+    }
+    if (basis.emptySessions > 0) {
+        parts.push(`${plural(basis.emptySessions, 'recorded run')} carried no loot of your own.`);
+    }
+    if (basis.sessionsHeld >= basis.sessionCap) {
+        parts.push(
+            `Only the ${basis.sessionCap} most recent runs are kept, so days before them are not covered by the feed.`
+        );
+    }
+    if (basis.uncoveredDays > 0) {
+        parts.push(
+            `${plural(basis.uncoveredDays, 'day')} in this window have neither recording, so whatever combat ` +
+                'earned on them is in the residual.'
+        );
+    }
+
+    return parts.join(' ');
+}
+
 /**
  * The tooltip for one source row.
  * @param {string} key - Source key
  * @param {Object} coverage - `attributeGoldSources` coverage map
+ * @param {Object} [combatBasis] - `attribution.combatBasis`, for the combat row
  * @returns {string} Tooltip text
  */
-export function sourceTooltip(key, coverage) {
+export function sourceTooltip(key, coverage, combatBasis = null) {
     const meta = SOURCE_META[key];
     if (!meta) return '';
-    const kind = meta.measured ? 'Measured' : 'Estimated';
-    return `${meta.label} — ${kind}\nData source: ${meta.source}\n${meta.note}\n${coverageText(coverage?.[key])}`;
+    const kind =
+        (key === 'combat' ? combatBasisLabel(combatBasis) : null) || (meta.measured ? 'Measured' : 'Estimated');
+    const extra = key === 'combat' ? combatCoverageText(combatBasis) : '';
+    return (
+        `${meta.label} — ${kind}\nData source: ${meta.source}\n${meta.note}\n${coverageText(coverage?.[key])}` +
+        (extra ? ` ${extra}` : '')
+    );
 }
 
 /**
@@ -281,15 +357,12 @@ export function buildTotalsTable(attribution) {
         table.appendChild(tr);
     };
 
+    const combatBasis = attribution?.combatBasis || null;
     for (const key of SOURCE_KEYS) {
         const meta = SOURCE_META[key];
-        addRow(
-            key,
-            meta.label,
-            totals[key] || 0,
-            sourceTooltip(key, attribution?.coverage),
-            meta.measured ? 'Measured' : 'Estimated'
-        );
+        const basis =
+            (key === 'combat' ? combatBasisLabel(combatBasis) : null) || (meta.measured ? 'Measured' : 'Estimated');
+        addRow(key, meta.label, totals[key] || 0, sourceTooltip(key, attribution?.coverage, combatBasis), basis);
     }
 
     addRow('residual', 'Unexplained residual', residual, RESIDUAL_NOTE, 'Not attributed', true);
@@ -370,6 +443,31 @@ export function buildPanelBody(attribution, { series = null, now = undefined } =
         warning.textContent =
             `${unpriced} enhancement session${unpriced === 1 ? '' : 's'} could not be valued — the item has no ` +
             'market price at one of its two levels — so they are in the residual rather than the enhancement row.';
+        body.appendChild(warning);
+    }
+
+    // The combat row's own version of the unpriced-production warning: a day
+    // neither recording covers is not a day of no combat, and a zero on the row
+    // without this line said it was
+    const combatBasis = attribution?.combatBasis || null;
+    if (combatBasis?.combatRan && (combatBasis.uncoveredDays > 0 || combatBasis.emptySessions > 0)) {
+        const warning = document.createElement('div');
+        warning.className = 'mwi-gold-sources-combat-gap';
+        warning.style.cssText = 'font-size: 10px; color: #fbbf24; margin-top: 6px;';
+        const pieces = [];
+        if (combatBasis.uncoveredDays > 0) {
+            pieces.push(
+                `${plural(combatBasis.uncoveredDays, 'day')} in this window have no combat record at all — the ` +
+                    'loot log was closed and the archived runs do not reach back that far'
+            );
+        }
+        if (combatBasis.emptySessions > 0) {
+            pieces.push(`${plural(combatBasis.emptySessions, 'recorded run')} carried no loot of your own`);
+        }
+        warning.textContent =
+            `${pieces.join(', and ')} — so the combat row is short by whatever they earned and the ` +
+            'difference sits in the residual. Only the ' +
+            `${combatBasis.sessionCap} most recent runs are kept.`;
         body.appendChild(warning);
     }
 

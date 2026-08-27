@@ -25,6 +25,8 @@ const {
     buildTotalsTable,
     sourceTooltip,
     coverageText,
+    combatBasisLabel,
+    combatCoverageText,
     calendarSummaryText,
     calendarCellKind,
     MODAL_ID,
@@ -177,6 +179,84 @@ describe('buildPanelBody', () => {
         const body = buildPanelBody(attribution());
         expect(body.querySelector('.mwi-gold-sources-note').textContent).toContain('UTC');
         expect(body.querySelector('.mwi-gold-sources-note').textContent).toContain('today');
+    });
+});
+
+describe('the combat row’s basis', () => {
+    /** A combatBasis with everything at rest */
+    const basis = (overrides = {}) => ({
+        lootLogDays: 0,
+        sessionDays: 0,
+        uncoveredDays: 0,
+        sessions: 0,
+        emptySessions: 0,
+        sessionsHeld: 0,
+        sessionCap: 20,
+        lastLootLog: null,
+        combatRan: false,
+        ...overrides,
+    });
+
+    test('names whichever recording fed it, and both when both did', () => {
+        expect(combatBasisLabel(basis({ lootLogDays: 3 }))).toBe('Measured — loot log');
+        expect(combatBasisLabel(basis({ sessionDays: 2 }))).toBe('Measured — battle feed');
+        expect(combatBasisLabel(basis({ lootLogDays: 3, sessionDays: 2 }))).toBe(
+            'Measured — loot log 3d, battle feed 2d'
+        );
+    });
+
+    test('a zero nothing recorded is not called Measured', () => {
+        expect(combatBasisLabel(basis({ combatRan: true, uncoveredDays: 7 }))).toBe('Not recorded');
+        // No combat at all is a real zero, and says so
+        expect(combatBasisLabel(basis())).toBe('Measured');
+    });
+
+    test('an attribution from before this existed still labels the row', () => {
+        expect(combatBasisLabel(null)).toBeNull();
+        expect(sourceTooltip('combat', { combat: D19 })).toContain('Measured');
+    });
+
+    test('the coverage line says when the loot log last spoke and what filled the rest', () => {
+        const text = combatCoverageText(
+            basis({ lastLootLog: D19, sessionDays: 2, uncoveredDays: 3, sessionsHeld: 20, combatRan: true })
+        );
+        expect(text).toContain('last recorded combat on 2026-08-19');
+        expect(text).toContain('battle feed filled 2 days');
+        expect(text).toContain('20 most recent runs');
+        expect(text).toContain('3 days in this window have neither recording');
+    });
+
+    test('the coverage line says plainly when the loot log has never recorded combat', () => {
+        expect(combatCoverageText(basis({ sessionDays: 1, combatRan: true }))).toContain('never recorded combat');
+    });
+
+    test('the table cell and tooltip carry the basis through', () => {
+        const body = buildPanelBody(
+            attribution({ combatBasis: basis({ sessionDays: 2, combatRan: true, sessions: 4 }) })
+        );
+        const row = body.querySelector('.mwi-gold-sources-row-combat');
+        expect(row.textContent).toContain('Measured — battle feed');
+        expect(row.title).toContain('battle feed filled 2 days');
+    });
+
+    test('days neither recording covers are called out, not left as a silent zero', () => {
+        const body = buildPanelBody(
+            attribution({
+                combatBasis: basis({ uncoveredDays: 5, emptySessions: 2, sessions: 2, combatRan: true }),
+            })
+        );
+        const note = body.querySelector('.mwi-gold-sources-combat-gap');
+        expect(note.textContent).toContain('5 days');
+        expect(note.textContent).toContain('2 recorded runs');
+        expect(note.textContent).toContain('residual');
+        expect(note.textContent).toContain('20 most recent runs');
+    });
+
+    test('nothing is said when both recordings covered the window', () => {
+        const body = buildPanelBody(
+            attribution({ combatBasis: basis({ lootLogDays: 2, combatRan: true, sessions: 2 }) })
+        );
+        expect(body.querySelector('.mwi-gold-sources-combat-gap')).toBeNull();
     });
 });
 

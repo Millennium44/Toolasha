@@ -7,6 +7,8 @@ import {
     dailyCloses,
     daysBetween,
     lootEntryValue,
+    combatSessionLootValue,
+    ownCombatPlayer,
     splitDropKey,
     utcDayId,
 } from './gold-sources.js';
@@ -54,6 +56,37 @@ describe('day helpers', () => {
             { t: D19, total: 50 },
         ]);
         expect(closes).toEqual({ '2026-08-19': 50, '2026-08-20': 250 });
+    });
+});
+
+describe('combat session loot', () => {
+    const session = {
+        players: [
+            { isCurrentPlayer: false, loot: { a: { itemHrid: '/items/cheese', count: 100 } } },
+            {
+                isCurrentPlayer: true,
+                loot: { a: { itemHrid: '/items/milk', count: 2 }, b: { itemHrid: '/items/milk', count: 3 } },
+            },
+        ],
+    };
+
+    test('ownCombatPlayer picks the flagged player, and the only one when nothing is flagged', () => {
+        expect(ownCombatPlayer(session).isCurrentPlayer).toBe(true);
+        expect(ownCombatPlayer({ players: [{ name: 'solo' }] }).name).toBe('solo');
+        expect(ownCombatPlayer(null)).toBeNull();
+    });
+
+    test('two slots of one item are added rather than one overwriting the other', () => {
+        expect(combatSessionLootValue(session, price)).toEqual({ value: 5 * 40, items: 2 });
+    });
+
+    test('an unpriced drop is worth nothing but still counts as a recorded entry', () => {
+        const unpriced = { players: [{ isCurrentPlayer: true, loot: { a: { itemHrid: '/items/coin', count: 900 } } }] };
+        expect(combatSessionLootValue(unpriced, price)).toEqual({ value: 0, items: 1 });
+    });
+
+    test('a run with no loot map at all records no entries', () => {
+        expect(combatSessionLootValue({ players: [{ isCurrentPlayer: true }] }, price)).toEqual({ value: 0, items: 0 });
     });
 });
 
@@ -335,6 +368,187 @@ describe('attributeGoldSources', () => {
         });
 
         expect(result.unpricedProductionActions).toBe(7);
+    });
+
+    /** An archived run, its loot map keyed the way the game keys it */
+    const run = (t, loot, { partyLoot = null, consumables = [] } = {}) => ({
+        combatStartTime: new Date(t).toISOString(),
+        players: [
+            {
+                isCurrentPlayer: true,
+                loot: Object.fromEntries(
+                    Object.entries(loot).map(([itemHrid, count], index) => [String(index), { itemHrid, count }])
+                ),
+                consumables,
+            },
+            ...(partyLoot
+                ? [
+                      {
+                          isCurrentPlayer: false,
+                          loot: Object.fromEntries(
+                              Object.entries(partyLoot).map(([itemHrid, count], index) => [
+                                  `p${index}`,
+                                  { itemHrid, count },
+                              ])
+                          ),
+                          consumables: [],
+                      },
+                  ]
+                : []),
+        ],
+    });
+
+    /** A combat loot log entry */
+    const combatEntry = (t, drops) => ({
+        startTime: new Date(t).toISOString(),
+        actionHrid: '/actions/combat/cow',
+        drops,
+    });
+
+    test('a day the loot log recorded uses the loot log alone, never both', () => {
+        const result = attributeGoldSources({
+            ...base,
+            lootEntries: [combatEntry(D20, { '/items/cheese': 10 })],
+            // The same day's run is in the history too; adding it would count
+            // the same drops twice
+            combatSessions: [run(D20, { '/items/cheese': 10 })],
+        });
+
+        expect(result.totals.sources.combat).toBe(1000);
+        expect(result.combatBasis.lootLogDays).toBe(1);
+        expect(result.combatBasis.sessionDays).toBe(0);
+    });
+
+    test('a day the loot log missed falls back to the run’s own loot', () => {
+        const result = attributeGoldSources({
+            ...base,
+            lootEntries: [],
+            combatSessions: [run(D20, { '/items/cheese': 3, '/items/log': 2 })],
+        });
+
+        expect(result.totals.sources.combat).toBe(3 * 100 + 2 * 10);
+        expect(result.combatBasis.sessionDays).toBe(1);
+        expect(result.combatBasis.lootLogDays).toBe(0);
+    });
+
+    test('the fallback counts only this character’s loot, not the party’s', () => {
+        const result = attributeGoldSources({
+            ...base,
+            combatSessions: [run(D20, { '/items/cheese': 1 }, { partyLoot: { '/items/cheese': 50 } })],
+        });
+
+        expect(result.totals.sources.combat).toBe(100);
+    });
+
+    test('a mixed window takes each day from whichever recording has it', () => {
+        const result = attributeGoldSources({
+            ...base,
+            lootEntries: [combatEntry(D20, { '/items/cheese': 10 })],
+            combatSessions: [run(D19, { '/items/log': 5 }), run(D20, { '/items/cheese': 999 })],
+        });
+
+        // The 20th is the loot log's, the 19th is the feed's
+        expect(result.totals.sources.combat).toBe(1000 + 50);
+        expect(result.combatBasis.lootLogDays).toBe(1);
+        expect(result.combatBasis.sessionDays).toBe(1);
+        expect(result.combatBasis.uncoveredDays).toBe(0);
+    });
+
+    test('a day with a loot log entry worth nothing is still the loot log’s day', () => {
+        const result = attributeGoldSources({
+            ...base,
+            lootEntries: [combatEntry(D20, {})],
+            combatSessions: [run(D20, { '/items/cheese': 10 })],
+        });
+
+        expect(result.totals.sources.combat).toBe(0);
+        expect(result.combatBasis.lootLogDays).toBe(1);
+        expect(result.combatBasis.sessionDays).toBe(0);
+    });
+
+    test('runs with an empty loot map leave a counted gap rather than a confident zero', () => {
+        const result = attributeGoldSources({
+            ...base,
+            combatSessions: [
+                {
+                    combatStartTime: new Date(D20).toISOString(),
+                    players: [{ isCurrentPlayer: true, loot: {}, consumables: [] }],
+                },
+            ],
+        });
+
+        expect(result.totals.sources.combat).toBe(0);
+        expect(result.combatBasis.emptySessions).toBe(1);
+        expect(result.combatBasis.combatRan).toBe(true);
+        // Both days of the window are uncovered — the run recorded no loot and
+        // the loot log recorded nothing at all
+        expect(result.combatBasis.uncoveredDays).toBe(2);
+    });
+
+    test('consumables alone are enough to prove combat ran on an unrecorded day', () => {
+        const result = attributeGoldSources({
+            ...base,
+            combatSessions: [
+                {
+                    combatStartTime: new Date(D20).toISOString(),
+                    players: [{ isCurrentPlayer: true, consumables: [{ itemHrid: '/items/coffee', consumed: 8 }] }],
+                },
+            ],
+        });
+
+        expect(result.totals.sources.consumables).toBe(-200);
+        expect(result.combatBasis.combatRan).toBe(true);
+        expect(result.combatBasis.uncoveredDays).toBe(2);
+    });
+
+    test('a character that never fought has no gap, because it has no combat', () => {
+        const result = attributeGoldSources({ ...base, combatSessions: [], lootEntries: [] });
+        expect(result.combatBasis.combatRan).toBe(false);
+        expect(result.combatBasis.uncoveredDays).toBe(0);
+    });
+
+    test('the retained-run bound is reported so the fallback’s reach is not overstated', () => {
+        const sessions = [];
+        for (let i = 0; i < 20; i += 1) sessions.push(run(D20 - i * 60_000, { '/items/log': 1 }));
+        const result = attributeGoldSources({ ...base, combatSessions: sessions, sessionCap: 20 });
+
+        expect(result.combatBasis.sessionsHeld).toBe(20);
+        expect(result.combatBasis.sessionCap).toBe(20);
+        // Twenty runs all landed on the 20th, so the 19th is still uncovered
+        expect(result.combatBasis.uncoveredDays).toBe(1);
+    });
+
+    test('combat coverage falls back to the oldest archived run when the loot log is silent', () => {
+        const result = attributeGoldSources({
+            ...base,
+            lootEntries: [],
+            combatSessions: [run(D19, { '/items/log': 1 }), run(D20, { '/items/log': 1 })],
+        });
+
+        expect(result.coverage.combat).toBe(D19);
+        expect(result.combatBasis.lastLootLog).toBeNull();
+    });
+
+    test('the loot log’s last recording is reported for the coverage line', () => {
+        const result = attributeGoldSources({
+            ...base,
+            lootEntries: [combatEntry(D19, { '/items/log': 1 }), combatEntry(D20, { '/items/log': 1 })],
+        });
+
+        expect(result.combatBasis.lastLootLog).toBe(D20);
+    });
+
+    test('consumables attribution is untouched by the loot fallback', () => {
+        const result = attributeGoldSources({
+            ...base,
+            lootEntries: [combatEntry(D20, { '/items/cheese': 10 })],
+            combatSessions: [
+                run(D20, { '/items/cheese': 10 }, { consumables: [{ itemHrid: '/items/coffee', consumed: 8 }] }),
+            ],
+        });
+
+        expect(result.totals.sources.consumables).toBe(-200);
+        expect(result.totals.sources.combat).toBe(1000);
     });
 
     test('activity outside the window is left out entirely', () => {

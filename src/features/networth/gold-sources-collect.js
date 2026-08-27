@@ -13,7 +13,7 @@
 
 import dataManager from '../../core/data-manager.js';
 import tradeLedgerStore from '../market/trade-ledger-store.js';
-import { loadSessions as loadCombatSessions } from '../combat-stats/combat-session-history.js';
+import { loadSessions as loadCombatSessions, MAX_SESSIONS } from '../combat-stats/combat-session-history.js';
 import { loadSessions as loadEnhancementSessions } from '../enhancement/enhancement-storage.js';
 import { createAlchemySessionStore, NO_CHARACTER } from '../alchemy/alchemy-session-store.js';
 import lootLogHistory from '../actions/loot-log-history.js';
@@ -120,6 +120,9 @@ export async function collectGoldSourceInputs({ price = createPricer() } = {}) {
         enhancementSessions: Object.values(enhancementSessions || {}),
         tradeFills,
         combatSessions,
+        // The bound the archived runs are kept under, carried through so the
+        // panel can say how far the combat fallback actually reaches back
+        sessionCap: MAX_SESSIONS,
         price,
         marketTax: MARKET_TAX,
     };
