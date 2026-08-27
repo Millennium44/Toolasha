@@ -506,7 +506,14 @@ class ActionTimeDisplay {
             if (!isTrulyInfinite && count > 0) {
                 const avgActionsPerBaseAction = calculateEfficiencyMultiplier(totalEfficiency);
                 baseActionsNeeded = Math.ceil(count / avgActionsPerBaseAction);
-                totalTime = baseActionsNeeded * actionTime;
+                // Scoped by (id, currentCount), so this only ever subtracts for the action
+                // actually in progress — a queued action gets 0 back and is unaffected
+                const elapsedInCurrentUnit = dataManager.getElapsedSecondsInCurrentUnit(
+                    actionObj.id,
+                    actionObj.currentCount,
+                    actionTime
+                );
+                totalTime = Math.max(0, baseActionsNeeded * actionTime - elapsedInCurrentUnit);
                 actionTimeSeconds = totalTime;
             } else if (isTrulyInfinite) {
                 totalTime = Infinity;
@@ -1064,7 +1071,15 @@ class ActionTimeDisplay {
             // Finite action or inventory-count infinite - remainingQueuedActions is queued actions
             baseActionsNeeded = Math.ceil(remainingQueuedActions / avgActionsPerBaseAction);
         }
-        const totalTimeSeconds = baseActionsNeeded * actionTime;
+        // Subtract what the in-progress base action has already run for. baseActionsNeeded
+        // counts that unit as a whole one, so without this the ETA re-anchors to a fresh full
+        // action on every reload/remount and walks later each time.
+        const elapsedInCurrentUnit = dataManager.getElapsedSecondsInCurrentUnit(
+            action.id,
+            action.currentCount,
+            actionTime
+        );
+        const totalTimeSeconds = Math.max(0, baseActionsNeeded * actionTime - elapsedInCurrentUnit);
 
         // Calculate transmute recycle time estimate
         let recycleTimeSeconds = null;
@@ -1328,7 +1343,13 @@ class ActionTimeDisplay {
             }
         }
 
-        const materialTime = materialLimit !== null ? materialLimit * perActionTime : null;
+        const elapsedInCurrentUnit = dataManager.getElapsedSecondsInCurrentUnit(
+            action.id,
+            action.currentCount,
+            perActionTime
+        );
+        const materialTime =
+            materialLimit !== null ? Math.max(0, materialLimit * perActionTime - elapsedInCurrentUnit) : null;
 
         // Apply CSS overrides for non-combat display
         const enhCompact = config.getSetting('actionBar_compactWidth') || isMobileMode();
@@ -1437,7 +1458,12 @@ class ActionTimeDisplay {
             if (actionObj.hasMaxCount) {
                 actions = Math.min(actions, actionObj.maxCount - actionObj.currentCount);
             }
-            return { count: actions, totalTime: actions * perActionTime };
+            const elapsedInCurrentUnit = dataManager.getElapsedSecondsInCurrentUnit(
+                actionObj.id,
+                actionObj.currentCount,
+                perActionTime
+            );
+            return { count: actions, totalTime: Math.max(0, actions * perActionTime - elapsedInCurrentUnit) };
         }
 
         // Determine queue count
@@ -1453,7 +1479,12 @@ class ActionTimeDisplay {
             queuedActions === Infinity
                 ? predictions.expectedAttempts
                 : Math.min(queuedActions, predictions.expectedAttempts);
-        const totalTime = realisticActions * perActionTime;
+        const elapsedInCurrentUnit = dataManager.getElapsedSecondsInCurrentUnit(
+            actionObj.id,
+            actionObj.currentCount,
+            perActionTime
+        );
+        const totalTime = Math.max(0, realisticActions * perActionTime - elapsedInCurrentUnit);
 
         return { count: realisticActions, totalTime };
     }
@@ -2186,7 +2217,12 @@ class ActionTimeDisplay {
                                 count = materialLimit; // Max queued actions based on materials
                                 const avgActionsPerBaseAction = calculateEfficiencyMultiplier(totalEfficiency);
                                 baseActionsNeeded = Math.ceil(count / avgActionsPerBaseAction);
-                                const totalTime = baseActionsNeeded * actionTime;
+                                const elapsedInCurrentUnit = dataManager.getElapsedSecondsInCurrentUnit(
+                                    currentAction.id,
+                                    currentAction.currentCount,
+                                    actionTime
+                                );
+                                const totalTime = Math.max(0, baseActionsNeeded * actionTime - elapsedInCurrentUnit);
                                 accumulatedTime += totalTime;
                                 actionTimeSeconds = totalTime;
                             }
@@ -2205,7 +2241,12 @@ class ActionTimeDisplay {
 
                             // Calculate time-consuming actions needed
                             baseActionsNeeded = Math.ceil(count / avgActionsPerBaseAction);
-                            const totalTime = baseActionsNeeded * actionTime;
+                            const elapsedInCurrentUnit = dataManager.getElapsedSecondsInCurrentUnit(
+                                currentAction.id,
+                                currentAction.currentCount,
+                                actionTime
+                            );
+                            const totalTime = Math.max(0, baseActionsNeeded * actionTime - elapsedInCurrentUnit);
                             accumulatedTime += totalTime;
                             actionTimeSeconds = totalTime;
                         }

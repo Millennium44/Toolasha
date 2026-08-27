@@ -2,7 +2,7 @@
  * Tests for DataManager event forwarding
  */
 
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
 let webSocketHandlers = new Map();
 
@@ -29,13 +29,20 @@ const storageMock = vi.hoisted(() => ({
     data: new Map(),
     getJSON: null,
     setJSON: null,
+    get: null,
+    set: null,
     flushAll: null,
 }));
+
+/** Namespaced key so the plain and JSON stores in the mock cannot collide */
+const storeKey = (storeName, key) => `${storeName}::${key}`;
 
 vi.mock('./storage.js', () => ({
     default: {
         getJSON: (key, storeName, fallback) => storageMock.getJSON(key, storeName, fallback),
         setJSON: (key, value, storeName) => storageMock.setJSON(key, value, storeName),
+        get: (key, storeName, fallback) => storageMock.get(key, storeName, fallback),
+        set: (key, value, storeName) => storageMock.set(key, value, storeName),
         flushAll: () => storageMock.flushAll(),
     },
 }));
@@ -47,6 +54,14 @@ beforeEach(() => {
     );
     storageMock.setJSON = vi.fn(async (key, value) => {
         storageMock.data.set(key, value);
+        return true;
+    });
+    storageMock.get = vi.fn(async (key, storeName = 'settings', fallback = null) => {
+        const k = storeKey(storeName, key);
+        return storageMock.data.has(k) ? storageMock.data.get(k) : fallback;
+    });
+    storageMock.set = vi.fn(async (key, value, storeName = 'settings') => {
+        storageMock.data.set(storeKey(storeName, key), value);
         return true;
     });
     storageMock.flushAll = vi.fn(async () => {});
@@ -595,6 +610,139 @@ describe('actions_updated', () => {
             { id: 8, isDone: false },
             { id: 7, isDone: false, take: 'second' },
         ]);
+    });
+});
+
+describe('action unit boundary (upstream 9210b4ab)', () => {
+    /** An action queue entry, front-most by default */
+    const queued = (overrides = {}) => ({
+        id: 1,
+        ordinal: 0,
+        isDone: false,
+        actionHrid: '/actions/combat/holy_hammer',
+        currentCount: 5,
+        ...overrides,
+    });
+
+    // Every test here drives the clock; leaving fake timers armed would leak into the rest
+    // of the file, which does not expect them.
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('an action_completed continuation dates the new unit from that instant', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterActions = [queued()];
+        dataManager.actionUnitBoundary = null;
+
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-27T12:00:00Z'));
+
+        // First sighting only establishes the pair — nothing is claimed as elapsed yet
+        webSocketHandlers.get('action_completed')({ endCharacterAction: queued() });
+        expect(dataManager.getElapsedSecondsInCurrentUnit(1, 5, 135)).toBe(0);
+
+        // The continuation for the next unit is the boundary we can actually date
+        vi.setSystemTime(new Date('2026-08-27T12:02:15Z'));
+        webSocketHandlers.get('action_completed')({ endCharacterAction: queued({ currentCount: 6 }) });
+
+        vi.setSystemTime(new Date('2026-08-27T12:03:15Z'));
+        expect(dataManager.getElapsedSecondsInCurrentUnit(1, 6, 135)).toBe(60);
+    });
+
+    test('the boundary is not reset while the same unit is still running', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterActions = [queued()];
+        dataManager.actionUnitBoundary = null;
+
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-27T12:00:00Z'));
+        webSocketHandlers.get('actions_updated')({ endCharacterActions: [queued()] });
+
+        // Same (id, currentCount) arriving again is the same in-progress unit; re-anchoring it
+        // here is exactly the bug — the ETA would walk later on every message
+        vi.setSystemTime(new Date('2026-08-27T12:00:40Z'));
+        webSocketHandlers.get('actions_updated')({ endCharacterActions: [queued()] });
+
+        expect(dataManager.getElapsedSecondsInCurrentUnit(1, 5, 135)).toBe(40);
+    });
+
+    test('a new action taking the front slot starts its own unit', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.characterActions = [queued()];
+        dataManager.actionUnitBoundary = null;
+
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-27T12:00:00Z'));
+        webSocketHandlers.get('actions_updated')({ endCharacterActions: [queued()] });
+
+        vi.setSystemTime(new Date('2026-08-27T12:05:00Z'));
+        dataManager.characterActions = [];
+        webSocketHandlers.get('actions_updated')({
+            endCharacterActions: [queued({ id: 2, currentCount: 0 })],
+        });
+
+        vi.setSystemTime(new Date('2026-08-27T12:05:10Z'));
+        expect(dataManager.getElapsedSecondsInCurrentUnit(2, 0, 135)).toBe(10);
+        // The old action's boundary is gone, not merely shadowed
+        expect(dataManager.getElapsedSecondsInCurrentUnit(1, 5, 135)).toBe(0);
+    });
+
+    test('fails closed for a different action id or a count that moved on', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        dataManager.actionUnitBoundary = { actionId: 1, currentCount: 5, unitStartTime: Date.now() - 60_000 };
+
+        expect(dataManager.getElapsedSecondsInCurrentUnit(2, 5, 135)).toBe(0);
+        expect(dataManager.getElapsedSecondsInCurrentUnit(1, 6, 135)).toBe(0);
+        expect(dataManager.getElapsedSecondsInCurrentUnit(1, 5, 135)).toBeCloseTo(60, 0);
+    });
+
+    test('fails closed with no boundary at all, and clamps to one unit', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+
+        dataManager.actionUnitBoundary = null;
+        expect(dataManager.getElapsedSecondsInCurrentUnit(1, 5, 135)).toBe(0);
+
+        // A boundary older than the unit it describes still cannot claim more than one unit
+        dataManager.actionUnitBoundary = { actionId: 1, currentCount: 5, unitStartTime: Date.now() - 10 * 60_000 };
+        expect(dataManager.getElapsedSecondsInCurrentUnit(1, 5, 135)).toBe(135);
+
+        // An unusable unit duration is never a licence to subtract anything
+        expect(dataManager.getElapsedSecondsInCurrentUnit(1, 5, Infinity)).toBe(0);
+        expect(dataManager.getElapsedSecondsInCurrentUnit(1, 5, 0)).toBe(0);
+    });
+
+    test('a matching boundary survives a reload, a stale one does not', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+        dataManager.characterActions = [];
+        dataManager.actionUnitBoundary = null;
+
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-27T12:00:00Z'));
+
+        await webSocketHandlers.get('init_character_data')(initPayload({ characterActions: [queued()] }));
+        expect(storageMock.set).toHaveBeenCalledWith('char-1', expect.anything(), 'actionProgress');
+
+        // Reload: same character, same action still on its fifth count
+        vi.setSystemTime(new Date('2026-08-27T12:01:00Z'));
+        resetCharacter(dataManager);
+        dataManager.actionUnitBoundary = null;
+        dataManager.characterActions = [];
+        await webSocketHandlers.get('init_character_data')(initPayload({ characterActions: [queued()] }));
+
+        expect(dataManager.getElapsedSecondsInCurrentUnit(1, 5, 135)).toBe(60);
+
+        // A count that moved on while the page was closed is not something we can date
+        vi.setSystemTime(new Date('2026-08-27T12:02:00Z'));
+        resetCharacter(dataManager);
+        dataManager.actionUnitBoundary = null;
+        dataManager.characterActions = [];
+        await webSocketHandlers.get('init_character_data')(
+            initPayload({ characterActions: [queued({ currentCount: 9 })] })
+        );
+
+        expect(dataManager.getElapsedSecondsInCurrentUnit(1, 9, 135)).toBe(0);
     });
 });
 
