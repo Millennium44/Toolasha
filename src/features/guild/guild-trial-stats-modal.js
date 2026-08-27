@@ -16,6 +16,7 @@
 
 import domObserver from '../../core/dom-observer.js';
 import { parseItemCount } from '../../utils/number-parser.js';
+import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
 
 /** The stats table the game draws inside the modal — the tab-switch also redraws it */
 const TABLE_CLASS = 'GuildPanel_trialStatsTable';
@@ -24,6 +25,10 @@ const MODAL_SELECTOR = '[class*="GuildPanel_trialStatsModal"]';
 /** The selected tab's own label carries the trial name */
 const ACTIVE_TAB_SELECTOR = '[role="tab"][aria-selected="true"] [class*="TabsComponent_badge"]';
 const TABLE_SELECTOR = `table[class*="${TABLE_CLASS}"]`;
+/** The member cell's name element, the one carrying the exact `data-name` */
+const NAME_SELECTOR = '[class*="CharacterName_name"]';
+/** dataset flag marking a name already wired, so a redraw never double-binds */
+const LINKED_FLAG = 'mwiTrialProfileLink';
 
 /**
  * Normalise a column header to a stable key.
@@ -104,6 +109,61 @@ export function parseTrialStatsModal(modal) {
     return { trialName, kind, columns, members };
 }
 
+/**
+ * Make the stats table's member names open their profile on click.
+ *
+ * The modal names the whole guild's trial participants and gives no way to look
+ * any of them up — the same gap the party popup had, and it is closed the same
+ * way: `openPlayerProfile` from `utils/profile-command.js`, which calls the
+ * game's own `handleViewProfile(name)` on the React core and falls back to the
+ * `/profile <name>` chat command on builds without it. One click is exactly one
+ * game action — the profile open — and nothing else.
+ *
+ * The game's own cell is decorated in place rather than replaced: only
+ * `cursor`, `title` and a hover underline are added, so the name keeps whatever
+ * colour and truncation the game gave it. Names are taken from `data-name`,
+ * which is exact where the visible text can be cut off, and a name that is not
+ * a single MWI name token is left alone.
+ *
+ * Idempotent: the table is redrawn on every tab switch, and each redraw brings
+ * fresh cells, so this is safe to run on every observer fire.
+ *
+ * @param {Element} root - The modal, or any node containing the stats table
+ * @returns {number} How many names were newly wired
+ */
+export function linkMemberNames(root) {
+    if (!root || typeof root.querySelectorAll !== 'function') return 0;
+
+    // The observer hands over the modal when it can reach one and the bare
+    // table when it cannot, so both shapes have to resolve to the same tables.
+    const tables = root.matches?.(TABLE_SELECTOR) ? [root] : [...root.querySelectorAll(TABLE_SELECTOR)];
+
+    let linked = 0;
+    for (const el of tables.flatMap((table) => [...table.querySelectorAll(NAME_SELECTOR)])) {
+        if (el.dataset?.[LINKED_FLAG]) continue;
+        const name = (el.getAttribute('data-name') || el.textContent || '').trim();
+        if (!name || !VALID_PLAYER_NAME_RE.test(name)) continue;
+
+        if (el.dataset) el.dataset[LINKED_FLAG] = '1';
+        el.style.cursor = 'pointer';
+        if (!el.title) el.title = `Open ${name}'s profile`;
+        // Hover underline, the same affordance chat's profile links use — but
+        // inline, because the colour here belongs to the game's own cell.
+        el.addEventListener('mouseenter', () => {
+            el.style.textDecoration = 'underline';
+        });
+        el.addEventListener('mouseleave', () => {
+            el.style.textDecoration = '';
+        });
+        el.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openPlayerProfile(name, { logPrefix: 'GuildTrialStatsModal' });
+        });
+        linked += 1;
+    }
+    return linked;
+}
+
 class GuildTrialStatsModal {
     constructor() {
         this.initialized = false;
@@ -121,6 +181,15 @@ class GuildTrialStatsModal {
         this.unregister = domObserver.onClass('GuildTrialStatsModal', TABLE_CLASS, (table) => {
             const modal = table.closest?.(MODAL_SELECTOR) || table.parentElement;
             this.capture(modal || table);
+            // After the capture, because the reading is of the game's own markup
+            // and this adds decoration to it. Runs whether or not the capture
+            // found anything: a name is worth linking even on a tab whose
+            // figures this module cannot use.
+            try {
+                linkMemberNames(modal || table);
+            } catch (error) {
+                console.error('[GuildTrialStatsModal] Failed to link member names:', error);
+            }
         });
     }
 

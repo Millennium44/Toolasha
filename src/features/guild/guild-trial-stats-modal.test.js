@@ -1,6 +1,28 @@
 /** @vitest-environment happy-dom */
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
-import { parseTrialStatsModal, headerKey, guildTrialStatsModal } from './guild-trial-stats-modal.js';
+import { parseTrialStatsModal, headerKey, guildTrialStatsModal, linkMemberNames } from './guild-trial-stats-modal.js';
+
+// The shared profile opener — the one game action a name click is allowed to
+// perform. Mocked so the tests can assert it is the mechanism reused, without
+// needing the game's React core.
+const profile = vi.hoisted(() => ({ opened: [] }));
+vi.mock('../../utils/profile-command.js', () => ({
+    openPlayerProfile: (name, options) => {
+        profile.opened.push({ name, options });
+        return true;
+    },
+    VALID_PLAYER_NAME_RE: /^[A-Za-z0-9_]+$/,
+}));
+// The observer is driven by hand, the way the other guild feature tests drive it
+const observers = vi.hoisted(() => ({ byClass: {} }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: (id, className, callback) => {
+            observers.byClass[className] = callback;
+            return () => delete observers.byClass[className];
+        },
+    },
+}));
 
 // The real "Combat Trial - Stats" modal, captured from the game (Jellyfish tab
 // active, Swarm tab hidden and empty). Abbreviated figures, data-name on the
@@ -134,5 +156,119 @@ describe('the capture singleton', () => {
     test('a modal that parses to nothing is ignored rather than stored', () => {
         guildTrialStatsModal.capture(modalEl('<div class="GuildPanel_trialStatsModal__x"></div>'));
         expect(guildTrialStatsModal.snapshot()).toEqual({});
+    });
+});
+
+describe('clickable member names', () => {
+    beforeEach(() => {
+        profile.opened.length = 0;
+        guildTrialStatsModal.statsByTrial.clear();
+    });
+    afterEach(() => {
+        guildTrialStatsModal.cleanup();
+        guildTrialStatsModal.statsByTrial.clear();
+    });
+
+    /** The name cell for `name`, as the game draws it */
+    const nameCell = (modal, name) => modal.querySelector(`[class*="CharacterName_name"][data-name="${name}"]`);
+
+    test('every member name in the table becomes clickable', () => {
+        const modal = modalEl();
+        expect(linkMemberNames(modal)).toBe(4);
+
+        for (const name of ['Tib', 'chocstest', 'Orven', 'MillenniumTest']) {
+            const cell = nameCell(modal, name);
+            expect(cell.style.cursor).toBe('pointer');
+            expect(cell.title).toBe(`Open ${name}'s profile`);
+        }
+    });
+
+    test('a click opens that player through the shared profile helper, and does nothing else', () => {
+        const modal = modalEl();
+        linkMemberNames(modal);
+
+        nameCell(modal, 'Orven').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+        // Exactly one game action: the profile open, for the name that was clicked
+        expect(profile.opened).toEqual([{ name: 'Orven', options: { logPrefix: 'GuildTrialStatsModal' } }]);
+    });
+
+    test('the name is taken from data-name, which survives a truncated label', () => {
+        const modal = modalEl();
+        const cell = nameCell(modal, 'MillenniumTest');
+        cell.querySelector('span').textContent = 'Millennium…';
+        linkMemberNames(modal);
+
+        cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(profile.opened[0].name).toBe('MillenniumTest');
+    });
+
+    test('hovering underlines the name, leaving the game its own colour', () => {
+        const modal = modalEl();
+        linkMemberNames(modal);
+        const cell = nameCell(modal, 'Tib');
+
+        expect(cell.style.textDecoration).toBe('');
+        cell.dispatchEvent(new MouseEvent('mouseenter'));
+        expect(cell.style.textDecoration).toBe('underline');
+        cell.dispatchEvent(new MouseEvent('mouseleave'));
+        expect(cell.style.textDecoration).toBe('');
+        // The class list is the game's; nothing recolours the cell
+        expect(cell.getAttribute('style')).not.toContain('color');
+    });
+
+    test('a redraw never double-binds a name it has already wired', () => {
+        const modal = modalEl();
+        expect(linkMemberNames(modal)).toBe(4);
+        expect(linkMemberNames(modal)).toBe(0);
+
+        nameCell(modal, 'Tib').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(profile.opened).toHaveLength(1);
+    });
+
+    test('a name that is not a single MWI name token is left alone', () => {
+        const modal = modalEl();
+        const cell = nameCell(modal, 'Tib');
+        cell.setAttribute('data-name', 'Giant Jellyfish');
+        cell.querySelector('span').textContent = 'Giant Jellyfish';
+
+        expect(linkMemberNames(modal)).toBe(3);
+        expect(cell.style.cursor).toBe('');
+    });
+
+    test('the skilling modal gets the same treatment', () => {
+        const modal = modalEl(SKILLING_HTML);
+        expect(linkMemberNames(modal)).toBe(2);
+    });
+
+    test('names outside the stats table are not touched', () => {
+        const modal = modalEl();
+        const stray = document.createElement('div');
+        stray.className = 'CharacterName_name__x';
+        stray.setAttribute('data-name', 'Bystander');
+        modal.appendChild(stray);
+
+        expect(linkMemberNames(modal)).toBe(4);
+        expect(stray.style.cursor).toBe('');
+    });
+
+    test('the observer wires the names when the game draws the table', () => {
+        guildTrialStatsModal.initialize();
+        const modal = modalEl();
+        document.body.appendChild(modal);
+
+        observers.byClass['GuildPanel_trialStatsTable'](modal.querySelector('table'));
+
+        // Both jobs done off one fire: the capture, and the decoration
+        expect(guildTrialStatsModal.getStats('Trial Jellyfish').members).toHaveLength(4);
+        nameCell(modal, 'chocstest').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        expect(profile.opened[0].name).toBe('chocstest');
+
+        modal.remove();
+    });
+
+    test('the bare table works too, for a build with no reachable modal wrapper', () => {
+        const table = modalEl().querySelector('table');
+        expect(linkMemberNames(table)).toBe(4);
     });
 });
