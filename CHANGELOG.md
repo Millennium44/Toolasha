@@ -8,7 +8,7 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ### Custom tabs survive a rapid character switch, and crafting prices can be forced fresh
 
-The sync-pull fix wasn't the whole story: switching characters quickly skips this feature's own re-init as a performance optimisation, and it kept saving under whoever the *current* character had become while still holding the *previous* one's tabs in memory — merging one character's tabs into another's, and deleting a shared tab (from Export/Import) if either side had removed it. The feature now refuses to save under a mismatched character and reloads its own tabs the moment the arriving character's data is ready, independent of that skip. Also: a "Refresh Prices" button next to Sort/Mode/Craft on crafting and gathering panels force-refetches the market and updates every visible Profit/hr figure in place, instead of having to open the marketplace per item.
+The sync-pull fix wasn't the whole story: switching characters quickly skips this feature's own re-init as a performance optimisation, and it kept saving under whoever the _current_ character had become while still holding the _previous_ one's tabs in memory — merging one character's tabs into another's, and deleting a shared tab (from Export/Import) if either side had removed it. The feature now refuses to save under a mismatched character and reloads its own tabs the moment the arriving character's data is ready, independent of that skip. Also: a "Refresh Prices" button next to Sort/Mode/Craft on crafting and gathering panels force-refetches the market and updates every visible Profit/hr figure in place, instead of having to open the marketplace per item.
 
 ### Custom tabs know when they changed, so a sync fold picks the right copy
 
@@ -1207,20 +1207,17 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.23.0](https://github.com/Millennium44/Toolasha/compare/v3.22.0...v3.23.0) (2026-08-27)
 
-
 ### Features
 
-* Refresh Prices button on skill pages to update all profit/hr at once ([bd57c72](https://github.com/Millennium44/Toolasha/commit/bd57c723d30572e99f32d9218d23c70373a7f67d))
-
+- Refresh Prices button on skill pages to update all profit/hr at once ([bd57c72](https://github.com/Millennium44/Toolasha/commit/bd57c723d30572e99f32d9218d23c70373a7f67d))
 
 ### Bug Fixes
 
-* custom tabs no longer save one character's tabs under another's key ([278624d](https://github.com/Millennium44/Toolasha/commit/278624d62b8a842c54d975369933139b40aa51a2))
-
+- custom tabs no longer save one character's tabs under another's key ([278624d](https://github.com/Millennium44/Toolasha/commit/278624d62b8a842c54d975369933139b40aa51a2))
 
 ### Documentation
 
-* changelog for the character-switch tab fix and price refresh ([6d7eed5](https://github.com/Millennium44/Toolasha/commit/6d7eed5cec6c8b2d351b6cf1cb30b4033884763a))
+- changelog for the character-switch tab fix and price refresh ([6d7eed5](https://github.com/Millennium44/Toolasha/commit/6d7eed5cec6c8b2d351b6cf1cb30b4033884763a))
 
 ## [3.22.0](https://github.com/Millennium44/Toolasha/compare/v3.21.1...v3.22.0) (2026-08-25)
 
