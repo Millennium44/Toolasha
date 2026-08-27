@@ -12,7 +12,7 @@ Player names across the Trial Abilities panel (aura holders, the utility rosters
 
 ### Sync: two characters pushing at once no longer fails with HTTP 409
 
-Two tabs on the sync interval — different characters, same gist — could land their pushes at the same moment, and GitHub answers the loser with a 409. That push now retries up to twice with a short jittered pause and a fresh file listing, and only a conflict that never clears is surfaced, named as what it is.
+Two tabs on the sync interval — different characters, same gist — could land their pushes at the same moment, and GitHub answers the loser with a 409. That push now retries up to twice with a short jittered pause and a fresh file listing, and only a conflict that never clears is surfaced, named as what it is. Tabs in the same browser also coordinate outright: while one tab's sync runs, another tab's interval tick skips (the database is shared — the winner is pushing it) instead of racing, and a manually clicked push still runs immediately.
 
 ### Trade Ledger: instant sales finally count, and rows open the marketplace
 

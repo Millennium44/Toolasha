@@ -625,6 +625,45 @@ class SyncManager {
      * @returns {Promise<{ok: boolean, skipped?: boolean, reason?: string}>} Outcome
      * @private
      */
+    /**
+     * Run a sync under a browser-wide lock, so tabs queue instead of racing.
+     *
+     * Four characters open is four tabs on the same interval pushing the same
+     * gist, and GitHub answers the losers with 409s. The `busy` flag above is
+     * per-tab; this is the cross-tab half, and it never waits: the lock is
+     * taken only if free (a held lock is a sync running in another tab), and
+     * Web Locks release on their own when a tab dies, so nothing can wedge it
+     * open for ever. A takeover of a stuck same-tab sync bypasses this — the
+     * stuck operation is the one holding the lock. No Web Locks API (an old
+     * browser) runs unguarded, as before.
+     *
+     * @param {boolean} silent - Whether this is an interval sync nobody asked for
+     * @param {Function} operation - What to run
+     * @returns {Promise<*>} The operation's result, or a skipped outcome
+     * @private
+     */
+    async _withCrossTabLock(silent, operation) {
+        const locks = typeof navigator !== 'undefined' ? navigator.locks : null;
+        if (typeof locks?.request !== 'function') return operation();
+
+        let ran = false;
+        let outcome;
+        await locks.request('toolasha-sync', { ifAvailable: true }, async (lock) => {
+            if (!lock) return;
+            ran = true;
+            outcome = await operation();
+        });
+        if (ran) return outcome;
+
+        // Another tab's sync holds the lock right now. An interval tick has
+        // nothing to add — the database is shared and the winner is pushing it
+        // as we speak; the next tick re-checks. A push somebody clicked runs
+        // anyway: it must not silently do nothing, and the 409 retry absorbs
+        // the race it might lose.
+        if (silent) return { ok: true, skipped: true, reason: 'another-tab' };
+        return operation();
+    }
+
     async _run(label, silent, operation) {
         if (!config.getSetting('sync_enabled', false)) {
             if (!silent) showToast('Cross-device sync is turned off.', { kind: 'warn' });
@@ -634,6 +673,7 @@ class SyncManager {
             if (!silent) showToast('Add a GitHub token in Settings → Cross-Device Sync first.', { kind: 'warn' });
             return { ok: false, reason: 'no-token' };
         }
+        let takingOver = false;
         if (this.busy) {
             // A sync that has been "running" this long is a wedged one — a
             // hung request or an abandoned dialog — and honouring its lock
@@ -642,6 +682,7 @@ class SyncManager {
                 console.warn(
                     `[Sync] A ${label} is taking over a sync stuck busy since ${new Date(this.busySince).toISOString()}.`
                 );
+                takingOver = true;
             } else {
                 if (!silent) showToast('A sync is already running.', { kind: 'warn' });
                 return { ok: false, reason: 'busy' };
@@ -652,7 +693,9 @@ class SyncManager {
         this.busy = token;
         this.busySince = Date.now();
         try {
-            return await operation();
+            // A takeover skips the cross-tab lock: the wedged operation it is
+            // replacing is the very thing still holding it
+            return await (takingOver ? operation() : this._withCrossTabLock(silent, operation));
         } catch (error) {
             // GistError messages are written to be shown; anything else is a bug
             // here and gets a generic message with the detail in the console.

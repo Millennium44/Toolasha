@@ -753,6 +753,33 @@ describe('the busy lock survives a takeover', () => {
     });
 });
 
+describe('the cross-tab lock', () => {
+    test('a silent sync skips while another tab syncs; a manual one runs anyway', async () => {
+        let release;
+        const held = new Promise((resolve) => (release = resolve));
+        const holding = navigator.locks.request('toolasha-sync', () => held);
+
+        const operation = vi.fn(async () => ({ ok: true }));
+        expect(await syncManager._run('push', true, operation)).toMatchObject({
+            ok: true,
+            skipped: true,
+            reason: 'another-tab',
+        });
+        expect(operation).not.toHaveBeenCalled();
+
+        // Somebody clicked Push: it must not silently do nothing
+        expect(await syncManager._run('push', false, operation)).toMatchObject({ ok: true });
+        expect(operation).toHaveBeenCalledTimes(1);
+
+        release();
+        await holding;
+
+        // Lock free again: the silent path runs normally
+        expect(await syncManager._run('push', true, operation)).toMatchObject({ ok: true });
+        expect(operation).toHaveBeenCalledTimes(2);
+    });
+});
+
 describe('a pull that did not apply', () => {
     beforeEach(() => {
         stored.map.toolasha_sync_gistId = 'gist-1';
