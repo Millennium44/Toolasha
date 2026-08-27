@@ -12,6 +12,42 @@ import storage from '../core/storage.js';
 const FORMAT_VERSION = 1;
 
 /**
+ * Storage keys left out of every export, scoped to the store they live in.
+ *
+ * The guild trial diagnostic trace (`features/guild/guild-trial-trace.js`) is
+ * opt-in and deliberately large — its own header comment says a full trial's
+ * trace can run 10-15MB gzipped by itself, several times the rest of an
+ * account's data combined — and it carries raw combat data with participant
+ * names in it. It already has its own dedicated export (`exportTrace()`) for
+ * when someone actually wants to share one; there is no reason for it to also
+ * ride along in an ordinary backup or sync, silently inflating both past the
+ * point a gist can hold. The literal prefixes are duplicated from that file
+ * rather than imported from it — a feature reaching down into a util it is
+ * built on is the wrong direction, so the two are kept in step by hand.
+ */
+export const EXCLUDED_STORE_KEY_PREFIXES = {
+    guildHistory: ['trialTraceManifest', 'trialTraceChunk_'],
+};
+
+/**
+ * Drop every key in `entries` whose store excludes it.
+ * @param {string} storeName
+ * @param {Record<string, *>} entries
+ * @returns {Record<string, *>} A new object; `entries` is not mutated
+ */
+export function stripExcludedKeys(storeName, entries) {
+    const prefixes = EXCLUDED_STORE_KEY_PREFIXES[storeName];
+    if (!prefixes) return entries;
+
+    const kept = {};
+    for (const [key, value] of Object.entries(entries || {})) {
+        if (prefixes.some((prefix) => key.startsWith(prefix))) continue;
+        kept[key] = value;
+    }
+    return kept;
+}
+
+/**
  * List every object store name currently defined in the database.
  * @returns {Promise<Array<string>>} Store names
  */
@@ -42,7 +78,7 @@ export async function exportEverythingJSON() {
 
     let first = true;
     for (const storeName of storeNames) {
-        const entries = await storage.getAll(storeName);
+        const entries = stripExcludedKeys(storeName, await storage.getAll(storeName));
         parts.push(`${first ? '' : ','}${JSON.stringify(storeName)}:${JSON.stringify(entries)}`);
         first = false;
     }
@@ -65,7 +101,7 @@ export async function exportEverything() {
     const stores = {};
 
     for (const storeName of storeNames) {
-        stores[storeName] = await storage.getAll(storeName);
+        stores[storeName] = stripExcludedKeys(storeName, await storage.getAll(storeName));
     }
 
     return {

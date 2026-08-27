@@ -23,7 +23,8 @@ vi.mock('../core/storage.js', () => ({
     },
 }));
 
-const { listBackupStores, exportEverything, exportEverythingJSON, importEverything } = await import('./full-backup.js');
+const { listBackupStores, exportEverything, exportEverythingJSON, importEverything, stripExcludedKeys } =
+    await import('./full-backup.js');
 
 /**
  * Reset the fake database to a fixed set of stores/keys.
@@ -176,6 +177,64 @@ describe('exportEverythingJSON', () => {
             '2026-01-01': { mining: 100 },
             '2026-01-02': { mining: 200 },
         });
+    });
+});
+
+describe('stripExcludedKeys', () => {
+    test('drops the trial trace manifest and chunks from guildHistory', () => {
+        const kept = stripExcludedKeys('guildHistory', {
+            trialTraceManifest_603281: { chunks: [1, 2] },
+            trialTraceChunk_0_603281: { data: 'x'.repeat(1000) },
+            trialTraceChunk_1_603281: { data: 'y' },
+            guildTrials_MilkMaxxing: { real: 'data' },
+        });
+        expect(kept).toEqual({ guildTrials_MilkMaxxing: { real: 'data' } });
+    });
+
+    test('leaves an unlisted store untouched, same reference back', () => {
+        const entries = { run1: { boss: 'X' } };
+        expect(stripExcludedKeys('dungeonRuns', entries)).toBe(entries);
+    });
+
+    test('does not mutate the input it filtered', () => {
+        const entries = { trialTraceManifest_1: {}, keep: 1 };
+        stripExcludedKeys('guildHistory', entries);
+        expect(entries).toEqual({ trialTraceManifest_1: {}, keep: 1 });
+    });
+});
+
+describe('trial trace exclusion end to end', () => {
+    beforeEach(() => {
+        seedDb();
+        db.set(
+            'guildHistory',
+            new Map([
+                ['trialTraceManifest_603281', { chunks: [0] }],
+                ['trialTraceChunk_0_603281', { data: 'a'.repeat(500) }],
+                ['guildTrials_MilkMaxxing', { real: 'data' }],
+            ])
+        );
+    });
+
+    test('exportEverythingJSON never carries the trace', async () => {
+        const parsed = JSON.parse(await exportEverythingJSON());
+        expect(Object.keys(parsed.stores.guildHistory)).toEqual(['guildTrials_MilkMaxxing']);
+    });
+
+    test('exportEverything (object form) never carries the trace either', async () => {
+        const payload = await exportEverything();
+        expect(Object.keys(payload.stores.guildHistory)).toEqual(['guildTrials_MilkMaxxing']);
+    });
+
+    test('an old backup that does carry a trace still restores it — only new exports exclude it', async () => {
+        const payload = {
+            formatVersion: 1,
+            stores: { guildHistory: { trialTraceManifest_603281: { chunks: [0] } } },
+        };
+        db.set('guildHistory', new Map());
+        const result = await importEverything(payload);
+        expect(result.restored.guildHistory).toBe(1);
+        expect(db.get('guildHistory').get('trialTraceManifest_603281')).toEqual({ chunks: [0] });
     });
 });
 

@@ -20,7 +20,7 @@
  */
 
 import storage from '../../core/storage.js';
-import { importEverything } from '../../utils/full-backup.js';
+import { importEverything, stripExcludedKeys } from '../../utils/full-backup.js';
 import { mergeForKey } from '../../utils/sync-merge-registry.js';
 
 /** Matches the full-backup format, because that is what this produces */
@@ -118,7 +118,7 @@ export async function buildPayloadJSON(scope = 'settings') {
 
     let first = true;
     for (const storeName of storeNames) {
-        const entries = await storage.getAll(storeName);
+        const entries = stripExcludedKeys(storeName, await storage.getAll(storeName));
         const safe = storeName === SETTINGS_STORE ? redactSettingsStore(entries) : entries;
         parts.push(`${first ? '' : ','}${JSON.stringify(storeName)}:${JSON.stringify(safe)}`);
         first = false;

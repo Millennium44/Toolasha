@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The guild trial diagnostic trace no longer rides along in backups and sync
+
+The opt-in trace (off by default) is deliberately large — a full trial can run 10–15 MB gzipped by itself, several times the rest of an account's data combined — and it already has its own dedicated export for when you actually want to share one. Nothing was excluding it from an ordinary backup or an "Everything" sync, so turning the trace on could quietly inflate both past what a gist can hold. Backups and sync payloads now leave it out; restoring an older backup that happens to carry one still works.
+
 ### The shrine upgrade planner remembers your targets, suggests what to buy next, and hands off the shortfall
 
 Target levels typed into the guild credit exchange's Shrine Upgrade Planner used to reset every time the modal closed; they now persist per character, and a stale target below your current level is dropped automatically as you level up. A new "Suggested Next Buys" list shows every shrine buff's next level only, cheapest in guild tokens first, marked against your current token balance, with a running total of what you could afford to buy right now. The cost box nets against what you already hold and says so; whatever credit shortfall remains gets a "Missing Mats Marketplace" button that finds the cheapest raw material for each credit and sends the shortfall to the marketplace as ready-made tabs.

@@ -18,6 +18,11 @@ vi.mock('../../core/storage.js', () => ({
 
 const importedPayloads = vi.hoisted(() => []);
 const importOutcome = vi.hoisted(() => ({ failed: [], complete: true }));
+// A real (not stubbed) filter, so the sync-payload tests below prove the
+// wiring actually calls it rather than asserting a mock echoed its input back
+const EXCLUDED_STORE_KEY_PREFIXES = vi.hoisted(() => ({
+    guildHistory: ['trialTraceManifest', 'trialTraceChunk_'],
+}));
 vi.mock('../../utils/full-backup.js', () => ({
     importEverything: async (payload) => {
         importedPayloads.push(payload);
@@ -26,6 +31,16 @@ vi.mock('../../utils/full-backup.js', () => ({
             failed: importOutcome.failed,
             complete: importOutcome.complete,
         };
+    },
+    stripExcludedKeys: (storeName, entries) => {
+        const prefixes = EXCLUDED_STORE_KEY_PREFIXES[storeName];
+        if (!prefixes) return entries;
+        const kept = {};
+        for (const [key, value] of Object.entries(entries || {})) {
+            if (prefixes.some((prefix) => key.startsWith(prefix))) continue;
+            kept[key] = value;
+        }
+        return kept;
     },
 }));
 
@@ -101,6 +116,18 @@ describe('buildPayloadJSON', () => {
         const parsed = JSON.parse(await buildPayloadJSON('everything'));
         expect(parsed.formatVersion).toBe(1);
         expect(typeof parsed.exportedAt).toBe('string');
+    });
+
+    test('never carries a trial trace, gzipped-10MB opt-in diagnostic that it is', async () => {
+        storeState.stores.guildHistory = {
+            trialTraceManifest_603281: { chunks: [0] },
+            trialTraceChunk_0_603281: { data: 'x'.repeat(1000) },
+            guildTrials_MilkMaxxing: { real: 'data' },
+        };
+
+        const parsed = JSON.parse(await buildPayloadJSON('everything'));
+
+        expect(Object.keys(parsed.stores.guildHistory)).toEqual(['guildTrials_MilkMaxxing']);
     });
 });
 
