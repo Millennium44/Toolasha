@@ -456,6 +456,80 @@ describe('a trial you did not join, read off its tier-clear timings', () => {
         expect(html).toContain('Expected');
         expect(html).toContain('falling');
     });
+
+    test('a trial that has banked the last tier forecasts nothing above it', () => {
+        // T21 is the end of the ladder. The reported card read "Next tier in ~a
+        // few seconds", "Before it ends ~0 more tiers" and "Expected ~T21" — all
+        // of them about a T22 that does not exist.
+        const record = carded({
+            level: 300,
+            tier: 21,
+            pointsByTier: { 21: 2278 },
+            tierSeenAt: { 20: now, 21: now + 320_000 },
+        });
+        const timing = tierTimingForecast(record, {
+            timeLeftMs: 30 * 60_000,
+            now: now + 320_000,
+            participants: 40,
+            workBase: 40_000,
+            bankedTiers: 21,
+        });
+        expect(timing.atFinalTier).toBe(true);
+        expect(timing.etaMsToNextTier).toBeNull();
+        expect(timing.tiersBeforeEnd).toBeNull();
+
+        const analysis = analyseTrial(record, { timeLeftMs: 30 * 60_000, participants: 40 });
+        expect(analysis.tiersClearedSoFar).toBe(21);
+
+        const html = renderTrialBlock(analysis, 40, undefined, {
+            participating: false,
+            phase: 'live',
+            looseForecast: timing,
+            forecast: tierTimingAsForecast(timing),
+        });
+
+        expect(html).toContain('Final tier');
+        expect(html).toContain('nothing above it');
+        expect(html).not.toContain('Next tier in');
+        expect(html).not.toContain('Before it ends');
+        expect(html).not.toContain('Next tier work');
+        expect(html).not.toContain('Expected');
+
+        // The rate is a real measurement and stays, as does what it banked
+        expect(html).toContain('Est. fill');
+        expect(html).toContain('Banked');
+    });
+
+    test('a trial still fighting the last tier keeps every forecast row', () => {
+        // Banked 20, fighting T21 — reaching the top of the ladder is a genuine
+        // forecast and must not be suppressed with the finished case
+        const record = carded({ level: 300, tier: 20, pointsByTier: { 20: 2278 } });
+        record.tierSeenAt = { 19: now, 20: now + 320_000 };
+        const timing = tierTimingForecast(record, {
+            timeLeftMs: 30 * 60_000,
+            now: now + 320_000,
+            participants: 40,
+            workBase: 40_000,
+            bankedTiers: 20,
+        });
+        expect(timing.atFinalTier).toBeFalsy();
+        expect(timing.currentTier).toBe(21);
+
+        const html = renderTrialBlock(
+            analyseTrial(record, { timeLeftMs: 30 * 60_000, participants: 40 }),
+            40,
+            undefined,
+            {
+                participating: false,
+                phase: 'live',
+                looseForecast: timing,
+                forecast: tierTimingAsForecast(timing),
+            }
+        );
+        expect(html).toContain('Next tier in');
+        expect(html).toContain('Expected');
+        expect(html).not.toContain('Final tier');
+    });
 });
 
 describe('the tier badge a card wears beside its level', () => {
@@ -465,11 +539,17 @@ describe('the tier badge a card wears beside its level', () => {
         expect(badgeText({ level: 290 })).toBe('T20');
     });
 
-    test('at the level cap the banked count takes over, and the badge says it is a floor', () => {
-        // Every tier from the top of the ladder up reads Lv.300, so the level
-        // has stopped identifying the tier
-        expect(badgeText({ level: 300 })).toBe('T21+');
-        expect(badgeText({ level: 300, bankedTiers: 24 })).toBe('T24+');
+    test('at the level cap the badge reads the last tier, with no "+" promising one above it', () => {
+        // T21 is the last trial tier there is, so Lv.300 is T21 exactly — the
+        // "+" used to advertise a ladder the game does not have
+        expect(badgeText({ level: 300 })).toBe('T21');
+        expect(badgeText({ level: 300 })).not.toContain('+');
+    });
+
+    test('a banked count above the ladder is clamped rather than drawn as a tier', () => {
+        // Nothing can bank 24 tiers when there are 21; a miscount must not put
+        // "T24" on a card
+        expect(badgeText({ level: 300, bankedTiers: 24 })).toBe('T21');
     });
 
     test('a badge never reads below what is banked', () => {

@@ -192,7 +192,9 @@ export function rateAtTier(fit, tier) {
  * @returns {{measured: number, currentTier: number, sharePerMs: number, workPerSecond: number|null,
  *   declinePerTier: number|null, etaMsToNextTier: number|null, tiersBeforeEnd: number|null,
  *   expectedTier: number|null, clears: Array<Object>, limitedBy: string, atLevelCap: boolean,
- *   reason: string|null}|null} The model, or null when nothing has been watched
+ *   atFinalTier: boolean, reason: string|null}|null} The model, or null when nothing has been
+ *   watched. `atFinalTier` says the trial has banked {@link module:./guild-trials-math.TRIAL_MAX_TIER},
+ *   the last tier there is — every next-tier field is then null because there is no next tier
  */
 export function tierTimingForecast(
     record,
@@ -219,6 +221,7 @@ export function tierTimingForecast(
             clears: [],
             limitedBy: 'unmeasured',
             atLevelCap: false,
+            atFinalTier: false,
             reason: 'measuring — needs two tier clears',
         };
     }
@@ -238,6 +241,7 @@ export function tierTimingForecast(
             clears: [],
             limitedBy: 'unmeasured',
             atLevelCap: false,
+            atFinalTier: false,
             reason: 'measuring — needs two consecutive tier clears',
         };
     }
@@ -247,6 +251,43 @@ export function tierTimingForecast(
     // somewhere the badges have not caught up with.
     const newest = clears[clears.length - 1];
     const banked = Number.isFinite(bankedTiers) ? Math.max(bankedTiers, newest.tier) : newest.tier;
+
+    // …unless there *is* no tier past it. T21 is the last tier the game has, so
+    // a trial that has banked it has nothing left to reach and every next-tier
+    // number is about a tier that does not exist: `tierWorkShape` is deliberately
+    // unclamped, so a T22 pool priced itself happily and the card read "Next tier
+    // in ~a few seconds · Before it ends ~0 more tiers · Expected ~T21". The
+    // measured rate is still real and is still returned; the forecast is not.
+    const atFinalTier = banked >= TRIAL_MAX_TIER;
+    if (atFinalTier) {
+        const fitRate = rateAtTier(fit, TRIAL_MAX_TIER);
+        const need = tierWorkShape(kind, TRIAL_MAX_TIER);
+        const pool = Number.isFinite(workBase)
+            ? tierPoolWork({ baseWork: workBase, tier: TRIAL_MAX_TIER, participants })
+            : null;
+        return {
+            measured: clears.length,
+            intervals: rates.length,
+            currentTier: TRIAL_MAX_TIER,
+            bankedTiers: banked,
+            sharePerMs: fitRate,
+            workPerSecond:
+                Number.isFinite(pool) && Number.isFinite(need) && need > 0 && Number.isFinite(fitRate)
+                    ? (fitRate * pool * 1000) / need
+                    : null,
+            declinePerTier:
+                Number.isFinite(fit.perTier) && Number.isFinite(fitRate) && fitRate > 0 ? -fit.perTier / fitRate : null,
+            etaMsToNextTier: null,
+            tiersBeforeEnd: null,
+            expectedTier: TRIAL_MAX_TIER,
+            clears: [],
+            limitedBy: 'ladder',
+            atLevelCap: true,
+            atFinalTier: true,
+            reason: null,
+        };
+    }
+
     const currentTier = banked + 1;
 
     const shareNow = rateAtTier(fit, currentTier);
@@ -326,6 +367,9 @@ export function tierTimingForecast(
         // worth saying in a tooltip, because past it a deep tier is merely big
         // rather than also slower
         atLevelCap: currentTier + walked.length > TRIAL_MAX_TIER,
+        // The walk may *finish* the ladder without having started past it, which
+        // is a different claim from the one above and is not this
+        atFinalTier: false,
         reason: null,
     };
 }
@@ -357,6 +401,9 @@ export function tierTimingAsForecast(timing) {
             ? { perTier: timing.declinePerTier, observations: timing.intervals ?? 0 }
             : null,
         atLevelCap: timing.atLevelCap,
+        // Carried through so the Expected row can be suppressed rather than made
+        // to print the top of the ladder as if it were still ahead
+        atFinalTier: timing.atFinalTier === true,
         measured: timing.measured,
     };
 }

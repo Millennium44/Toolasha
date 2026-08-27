@@ -301,10 +301,10 @@ describe('guild credit value — trial tier badge', () => {
         // tiers — the same ladder `guild-trials-math.js` encodes, and not the 20
         // this badge used to cap at.
         //
-        // At the cap the level stops identifying the tier: T21, T22 and T23 all
-        // read Lv.300, so the badge is a floor and wears a `+` to say so.
-        expect(buildAndReadTier('Lv.300')).toBe('T21+');
-        expect(buildAndReadTier('Lv.500')).toBe('T21+');
+        // T21 is the last tier there is, so the cap is the top of the ladder
+        // rather than a floor under an open-ended one — no `+`.
+        expect(buildAndReadTier('Lv.300')).toBe('T21');
+        expect(buildAndReadTier('Lv.500')).toBe('T21');
 
         function buildAndReadTier(text) {
             const el = buildTileSummary(text);
@@ -320,10 +320,7 @@ describe('guild credit value — trial tier badge', () => {
 
             const el = buildTileSummary(`Lv.${level}`);
             game.observers['GuildPanel_tileSummary'](el);
-            // The top tier is at the level cap, where the badge is a floor
-            expect(el.querySelector('.mwi-trial-tier').textContent).toBe(
-                `T${tier}${tier === TRIAL_MAX_TIER ? '+' : ''}`
-            );
+            expect(el.querySelector('.mwi-trial-tier').textContent).toBe(`T${tier}`);
         }
 
         // One past the top is still the top, not a 22nd tier
@@ -354,9 +351,11 @@ describe('guild credit value — trial tier badge', () => {
         expect(el.querySelector('.mwi-trial-tier').textContent).toBe('T17');
     });
 
-    test('the badge never reads below what the record says is banked', () => {
+    test('a banked count above the ladder is held at the top tier', () => {
         // Past the level cap the level is no longer the better number, and the
-        // trials feature publishes the banked count on the card for this
+        // trials feature publishes the banked count on the card for this — but
+        // there are only 21 tiers, so a count above that is a miscount and must
+        // not reach a card as a tier the game cannot fight
         const owner = document.createElement('div');
         owner.dataset.mwiTrialBanked = '24';
         const el = document.createElement('div');
@@ -365,7 +364,7 @@ describe('guild credit value — trial tier badge', () => {
         document.body.appendChild(owner);
 
         game.observers['GuildPanel_tileSummary'](el);
-        expect(el.querySelector('.mwi-trial-tier').textContent).toBe('T24+');
+        expect(el.querySelector('.mwi-trial-tier').textContent).toBe(`T${TRIAL_MAX_TIER}`);
     });
 
     test('text with no level marker is left alone', () => {

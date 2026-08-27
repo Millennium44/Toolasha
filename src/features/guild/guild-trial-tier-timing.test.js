@@ -174,6 +174,39 @@ describe('tierTimingForecast — a projection for a trial nobody here joined', (
         expect(timing.currentTier).toBe(20);
     });
 
+    test('a trial that has banked the last tier projects nothing past it', () => {
+        // T21 is the end of the ladder, so there is no T22 pool to time — and
+        // `tierWorkShape` is deliberately unclamped, so one would price itself
+        const timing = tierTimingForecast(
+            { tierSeenAt: { 20: 0, 21: 100_000 } },
+            { timeLeftMs: 30 * 60_000, now: 100_000, participants: 40, workBase: 40_000 }
+        );
+
+        expect(timing.atFinalTier).toBe(true);
+        expect(timing.currentTier).toBe(TRIAL_MAX_TIER);
+        expect(timing.expectedTier).toBe(TRIAL_MAX_TIER);
+        expect(timing.etaMsToNextTier).toBeNull();
+        expect(timing.tiersBeforeEnd).toBeNull();
+        expect(timing.clears).toEqual([]);
+        expect(timing.limitedBy).toBe('ladder');
+
+        // The measured rate is a real reading and survives
+        expect(timing.sharePerMs).toBeGreaterThan(0);
+        expect(timing.workPerSecond).toBeGreaterThan(0);
+
+        expect(tierTimingAsForecast(timing).atFinalTier).toBe(true);
+    });
+
+    test('a trial still fighting the last tier is not at the final tier yet', () => {
+        const timing = tierTimingForecast(
+            { tierSeenAt: { 19: 0, 20: 100_000 } },
+            { timeLeftMs: 30 * 60_000, now: 100_000 }
+        );
+        expect(timing.atFinalTier).toBe(false);
+        expect(timing.currentTier).toBe(TRIAL_MAX_TIER);
+        expect(timing.etaMsToNextTier).toBeGreaterThan(0);
+    });
+
     test('with no clock there is a rate but no walk', () => {
         const timing = tierTimingForecast({ tierSeenAt: { 3: 0, 4: 50_000 } }, { timeLeftMs: null, now: 50_000 });
         expect(timing.sharePerMs).toBeGreaterThan(0);

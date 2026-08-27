@@ -10,10 +10,14 @@
  * ## Two things the level alone cannot do
  *
  * **The level caps.** It stops rising at
- * {@link module:./guild-trials-math.TRIAL_MAX_LEVEL}, so a card reading Lv.300
- * is T21 *or anything above it* and the level has stopped identifying the tier.
- * There the badge falls back to what the guild has actually banked and says it
- * is a floor, with a `+`.
+ * {@link module:./guild-trials-math.TRIAL_MAX_LEVEL}, and
+ * {@link module:./guild-trials-math.TRIAL_MAX_TIER} is the last tier there is —
+ * nothing exists above T21. So a card reading Lv.300 is T21 exactly, and the
+ * badge reads `T21` with no `+`: the `+` promised a ladder that does not exist,
+ * and "T24+" — which this used to draw from a banked count nothing bounded — was
+ * a tier the game cannot fight. What survives the cap is only that the *level*
+ * has stopped identifying the tier, so the banked count is consulted as the
+ * better number and the whole thing is held at the top of the ladder.
  *
  * **A badge is never allowed to read low.** Where the trials record knows more
  * tiers are banked than the level implies, the banked count wins — a marker
@@ -43,7 +47,9 @@ const BADGE_STYLE = 'color:#9ca3af; margin-left:3px; font-size:0.85em; white-spa
  * @param {Object} input - Inputs
  * @param {number|null} input.level - The card's stated trial level
  * @param {number|null} [input.bankedTiers] - Tiers the record says are banked
- * @returns {{tier: number, atCap: boolean}|null} The tier, or null when nothing identifies one
+ * @returns {{tier: number, atCap: boolean}|null} The tier, or null when nothing
+ *   identifies one. `atCap` says the *level* has stopped identifying the tier —
+ *   not that the tier is a floor, because {@link TRIAL_MAX_TIER} is the ceiling
  */
 export function badgeTierFor({ level, bankedTiers = null } = {}) {
     const fromLevel = tierFromLevel(level);
@@ -53,22 +59,25 @@ export function badgeTierFor({ level, bankedTiers = null } = {}) {
     // keeps a guild *building*'s "Lv. 10 / 20" from being labelled as a trial
     if (fromLevel === null) return null;
 
-    // At the cap the level says only "at least T21", so the count of tiers
-    // actually banked is the better number and the badge admits it is a floor
+    // At the cap every tier from the top of the ladder up reads Lv.300, so the
+    // level alone no longer identifies the tier and the count of tiers actually
+    // banked is the better number. It is still not allowed to exceed the ladder:
+    // T21 is the last tier, so a banked count above it is a miscount rather than
+    // a tier, and clamping is what keeps "T24" off a card
     const atCap = Number.isFinite(level) && level >= TRIAL_MAX_LEVEL;
-    const tier = Math.max(fromLevel, banked ?? 0, atCap ? TRIAL_MAX_TIER : 0);
+    const tier = Math.min(TRIAL_MAX_TIER, Math.max(fromLevel, banked ?? 0, atCap ? TRIAL_MAX_TIER : 0));
     return { tier, atCap };
 }
 
 /**
  * What the badge should read, or null when there is nothing to say.
  * @param {Object} input - As {@link badgeTierFor}
- * @returns {string|null} e.g. `T17`, or `T21+` at the level cap
+ * @returns {string|null} e.g. `T17`, or `T21` at the level cap — the top of the ladder
  */
 export function badgeText(input) {
     const badge = badgeTierFor(input);
     if (!badge) return null;
-    return `T${badge.tier}${badge.atCap ? '+' : ''}`;
+    return `T${badge.tier}`;
 }
 
 /** The level a "Lv.260" line is stating, or null. */

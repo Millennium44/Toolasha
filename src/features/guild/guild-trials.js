@@ -112,6 +112,7 @@ import { guildXPTracker } from './guild-xp-tracker.js';
 import {
     EXTRA_TIER_POINTS,
     TRIAL_ACTIVE_MS,
+    TRIAL_MAX_LEVEL,
     TRIAL_MAX_TIER,
     TRIAL_SKILLS,
     baseWorkFromObservations,
@@ -1011,6 +1012,31 @@ export function renderTrialBlock(
     const unit = analysis.kind === 'combat' ? 'dmg' : 'work';
     const rows = [];
 
+    // T21 is the last trial tier the game has, so a trial that has banked it can
+    // never reach another one and every next-tier estimate under it is about a
+    // tier that does not exist. The card in the report read "Next tier in ~a few
+    // seconds", "Before it ends ~0 more tiers" and "Expected ~T21" all at once,
+    // which is three ways of saying nothing.
+    //
+    // The banked count is what settles it rather than `analysis.tier`: the tier
+    // being *fought* is one past the badge, so a trial finished with the ladder
+    // reports tier 22 — a number no rung of the ladder can mean — while "banked
+    // 21" is the plain fact. A trial still fighting T21 has banked 20 and keeps
+    // every row: reaching the top of the ladder is a real forecast.
+    const atFinalTier =
+        analysis.tiersClearedSoFar >= TRIAL_MAX_TIER ||
+        looseForecast?.atFinalTier === true ||
+        forecast?.atFinalTier === true;
+    const finalTierRow = () =>
+        line(
+            'Final tier',
+            `T${TRIAL_MAX_TIER} — nothing above it`,
+            GOOD,
+            `The ladder ends at T${TRIAL_MAX_TIER} (Lv.${TRIAL_MAX_LEVEL}) and this trial has cleared it, so ` +
+                'there is no next tier to time, none left to fit in the hour, and nothing further to expect. ' +
+                'What it banked stands below.'
+        );
+
     // Nothing has started. One line, the countdown the header already states —
     // and the one number that CAN be said in advance: a combat trial opens on
     // tier 1 with the whole hour ahead, so the captured loadouts price a rough
@@ -1093,7 +1119,7 @@ export function renderTrialBlock(
                     )
                 );
             }
-            if (Number.isFinite(loose.etaMsToNextTier)) {
+            if (!atFinalTier && Number.isFinite(loose.etaMsToNextTier)) {
                 rows.push(
                     line(
                         'Next tier in',
@@ -1106,7 +1132,7 @@ export function renderTrialBlock(
                     )
                 );
             }
-            if (Number.isFinite(loose.tiersBeforeEnd)) {
+            if (!atFinalTier && Number.isFinite(loose.tiersBeforeEnd)) {
                 rows.push(
                     line(
                         'Before it ends',
@@ -1286,7 +1312,9 @@ export function renderTrialBlock(
         );
     }
 
-    if (forecast && forecast.tier !== null) {
+    if (atFinalTier) {
+        rows.push(finalTierRow());
+    } else if (forecast && forecast.tier !== null) {
         // Enrage is escalation, not an ending: the boss gains a stack a minute
         // to ten, each +10% accuracy and +10% damage, and then stops. A tier
         // that takes that long is dangerous rather than impossible, and what the
@@ -1351,7 +1379,10 @@ export function renderTrialBlock(
         rows.push(line('Expected', 'not projectable', DIM, `${forecast.reason}.`));
     }
 
-    if (analysis.next) {
+    if (atFinalTier) {
+        // Nothing: the final-tier line above already said why there is no next
+        // tier, and a size for one would be the same claim contradicted
+    } else if (analysis.next) {
         const label = analysis.kind === 'combat' ? 'Next tier HP' : 'Next tier work';
         rows.push(
             line(
