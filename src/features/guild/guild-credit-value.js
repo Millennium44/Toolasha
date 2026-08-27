@@ -30,7 +30,11 @@ import { heldInInventory } from '../../utils/dungeon-key-forecast.js';
 import { renderTierBadge, TIER_BADGE_CLASS } from './guild-trial-tier-badge.js';
 import { GUILD_BUILDING_MAX_LEVEL } from './guild-trials-store.js';
 import { describeGuildTokenGold } from './guild-token-value.js';
-import { captureTokenExchangeFromModal, hydrateCapturedTokenExchanges } from './guild-token-exchange-capture.js';
+import {
+    capturedTokenExchange,
+    captureTokenExchangeFromModal,
+    hydrateCapturedTokenExchanges,
+} from './guild-token-exchange-capture.js';
 
 const CSS_CLASS = 'mwi-guild-credit-value';
 
@@ -96,6 +100,174 @@ export function greedyAffordable(options, balance) {
         count += 1;
     }
     return { count, spent };
+}
+
+/**
+ * A credit's name with the word "Credit" taken off, for a dense list that is
+ * entirely about guild credits.
+ *
+ * "12,000 Blue Guild Credit, 1,200 Purple Guild Credit" is four fifths the same
+ * two words repeated, and it was that repetition — not the numbers — that pushed
+ * the suggestion rows past the modal's right edge. The full name still travels
+ * with every shortened one, in a `title`.
+ *
+ * @param {string} name - The credit's display name
+ * @returns {string} The distinguishing part of it, or the whole name when
+ *   shortening would leave nothing
+ */
+export function shortCreditName(name) {
+    const full = String(name || '').trim();
+    const short = full
+        .replace(/\s*guild\s+credits?$/i, '')
+        .replace(/\s*credits?$/i, '')
+        .trim();
+    return short || full;
+}
+
+/**
+ * The guild tokens it takes to buy a number of credits at a captured rate.
+ *
+ * The guild shop trades in whole exchanges — "1 → 10" is one token for ten green
+ * credits, and there is no way to hand over a third of a token — so a part-filled
+ * exchange costs a whole one. When the reading kept both sides
+ * (`tokensPerExchange`/`creditsPerExchange`) that granularity is honoured
+ * exactly; a reading that only carries a ratio is rounded up to whole tokens,
+ * which is the same rule at a batch size of one.
+ *
+ * @param {number} credits - Credits wanted
+ * @param {Object|null} rate - A captured exchange, or null when none was ever read
+ * @returns {number|null} Tokens needed, or null when no rate is known
+ */
+export function tokensForCredits(credits, rate) {
+    const wanted = Number(credits) || 0;
+    if (wanted <= 0) return 0;
+    if (!rate) return null;
+
+    const perExchange = Number(rate.creditsPerExchange);
+    const tokensPer = Number(rate.tokensPerExchange);
+    if (perExchange > 0 && tokensPer > 0) return Math.ceil(wanted / perExchange) * tokensPer;
+
+    const perToken = Number(rate.creditsPerToken);
+    if (perToken > 0) return Math.ceil(wanted / perToken);
+    return null;
+}
+
+/**
+ * What one single-level buy actually costs in tokens, given what is already held.
+ *
+ * Two kinds of token cost, added together: the level's own `guildTokenCost`, and
+ * the tokens it would take to convert away whatever credit shortfall is left
+ * after the inventory is netted off. The second half only exists for a colour
+ * whose exchange rate has been read off the Guild Shop. A colour that has never
+ * been seen adds nothing to the total and is reported in `unknown` instead, to be
+ * said out loud on the row — a guessed rate would turn a number this script does
+ * not have into one it appears to. Such a buy is then judged on its direct token
+ * cost alone, which is how every buy was judged before any of this existed;
+ * declaring it unaffordable would be its own overclaim from the same ignorance.
+ *
+ * @param {{tokenCost: number, creditCosts: Array<{itemHrid: string, count: number}>}} buy - One buy
+ * @param {Object<string, number>} creditBalances - creditHrid → credits on hand
+ * @param {Function} rateFor - creditHrid → captured exchange or null
+ * @returns {{direct: number, conversionTokens: number, effective: number,
+ *   conversions: Array<Object>, unknown: Array<Object>}} The breakdown
+ */
+export function buyTokenCost(buy, creditBalances = {}, rateFor = () => null) {
+    const direct = Number(buy?.tokenCost) || 0;
+    const conversions = [];
+    const unknown = [];
+    let conversionTokens = 0;
+
+    for (const { itemHrid, count } of buy?.creditCosts || []) {
+        const gap = Math.max(0, (Number(count) || 0) - (Number(creditBalances?.[itemHrid]) || 0));
+        if (gap <= 0) continue;
+        const rate = rateFor(itemHrid) || null;
+        const tokens = tokensForCredits(gap, rate);
+        if (!(tokens > 0)) {
+            unknown.push({ itemHrid, gap });
+            continue;
+        }
+        conversionTokens += tokens;
+        conversions.push({ itemHrid, gap, tokens, rate });
+    }
+
+    return {
+        direct,
+        conversionTokens,
+        effective: direct + conversionTokens,
+        conversions,
+        unknown,
+    };
+}
+
+/**
+ * Rank the single-level buys by what they genuinely cost in tokens, and walk the
+ * balance down that ranking.
+ *
+ * The ranking is by *effective* token cost — the level's own token price plus
+ * whatever the guild shop would charge in tokens to make up its credit shortfall
+ * — because that is the number the token balance is actually spent against. A
+ * cheap level whose credits you do not hold can easily cost more than a dearer
+ * one whose credits you do.
+ *
+ * The walk then re-prices each buy against the balances the buys before it left
+ * behind, so two levels wanting the same credit do not both claim the same stack.
+ * The stopping rule is the old one: ascending order means the first buy the
+ * remaining balance cannot cover is the last, since nothing further down is
+ * cheaper.
+ *
+ * `owedCredits` comes back with what the taken buys are still short of after the
+ * inventory and each other — the bill the marketplace hand-off under the list is
+ * drawn from, so the two are the same arithmetic and cannot disagree.
+ *
+ * Still deliberately single-level-ahead: buying a level changes what that buff's
+ * next level costs, so this is "if you spent everything right now" and not a
+ * claim about an optimal spend.
+ *
+ * @param {Array<Object>} buys - Single-level buys, as `renderSuggestions` builds them
+ * @param {Object} [context] - What is held and what is known
+ * @param {number} [context.tokenBalance=0] - Guild tokens on hand
+ * @param {Object<string, number>} [context.creditBalances={}] - creditHrid → credits on hand
+ * @param {Function} [context.rateFor] - creditHrid → captured exchange or null
+ * @returns {{rows: Array<Object>, count: number, spent: number, conversionSpent: number,
+ *   directSpent: number, owedCredits: Object<string, number>}} The ranked rows and the walk
+ */
+export function planNextBuys(buys, { tokenBalance = 0, creditBalances = {}, rateFor = () => null } = {}) {
+    const rows = (Array.isArray(buys) ? buys : []).map((buy) => ({
+        buy,
+        ...buyTokenCost(buy, creditBalances, rateFor),
+        affordable: false,
+    }));
+    rows.sort(
+        (a, b) => a.effective - b.effective || String(a.buy?.label ?? '').localeCompare(String(b.buy?.label ?? ''))
+    );
+
+    const remaining = { ...creditBalances };
+    const owedCredits = {};
+    let tokens = Number(tokenBalance) || 0;
+    let count = 0;
+    let spent = 0;
+    let conversionSpent = 0;
+
+    for (const row of rows) {
+        const cost = buyTokenCost(row.buy, remaining, rateFor);
+        if (cost.effective > tokens) break;
+
+        tokens -= cost.effective;
+        spent += cost.effective;
+        conversionSpent += cost.conversionTokens;
+        count += 1;
+        row.affordable = true;
+
+        for (const { itemHrid, count: needed } of row.buy?.creditCosts || []) {
+            const held = Number(remaining[itemHrid]) || 0;
+            const used = Math.min(held, Number(needed) || 0);
+            remaining[itemHrid] = held - used;
+            const gap = (Number(needed) || 0) - used;
+            if (gap > 0) owedCredits[itemHrid] = (owedCredits[itemHrid] || 0) + gap;
+        }
+    }
+
+    return { rows, count, spent, conversionSpent, directSpent: spent - conversionSpent, owedCredits };
 }
 
 /**
@@ -210,6 +382,101 @@ export function creditShortfallMaterials(owedCredits, topConversions, inventory)
         if (missing > 0) mats.push({ ...mat, count: missing });
     }
     return mats;
+}
+
+/**
+ * The exchanges to make once the shortfall's materials are in the bag.
+ *
+ * `creditShortfallMaterials` answers "what do I buy"; this answers the step
+ * after it, and off the same conversion option — `topConversions[hrid][0]`, the
+ * cheapest ask-per-credit route — so the two can never name different items for
+ * the same credit. The quantities are the *whole* trade, not the shopping list's:
+ * a stack already in the inventory comes off what has to be bought and does not
+ * come off what has to be handed over the counter.
+ *
+ * The rounding is the same part-filled-trade rule: 10 credits bought 4 at a time
+ * is three trades, which is 12 credits, and the plan says 12 rather than pretend
+ * the counter will make change.
+ *
+ * @param {Object<string, number>} owedCredits - creditHrid → credits still owed
+ * @param {Object} topConversions - From {@link buildTopConversions}
+ * @param {Object} [itemDetailMap] - The game's items, for display names
+ * @returns {Array<{creditItemHrid: string, creditName: string, itemHrid: string, itemName: string,
+ *   itemCount: number, creditCount: number, owed: number}>} One step per credit
+ */
+export function creditConversionPlan(owedCredits, topConversions, itemDetailMap = {}) {
+    const steps = [];
+    for (const [creditHrid, owed] of Object.entries(owedCredits || {})) {
+        if (!(owed > 0)) continue;
+        const top = (topConversions?.[creditHrid] || [])[0];
+        if (!top?.hrid || !(top.creditCount > 0) || !(top.itemCount > 0)) continue;
+        const trades = Math.ceil(owed / top.creditCount);
+        steps.push({
+            creditItemHrid: creditHrid,
+            creditName: itemDetailMap?.[creditHrid]?.name || creditHrid.split('/').pop().replace(/_/g, ' '),
+            itemHrid: top.hrid,
+            itemName: top.name,
+            itemCount: trades * top.itemCount,
+            creditCount: trades * top.creditCount,
+            owed,
+        });
+    }
+    steps.sort((a, b) => a.creditName.localeCompare(b.creditName));
+    return steps;
+}
+
+/**
+ * The Guild Shop's token→credit rate for one colour, if it has ever been seen.
+ * @param {string} creditHrid - Credit hrid
+ * @returns {Object|null} The captured reading, or null
+ */
+function tokenRateFor(creditHrid) {
+    try {
+        return capturedTokenExchange(creditHrid);
+    } catch {
+        return null;
+    }
+}
+
+/** What a colour with no captured rate is annotated with, and why */
+const NO_RATE_NOTE = 'rate not seen yet';
+const NO_RATE_TITLE =
+    'No token→credit rate has been read for this credit. Open this exchange once with Guild Token selected ' +
+    'on the give side and the rate is recorded — until then it is left out of the affordability math rather ' +
+    'than guessed at.';
+
+/**
+ * How a captured rate should be spoken about.
+ *
+ * Every figure derived from one is approximate and says so with a `≈`: the
+ * reading is a number scraped off a dialog, kept with the strategy that read it
+ * (`via`) and when it was taken (`capturedAt`), and neither of those is a
+ * guarantee that the shop still says the same thing. A reading taken from the
+ * item tiles rather than the dialog's own stated arrow, or one with no capture
+ * time at all, carries that caveat into the tooltip as well.
+ *
+ * @param {Object|null} rate - A captured exchange
+ * @returns {{rateText: string, title: string}|null} Captions, or null without a rate
+ */
+function describeCapturedRate(rate) {
+    if (!rate || !(Number(rate.creditsPerToken) > 0)) return null;
+
+    const per = Number(rate.creditsPerToken);
+    const rateText =
+        Number(rate.tokensPerExchange) > 0 && Number(rate.creditsPerExchange) > 0
+            ? `${rate.tokensPerExchange} token${rate.tokensPerExchange === 1 ? '' : 's'} → ${rate.creditsPerExchange}`
+            : `${Number(per.toPrecision(3))} credits per token`;
+
+    const caveats = [];
+    if (rate.via && rate.via !== 'arrow')
+        caveats.push(`read from the exchange's item tiles rather than its stated rate`);
+    if (!(Number(rate.capturedAt) > 0)) caveats.push('capture time unknown');
+    else caveats.push(`read on ${new Date(Number(rate.capturedAt)).toLocaleDateString()}`);
+
+    return {
+        rateText,
+        title: `Approximate: the guild shop was seen exchanging ${rateText} (${caveats.join('; ')}). Whole exchanges only, so a part-filled one costs a full one.`,
+    };
 }
 
 class GuildCreditValue {
@@ -552,7 +819,11 @@ class GuildCreditValue {
 
         const wrapper = document.createElement('div');
         wrapper.className = 'mwi-shrine-planner';
-        wrapper.style.cssText = 'margin-top:10px; font-size:12px; width:100%;';
+        // `box-sizing` and `max-width` together are what keep the whole planner
+        // inside the modal's fixed width: the game's exchange modal does not grow
+        // for injected content, so anything wider than 100% is a horizontal
+        // scrollbar on the modal rather than a wider planner.
+        wrapper.style.cssText = 'margin-top:10px; font-size:12px; width:100%; max-width:100%; box-sizing:border-box;';
 
         // Collapsible header
         const header = document.createElement('div');
@@ -574,7 +845,11 @@ class GuildCreditValue {
         // Bounded like the ranking table above: the game's exchange modal does not grow
         // for injected content, so an unbounded planner body renders past the modal's
         // bottom edge instead of scrolling within it
-        body.style.cssText = 'display:none; max-height:260px; overflow-y:auto;';
+        // `overflow-x:hidden` is the backstop, not the mechanism: every row inside
+        // wraps rather than extends, and this is here so a row that one day forgets
+        // to still cannot put a horizontal scrollbar on the modal.
+        body.style.cssText =
+            'display:none; max-height:260px; overflow-y:auto; overflow-x:hidden; width:100%; box-sizing:border-box;';
         wrapper.appendChild(body);
 
         const applyCollapsed = (collapsed) => {
@@ -673,6 +948,13 @@ class GuildCreditValue {
                 totalsEl.appendChild(row);
             }
 
+            // Tokens the plan does not already spend on itself — the only ones
+            // there are to convert into credits. Against the plan's gross token
+            // cost, not the netted `owed`: the tokens the plan consumes are spent
+            // whether or not they were already in the bag.
+            const heldTokens = tokenHrid ? heldInInventory(inventory, tokenHrid) : 0;
+            const spareTokens = Math.max(0, heldTokens - tokens.total);
+
             // Credit costs
             const owedCredits = {};
             for (const [itemHrid, count] of Object.entries(credits)) {
@@ -683,9 +965,32 @@ class GuildCreditValue {
                 const price = getItemPrice(itemHrid, { mode: 'ask' });
                 const goldStr = price > 0 ? ` (${formatKMB(price * owed)})` : '';
                 const row = document.createElement('div');
-                row.style.cssText = 'display:flex; justify-content:space-between; padding:2px 0; font-size:12px;';
+                row.style.cssText =
+                    'display:flex; justify-content:space-between; gap:6px; padding:2px 0; font-size:12px;';
                 row.innerHTML = `<span style="color:#aaa;">${name}</span><span style="color:#e0e0e0; font-weight:600;">${owed.toLocaleString()}<span style="color:#6b7280; font-weight:400;">${goldStr}</span>${ownedNote(owned)}</span>`;
                 totalsEl.appendChild(row);
+
+                // The other way to settle this row: the guild shop sells credits
+                // for tokens. Only said when a rate has actually been read, and
+                // only when the tokens the plan is not already spending cover it.
+                const rate = tokenRateFor(itemHrid);
+                const described = describeCapturedRate(rate);
+                const note = document.createElement('div');
+                note.className = 'mwi-shrine-credit-convert';
+                note.dataset.creditHrid = itemHrid;
+                note.style.cssText =
+                    'padding:0 0 2px 0; font-size:10px; color:#6b7280; white-space:normal; overflow-wrap:anywhere;';
+                if (!described) {
+                    note.textContent = `${shortCreditName(name)}: token ${NO_RATE_NOTE}`;
+                    note.title = NO_RATE_TITLE;
+                    totalsEl.appendChild(note);
+                    continue;
+                }
+                const tokensNeeded = tokensForCredits(owed, rate);
+                if (!(tokensNeeded > 0) || tokensNeeded > spareTokens) continue;
+                note.textContent = `or convert ≈${tokensNeeded.toLocaleString()} tokens`;
+                note.title = described.title;
+                totalsEl.appendChild(note);
             }
 
             if (totalsEl.childElementCount === 1) {
@@ -835,28 +1140,53 @@ class GuildCreditValue {
 
         /**
          * "What should I buy next" — every buff's single next level, cheapest
-         * guild-token cost first.
+         * *effective* guild-token cost first.
          *
-         * Ranked by token cost alone, and deliberately not by any blended score:
+         * Ranked on tokens alone, and deliberately not on any blended score:
          * Force, Rarity and Scholar buy different things (combat power, loot,
          * experience) with no exchange rate between them, so a "best value"
          * number across shrines would be an invented one. Cheapest-unlock-first
          * is objective, and which of the cheap ones is worth having stays the
-         * player's call. Credit costs are shown but not ranked on — tokens are
-         * the scarce side, credits convert from ordinary skilling materials.
+         * player's call.
+         *
+         * What changed is what "cheapest" counts. The guild shop also sells
+         * credits for tokens, so a level whose credits are short is not simply
+         * unaffordable — it costs its token price *plus* the tokens that would
+         * make up the shortfall, and that total is what the balance is spent
+         * against. A level costing 100 tokens and 50 credits you do not hold can
+         * easily be dearer than one costing 300 tokens and nothing else. See
+         * {@link planNextBuys}. A colour whose rate has never been read off the
+         * Guild Shop is left out of that arithmetic entirely and said so on the
+         * row, because a guessed rate makes an unaffordable buy look affordable.
+         *
+         * ## Layout
+         *
+         * Each row is a wrapping flex line, not a two-column split: the label and
+         * the token figure share the first line (the label on one line, clipped
+         * rather than stacked), and the credit list and any conversion note take
+         * whole continuation lines of their own (`flex:1 1 100%`). That is the
+         * fix for the rows running past the modal's right edge — the modal has a
+         * fixed width and does not grow, so the only place a long credit list can
+         * go is downwards. Credit names are shortened here, where the whole
+         * section is about guild credits, with the full name in a `title`.
          */
         function renderSuggestions() {
             const itemDetailMap = gameData.itemDetailMap || {};
             const tokenHrid = Object.keys(itemDetailMap).find((hrid) => hrid.includes('guild_token'));
             const tokenName = (tokenHrid && itemDetailMap[tokenHrid]?.name) || 'Guild Tokens';
-            const balance = tokenHrid ? heldInInventory(dataManager.getInventory(), tokenHrid) : 0;
+            const inventory = dataManager.getInventory();
+            const balance = tokenHrid ? heldInInventory(inventory, tokenHrid) : 0;
 
             suggestEl.innerHTML = '';
 
             const heading = document.createElement('div');
             heading.style.cssText =
-                'display:flex; justify-content:space-between; align-items:center; font-size:11px; color:#9ca3af; margin-bottom:5px;';
-            heading.innerHTML = `<span>Suggested Next Buys</span><span style="color:#e0e0e0;">${tokenName}: <b>${balance.toLocaleString()}</b></span>`;
+                'display:flex; justify-content:space-between; align-items:center; gap:6px; font-size:11px; color:#9ca3af; margin-bottom:5px;';
+            heading.title =
+                'Cheapest first by effective token cost: the level’s own token price plus the tokens the ' +
+                'guild shop would charge to make up any credit shortfall. Colours with no rate read yet are ' +
+                'left out of that sum.';
+            heading.innerHTML = `<span>Suggested Next Buys</span><span style="color:#e0e0e0; white-space:nowrap;">${tokenName}: <b>${balance.toLocaleString()}</b></span>`;
             suggestEl.appendChild(heading);
 
             if (nextBuys.length === 0) {
@@ -867,38 +1197,191 @@ class GuildCreditValue {
                 return;
             }
 
-            const sorted = [...nextBuys].sort((a, b) => a.tokenCost - b.tokenCost || a.label.localeCompare(b.label));
-            const { count, spent } = greedyAffordable(sorted, balance);
+            const creditBalances = {};
+            for (const buy of nextBuys) {
+                for (const { itemHrid } of buy.creditCosts || []) {
+                    if (!(itemHrid in creditBalances)) creditBalances[itemHrid] = heldInInventory(inventory, itemHrid);
+                }
+            }
 
-            sorted.forEach((buy, i) => {
-                const affordable = i < count;
-                const credits = buy.creditCosts
-                    .map(({ itemHrid, count: n }) => {
-                        const name = itemDetailMap[itemHrid]?.name || itemHrid.split('/').pop();
-                        return `${n.toLocaleString()} ${name}`;
-                    })
-                    .join(', ');
+            const plan = planNextBuys(nextBuys, { tokenBalance: balance, creditBalances, rateFor: tokenRateFor });
+
+            const creditLabel = (itemHrid, short) => {
+                const name = itemDetailMap[itemHrid]?.name || itemHrid.split('/').pop().replace(/_/g, ' ');
+                return short ? shortCreditName(name) : name;
+            };
+            const creditText = (itemHrid, n, short) => `${Number(n).toLocaleString()} ${creditLabel(itemHrid, short)}`;
+
+            plan.rows.forEach((entry) => {
+                const { buy, affordable } = entry;
                 const row = document.createElement('div');
                 row.className = 'mwi-shrine-next-buy';
                 row.dataset.affordable = affordable ? 'yes' : 'no';
                 row.style.cssText =
-                    'display:flex; justify-content:space-between; gap:6px; padding:2px 0; font-size:11px;';
-                row.innerHTML = `
-                    <span style="color:${affordable ? '#4ade80' : '#9ca3af'};">${affordable ? '✓ ' : ''}${buy.label} <span style="color:#6b7280;">${buy.fromLevel}→${buy.toLevel}</span></span>
-                    <span style="color:${affordable ? '#e0e0e0' : '#6b7280'}; white-space:nowrap;">${buy.tokenCost.toLocaleString()} tok${credits ? ` <span style="color:#6b7280;">+ ${credits}</span>` : ''}</span>
-                `;
+                    'display:flex; flex-wrap:wrap; align-items:baseline; column-gap:6px; padding:2px 0; ' +
+                    'font-size:11px; width:100%; max-width:100%; box-sizing:border-box;';
+
+                // One line, always: a shrine and buff name that wrapped turned
+                // into a tall vertical stack down the left of the row
+                const label = document.createElement('span');
+                label.className = 'mwi-shrine-next-buy-label';
+                label.style.cssText =
+                    'flex:0 1 auto; min-width:0; max-width:62%; white-space:nowrap; overflow:hidden; ' +
+                    `text-overflow:ellipsis; color:${affordable ? '#4ade80' : '#9ca3af'};`;
+                label.textContent = `${affordable ? '✓ ' : ''}${buy.label} · ${buy.fromLevel}→${buy.toLevel}`;
+                label.title = label.textContent;
+                row.appendChild(label);
+
+                const tok = document.createElement('span');
+                tok.className = 'mwi-shrine-next-buy-tok';
+                tok.style.cssText = `margin-left:auto; flex:0 0 auto; white-space:nowrap; color:${affordable ? '#e0e0e0' : '#6b7280'};`;
+                tok.textContent = `${entry.effective.toLocaleString()} tok`;
+                tok.title =
+                    entry.conversionTokens > 0
+                        ? `${entry.direct.toLocaleString()} tokens for the level, plus about ` +
+                          `${entry.conversionTokens.toLocaleString()} to convert into the credits it is short`
+                        : `${entry.direct.toLocaleString()} tokens for the level`;
+                row.appendChild(tok);
+
+                if (buy.creditCosts?.length) {
+                    const credits = document.createElement('span');
+                    credits.className = 'mwi-shrine-next-buy-credits';
+                    // A whole line of its own, wrapping within it — this is the
+                    // half that used to run off the right of the modal
+                    credits.style.cssText =
+                        'flex:1 1 100%; min-width:0; white-space:normal; overflow-wrap:anywhere; color:#6b7280;';
+                    credits.textContent = `+ ${buy.creditCosts.map(({ itemHrid, count: n }) => creditText(itemHrid, n, true)).join(', ')}`;
+                    credits.title = buy.creditCosts
+                        .map(({ itemHrid, count: n }) => creditText(itemHrid, n, false))
+                        .join(', ');
+                    row.appendChild(credits);
+                }
+
+                if (entry.conversions.length > 0 || entry.unknown.length > 0) {
+                    const note = document.createElement('span');
+                    note.className = 'mwi-shrine-next-buy-convert';
+                    note.style.cssText =
+                        'flex:1 1 100%; min-width:0; white-space:normal; overflow-wrap:anywhere; font-size:10px;';
+                    const parts = [];
+                    const titles = [];
+                    if (entry.conversions.length > 0) {
+                        const covered = entry.conversions
+                            .map(({ itemHrid, gap }) => creditText(itemHrid, gap, true))
+                            .join(', ');
+                        parts.push(
+                            `via tokens: +${entry.conversionTokens.toLocaleString()} tok converts to the missing ${covered}`
+                        );
+                        for (const { rate } of entry.conversions) {
+                            const described = describeCapturedRate(rate);
+                            if (described) titles.push(described.title);
+                        }
+                    }
+                    if (entry.unknown.length > 0) {
+                        parts.push(
+                            `${entry.unknown.map(({ itemHrid }) => creditLabel(itemHrid, true)).join(', ')}: ${NO_RATE_NOTE} — select Guild Token in this exchange once to record it`
+                        );
+                        titles.push(NO_RATE_TITLE);
+                    }
+                    note.textContent = parts.join(' · ');
+                    note.title = titles.join(' ');
+                    note.style.color = entry.unknown.length > 0 ? '#9ca3af' : '#c4b5fd';
+                    row.appendChild(note);
+                }
+
                 suggestEl.appendChild(row);
             });
 
             const walk = document.createElement('div');
             walk.className = 'mwi-shrine-spend-all';
             walk.style.cssText =
-                'margin-top:5px; padding-top:4px; border-top:1px solid rgba(255,255,255,0.1); font-size:11px; color:#9ca3af;';
+                'margin-top:5px; padding-top:4px; border-top:1px solid rgba(255,255,255,0.1); font-size:11px; color:#9ca3af; white-space:normal; overflow-wrap:anywhere;';
+            const converted =
+                plan.conversionSpent > 0
+                    ? `, ${plan.conversionSpent.toLocaleString()} of them converted into credits`
+                    : '';
             walk.textContent =
-                count === 0
+                plan.count === 0
                     ? `Nothing on this list is affordable with ${balance.toLocaleString()} tokens`
-                    : `Spending everything now: ${count} of ${sorted.length} next levels for ${spent.toLocaleString()} tokens`;
+                    : `Spending everything now: ${plan.count} of ${plan.rows.length} next levels for ${plan.spent.toLocaleString()} tokens${converted}`;
             suggestEl.appendChild(walk);
+
+            renderNextBuyFlow(plan.owedCredits, itemDetailMap, inventory);
+        }
+
+        /**
+         * The step after the suggestions: buy the credits these buys are short
+         * of, then exchange them.
+         *
+         * Scoped to the affordable (✓) set, because that is the list the player
+         * can act on this minute — the rest of the list is a wish, and a
+         * marketplace tab for a level no amount of shopping unlocks is noise.
+         * The credits it covers are the ones the ✓ walk found short after the
+         * inventory was netted off and the earlier buys had taken their share.
+         *
+         * Two halves, from the same conversion option so they cannot disagree:
+         * the marketplace hand-off for the raw materials
+         * ({@link creditShortfallMaterials}, inventory netted off), and the
+         * exchange itself ({@link creditConversionPlan}, whole trades). The
+         * second half is guidance, not navigation — this modal *is* the exchange,
+         * so there is nowhere to send the player.
+         *
+         * @param {Object<string, number>} owedCredits - creditHrid → credits the ✓ set is short
+         * @param {Object} itemDetailMap - The game's items
+         * @param {Array<Object>} inventory - The character's items
+         * @returns {void}
+         */
+        function renderNextBuyFlow(owedCredits, itemDetailMap, inventory) {
+            const topConversions = buildTopConversions(itemDetailMap, 1);
+            const mats = creditShortfallMaterials(owedCredits, topConversions, inventory);
+            const steps = creditConversionPlan(owedCredits, topConversions, itemDetailMap);
+            if (mats.length === 0 && steps.length === 0) return;
+
+            const flow = document.createElement('div');
+            flow.className = 'mwi-shrine-next-buy-flow';
+            flow.style.cssText = 'margin-top:6px;';
+
+            if (mats.length > 0) {
+                const button = document.createElement('button');
+                button.className = 'mwi-shrine-next-buy-mats-btn';
+                button.style.cssText = `
+                    width:100%; box-sizing:border-box; padding:6px 10px;
+                    background:linear-gradient(180deg,rgba(91,141,239,0.2) 0%,rgba(91,141,239,0.1) 100%);
+                    color:#fff; border:1px solid rgba(91,141,239,0.4); border-radius:6px;
+                    cursor:pointer; font-size:11px; font-weight:600;
+                `;
+                button.textContent = 'Missing Mats Marketplace';
+                button.title = 'The raw materials the affordable buys above are short of, at the cheapest conversion';
+                button.addEventListener('mouseenter', () => {
+                    button.style.background =
+                        'linear-gradient(180deg,rgba(91,141,239,0.35) 0%,rgba(91,141,239,0.25) 100%)';
+                });
+                button.addEventListener('mouseleave', () => {
+                    button.style.background =
+                        'linear-gradient(180deg,rgba(91,141,239,0.2) 0%,rgba(91,141,239,0.1) 100%)';
+                });
+                button.addEventListener('click', () => openShoppingList(mats, { heading: 'Next buys' }));
+                flow.appendChild(button);
+            }
+
+            if (steps.length > 0) {
+                const title = document.createElement('div');
+                title.style.cssText = 'margin-top:5px; font-size:10px; color:#9ca3af;';
+                title.textContent = 'then convert:';
+                flow.appendChild(title);
+
+                for (const step of steps) {
+                    const line = document.createElement('div');
+                    line.className = 'mwi-shrine-convert-step';
+                    line.dataset.creditHrid = step.creditItemHrid;
+                    line.style.cssText =
+                        'font-size:10px; color:#c4b5fd; white-space:normal; overflow-wrap:anywhere; padding:1px 0;';
+                    line.textContent = `convert ${step.itemCount.toLocaleString()}× ${step.itemName} → ${step.creditCount.toLocaleString()} ${shortCreditName(step.creditName)}`;
+                    line.title = `${step.itemCount.toLocaleString()} ${step.itemName} exchanges here for ${step.creditCount.toLocaleString()} ${step.creditName} — the ${step.owed.toLocaleString()} still owed, rounded up to whole exchanges`;
+                    flow.appendChild(line);
+                }
+            }
+
+            suggestEl.appendChild(flow);
         }
 
         /**

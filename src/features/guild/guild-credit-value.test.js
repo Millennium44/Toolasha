@@ -21,6 +21,7 @@ const game = vi.hoisted(() => ({
     buffLevels: {},
     inventory: [],
     captures: [],
+    rates: {},
     storage: {},
     writes: 0,
 }));
@@ -105,15 +106,29 @@ vi.mock('../../utils/shopping-list.js', () => ({
     openShoppingList: (items, options) => shopping.calls.push({ items, options }),
     clearShoppingList: () => {},
 }));
+// The Guild Shop's token→credit rates, mocked the way the other guild tests mock
+// a sibling module: `game.rates` is what the shop has been seen saying, one entry
+// per credit colour, and a colour missing from it is one the player has never
+// opened the exchange for.
 vi.mock('./guild-token-exchange-capture.js', () => ({
     captureTokenExchangeFromModal: (...args) => game.captures.push(args),
-    hydrateCapturedTokenExchanges: async () => ({}),
-    capturedTokenExchanges: () => [],
+    hydrateCapturedTokenExchanges: async () => ({ ...game.rates }),
+    capturedTokenExchanges: () => Object.values(game.rates),
+    capturedTokenExchange: (creditItemHrid) => game.rates[creditItemHrid] ?? null,
 }));
 
 const creditValueModule = await import('./guild-credit-value.js');
 const guildCreditValue = creditValueModule.default;
-const { shrinePlanRecord, greedyAffordable, creditShortfallMaterials } = creditValueModule;
+const {
+    shrinePlanRecord,
+    greedyAffordable,
+    creditShortfallMaterials,
+    creditConversionPlan,
+    shortCreditName,
+    tokensForCredits,
+    buyTokenCost,
+    planNextBuys,
+} = creditValueModule;
 const { TRIAL_MAX_TIER, levelFromTier, tierFromLevel } = await import('./guild-trials-math.js');
 
 function buildExchangeModal(creditName) {
@@ -596,6 +611,8 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         };
         game.buffLevels = { [FORCE]: 2, [TEMPO]: 0, [RARITY]: 5 };
         game.inventory = [];
+        // No colour's exchange has been opened yet — the honest default
+        game.rates = {};
         game.storage = {};
         game.clientData = planClientData();
         shrinePlanRecord.reset();
@@ -611,6 +628,7 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         game.storage = {};
         game.buffLevels = {};
         game.inventory = [];
+        game.rates = {};
     });
 
     test('a typed target survives closing and reopening the modal', async () => {
@@ -711,10 +729,13 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         expect(text).not.toContain('Rarity');
     });
 
-    test('a suggested buy shows its credit cost beside the token cost', () => {
+    test('a suggested buy shows its credit cost, shortened, with the full name in a tooltip', () => {
         const modal = openModal();
         const forceRow = nextBuyRows(modal).find((r) => r.textContent.includes('Force'));
-        expect(forceRow.textContent.replace(/\s+/g, ' ')).toContain('50 Trade Credit');
+        const credits = forceRow.querySelector('.mwi-shrine-next-buy-credits');
+
+        expect(credits.textContent.replace(/\s+/g, ' ')).toBe('+ 50 Trade');
+        expect(credits.title).toBe('50 Trade Credit');
     });
 
     test('affordability marking follows the held guild-token balance', () => {
@@ -907,6 +928,373 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
             // And back below the current level, where there is nothing to plan
             setTarget(modal, FORCE, 2);
             expect(matsButton(modal)).toBeNull();
+        });
+    });
+
+    describe('suggestion row layout', () => {
+        function forceRow(modal) {
+            return nextBuyRows(modal).find((r) => r.textContent.includes('Force'));
+        }
+
+        test('the label is a single unwrapping line carrying shrine, buff and levels', () => {
+            const modal = openModal();
+            const label = forceRow(modal).querySelector('.mwi-shrine-next-buy-label');
+
+            expect(label.textContent).toBe('Force · Combat · 2→3');
+            expect(label.textContent).not.toContain('\n');
+            expect(label.style.whiteSpace).toBe('nowrap');
+            // Clipped rather than stacked: a name too long for the row loses its
+            // tail, it does not become a column
+            expect(label.style.textOverflow).toBe('ellipsis');
+            expect(label.style.overflow).toBe('hidden');
+        });
+
+        test('the credit list wraps onto continuation lines instead of running off the row', () => {
+            const modal = openModal();
+            const credits = forceRow(modal).querySelector('.mwi-shrine-next-buy-credits');
+
+            expect(credits.style.whiteSpace).toBe('normal');
+            expect(credits.style.whiteSpace).not.toBe('nowrap');
+            expect(credits.style.overflowWrap).toBe('anywhere');
+            // A whole line of its own inside the wrapping row
+            expect(credits.style.flexBasis).toBe('100%');
+            expect(credits.style.minWidth).toBe('0');
+        });
+
+        test('the row itself wraps and is bounded by the modal width', () => {
+            const modal = openModal();
+            const row = forceRow(modal);
+
+            expect(row.style.flexWrap).toBe('wrap');
+            expect(row.style.maxWidth).toBe('100%');
+            expect(row.style.boxSizing).toBe('border-box');
+        });
+
+        test('the token figure stays on one line', () => {
+            const modal = openModal();
+            expect(forceRow(modal).querySelector('.mwi-shrine-next-buy-tok').style.whiteSpace).toBe('nowrap');
+        });
+
+        test('the planner body scrolls vertically only', () => {
+            const modal = openModal();
+            const body = modal.querySelector('.mwi-shrine-planner > div:nth-child(2)');
+
+            expect(body.style.overflowY).toBe('auto');
+            expect(body.style.overflowX).toBe('hidden');
+            expect(modal.querySelector('.mwi-shrine-planner').style.maxWidth).toBe('100%');
+        });
+
+        test('shortCreditName keeps the colour and drops the boilerplate', () => {
+            expect(shortCreditName('Blue Guild Credit')).toBe('Blue');
+            expect(shortCreditName('Trade Credit')).toBe('Trade');
+            expect(shortCreditName('Guild Credit')).toBe('Guild Credit');
+            expect(shortCreditName('')).toBe('');
+        });
+    });
+
+    describe('suggested buys → marketplace → conversion', () => {
+        function flowButton(modal) {
+            return modal.querySelector('.mwi-shrine-next-buy-mats-btn');
+        }
+
+        function convertSteps(modal) {
+            return Array.from(modal.querySelectorAll('.mwi-shrine-convert-step')).map((el) => el.textContent);
+        }
+
+        test('the hand-off is scoped to the affordable buys, not the whole list', () => {
+            // 150 tokens covers Tempo (100, no credits) and nothing else, so the
+            // Force level's 50 Trade Credit is not a bill to go shopping for yet
+            game.inventory = [
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 150 },
+            ];
+            const modal = openModal();
+
+            expect(nextBuyRows(modal)[1].dataset.affordable).toBe('no');
+            expect(flowButton(modal)).toBeNull();
+            expect(convertSteps(modal)).toEqual([]);
+        });
+
+        test('the affordable buys’ credit shortfall becomes a marketplace list', () => {
+            game.inventory = [
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 450 },
+            ];
+            const modal = openModal();
+            flowButton(modal).click();
+
+            // 50 Trade Credit through the cheaper iron bar: 5 bars per credit
+            expect(shopping.calls).toHaveLength(1);
+            expect(shopping.calls[0].items).toEqual([{ itemHrid: '/items/iron_bar', name: 'Iron Bar', count: 250 }]);
+            expect(shopping.calls[0].options).toEqual({ heading: 'Next buys' });
+        });
+
+        test('the convert plan names the same option and quantity the shortfall used', () => {
+            game.inventory = [
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 450 },
+            ];
+            const modal = openModal();
+
+            expect(convertSteps(modal)).toEqual(['convert 250× Iron Bar → 50 Trade']);
+            const line = modal.querySelector('.mwi-shrine-convert-step');
+            expect(line.dataset.creditHrid).toBe('/items/guild_credit_1');
+            expect(line.title).toContain('50 Trade Credit');
+        });
+
+        test('the conversion is the whole trade even where the bars are already held', () => {
+            game.inventory = [
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 450 },
+                { itemHrid: '/items/iron_bar', itemLocationHrid: '/item_locations/inventory', count: 200 },
+            ];
+            const modal = openModal();
+            flowButton(modal).click();
+
+            // 50 bars left to buy, but all 250 still go over the counter
+            expect(shopping.calls[0].items[0].count).toBe(50);
+            expect(convertSteps(modal)).toEqual(['convert 250× Iron Bar → 50 Trade']);
+        });
+
+        test('nothing is drawn when the affordable buys are short of no credits', () => {
+            game.inventory = [
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 450 },
+                { itemHrid: '/items/guild_credit_1', itemLocationHrid: '/item_locations/inventory', count: 50 },
+            ];
+            const modal = openModal();
+
+            expect(flowButton(modal)).toBeNull();
+            expect(convertSteps(modal)).toEqual([]);
+        });
+
+        test('creditConversionPlan rounds a part-filled trade up to a whole one', () => {
+            const conversions = {
+                '/items/guild_credit_1': [{ hrid: '/items/iron_bar', name: 'Iron Bar', itemCount: 3, creditCount: 4 }],
+            };
+            expect(
+                creditConversionPlan({ '/items/guild_credit_1': 10 }, conversions, {
+                    '/items/guild_credit_1': { name: 'Trade Credit' },
+                })
+            ).toEqual([
+                {
+                    creditItemHrid: '/items/guild_credit_1',
+                    creditName: 'Trade Credit',
+                    itemHrid: '/items/iron_bar',
+                    itemName: 'Iron Bar',
+                    itemCount: 9,
+                    creditCount: 12,
+                    owed: 10,
+                },
+            ]);
+        });
+
+        test('a credit nothing converts into contributes no step', () => {
+            expect(creditConversionPlan({ '/items/guild_credit_2': 7 }, {}, {})).toEqual([]);
+        });
+    });
+
+    describe('token → credit conversion awareness', () => {
+        /** The Guild Shop seen exchanging `tokens` for `credits` of Trade Credit */
+        function seeRate(tokens, credits, extra = {}) {
+            game.rates['/items/guild_credit_1'] = {
+                creditItemHrid: '/items/guild_credit_1',
+                creditsPerToken: credits / tokens,
+                tokensPerExchange: tokens,
+                creditsPerExchange: credits,
+                via: 'arrow',
+                capturedAt: Date.UTC(2026, 0, 1),
+                ...extra,
+            };
+        }
+
+        function forceRow(modal) {
+            return nextBuyRows(modal).find((r) => r.textContent.includes('Force'));
+        }
+
+        test('tokensForCredits rounds up to whole exchanges', () => {
+            const batched = { creditsPerToken: 10 / 3, tokensPerExchange: 3, creditsPerExchange: 10 };
+            expect(tokensForCredits(10, batched)).toBe(3);
+            expect(tokensForCredits(11, batched)).toBe(6);
+            expect(tokensForCredits(25, batched)).toBe(9);
+            expect(tokensForCredits(0, batched)).toBe(0);
+
+            // A reading that only kept the ratio is the same rule at a batch of one
+            expect(tokensForCredits(10, { creditsPerToken: 4 })).toBe(3);
+            // Never guessed
+            expect(tokensForCredits(10, null)).toBeNull();
+        });
+
+        test('buyTokenCost adds the conversion top-up and nets what is held', () => {
+            const buy = { tokenCost: 300, creditCosts: [{ itemHrid: '/items/guild_credit_1', count: 50 }] };
+            const rate = { creditsPerToken: 10, tokensPerExchange: 1, creditsPerExchange: 10 };
+            const rateFor = () => rate;
+
+            expect(buyTokenCost(buy, {}, rateFor).effective).toBe(305);
+            expect(buyTokenCost(buy, { '/items/guild_credit_1': 20 }, rateFor).effective).toBe(303);
+            expect(buyTokenCost(buy, { '/items/guild_credit_1': 50 }, rateFor)).toMatchObject({
+                effective: 300,
+                conversionTokens: 0,
+                conversions: [],
+                unknown: [],
+            });
+        });
+
+        test('an unseen colour is excluded from the sum and reported instead', () => {
+            const buy = { tokenCost: 300, creditCosts: [{ itemHrid: '/items/guild_credit_2', count: 7 }] };
+            const cost = buyTokenCost(buy, {}, () => null);
+
+            expect(cost.effective).toBe(300);
+            expect(cost.conversionTokens).toBe(0);
+            expect(cost.unknown).toEqual([{ itemHrid: '/items/guild_credit_2', gap: 7 }]);
+        });
+
+        test('the row says how the missing credits would be covered', () => {
+            seeRate(1, 10);
+            game.inventory = [
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 405 },
+            ];
+            const modal = openModal();
+            const row = forceRow(modal);
+
+            expect(row.querySelector('.mwi-shrine-next-buy-tok').textContent).toBe('305 tok');
+            expect(row.querySelector('.mwi-shrine-next-buy-convert').textContent).toBe(
+                'via tokens: +5 tok converts to the missing 50 Trade'
+            );
+            expect(row.dataset.affordable).toBe('yes');
+        });
+
+        test('a known rate makes the true cost the one affordability is judged on', () => {
+            game.inventory = [
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 404 },
+            ];
+            // Without a rate, 404 covers 100 + 300
+            expect(nextBuyRows(openModal())[1].dataset.affordable).toBe('yes');
+
+            // With one, the Force level really costs 305 and 404 no longer covers both
+            seeRate(1, 10);
+            expect(nextBuyRows(openModal())[1].dataset.affordable).toBe('no');
+        });
+
+        test('tokensPerExchange granularity is respected on the row', () => {
+            // 3 tokens buy 10 credits, so 50 credits is five whole exchanges
+            seeRate(3, 10);
+            game.inventory = [
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 5000 },
+            ];
+            const modal = openModal();
+
+            expect(forceRow(modal).querySelector('.mwi-shrine-next-buy-tok').textContent).toBe('315 tok');
+        });
+
+        test('ordering follows the effective cost, not the sticker price', () => {
+            game.clientData.guildBuffDetailMap[TEMPO].levelCosts['1'] = { guildTokenCost: 302, creditCosts: [] };
+
+            // Sticker price alone puts Force (300) ahead of Tempo (302)
+            expect(nextBuyRows(openModal())[0].textContent).toContain('Force');
+
+            // The 50 Trade Credit it is short of costs 5 more tokens, so it is not
+            // the cheaper of the two after all
+            seeRate(1, 10);
+            expect(nextBuyRows(openModal())[0].textContent).toContain('Tempo');
+        });
+
+        test('the spend-everything walk counts the conversion tokens it spent', () => {
+            seeRate(3, 10);
+            game.inventory = [
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 5000 },
+            ];
+            const modal = openModal();
+
+            expect(modal.querySelector('.mwi-shrine-spend-all').textContent).toBe(
+                'Spending everything now: 2 of 2 next levels for 415 tokens, 15 of them converted into credits'
+            );
+        });
+
+        test('planNextBuys will not let two buys spend the same credits twice', () => {
+            const rate = { creditsPerToken: 10, tokensPerExchange: 1, creditsPerExchange: 10 };
+            const buys = [
+                { label: 'A', tokenCost: 10, creditCosts: [{ itemHrid: '/c', count: 50 }] },
+                { label: 'B', tokenCost: 10, creditCosts: [{ itemHrid: '/c', count: 50 }] },
+            ];
+            const plan = planNextBuys(buys, {
+                tokenBalance: 1000,
+                creditBalances: { '/c': 50 },
+                rateFor: () => rate,
+            });
+
+            // The first takes the 50 held; the second buys its own with tokens
+            expect(plan.count).toBe(2);
+            expect(plan.spent).toBe(25);
+            expect(plan.conversionSpent).toBe(5);
+            expect(plan.owedCredits).toEqual({ '/c': 50 });
+        });
+
+        test('an unseen colour is named on the row rather than silently priced', () => {
+            game.inventory = [
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 5000 },
+            ];
+            const modal = openModal();
+            const note = forceRow(modal).querySelector('.mwi-shrine-next-buy-convert');
+
+            expect(note.textContent).toBe(
+                'Trade: rate not seen yet — select Guild Token in this exchange once to record it'
+            );
+            expect(note.title).toContain('Guild Token');
+            // And nothing was added to the cost on the strength of not knowing
+            expect(forceRow(modal).querySelector('.mwi-shrine-next-buy-tok').textContent).toBe('300 tok');
+        });
+
+        test('a converted figure is never presented as exact', () => {
+            seeRate(1, 10, { via: 'tiles', capturedAt: 0 });
+            game.inventory = [
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 5000 },
+            ];
+            const modal = openModal();
+            const note = forceRow(modal).querySelector('.mwi-shrine-next-buy-convert');
+
+            expect(note.title).toContain('Approximate');
+            expect(note.title).toContain('item tiles');
+            expect(note.title).toContain('capture time unknown');
+        });
+
+        describe('the still-needed box', () => {
+            function convertNote(modal, creditHrid) {
+                return modal.querySelector(`.mwi-shrine-credit-convert[data-credit-hrid="${creditHrid}"]`);
+            }
+
+            test('a credit row says what converting it would cost in spare tokens', () => {
+                seeRate(1, 10);
+                game.inventory = [
+                    { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 1000 },
+                ];
+                const modal = openModal();
+                setTarget(modal, FORCE, 3);
+
+                const note = convertNote(modal, '/items/guild_credit_1');
+                expect(note.textContent).toBe('or convert ≈5 tokens');
+                expect(note.title).toContain('Approximate');
+            });
+
+            test('no annotation when the spare tokens do not cover it', () => {
+                seeRate(1, 1);
+                // 300 of the 320 tokens are already owed to the level itself, and
+                // 50 credits at one per token is more than the 20 left over
+                game.inventory = [
+                    { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 320 },
+                ];
+                const modal = openModal();
+                setTarget(modal, FORCE, 3);
+
+                expect(convertNote(modal, '/items/guild_credit_1')).toBeNull();
+            });
+
+            test('an unseen colour says so instead of a converted figure', () => {
+                game.inventory = [
+                    { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 1000 },
+                ];
+                const modal = openModal();
+                setTarget(modal, FORCE, 3);
+
+                const note = convertNote(modal, '/items/guild_credit_1');
+                expect(note.textContent).toBe('Trade: token rate not seen yet');
+                expect(note.title).toContain('Guild Token');
+            });
         });
     });
 });
