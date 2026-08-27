@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The shrine planner knows the real token rates and recommends the cheapest path
+
+The guild shop's actual token→credit rates are built in (green/brown/white/blue 1→10, purple/red 1→1, silver 10→1, gold 60→1; a live capture from the exchange still overrides them if the game rebalances). With every rate known, each suggested buy now recommends one cheapest plan per credit colour — convert tokens where tokens genuinely win, buy mats where the market wins, judged against the token's own gold value at its best use. In practice tokens go to the colour they buy the most of and everything else goes to gold; the affordability marks, the ranking, the spend-everything walk, the Missing Mats button and the convert lines all follow the recommended plan, and figures from the standard rates drop the ≈ they no longer need.
+
 ### The shrine planner stays inside its window and follows through to the exchange
 
 The Suggested Next Buys rows wrapped badly and ran off the modal's right edge; they now wrap within it, with credit names shortened in context ("12,000 Blue") and the full list in the tooltip. The affordable buys get their own Missing Mats Marketplace button plus a "then convert:" plan naming exactly what to exchange after buying. And spare guild tokens now count toward credit gaps: where the exchange rate has been seen, a buy short on credits shows the ≈token top-up that covers it, the spend-everything walk ranks by effective token cost, and the still-needed box says "or convert ≈N tokens" — a colour whose rate has never been captured says so instead of guessing.
