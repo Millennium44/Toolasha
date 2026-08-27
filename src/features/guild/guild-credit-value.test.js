@@ -941,6 +941,35 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         });
     });
 
+    describe('the suggestions section folds', () => {
+        const suggestHeading = (modal) => modal.querySelector('.mwi-shrine-suggest-heading');
+        const suggestBody = (modal) => modal.querySelector('.mwi-shrine-suggest-body');
+
+        test('clicking the heading folds the whole block and remembers it', async () => {
+            const modal = openModal();
+            expect(suggestBody(modal).style.display).toBe('block');
+
+            suggestHeading(modal).click();
+            expect(suggestBody(modal).style.display).toBe('none');
+            expect(suggestHeading(modal).textContent).toContain('▶');
+            expect(shrinePlanRecord.get().suggestionsCollapsed).toBe(true);
+
+            // A fresh render honours the remembered fold
+            const reopened = openModal();
+            expect(suggestBody(reopened).style.display).toBe('none');
+        });
+
+        test('unfolding is remembered the same way', () => {
+            shrinePlanRecord.get().suggestionsCollapsed = true;
+            const modal = openModal();
+            expect(suggestBody(modal).style.display).toBe('none');
+
+            suggestHeading(modal).click();
+            expect(suggestBody(modal).style.display).toBe('block');
+            expect(shrinePlanRecord.get().suggestionsCollapsed).toBe(false);
+        });
+    });
+
     describe('suggestion row layout', () => {
         function forceRow(modal) {
             return nextBuyRows(modal).find((r) => r.textContent.includes('Force'));

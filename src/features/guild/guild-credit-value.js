@@ -1528,6 +1528,10 @@ class GuildCreditValue {
          * go is downwards. Credit names are shortened here, where the whole
          * section is about guild credits, with the full name in a `title`.
          */
+        // renderSuggestions is a plain function, so the instance's debounced
+        // plan save has to be captured here where `this` still means the panel
+        const savePlanSoon = () => this._savePlanSoon();
+
         function renderSuggestions() {
             const itemDetailMap = gameData.itemDetailMap || {};
             const tokenHrid = Object.keys(itemDetailMap).find((hrid) => hrid.includes('guild_token'));
@@ -1545,14 +1549,34 @@ class GuildCreditValue {
                 'recommended plan spends converting credits. Credits the marketplace supplies more cheaply ' +
                 'than the guild shop are bought there instead, and cost gold rather than tokens. Colours ' +
                 'with neither a rate nor a market price are left out of the sum.';
-            heading.innerHTML = `<span>Suggested Next Buys</span><span style="color:#e0e0e0; white-space:nowrap;">${tokenName}: <b>${balance.toLocaleString()}</b></span>`;
+            heading.className = 'mwi-shrine-suggest-heading';
+            heading.style.cursor = 'pointer';
+            heading.style.userSelect = 'none';
+            const collapsed = planState().suggestionsCollapsed === true;
+            heading.innerHTML =
+                `<span>${collapsed ? '▶' : '▼'} Suggested Next Buys</span>` +
+                `<span style="color:#e0e0e0; white-space:nowrap;">${tokenName}: <b>${balance.toLocaleString()}</b></span>`;
             suggestEl.appendChild(heading);
+
+            // Everything below the heading folds as one block; the collapsed
+            // state rides the same per-character plan record as the panel's own
+            const suggestBody = document.createElement('div');
+            suggestBody.className = 'mwi-shrine-suggest-body';
+            suggestBody.style.display = collapsed ? 'none' : 'block';
+            suggestEl.appendChild(suggestBody);
+            heading.addEventListener('click', () => {
+                const isOpen = suggestBody.style.display !== 'none';
+                suggestBody.style.display = isOpen ? 'none' : 'block';
+                heading.querySelector('span').textContent = `${isOpen ? '▶' : '▼'} Suggested Next Buys`;
+                planState().suggestionsCollapsed = isOpen;
+                savePlanSoon();
+            });
 
             if (nextBuys.length === 0) {
                 const none = document.createElement('div');
                 none.style.cssText = 'color:#6b7280; text-align:center; font-size:11px;';
                 none.textContent = 'Every buff is at its shrine cap';
-                suggestEl.appendChild(none);
+                suggestBody.appendChild(none);
                 return;
             }
 
@@ -1686,7 +1710,7 @@ class GuildCreditValue {
                     row.appendChild(note);
                 }
 
-                suggestEl.appendChild(row);
+                suggestBody.appendChild(row);
             });
 
             const walk = document.createElement('div');
@@ -1705,9 +1729,9 @@ class GuildCreditValue {
                 plan.count === 0
                     ? `Nothing on this list is affordable with ${balance.toLocaleString()} tokens`
                     : `Spending everything now: ${plan.count} of ${plan.rows.length} next levels for ${plan.spent.toLocaleString()} tokens${converted}${bought}`;
-            suggestEl.appendChild(walk);
+            suggestBody.appendChild(walk);
 
-            renderNextBuyFlow(plan.owedCredits, plan.owedTokenCredits, itemDetailMap, inventory);
+            renderNextBuyFlow(plan.owedCredits, plan.owedTokenCredits, itemDetailMap, inventory, suggestBody);
         }
 
         /**
@@ -1740,7 +1764,7 @@ class GuildCreditValue {
          * @param {Array<Object>} inventory - The character's items
          * @returns {void}
          */
-        function renderNextBuyFlow(owedCredits, owedTokenCredits, itemDetailMap, inventory) {
+        function renderNextBuyFlow(owedCredits, owedTokenCredits, itemDetailMap, inventory, host) {
             const topConversions = buildTopConversions(itemDetailMap, 1);
             const mats = creditShortfallMaterials(owedCredits, topConversions, inventory);
             const steps = creditConversionPlan(owedCredits, topConversions, itemDetailMap);
@@ -1809,7 +1833,7 @@ class GuildCreditValue {
                 }
             }
 
-            suggestEl.appendChild(flow);
+            host.appendChild(flow);
         }
 
         /**
