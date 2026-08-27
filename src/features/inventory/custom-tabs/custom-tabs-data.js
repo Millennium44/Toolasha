@@ -115,20 +115,35 @@ function unionTombstones(a, b) {
  * a list the user authored by hand the safe answer is to keep the tab and drop
  * the tombstone: reviving one deleted tab costs a second click, losing a
  * curated tree costs an evening.
+ *
+ * A REVIVED SUBTREE comes back whole. `removeTab` tombstones the root and every
+ * descendant at the same instant, so when the root's tombstone turns out to be
+ * stale news — the other device edited the subtree after the deletion — every
+ * descendant tombstone from that same removal is stale news too. Comparing each
+ * descendant against its own stamp instead resurrected the root carrying only
+ * the children that happened to be edited and silently dropped the untouched
+ * siblings, which is the one outcome worse than either "deleted" or "kept".
+ * `revivedAt` carries the cleared ancestor's `deletedAt` down: a descendant
+ * tombstone no newer than it belongs to the removal that was just undone, while
+ * a NEWER one is an independent later deletion and still applies.
  * @param {Object} tab
  * @param {Object<string, number>} removed - Mutated: surviving ids are cleared
+ * @param {number} [revivedAt] - Deletion an ancestor was just revived from
  * @returns {Object|null} The tab (a new copy only if a descendant was dropped)
  */
-function applyTombstones(tab, removed) {
+function applyTombstones(tab, removed, revivedAt = -1) {
     if (!tab || typeof tab !== 'object') return null;
     const deletedAt = removed[tab.id];
+    let revived = revivedAt;
     if (deletedAt !== undefined) {
-        if (stampOf(tab) === 0 || deletedAt <= stampOf(tab)) delete removed[tab.id];
-        else return null;
+        if (stampOf(tab) === 0 || deletedAt <= stampOf(tab) || deletedAt <= revivedAt) {
+            delete removed[tab.id];
+            if (deletedAt > revived) revived = deletedAt;
+        } else return null;
     }
     const children = Array.isArray(tab.children) ? tab.children : null;
     if (!children || children.length === 0) return tab;
-    const kept = children.map((child) => applyTombstones(child, removed)).filter(Boolean);
+    const kept = children.map((child) => applyTombstones(child, removed, revived)).filter(Boolean);
     if (kept.length === children.length && kept.every((child, i) => child === children[i])) return tab;
     return { ...tab, children: kept };
 }
@@ -260,6 +275,39 @@ function mergeConfigs(stored, memory) {
 }
 
 /**
+ * Give every tab in a tree the shape the read helpers assume.
+ *
+ * `_findNode`, `_walkTabs`, `getAssignedItemSet` and `collectItemsAboveTab` all
+ * reach `tab.children.length` and iterate `tab.items` unguarded, so a single
+ * node missing either field throws and the whole panel stops drawing — and,
+ * once that config is in hand, keeps throwing on every load until the key is
+ * cleared by hand. Three things write this key without going through the CRUD
+ * helpers: an imported layout file, a sync pull, and the upstream script that
+ * shares `<charId>_inventoryTabs_config` in the same database. None of them is
+ * obliged to produce the shape this module builds, so the shape is imposed on
+ * the way in rather than trusted.
+ *
+ * Deliberately conservative: only the two fields that crash are filled, other
+ * keys are carried through untouched, and the only tabs dropped are the ones
+ * `mergeConfigs` already drops (non-objects and ids it cannot key by).
+ * @param {*} tabs
+ * @returns {Array<Object>} The tree, every node with `items` and `children`
+ */
+function normalizeTabs(tabs) {
+    if (!Array.isArray(tabs)) return [];
+    const out = [];
+    for (const tab of tabs) {
+        if (!tab || typeof tab !== 'object' || tab.id == null) continue;
+        out.push({
+            ...tab,
+            items: Array.isArray(tab.items) ? tab.items.filter((hrid) => typeof hrid === 'string') : [],
+            children: normalizeTabs(tab.children),
+        });
+    }
+    return out;
+}
+
+/**
  * Forget deletions older than `TOMBSTONE_MAX_AGE_MS`.
  * @param {Object} config
  * @param {number} [now]
@@ -369,6 +417,7 @@ export async function loadConfig(characterId) {
     // copies a surviving tombstone can still delete are the synced ones it is
     // meant to.
     const config = pruneTombstones(raw);
+    config.tabs = normalizeTabs(config.tabs);
     record.set(config);
     return config;
 }
@@ -425,7 +474,16 @@ export function sanitizeImportedConfig(parsed, now = Date.now()) {
             .map((tab) => {
                 const id = makeId();
                 if (tab.id != null) idMap.set(tab.id, id);
-                return { ...tab, id, updatedAt: now, children: rebuild(tab.children) };
+                // `items` is normalized for the same reason the ids are replaced:
+                // the file came from outside and the read helpers iterate it
+                // unguarded (see `normalizeTabs`)
+                return {
+                    ...tab,
+                    id,
+                    updatedAt: now,
+                    items: Array.isArray(tab.items) ? tab.items.filter((hrid) => typeof hrid === 'string') : [],
+                    children: rebuild(tab.children),
+                };
             });
     const tabs = rebuild(rest.tabs);
     const selectedTabId = rest.selectedTabId != null ? (idMap.get(rest.selectedTabId) ?? null) : null;

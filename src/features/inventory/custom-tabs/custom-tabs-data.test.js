@@ -56,6 +56,7 @@ const {
     cleanOrphanedBindings,
     getBaseHrid,
     collectItemsAboveTab,
+    getAssignedItemSet,
     LINEBREAK_HRID,
     TOMBSTONE_MAX_AGE_MS,
     loadConfig,
@@ -784,6 +785,49 @@ describe('tombstones against unstamped tabs', () => {
         expect(merged.removed).toBeUndefined();
     });
 
+    test('a revived subtree comes back whole, untouched siblings included', () => {
+        // removeTab tombstones the root and every descendant at one instant, so
+        // when the root's tombstone turns out to be stale the siblings' are too.
+        // Comparing each child against its own stamp brought the root back
+        // carrying only the child that happened to be edited.
+        const carrier = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [
+                tab('root', {
+                    updatedAt: 400,
+                    children: [tab('kid', { updatedAt: 400 }), tab('sib', { updatedAt: 100 })],
+                }),
+            ],
+        };
+        const deleted = { version: 1, selectedTabId: null, tabs: [], removed: { root: 300, kid: 300, sib: 300 } };
+
+        for (const merged of [merge(carrier, deleted), merge(deleted, carrier)]) {
+            expect(merged.tabs.map((t) => t.id)).toEqual(['root']);
+            expect(merged.tabs[0].children.map((t) => t.id)).toEqual(['kid', 'sib']);
+            expect(merged.removed).toBeUndefined();
+        }
+    });
+
+    test('a LATER deletion of one child still applies after the subtree is revived', () => {
+        // The revival only excuses the tombstones of the removal it undid — a
+        // deletion recorded after the revival is an independent one
+        const carrier = {
+            version: 1,
+            selectedTabId: null,
+            tabs: [
+                tab('root', {
+                    updatedAt: 400,
+                    children: [tab('kid', { updatedAt: 400 }), tab('sib', { updatedAt: 100 })],
+                }),
+            ],
+        };
+        const deleted = { version: 1, selectedTabId: null, tabs: [], removed: { root: 300, sib: 600 } };
+        const merged = merge(carrier, deleted);
+        expect(merged.tabs[0].children.map((t) => t.id)).toEqual(['kid']);
+        expect(merged.removed).toEqual({ sib: 600 });
+    });
+
     test('a stamped tab older than the tombstone is still deleted', () => {
         const carrier = { version: 1, selectedTabId: null, tabs: [tab('a', { updatedAt: 100 })] };
         const deleted = { version: 1, selectedTabId: null, tabs: [], removed: { a: 500 } };
@@ -950,6 +994,56 @@ describe('sanitizeImportedConfig', () => {
         expect(reloaded.tabs.map((t) => t.name)).toEqual(['Ores', 'Gear']);
         expect(reloaded.tabs[1].children.map((t) => t.name)).toEqual(['W']);
         expect(reloaded.removed).toBeUndefined();
+    });
+});
+
+// -------------------------------------------------------------------------
+// A config written by something that is not this module's CRUD helpers — an
+// imported file, a sync pull, the upstream script sharing the same key — must
+// not be able to crash the read helpers
+// -------------------------------------------------------------------------
+
+describe('tab shape coming in from outside', () => {
+    const KEY = 'char1_inventoryTabs_config';
+
+    beforeEach(() => {
+        storageMock.reset();
+    });
+
+    test('a stored tab with no items or children array loads usable', async () => {
+        storageMock.storeFor('settings').set(KEY, {
+            version: 1,
+            selectedTabId: null,
+            tabs: [{ id: 'gear', name: 'Gear', children: [{ id: 'weapons', name: 'W' }] }, { id: 'bare' }],
+        });
+
+        const config = await loadConfig('char1');
+        expect(config.tabs.map((t) => t.id)).toEqual(['gear', 'bare']);
+        expect(config.tabs[0].children[0].items).toEqual([]);
+        expect(config.tabs[0].children[0].children).toEqual([]);
+        // These are what threw: every read helper walks children and items raw
+        expect(() => getAssignedItemSet(config)).not.toThrow();
+        expect(() => findTab(config, 'nothing-here')).not.toThrow();
+        expect(() => collectItemsAboveTab(config, 'bare')).not.toThrow();
+    });
+
+    test('non-object and id-less entries are dropped rather than carried', async () => {
+        storageMock.storeFor('settings').set(KEY, {
+            version: 1,
+            selectedTabId: null,
+            tabs: [null, 'nope', { name: 'no id' }, { id: 'real', name: 'Real', items: ['/items/hat', 7] }],
+        });
+
+        const config = await loadConfig('char1');
+        expect(config.tabs.map((t) => t.id)).toEqual(['real']);
+        // A non-string in items would reach the DOM as an hrid lookup
+        expect(config.tabs[0].items).toEqual(['/items/hat']);
+    });
+
+    test('an imported tab with no items array is given one', () => {
+        const config = sanitizeImportedConfig({ version: 1, tabs: [{ id: 'x', name: 'X' }] });
+        expect(config.tabs[0].items).toEqual([]);
+        expect(() => getAssignedItemSet(config)).not.toThrow();
     });
 });
 
