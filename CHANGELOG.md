@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The lab restock gets its own Buy all, and T21 stops pretending there's a T22
+
+The Labyrinth block on the consumables panel gains the same "Buy all N · cost" hand-off as the consumables footer — one click opens the marketplace with a tab per missing supply instead of a per-row trip each. And T21 being the final trial tier is now respected: the badge reads T21 rather than T21+ (a banked count above 21 clamps as the miscount it is), and a trial that has banked all 21 tiers shows one "Final tier" line instead of forecasting a next tier that cannot exist — while a trial still fighting T21 keeps its forecast, since reaching the top rung is a real prediction.
+
 ### The suggestions fold away, and you choose how missing credits are paid
 
 Suggested Next Buys collapses from its heading and remembers the fold per character. A new Missing credits: Auto · Tokens · Gold control picks how credit gaps are covered — Auto keeps the cheapest path per colour, Tokens forces the guild exchange wherever a rate exists, Gold forces the market wherever mats are priceable — with honest fallbacks either way and a tooltip naming the overpay when a forced path costs more than Auto would have. One mode drives the whole panel: rankings, affordability, the spend-everything walk, both mats buttons, the convert lines and the still-needed box all move together — which also fixed Auto double-billing the same shortfall as both a purchase and an exchange.
