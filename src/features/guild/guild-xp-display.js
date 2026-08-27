@@ -13,6 +13,7 @@ import { guildXPTracker } from './guild-xp-tracker.js';
 import { findTrialsRoot, isTrialsSetupTab } from './guild-trials-scrape.js';
 import { BUILDING_PATTERNS, readBuildingBonus } from './guild-trials-store.js';
 import { formatDateTime } from '../../utils/formatters.js';
+import { openPlayerProfile } from '../../utils/profile-command.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { fNum, rankBadge, addColumn, makeColumnSortable } from '../../utils/table-columns.js';
 
@@ -928,6 +929,11 @@ class GuildXPDisplay {
         else trialsContentEl.insertAdjacentElement('afterbegin', wrapper);
 
         wrapper.querySelectorAll('.mwi-trial-name').forEach((el) => {
+            el.title = 'Click to draft a whisper. Right-click to open their profile.';
+            el.addEventListener('contextmenu', (event) => {
+                event.preventDefault();
+                openPlayerProfile(el.dataset.name, { logPrefix: 'TrialSignups' });
+            });
             el.addEventListener('click', () => {
                 const name = el.dataset.name;
                 const chatInput = document.querySelector('[class*="Chat_chatInputContainer"] input');

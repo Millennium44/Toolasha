@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Trial signups: right-click an unsigned name for their profile
+
+The unsigned-players list keeps left-click for drafting the whisper nudge; right-clicking a name now opens that player's profile instead.
+
 ### The shared database keeps up with upstream, and a dead link goes away
 
 An upstream audit found the co-installed upstream script has moved the shared ToolashaDB to version 20 while this fork sat at 17 — if that script ran even once, this one would open the database into a VersionError and silently read defaults for everything. The fork now matches version 20, creates upstream's three new stores defensively, and — should the version ever drift again — reopens the database at whatever version it finds instead of going dark. The milkyway.market link (site permanently down) is removed along with its setting.
