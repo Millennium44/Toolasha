@@ -757,11 +757,11 @@ function buildPartyMemberDTO(profile, clientData, battleData) {
  * Calculate combat level for level gap debuff.
  *
  * A simulated party has no native `combatDetails.combatLevel`, so it is derived
- * from the same formula the game uses (utils/combat-level.js) and floored the
- * same way — the debuff compares the integer Combat Levels the game shows, not
- * the unfloored figure.
+ * from the same formula the game uses (utils/combat-level.js) — and left
+ * unfloored, because the server-side Level Malus reads the raw whole-skill
+ * Combat Level rather than the integer the game displays.
  * @param {Object} dto - Player DTO
- * @returns {number} Combat level
+ * @returns {number} Raw (unfloored) combat level
  */
 function calcCombatLevel(dto) {
     return combatLevel({
@@ -772,7 +772,7 @@ function calcCombatLevel(dto) {
         melee: dto.meleeLevel,
         ranged: dto.rangedLevel,
         magic: dto.magicLevel,
-    }).level;
+    }).exact;
 }
 
 /**

@@ -24,7 +24,44 @@ vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
 }));
 
-const { default: combatDropLuck, formatOrdinal, describeLuck } = await import('./combat-drop-luck.js');
+const {
+    default: combatDropLuck,
+    formatOrdinal,
+    describeLuck,
+    rawCombatLevelOf,
+} = await import('./combat-drop-luck.js');
+
+describe('the combat level the level gap is measured on', () => {
+    /** A `combatDetails` with the seven whole skill levels a live battle carries */
+    const details = (level) => ({
+        combatLevel: Math.floor(0.1 * (level * 4 + level) + 0.5 * level),
+        staminaLevel: level,
+        intelligenceLevel: level,
+        attackLevel: level,
+        defenseLevel: level,
+        meleeLevel: level,
+        rangedLevel: level,
+        magicLevel: level,
+    });
+
+    test('is the raw one, recomputed from the skills rather than the floored field', () => {
+        // Seven skills at 63: 0.1 × (63 × 5) + 0.5 × 63 = 63 exactly, but a build
+        // that does not land on a whole number is where floored and raw diverge
+        const mixed = { ...details(63), meleeLevel: 64 };
+        expect(rawCombatLevelOf(mixed)).toBeCloseTo(63.6, 6);
+        expect(mixed.combatLevel).toBe(63);
+    });
+
+    test('falls back to the floored field when a skill is missing rather than giving up', () => {
+        const partial = { ...details(70), magicLevel: undefined };
+        expect(rawCombatLevelOf(partial)).toBe(70);
+    });
+
+    test('and is unknown when there is nothing to read', () => {
+        expect(rawCombatLevelOf(null)).toBeNull();
+        expect(rawCombatLevelOf({})).toBeNull();
+    });
+});
 
 describe('formatOrdinal', () => {
     test('gets the ordinary suffixes right', () => {

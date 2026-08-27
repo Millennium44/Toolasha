@@ -2,16 +2,29 @@
  * The level gap debuff
  *
  * A character fighting alongside people far above their level takes a penalty to
- * what drops for them. It starts once somebody in the party is both 20% above
- * them *and* at least ten combat levels above them — the Game Guide states both
- * conditions, and at low levels they disagree: 40 against 49 is a ratio of 1.225
- * but a gap of only nine, and draws no penalty. Past that it deepens fast: three
- * points of penalty for every point of ratio past the fifth, capped at 90%.
+ * what drops for them. The Game Guide describes two conditions — 20% above and
+ * ten combat levels above — and the server folds them into a single effective
+ * threshold:
  *
- * The levels compared are the game's own floored Combat Levels — the integer it
- * shows in the sidebar and sends as `combatDetails.combatLevel` — which is the
- * only Combat Level the client defines anywhere; there is no evidence of an
- * unfloored variant feeding this check.
+ * ```go
+ * effectiveThreshold := max(1.2, (combatLevel+10)/combatLevel)
+ * if effectiveThreshold*combatLevel < topCombatLevel {
+ *     multiplier = max(0.1, 1.0-3.0*(topCombatLevel/combatLevel-effectiveThreshold))
+ * }
+ * ```
+ *
+ * Below Combat Level 50 the ten-level rule dominates; above it the fifth does.
+ * The comparison is strict — exactly at the threshold is not a penalty — and the
+ * penalty is continuous: three points for every point of ratio past the
+ * threshold, with the multiplier floored at a tenth, so 90% is as deep as it goes.
+ *
+ * The levels compared are the **raw, unfloored** whole-skill Combat Levels, not
+ * the integer the game shows in the sidebar and sends as
+ * `combatDetails.combatLevel`. This file used to say the opposite — that there
+ * was no evidence of an unfloored variant feeding this check. That position was
+ * retracted upstream after the MWI developer supplied the server-side Go
+ * implementation above directly; it reads the unfloored value, and this is now
+ * the same formula the server runs.
  *
  * ## Why this is its own file
  *
@@ -39,20 +52,25 @@
  * caller's decision, and the honest one while the chest penalty is unmeasured.
  */
 
-/** Below this ratio between the party's top level and yours there is no penalty */
+/** The floor on the effective threshold — a fifth above you, whatever your level */
 export const LEVEL_GAP_RATIO = 1.2;
 
-/** And fewer whole levels than this below the top is no penalty either, whatever the ratio */
+/** The other half of the threshold: ten whole levels above you, which dominates below Combat 50 */
 export const LEVEL_GAP_MIN_LEVELS = 10;
 
-/** However far below the party you are, the penalty stops here */
+/** However far below the party you are, the penalty stops here — the multiplier floors at a tenth */
 export const MAX_LEVEL_GAP_DEBUFF = 0.9;
+
+/** Points of penalty per point of ratio past the threshold */
+const LEVEL_GAP_SLOPE = 3;
 
 /**
  * One character's penalty for being below the party.
  *
- * @param {number} level - Their combat level
- * @param {number} topLevel - The highest combat level in the party
+ * Both levels are the raw, unfloored Combat Level — see the header.
+ *
+ * @param {number} level - Their raw (unfloored) combat level
+ * @param {number} topLevel - The highest raw (unfloored) combat level in the party
  * @returns {number|null} A negative fraction, 0 for no penalty, or null when a
  *   level was not available — which is not the same as no penalty and should not
  *   be shown as one
@@ -60,13 +78,13 @@ export const MAX_LEVEL_GAP_DEBUFF = 0.9;
 export function levelGapDebuff(level, topLevel) {
     if (!(level > 0) || !(topLevel > 0)) return null;
 
-    const ratio = topLevel / level;
-    if (ratio <= LEVEL_GAP_RATIO || topLevel - level < LEVEL_GAP_MIN_LEVELS) return 0;
+    const threshold = Math.max(LEVEL_GAP_RATIO, (level + LEVEL_GAP_MIN_LEVELS) / level);
+    // Strict: exactly at the threshold is not a penalty
+    if (!(threshold * level < topLevel)) return 0;
 
-    // Floored to whole percent before scaling, matching the game's own rounding —
-    // an unfloored version drifts by a fraction of a percent at every ratio
-    const levelPercent = Math.floor((ratio - LEVEL_GAP_RATIO) * 100) / 100;
-    return -Math.min(MAX_LEVEL_GAP_DEBUFF, 3 * levelPercent);
+    // The server writes this as a multiplier floored at 0.1; as a debuff that is
+    // the same arithmetic without the float noise of subtracting one from it
+    return -Math.min(MAX_LEVEL_GAP_DEBUFF, LEVEL_GAP_SLOPE * (topLevel / level - threshold));
 }
 
 /**

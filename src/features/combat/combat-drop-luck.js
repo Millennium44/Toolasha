@@ -56,6 +56,7 @@ import {
 } from '../../utils/dungeon-chest-luck.js';
 import { newKeyLedger, noteItems, sample, keyFlow, entryKeyFor } from '../../utils/key-ledger.js';
 import { partyLevelGaps, isLevelGapped } from '../../utils/dungeon-level-gap.js';
+import { combatLevel } from '../../utils/combat-level.js';
 import { partyLuckPanel } from '../../utils/bundle-bridge.js';
 
 const DISPLAY_ID = 'mwi-drop-luck';
@@ -74,6 +75,42 @@ const LIVE_INTERVAL_MS = 30000;
 /** Above this is a good session, below the mirror of it a bad one */
 const LUCKY_PERCENTILE = 0.75;
 const UNLUCKY_PERCENTILE = 0.25;
+
+/** The seven whole skill levels `combatDetails` carries, and the names the formula wants */
+const COMBAT_LEVEL_FIELDS = Object.freeze({
+    stamina: 'staminaLevel',
+    intelligence: 'intelligenceLevel',
+    attack: 'attackLevel',
+    defense: 'defenseLevel',
+    melee: 'meleeLevel',
+    ranged: 'rangedLevel',
+    magic: 'magicLevel',
+});
+
+/**
+ * The raw, unfloored Combat Level behind a live `combatDetails`.
+ *
+ * The level gap penalty is computed server-side from the unfloored figure, not
+ * from the integer in `combatDetails.combatLevel`, so it is recomputed here from
+ * the seven whole skill levels that ride along on the same object. Those fields
+ * are present on live `new_battle` payloads; if one is not, the floored field is
+ * still a better answer than none — it is the same number to within a level, and
+ * only the boundary cases differ.
+ *
+ * @param {Object} combatDetails - One player's `combatDetails`
+ * @returns {number|null} The raw combat level, or null when nothing was readable
+ */
+export function rawCombatLevelOf(combatDetails) {
+    if (!combatDetails) return null;
+
+    const levels = {};
+    for (const [skill, field] of Object.entries(COMBAT_LEVEL_FIELDS)) {
+        const value = combatDetails[field];
+        if (typeof value !== 'number') return combatDetails.combatLevel ?? null;
+        levels[skill] = value;
+    }
+    return combatLevel(levels).exact;
+}
 
 /**
  * A percentile as a rank, so it reads as a position rather than a probability.
@@ -272,7 +309,7 @@ class CombatDropLuck {
      * @returns {Object} Name to debuff, a negative fraction or null
      */
     _partyGaps(players) {
-        const gaps = partyLevelGaps(players.map((player) => player?.combatDetails?.combatLevel ?? null));
+        const gaps = partyLevelGaps(players.map((player) => rawCombatLevelOf(player?.combatDetails)));
 
         const byName = {};
         players.forEach((player, index) => {
