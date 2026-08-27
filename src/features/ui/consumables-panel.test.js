@@ -24,6 +24,7 @@ const game = vi.hoisted(() => ({
     statsByName: {},
     characterData: null,
     currentActions: [],
+    clientData: null,
 }));
 
 const settings = vi.hoisted(() => ({ values: {} }));
@@ -67,6 +68,7 @@ vi.mock('../../core/data-manager.js', () => ({
         getItemDetails: (hrid) => game.items[hrid] || null,
         getActionDetails: () => game.actionDetail,
         getInventory: () => game.inventory,
+        getInitClientData: () => game.clientData,
         getCurrentActions: () => game.currentActions,
         get characterData() {
             return game.characterData;
@@ -93,7 +95,10 @@ vi.mock('../../utils/marketplace-autofill.js', () => ({
     createAutofillManager: () => ({ initialize: () => {}, setQuantity: () => {} }),
 }));
 vi.mock('../../utils/order-book.js', () => ({ estimateFillSeconds: () => null }));
-vi.mock('./consumables-shopping-list.js', () => ({ openShoppingList: () => {} }));
+const shopping = vi.hoisted(() => ({ calls: [] }));
+vi.mock('./consumables-shopping-list.js', () => ({
+    openShoppingList: (items, options) => shopping.calls.push({ items, options }),
+}));
 vi.mock('../combat-stats/combat-stats-data-collector.js', () => ({
     default: { getLatestData: () => game.latest },
 }));
@@ -116,6 +121,8 @@ beforeEach(async () => {
     game.latest = null;
     game.statsByName = {};
     game.characterData = null;
+    game.clientData = null;
+    shopping.calls.length = 0;
     game.currentActions = [];
     consumablesPanel._readinessMemo = null;
     consumablesPanel._profiles = [];
@@ -558,5 +565,56 @@ describe('switching character', () => {
         await settled();
 
         expect(consumablesPanel.panel).not.toBe(null);
+    });
+});
+
+describe('the labyrinth buy all', () => {
+    const SUPPLIES = ['/items/basic_torch', '/items/basic_shroud', '/items/basic_beacon'];
+
+    beforeEach(() => {
+        game.clientData = { itemDetailMap: Object.fromEntries(SUPPLIES.map((h) => [h, {}])) };
+        for (const hrid of SUPPLIES) game.items[hrid] = { name: hrid.split('/').pop() };
+        game.characterData = {
+            characterInfo: { labyrinthTorchCap: 100, labyrinthShroudCap: 4, labyrinthBeaconCap: 5 },
+        };
+        game.inventory = [];
+    });
+
+    test('the whole lab shortfall goes to the marketplace in one gesture', async () => {
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._render();
+
+        // Five runs is the default target: 5x(100 torches + 4 shrouds + 5 beacons)
+        const buyAll = [...consumablesPanel.bodyEl.querySelectorAll('span')].find((el) =>
+            el.textContent.startsWith('Buy all 545')
+        );
+        expect(buyAll).toBeTruthy();
+
+        buyAll.click();
+        expect(shopping.calls).toHaveLength(1);
+        expect(shopping.calls[0].items.map((i) => [i.itemHrid, i.count])).toEqual([
+            ['/items/basic_torch', 500],
+            ['/items/basic_shroud', 20],
+            ['/items/basic_beacon', 25],
+        ]);
+        // Names ride along so the marketplace tabs can label themselves
+        expect(shopping.calls[0].items.every((i) => typeof i.name === 'string' && i.name)).toBe(true);
+    });
+
+    test('a fully stocked lab shows no buy-all line', async () => {
+        game.inventory = [
+            { itemHrid: '/items/basic_torch', count: 500, itemLocationHrid: '/item_locations/inventory' },
+            { itemHrid: '/items/basic_shroud', count: 50, itemLocationHrid: '/item_locations/inventory' },
+            { itemHrid: '/items/basic_beacon', count: 50, itemLocationHrid: '/item_locations/inventory' },
+        ];
+        consumablesPanel.show();
+        await settled();
+        consumablesPanel._render();
+
+        const buyAll = [...consumablesPanel.bodyEl.querySelectorAll('span')].find((el) =>
+            el.textContent.startsWith('Buy all')
+        );
+        expect(buyAll).toBeUndefined();
     });
 });

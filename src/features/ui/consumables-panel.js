@@ -1718,6 +1718,48 @@ class ConsumablesPanel {
             section.appendChild(this._labRow(need.itemHrid, need.perRun, runs, inventory, need));
         }
 
+        // The whole lab restock in one gesture, exactly like the consumables
+        // footer above it - the per-row buys were the only option here, and a
+        // restock of four supplies meant four trips back to this panel
+        if (queue.length) {
+            let labCost = 0;
+            let labUnpriced = 0;
+            const labItems = queue.map(({ itemHrid, count }) => {
+                const ask = Number(getItemPrices(itemHrid)?.ask);
+                if (ask > 0) labCost += ask * count;
+                else labUnpriced += 1;
+                return {
+                    itemHrid,
+                    count,
+                    name: dataManager.getItemDetails?.(itemHrid)?.name || itemHrid.split('/').pop(),
+                };
+            });
+            const labTotal = queue.reduce((sum, q) => sum + q.count, 0);
+
+            const buyLine = document.createElement('div');
+            Object.assign(buyLine.style, { textAlign: 'right', padding: '3px 0 1px', fontWeight: 'bold' });
+            const buyAll = document.createElement('span');
+            buyAll.textContent = `Buy all ${formatLargeNumber(labTotal)} · ${formatLargeNumber(Math.round(labCost))}`;
+            Object.assign(buyAll.style, {
+                color: ROW_COLORS.gold,
+                cursor: 'pointer',
+                textDecoration: 'underline dotted',
+                whiteSpace: 'nowrap',
+            });
+            buyAll.title =
+                'Open the marketplace with a tab per item, each showing what is missing.' +
+                (labUnpriced
+                    ? `
+${labUnpriced} item(s) could not be priced and are not in this total.`
+                    : '');
+            buyAll.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this._openShoppingList(labItems);
+            });
+            buyLine.appendChild(buyAll);
+            section.appendChild(buyLine);
+        }
+
         // What recent runs actually left unspent, and what each rush-for-exit
         // floor would cost against the torch capacity — the two readings that
         // together answer "could the rush floor come down?"
