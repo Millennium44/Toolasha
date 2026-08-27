@@ -81,8 +81,22 @@ describe('combat session loot', () => {
     });
 
     test('an unpriced drop is worth nothing but still counts as a recorded entry', () => {
-        const unpriced = { players: [{ isCurrentPlayer: true, loot: { a: { itemHrid: '/items/coin', count: 900 } } }] };
+        const unpriced = {
+            players: [{ isCurrentPlayer: true, loot: { a: { itemHrid: '/items/never_listed', count: 900 } } }],
+        };
         expect(combatSessionLootValue(unpriced, price)).toEqual({ value: 0, items: 1 });
+    });
+
+    test('coin drops are coins - face value, no market lookup', () => {
+        // The pricer knows no price for coin, which used to value every combat
+        // coin drop at nothing and leave it in the residual
+        const coins = { players: [{ isCurrentPlayer: true, loot: { a: { itemHrid: '/items/coin', count: 900 } } }] };
+        expect(combatSessionLootValue(coins, price)).toEqual({ value: 900, items: 1 });
+    });
+
+    test('loot log coin drops are face value too, so the row cannot jump with its source', () => {
+        const entry = { drops: { '/items/coin::0': 250, '/items/milk::0': 1 } };
+        expect(lootEntryValue(entry, price)).toBe(250 + 40);
     });
 
     test('a run with no loot map at all records no entries', () => {

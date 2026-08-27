@@ -215,6 +215,27 @@ function emptyTally() {
     return tally;
 }
 
+/** Coin dropped as loot is coins - face value, no market lookup */
+const COIN_HRID = '/items/coin';
+
+/**
+ * One drop's unit worth: coin at face value, everything else at market.
+ *
+ * The pricer knows no price for coin (it has no order book), which silently
+ * valued every combat coin drop at nothing and left it in the residual.
+ * Face value here rather than in the shared pricer, because the alchemy and
+ * enhancement paths already carry their coins through `totalCoinsEarned` and
+ * a pricer-level coin would count those twice.
+ * @param {Function} price - `(itemHrid, enhancementLevel) => number|null`
+ * @param {string} itemHrid
+ * @param {number} enhancementLevel
+ * @returns {number}
+ */
+function dropUnitValue(price, itemHrid, enhancementLevel) {
+    if (itemHrid === COIN_HRID) return 1;
+    return num(price(itemHrid, enhancementLevel));
+}
+
 /**
  * What a loot log entry's drops are worth.
  * @param {Object} entry - A loot log entry
@@ -225,7 +246,7 @@ export function lootEntryValue(entry, price) {
     let total = 0;
     for (const [key, count] of Object.entries(entry?.drops || {})) {
         const { itemHrid, enhancementLevel } = splitDropKey(key);
-        total += num(price(itemHrid, enhancementLevel)) * num(count);
+        total += dropUnitValue(price, itemHrid, enhancementLevel) * num(count);
     }
     return total;
 }
@@ -272,7 +293,7 @@ export function combatSessionLootValue(session, price) {
     for (const entry of Object.values(me?.loot || {})) {
         if (!entry?.itemHrid) continue;
         items += 1;
-        value += num(price(entry.itemHrid, num(entry.enhancementLevel))) * num(entry.count);
+        value += dropUnitValue(price, entry.itemHrid, num(entry.enhancementLevel)) * num(entry.count);
     }
     return { value, items };
 }

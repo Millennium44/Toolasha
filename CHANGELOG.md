@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Combat income is measured from your own battles, not just the Loot & XP Log
+
+The combat row read only the Loot & XP Log history, which the game syncs when that log is opened — a character who never opened it showed a confident "Combat drops: 0" while the whole week's income sat in the residual. Each day now uses the game's own log when it recorded that day and falls back to your battle-feed session loot when it didn't (own character only, never both), the basis says which fed what, and a day where combat demonstrably ran but neither source covered it is disclosed as a gap instead of read as zero. Coin drops are also finally worth their face value in both paths instead of pricing to nothing. Labyrinth end-of-run rewards remain invisible to both sources and stay in the residual — the gap note will say so on lab-heavy days.
+
 ### The shrine planner knows the real token rates and recommends the cheapest path
 
 The guild shop's actual token→credit rates are built in (green/brown/white/blue 1→10, purple/red 1→1, silver 10→1, gold 60→1; a live capture from the exchange still overrides them if the game rebalances). With every rate known, each suggested buy now recommends one cheapest plan per credit colour — convert tokens where tokens genuinely win, buy mats where the market wins, judged against the token's own gold value at its best use. In practice tokens go to the colour they buy the most of and everything else goes to gold; the affordability marks, the ranking, the spend-everything walk, the Missing Mats button and the convert lines all follow the recommended plan, and figures from the standard rates drop the ≈ they no longer need.
