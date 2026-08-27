@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Custom tabs: two more holes closed by an adversarial audit
+
+An audit of the merge and load paths against every known failure mode found two real bugs, now fixed. First, reviving a deleted tab subtree by editing one of its children brought back the subtree without its untouched siblings — the revival now carries the whole removal back with it, while a genuinely later deletion inside it still applies. Second, a tab record missing its `items` or `children` arrays — reachable via an imported file, a sync pull, or the co-installed upstream script writing the shared key — crashed the panel on every load until the key was cleared by hand; loads and imports now normalize the shape instead of trusting it. Every other invariant from the previous fix rounds was verified to hold.
+
 ### Tab exports name themselves
 
 An exported custom-tabs layout now downloads as `toolasha-tabs-<character>-<mode>-<date>.json` (mode tagged MC/IC/LC), so exports from different characters or days stop overwriting each other in the downloads folder.
