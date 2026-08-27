@@ -10,7 +10,7 @@
  * back out.
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const game = vi.hoisted(() => ({
     settings: {},
@@ -18,7 +18,11 @@ const game = vi.hoisted(() => ({
     prices: {},
     observers: {},
     buildingLevels: {},
+    buffLevels: {},
+    inventory: [],
     captures: [],
+    storage: {},
+    writes: 0,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -27,9 +31,42 @@ vi.mock('../../core/config.js', () => ({
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getInitClientData: () => game.clientData,
-        getInventory: () => [],
+        getInventory: () => game.inventory,
         getGuildBuildingLevel: (hrid) => game.buildingLevels[hrid] ?? 0,
-        getCharacterGuildBuffLevel: () => 0,
+        getCharacterGuildBuffLevel: (hrid) => game.buffLevels[hrid] ?? 0,
+        getCurrentCharacterId: () => 'char1',
+    },
+}));
+// An in-memory stand-in for IndexedDB: the shrine planner's saved plan is the
+// only thing this file reads or writes through it, and a round-trip needs a
+// store that survives the record being reset between "modal openings".
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        tryGet: async (key, store = 'settings') => {
+            const k = `${store}:${key}`;
+            return { found: k in game.storage, value: game.storage[k] };
+        },
+        get: async (key, store = 'settings', fallback = null) => {
+            const k = `${store}:${key}`;
+            return k in game.storage ? game.storage[k] : fallback;
+        },
+        set: async (key, value, store = 'settings') => {
+            game.writes += 1;
+            game.storage[`${store}:${key}`] = JSON.parse(JSON.stringify(value));
+            return true;
+        },
+    },
+}));
+vi.mock('../../utils/character-key.js', () => ({
+    characterKey: (base) => `${base}_char1`,
+    readScoped: async (base, store = 'settings', fallback = null) => {
+        const k = `${store}:${base}_char1`;
+        return k in game.storage ? game.storage[k] : fallback;
+    },
+    writeScoped: async (base, value, store = 'settings') => {
+        game.writes += 1;
+        game.storage[`${store}:${base}_char1`] = JSON.parse(JSON.stringify(value));
+        return true;
     },
 }));
 vi.mock('../../core/dom-observer.js', () => ({
@@ -43,6 +80,11 @@ vi.mock('../../core/dom-observer.js', () => ({
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
 vi.mock('../../utils/market-data.js', () => ({
     getItemPrice: (itemHrid, { mode }) => game.prices[itemHrid]?.[mode] ?? 0,
+    // The planner's token→gold aside prices credits through this
+    getItemPriceInfo: (itemHrid, { mode }) => ({
+        price: game.prices[itemHrid]?.[mode] ?? 0,
+        estimated: false,
+    }),
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: () => {},
@@ -61,7 +103,9 @@ vi.mock('./guild-token-exchange-capture.js', () => ({
     capturedTokenExchanges: () => [],
 }));
 
-const guildCreditValue = (await import('./guild-credit-value.js')).default;
+const creditValueModule = await import('./guild-credit-value.js');
+const guildCreditValue = creditValueModule.default;
+const { shrinePlanRecord, greedyAffordable } = creditValueModule;
 const { TRIAL_MAX_TIER, levelFromTier, tierFromLevel } = await import('./guild-trials-math.js');
 
 function buildExchangeModal(creditName) {
@@ -446,5 +490,267 @@ describe('reading the token exchange off the dialog', () => {
 
         expect(game.captures).toHaveLength(1);
         expect(modal.querySelector('.mwi-guild-credit-value')).toBeNull();
+    });
+});
+
+describe('shrine upgrade planner — saved plan and next-buy suggestions', () => {
+    const FORCE = '/guild_buffs/force_combat';
+    const TEMPO = '/guild_buffs/tempo_skilling';
+    const RARITY = '/guild_buffs/rarity_combat';
+
+    /** levelCosts for levels 1..max, with `at` overriding named levels */
+    function costs(max, at = {}) {
+        const out = {};
+        for (let lvl = 1; lvl <= max; lvl++) out[String(lvl)] = at[lvl] || { guildTokenCost: 1000, creditCosts: [] };
+        return out;
+    }
+
+    function planClientData() {
+        return {
+            itemDetailMap: {
+                '/items/guild_credit_1': { name: 'Trade Credit', guildCreditConversions: [] },
+                '/items/guild_token': { name: 'Guild Token', guildCreditConversions: [] },
+                '/items/bronze_bar': {
+                    name: 'Bronze Bar',
+                    guildCreditConversions: [
+                        { creditItemHrid: '/items/guild_credit_1', itemCount: 10, creditCount: 1 },
+                    ],
+                },
+            },
+            guildBuffDetailMap: {
+                [FORCE]: {
+                    shrineHrid: '/guild_shrines/force',
+                    isCombat: true,
+                    levelCosts: costs(10, {
+                        3: { guildTokenCost: 300, creditCosts: [{ itemHrid: '/items/guild_credit_1', count: 50 }] },
+                    }),
+                },
+                [TEMPO]: {
+                    shrineHrid: '/guild_shrines/tempo',
+                    isCombat: false,
+                    levelCosts: costs(10, { 1: { guildTokenCost: 100, creditCosts: [] } }),
+                },
+                [RARITY]: {
+                    shrineHrid: '/guild_shrines/rarity',
+                    isCombat: true,
+                    levelCosts: costs(10),
+                },
+            },
+        };
+    }
+
+    /** Open the exchange modal and return it, planner drawn */
+    function openModal() {
+        const modal = buildExchangeModal('Trade Credit');
+        game.observers['GuildPanel_exchangeModalContent'](modal);
+        return modal;
+    }
+
+    function inputFor(modal, buffHrid) {
+        return modal.querySelector(`.mwi-shrine-planner input[data-buff-hrid="${buffHrid}"]`);
+    }
+
+    function nextBuyRows(modal) {
+        return Array.from(modal.querySelectorAll('.mwi-shrine-next-buy'));
+    }
+
+    /** Close the modal and forget the in-memory plan, as a page reload would */
+    async function reopenFromStorage() {
+        document.body.innerHTML = '';
+        shrinePlanRecord.reset();
+        await shrinePlanRecord.load();
+        return openModal();
+    }
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        game.settings = { guildCreditValue: true, guildCreditExchangeAdvisor: false, guildShrineUpgradePlanner: true };
+        game.observers = {};
+        game.prices = { '/items/bronze_bar': { ask: 100, bid: 90 } };
+        // Force and Tempo shrines have room; Rarity's cap equals its current
+        // buff level, so that buff has no next level to suggest.
+        game.buildingLevels = {
+            '/guild_shrines/force': 10,
+            '/guild_shrines/tempo': 10,
+            '/guild_shrines/rarity': 5,
+        };
+        game.buffLevels = { [FORCE]: 2, [TEMPO]: 0, [RARITY]: 5 };
+        game.inventory = [];
+        game.storage = {};
+        game.clientData = planClientData();
+        shrinePlanRecord.reset();
+        guildCreditValue.cleanup();
+        guildCreditValue.initialize();
+        // After the teardown, which flushes any save the previous test left pending
+        game.writes = 0;
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+        shrinePlanRecord.reset();
+        game.storage = {};
+        game.buffLevels = {};
+        game.inventory = [];
+    });
+
+    test('a typed target survives closing and reopening the modal', async () => {
+        const modal = openModal();
+        const input = inputFor(modal, FORCE);
+        input.value = '7';
+        input.dispatchEvent(new Event('input'));
+
+        vi.advanceTimersByTime(400);
+        await shrinePlanRecord.flushed();
+
+        expect(game.storage['settings:guildShrinePlan_char1'].targets).toEqual({ [FORCE]: 7 });
+
+        const reopened = await reopenFromStorage();
+        expect(inputFor(reopened, FORCE).value).toBe('7');
+        // Untouched buffs still sit at their current level
+        expect(inputFor(reopened, TEMPO).value).toBe('0');
+    });
+
+    test('a target at or below the current level is pruned, not restored', async () => {
+        game.storage['settings:guildShrinePlan_char1'] = {
+            targets: { [FORCE]: 2, [TEMPO]: 4 },
+            collapsed: true,
+        };
+
+        const modal = await reopenFromStorage();
+        // FORCE is already level 2 — a no-op target, so the input keeps its default
+        expect(inputFor(modal, FORCE).value).toBe('2');
+        expect(inputFor(modal, TEMPO).value).toBe('4');
+
+        vi.advanceTimersByTime(400);
+        await shrinePlanRecord.flushed();
+        expect(game.storage['settings:guildShrinePlan_char1'].targets).toEqual({ [TEMPO]: 4 });
+    });
+
+    test('a saved target above the current cap is clamped to it', async () => {
+        game.storage['settings:guildShrinePlan_char1'] = { targets: { [TEMPO]: 99 }, collapsed: true };
+
+        const modal = await reopenFromStorage();
+        const input = inputFor(modal, TEMPO);
+        expect(input.value).toBe(input.max);
+
+        vi.advanceTimersByTime(400);
+        await shrinePlanRecord.flushed();
+        expect(game.storage['settings:guildShrinePlan_char1'].targets[TEMPO]).toBe(Number(input.max));
+    });
+
+    test('the expanded/collapsed state of the planner body persists', async () => {
+        const modal = openModal();
+        const body = modal.querySelector('.mwi-shrine-planner > div:nth-child(2)');
+        expect(body.style.display).toBe('none');
+
+        modal.querySelector('.mwi-shrine-planner > div').click();
+        expect(body.style.display).toBe('block');
+
+        vi.advanceTimersByTime(400);
+        await shrinePlanRecord.flushed();
+        expect(game.storage['settings:guildShrinePlan_char1'].collapsed).toBe(false);
+
+        const reopened = await reopenFromStorage();
+        expect(reopened.querySelector('.mwi-shrine-planner > div:nth-child(2)').style.display).toBe('block');
+    });
+
+    test('writes are debounced — a burst of keystrokes lands as one save', async () => {
+        const modal = openModal();
+        const input = inputFor(modal, FORCE);
+
+        for (const keystroke of ['1', '12', '5']) {
+            input.value = keystroke;
+            input.dispatchEvent(new Event('input'));
+            vi.advanceTimersByTime(100);
+        }
+        await shrinePlanRecord.flushed();
+        expect(game.writes).toBe(0);
+
+        vi.advanceTimersByTime(400);
+        await shrinePlanRecord.flushed();
+        expect(game.writes).toBe(1);
+        expect(game.storage['settings:guildShrinePlan_char1'].targets).toEqual({ [FORCE]: 5 });
+    });
+
+    test('next buys list every unlocked buff, cheapest guild-token cost first', () => {
+        const modal = openModal();
+        const rows = nextBuyRows(modal).map((r) => r.textContent.replace(/\s+/g, ' ').trim());
+
+        expect(rows).toHaveLength(2);
+        expect(rows[0]).toContain('Tempo · Skilling');
+        expect(rows[0]).toContain('100 tok');
+        expect(rows[1]).toContain('Force · Combat');
+        expect(rows[1]).toContain('300 tok');
+    });
+
+    test('a buff already at its shrine cap has no next level to suggest', () => {
+        const modal = openModal();
+        const text = nextBuyRows(modal)
+            .map((r) => r.textContent)
+            .join(' ');
+        expect(text).not.toContain('Rarity');
+    });
+
+    test('a suggested buy shows its credit cost beside the token cost', () => {
+        const modal = openModal();
+        const forceRow = nextBuyRows(modal).find((r) => r.textContent.includes('Force'));
+        expect(forceRow.textContent.replace(/\s+/g, ' ')).toContain('50 Trade Credit');
+    });
+
+    test('affordability marking follows the held guild-token balance', () => {
+        game.inventory = [
+            { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 150 },
+        ];
+        const modal = openModal();
+        const rows = nextBuyRows(modal);
+
+        expect(modal.querySelector('.mwi-shrine-next-buys').textContent).toContain('Guild Token: 150');
+        expect(rows[0].dataset.affordable).toBe('yes'); // 100 tokens
+        expect(rows[1].dataset.affordable).toBe('no'); // 300 tokens
+    });
+
+    test('tokens held outside the inventory do not count toward the balance', () => {
+        game.inventory = [{ itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/bank', count: 500 }];
+        const modal = openModal();
+
+        expect(modal.querySelector('.mwi-shrine-next-buys').textContent).toContain('Guild Token: 0');
+        expect(nextBuyRows(modal)[0].dataset.affordable).toBe('no');
+    });
+
+    test('the spend-everything walk totals what the balance actually covers', () => {
+        game.inventory = [
+            { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 450 },
+        ];
+        const modal = openModal();
+
+        expect(modal.querySelector('.mwi-shrine-spend-all').textContent).toBe(
+            'Spending everything now: 2 of 2 next levels for 400 tokens'
+        );
+    });
+
+    test('the walk says so when nothing on the list is affordable', () => {
+        const modal = openModal();
+        expect(modal.querySelector('.mwi-shrine-spend-all').textContent).toContain(
+            'Nothing on this list is affordable'
+        );
+    });
+
+    test('greedyAffordable stops at the first buy the balance cannot cover', () => {
+        const options = [{ tokenCost: 100 }, { tokenCost: 300 }, { tokenCost: 500 }];
+        expect(greedyAffordable(options, 0)).toEqual({ count: 0, spent: 0 });
+        expect(greedyAffordable(options, 399)).toEqual({ count: 1, spent: 100 });
+        expect(greedyAffordable(options, 400)).toEqual({ count: 2, spent: 400 });
+        expect(greedyAffordable(options, 10_000)).toEqual({ count: 3, spent: 900 });
+    });
+
+    test('the existing total-cost calculator still answers the goal question', () => {
+        const modal = openModal();
+        const input = inputFor(modal, FORCE);
+        input.value = '3';
+        input.dispatchEvent(new Event('input'));
+
+        const totals = modal.querySelector('.mwi-shrine-planner').textContent;
+        expect(totals).toContain('Total upgrade cost');
+        expect(totals).toContain('300');
     });
 });

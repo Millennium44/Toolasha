@@ -24,12 +24,78 @@ import {
     visibleTabsContainer,
 } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
+import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
+import { heldInInventory } from '../../utils/dungeon-key-forecast.js';
 import { renderTierBadge, TIER_BADGE_CLASS } from './guild-trial-tier-badge.js';
 import { GUILD_BUILDING_MAX_LEVEL } from './guild-trials-store.js';
 import { describeGuildTokenGold } from './guild-token-value.js';
 import { captureTokenExchangeFromModal, hydrateCapturedTokenExchanges } from './guild-token-exchange-capture.js';
 
 const CSS_CLASS = 'mwi-guild-credit-value';
+
+/**
+ * The shrine planner's saved state, per character.
+ *
+ * A curated record, not a plain one: the targets are a list the user edits, and
+ * a target they cleared must not come back from storage on the next save.
+ * Scoped (the default) because a plan for which shrine levels to chase is one
+ * character's business — the guild-shared trial plan is the unscoped case.
+ *
+ * Shape: `{ targets: { [buffHrid]: number }, collapsed: boolean }`.
+ * Stored key: `guildShrinePlan_<characterId>` in the `settings` store.
+ *
+ * `empty()` is a bare `{}` rather than the shape with its defaults filled in:
+ * the pre-load merge is a shallow one with memory winning per key, so an
+ * `empty()` carrying `targets: {}` would shadow the stored targets on the first
+ * load and hand back an empty plan. Defaults are applied where the plan is
+ * read instead ({@link planState}).
+ */
+const SHRINE_PLAN_KEY = 'guildShrinePlan';
+const shrinePlanRecord = createCuratedRecord({
+    base: SHRINE_PLAN_KEY,
+    empty: () => ({}),
+    merge: mergeMaps(),
+    label: 'GuildShrinePlanner',
+});
+
+/**
+ * The saved plan with its shape guaranteed — `targets` always an object.
+ * @returns {{targets: Object<string, number>, collapsed: boolean}} The live record
+ */
+function planState() {
+    const plan = shrinePlanRecord.get();
+    if (!plan.targets || typeof plan.targets !== 'object') plan.targets = {};
+    return plan;
+}
+
+/** How long the target inputs sit still before the plan is written */
+const PLAN_SAVE_DEBOUNCE_MS = 400;
+
+/**
+ * Walk a token-cost-ascending list of single-level buys, taking each one the
+ * remaining balance still covers.
+ *
+ * Deliberately single-level-ahead: buying a level changes what that buff's
+ * *next* level costs, so this is an "if you spent everything right now" figure
+ * and not a claim about an optimal spend.
+ *
+ * @param {Array<{tokenCost: number}>} options - Sorted by `tokenCost` ascending
+ * @param {number} balance - Guild tokens held
+ * @returns {{count: number, spent: number}} How many are covered and what they cost
+ */
+export function greedyAffordable(options, balance) {
+    let spent = 0;
+    let count = 0;
+    for (const option of Array.isArray(options) ? options : []) {
+        const cost = Number(option?.tokenCost) || 0;
+        // Ascending order means the first miss is the last: nothing further down
+        // the list is cheaper than the one that just failed to fit.
+        if (spent + cost > balance) break;
+        spent += cost;
+        count += 1;
+    }
+    return { count, spent };
+}
 
 /**
  * Build cheapest-gold-per-credit maps for both sell and buy sides.
@@ -106,12 +172,18 @@ class GuildCreditValue {
         this._shrineTabCleanup = null;
         this._advisorObserver = null; // Re-renders the exchange advisor when the selected item changes
         this._advisorTimer = null;
+        this._planSaveTimer = null;
     }
 
     initialize() {
         if (this.initialized) return;
 
         this.autofillManager.initialize();
+
+        // The saved shrine plan, read once so the synchronous planner render can
+        // see it. Nothing waits on it: a modal opened before it lands restores
+        // its inputs when the load finishes (see `_renderShrinePlanner`).
+        shrinePlanRecord.load();
 
         // The stored token exchange, read once so the synchronous valuation can
         // see it. Nothing waits on it: until it lands, tokens are priced the way
@@ -363,6 +435,22 @@ class GuildCreditValue {
         }
     }
 
+    /**
+     * Write the shrine plan, once the inputs have sat still.
+     *
+     * The number input fires `input` on every keystroke — typing "12" is a pass
+     * through "1" — and each write is a probe-merge-write against IndexedDB, so
+     * they are coalesced the way the advisor's re-render is.
+     * @returns {void}
+     */
+    _savePlanSoon() {
+        if (this._planSaveTimer) clearTimeout(this._planSaveTimer);
+        this._planSaveTimer = setTimeout(() => {
+            this._planSaveTimer = null;
+            shrinePlanRecord.save();
+        }, PLAN_SAVE_DEBOUNCE_MS);
+    }
+
     /** Release the exchange advisor's selection observer and any pending re-render */
     _disconnectAdvisorObserver() {
         this._advisorObserver?.disconnect();
@@ -441,11 +529,26 @@ class GuildCreditValue {
         body.style.cssText = 'display:none; max-height:260px; overflow-y:auto;';
         wrapper.appendChild(body);
 
+        const applyCollapsed = (collapsed) => {
+            body.style.display = collapsed ? 'none' : 'block';
+            headerArrow.textContent = collapsed ? '▶' : '▼';
+        };
+
         header.addEventListener('click', () => {
             const isOpen = body.style.display !== 'none';
-            body.style.display = isOpen ? 'none' : 'block';
-            headerArrow.textContent = isOpen ? '▶' : '▼';
+            applyCollapsed(isOpen);
+            planState().collapsed = isOpen;
+            this._savePlanSoon();
         });
+
+        // The suggestion section is built before the manual rows so it sits at
+        // the top of the body, but its contents come from the same per-buff walk
+        // below — so it is filled in afterwards.
+        const suggestEl = document.createElement('div');
+        suggestEl.className = 'mwi-shrine-next-buys';
+        suggestEl.style.cssText =
+            'margin-bottom:8px; padding:6px; border-radius:4px; border:1px solid rgba(255,255,255,0.1); background:rgba(0,0,0,0.2);';
+        body.appendChild(suggestEl);
 
         // Track target inputs for cost recalculation
         const planInputs = []; // [{buffHrid, currentLevel, capLevel, inputEl}]
@@ -506,6 +609,9 @@ class GuildCreditValue {
             }
         };
 
+        // Single-level-ahead buys, filled by the per-shrine walk below
+        const nextBuys = [];
+
         // Build rows per shrine
         for (const [shrineHrid, buffs] of Object.entries(byShrine).sort()) {
             const shrineLabel = SHRINE_LABELS[shrineHrid] || shrineHrid.split('/').pop();
@@ -544,11 +650,36 @@ class GuildCreditValue {
                 input.min = String(currentLevel);
                 input.max = String(capLevel);
                 input.value = String(currentLevel);
+                input.dataset.buffHrid = buffHrid;
                 input.style.cssText = `
                     width:52px; padding:2px 4px; background:#1a1a2e; border:1px solid #374151;
                     border-radius:3px; color:#e0e0e0; font-size:11px; text-align:center;
                 `;
-                input.addEventListener('input', recalculate);
+                input.addEventListener('input', () => {
+                    recalculate();
+                    const targets = planState().targets;
+                    const value = parseInt(input.value, 10);
+                    if (Number.isFinite(value) && value > currentLevel) targets[buffHrid] = Math.min(value, capLevel);
+                    else delete targets[buffHrid];
+                    this._savePlanSoon();
+                });
+
+                // The cost of this buff's next level only, for the suggestions
+                // above — a buff already at its shrine's cap has no next level
+                // and is left out.
+                if (currentLevel < capLevel) {
+                    const nextCost = buff.levelCosts?.[String(currentLevel + 1)];
+                    if (nextCost) {
+                        nextBuys.push({
+                            buffHrid,
+                            label: `${shrineLabel} · ${buffLabel}`,
+                            fromLevel: currentLevel,
+                            toLevel: currentLevel + 1,
+                            tokenCost: nextCost.guildTokenCost || 0,
+                            creditCosts: nextCost.creditCosts || [],
+                        });
+                    }
+                }
 
                 const capLabel = document.createElement('span');
                 capLabel.style.cssText = 'color:#4b5563; font-size:10px;';
@@ -566,7 +697,119 @@ class GuildCreditValue {
         }
 
         body.appendChild(totalsEl);
-        recalculate();
+
+        /**
+         * "What should I buy next" — every buff's single next level, cheapest
+         * guild-token cost first.
+         *
+         * Ranked by token cost alone, and deliberately not by any blended score:
+         * Force, Rarity and Scholar buy different things (combat power, loot,
+         * experience) with no exchange rate between them, so a "best value"
+         * number across shrines would be an invented one. Cheapest-unlock-first
+         * is objective, and which of the cheap ones is worth having stays the
+         * player's call. Credit costs are shown but not ranked on — tokens are
+         * the scarce side, credits convert from ordinary skilling materials.
+         */
+        function renderSuggestions() {
+            const itemDetailMap = gameData.itemDetailMap || {};
+            const tokenHrid = Object.keys(itemDetailMap).find((hrid) => hrid.includes('guild_token'));
+            const tokenName = (tokenHrid && itemDetailMap[tokenHrid]?.name) || 'Guild Tokens';
+            const balance = tokenHrid ? heldInInventory(dataManager.getInventory(), tokenHrid) : 0;
+
+            suggestEl.innerHTML = '';
+
+            const heading = document.createElement('div');
+            heading.style.cssText =
+                'display:flex; justify-content:space-between; align-items:center; font-size:11px; color:#9ca3af; margin-bottom:5px;';
+            heading.innerHTML = `<span>Suggested Next Buys</span><span style="color:#e0e0e0;">${tokenName}: <b>${balance.toLocaleString()}</b></span>`;
+            suggestEl.appendChild(heading);
+
+            if (nextBuys.length === 0) {
+                const none = document.createElement('div');
+                none.style.cssText = 'color:#6b7280; text-align:center; font-size:11px;';
+                none.textContent = 'Every buff is at its shrine cap';
+                suggestEl.appendChild(none);
+                return;
+            }
+
+            const sorted = [...nextBuys].sort((a, b) => a.tokenCost - b.tokenCost || a.label.localeCompare(b.label));
+            const { count, spent } = greedyAffordable(sorted, balance);
+
+            sorted.forEach((buy, i) => {
+                const affordable = i < count;
+                const credits = buy.creditCosts
+                    .map(({ itemHrid, count: n }) => {
+                        const name = itemDetailMap[itemHrid]?.name || itemHrid.split('/').pop();
+                        return `${n.toLocaleString()} ${name}`;
+                    })
+                    .join(', ');
+                const row = document.createElement('div');
+                row.className = 'mwi-shrine-next-buy';
+                row.dataset.affordable = affordable ? 'yes' : 'no';
+                row.style.cssText =
+                    'display:flex; justify-content:space-between; gap:6px; padding:2px 0; font-size:11px;';
+                row.innerHTML = `
+                    <span style="color:${affordable ? '#4ade80' : '#9ca3af'};">${affordable ? '✓ ' : ''}${buy.label} <span style="color:#6b7280;">${buy.fromLevel}→${buy.toLevel}</span></span>
+                    <span style="color:${affordable ? '#e0e0e0' : '#6b7280'}; white-space:nowrap;">${buy.tokenCost.toLocaleString()} tok${credits ? ` <span style="color:#6b7280;">+ ${credits}</span>` : ''}</span>
+                `;
+                suggestEl.appendChild(row);
+            });
+
+            const walk = document.createElement('div');
+            walk.className = 'mwi-shrine-spend-all';
+            walk.style.cssText =
+                'margin-top:5px; padding-top:4px; border-top:1px solid rgba(255,255,255,0.1); font-size:11px; color:#9ca3af;';
+            walk.textContent =
+                count === 0
+                    ? `Nothing on this list is affordable with ${balance.toLocaleString()} tokens`
+                    : `Spending everything now: ${count} of ${sorted.length} next levels for ${spent.toLocaleString()} tokens`;
+            suggestEl.appendChild(walk);
+        }
+
+        /**
+         * Put the saved plan back into the inputs.
+         *
+         * Two things are pruned rather than restored, so the record does not
+         * accumulate cruft as levels rise: a target at or below the buff's
+         * current level (already met — a no-op), and a target above what the
+         * input now accepts is clamped to the cap (the shrine may have been
+         * upgraded, or its `levelCosts` table changed, since the plan was made).
+         */
+        const restorePlan = () => {
+            const plan = planState();
+            const targets = plan.targets;
+            let pruned = false;
+            for (const { buffHrid, currentLevel, capLevel, inputEl } of planInputs) {
+                const saved = Number(targets[buffHrid]);
+                if (!Number.isFinite(saved)) continue;
+                if (saved <= currentLevel) {
+                    delete targets[buffHrid];
+                    pruned = true;
+                    continue;
+                }
+                const clamped = Math.min(saved, capLevel);
+                inputEl.value = String(clamped);
+                if (clamped !== saved) {
+                    targets[buffHrid] = clamped;
+                    pruned = true;
+                }
+            }
+            applyCollapsed(plan.collapsed !== false);
+            recalculate();
+            if (pruned) this._savePlanSoon();
+        };
+
+        restorePlan();
+        renderSuggestions();
+
+        // A modal opened before the record's initial read landed shows the
+        // defaults; when the read finishes, the inputs it belongs in are filled.
+        if (!shrinePlanRecord.isLoaded()) {
+            (async () => {
+                const readable = await shrinePlanRecord.load();
+                if (readable && wrapper.isConnected) restorePlan();
+            })();
+        }
 
         // Insert after the advisor (or after the ranking table if no advisor)
         const advisorEl = modalEl.querySelector('.mwi-exchange-advisor');
@@ -1128,6 +1371,13 @@ class GuildCreditValue {
         this.unregisterObservers.forEach((fn) => fn());
         this.unregisterObservers = [];
         this._disconnectAdvisorObserver();
+        // A plan edited in the last few hundred milliseconds is written now
+        // rather than dropped with the timer
+        if (this._planSaveTimer) {
+            clearTimeout(this._planSaveTimer);
+            this._planSaveTimer = null;
+            shrinePlanRecord.save();
+        }
         if (this._shrineTabCleanup) {
             this._shrineTabCleanup();
             this._shrineTabCleanup = null;
@@ -1144,6 +1394,12 @@ class GuildCreditValue {
 }
 
 const guildCreditValue = new GuildCreditValue();
+
+/**
+ * The shrine plan record, for a character switch to `reset()` and for tests to
+ * drive. Everything else goes through the planner.
+ */
+export { shrinePlanRecord };
 
 export default {
     name: 'Guild Credit Value',
