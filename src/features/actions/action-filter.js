@@ -8,6 +8,7 @@
 
 import config from '../../core/config.js';
 import domObserver from '../../core/dom-observer.js';
+import marketAPI from '../../api/marketplace.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import actionPanelSort from './action-panel-sort.js';
 import { displayGatheringProfit, displayProductionProfit } from './profit-display.js';
@@ -25,6 +26,8 @@ class ActionFilter {
         this.filterTimeout = null;
         this.unregisterHandlers = [];
         this.currentTitleElement = null; // Track which title we're attached to
+        this.refreshButton = null; // Reference to the manual price refresh button
+        this._priceRefreshInFlight = false; // Guards against a second click while fetching
         this._updateModeBtn = null;
         this._updateCraftBtn = null;
         this._updateSortBtn = null;
@@ -98,6 +101,7 @@ class ActionFilter {
         this.filterInput = null;
         this.sortButton = null;
         this.modeButton = null;
+        this.refreshButton = null;
         this.noResultsMessage = null;
 
         // The h1 has display: block from game CSS, need to override it
@@ -105,7 +109,8 @@ class ActionFilter {
             config.getSetting('actionPanel_showFilter') ||
             config.getSetting('actionPanel_showSort') ||
             config.getSetting('actionPanel_showPricingMode') ||
-            config.getSetting('actionPanel_showCraftToggle');
+            config.getSetting('actionPanel_showCraftToggle') ||
+            this._profitPerHourVisible();
 
         if (anyVisible) {
             titleElement.style.setProperty('display', 'flex', 'important');
@@ -266,8 +271,92 @@ class ActionFilter {
             craftBtn.style.display = 'none';
         }
 
+        // Manual price refresh. Prices come out of a 15-minute cache, so the
+        // profit/hr numbers on every tile can be up to that stale; the only way
+        // to freshen them used to be opening the marketplace once per item.
+        // This pulls the whole feed once and re-renders every tile on the page.
+        const refreshBtn = document.createElement('button');
+        refreshBtn.id = 'mwi-action-price-refresh';
+        refreshBtn.textContent = 'Refresh Prices';
+        refreshBtn.title = 'Fetch fresh market prices now and update the profit/hr figures on every action here';
+        refreshBtn.style.cssText = `
+            padding: 8px 12px;
+            font-size: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.23);
+            border-radius: 4px;
+            background: transparent;
+            cursor: pointer;
+            font-family: inherit;
+            flex-shrink: 0;
+        `;
+        refreshBtn.addEventListener('click', async () => {
+            await this.refreshPrices();
+        });
+        craftBtn.insertAdjacentElement('afterend', refreshBtn);
+        this.refreshButton = refreshBtn;
+
+        // Only useful where profit/hr is actually drawn — no separate setting.
+        if (!this._profitPerHourVisible()) {
+            refreshBtn.style.display = 'none';
+        }
+
         // Find the container for action panels to inject "No results" message
         this.setupNoResultsMessage(titleElement);
+    }
+
+    /**
+     * Whether profit/hr is shown on any action tile, gathering or production.
+     * The refresh button only appears when there is something for it to update.
+     * @returns {boolean} True if either profit/hr display setting is enabled
+     */
+    _profitPerHourVisible() {
+        return (
+            config.getSetting('actionPanel_showProfitPerHour_gathering') ||
+            config.getSetting('actionPanel_showProfitPerHour_production')
+        );
+    }
+
+    /**
+     * Force a fresh marketplace pull and re-render every profit section on the
+     * page. User-initiated only — this deliberately bypasses the price cache and
+     * adds no automatic polling of its own.
+     * @returns {Promise<boolean>} True if the prices were refreshed
+     */
+    async refreshPrices() {
+        // A second click while the first fetch is still running is a no-op. The
+        // button is disabled too, but tests and stray programmatic clicks are not.
+        if (this._priceRefreshInFlight) return false;
+        this._priceRefreshInFlight = true;
+
+        const btn = this.refreshButton;
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Refreshing...';
+            btn.style.opacity = '0.6';
+            btn.style.cursor = 'default';
+        }
+
+        let ok = false;
+        try {
+            await marketAPI.fetch(true);
+            await this._refreshProfitDisplays();
+            ok = true;
+        } catch (error) {
+            console.error('[ActionFilter] Failed to refresh market prices:', error);
+        } finally {
+            this._priceRefreshInFlight = false;
+            // Re-read the reference: the page may have been torn down mid-fetch,
+            // in which case clearFilter() already dropped the button.
+            const current = this.refreshButton;
+            if (current) {
+                current.disabled = false;
+                current.textContent = ok ? 'Refresh Prices' : 'Refresh Failed';
+                current.style.opacity = '1';
+                current.style.cursor = 'pointer';
+            }
+        }
+
+        return ok;
     }
 
     /**
@@ -483,6 +572,11 @@ class ActionFilter {
         if (this.craftButton && this.craftButton.parentElement) {
             this.craftButton.remove();
             this.craftButton = null;
+        }
+
+        if (this.refreshButton && this.refreshButton.parentElement) {
+            this.refreshButton.remove();
+            this.refreshButton = null;
         }
 
         this._updateModeBtn = null;
