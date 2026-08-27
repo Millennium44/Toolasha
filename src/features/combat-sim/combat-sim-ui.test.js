@@ -2017,7 +2017,30 @@ describe('the summary at the top of the Results tab', () => {
 
         expect(shown).toContain('Deaths/day0.5');
         // The hourly figure is still down in Overview for anyone who wants it
-        expect(shown).toContain('Deaths/hr0.02');
+        expect(shown).toContain('Deaths/hr0.020');
+    });
+
+    test('Overview shows Deaths/hr to three decimals, so safe builds stay comparable', () => {
+        // The reported case: two builds a factor of twenty apart in real death
+        // rate both used to read as a rounded integer in Overview.
+        const safe = showFight(oneHourFight({ deaths: { player1: 0.042 } })).textContent;
+        expect(safe).toContain('Deaths/hr0.042');
+
+        // A whole number keeps the same fixed three decimals — constant width is
+        // what lets two results be read against each other digit by digit.
+        const one = showFight(oneHourFight({ deaths: { player1: 1 } })).textContent;
+        expect(one).toContain('Deaths/hr1.000');
+
+        // And no deaths at all is 0.000, not a bare "0"
+        const none = showFight(oneHourFight({ deaths: { player1: 0 } })).textContent;
+        expect(none).toContain('Deaths/hr0.000');
+    });
+
+    test('the Summary Deaths/day tile keeps its own variable precision', () => {
+        // Only Deaths/hr was asked to change; the daily headline tile still
+        // rounds the way it always did.
+        const shown = showFight(oneHourFight({ deaths: { player1: 1 } })).textContent;
+        expect(shown).toContain('Deaths/day24');
     });
 
     test('party lint warnings render in amber directly under the summary', () => {

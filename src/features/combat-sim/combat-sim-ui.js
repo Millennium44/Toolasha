@@ -4441,7 +4441,7 @@ class CombatSimUI {
         html += '</div>';
         html += `<div style="${rowStyle}">`;
         html += `<span style="${labelStyle}">Deaths/hr</span>`;
-        html += `<span style="${valueStyle}">${this._formatDeaths(deathsPerHr)}${this._formatDelta(deathsPerHr, prevDeathsPerHr, false)}</span>`;
+        html += `<span style="${valueStyle}">${this._formatDeathsPerHour(deathsPerHr)}${this._formatDelta(deathsPerHr, prevDeathsPerHr, false)}</span>`;
         html += '</div>';
 
         // Mana Run Out
@@ -5829,6 +5829,26 @@ class CombatSimUI {
         if (value < 0.1) return value.toFixed(2);
         if (value < 1) return value.toFixed(1);
         return formatWithSeparator(Math.round(value));
+    }
+
+    /**
+     * Format the Overview's Deaths/hr, always to three decimals.
+     *
+     * The variable-precision {@link _formatDeaths} is right for the Summary's
+     * Deaths/day tile — a headline number, read at a glance — but wrong here:
+     * rounding an hourly rate to an integer collapses 0.042 and 1.4 deaths/hr
+     * onto "0" and "1", and the difference between them is the whole story of
+     * how safe a build is. Three fixed decimals is the same treatment the
+     * drop table gives its fractional items/hr rates, and keeping the width
+     * constant means two builds can be compared digit by digit.
+     *
+     * @param {number} value - Deaths per hour
+     * @returns {string} e.g. "0.042", "1.000"
+     * @private
+     */
+    _formatDeathsPerHour(value) {
+        if (!Number.isFinite(value)) return '0.000';
+        return value.toFixed(3);
     }
 
     /**
