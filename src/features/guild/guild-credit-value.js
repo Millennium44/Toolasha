@@ -106,6 +106,13 @@ function spendMode() {
 
 /** How long the target inputs sit still before the plan is written */
 const PLAN_SAVE_DEBOUNCE_MS = 400;
+/**
+ * How long the shrine block waits for the modal to settle before recomputing.
+ * An upgrade lands as a burst — the game rewrites the requirement rows and the
+ * deduction arrives as its own `items_updated` — and the block is a full
+ * re-render, so the two are coalesced the way the advisor's redraw is.
+ */
+const SHRINE_RERENDER_DEBOUNCE_MS = 50;
 
 /**
  * Walk a token-cost-ascending list of single-level buys, taking each one the
@@ -949,6 +956,15 @@ class GuildCreditValue {
         this._advisorObserver = null; // Re-renders the exchange advisor when the selected item changes
         this._advisorTimer = null;
         this._planSaveTimer = null;
+        // Keeps the shrine cost table and its Missing Mats button current while
+        // the modal stays open — see `_armShrineObservers`.
+        this._shrineObserver = null;
+        this._shrineTimer = null;
+        this._shrineItemsHandler = null;
+        /** Item hrids whose holdings the last shrine render depended on */
+        this._shrineWatchedHrids = null;
+        /** Signature of the costs+holdings the last shrine render was built from */
+        this._shrineSignature = null;
     }
 
     initialize() {
@@ -2257,8 +2273,136 @@ class GuildCreditValue {
         buttonsContainer.insertAdjacentElement('beforebegin', copyBtn);
     }
 
+    /**
+     * A cheap signature of everything `_renderShrine` computes from: the costs
+     * the modal is currently stating, and the holdings those costs are measured
+     * against.
+     *
+     * Used as the loop guard for the re-render triggers. Only the item hrids the
+     * last render actually depended on are read — the required materials and the
+     * conversion items behind the credit rows — so an unrelated inventory change
+     * is not mistaken for a reason to redraw.
+     *
+     * @param {Element} modalEl - The shrine modal content
+     * @returns {string|null} The signature, or null when the modal has no cost area
+     * @private
+     */
+    _shrineSignatureOf(modalEl) {
+        const requirements = modalEl.querySelector?.('[class*="GuildPanel_itemRequirements"]');
+        if (!requirements) return null;
+
+        const containers = Array.from(requirements.querySelectorAll('[class*="Item_itemContainer"]'));
+        const counts = Array.from(requirements.querySelectorAll('[class*="GuildPanel_inputCount"]'));
+        const costs = containers
+            .map((container, i) => {
+                const sprite = container.querySelector('use')?.getAttribute('href')?.split('#')[1] || '?';
+                return `${sprite}:${(counts[i]?.textContent || '').trim()}`;
+            })
+            .join('|');
+
+        const watched = this._shrineWatchedHrids;
+        if (!watched?.size) return `${costs}#`;
+
+        const owned = new Map();
+        for (const inv of dataManager.getInventory() || []) {
+            if (inv.itemLocationHrid !== '/item_locations/inventory') continue;
+            if (!watched.has(inv.itemHrid)) continue;
+            owned.set(inv.itemHrid, (owned.get(inv.itemHrid) || 0) + (inv.count || 0));
+        }
+        const holdings = [...watched]
+            .sort()
+            .map((hrid) => `${hrid}:${owned.get(hrid) || 0}`)
+            .join('|');
+        return `${costs}#${holdings}`;
+    }
+
+    /**
+     * Re-render the shrine block, but only when its inputs actually moved.
+     *
+     * The observers below watch the very modal this feature injects into, so an
+     * unguarded re-render would feed itself. The signature comparison is what
+     * makes the loop impossible: a redraw that changes no cost and no holding
+     * produces the same signature and stops here.
+     *
+     * @param {Element} modalEl - The shrine modal content
+     * @private
+     */
+    _renderShrineIfChanged(modalEl) {
+        if (!modalEl?.isConnected) {
+            this._disconnectShrineObservers();
+            return;
+        }
+        const signature = this._shrineSignatureOf(modalEl);
+        if (signature !== null && signature === this._shrineSignature) return;
+        this._renderShrine(modalEl);
+    }
+
+    /** Coalesce a burst of mutations into one re-render, as the advisor does */
+    _scheduleShrineRerender(modalEl) {
+        if (this._shrineTimer) clearTimeout(this._shrineTimer);
+        this._shrineTimer = setTimeout(() => {
+            this._shrineTimer = null;
+            this._renderShrineIfChanged(modalEl);
+        }, SHRINE_RERENDER_DEBOUNCE_MS);
+    }
+
+    /**
+     * Keep the injected block current for as long as the modal is open.
+     *
+     * Two things move under it. The game rewrites the requirement rows in place
+     * after an upgrade — the next level's costs, which the first render knew
+     * nothing about — and the upgrade's own deduction lands separately as an
+     * `items_updated`. Watching only one of them is what left the maintainer
+     * looking at a red "144K / 156K Blue Guild Credit" with no Missing Mats
+     * button under it: the block had been computed while the holdings were still
+     * enough, and nothing recomputed it.
+     *
+     * One set of observers at a time, released with the feature — the exchange
+     * advisor's rule, for the same reason (a modal opened a few times used to
+     * leave each one's observer behind).
+     *
+     * @param {Element} modalEl - The shrine modal content
+     * @private
+     */
+    _armShrineObservers(modalEl) {
+        this._disconnectShrineObservers();
+
+        const requirements = modalEl.querySelector('[class*="GuildPanel_itemRequirements"]');
+        if (requirements) {
+            this._shrineObserver = new MutationObserver(() => this._scheduleShrineRerender(modalEl));
+            this._shrineObserver.observe(requirements, {
+                subtree: true,
+                childList: true,
+                characterData: true,
+            });
+        }
+
+        this._shrineItemsHandler = () => this._scheduleShrineRerender(modalEl);
+        dataManager.on('items_updated', this._shrineItemsHandler);
+    }
+
+    /** Release the shrine block's re-render triggers and any pending redraw */
+    _disconnectShrineObservers() {
+        this._shrineObserver?.disconnect();
+        this._shrineObserver = null;
+        if (this._shrineTimer) {
+            clearTimeout(this._shrineTimer);
+            this._shrineTimer = null;
+        }
+        if (this._shrineItemsHandler) {
+            dataManager.off('items_updated', this._shrineItemsHandler);
+            this._shrineItemsHandler = null;
+        }
+    }
+
     _renderShrine(modalEl) {
         if (!config.getSetting('guildCreditValue', true)) return;
+
+        // Any previously armed triggers belong to the render being replaced; the
+        // fresh ones go on at the end, once there is something to keep current.
+        this._disconnectShrineObservers();
+        this._shrineWatchedHrids = null;
+        this._shrineSignature = null;
 
         modalEl.querySelectorAll('.mwi-shrine-cost').forEach((el) => el.remove());
 
@@ -2335,6 +2479,7 @@ class GuildCreditValue {
             else if (!isToken && effectiveRequired > 0) allBuyPriced = false;
 
             rows.push({
+                itemHrid,
                 itemName,
                 required,
                 effectiveRequired,
@@ -2621,6 +2766,20 @@ class GuildCreditValue {
 
         upgradeBtn.insertAdjacentElement('afterend', wrapper);
 
+        // What this render depended on, recorded before the triggers go on: the
+        // required materials, plus every conversion item a credit row was priced
+        // through (the missing-mats list is built from those holdings).
+        const watched = new Set(rows.map((row) => row.itemHrid).filter(Boolean));
+        for (const row of rows) {
+            if (!row.isCredit || !row.creditHrid) continue;
+            for (const option of topConversions[row.creditHrid] || []) {
+                if (option?.hrid) watched.add(option.hrid);
+            }
+        }
+        this._shrineWatchedHrids = watched;
+        this._shrineSignature = this._shrineSignatureOf(modalEl);
+        this._armShrineObservers(modalEl);
+
         const levelEl = modalEl.querySelector('[class*="GuildPanel_level"]');
         if (!levelEl) return;
 
@@ -2663,6 +2822,9 @@ class GuildCreditValue {
         this.unregisterObservers.forEach((fn) => fn());
         this.unregisterObservers = [];
         this._disconnectAdvisorObserver();
+        this._disconnectShrineObservers();
+        this._shrineWatchedHrids = null;
+        this._shrineSignature = null;
         // A plan edited in the last few hundred milliseconds is written now
         // rather than dropped with the timer
         if (this._planSaveTimer) {

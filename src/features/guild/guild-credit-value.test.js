@@ -24,6 +24,7 @@ const game = vi.hoisted(() => ({
     rates: {},
     storage: {},
     writes: 0,
+    listeners: {},
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -36,6 +37,14 @@ vi.mock('../../core/data-manager.js', () => ({
         getGuildBuildingLevel: (hrid) => game.buildingLevels[hrid] ?? 0,
         getCharacterGuildBuffLevel: (hrid) => game.buffLevels[hrid] ?? 0,
         getCurrentCharacterId: () => 'char1',
+        // The event side, for the shrine block's `items_updated` hook: a real
+        // listener list, so a test can both fire it and check it was released.
+        on: (event, handler) => {
+            (game.listeners[event] ||= []).push(handler);
+        },
+        off: (event, handler) => {
+            game.listeners[event] = (game.listeners[event] || []).filter((fn) => fn !== handler);
+        },
     },
 }));
 // An in-memory stand-in for IndexedDB: the shrine planner's saved plan is the
@@ -2041,5 +2050,189 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                 expect(shopping.calls[1].items.map((i) => i.itemHrid).sort()).toEqual(['/items/rune', '/items/silk']);
             });
         });
+    });
+});
+
+describe('the shrine cost block keeps up with the modal', () => {
+    // One credit colour, bought through one bar. Ten credits per bar, so the
+    // arithmetic in the assertions stays readable.
+    const CREDIT = '/items/blue_guild_credit';
+    const BAR = '/items/blue_bar';
+
+    /**
+     * The shrine modal as the game draws it: a level line, the Upgrade button,
+     * and the requirement row stating this level's cost.
+     * @param {number} required - The credit cost the modal is currently stating
+     * @returns {Element} The modal content element
+     */
+    function buildShrineModal(required) {
+        document.body.innerHTML = '';
+        const modal = document.createElement('div');
+        modal.className = 'GuildPanel_guildModalContent__x';
+        modal.innerHTML = `
+            <div class="GuildPanel_level__x">Lv. 3</div>
+            <button>Upgrade</button>
+            <div class="GuildPanel_itemRequirements__x">
+                <div class="Item_itemContainer__x"><svg><use href="/sprite.svg#blue_guild_credit"></use></svg></div>
+                <div class="GuildPanel_inputCount__x">${required}</div>
+            </div>`;
+        document.body.appendChild(modal);
+        return modal;
+    }
+
+    /** Restate the modal's cost, the way the game does after an upgrade lands */
+    const restateCost = (modal, required) => {
+        modal.querySelector('[class*="GuildPanel_inputCount"]').textContent = String(required);
+    };
+
+    /** Set what the character is holding */
+    const hold = (credits, bars = 0) => {
+        game.inventory = [
+            { itemHrid: CREDIT, itemLocationHrid: '/item_locations/inventory', count: credits },
+            { itemHrid: BAR, itemLocationHrid: '/item_locations/inventory', count: bars },
+        ];
+    };
+
+    const fireItemsUpdated = () => (game.listeners.items_updated || []).forEach((fn) => fn({}));
+    /** Let the MutationObserver deliver and the re-render debounce elapse */
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 90));
+    const missingButton = (modal) =>
+        [...modal.querySelectorAll('.mwi-shrine-cost button')].find(
+            (b) => b.textContent === 'Missing Mats Marketplace'
+        );
+
+    beforeEach(() => {
+        game.settings = {};
+        game.prices = { [BAR]: { ask: 100, bid: 90 } };
+        game.clientData = {
+            itemDetailMap: {
+                [CREDIT]: { name: 'Blue Guild Credit' },
+                [BAR]: {
+                    name: 'Blue Bar',
+                    guildCreditConversions: [{ creditItemHrid: CREDIT, itemCount: 1, creditCount: 10 }],
+                },
+            },
+        };
+        hold(244_000);
+        guildCreditValue.initialize();
+    });
+
+    afterEach(() => {
+        guildCreditValue.cleanup();
+        game.listeners = {};
+        document.body.innerHTML = '';
+    });
+
+    test('enough credits means a cost table with no Missing Mats button', () => {
+        const modal = buildShrineModal(100_000);
+        game.observers['GuildPanel_guildModalContent'](modal);
+
+        expect(modal.querySelector('.mwi-shrine-cost')).toBeTruthy();
+        expect(missingButton(modal)).toBeUndefined();
+    });
+
+    test('the button appears when the game restates the next level cost', async () => {
+        // The reported sequence: the block renders with nothing missing, the
+        // upgrade goes through, and the modal starts stating a cost the
+        // remaining credits no longer cover.
+        const modal = buildShrineModal(100_000);
+        game.observers['GuildPanel_guildModalContent'](modal);
+        expect(missingButton(modal)).toBeUndefined();
+
+        restateCost(modal, 500_000);
+        await settle();
+
+        // 500K owed, 244K held → 256K short → 25,600 bars at ten credits each
+        expect(missingButton(modal)).toBeTruthy();
+        expect(modal.querySelector('.mwi-shrine-cost').textContent).toContain('256,000');
+    });
+
+    test('the button appears when the upgrade drains the holdings', async () => {
+        const modal = buildShrineModal(156_000);
+        hold(244_000);
+        game.observers['GuildPanel_guildModalContent'](modal);
+        expect(missingButton(modal)).toBeUndefined();
+
+        // The deduction lands separately from the cost restatement — this is the
+        // half the first render could not have known about.
+        hold(144_000);
+        fireItemsUpdated();
+        await settle();
+
+        expect(missingButton(modal)).toBeTruthy();
+        // 156K owed against 144K held is a 12K shortfall → 1,200 bars
+        expect(modal.querySelector('.mwi-shrine-cost').textContent).toContain('12,000');
+    });
+
+    test('a shortfall that is filled again takes the button away', async () => {
+        const modal = buildShrineModal(300_000);
+        hold(100_000);
+        game.observers['GuildPanel_guildModalContent'](modal);
+        expect(missingButton(modal)).toBeTruthy();
+
+        hold(100_000, 100_000);
+        fireItemsUpdated();
+        await settle();
+
+        expect(missingButton(modal)).toBeUndefined();
+    });
+
+    test('its own injection does not send it round again', async () => {
+        const modal = buildShrineModal(100_000);
+        game.observers['GuildPanel_guildModalContent'](modal);
+
+        // A re-render replaces the block, so the identity of the injected node
+        // is the render count: the same node back means nothing redrew.
+        const injected = modal.querySelector('.mwi-shrine-cost');
+
+        // A redraw of the watched area that states exactly the same cost — what
+        // React does on any unrelated re-render, and what this feature's own
+        // mutations look like to the observer.
+        restateCost(modal, 100_000);
+        modal.querySelector('[class*="GuildPanel_itemRequirements"]').appendChild(document.createElement('span'));
+        fireItemsUpdated();
+        await settle();
+        expect(modal.querySelector('.mwi-shrine-cost')).toBe(injected);
+
+        // …and the guard is a fingerprint, not a switch: a cost that really
+        // moves still gets through it.
+        restateCost(modal, 900_000);
+        await settle();
+        expect(modal.querySelector('.mwi-shrine-cost')).not.toBe(injected);
+    });
+
+    test('cleanup releases the re-render triggers', async () => {
+        const modal = buildShrineModal(100_000);
+        game.observers['GuildPanel_guildModalContent'](modal);
+        expect(game.listeners.items_updated).toHaveLength(1);
+
+        guildCreditValue.cleanup();
+        expect(game.listeners.items_updated).toHaveLength(0);
+
+        // And nothing redraws after the feature is gone
+        restateCost(modal, 900_000);
+        await settle();
+        expect(modal.querySelector('.mwi-shrine-cost')).toBeNull();
+    });
+
+    test('only one set of triggers at a time, however often the modal is redrawn', () => {
+        const modal = buildShrineModal(100_000);
+        game.observers['GuildPanel_guildModalContent'](modal);
+        game.observers['GuildPanel_guildModalContent'](modal);
+        game.observers['GuildPanel_guildModalContent'](modal);
+
+        expect(game.listeners.items_updated).toHaveLength(1);
+        expect(modal.querySelectorAll('.mwi-shrine-cost')).toHaveLength(1);
+    });
+
+    test('a closed modal releases the triggers rather than redrawing into nothing', async () => {
+        const modal = buildShrineModal(100_000);
+        game.observers['GuildPanel_guildModalContent'](modal);
+
+        modal.remove();
+        fireItemsUpdated();
+        await settle();
+
+        expect(game.listeners.items_updated).toHaveLength(0);
     });
 });
