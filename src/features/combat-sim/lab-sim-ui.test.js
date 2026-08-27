@@ -2227,3 +2227,24 @@ describe('guild shrine targets are asked for one shrine at a time', () => {
         expect(candidates.map((candidate) => candidate.buffHrid)).toEqual([AEGIS]);
     });
 });
+
+describe('remembered-run banner', () => {
+    test('names the character when meta is present', () => {
+        const html = ui._restoredUpgradeNote(null, { characterName: 'Millennium44' });
+        expect(html).toContain('Showing results remembered from a previous session — Millennium44.');
+    });
+
+    test('renders the legacy sentence for a payload saved before the name was stored', () => {
+        const html = ui._restoredUpgradeNote(null, null);
+        expect(html).toContain(
+            'Showing results remembered from a previous session. Run a new analysis to refresh them.'
+        );
+        expect(html).not.toContain('—');
+    });
+
+    test('escapes markup in the character name', () => {
+        const html = ui._restoredUpgradeNote(null, { characterName: '<img src=x>' });
+        expect(html).not.toContain('<img');
+        expect(html).toContain('&lt;img src=x&gt;');
+    });
+});

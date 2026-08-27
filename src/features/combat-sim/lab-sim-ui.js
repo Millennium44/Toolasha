@@ -2818,8 +2818,14 @@ class LabSimUI {
             // A fresh run supersedes any restored set — drop the "from a previous
             // run" note before drawing, and remember the new results (opt-in).
             this._restoredUpgradeAt = null;
+            this._restoredUpgradeMeta = null;
             this._renderUpgradeResults(analysisResult, resultsEl);
-            if (analysisResult?.results?.length) saveUpgradeResults(LAB_UPGRADE_RESULTS_KEY, analysisResult);
+            if (analysisResult?.results?.length) {
+                const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
+                saveUpgradeResults(LAB_UPGRADE_RESULTS_KEY, analysisResult, {
+                    characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
+                });
+            }
         } catch (error) {
             if (error.message !== 'Cancelled' && error.message !== 'Aborted') {
                 console.error('[LabSimUI] Upgrade analysis failed:', error);
@@ -4028,6 +4034,7 @@ class LabSimUI {
             if (!payload) return;
             if (!this.panel || container.querySelector('table')) return;
             this._restoredUpgradeAt = payload.savedAt || null;
+            this._restoredUpgradeMeta = { characterName: payload.characterName || null };
             this._renderUpgradeResults(payload.data, container);
         } catch (error) {
             console.error('[LabSimUI] Restoring upgrade results failed:', error);
@@ -4040,12 +4047,15 @@ class LabSimUI {
      * @returns {string} HTML
      * @private
      */
-    _restoredUpgradeNote(savedAt) {
+    _restoredUpgradeNote(savedAt, meta = null) {
         const when = savedAt ? new Date(savedAt).toLocaleString() : 'a previous session';
+        // A payload from before the name was stored renders the old sentence.
+        // No zone half here - the lab is the zone
+        const who = meta?.characterName ? escapeHtmlAttribute(meta.characterName) : null;
         return (
             `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; ` +
             `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
-            `Showing results remembered from ${when}. Run a new analysis to refresh them.</div>`
+            `Showing results remembered from ${when}${who ? ` — ${who}` : ''}. Run a new analysis to refresh them.</div>`
         );
     }
 
@@ -4289,7 +4299,9 @@ class LabSimUI {
             sortRows(goldRows, sortState.gold.key, sortState.gold.dir);
             sortRows(communityRows, sortState.community.key, sortState.community.dir);
             let html = '';
-            if (this._restoredUpgradeAt) html += this._restoredUpgradeNote(this._restoredUpgradeAt);
+            if (this._restoredUpgradeAt) {
+                html += this._restoredUpgradeNote(this._restoredUpgradeAt, this._restoredUpgradeMeta);
+            }
             if (tokenResults.length > 0) html += renderTokenTable();
             if (communityResults.length > 0) html += renderCommunityTable();
             if (goldResults.length > 0) html += renderGoldTable();

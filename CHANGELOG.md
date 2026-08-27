@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Small sharpenings across the sims, trials and shrine planner
+
+Deaths/hr in the single-zone combat sim overview now shows three decimals, so a rare death stops rounding to 0.0. Character names in the trial results table are clickable and open the player's profile. The shrine planner's missing-mats view re-renders when an upgrade or inventory change makes materials newly missing (or newly covered), instead of only on open. And the "remembered results" banner on both the combat and lab sim Upgrade tabs now says whose run it was — character name, and for the combat sim the zone and tier it simulated — so a restored set can't be mistaken for the character or zone currently selected.
+
 ### The lab restock gets its own Buy all, and T21 stops pretending there's a T22
 
 The Labyrinth block on the consumables panel gains the same "Buy all N · cost" hand-off as the consumables footer — one click opens the marketplace with a tab per missing supply instead of a per-row trip each. And T21 being the final trial tier is now respected: the badge reads T21 rather than T21+ (a banked count above 21 clamps as the miscount it is), and a trial that has banked all 21 tiers shows one "Final tier" line instead of forecasting a next tier that cannot exist — while a trial still fighting T21 keeps its forecast, since reaching the top rung is a real prediction.

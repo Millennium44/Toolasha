@@ -6777,6 +6777,7 @@ class CombatSimUI {
             // A fresh run supersedes any restored set — drop the "from a previous
             // run" note before drawing, and remember the new results (opt-in).
             this._restoredUpgradeAt = null;
+            this._restoredUpgradeMeta = null;
             if (this._upgradeAborted) {
                 if (completed) {
                     this._renderUpgradeResults(results);
@@ -6791,7 +6792,16 @@ class CombatSimUI {
                 const foodNote = results.food ? ' Food search complete.' : '';
                 this._setStatus(`Analysis complete. ${completed} upgrades evaluated.${foodNote}`);
             }
-            if (completed) saveUpgradeResults(UPGRADE_RESULTS_KEY, results);
+            if (completed) {
+                // Who and where, so a restored set can say whose run it was -
+                // the selector may hold a different player, or another zone,
+                // by the time these come back
+                saveUpgradeResults(UPGRADE_RESULTS_KEY, results, {
+                    characterName: (this._editor?.getPlayerInfo?.() || [])[playerIndex]?.name || null,
+                    zoneName: getCombatZones().find((z) => z.hrid === zoneHrid)?.name || null,
+                    difficultyTier,
+                });
+            }
         } catch (error) {
             console.error('[CombatSimUI] Upgrade analysis failed:', error);
             this._setStatus('Analysis failed: ' + error.message);
@@ -7911,6 +7921,11 @@ class CombatSimUI {
             if (!payload || this._upgradeResultsData) return;
             if (!this.panel?.querySelector('#mwi-csim-upgrade-results')) return;
             this._restoredUpgradeAt = payload.savedAt || null;
+            this._restoredUpgradeMeta = {
+                characterName: payload.characterName || null,
+                zoneName: payload.zoneName || null,
+                difficultyTier: payload.difficultyTier,
+            };
             this._renderUpgradeResults(payload.data);
         } catch (error) {
             console.error('[CombatSimUI] Restoring upgrade results failed:', error);
@@ -7923,12 +7938,17 @@ class CombatSimUI {
      * @returns {string} HTML
      * @private
      */
-    _restoredUpgradeNote(savedAt) {
+    _restoredUpgradeNote(savedAt, meta = null) {
         const when = savedAt ? new Date(savedAt).toLocaleString() : 'a previous session';
+        // A payload from before these fields existed renders the old sentence
+        const zone = meta?.zoneName
+            ? `${meta.zoneName}${Number.isFinite(meta.difficultyTier) ? ` (T${meta.difficultyTier})` : ''}`
+            : null;
+        const who = [meta?.characterName, zone].filter(Boolean).map(escapeAttribute).join(', ');
         return (
             `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; ` +
             `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
-            `Showing results remembered from ${when}. Run a new analysis to refresh them.</div>`
+            `Showing results remembered from ${when}${who ? ` — ${who}` : ''}. Run a new analysis to refresh them.</div>`
         );
     }
 
@@ -7964,7 +7984,9 @@ class CombatSimUI {
         const unpricedRows = purchasable.filter((r) => r.cost == null);
 
         let html = foodHtml;
-        if (this._restoredUpgradeAt) html = this._restoredUpgradeNote(this._restoredUpgradeAt) + html;
+        if (this._restoredUpgradeAt) {
+            html = this._restoredUpgradeNote(this._restoredUpgradeAt, this._restoredUpgradeMeta) + html;
+        }
         if (goldRows.length) html += this._renderUpgradeBudget(goldRows, results.baseline);
         if (goldRows.length) html += this._renderUpgradeGoldTable(goldRows, results.baseline);
         if (levelRows.length) html += this._renderUpgradeLevelTable(levelRows, results.baseline);

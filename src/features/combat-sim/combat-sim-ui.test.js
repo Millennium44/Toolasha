@@ -3215,3 +3215,49 @@ describe('dungeons in the all-zones run and in the plan', () => {
         expect(cells[3]).toBe('≈6 clears');
     });
 });
+
+describe('remembered-run banner', () => {
+    test('names the character and zone with tier when meta is present', () => {
+        const html = ui._restoredUpgradeNote(null, {
+            characterName: 'Millennium44',
+            zoneName: 'Planet Of The Eyes',
+            difficultyTier: 2,
+        });
+        expect(html).toContain(
+            'Showing results remembered from a previous session — Millennium44, Planet Of The Eyes (T2).'
+        );
+    });
+
+    test('omits the tier when it is not a number', () => {
+        const html = ui._restoredUpgradeNote(null, {
+            characterName: 'Millennium44',
+            zoneName: 'Planet Of The Eyes',
+            difficultyTier: null,
+        });
+        expect(html).toContain('— Millennium44, Planet Of The Eyes.');
+        expect(html).not.toContain('(T');
+    });
+
+    test('shows only the zone when the character name is missing', () => {
+        const html = ui._restoredUpgradeNote(null, {
+            characterName: null,
+            zoneName: 'Smelly Planet',
+            difficultyTier: 0,
+        });
+        expect(html).toContain('— Smelly Planet (T0).');
+    });
+
+    test('renders the legacy sentence for a payload saved before meta existed', () => {
+        const html = ui._restoredUpgradeNote(null, null);
+        expect(html).toContain(
+            'Showing results remembered from a previous session. Run a new analysis to refresh them.'
+        );
+        expect(html).not.toContain('—');
+    });
+
+    test('escapes markup in the character name', () => {
+        const html = ui._restoredUpgradeNote(null, { characterName: '<img src=x>', zoneName: null });
+        expect(html).not.toContain('<img');
+        expect(html).toContain('&lt;img src=x&gt;');
+    });
+});
