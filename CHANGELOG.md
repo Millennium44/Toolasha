@@ -1205,6 +1205,23 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.23.0](https://github.com/Millennium44/Toolasha/compare/v3.22.0...v3.23.0) (2026-08-27)
+
+
+### Features
+
+* Refresh Prices button on skill pages to update all profit/hr at once ([bd57c72](https://github.com/Millennium44/Toolasha/commit/bd57c723d30572e99f32d9218d23c70373a7f67d))
+
+
+### Bug Fixes
+
+* custom tabs no longer save one character's tabs under another's key ([278624d](https://github.com/Millennium44/Toolasha/commit/278624d62b8a842c54d975369933139b40aa51a2))
+
+
+### Documentation
+
+* changelog for the character-switch tab fix and price refresh ([6d7eed5](https://github.com/Millennium44/Toolasha/commit/6d7eed5cec6c8b2d351b6cf1cb30b4033884763a))
+
 ## [3.22.0](https://github.com/Millennium44/Toolasha/compare/v3.21.1...v3.22.0) (2026-08-25)
 
 ### Features
