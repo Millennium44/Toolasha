@@ -136,6 +136,8 @@ const {
     goldPerTokenFor,
     mergedTokenExchanges,
     tokenConversionPlan,
+    applySpendMode,
+    SPEND_MODES,
 } = creditValueModule;
 const { TRIAL_MAX_TIER, levelFromTier, tierFromLevel } = await import('./guild-trials-math.js');
 
@@ -1720,6 +1722,324 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                 expect(note.title).toContain('Approximate');
                 expect(note.title).toContain('item tiles');
                 expect(note.title).toContain('capture time unknown');
+            });
+        });
+    });
+
+    describe('choosing how missing credits are paid for', () => {
+        const BLUE = '/items/blue_guild_credit';
+        const GOLD = '/items/gold_guild_credit';
+
+        const modeButtons = (modal) => Array.from(modal.querySelectorAll('.mwi-shrine-spend-mode-btn'));
+        const modeButton = (modal, mode) => modal.querySelector(`.mwi-shrine-spend-mode-btn[data-mode="${mode}"]`);
+        const activeMode = (modal) => modeButtons(modal).find((b) => b.dataset.active === 'yes')?.dataset.mode;
+        const rowFor = (modal, label) => nextBuyRows(modal).find((r) => r.textContent.includes(label));
+        const convertNote = (modal, label) => rowFor(modal, label).querySelector('.mwi-shrine-next-buy-convert');
+        const tokenConvertSteps = (modal) =>
+            Array.from(modal.querySelectorAll('.mwi-shrine-token-convert-step')).map((el) => el.textContent);
+        const matConvertSteps = (modal) =>
+            Array.from(modal.querySelectorAll('.mwi-shrine-convert-step')).map((el) => el.textContent);
+        const flowButton = (modal) => modal.querySelector('.mwi-shrine-next-buy-mats-btn');
+        const walkText = (modal) => modal.querySelector('.mwi-shrine-spend-all').textContent;
+        const boxNote = (modal, creditHrid) =>
+            modal.querySelector(`.mwi-shrine-credit-convert[data-credit-hrid="${creditHrid}"]`);
+
+        /** Two colours whose cheapest paths point opposite ways */
+        function twoColourFixture() {
+            Object.assign(game.clientData.itemDetailMap, {
+                [BLUE]: { name: 'Blue Guild Credit', guildCreditConversions: [] },
+                [GOLD]: { name: 'Gold Guild Credit', guildCreditConversions: [] },
+                '/items/silk': {
+                    name: 'Silk',
+                    guildCreditConversions: [{ creditItemHrid: BLUE, itemCount: 1, creditCount: 1 }],
+                },
+                '/items/rune': {
+                    name: 'Rune',
+                    guildCreditConversions: [{ creditItemHrid: GOLD, itemCount: 1, creditCount: 1 }],
+                },
+            });
+            game.prices['/items/silk'] = { ask: 200, bid: 150 };
+            game.prices['/items/rune'] = { ask: 6_000, bid: 5_000 };
+            // Force wants gold credits (60 tokens each — the market is far
+            // cheaper); Tempo wants blue ones (a tenth of a token each)
+            game.clientData.guildBuffDetailMap[FORCE].levelCosts['3'] = {
+                guildTokenCost: 100,
+                creditCosts: [{ itemHrid: GOLD, count: 5 }],
+            };
+            game.clientData.guildBuffDetailMap[TEMPO].levelCosts['1'] = {
+                guildTokenCost: 100,
+                creditCosts: [{ itemHrid: BLUE, count: 20 }],
+            };
+            game.inventory = [
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 1_000 },
+            ];
+        }
+
+        /** Open the planner already in `mode`, as a saved plan would */
+        function openInMode(mode) {
+            shrinePlanRecord.get().spendMode = mode;
+            return openModal();
+        }
+
+        describe('applySpendMode', () => {
+            const withRate = { path: 'market', tokensPerCredit: 60, tokenGold: 120_000, marketGold: 6_000 };
+            const noRate = { path: 'market', tokensPerCredit: null, tokenGold: null, marketGold: 6_000 };
+            const noMarket = { path: 'tokens', tokensPerCredit: 0.1, tokenGold: 200, marketGold: null };
+
+            test('auto hands the recommendation straight back', () => {
+                expect(applySpendMode(withRate, 'auto')).toMatchObject({ path: 'market', forced: false });
+                // An unknown mode is not a fourth behaviour — it is auto
+                expect(applySpendMode(withRate, 'nonsense').path).toBe('market');
+                expect(applySpendMode(withRate).path).toBe('market');
+            });
+
+            test('a forced path is marked forced, with what it displaced', () => {
+                expect(applySpendMode(withRate, 'tokens')).toMatchObject({
+                    path: 'tokens',
+                    autoPath: 'market',
+                    forced: true,
+                    fallback: false,
+                });
+            });
+
+            test('a mode that cannot be honoured falls back rather than dropping the colour', () => {
+                expect(applySpendMode(noRate, 'tokens')).toMatchObject({ path: 'market', fallback: true });
+                expect(applySpendMode(noMarket, 'gold')).toMatchObject({ path: 'tokens', fallback: true });
+                // Falling back to where auto already was is not an override
+                expect(applySpendMode(noRate, 'tokens').forced).toBe(false);
+            });
+
+            test('a colour with neither path stays unknown in every mode', () => {
+                const nothing = { path: 'unknown', tokensPerCredit: null, tokenGold: null, marketGold: null };
+                for (const mode of SPEND_MODES) expect(applySpendMode(nothing, mode).path).toBe('unknown');
+                expect(applySpendMode(null, 'gold').path).toBe('unknown');
+            });
+        });
+
+        describe('the control', () => {
+            test('three pills render, auto active, inside the folding body', () => {
+                const modal = openModal();
+
+                expect(modeButtons(modal).map((b) => b.textContent)).toEqual(['Auto', 'Tokens', 'Gold']);
+                expect(activeMode(modal)).toBe('auto');
+                expect(modal.querySelector('.mwi-shrine-suggest-body .mwi-shrine-spend-mode')).not.toBeNull();
+            });
+
+            test('a legacy plan with no saved mode is auto', async () => {
+                game.storage['settings:guildShrinePlan_char1'] = { targets: { [TEMPO]: 4 }, collapsed: false };
+                const modal = await reopenFromStorage();
+
+                expect(activeMode(modal)).toBe('auto');
+                expect(shrinePlanRecord.get().spendMode).toBeUndefined();
+            });
+
+            test('a click persists the choice and survives a reopen', async () => {
+                const modal = openModal();
+                modeButton(modal, 'tokens').click();
+
+                expect(activeMode(modal)).toBe('tokens');
+                vi.advanceTimersByTime(400);
+                await shrinePlanRecord.flushed();
+                expect(game.storage['settings:guildShrinePlan_char1'].spendMode).toBe('tokens');
+
+                const reopened = await reopenFromStorage();
+                expect(activeMode(reopened)).toBe('tokens');
+            });
+
+            test('re-clicking the active pill is a no-op, not a redundant save', async () => {
+                const modal = openModal();
+                modeButton(modal, 'auto').click();
+
+                vi.advanceTimersByTime(400);
+                await shrinePlanRecord.flushed();
+                expect(game.writes).toBe(0);
+            });
+
+            test('the fold state and the typed targets are untouched by a mode change', async () => {
+                const modal = openModal();
+                const input = inputFor(modal, TEMPO);
+                input.value = '4';
+                input.dispatchEvent(new Event('input'));
+                modal.querySelector('.mwi-shrine-suggest-heading').click();
+
+                modeButton(modal, 'gold').click();
+
+                expect(shrinePlanRecord.get().suggestionsCollapsed).toBe(true);
+                expect(shrinePlanRecord.get().targets).toEqual({ [TEMPO]: 4 });
+                expect(inputFor(modal, TEMPO).value).toBe('4');
+
+                vi.advanceTimersByTime(400);
+                await shrinePlanRecord.flushed();
+                const saved = game.storage['settings:guildShrinePlan_char1'];
+                expect(saved).toMatchObject({ spendMode: 'gold', suggestionsCollapsed: true, targets: { [TEMPO]: 4 } });
+            });
+
+            test('the heading tooltip names the ranking and what the mode does to it', () => {
+                const modal = openInMode('gold');
+                const title = modal.querySelector('.mwi-shrine-suggest-heading').title;
+
+                expect(title).toContain('Cheapest first by effective token cost');
+                expect(title).toContain('gold half named beside it');
+                expect(title).toContain('Gold: every colour with a priced conversion is bought');
+            });
+        });
+
+        describe('tokens mode', () => {
+            beforeEach(twoColourFixture);
+
+            test('a market-cheaper colour is converted anyway, and the tooltip says what that costs', () => {
+                const modal = openInMode('tokens');
+
+                expect(convertNote(modal, 'Force').textContent).toBe('convert 300 tok → 5 Gold');
+                const title = convertNote(modal, 'Force').title;
+                expect(title).toContain('Gold — tokens: 120.0K gold-equiv/credit vs market: 6.0K/credit.');
+                expect(title).toContain('Auto would buy it on the market');
+                expect(title).toContain('more gold-equivalent per credit');
+            });
+
+            test('the ranking and the walk are recomputed on the forced path', () => {
+                const modal = openInMode('tokens');
+                const rows = nextBuyRows(modal);
+
+                // Tempo 100 + 2, Force 100 + 300 — the order auto gives is reversed
+                expect(rows[0].textContent).toContain('Tempo');
+                expect(rows[0].querySelector('.mwi-shrine-next-buy-tok').textContent).toBe('102 tok');
+                expect(rows[1].querySelector('.mwi-shrine-next-buy-tok').textContent).toBe('400 tok');
+                expect(walkText(modal)).toBe(
+                    'Spending everything now: 2 of 2 next levels for 502 tokens, 302 of them converted into credits'
+                );
+            });
+
+            test('nothing is left for the marketplace, and both colours become exchanges', () => {
+                const modal = openInMode('tokens');
+
+                expect(flowButton(modal)).toBeNull();
+                expect(matConvertSteps(modal)).toEqual([]);
+                expect(tokenConvertSteps(modal)).toEqual(['convert 2 tok → 20 Blue', 'convert 300 tok → 5 Gold']);
+            });
+
+            test('the still-needed box and its button follow the same mode', () => {
+                const modal = openInMode('tokens');
+                setTarget(modal, FORCE, 3);
+                setTarget(modal, TEMPO, 1);
+
+                expect(boxNote(modal, BLUE).textContent).toBe('or convert 2 tokens');
+                expect(boxNote(modal, GOLD).textContent).toBe('or convert 300 tokens');
+                // Nothing is bought, so there is nothing to go shopping for
+                expect(matsButton(modal)).toBeNull();
+            });
+
+            test('an exchange beyond the tokens the plan leaves spare is shown, not hidden', () => {
+                game.inventory = [
+                    { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 250 },
+                ];
+                const modal = openInMode('tokens');
+                setTarget(modal, FORCE, 3);
+                setTarget(modal, TEMPO, 1);
+
+                // 250 held against a 200-token plan leaves 50 spare, and the gold
+                // credits want 300 — said with the shortfall rather than dropped
+                expect(boxNote(modal, GOLD).textContent).toBe(
+                    'or convert 300 tokens (more than this plan leaves spare)'
+                );
+            });
+
+            test('a colour with no rate at all is still bought, and the row says why', () => {
+                // Back to the plain fixture: Trade Credit has no token rate
+                game.clientData = planClientData();
+                const modal = openInMode('tokens');
+
+                expect(convertNote(modal, 'Force').textContent).toBe('buy ≈7.5K gold of mats → 50 Trade');
+                expect(convertNote(modal, 'Force').title).toContain(
+                    'no token→credit rate is known for it, so Tokens mode buys this one on the market instead'
+                );
+            });
+        });
+
+        describe('gold mode', () => {
+            beforeEach(twoColourFixture);
+
+            test('a token-cheaper colour is bought on the market instead', () => {
+                const modal = openInMode('gold');
+
+                expect(convertNote(modal, 'Tempo').textContent).toBe('buy ≈4.0K gold of mats → 20 Blue');
+                expect(convertNote(modal, 'Force').textContent).toBe('buy ≈30.0K gold of mats → 5 Gold');
+            });
+
+            test('the token bill falls to the levels themselves and the gold bill grows', () => {
+                const modal = openInMode('gold');
+                const rows = nextBuyRows(modal);
+
+                expect(rows.map((r) => r.querySelector('.mwi-shrine-next-buy-tok').textContent)).toEqual([
+                    '100 tok',
+                    '100 tok',
+                ]);
+                expect(walkText(modal)).toBe(
+                    'Spending everything now: 2 of 2 next levels for 200 tokens plus ≈34.0K gold of mats'
+                );
+            });
+
+            test('every colour lands on the shopping list and the market conversion lines', () => {
+                const modal = openInMode('gold');
+                flowButton(modal).click();
+
+                expect(shopping.calls[0].items.map((i) => i.itemHrid).sort()).toEqual(['/items/rune', '/items/silk']);
+                expect(matConvertSteps(modal)).toEqual(['convert 20× Silk → 20 Blue', 'convert 5× Rune → 5 Gold']);
+                expect(tokenConvertSteps(modal)).toEqual([]);
+            });
+
+            test('the still-needed box stops offering exchanges and its button covers both colours', () => {
+                const modal = openInMode('gold');
+                setTarget(modal, FORCE, 3);
+                setTarget(modal, TEMPO, 1);
+
+                expect(boxNote(modal, BLUE)).toBeNull();
+                expect(boxNote(modal, GOLD)).toBeNull();
+                matsButton(modal).click();
+                expect(shopping.calls[0].items.map((i) => i.itemHrid).sort()).toEqual(['/items/rune', '/items/silk']);
+            });
+
+            test('a colour nothing priced converts into goes back to the tokens, and the row says why', () => {
+                delete game.prices['/items/silk'];
+                const modal = openInMode('gold');
+
+                expect(convertNote(modal, 'Tempo').textContent).toBe('convert 2 tok → 20 Blue');
+                expect(convertNote(modal, 'Tempo').title).toContain(
+                    'nothing on the market converts into it at a known price, so Gold mode exchanges tokens'
+                );
+            });
+        });
+
+        describe('switching modes redraws the whole section', () => {
+            beforeEach(twoColourFixture);
+
+            test('one click moves the rows, the walk, the box and the button together', () => {
+                const modal = openModal();
+                setTarget(modal, FORCE, 3);
+                setTarget(modal, TEMPO, 1);
+
+                // Auto: gold credits bought, blue ones exchanged
+                expect(tokenConvertSteps(modal)).toEqual(['convert 2 tok → 20 Blue']);
+                expect(matConvertSteps(modal)).toEqual(['convert 5× Rune → 5 Gold']);
+                expect(boxNote(modal, BLUE).textContent).toBe('or convert 2 tokens');
+                matsButton(modal).click();
+                expect(shopping.calls[0].items.map((i) => i.itemHrid)).toEqual(['/items/rune']);
+
+                modeButton(modal, 'tokens').click();
+
+                expect(tokenConvertSteps(modal)).toEqual(['convert 2 tok → 20 Blue', 'convert 300 tok → 5 Gold']);
+                expect(matConvertSteps(modal)).toEqual([]);
+                expect(boxNote(modal, GOLD).textContent).toBe('or convert 300 tokens');
+                expect(matsButton(modal)).toBeNull();
+                expect(walkText(modal)).toContain('502 tokens');
+
+                modeButton(modal, 'gold').click();
+
+                expect(tokenConvertSteps(modal)).toEqual([]);
+                expect(boxNote(modal, BLUE)).toBeNull();
+                expect(walkText(modal)).toContain('≈34.0K gold of mats');
+                matsButton(modal).click();
+                expect(shopping.calls[1].items.map((i) => i.itemHrid).sort()).toEqual(['/items/rune', '/items/silk']);
             });
         });
     });

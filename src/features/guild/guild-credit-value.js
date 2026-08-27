@@ -47,7 +47,8 @@ const CSS_CLASS = 'mwi-guild-credit-value';
  * Scoped (the default) because a plan for which shrine levels to chase is one
  * character's business — the guild-shared trial plan is the unscoped case.
  *
- * Shape: `{ targets: { [buffHrid]: number }, collapsed: boolean }`.
+ * Shape: `{ targets: { [buffHrid]: number }, collapsed: boolean,
+ * suggestionsCollapsed: boolean, spendMode: 'auto'|'tokens'|'gold' }`.
  * Stored key: `guildShrinePlan_<characterId>` in the `settings` store.
  *
  * `empty()` is a bare `{}` rather than the shape with its defaults filled in:
@@ -72,6 +73,35 @@ function planState() {
     const plan = shrinePlanRecord.get();
     if (!plan.targets || typeof plan.targets !== 'object') plan.targets = {};
     return plan;
+}
+
+/**
+ * The three ways the planner may be told to settle a credit shortfall.
+ *
+ * `auto` is the recommendation — cheapest path per colour
+ * ({@link chooseCreditPath}). The other two are the player overriding it: one
+ * pocket for everything, because "spend tokens" and "spend gold" are real
+ * positions to take (a token hoard with nothing else to buy, a gold pile and no
+ * patience) that a per-colour cost comparison cannot know about.
+ */
+export const SPEND_MODES = ['auto', 'tokens', 'gold'];
+
+/** What each mode is called on its button */
+const SPEND_MODE_LABELS = { auto: 'Auto', tokens: 'Tokens', gold: 'Gold' };
+
+/**
+ * The saved spend mode, normalised.
+ *
+ * A plan written before this option existed carries no `spendMode` at all, and
+ * `auto` — the only behaviour it could have been saved under — is what it means.
+ * Read rather than defaulted into the record, so a plan is not rewritten with a
+ * key the player never chose.
+ *
+ * @returns {string} One of {@link SPEND_MODES}
+ */
+function spendMode() {
+    const mode = planState().spendMode;
+    return SPEND_MODES.includes(mode) ? mode : 'auto';
 }
 
 /** How long the target inputs sit still before the plan is written */
@@ -352,6 +382,56 @@ export function chooseCreditPath({ rate = null, marketGoldPerCredit = null, gold
         tokenGold,
         marketGold: market,
     };
+}
+
+/**
+ * How much dearer the forced path has to be before the row says so.
+ *
+ * A percent, not {@link PATH_TIE_TOLERANCE}'s float epsilon: the disclosure is
+ * about a decision the player would want to reconsider, and a rounding-error
+ * difference is not one. It is deliberately low all the same — the point is that
+ * an overpay is never silent, not that only large ones are mentioned.
+ */
+const OVERPAY_TOLERANCE = 0.01;
+
+/**
+ * The recommendation, bent to the mode the player picked.
+ *
+ * `auto` hands the decision straight back. The forced modes take the path they
+ * are named after *when that path exists for the colour*, and fall back to the
+ * other one when it does not — never to nothing. A colour with no token rate
+ * (the ninth colour nobody has opened the exchange for) cannot be converted no
+ * matter how firmly Tokens is selected, and a colour nothing on the market
+ * converts into at a known price cannot be bought; dropping either from the plan
+ * would make an unaffordable buy look affordable, which is the one thing this
+ * section must never do. The fallback is recorded rather than hidden
+ * (`fallback`), and so is the fact that the mode overrode the cheaper path
+ * (`forced`, with `autoPath` naming what the recommendation would have done) —
+ * both are said out loud in the row's tooltip.
+ *
+ * @param {Object} decision - From {@link chooseCreditPath}
+ * @param {string} [mode='auto'] - One of {@link SPEND_MODES}
+ * @returns {{path: string, tokensPerCredit: number|null, tokenGold: number|null,
+ *   marketGold: number|null, mode: string, autoPath: string, forced: boolean,
+ *   fallback: boolean}} The decision the whole section is then drawn from
+ */
+export function applySpendMode(decision, mode = 'auto') {
+    const base = decision || { path: 'unknown', tokensPerCredit: null, tokenGold: null, marketGold: null };
+    const autoPath = base.path;
+    if (mode !== 'tokens' && mode !== 'gold')
+        return { ...base, mode: 'auto', autoPath, forced: false, fallback: false };
+
+    // What each path needs to be usable at all: a rate to exchange at, and a
+    // priced conversion to shop for. The same two tests `buyTokenCost` makes.
+    const canTokens = Number(base.tokensPerCredit) > 0;
+    const canMarket = Number(base.marketGold) > 0;
+    const wanted = mode === 'tokens' ? 'tokens' : 'market';
+    const wantedUsable = wanted === 'tokens' ? canTokens : canMarket;
+    const otherUsable = wanted === 'tokens' ? canMarket : canTokens;
+    const other = wanted === 'tokens' ? 'market' : 'tokens';
+
+    const path = wantedUsable ? wanted : otherUsable ? other : 'unknown';
+    return { ...base, path, mode, autoPath, forced: path !== autoPath, fallback: !wantedUsable };
 }
 
 /**
@@ -801,14 +881,63 @@ function describeRate(rate) {
 }
 
 /**
- * Why one path beat the other, for a tooltip.
+ * What a forced mode could not honour, for a tooltip.
+ *
+ * Said because the alternative is a section that quietly disagrees with the
+ * button the player pressed: in Tokens mode a colour on the market side looks
+ * like a bug unless the row explains that there is no rate to convert at.
+ *
  * @param {string} label - The credit's short name
- * @param {Object} decision - From {@link chooseCreditPath}
- * @returns {string} One sentence, or '' when there was no comparison to make
+ * @param {Object} decision - From {@link applySpendMode}
+ * @returns {string} One sentence, or '' when the mode was honoured
+ */
+function describeFallback(label, decision) {
+    if (!decision?.fallback || decision.path === 'unknown') return '';
+    return decision.mode === 'tokens'
+        ? `${label} — no token→credit rate is known for it, so Tokens mode buys this one on the market instead.`
+        : `${label} — nothing on the market converts into it at a known price, so Gold mode exchanges tokens for this one instead.`;
+}
+
+/**
+ * What the forced path costs over the recommended one, for a tooltip.
+ *
+ * The player is allowed to overpay — that is what the mode is for — but not
+ * unknowingly, so a forced path that is meaningfully dearer names the path it
+ * displaced and the difference. Both figures are the ones the comparison was
+ * already made on, so the sentence cannot drift from the decision above it.
+ *
+ * @param {Object} decision - From {@link applySpendMode}
+ * @returns {string} One sentence, or '' when nothing was overridden or nothing was lost
+ */
+function describeOverpay(decision) {
+    if (!decision?.forced) return '';
+    if (!(Number(decision.tokenGold) > 0) || !(Number(decision.marketGold) > 0)) return '';
+    const chosen = decision.path === 'tokens' ? decision.tokenGold : decision.marketGold;
+    const auto = decision.autoPath === 'tokens' ? decision.tokenGold : decision.marketGold;
+    if (!(chosen > auto * (1 + OVERPAY_TOLERANCE))) return '';
+    const would = decision.autoPath === 'tokens' ? 'convert tokens for it' : 'buy it on the market';
+    return `Auto would ${would}: this mode pays about ${formatKMB(chosen - auto)} more gold-equivalent per credit.`;
+}
+
+/**
+ * Why one path beat the other, for a tooltip — and, in a forced mode, what
+ * taking the other one costs.
+ * @param {string} label - The credit's short name
+ * @param {Object} decision - From {@link chooseCreditPath}, possibly through {@link applySpendMode}
+ * @returns {string} One to three sentences, or '' when there was nothing to say
  */
 function describeDecision(label, decision) {
-    if (!(Number(decision?.tokenGold) > 0) || !(Number(decision?.marketGold) > 0)) return '';
-    return `${label} — tokens: ${formatKMB(decision.tokenGold)} gold-equiv/credit vs market: ${formatKMB(decision.marketGold)}/credit.`;
+    const parts = [];
+    if (Number(decision?.tokenGold) > 0 && Number(decision?.marketGold) > 0) {
+        parts.push(
+            `${label} — tokens: ${formatKMB(decision.tokenGold)} gold-equiv/credit vs market: ${formatKMB(decision.marketGold)}/credit.`
+        );
+        const overpay = describeOverpay(decision);
+        if (overpay) parts.push(overpay);
+    }
+    const fallback = describeFallback(label, decision);
+    if (fallback) parts.push(fallback);
+    return parts.join(' ');
 }
 
 class GuildCreditValue {
@@ -1290,14 +1419,23 @@ class GuildCreditValue {
             // Which way each colour is cheapest to get, for the annotation below.
             // Built here rather than per row so the button under the box and the
             // notes inside it are drawn from the same prices.
+            //
+            // Through the selected spend mode, like every other part of the
+            // section: the box above the suggestions and the suggestions
+            // themselves settle the same shortfall, so they cannot be allowed to
+            // settle it two different ways.
             const topConversions = buildTopConversions(itemDetailMap, 1);
             const goldPerToken = goldPerTokenFor(itemDetailMap);
+            const mode = spendMode();
             const pathFor = (creditHrid) =>
-                chooseCreditPath({
-                    rate: tokenRateFor(creditHrid),
-                    marketGoldPerCredit: (topConversions?.[creditHrid] || [])[0]?.askGPC ?? null,
-                    goldPerToken,
-                });
+                applySpendMode(
+                    chooseCreditPath({
+                        rate: tokenRateFor(creditHrid),
+                        marketGoldPerCredit: (topConversions?.[creditHrid] || [])[0]?.askGPC ?? null,
+                        goldPerToken,
+                    }),
+                    mode
+                );
 
             // Credit costs
             const owedCredits = {};
@@ -1337,8 +1475,17 @@ class GuildCreditValue {
                 const decision = pathFor(itemHrid);
                 if (decision.path !== 'tokens') continue;
                 const tokensNeeded = tokensForCredits(owed, rate);
-                if (!(tokensNeeded > 0) || tokensNeeded > spareTokens) continue;
-                note.textContent = `or convert ${described.approx ? '≈' : ''}${tokensNeeded.toLocaleString()} tokens`;
+                if (!(tokensNeeded > 0)) continue;
+                // The spare-token guard is advice, and advice is what `auto` is
+                // for: offering an exchange the plan's own tokens cannot cover
+                // would be a suggestion to go and find more. A mode the player
+                // chose is not advice — the line stays and says the shortfall,
+                // rather than vanishing and leaving this box disagreeing with
+                // the button that put it here.
+                const beyondSpare = tokensNeeded > spareTokens;
+                if (beyondSpare && mode !== 'tokens') continue;
+                const spareNote = beyondSpare ? ' (more than this plan leaves spare)' : '';
+                note.textContent = `or convert ${described.approx ? '≈' : ''}${tokensNeeded.toLocaleString()} tokens${spareNote}`;
                 note.title = [described.title, describeDecision(shortCreditName(name), decision)]
                     .filter(Boolean)
                     .join(' ');
@@ -1352,7 +1499,16 @@ class GuildCreditValue {
                 totalsEl.appendChild(none);
             }
 
-            renderMissingMats(owedCredits, itemDetailMap, inventory);
+            // Only the colours this mode sends to the market. A colour it
+            // settles with tokens has an exchange to make rather than a shopping
+            // trip, and the note under its row above already says so — putting
+            // its materials on the shopping list too would be the same shortfall
+            // billed twice, in two different currencies.
+            const marketOwed = {};
+            for (const [itemHrid, owed] of Object.entries(owedCredits)) {
+                if (pathFor(itemHrid).path !== 'tokens') marketOwed[itemHrid] = owed;
+            }
+            renderMissingMats(marketOwed, itemDetailMap, inventory);
         };
 
         /**
@@ -1541,14 +1697,34 @@ class GuildCreditValue {
 
             suggestEl.innerHTML = '';
 
+            const mode = spendMode();
+
             const heading = document.createElement('div');
             heading.style.cssText =
                 'display:flex; justify-content:space-between; align-items:center; gap:6px; font-size:11px; color:#9ca3af; margin-bottom:5px;';
-            heading.title =
+            // The ranking is by effective *token* cost in every mode — tokens are
+            // the scarce pocket, and the gold figure rides alongside rather than
+            // being blended into it. What changes per mode is which colours
+            // contribute to which half.
+            const RANKING_TITLE =
                 'Cheapest first by effective token cost: the level’s own token price plus the tokens its ' +
-                'recommended plan spends converting credits. Credits the marketplace supplies more cheaply ' +
-                'than the guild shop are bought there instead, and cost gold rather than tokens. Colours ' +
+                'plan spends converting credits, with the gold half named beside it. Colours ' +
                 'with neither a rate nor a market price are left out of the sum.';
+            heading.title =
+                {
+                    auto:
+                        `${RANKING_TITLE} Auto: each colour goes whichever way is cheaper — credits the ` +
+                        'marketplace supplies more cheaply than the guild shop are bought there, and cost gold ' +
+                        'rather than tokens.',
+                    tokens:
+                        `${RANKING_TITLE} Tokens: every colour with a known rate is exchanged for, however ` +
+                        'dear — a colour with no rate is still bought on the market, since there is nothing to ' +
+                        'exchange at.',
+                    gold:
+                        `${RANKING_TITLE} Gold: every colour with a priced conversion is bought, so the token ` +
+                        'figure falls to the levels themselves — a colour nothing converts into is still ' +
+                        'exchanged for tokens, since there is nothing to buy.',
+                }[mode] || RANKING_TITLE;
             heading.className = 'mwi-shrine-suggest-heading';
             heading.style.cursor = 'pointer';
             heading.style.userSelect = 'none';
@@ -1571,6 +1747,49 @@ class GuildCreditValue {
                 planState().suggestionsCollapsed = isOpen;
                 savePlanSoon();
             });
+
+            // How the credit gaps are settled, for the whole section. Inside the
+            // folding body rather than in the heading, so it is out of the way
+            // when the section is folded and its clicks cannot be mistaken for
+            // the fold's. Pills in the shape the other panels' range selectors
+            // use, in the planner's own purple.
+            const modeRow = document.createElement('div');
+            modeRow.className = 'mwi-shrine-spend-mode';
+            modeRow.style.cssText = 'display:flex; gap:4px; align-items:center; margin-bottom:5px;';
+            const modeLabel = document.createElement('span');
+            modeLabel.style.cssText = 'font-size:10px; color:#6b7280; margin-right:2px;';
+            modeLabel.textContent = 'Missing credits:';
+            modeRow.appendChild(modeLabel);
+            for (const option of SPEND_MODES) {
+                const active = option === mode;
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'mwi-shrine-spend-mode-btn';
+                button.dataset.mode = option;
+                button.dataset.active = active ? 'yes' : 'no';
+                button.textContent = SPEND_MODE_LABELS[option];
+                button.style.cssText =
+                    'padding:2px 8px; font-size:10px; cursor:pointer; border-radius:3px; ' +
+                    'border:1px solid rgba(255,255,255,0.16); ' +
+                    `background:${active ? 'rgba(196,181,253,0.18)' : 'transparent'}; ` +
+                    `color:${active ? '#c4b5fd' : '#9ca3af'};`;
+                button.title = {
+                    auto: 'Cheapest way per colour — the recommendation.',
+                    tokens: 'Exchange guild tokens for every colour that has a known rate, cheaper or not.',
+                    gold: 'Buy every colour that has a priced conversion on the marketplace, cheaper or not.',
+                }[option];
+                button.addEventListener('click', () => {
+                    if (spendMode() === option) return;
+                    planState().spendMode = option;
+                    savePlanSoon();
+                    // Both halves, because both are drawn from the mode: the
+                    // suggestions below and the still-needed box above
+                    renderSuggestions();
+                    recalculate();
+                });
+                modeRow.appendChild(button);
+            }
+            suggestBody.appendChild(modeRow);
 
             if (nextBuys.length === 0) {
                 const none = document.createElement('div');
@@ -1595,11 +1814,14 @@ class GuildCreditValue {
             const decisions = {};
             const pathFor = (creditHrid) => {
                 if (!(creditHrid in decisions))
-                    decisions[creditHrid] = chooseCreditPath({
-                        rate: tokenRateFor(creditHrid),
-                        marketGoldPerCredit: (topConversions?.[creditHrid] || [])[0]?.askGPC ?? null,
-                        goldPerToken,
-                    });
+                    decisions[creditHrid] = applySpendMode(
+                        chooseCreditPath({
+                            rate: tokenRateFor(creditHrid),
+                            marketGoldPerCredit: (topConversions?.[creditHrid] || [])[0]?.askGPC ?? null,
+                            goldPerToken,
+                        }),
+                        mode
+                    );
                 return decisions[creditHrid];
             };
 
