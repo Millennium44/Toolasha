@@ -313,12 +313,12 @@ describe('self-sufficient reload', () => {
 });
 
 describe('Export / Import across characters', () => {
-    test('an imported layout sharing tab ids still saves, and only under the importing character', async () => {
+    test('an import re-ids every tab, so two characters never share one', async () => {
         store('ironChar', config([{ id: 'shared-tab', name: 'Shared', items: ['/items/cheese'] }]));
         store('mainChar', config([{ id: 'mc-tab', name: 'Main Gear' }]));
 
         await startUI();
-        // Export, verbatim from `_exportLayout`
+        ui._exportLayout();
         const exported = JSON.stringify({ _toolasha: 'tabs-v1', ...ui._config });
 
         // Switch, properly this time, and import onto the second character
@@ -328,17 +328,84 @@ describe('Export / Import across characters', () => {
         await ui._handleImportFile(new File([exported], 'toolasha-tabs.json', { type: 'application/json' }));
         await flushConfigWrites();
 
-        expect(tabIds(stored('mainChar'))).toContain('shared-tab');
+        const imported = stored('mainChar').tabs.find((t) => t.name === 'Shared');
+        expect(imported).toBeDefined();
+        expect(imported.items).toContain('/items/cheese');
+        // The whole cross-character shared-id problem, ended at the source
+        expect(tabIds(stored('mainChar'))).not.toContain('shared-tab');
+        expect(imported.updatedAt).toBeGreaterThan(0);
 
-        // Editing the shared-id tab as the importing character is allowed and
-        // lands on that character only — the guard keys on WHO, not on tab ids.
-        ui._config = addItem(ui._config, 'shared-tab', '/items/sword');
+        // Editing it lands on the importing character only
+        ui._config = addItem(ui._config, imported.id, '/items/sword');
         await ui._save();
         await flushConfigWrites();
 
-        const mainShared = stored('mainChar').tabs.find((t) => t.id === 'shared-tab');
-        const ironShared = stored('ironChar').tabs.find((t) => t.id === 'shared-tab');
-        expect(mainShared.items).toContain('/items/sword');
-        expect(ironShared.items).not.toContain('/items/sword');
+        expect(stored('mainChar').tabs.find((t) => t.id === imported.id).items).toContain('/items/sword');
+        expect(stored('ironChar').tabs.find((t) => t.id === 'shared-tab').items).not.toContain('/items/sword');
+    });
+
+    test('an exported file carries no tombstone map and no order stamp', async () => {
+        store(
+            'ironChar',
+            config([
+                { id: 'a', name: 'A' },
+                { id: 'b', name: 'B' },
+            ])
+        );
+        await startUI();
+        ui._config = removeTab(ui._config, 'b');
+        ui._config.orderUpdatedAt = Date.now();
+        expect(ui._config.removed).toBeDefined();
+
+        let payload = null;
+        const originalBlob = globalThis.Blob;
+        globalThis.Blob = class {
+            constructor(parts) {
+                payload = JSON.parse(parts[0]);
+            }
+        };
+        globalThis.URL.createObjectURL = () => 'blob:test';
+        globalThis.URL.revokeObjectURL = () => {};
+        try {
+            ui._exportLayout();
+        } finally {
+            globalThis.Blob = originalBlob;
+        }
+
+        expect(payload._toolasha).toBe('tabs-v1');
+        expect(payload.removed).toBeUndefined();
+        expect(payload.orderUpdatedAt).toBeUndefined();
+        expect(payload.tabs.map((t) => t.id)).toEqual(['a']);
+    });
+
+    test('a file WITH a tombstone map and unstamped tabs survives the next load intact', async () => {
+        store('mainChar', config([{ id: 'mc-tab', name: 'Main Gear' }]));
+        dm.charId = 'mainChar';
+        await startUI();
+
+        // A file written by an older build: verbatim config, tombstones included
+        const hostile = JSON.stringify({
+            _toolasha: 'tabs-v1',
+            version: 1,
+            selectedTabId: 'ores',
+            removed: { ores: Date.now(), gear: Date.now() },
+            tabs: [
+                { id: 'ores', name: 'Ores', items: ['/items/iron_ore'], children: [] },
+                { id: 'gear', name: 'Gear', items: [], children: [] },
+            ],
+        });
+
+        await ui._handleImportFile(new File([hostile], 'toolasha-tabs.json', { type: 'application/json' }));
+        await flushConfigWrites();
+
+        // The next page load — where the old code's imported tabs deleted themselves
+        dm.charId = 'otherChar';
+        await dm.emit('character_initialized', { _isCharacterSwitch: true });
+        dm.charId = 'mainChar';
+        await dm.emit('character_initialized', { _isCharacterSwitch: true });
+        await flushConfigWrites();
+
+        expect(ui._config.tabs.map((t) => t.name)).toEqual(['Ores', 'Gear']);
+        expect(ui._config.removed).toBeUndefined();
     });
 });

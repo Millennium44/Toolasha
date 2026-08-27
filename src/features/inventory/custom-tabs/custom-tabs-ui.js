@@ -49,6 +49,7 @@ import {
     syncLoadoutBinding,
     cleanOrphanedBindings,
     getBaseHrid,
+    sanitizeImportedConfig,
     LINEBREAK_HRID,
 } from './custom-tabs-data.js';
 
@@ -528,6 +529,9 @@ export default class CustomTabsUI {
         // is checked against this rather than against "whoever is current now" —
         // see `_isConfigForCurrentCharacter`.
         this._configCharId = null;
+        // Bumped by every `_reloadForCurrentCharacter`; only the newest reload
+        // is allowed to set `_configCharId`, and it always does
+        this._reloadGeneration = 0;
         this._onCharacterInitialized = null;
         this._tabBtn = null;
         this._invContainer = null;
@@ -709,6 +713,20 @@ export default class CustomTabsUI {
         const charId = dataManager.getCurrentCharacterId();
         if (charId === this._configCharId) return;
 
+        // Every reload takes a generation. Two rules hang off it, and together
+        // they are what guarantees the latch always ends up SET:
+        //
+        //  - the bail-out below stands down only for a reload that is genuinely
+        //    newer than this one, so the newest reload always runs to
+        //    completion and sets `_configCharId`. It used to bail on
+        //    "the current character is not the one I loaded", which is also
+        //    true when the newer reload has already finished — both reloads
+        //    then returned without setting the latch and the panel drew
+        //    nothing until the page was reloaded;
+        //  - a failure restores the latch it found rather than leaving null.
+        const generation = ++this._reloadGeneration;
+        const previousCharId = this._configCharId;
+
         // Nulled for the duration of the load, not left pointing at the old
         // character: a save landing mid-load would otherwise be waved through
         // against the departed id and then merged under the arriving one when
@@ -716,12 +734,31 @@ export default class CustomTabsUI {
         // is closed rather than narrowed.
         this._configCharId = null;
 
-        const loaded = await loadConfig(charId);
+        let loaded;
+        try {
+            loaded = await loadConfig(charId);
+        } catch (error) {
+            // A rejected load must not leave the panel dead. Retry once — the
+            // usual cause is a transient IndexedDB failure — and if that fails
+            // too, hand the latch back to whatever it was, so the panel keeps
+            // drawing the config it already has instead of nothing at all.
+            console.error('[CustomTabs] Loading tabs failed; retrying once:', error);
+            try {
+                loaded = await loadConfig(charId);
+            } catch (retryError) {
+                console.error('[CustomTabs] Tab reload failed again; keeping the previous config:', retryError);
+                if (generation === this._reloadGeneration && this._configCharId === null) {
+                    this._configCharId = previousCharId;
+                }
+                return;
+            }
+        }
 
-        // A second switch during the load has its own reload in flight, and that
-        // one is the authority on what should end up in `_config`. Bailing here
-        // leaves `_configCharId` null, so writes stay refused until it lands.
-        if (dataManager.getCurrentCharacterId() !== charId) return;
+        // A LATER reload is the authority on what ends up in `_config`; this one
+        // stands down for it and for nothing else. When this is still the newest
+        // reload it finishes even if the character moved on under it — its own
+        // successor is already queued behind the same event and will correct it.
+        if (generation !== this._reloadGeneration) return;
 
         this._config = loaded;
         this._configCharId = charId;
@@ -1319,9 +1356,17 @@ export default class CustomTabsUI {
 
     /**
      * Serialize the current layout to a JSON file and trigger a download.
+     *
+     * `removed` and `orderUpdatedAt` are stripped. Both are sync bookkeeping
+     * about THIS config's history on THIS device, and neither survives the trip
+     * usefully: a shared file carrying a tombstone map is a file that deletes
+     * tabs on whoever imports it, and an `orderUpdatedAt` from another device's
+     * clock outranks the importer's own ordering for no reason. A layout file
+     * is the tabs and where they sit — nothing else.
      */
     _exportLayout() {
-        const payload = { _toolasha: 'tabs-v1', ...this._config };
+        const { removed: _removed, orderUpdatedAt: _orderUpdatedAt, ...config } = this._config || {};
+        const payload = { _toolasha: 'tabs-v1', ...config };
         const json = JSON.stringify(payload, null, 2);
         const blob = new Blob([json], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -1345,8 +1390,9 @@ export default class CustomTabsUI {
                 console.error('[CustomTabs] Import failed: missing _toolasha marker or tabs array', parsed);
                 return;
             }
-            const { _toolasha: _, ...config } = parsed;
-            this._config = config;
+            const { _toolasha: _, ...raw } = parsed;
+            // Never adopt a file verbatim — see sanitizeImportedConfig
+            this._config = sanitizeImportedConfig(raw);
             // Apply layout immediately — save to IndexedDB in the background
             this._removeInjectedEls();
             const invContainer = this._findInvContainer();
