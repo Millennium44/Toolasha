@@ -45,21 +45,36 @@ describe('calculateEfficiencyBreakdown', () => {
             teaSkillLevelBonus: 5,
         });
 
+        // The tea is added to the real skill level, so 18 + 5 = 23 against a
+        // requirement of 20 is +3% — the two levels below the requirement are
+        // spent closing the gap, not credited on top of it
         expect(result.effectiveRequirement).toBe(20);
-        expect(result.effectiveLevel).toBe(25);
-        expect(result.levelEfficiency).toBe(5);
+        expect(result.effectiveLevel).toBe(23);
+        expect(result.levelEfficiency).toBe(3);
     });
 
-    test('clamps skill level to required level', () => {
+    test('a tea that does not close the gap earns nothing', () => {
         const result = calculateEfficiencyBreakdown({
             requiredLevel: 30,
             skillLevel: 10,
             teaSkillLevelBonus: 2,
         });
 
+        // 10 + 2 is still twenty levels short of the requirement
         expect(result.effectiveRequirement).toBe(30);
-        expect(result.effectiveLevel).toBe(32);
-        expect(result.levelEfficiency).toBe(2);
+        expect(result.effectiveLevel).toBe(12);
+        expect(result.levelEfficiency).toBe(0);
+    });
+
+    test('and a tea that closes it exactly earns nothing either', () => {
+        const result = calculateEfficiencyBreakdown({
+            requiredLevel: 20,
+            skillLevel: 17,
+            teaSkillLevelBonus: 3,
+        });
+
+        expect(result.effectiveLevel).toBe(20);
+        expect(result.levelEfficiency).toBe(0);
     });
 
     test('stacks efficiency sources additively', () => {

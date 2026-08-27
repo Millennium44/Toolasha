@@ -10,6 +10,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 The unsigned-players list keeps left-click for drafting the whisper nudge; right-clicking a name now opens that player's profile instead.
 
+### Tea below an action's requirement stops being over-credited
+
+Efficiency for an action you are under-levelled for clamped the skill level up to the requirement before adding the tea's levels, so a tea that only partly closed the gap was paid as if it closed all of it — skill 18 on a level 20 action with a +3 tea read +3% level efficiency where the game gives +1%. The tea now adds to the real level first, which corrects profit displays, gathering profit, action times and the sims for those actions.
+
 ### Level Malus now matches the server's own formula
 
 The MWI developer supplied the server-side implementation, which differs from what the fork inferred from the Game Guide: the 20%-and-ten-levels pair is one combined threshold, the comparison is strict, the penalty is continuous rather than stepped to whole percents, and it reads the raw unfloored Combat Level. Combat Level 40 in a party topping out at 50 is no penalty at all (was -15%), at 51 it is -7.5% (was -15%), and small gaps that used to round away now show their real fraction of a percent. Both the sim and the live drop model feed it unfloored levels now.
