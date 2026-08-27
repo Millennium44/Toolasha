@@ -23,6 +23,17 @@ import { webSocketHook as sharedWebSocketHook } from '../../utils/bundle-bridge.
 const STORAGE_KEY_PREFIX = 'loadout_snapshots';
 
 /**
+ * How long a caller waiting on the store will wait before giving up on it.
+ *
+ * The store only loads if the Loadout Snapshots feature is switched on; with it
+ * off, nothing ever marks it ready. A wait that could never end would leave
+ * every consumer gated on it permanently, so the deadline marks the store ready
+ * anyway and the callers fall back to the pre-flag behaviour (whatever
+ * `snapshots` holds, empty or not).
+ */
+const SNAPSHOT_READY_TIMEOUT_MS = 5000;
+
+/**
  * Returns the active WebSocket hook instance.
  * In the multi-bundle production build each library bundles its own copy of websocket.js,
  * but only the Core library's instance has install() called on it.
@@ -165,6 +176,14 @@ class LoadoutSnapshot {
         this.characterInitializedHandler = null;
         this.updateListeners = [];
         this.isInitialized = false;
+        // Whether `snapshots` has been filled from its sources yet — storage
+        // (IndexedDB, asynchronous) or a `loadouts_updated` message. An empty
+        // `snapshots` says nothing on its own: before the load resolves it is
+        // indistinguishable from a character with no loadouts at all, and a
+        // consumer that cannot tell the two apart silently simulates the wrong
+        // gear. Never reset once set — a reload is a fresh module.
+        this.snapshotsReady = false;
+        this._readyWaiters = [];
 
         // Register WebSocket handler at module load time so in-session loadout
         // changes are captured whenever loadouts_updated fires.
@@ -190,6 +209,38 @@ class LoadoutSnapshot {
 
     _emitUpdate() {
         this.updateListeners.forEach((fn) => fn());
+    }
+
+    /**
+     * Declare the store loaded, and release anything waiting on it.
+     * @private
+     */
+    _markReady() {
+        if (this.snapshotsReady) return;
+        this.snapshotsReady = true;
+        const waiters = this._readyWaiters;
+        this._readyWaiters = [];
+        for (const resolve of waiters) resolve(true);
+    }
+
+    /**
+     * Resolves once the store has been filled from storage (or from a
+     * `loadouts_updated` message), so a caller that would otherwise read an
+     * empty `snapshots` as "this character has no loadouts" can wait for the
+     * real answer.
+     *
+     * Bounded: with the feature switched off nothing ever loads, so the
+     * deadline marks the store ready and the wait resolves anyway.
+     * @param {number} [timeoutMs]
+     * @returns {Promise<boolean>} Always true — the store is ready or has been
+     *   declared ready by the deadline
+     */
+    whenReady(timeoutMs = SNAPSHOT_READY_TIMEOUT_MS) {
+        if (this.snapshotsReady) return Promise.resolve(true);
+        return new Promise((resolve) => {
+            this._readyWaiters.push(resolve);
+            setTimeout(() => this._markReady(), timeoutMs);
+        });
     }
 
     async initialize() {
@@ -223,6 +274,10 @@ class LoadoutSnapshot {
             }
         }
 
+        // Whatever the load produced — snapshots, or a genuinely empty store —
+        // is now the answer, so consumers can stop treating empty as "not yet"
+        this._markReady();
+
         // Reload from the correct character-scoped key once character data is available
         this.characterInitializedHandler = async () => {
             const storageKey = getStorageKey();
@@ -255,6 +310,9 @@ class LoadoutSnapshot {
 
         this.snapshots = newSnapshots;
         storage.setJSON(getStorageKey(), this.snapshots, 'settings');
+        // The server's own word on the loadouts — as loaded as the store gets,
+        // whether or not initialize() has run yet
+        this._markReady();
         this._emitUpdate();
     }
 

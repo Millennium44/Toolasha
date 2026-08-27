@@ -21,6 +21,9 @@ vi.mock('../../core/data-manager.js', () => ({
             return game.items;
         },
         getCurrentCharacterId: () => 'char1',
+        // initialize() re-reads under the character-scoped key when this fires
+        on: () => {},
+        off: () => {},
     },
 }));
 
@@ -147,5 +150,56 @@ describe('a whole loadout at once', () => {
     test('no equipment is an empty list rather than a throw', () => {
         expect(loadoutSnapshot.resolveEquipment(null)).toEqual([]);
         expect(loadoutSnapshot.resolveEquipment({})).toEqual([]);
+    });
+});
+
+/**
+ * An empty `snapshots` is two different states wearing the same face: a
+ * character with no loadouts, and a store that has not finished reading
+ * IndexedDB. A consumer that cannot tell them apart simulates the wrong gear
+ * and reports the result as fact, so the store says which one it is.
+ */
+describe('whether the store has actually loaded', () => {
+    test('starts unloaded and a wait is still pending', async () => {
+        const store = new loadoutSnapshot.constructor();
+        expect(store.snapshotsReady).toBe(false);
+
+        let settled = false;
+        store.whenReady(50_000).then(() => {
+            settled = true;
+        });
+        await Promise.resolve();
+        expect(settled).toBe(false);
+    });
+
+    test('a loadouts message marks it loaded and releases the wait', async () => {
+        const store = new loadoutSnapshot.constructor();
+        const waited = store.whenReady(50_000);
+
+        store._onLoadoutsUpdated({ characterLoadoutMap: { 1: { name: 'Fighting' } } });
+
+        await expect(waited).resolves.toBe(true);
+        expect(store.snapshotsReady).toBe(true);
+    });
+
+    test('initializing marks it loaded even when the character has no loadouts', async () => {
+        const store = new loadoutSnapshot.constructor();
+        await store.initialize();
+        expect(store.snapshotsReady).toBe(true);
+        // An empty store that has spoken is an answer, not a pending question
+        expect(store.snapshots).toEqual({});
+    });
+
+    test('a wait cannot hang forever when nothing ever loads', async () => {
+        vi.useFakeTimers();
+        try {
+            const store = new loadoutSnapshot.constructor();
+            const waited = store.whenReady(5000);
+            await vi.advanceTimersByTimeAsync(5000);
+            await expect(waited).resolves.toBe(true);
+            expect(store.snapshotsReady).toBe(true);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

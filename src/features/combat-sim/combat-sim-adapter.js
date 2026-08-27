@@ -226,6 +226,16 @@ export function buildPlayerDTO() {
         return null;
     }
 
+    // Without the item sheet, `itemDetailMap` falls back to {} below and every
+    // equipped piece is dropped for want of a definition — the DTO builds
+    // cleanly and describes a naked character. That is worse than no DTO: the
+    // callers all handle null, and none of them can spot a silently unequipped
+    // player. Same answer the missing-character-data guard gives.
+    if (!clientData) {
+        console.error('[CombatSimAdapter] No initClientData available');
+        return null;
+    }
+
     const dto = {
         staminaLevel: 1,
         intelligenceLevel: 1,

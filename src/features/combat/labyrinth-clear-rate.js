@@ -191,8 +191,13 @@ class LabyrinthClearRate {
         // invalidated when loadout gear actually changes — but snapshots also
         // re-broadcast unchanged (e.g. when the lab equips the next room's
         // loadout), so verify content really differs before wiping anything
+        // Redrawn as well as invalidated, the way the two handlers above do:
+        // the snapshots arriving (or changing) is exactly the event that makes
+        // a placeholder or a stale badge answerable, and without a redraw those
+        // badges sat as they were until some unrelated DOM mutation happened by.
         this.snapshotUpdateHandler = () => {
             this._invalidateIfInputsChanged();
+            this.injectOverlays();
         };
         loadoutSnapshot.onUpdate(this.snapshotUpdateHandler);
 
@@ -251,16 +256,11 @@ class LabyrinthClearRate {
         }, 500);
 
         setTimeout(() => {
-            // Seed the invalidation baselines once character data is present,
-            // then bring in whatever combat sims survived the reload — loading
-            // is gated on the same gear fingerprint the baseline seeding just
-            // established, so it has to run after it, not before. The overlay
-            // pass right after this still fires immediately for skilling/
-            // enhancing badges (which never touch combatCache); a second pass
-            // once the cache load resolves picks up any combat badges it filled.
-            this._invalidateIfInputsChanged();
-            this._loadCombatCache().then(() => this.injectOverlays());
+            // The overlay pass fires immediately for skilling/enhancing badges
+            // (which never touch combatCache); combat rooms get a placeholder
+            // and are redrawn once the cache is in.
             this.injectOverlays();
+            this._seedCombatCache();
         }, 500);
 
         // Skip-threshold cells wrap so the shared annotation line (clear rate,
@@ -292,6 +292,30 @@ class LabyrinthClearRate {
         // there is a preview on screen to orphan.
 
         this.isInitialized = true;
+    }
+
+    /**
+     * Seed the invalidation baselines and bring in whatever combat sims
+     * survived the reload, once the loadout snapshots have arrived.
+     *
+     * Both steps wait on the snapshot store, and the wait is the point. The
+     * gear fingerprint hashes the snapshot contents, so seeding it against a
+     * store still loading from IndexedDB records the hash of `{}` — and every
+     * persisted entry, hashed under the real gear, is then thrown away as a
+     * mismatch. That happened on *every* reload, so the cache never survived
+     * one and every combat badge was re-simmed from cold, which is the race the
+     * 0% badges came out of.
+     *
+     * The cache load is gated on the fingerprint the seeding establishes, so it
+     * has to run after it, not merely alongside it.
+     * @private
+     */
+    async _seedCombatCache() {
+        await loadoutSnapshot.whenReady();
+        this._invalidateIfInputsChanged();
+        await this._loadCombatCache();
+        // Combat badges the load just filled, drawn from the cache this time
+        this.injectOverlays();
     }
 
     /**
@@ -1505,11 +1529,27 @@ class LabyrinthClearRate {
     }
 
     /**
-     * Build a player DTO with the labyrinth loadout applied
+     * Build a player DTO with the labyrinth loadout applied.
+     *
+     * Null means "not simmable right now", and a configured loadout the
+     * snapshot store has not loaded yet is exactly that: the store fills from
+     * IndexedDB asynchronously, so early in a session `snapshots` is empty for
+     * a character whose loadouts are perfectly well saved. Falling through to
+     * the worn gear there sims the wrong build and returns a legitimate-looking
+     * number — the 0% badges this guard exists to prevent.
+     *
+     * Once the store IS loaded, a loadout id it does not hold is a deleted or
+     * never-saved loadout, not a race, and the long-standing worn-gear fallback
+     * stands: those rooms keep answering rather than being bricked forever.
+     * @param {number} loadoutId - 0 when no loadout is assigned
+     * @returns {Object|null}
      */
     buildLabyrinthPlayerDTO(loadoutId) {
         const dto = buildPlayerDTO();
         if (!dto) return null;
+
+        // A configured loadout with the store still loading: not yet simmable
+        if (Number(loadoutId) > 0 && !loadoutSnapshot.snapshotsReady) return null;
 
         const snapshot = loadoutSnapshot.snapshots[loadoutId];
         if (snapshot?.name) {
@@ -3973,7 +4013,11 @@ class LabyrinthClearRate {
                 const roomLevel = this.getCombatSkipRoomLevel(roomHrid);
                 if (!roomLevel || roomLevel <= 0) continue;
 
-                const cached = this.getCachedCombatResult(roomHrid, roomLevel);
+                // Under the Automation tab's own precision, which is what the
+                // queue below sims and stores at. Looking up under the map's
+                // instead missed every entry whenever the two settings differ,
+                // so every redraw re-simmed every combat row from scratch.
+                const cached = this.getCachedCombatResult(roomHrid, roomLevel, this.getAutomationSimPrecisionPct());
                 if (cached) {
                     this.appendBadge(cell, cached, roomLevel);
                 } else {

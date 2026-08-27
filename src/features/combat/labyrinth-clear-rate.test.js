@@ -10,7 +10,7 @@ import { SUPPLY_HRIDS } from './labyrinth-supplies.js';
 
 /** Gear the mocked loadoutSnapshot reports; mutated in place (see setGear) so
  *  every holder of the mocked default export sees updates */
-const gear = vi.hoisted(() => ({ snapshots: {} }));
+const gear = vi.hoisted(() => ({ snapshots: {}, ready: true, waiters: [], listeners: [] }));
 
 /** Guild shrine data the mocked adapter and data manager report */
 const shrines = vi.hoisted(() => ({ detailMap: {}, owned: {} }));
@@ -88,8 +88,16 @@ vi.mock('../../api/marketplace.js', () => ({
 vi.mock('./loadout-snapshot.js', () => ({
     default: {
         snapshots: gear.snapshots,
-        onUpdate: () => {},
-        offUpdate: () => {},
+        // The store's load state, which the DTO builder and the cold-start
+        // cache seeding both gate on — `gear.ready` is flipped per test
+        get snapshotsReady() {
+            return gear.ready;
+        },
+        whenReady: () => (gear.ready ? Promise.resolve(true) : new Promise((resolve) => gear.waiters.push(resolve))),
+        onUpdate: (fn) => gear.listeners.push(fn),
+        offUpdate: (fn) => {
+            gear.listeners = gear.listeners.filter((l) => l !== fn);
+        },
         resolveEquipment: (snapshot) => snapshot?.equipment || [],
     },
 }));
@@ -127,6 +135,7 @@ vi.mock('../../core/storage.js', () => ({
 
 const { default: labyrinthClearRate } = await import('./labyrinth-clear-rate.js');
 const { default: configMock } = await import('../../core/config.js');
+const { COMBAT_CACHE_STORAGE_VERSION } = await import('./labyrinth-sim-cache.js');
 
 describe('normalizeChance', () => {
     test('passes through ratios and converts percent-form values', () => {
@@ -357,7 +366,7 @@ describe('persisted combat cache', () => {
         const key = 'imp:200:1:1pp:';
         const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
         db.map.set('labyrinth:labyrinthCombatSimCache_me', {
-            version: 1,
+            version: COMBAT_CACHE_STORAGE_VERSION,
             entries: [
                 {
                     key,
@@ -377,7 +386,7 @@ describe('persisted combat cache', () => {
         const key = 'imp:200:1:1pp:';
         const oneHourAgo = Date.now() - 60 * 60 * 1000;
         db.map.set('labyrinth:labyrinthCombatSimCache_me', {
-            version: 1,
+            version: COMBAT_CACHE_STORAGE_VERSION,
             entries: [
                 {
                     key,
@@ -2943,5 +2952,311 @@ describe('precision and the fight cap reach the cache', () => {
         labyrinthClearRate.combatCache.set(key, tight);
 
         expect(await labyrinthClearRate.computeCombatClear('/monsters/imp', 200, { uncapped: true })).toBe(tight);
+    });
+});
+
+const adapterMock = await import('../combat-sim/combat-sim-adapter.js');
+
+/**
+ * A combat badge reading "0%" is a claim that the room cannot be cleared, and
+ * the one way it used to be produced was a sim that never really ran: the
+ * loadout snapshots load from IndexedDB after the page does, and a configured
+ * loadout that is not in the store yet used to fall through to the gear the
+ * character happens to be wearing. Silently simming the wrong build is worse
+ * than not simming — it produces a legitimate-looking wrong number that nothing
+ * downstream can tell from a real one.
+ */
+describe('a labyrinth DTO waits for the loadout it is told to wear', () => {
+    beforeEach(() => {
+        gear.ready = true;
+        gear.waiters = [];
+        for (const key of Object.keys(gear.snapshots)) delete gear.snapshots[key];
+        adapterMock.buildPlayerDTO.mockReturnValue({ hrid: 'player1', equipment: {} });
+        adapterMock.applyLoadoutSnapshotToDTO.mockClear();
+    });
+
+    afterEach(() => {
+        adapterMock.buildPlayerDTO.mockReset();
+        gear.ready = true;
+    });
+
+    test('a configured loadout with the store still loading is not simmable', () => {
+        gear.ready = false;
+        expect(labyrinthClearRate.buildLabyrinthPlayerDTO(3)).toBeNull();
+        expect(adapterMock.applyLoadoutSnapshotToDTO).not.toHaveBeenCalled();
+    });
+
+    test('no loadout configured still sims the worn gear, loaded or not', () => {
+        gear.ready = false;
+        expect(labyrinthClearRate.buildLabyrinthPlayerDTO(0)).not.toBeNull();
+        expect(adapterMock.applyLoadoutSnapshotToDTO).not.toHaveBeenCalled();
+    });
+
+    test('a loaded store missing that loadout keeps the worn-gear fallback', () => {
+        // A deleted or never-saved loadout: the store has spoken, and the
+        // long-standing behaviour answers with the worn gear rather than
+        // bricking the room forever
+        Object.assign(gear.snapshots, { 1: { name: 'Fighting', equipment: [] } });
+        expect(labyrinthClearRate.buildLabyrinthPlayerDTO(3)).not.toBeNull();
+        expect(adapterMock.applyLoadoutSnapshotToDTO).not.toHaveBeenCalled();
+    });
+
+    test('a loaded store holding it applies that loadout', () => {
+        Object.assign(gear.snapshots, { 3: { name: 'Fighting', equipment: [] } });
+        expect(labyrinthClearRate.buildLabyrinthPlayerDTO(3)).not.toBeNull();
+        const [dto, name] = adapterMock.applyLoadoutSnapshotToDTO.mock.calls[0];
+        expect(dto).toMatchObject({ hrid: 'player1' });
+        expect(name).toBe('Fighting');
+    });
+
+    test('a sim asked for before the loadout arrives reports failure, not a 0% clear', async () => {
+        gear.ready = false;
+        labyrinthClearRate.combatCache.clear();
+        const spy = vi.spyOn(labyrinthClearRate, 'getLabyrinthLoadoutId').mockReturnValue(3);
+        try {
+            const result = await labyrinthClearRate.computeCombatClear('/monsters/imp', 200);
+            expect(result.failed).toBe(true);
+            // Nothing was filed under that room, so a retry can still correct it
+            expect(labyrinthClearRate.combatCache.size).toBe(0);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+});
+
+/**
+ * The snapshots arriving is precisely the event that makes an unanswerable
+ * badge answerable. Its handler invalidated the stale sims and then left the
+ * screen alone, so corrected numbers waited for whatever unrelated DOM mutation
+ * happened along next — the "self-heals after a bit" half of the symptom.
+ */
+describe('the snapshot store arriving redraws the table', () => {
+    afterEach(() => {
+        // domObserver is mocked, so the registrations it handed back are not
+        // callable — disable() would only log about them
+        labyrinthClearRate.unregisterHandlers = [];
+        labyrinthClearRate.disable();
+        labyrinthClearRate.isInitialized = false;
+        gear.listeners = [];
+        vi.useRealTimers();
+    });
+
+    test('a snapshot update injects overlays, the way a setting change does', () => {
+        vi.useFakeTimers();
+        gear.listeners = [];
+        labyrinthClearRate.isInitialized = false;
+        labyrinthClearRate.initialize();
+
+        const handler = gear.listeners[gear.listeners.length - 1];
+        expect(typeof handler).toBe('function');
+
+        const spy = vi.spyOn(labyrinthClearRate, 'injectOverlays').mockImplementation(() => {});
+        handler();
+        expect(spy).toHaveBeenCalled();
+        spy.mockRestore();
+    });
+});
+
+/**
+ * The persisted cache is keyed on a gear fingerprint hashed from the snapshot
+ * store. Seeding that fingerprint while the store is still loading hashes `{}`,
+ * so every stored entry — hashed under the real gear — is discarded as a
+ * mismatch. That fired on every reload, which is what guaranteed a cold start
+ * and the race the 0% badges came out of.
+ */
+describe('the cold-start cache load waits for the loadout snapshots', () => {
+    const sword = { name: 'Fighting', equipment: [{ itemHrid: '/items/sword', enhancementLevel: 5 }] };
+
+    beforeEach(() => {
+        db.map.clear();
+        gear.waiters = [];
+        for (const key of Object.keys(gear.snapshots)) delete gear.snapshots[key];
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate._combatCacheMeta.clear();
+        labyrinthClearRate._combatCacheLoaded = false;
+        labyrinthClearRate._snapshotFingerprint = null;
+    });
+
+    afterEach(() => {
+        gear.ready = true;
+        gear.waiters = [];
+    });
+
+    test('a persisted entry survives a reload whose snapshots load late', async () => {
+        // What the previous session wrote: an entry stamped with the
+        // fingerprint of the gear that is about to finish loading
+        Object.assign(gear.snapshots, { 1: sword });
+        const loadedFingerprint = labyrinthClearRate._snapshotContentFingerprint();
+        for (const key of Object.keys(gear.snapshots)) delete gear.snapshots[key];
+
+        const key = 'imp:200:1:1pp:';
+        db.map.set('labyrinth:labyrinthCombatSimCache_me', {
+            version: COMBAT_CACHE_STORAGE_VERSION,
+            entries: [
+                {
+                    key,
+                    result: { clearChance: 0.75, winRate: 0.75 },
+                    computedAt: Date.now(),
+                    snapshotFingerprint: loadedFingerprint,
+                    scriptVersion: null,
+                },
+            ],
+        });
+
+        // The reload: snapshots still loading when the seeding fires
+        gear.ready = false;
+        const seeded = labyrinthClearRate._seedCombatCache();
+        await Promise.resolve();
+        expect(labyrinthClearRate._combatCacheLoaded).toBe(false);
+        expect(labyrinthClearRate._snapshotFingerprint).toBeNull();
+
+        // The store lands, and the wait releases
+        Object.assign(gear.snapshots, { 1: sword });
+        gear.ready = true;
+        for (const resolve of gear.waiters.splice(0)) resolve(true);
+        await seeded;
+
+        expect(labyrinthClearRate._snapshotFingerprint).toBe(loadedFingerprint);
+        expect(labyrinthClearRate.combatCache.get(key)).toMatchObject({
+            clearChance: 0.75,
+            fromPersistedCache: true,
+        });
+    });
+});
+
+/**
+ * A stored result is a claim about a fight made by one particular simulator.
+ * The key encodes the room, the gear and the stopping rule, and nothing about
+ * the engine — so results from before an engine fix were served as current for
+ * the whole seven-day TTL.
+ */
+describe('cached sims do not outlive the simulator that made them', () => {
+    beforeEach(() => {
+        db.map.clear();
+        labyrinthClearRate.combatCache.clear();
+        labyrinthClearRate._combatCacheMeta.clear();
+        labyrinthClearRate._combatCacheLoaded = false;
+    });
+
+    test('the storage version has moved past the pre-fix records', () => {
+        expect(COMBAT_CACHE_STORAGE_VERSION).toBeGreaterThan(1);
+    });
+
+    test('a version 1 document is discarded whole', async () => {
+        db.map.set('labyrinth:labyrinthCombatSimCache_me', {
+            version: 1,
+            entries: [
+                {
+                    key: 'imp:200:1:1pp:',
+                    result: { clearChance: 0.75 },
+                    computedAt: Date.now(),
+                    snapshotFingerprint: labyrinthClearRate._snapshotContentFingerprint(),
+                },
+            ],
+        });
+
+        await labyrinthClearRate._loadCombatCache();
+
+        expect(labyrinthClearRate.combatCache.size).toBe(0);
+    });
+
+    test('an entry from another script version is dropped, the current one kept', async () => {
+        const fingerprint = labyrinthClearRate._snapshotContentFingerprint();
+        db.map.set('labyrinth:labyrinthCombatSimCache_me', {
+            version: COMBAT_CACHE_STORAGE_VERSION,
+            entries: [
+                {
+                    key: 'old:200:0:1pp:',
+                    result: { clearChance: 0.75 },
+                    computedAt: Date.now(),
+                    snapshotFingerprint: fingerprint,
+                    // Some earlier build's engine; scriptVersion() is null here
+                    scriptVersion: '9.9.9',
+                },
+                {
+                    key: 'now:200:0:1pp:',
+                    result: { clearChance: 0.5 },
+                    computedAt: Date.now(),
+                    snapshotFingerprint: fingerprint,
+                    scriptVersion: null,
+                },
+            ],
+        });
+
+        await labyrinthClearRate._loadCombatCache();
+
+        expect(labyrinthClearRate.combatCache.has('old:200:0:1pp:')).toBe(false);
+        expect(labyrinthClearRate.combatCache.has('now:200:0:1pp:')).toBe(true);
+    });
+});
+
+/**
+ * The Automation table sims and files its results under its own precision, and
+ * looked them up under the floor map's. Whenever the two settings differ —
+ * which is the entire point of the table having its own knob — every lookup
+ * missed and every redraw re-simmed every combat row from scratch.
+ */
+describe('the Automation table looks up what it stores', () => {
+    beforeEach(() => {
+        settings.map.clear();
+        labyrinthClearRate.combatCache.clear();
+        document.body.innerHTML = '';
+    });
+
+    afterEach(() => {
+        settings.map.clear();
+        labyrinthClearRate.combatCache.clear();
+        document.body.innerHTML = '';
+    });
+
+    test('a result stored at the automation precision is found at it', () => {
+        settings.map.set('labyrinthSimPrecision', 1);
+        settings.map.set('labyrinthAutomationSimPrecision', 3);
+
+        const result = { clearChance: 0.62, expectedSeconds: 40 };
+        labyrinthClearRate.combatCache.set(
+            labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200, null, 3),
+            result
+        );
+
+        // The map's precision is a different measurement and rightly misses
+        expect(labyrinthClearRate.getCachedCombatResult('/monsters/imp', 200)).toBeNull();
+        const found = labyrinthClearRate.getCachedCombatResult(
+            '/monsters/imp',
+            200,
+            labyrinthClearRate.getAutomationSimPrecisionPct()
+        );
+        expect(found).toBe(result);
+    });
+
+    test('the table draws the cached badge instead of queueing another sim', () => {
+        settings.map.set('labyrinthSimPrecision', 1);
+        settings.map.set('labyrinthAutomationSimPrecision', 3);
+
+        document.body.innerHTML =
+            '<table><tbody><tr>' +
+            '<td class="LabyrinthPanel_roomLabel__x"><svg><use href="/sprite#imp"></use></svg></td>' +
+            '<td class="LabyrinthPanel_skipThreshold__x"></td>' +
+            '</tr></tbody></table>';
+
+        const levelSpy = vi.spyOn(labyrinthClearRate, 'getCombatSkipRoomLevel').mockReturnValue(200);
+        const loadoutSpy = vi.spyOn(labyrinthClearRate, 'getLabyrinthLoadoutId').mockReturnValue(0);
+        const queueSpy = vi.spyOn(labyrinthClearRate, 'queueCombatSim');
+        try {
+            labyrinthClearRate.combatCache.set(labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200, null, 3), {
+                clearChance: 0.62,
+                expectedSeconds: 40,
+            });
+
+            labyrinthClearRate.injectOverlays();
+
+            const badge = document.querySelector('[class*="LabyrinthPanel_skipThreshold"] span');
+            expect(badge.textContent).toContain('62%');
+            expect(queueSpy).not.toHaveBeenCalled();
+        } finally {
+            levelSpy.mockRestore();
+            loadoutSpy.mockRestore();
+            queueSpy.mockRestore();
+        }
     });
 });

@@ -321,3 +321,26 @@ describe('taxedDropValue', () => {
         expect(taxedDropValue('/items/cheese', 0)).toBe(0);
     });
 });
+
+/**
+ * A DTO built without the client's item sheet is not a player: `itemDetailMap`
+ * falls back to `{}`, every equipped piece is dropped for want of a definition,
+ * and what comes back describes a naked character. Callers all handle null, and
+ * none of them can spot a silently unequipped one — so this reports the absence
+ * rather than inventing a player.
+ */
+describe('a player DTO without the game data', () => {
+    test('is null, not an unequipped character', () => {
+        mocks.characterData = { characterSkills: [] };
+        mocks.clientData = null;
+
+        expect(buildPlayerDTO()).toBeNull();
+    });
+
+    test('is still built when the data is there', () => {
+        mocks.characterData = { characterSkills: [] };
+        mocks.clientData = { itemDetailMap: {}, abilityDetailMap: {} };
+
+        expect(buildPlayerDTO()).not.toBeNull();
+    });
+});

@@ -37,12 +37,22 @@ vi.mock('../../core/storage.js', () => ({
         setJSON: async () => true,
     },
 }));
+/** What the mocked adapter hands back as the game data payload — null before the
+ *  client's data sheet has arrived, which is a state the sim must not run in */
+const adapter = vi.hoisted(() => ({ gameData: {} }));
+/** Every call the mocked runner received, so "never asked the worker" is testable */
+const simRuns = vi.hoisted(() => ({ list: [] }));
+
 vi.mock('../combat-sim/combat-sim-adapter.js', () => ({
-    buildGameDataPayload: () => ({}),
+    buildGameDataPayload: () => adapter.gameData,
+    buildPlayerDTO: () => ({ hrid: 'player1' }),
     getCommunityBuffs: () => ({}),
 }));
 vi.mock('../combat-sim/combat-sim-runner.js', () => ({
-    runLabyrinthSimulation: async () => ({}),
+    runLabyrinthSimulation: async (options) => {
+        simRuns.list.push(options);
+        return {};
+    },
     runBlindBuffProbe: async () => [],
     runPlayerStatProbe: async () => null,
     cancelSimulation: () => {},
@@ -66,6 +76,8 @@ const { buildAccuracyExport } = await import('./labyrinth-accuracy-export.js');
 afterEach(() => {
     settings.map.clear();
     storageWrites.list = [];
+    simRuns.list = [];
+    adapter.gameData = {};
 });
 
 describe('the persisted combat cache mirror', () => {
@@ -247,5 +259,161 @@ describe('the Automation tab’s own sim settings', () => {
         settings.map.set('labyrinthAutomationSimPrecision', 3);
         expect(automationSimOptions()).toEqual({ precisionPct: 3, uncapped: false });
         expect(getAutomationUncapped()).toBe(false);
+    });
+});
+
+/**
+ * A failed sim is not a 0% clear.
+ *
+ * The queue behind the Automation table's badges drew whatever came back, and
+ * a run whose inputs were not ready comes back as `{failed: true, clearChance:
+ * 0}` — which rendered as a confident "0% 999s" on a room that clears fine.
+ * The floor-map tile path has always skipped failed results and retried; this
+ * pins the same discipline on the badge path.
+ */
+describe('a failed sim never reaches a badge', () => {
+    /** A stand-in for the clear-rate module's state, the mixin's `this` */
+    const queueContext = (results) => {
+        const drawn = [];
+        const attempts = [];
+        return {
+            ...simCacheMethods,
+            drawn,
+            attempts,
+            simQueue: [],
+            simRunning: false,
+            combatCache: new Map(),
+            _combatCacheMeta: new Map(),
+            _snapshotContentFingerprint: () => 'fp',
+            getLabyrinthLoadoutId: () => 0,
+            // The sim itself is not what this suite is about — what the queue
+            // does with each answer is
+            computeCombatClear: async (monsterHrid, roomLevel) => {
+                attempts.push([monsterHrid, roomLevel]);
+                return results.shift() ?? { failed: true, clearChance: 0, expectedSeconds: Infinity };
+            },
+            updateBadge: (badge, result, roomLevel) => drawn.push([badge, result, roomLevel]),
+        };
+    };
+
+    const badge = () => ({ isConnected: true, textContent: '...' });
+
+    test('a failed result leaves the placeholder standing and is tried again', async () => {
+        vi.useFakeTimers();
+        try {
+            // Fails once, then succeeds on the retry
+            const ctx = queueContext([
+                { failed: true, clearChance: 0 },
+                { clearChance: 0.62, expectedSeconds: 40 },
+            ]);
+            const el = badge();
+            ctx.queueCombatSim('/monsters/imp', 200, el);
+
+            await ctx.processSimQueue();
+            expect(ctx.drawn).toHaveLength(0);
+            expect(el.textContent).toBe('...');
+
+            await vi.advanceTimersByTimeAsync(2500);
+            expect(ctx.drawn).toHaveLength(1);
+            expect(ctx.drawn[0][1]).toMatchObject({ clearChance: 0.62 });
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('the retries are bounded, and nothing is ever drawn from a failure', async () => {
+        vi.useFakeTimers();
+        try {
+            const ctx = queueContext([]); // every run fails
+            const el = badge();
+            ctx.queueCombatSim('/monsters/imp', 200, el);
+
+            await ctx.processSimQueue();
+            await vi.advanceTimersByTimeAsync(2500 * 10);
+
+            // The first run plus three retries, the floor map's own rule
+            expect(ctx.attempts).toHaveLength(4);
+            expect(ctx.drawn).toHaveLength(0);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a badge the table has since discarded is not simulated again', async () => {
+        vi.useFakeTimers();
+        try {
+            const ctx = queueContext([]);
+            const el = badge();
+            ctx.queueCombatSim('/monsters/imp', 200, el);
+
+            await ctx.processSimQueue();
+            el.isConnected = false;
+            await vi.advanceTimersByTimeAsync(2500 * 10);
+
+            expect(ctx.attempts).toHaveLength(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a Stop disarms a pending retry', async () => {
+        vi.useFakeTimers();
+        try {
+            const ctx = queueContext([]);
+            ctx.queueCombatSim('/monsters/imp', 200, badge());
+
+            await ctx.processSimQueue();
+            ctx.cancelRunningSims();
+            await vi.advanceTimersByTimeAsync(2500 * 10);
+
+            expect(ctx.attempts).toHaveLength(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    test('a successful result is drawn as before', async () => {
+        const ctx = queueContext([{ clearChance: 0.5, expectedSeconds: 12 }]);
+        ctx.queueCombatSim('/monsters/imp', 200, badge());
+
+        await ctx.processSimQueue();
+
+        expect(ctx.drawn).toHaveLength(1);
+        expect(ctx.drawn[0][2]).toBe(200);
+    });
+});
+
+/**
+ * The game data payload is null until the client's data sheet arrives. Handing
+ * that to the worker throws inside it, and the throw comes back as a failed
+ * run — which, on the badge path above, used to be drawn as 0%. Bailing before
+ * the worker is asked keeps the failure honest and costs nothing.
+ */
+describe('a sim with no game data does not reach the worker', () => {
+    const context = () => ({
+        ...simCacheMethods,
+        combatCache: new Map(),
+        _combatCacheMeta: new Map(),
+        _snapshotContentFingerprint: () => 'fp',
+        getLabyrinthLoadoutId: () => 0,
+        buildLabyrinthPlayerDTO: () => ({ hrid: 'player1' }),
+        getLabyrinthCombatBuffs: () => [],
+        getCombatExperienceBonus: () => 0,
+    });
+
+    afterEach(() => {
+        adapter.gameData = {};
+    });
+
+    test('null game data is a failure, not a thrown error and not a 0% clear', async () => {
+        adapter.gameData = null;
+        const ctx = context();
+
+        const result = await ctx.computeCombatClear('/monsters/imp', 200);
+
+        expect(result).toMatchObject({ failed: true, clearChance: 0 });
+        expect(simRuns.list).toHaveLength(0);
+        // Nothing cached, so the room is re-tried once the data lands
+        expect(ctx.combatCache.size).toBe(0);
     });
 });

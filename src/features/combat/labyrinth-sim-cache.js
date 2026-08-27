@@ -33,6 +33,7 @@ import { deriveObserved, predictedFromSim, compareLab } from './labyrinth-replay
 import { roomXpPerHour } from './labyrinth-formulas.js';
 import { DISCARD_LEGACY } from './labyrinth-outcomes.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
+import { scriptVersion } from '../../utils/script-version.js';
 
 /**
  * The zone a probe fight nominally happens in when the real one is not a zone.
@@ -116,8 +117,19 @@ export const UNCAPPED_MAX_SIM_TRIALS = MAX_SIM_TRIALS * 100;
 /** Persisted mirror of combatCache, in the 'labyrinth' store */
 const COMBAT_CACHE_STORAGE_KEY = 'labyrinthCombatSimCache';
 const COMBAT_CACHE_STORE = 'labyrinth';
-/** Bumped when the stored shape changes */
-const COMBAT_CACHE_STORAGE_VERSION = 1;
+/**
+ * Bumped when the stored shape changes — or when the simulator behind the
+ * stored results does.
+ *
+ * A cached result is a claim about a fight, and the cache key encodes the room,
+ * the gear and the stopping rule but nothing about the engine that ran it. An
+ * engine fix therefore left week-old results from the *previous* simulator
+ * being served as current for the whole TTL. Bumping this discards them in one
+ * go, and every entry now also carries the script version it was computed under
+ * (below), so a release that changes the engine drops its predecessor's results
+ * without needing this constant touched at all.
+ */
+export const COMBAT_CACHE_STORAGE_VERSION = 2;
 /** A cached sim result older than this is dropped on load rather than trusted */
 const COMBAT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** Newest entries kept when the persisted set is written back out */
@@ -127,6 +139,13 @@ const COMBAT_CACHE_FLUSH_MS = 1000;
 const DECISION_MIN_TRIALS = 40;
 /** A room sitting exactly on the bar never decides; this is where it gives up */
 const DECISION_MAX_TRIALS = 4000;
+/**
+ * How many times a table badge whose sim could not run is tried again, and how
+ * long between tries — the floor-map tile path's own retry rule, so the two
+ * badge paths give the inputs the same window to arrive.
+ */
+const MAX_BADGE_SIM_RETRIES = 3;
+const BADGE_SIM_RETRY_MS = 2500;
 /** A recorded room needs at least this many fights before a replay is worth a sim */
 const MIN_REPLAY_FIGHTS = 3;
 /** At most this many rooms are replayed at once, so a Replay press is bounded */
@@ -536,6 +555,12 @@ export const simCacheMethods = {
     cancelRunningSims() {
         this._simCancelRequested = true;
         this.simQueue = [];
+        // A pending badge retry is part of the batch being stopped: leaving it
+        // armed would have the queue start up again seconds after the Stop
+        if (this._simRetryTimer) {
+            clearTimeout(this._simRetryTimer);
+            this._simRetryTimer = null;
+        }
         cancelSimulation();
     },
 
@@ -654,8 +679,22 @@ export const simCacheMethods = {
         return roomXpPerHour(xpPerRoom, avgFightSeconds / clearChance, clearChance);
     },
 
-    getCachedCombatResult(monsterHrid, roomLevel) {
-        return this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel)) || null;
+    /**
+     * A measured sim result already in the cache, or null.
+     *
+     * The precision is part of the cache key, so a caller has to ask under the
+     * precision its own sims run at: the Automation table sims and stores at
+     * `labyrinthAutomationSimPrecision` and looked up under the map's
+     * `labyrinthSimPrecision`, which missed on every row whenever the two
+     * differed. Left unset it means the map's, which is what the floor-map and
+     * forecast callers want.
+     * @param {string} monsterHrid
+     * @param {number} roomLevel
+     * @param {number|null} [precisionPct]
+     * @returns {Object|null}
+     */
+    getCachedCombatResult(monsterHrid, roomLevel, precisionPct = null) {
+        return this.combatCache.get(this.buildCombatCacheKey(monsterHrid, roomLevel, null, precisionPct)) || null;
     },
 
     // -------------------------------------------------------------------------
@@ -692,8 +731,14 @@ export const simCacheMethods = {
 
             const now = Date.now();
             const currentFingerprint = this._snapshotContentFingerprint();
+            const version = scriptVersion();
             for (const entry of stored.entries) {
                 if (!entry?.key || !entry.result) continue;
+
+                // A result is only as current as the simulator that produced
+                // it: a build whose engine changed must not serve its
+                // predecessor's numbers back as its own
+                if ((entry.scriptVersion ?? null) !== version) continue;
 
                 const age = now - Number(entry.computedAt);
                 if (!Number.isFinite(age) || age > COMBAT_CACHE_TTL_MS) continue;
@@ -708,6 +753,7 @@ export const simCacheMethods = {
                 this._combatCacheMeta.set(entry.key, {
                     computedAt: entry.computedAt,
                     snapshotFingerprint: entry.snapshotFingerprint,
+                    scriptVersion: entry.scriptVersion ?? null,
                 });
             }
         } catch (error) {
@@ -735,6 +781,7 @@ export const simCacheMethods = {
         this._combatCacheMeta.set(cacheKey, {
             computedAt: Date.now(),
             snapshotFingerprint: this._snapshotContentFingerprint(),
+            scriptVersion: scriptVersion(),
         });
 
         this._combatCacheDirty = true;
@@ -780,6 +827,10 @@ export const simCacheMethods = {
                 result: bare,
                 computedAt: meta.computedAt,
                 snapshotFingerprint: meta.snapshotFingerprint,
+                // The simulator this result came out of. Null outside the
+                // userscript sandbox, which is itself a cohort — see
+                // script-version.js.
+                scriptVersion: meta.scriptVersion ?? null,
             });
         }
         entries.sort((a, b) => b.computedAt - a.computedAt);
@@ -880,6 +931,12 @@ export const simCacheMethods = {
         if (!dto) return { clearChance: 0, expectedSeconds: Infinity, failed: true };
 
         const gameData = buildGameDataPayload();
+        // Null when the client's data sheet has not arrived yet. Handing that
+        // to the worker throws inside it, which comes back as a failed run and
+        // reads on a badge as a 0% clear — the same "not simmable yet" the
+        // null DTO above bails on, so it bails the same way.
+        if (!gameData) return { clearChance: 0, expectedSeconds: Infinity, failed: true };
+
         const crateHrids = this.getCrateHrids();
         const labyrinthCombatBuffs = this.getLabyrinthCombatBuffs();
 
@@ -996,8 +1053,8 @@ export const simCacheMethods = {
         }
     },
 
-    queueCombatSim(monsterHrid, roomLevel, badge) {
-        this.simQueue.push({ monsterHrid, roomLevel, badge });
+    queueCombatSim(monsterHrid, roomLevel, badge, attempt = 0) {
+        this.simQueue.push({ monsterHrid, roomLevel, badge, attempt });
     },
 
     async processSimQueue() {
@@ -1007,14 +1064,32 @@ export const simCacheMethods = {
         // The Automation tab's own precision and cap, not the floor map's —
         // this queue is what fills the per-room table's cached badges
         const simOptions = this.automationSimOptions();
+        /** Rooms whose inputs were not ready, to be tried again shortly */
+        const retry = [];
         try {
             while (this.simQueue.length > 0) {
                 if (this.simCancelled()) break;
-                const { monsterHrid, roomLevel, badge } = this.simQueue.shift();
+                const { monsterHrid, roomLevel, badge, attempt = 0 } = this.simQueue.shift();
                 if (!badge.isConnected) continue;
                 const result = await this.computeCombatClear(monsterHrid, roomLevel, simOptions);
                 if (result?.cancelled) break;
-                if (badge.isConnected) this.updateBadge(badge, result, roomLevel);
+                if (!badge.isConnected) continue;
+
+                // A failed run is not a 0% clear. It means the sim's inputs were
+                // not ready — loadout snapshots still loading, no client data
+                // yet — and drawing it puts a confident "0% 999s" on a room that
+                // is perfectly clearable. The floor-map tile path has always
+                // skipped failed results and retried; this one drew them, which
+                // is where the intermittent 0% combat badges came from. Leave the
+                // '...' placeholder standing and come back to it.
+                if (!result || result.failed) {
+                    if (attempt < MAX_BADGE_SIM_RETRIES) {
+                        retry.push({ monsterHrid, roomLevel, badge, attempt: attempt + 1 });
+                    }
+                    continue;
+                }
+
+                this.updateBadge(badge, result, roomLevel);
             }
         } finally {
             this.simRunning = false;
@@ -1022,6 +1097,29 @@ export const simCacheMethods = {
             // rather than a flush window later
             this._flushCombatCache();
             this.refreshAutomationRunningState?.();
+            if (retry.length > 0 && !this.simCancelled()) this._scheduleSimRetry(retry);
         }
+    },
+
+    /**
+     * Re-queue rooms whose sim inputs were not ready, after a pause — the same
+     * bounded, spaced retry the floor-map tile path runs (three attempts,
+     * 2500ms apart), which is long enough for the snapshot store to arrive.
+     * @param {Array<{monsterHrid: string, roomLevel: number, badge: Element, attempt: number}>} entries
+     * @private
+     */
+    _scheduleSimRetry(entries) {
+        if (this._simRetryTimer) clearTimeout(this._simRetryTimer);
+        this._simRetryTimer = setTimeout(() => {
+            this._simRetryTimer = null;
+            let queued = 0;
+            for (const entry of entries) {
+                // A badge the table's own rerender discarded needs no answer
+                if (!entry.badge?.isConnected) continue;
+                this.queueCombatSim(entry.monsterHrid, entry.roomLevel, entry.badge, entry.attempt);
+                queued++;
+            }
+            if (queued > 0) this.processSimQueue();
+        }, BADGE_SIM_RETRY_MS);
     },
 };
