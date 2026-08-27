@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The shared database keeps up with upstream, and a dead link goes away
+
+An upstream audit found the co-installed upstream script has moved the shared ToolashaDB to version 20 while this fork sat at 17 — if that script ran even once, this one would open the database into a VersionError and silently read defaults for everything. The fork now matches version 20, creates upstream's three new stores defensively, and — should the version ever drift again — reopens the database at whatever version it finds instead of going dark. The milkyway.market link (site permanently down) is removed along with its setting.
+
 ### Trial Abilities and Guild Roster: names click through, controls stay put
 
 Player names across the Trial Abilities panel (aura holders, the utility rosters, the player list) and the Guild Roster panel (seen loadouts, contribution, gone-quiet) now open that player's profile on click. The Trial Abilities controls moved up under the header, so the buttons stop drifting down as the lists below them grow.

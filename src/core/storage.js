@@ -54,7 +54,13 @@ class Storage {
         this.db = null;
         this.available = false;
         this.dbName = 'ToolashaDB';
-        this.dbVersion = 17; // Bumped for leaderboardHistory store
+        // Kept in lockstep with the upstream script this fork shares its
+        // database with. Upstream is at v20 (actionProgress v18,
+        // characterActivityStatus v19, openableAnalytics v20); if it runs
+        // once at a higher version than ours, our open() dies with a
+        // VersionError and every read silently returns its default — so we
+        // match its version and create its stores even before we use them.
+        this.dbVersion = 20;
         this.saveDebounceTimers = new Map(); // Per-key debounce timers
         this.pendingWrites = new Map(); // Per-key pending write data: {value, storeName, resolvers, generation}
         this._writeGeneration = new Map(); // Per-key monotonic generation counter, for write ownership
@@ -139,6 +145,29 @@ class Storage {
             const request = indexedDB.open(this.dbName, this.dbVersion);
 
             request.onerror = () => {
+                // A VersionError means another script sharing this database
+                // (the upstream Toolasha) has already upgraded it past our
+                // version. Our stores are a subset of its, so the data is all
+                // still there — reopen at whatever version the database is at
+                // rather than going dark with every read returning defaults.
+                if (request.error?.name === 'VersionError') {
+                    console.warn(
+                        '[Storage] ToolashaDB is at a newer version than this script expects — ' +
+                            'another Toolasha install has upgraded it. Reopening at the current version.'
+                    );
+                    const reopen = indexedDB.open(this.dbName);
+                    reopen.onerror = () => {
+                        console.error('[Storage] Failed to reopen IndexedDB at its current version', reopen.error);
+                        reject(reopen.error);
+                    };
+                    reopen.onsuccess = () => {
+                        this.db = reopen.result;
+                        this._dbNulledReason = null;
+                        this._setupDbEventHandlers();
+                        resolve();
+                    };
+                    return;
+                }
                 console.error('[Storage] Failed to open IndexedDB', request.error);
                 reject(request.error);
             };
@@ -262,6 +291,17 @@ class Storage {
                 // Create leaderboardHistory store if it doesn't exist (for leaderboard XP tracker)
                 if (!db.objectStoreNames.contains('leaderboardHistory')) {
                     db.createObjectStore('leaderboardHistory');
+                }
+
+                // The upstream script's v18-v20 stores, created here too even
+                // though this fork does not use them (yet): the database is
+                // shared, and matching its version without matching its
+                // stores would leave upstream failing on every transaction
+                // it opens against a store that should exist at v20.
+                for (const shared of ['actionProgress', 'characterActivityStatus', 'openableAnalytics']) {
+                    if (!db.objectStoreNames.contains(shared)) {
+                        db.createObjectStore(shared);
+                    }
                 }
             };
         });

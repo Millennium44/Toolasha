@@ -182,7 +182,6 @@ const MARKET_EXTRAS = [
     'market_showHistoryViewer',
     'market_showPhiloCalculator',
     'market_showQueueLength',
-    'market_milkywayMarketLink',
     // Pricing & profit
     'profitCalc_craftUpgradeItems',
     'actionPanel_showPricingMode',

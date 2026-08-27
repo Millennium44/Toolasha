@@ -41,7 +41,6 @@ import profitCalculator from '../features/market/profit-calculator.js';
 import alchemyProfitCalculator from '../features/market/alchemy-profit-calculator.js';
 import marketplaceShortcuts from '../features/market/marketplace-shortcuts.js';
 import sellQueue from '../features/market/sell-queue.js';
-import milkywayMarketLink from '../features/market/milkyway-market-link.js';
 
 // Not market features, but this is the bundle that owns them: the actions,
 // combat and ui bundles all import these two calculators and all load after
@@ -132,7 +131,6 @@ toolashaRoot.Market = {
     equipmentSavingsPanel,
     marketplaceShortcuts,
     sellQueue,
-    milkywayMarketLink,
     gatheringProfit,
     productionProfit,
 };

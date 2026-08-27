@@ -2,10 +2,13 @@
  * Dual-install guard.
  *
  * Two copies of Toolasha on one page do not coexist — they share storage. The
- * database name, its version, and the exact settings and tab keys are the same
- * for this fork and for the script it forked from (deliberately: it is what
- * lets a user move between them without losing anything — see the note in
- * `settings-storage.js`). The cost of that sharing is that whichever copy saves
+ * database name and the exact settings and tab keys are the same for this fork
+ * and for the script it forked from (deliberately: it is what lets a user move
+ * between them without losing anything — see the note in `settings-storage.js`).
+ * The database VERSION is kept in lockstep by hand — upstream bumps it as it
+ * adds stores, and a fork left behind dies with a VersionError the moment the
+ * newer script touches the shared database first (storage.js matches upstream's
+ * version, creates its stores, and reopens versionless as a last resort). The cost of that sharing is that whichever copy saves
  * last wins the WHOLE map, because the settings map is written whole. A copy
  * with a smaller schema therefore deletes every setting the other one added,
  * silently, on the next toggle of anything. That is the confirmed cause of the
