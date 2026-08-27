@@ -24,6 +24,7 @@ import {
     visibleTabsContainer,
 } from '../../utils/marketplace-tabs.js';
 import { createAutofillManager } from '../../utils/marketplace-autofill.js';
+import { openShoppingList } from '../../utils/shopping-list.js';
 import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
 import { heldInInventory } from '../../utils/dungeon-key-forecast.js';
 import { renderTierBadge, TIER_BADGE_CLASS } from './guild-trial-tier-badge.js';
@@ -162,6 +163,53 @@ function buildTopConversions(itemDetailMap, n) {
         byCredit[creditHrid] = byCredit[creditHrid].slice(0, n);
     }
     return byCredit;
+}
+
+/**
+ * The raw materials to buy for a bill of still-owed credits.
+ *
+ * The same walk the shrine cost table does for one upgrade, applied to the
+ * planner's whole target list: each credit is bought through its cheapest
+ * conversion (`buildTopConversions` has already ranked them ask-per-credit
+ * ascending, so `[0]` is that one), the conversion is a fixed
+ * `itemCount → creditCount` trade so a part-filled trade still costs a whole
+ * one, and what is already sitting in the inventory comes off the end.
+ *
+ * Materials are pooled by hrid before the inventory is subtracted — two credits
+ * whose cheapest conversion is the same bar want one number, not two competing
+ * ones each claiming the whole stack.
+ *
+ * A credit with no conversion at all is skipped. Nothing is lost by that: the
+ * amount is still owed and still listed in the totals above, it just has no
+ * market item behind it to go and buy, so there is no tab to open for it.
+ *
+ * Guild tokens never appear here. They are not a market item and have no
+ * `guildCreditConversions` entry — they come from trials — so they are the
+ * planner's one cost the marketplace cannot answer.
+ *
+ * @param {Object<string, number>} owedCredits - creditHrid → credits still owed
+ * @param {Object} topConversions - From {@link buildTopConversions}
+ * @param {Array<Object>} inventory - The character's items
+ * @returns {Array<{itemHrid: string, name: string, count: number}>} Shopping-list shape
+ */
+export function creditShortfallMaterials(owedCredits, topConversions, inventory) {
+    const wanted = new Map();
+    for (const [creditHrid, owed] of Object.entries(owedCredits || {})) {
+        if (!(owed > 0)) continue;
+        const top = (topConversions?.[creditHrid] || [])[0];
+        if (!top?.hrid || !(top.creditCount > 0) || !(top.itemCount > 0)) continue;
+        const qtyNeeded = Math.ceil(owed / top.creditCount) * top.itemCount;
+        const prior = wanted.get(top.hrid);
+        if (prior) prior.count += qtyNeeded;
+        else wanted.set(top.hrid, { itemHrid: top.hrid, name: top.name, count: qtyNeeded });
+    }
+
+    const mats = [];
+    for (const mat of wanted.values()) {
+        const missing = mat.count - heldInInventory(inventory, mat.itemHrid);
+        if (missing > 0) mats.push({ ...mat, count: missing });
+    }
+    return mats;
 }
 
 class GuildCreditValue {
@@ -557,6 +605,12 @@ class GuildCreditValue {
         totalsEl.style.cssText =
             'margin-top:8px; padding:6px; border-radius:4px; border:1px solid rgba(255,255,255,0.1); background:rgba(0,0,0,0.2);';
 
+        // The marketplace hand-off for whatever the totals still owe. Its own
+        // element rather than part of `totalsEl`, so the button is not rebuilt
+        // by the innerHTML wipe that clears the rows above it.
+        const matsEl = document.createElement('div');
+        matsEl.className = 'mwi-shrine-plan-mats';
+
         const recalculate = () => {
             const plans = planInputs
                 .map(({ buffHrid, currentLevel, inputEl }) => ({
@@ -567,6 +621,7 @@ class GuildCreditValue {
                 .filter(({ fromLevel, toLevel }) => toLevel > fromLevel);
 
             totalsEl.innerHTML = '';
+            matsEl.innerHTML = '';
 
             if (plans.length === 0) {
                 totalsEl.innerHTML =
@@ -576,38 +631,117 @@ class GuildCreditValue {
 
             const { tokens, credits } = aggregateCosts(plans);
             const itemDetailMap = gameData.itemDetailMap || {};
+            const inventory = dataManager.getInventory();
+
+            // What the plan costs, less what is already in the bag. The shrine
+            // cost table nets the same way for a single upgrade, and the two
+            // reading differently for the same buy was the confusing part: the
+            // planner asked for 50 credits you were holding 50 of.
+            //
+            // Netting is why the heading no longer says "Total upgrade cost".
+            // That phrase was true of the gross figure and would be a lie about
+            // this one, so the box says what it now shows, and every row that
+            // had something come off it says how much.
+            const owedRow = (itemHrid, gross) => {
+                const owned = heldInInventory(inventory, itemHrid);
+                return { owed: Math.max(0, gross - owned), owned };
+            };
+            const ownedNote = (owned) =>
+                owned > 0
+                    ? ` <span style="color:#6b7280; font-weight:400;">(own ${owned.toLocaleString()})</span>`
+                    : '';
 
             const titleEl = document.createElement('div');
             titleEl.style.cssText = 'color:#9ca3af; font-size:11px; margin-bottom:6px;';
-            titleEl.textContent = 'Total upgrade cost';
+            titleEl.textContent = 'Still needed for these targets';
             totalsEl.appendChild(titleEl);
 
             // Guild tokens row. Tokens are not listed on the market, but the
             // guild shop trades them for credits and credits have a gold value,
             // so the row can carry an approximate one — labelled as derived,
             // never presented as a price
-            if (tokens.total > 0) {
-                const tokenGold = describeGuildTokenGold(tokens.total, 'ask');
+            const tokenHrid = Object.keys(itemDetailMap).find((hrid) => hrid.includes('guild_token'));
+            const tokenRow = owedRow(tokenHrid, tokens.total);
+            if (tokenRow.owed > 0) {
+                const tokenGold = describeGuildTokenGold(tokenRow.owed, 'ask');
                 const goldStr = tokenGold
                     ? ` <span style="color:#6b7280; font-weight:400;" title="${tokenGold.title.replace(/"/g, '&quot;')}">(${tokenGold.text})</span>`
                     : '';
                 const row = document.createElement('div');
                 row.style.cssText = 'display:flex; justify-content:space-between; padding:2px 0; font-size:12px;';
-                row.innerHTML = `<span style="color:#aaa;">Guild Tokens</span><span style="color:#e0e0e0; font-weight:600;">${tokens.total.toLocaleString()}${goldStr}</span>`;
+                row.innerHTML = `<span style="color:#aaa;">Guild Tokens</span><span style="color:#e0e0e0; font-weight:600;">${tokenRow.owed.toLocaleString()}${goldStr}${ownedNote(tokenRow.owned)}</span>`;
                 totalsEl.appendChild(row);
             }
 
             // Credit costs
+            const owedCredits = {};
             for (const [itemHrid, count] of Object.entries(credits)) {
+                const { owed, owned } = owedRow(itemHrid, count);
+                owedCredits[itemHrid] = owed;
+                if (owed <= 0) continue;
                 const name = itemDetailMap[itemHrid]?.name || itemHrid.split('/').pop();
                 const price = getItemPrice(itemHrid, { mode: 'ask' });
-                const goldStr = price > 0 ? ` (${formatKMB(price * count)})` : '';
+                const goldStr = price > 0 ? ` (${formatKMB(price * owed)})` : '';
                 const row = document.createElement('div');
                 row.style.cssText = 'display:flex; justify-content:space-between; padding:2px 0; font-size:12px;';
-                row.innerHTML = `<span style="color:#aaa;">${name}</span><span style="color:#e0e0e0; font-weight:600;">${count.toLocaleString()}<span style="color:#6b7280; font-weight:400;">${goldStr}</span></span>`;
+                row.innerHTML = `<span style="color:#aaa;">${name}</span><span style="color:#e0e0e0; font-weight:600;">${owed.toLocaleString()}<span style="color:#6b7280; font-weight:400;">${goldStr}</span>${ownedNote(owned)}</span>`;
                 totalsEl.appendChild(row);
             }
+
+            if (totalsEl.childElementCount === 1) {
+                const none = document.createElement('div');
+                none.style.cssText = 'color:#4ade80; text-align:center; font-size:11px;';
+                none.textContent = 'Everything these targets cost is already held';
+                totalsEl.appendChild(none);
+            }
+
+            renderMissingMats(owedCredits, itemDetailMap, inventory);
         };
+
+        /**
+         * The "go and buy the shortfall" button under the totals.
+         *
+         * Rebuilt by `recalculate()` rather than kept in step, because what is
+         * missing is a function of the targets, the inventory and the ask prices
+         * all at once — the same three the totals above are drawn from, so the
+         * two cannot disagree if they are drawn together. (The planner has no
+         * live inventory or price hook of its own; neither does the shrine cost
+         * table's own button, which is likewise built once per render.)
+         *
+         * @param {Object<string, number>} owedCredits - creditHrid → credits still owed
+         * @param {Object} itemDetailMap - The game's items
+         * @param {Array<Object>} inventory - The character's items
+         */
+        function renderMissingMats(owedCredits, itemDetailMap, inventory) {
+            // Fresh per recalculation: the ranking is by live ask price, and a
+            // cached one would send the user after yesterday's cheapest bar
+            const topConversions = buildTopConversions(itemDetailMap, 1);
+            const missingMats = creditShortfallMaterials(owedCredits, topConversions, inventory);
+            if (missingMats.length === 0) return;
+
+            const button = document.createElement('button');
+            button.className = 'mwi-shrine-plan-mats-btn';
+            button.style.cssText = `
+                width:100%; padding:8px 12px; margin-top:8px;
+                background:linear-gradient(180deg,rgba(91,141,239,0.2) 0%,rgba(91,141,239,0.1) 100%);
+                color:#fff; border:1px solid rgba(91,141,239,0.4); border-radius:6px;
+                cursor:pointer; font-size:12px; font-weight:600;
+            `;
+            button.textContent = 'Missing Mats Marketplace';
+            button.addEventListener('mouseenter', () => {
+                button.style.background = 'linear-gradient(180deg,rgba(91,141,239,0.35) 0%,rgba(91,141,239,0.25) 100%)';
+            });
+            button.addEventListener('mouseleave', () => {
+                button.style.background = 'linear-gradient(180deg,rgba(91,141,239,0.2) 0%,rgba(91,141,239,0.1) 100%)';
+            });
+            // The shared list, not this file's older hand-rolled tab code above:
+            // one module owns the marketplace tab bar, and a second watcher on it
+            // is what the shopping list's own docstring is a note about. It also
+            // takes its own tabs away when the marketplace closes, so the button
+            // needs no teardown hooked into the modal's lifecycle.
+            button.addEventListener('click', () => openShoppingList(missingMats, { heading: 'Shrine plan' }));
+            matsEl.appendChild(button);
+        }
 
         // Single-level-ahead buys, filled by the per-shrine walk below
         const nextBuys = [];
@@ -697,6 +831,7 @@ class GuildCreditValue {
         }
 
         body.appendChild(totalsEl);
+        body.appendChild(matsEl);
 
         /**
          * "What should I buy next" — every buff's single next level, cheapest

@@ -97,6 +97,14 @@ vi.mock('../../utils/marketplace-tabs.js', () => ({
 vi.mock('../../utils/marketplace-autofill.js', () => ({
     createAutofillManager: () => ({ initialize: () => {}, setPendingCalculation: () => {} }),
 }));
+// The marketplace hand-off. What matters here is which items the planner sends
+// and under what heading, not what the marketplace does when it gets them —
+// the shared list has its own tests for that.
+const shopping = vi.hoisted(() => ({ calls: [] }));
+vi.mock('../../utils/shopping-list.js', () => ({
+    openShoppingList: (items, options) => shopping.calls.push({ items, options }),
+    clearShoppingList: () => {},
+}));
 vi.mock('./guild-token-exchange-capture.js', () => ({
     captureTokenExchangeFromModal: (...args) => game.captures.push(args),
     hydrateCapturedTokenExchanges: async () => ({}),
@@ -105,7 +113,7 @@ vi.mock('./guild-token-exchange-capture.js', () => ({
 
 const creditValueModule = await import('./guild-credit-value.js');
 const guildCreditValue = creditValueModule.default;
-const { shrinePlanRecord, greedyAffordable } = creditValueModule;
+const { shrinePlanRecord, greedyAffordable, creditShortfallMaterials } = creditValueModule;
 const { TRIAL_MAX_TIER, levelFromTier, tierFromLevel } = await import('./guild-trials-math.js');
 
 function buildExchangeModal(creditName) {
@@ -509,12 +517,21 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         return {
             itemDetailMap: {
                 '/items/guild_credit_1': { name: 'Trade Credit', guildCreditConversions: [] },
+                // Nothing on the market converts into this one — the planner's
+                // "no conversion" case
+                '/items/guild_credit_2': { name: 'Craft Credit', guildCreditConversions: [] },
                 '/items/guild_token': { name: 'Guild Token', guildCreditConversions: [] },
                 '/items/bronze_bar': {
                     name: 'Bronze Bar',
                     guildCreditConversions: [
                         { creditItemHrid: '/items/guild_credit_1', itemCount: 10, creditCount: 1 },
                     ],
+                },
+                // The cheaper route to the same credit: 150 gold per credit
+                // against the bronze bar's 1000
+                '/items/iron_bar': {
+                    name: 'Iron Bar',
+                    guildCreditConversions: [{ creditItemHrid: '/items/guild_credit_1', itemCount: 5, creditCount: 1 }],
                 },
             },
             guildBuffDetailMap: {
@@ -523,6 +540,8 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                     isCombat: true,
                     levelCosts: costs(10, {
                         3: { guildTokenCost: 300, creditCosts: [{ itemHrid: '/items/guild_credit_1', count: 50 }] },
+                        4: { guildTokenCost: 400, creditCosts: [{ itemHrid: '/items/guild_credit_2', count: 7 }] },
+                        5: { guildTokenCost: 500, creditCosts: [{ itemHrid: '/items/guild_credit_1', count: 50 }] },
                     }),
                 },
                 [TEMPO]: {
@@ -566,7 +585,8 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         vi.useFakeTimers();
         game.settings = { guildCreditValue: true, guildCreditExchangeAdvisor: false, guildShrineUpgradePlanner: true };
         game.observers = {};
-        game.prices = { '/items/bronze_bar': { ask: 100, bid: 90 } };
+        game.prices = { '/items/bronze_bar': { ask: 100, bid: 90 }, '/items/iron_bar': { ask: 30, bid: 25 } };
+        shopping.calls = [];
         // Force and Tempo shrines have room; Rarity's cap equals its current
         // buff level, so that buff has no next level to suggest.
         game.buildingLevels = {
@@ -750,7 +770,143 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
         input.dispatchEvent(new Event('input'));
 
         const totals = modal.querySelector('.mwi-shrine-planner').textContent;
-        expect(totals).toContain('Total upgrade cost');
+        // The heading follows the arithmetic: the figures below it are net of
+        // what is held, so it no longer claims to be a gross "total cost"
+        expect(totals).toContain('Still needed for these targets');
         expect(totals).toContain('300');
+    });
+
+    /** Set a target level and let the planner recalculate */
+    function setTarget(modal, buffHrid, level) {
+        const input = inputFor(modal, buffHrid);
+        input.value = String(level);
+        input.dispatchEvent(new Event('input'));
+    }
+
+    function matsButton(modal) {
+        return modal.querySelector('.mwi-shrine-plan-mats-btn');
+    }
+
+    describe('missing mats hand-off', () => {
+        test('the totals net against credits already held, and say how many those are', () => {
+            game.inventory = [
+                { itemHrid: '/items/guild_credit_1', itemLocationHrid: '/item_locations/inventory', count: 20 },
+            ];
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+
+            const totals = modal.querySelector('.mwi-shrine-planner').textContent.replace(/\s+/g, ' ');
+            // 50 owed, 20 held
+            expect(totals).toContain('Trade Credit');
+            expect(totals).toContain('30');
+            expect(totals).toContain('(own 20)');
+        });
+
+        test('the shopping list buys the cheapest conversion into each credit', () => {
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+            matsButton(modal).click();
+
+            // Iron at 150 gold/credit beats bronze at 1000: 50 credits at
+            // 1 credit per 5 bars is 250 bars
+            expect(shopping.calls).toHaveLength(1);
+            expect(shopping.calls[0].items).toEqual([{ itemHrid: '/items/iron_bar', name: 'Iron Bar', count: 250 }]);
+            expect(shopping.calls[0].options).toEqual({ heading: 'Shrine plan' });
+        });
+
+        test('a part-filled conversion still costs a whole one', () => {
+            // The `_renderShrine` precedent's arithmetic, with no round number to
+            // hide behind: 10 credits bought 4 at a time is three trades of 3 bars
+            const conversions = {
+                '/items/guild_credit_1': [{ hrid: '/items/iron_bar', name: 'Iron Bar', itemCount: 3, creditCount: 4 }],
+            };
+            expect(creditShortfallMaterials({ '/items/guild_credit_1': 10 }, conversions, [])).toEqual([
+                { itemHrid: '/items/iron_bar', name: 'Iron Bar', count: 9 },
+            ]);
+        });
+
+        test('raw material already in the inventory comes off the shopping list', () => {
+            game.inventory = [
+                { itemHrid: '/items/iron_bar', itemLocationHrid: '/item_locations/inventory', count: 200 },
+            ];
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+            matsButton(modal).click();
+
+            expect(shopping.calls[0].items).toEqual([{ itemHrid: '/items/iron_bar', name: 'Iron Bar', count: 50 }]);
+        });
+
+        test('bars held outside the inventory are not counted as held', () => {
+            game.inventory = [{ itemHrid: '/items/iron_bar', itemLocationHrid: '/item_locations/bank', count: 500 }];
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+            matsButton(modal).click();
+
+            expect(shopping.calls[0].items[0].count).toBe(250);
+        });
+
+        test('a credit nothing converts into is left off the list rather than throwing', () => {
+            const modal = openModal();
+            // Level 4 costs Craft Credit, which has no conversion at all
+            expect(() => setTarget(modal, FORCE, 4)).not.toThrow();
+
+            // Still owed, and still shown in the totals — it just has nothing to buy
+            expect(modal.querySelector('.mwi-shrine-planner').textContent).toContain('Craft Credit');
+            matsButton(modal).click();
+            expect(shopping.calls[0].items.map((i) => i.itemHrid)).toEqual(['/items/iron_bar']);
+        });
+
+        test('there is no button when the plan owes no credits at all', () => {
+            const modal = openModal();
+            // Tempo's next levels cost tokens only
+            setTarget(modal, TEMPO, 3);
+
+            expect(matsButton(modal)).toBeNull();
+        });
+
+        test('there is no button when every needed credit is already held', () => {
+            game.inventory = [
+                { itemHrid: '/items/guild_credit_1', itemLocationHrid: '/item_locations/inventory', count: 50 },
+            ];
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+
+            expect(matsButton(modal)).toBeNull();
+            // The tokens are still owed, so the box is not empty — but nothing
+            // in it is a credit, and nothing a credit converts from is on the
+            // market for the button to offer
+            expect(modal.querySelector('.mwi-shrine-planner').textContent).not.toContain('Trade Credit50');
+        });
+
+        test('a plan with nothing left to pay says so instead of showing an empty box', () => {
+            game.inventory = [
+                { itemHrid: '/items/guild_credit_1', itemLocationHrid: '/item_locations/inventory', count: 50 },
+                { itemHrid: '/items/guild_token', itemLocationHrid: '/item_locations/inventory', count: 5000 },
+            ];
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+
+            expect(matsButton(modal)).toBeNull();
+            expect(modal.querySelector('.mwi-shrine-planner').textContent).toContain(
+                'Everything these targets cost is already held'
+            );
+        });
+
+        test('changing the target level rebuilds the list', () => {
+            const modal = openModal();
+            setTarget(modal, FORCE, 3);
+            matsButton(modal).click();
+            expect(shopping.calls[0].items[0].count).toBe(250);
+
+            // Level 5 costs another 50 credits on top
+            setTarget(modal, FORCE, 5);
+            matsButton(modal).click();
+            expect(shopping.calls).toHaveLength(2);
+            expect(shopping.calls[1].items[0].count).toBe(500);
+
+            // And back below the current level, where there is nothing to plan
+            setTarget(modal, FORCE, 2);
+            expect(matsButton(modal)).toBeNull();
+        });
     });
 });
