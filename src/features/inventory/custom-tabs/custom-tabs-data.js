@@ -149,20 +149,6 @@ function _countTabs(tabs) {
 }
 
 /**
- * Every tab id in a tree, nested ones included.
- * @param {Array} tabs
- * @param {Set<string>} [into]
- * @returns {Set<string>}
- */
-function _collectIds(tabs, into = new Set()) {
-    for (const tab of Array.isArray(tabs) ? tabs : []) {
-        if (tab?.id != null) into.add(tab.id);
-        if (Array.isArray(tab?.children)) _collectIds(tab.children, into);
-    }
-    return into;
-}
-
-/**
  * Depth-first: does any tab in this tree carry the id?
  * @param {Array} tabs
  * @param {string} id
@@ -294,34 +280,6 @@ function pruneTombstones(config, now = Date.now()) {
 }
 
 /**
- * Forget deletions for ids that are not in the config any more.
- *
- * Once the tombstones have been applied at load, a tombstone whose id names no
- * tab in the tree has nothing left to do here: it can only ever delete
- * something later, never restore anything, and the id it names is one this
- * config has already stopped carrying. Keeping it is all downside — it is what
- * turns a re-imported or re-synced copy of that tab into a tab that deletes
- * itself on the next load.
- *
- * Deliberately separate from `pruneTombstones` (which is about age) and pure,
- * so both can be composed at the one call site that has an applied config.
- * @param {Object} config
- * @returns {Object} The config, tombstone map replaced only if some were dead
- */
-function pruneDeadTombstones(config) {
-    const removed = config?.removed;
-    if (!removed || typeof removed !== 'object') return config;
-    const live = _collectIds(config.tabs);
-    const kept = Object.fromEntries(Object.entries(removed).filter(([id]) => live.has(id)));
-    if (Object.keys(kept).length === Object.keys(removed).length) return config;
-    if (Object.keys(kept).length === 0) {
-        const { removed: _dead, ...rest } = config;
-        return rest;
-    }
-    return { ...config, removed: kept };
-}
-
-/**
  * A pull folds the gist's config into the one on disk instead of replacing it.
  *
  * The key is character-scoped with the id FIRST (`<charId>_inventoryTabs_config`),
@@ -402,8 +360,15 @@ export async function loadConfig(characterId) {
     await record.load({ authoritative: true });
     const saved = record.get();
     const raw = !saved || !Array.isArray(saved.tabs) ? defaultConfig() : { ...defaultConfig(), ...saved };
-    // Age first, then the ids the applied config no longer carries
-    const config = pruneDeadTombstones(pruneTombstones(raw));
+    // Age pruning only. A tombstone whose id names no tab here is not dead
+    // weight: it is the record of a deletion, and the one thing that stops a
+    // peer device's sync push from reviving the tab. Pruning it because the id
+    // is absent would make every deletion single-load-lived - the id is
+    // *always* absent after the deletion applied. The clamp above protects
+    // unstamped copies and import hygiene protects re-imports, so the only
+    // copies a surviving tombstone can still delete are the synced ones it is
+    // meant to.
+    const config = pruneTombstones(raw);
     record.set(config);
     return config;
 }

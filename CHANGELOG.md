@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Custom tabs: tombstones can no longer eat your tabs, and lost ones come back
+
+The deletion tombstones added two releases ago could delete every tab created before them — an unstamped tab counted as infinitely old, so any deletion record beat it, and this ran on every load. Since the pruned config only becomes permanent on the next save, affected tabs reappear on their own with this fix. Also: a merge can never empty most of a curated list any more (a mass-delete is held back and logged instead); exports no longer carry the tombstone map and imports strip it, stamp every tab, and give them fresh ids, so an imported file can't delete itself and two characters can't share tab ids; two load-race windows from the previous fix are closed (a reload that could leave the panel blank until refresh, and a save that could land against a half-loaded config); and running a second Toolasha userscript alongside this one — which shares its database and silently rewrites shared settings — is now detected and loudly warned about.
+
+### Labyrinth: combat rooms no longer flash 0% after a reload
+
+The Automation table drew failed or too-early sim results as a hard 0% (skilling rooms were unaffected — they're plain arithmetic). Failed sims now keep their placeholder and retry like the floor-map tiles always did; sims wait for loadout snapshots instead of silently running your worn gear; the persisted sim cache survives reloads instead of being discarded against a half-loaded fingerprint every time; badges redraw the moment snapshots land; a settings mismatch that re-simmed every room on every render is fixed; and cached results from older script versions are dropped rather than served.
+
 ### The guild trial diagnostic trace no longer rides along in backups and sync
 
 The opt-in trace (off by default) is deliberately large — a full trial can run 10–15 MB gzipped by itself, several times the rest of an account's data combined — and it already has its own dedicated export for when you actually want to share one. Nothing was excluding it from an ordinary backup or an "Everything" sync, so turning the trace on could quietly inflate both past what a gist can hold. Backups and sync payloads now leave it out; restoring an older backup that happens to carry one still works.

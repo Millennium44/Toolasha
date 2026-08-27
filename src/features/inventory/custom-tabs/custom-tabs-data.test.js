@@ -700,7 +700,10 @@ describe('tombstone pruning', () => {
         warn.mockRestore();
     });
 
-    test('a load forgets deletions for ids the config does not carry', async () => {
+    test('a load KEEPS a deletion for an id the config no longer carries', async () => {
+        // That tombstone is the record of the deletion - the one thing that
+        // stops a peer device's sync push from reviving the tab. Only age
+        // forgets it.
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const now = Date.now();
         storageMock
@@ -708,7 +711,7 @@ describe('tombstone pruning', () => {
             .set(KEY, cappedConfig({ a: now - 10, b: now - 10, c: now - 10, ghost: now - 1000 }));
 
         const config = await loadConfig('char1');
-        expect(config.removed).toEqual({ a: now - 10, b: now - 10, c: now - 10 });
+        expect(config.removed).toEqual({ a: now - 10, b: now - 10, c: now - 10, ghost: now - 1000 });
         warn.mockRestore();
     });
 
@@ -724,7 +727,9 @@ describe('tombstone pruning', () => {
         expect(await loadConfig('char1')).toEqual({ version: 1, selectedTabId: null, tabs: [] });
     });
 
-    test('a load drops tombstones for ids the config no longer carries', async () => {
+    test('a load keeps a fresh tombstone whose tab is already gone', async () => {
+        // The absent id is not dead weight: it is what a peer device's copy of
+        // the deleted tab will be folded against. Only the age prune ends it.
         const now = Date.now();
         storageMock.storeFor('settings').set(KEY, {
             version: 1,
@@ -735,7 +740,7 @@ describe('tombstone pruning', () => {
 
         const config = await loadConfig('char1');
         expect(config.tabs.map((t) => t.id)).toEqual(['here']);
-        expect(config.removed).toBeUndefined();
+        expect(config.removed).toEqual({ gone: now - 1000 });
     });
 });
 
