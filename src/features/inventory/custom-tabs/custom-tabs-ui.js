@@ -524,6 +524,11 @@ export default class CustomTabsUI {
     constructor() {
         this._isActive = false;
         this._config = null;
+        // Which character `_config` was loaded for. Every write and every render
+        // is checked against this rather than against "whoever is current now" —
+        // see `_isConfigForCurrentCharacter`.
+        this._configCharId = null;
+        this._onCharacterInitialized = null;
         this._tabBtn = null;
         this._invContainer = null;
         this._injectedEls = []; // Elements we injected into Inventory_items (headers, topbar)
@@ -552,6 +557,7 @@ export default class CustomTabsUI {
     async initialize() {
         const charId = dataManager.getCurrentCharacterId();
         this._config = await loadConfig(charId);
+        this._configCharId = charId;
 
         // Inject CSS
         this._styleEl = document.createElement('style');
@@ -617,6 +623,30 @@ export default class CustomTabsUI {
         });
         this._unregisterHandlers.push(unregisterItemAction);
 
+        // Reload the config when the character changes, without waiting for the
+        // feature registry to tear this UI down and build a new one.
+        //
+        // `character_initialized` rather than `character_switched`: the data
+        // manager skips BOTH `character_switching` and `character_switched` when
+        // switches arrive inside its rapid-switch window (see
+        // `isRapidSwitch` in data-manager.js), and with them the whole
+        // disable()/initialize() cycle this feature used to depend on — so the
+        // UI kept the departing character's tabs while `getCurrentCharacterId()`
+        // already answered with the arriving one, and the next edit wrote one
+        // character's tabs under the other's key. `character_initialized` is
+        // emitted on every init, rapid or not, and only once the arriving
+        // character's data is actually in place, which is also the first moment
+        // a re-render has the right inventory to draw against.
+        // The returned promise is what an awaiting emitter (and the tests) can
+        // wait on; the data manager does not await this event, and does not
+        // need to — until it resolves, `_configCharId` is null and every write
+        // and render is refused.
+        this._onCharacterInitialized = () =>
+            this._reloadForCurrentCharacter().catch((error) => {
+                console.error('[CustomTabs] Reloading tabs after a character switch failed:', error);
+            });
+        dataManager.on('character_initialized', this._onCharacterInitialized);
+
         // Subscribe to loadout snapshot updates for auto-sync of loadout bindings
         this._loadoutBindingHandler = () => this._onLoadoutSnapshotUpdate();
         getLoadoutSnapshot().onUpdate(this._loadoutBindingHandler);
@@ -637,6 +667,10 @@ export default class CustomTabsUI {
             dataManager.off('items_updated', this._onItemsUpdated);
             this._onItemsUpdated = null;
         }
+        if (this._onCharacterInitialized) {
+            dataManager.off('character_initialized', this._onCharacterInitialized);
+            this._onCharacterInitialized = null;
+        }
         for (const unreg of this._unregisterHandlers) {
             if (typeof unreg === 'function') unreg();
         }
@@ -648,6 +682,57 @@ export default class CustomTabsUI {
         this._styleEl?.remove();
         document.querySelectorAll('.toolasha-ct-add-to-tab').forEach((el) => el.remove());
         this._isActive = false;
+        this._configCharId = null;
+    }
+
+    /**
+     * Whether the config in hand belongs to the character that is current now.
+     *
+     * The safety net the whole fix hangs off. `_config` is loaded once and kept
+     * for the UI's lifetime, and that lifetime is NOT guaranteed to end at a
+     * character switch, so "current character" and "the character these tabs
+     * came from" are two different questions and every write has to ask the
+     * second one.
+     * @returns {boolean}
+     */
+    _isConfigForCurrentCharacter() {
+        return this._configCharId === dataManager.getCurrentCharacterId();
+    }
+
+    /**
+     * Load the current character's config and redraw, if what is held is
+     * someone else's. Idempotent: called on every `character_initialized`,
+     * including the ones that are not switches.
+     * @returns {Promise<void>}
+     */
+    async _reloadForCurrentCharacter() {
+        const charId = dataManager.getCurrentCharacterId();
+        if (charId === this._configCharId) return;
+
+        // Nulled for the duration of the load, not left pointing at the old
+        // character: a save landing mid-load would otherwise be waved through
+        // against the departed id and then merged under the arriving one when
+        // `saveConfig` looks the record up. Nothing matches null, so the window
+        // is closed rather than narrowed.
+        this._configCharId = null;
+
+        const loaded = await loadConfig(charId);
+
+        // A second switch during the load has its own reload in flight, and that
+        // one is the authority on what should end up in `_config`. Bailing here
+        // leaves `_configCharId` null, so writes stay refused until it lands.
+        if (dataManager.getCurrentCharacterId() !== charId) return;
+
+        this._config = loaded;
+        this._configCharId = charId;
+
+        // The headers encode the departed character's tabs and their order
+        // values, so they are torn down rather than updated — the same path the
+        // Import button takes when it swaps the whole config out.
+        this._removeInjectedEls();
+        const invContainer = this._findInvContainer();
+        if (invContainer) invContainer.scrollTop = 0;
+        if (this._isActive) await this._applyLayout();
     }
 
     // -----------------------------------------------------------------------
@@ -962,6 +1047,13 @@ export default class CustomTabsUI {
      * then selectively shown by adding .toolasha-ct-visible.
      */
     async _applyLayout() {
+        // A pass deferred across a character switch (the rAF below, the tile
+        // MutationObserver, a sort-mode change) would draw the departed
+        // character's tabs over the arriving character's tiles, and claim
+        // their items into sections that are not theirs. The reload triggered
+        // by `character_initialized` redraws once the right config is in hand.
+        if (!this._isConfigForCurrentCharacter()) return;
+
         // Guard against concurrent calls — defer and re-run after current pass
         if (this._isApplying) {
             this._needsAnotherPass = true;
@@ -2670,6 +2762,12 @@ export default class CustomTabsUI {
      * @param {Object} data - The items_updated event data
      */
     _checkBindingEnhancements(data) {
+        // Reads `dataManager.characterItems` — the CURRENT character's inventory —
+        // and rewrites bindings in `_config`. Across a switch that is one
+        // character's equipment levels written into another's tabs, so it waits
+        // for the reload rather than running against a mismatched pair.
+        if (!this._isConfigForCurrentCharacter()) return;
+
         const changedItems = data?.endCharacterItems;
         if (!changedItems || changedItems.length === 0) return;
 
@@ -2830,6 +2928,11 @@ export default class CustomTabsUI {
      * Called whenever any loadout is created/updated/deleted in-game.
      */
     _onLoadoutSnapshotUpdate() {
+        // Loadout snapshots are per character; syncing the arriving character's
+        // loadouts into the departing character's bindings is the same
+        // contamination `_save` refuses, caught one step earlier.
+        if (!this._isConfigForCurrentCharacter()) return;
+
         const loadoutSnapshot = getLoadoutSnapshot();
         const snapshots = loadoutSnapshot.snapshots;
         const currentSnapshotNames = new Set(Object.values(snapshots).map((s) => s.name));
@@ -3034,9 +3137,26 @@ export default class CustomTabsUI {
     // Persistence
     // -----------------------------------------------------------------------
 
+    /**
+     * Persist the config — under the character it was loaded for, or not at all.
+     *
+     * `saveConfig` folds what it is given into whatever is already stored under
+     * that key, so writing the wrong character's config here does not merely
+     * overwrite: it unions the departed character's tabs into the arriving
+     * character's list, and a tombstone the departed character wrote can delete
+     * a same-id tab (Export/Import legitimately shares ids across characters)
+     * the arriving one still has. Refusing is safe — the edit is lost, the tabs
+     * are not — and the reload that follows a switch brings the right config in.
+     * @returns {Promise<boolean|undefined>}
+     */
     async _save() {
-        const charId = dataManager.getCurrentCharacterId();
-        await saveConfig(charId, this._config);
+        if (!this._isConfigForCurrentCharacter()) {
+            console.warn(
+                `[CustomTabs] Refusing to save: tabs in hand belong to ${this._configCharId}, current character is ${dataManager.getCurrentCharacterId()}`
+            );
+            return;
+        }
+        return saveConfig(this._configCharId, this._config);
     }
 
     // -----------------------------------------------------------------------
