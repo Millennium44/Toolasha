@@ -506,6 +506,13 @@ class LabSimUI {
         this._labyFindMaxMode = false;
         this._labyResults = null;
         this._upgradeAborted = false;
+        // Guards _onUpgradeAnalyze against a second click landing while the
+        // first is still in the async window before the Run button is hidden
+        // (e.g. the editor isn't ready yet and buildAllPlayerDTOs is awaited) —
+        // without it, two concurrent runs share _upgradeAborted and both write
+        // resultsEl/saveUpgradeResults, so the loser's Stop silently no-ops and
+        // its results vanish under the winner's.
+        this._upgradeRunning = false;
         this._skillingAborted = false;
         this._skillLoadouts = {};
         this._skillLoadoutsLoaded = false;
@@ -2540,6 +2547,14 @@ class LabSimUI {
 
     /** @private */
     async _onUpgradeAnalyze() {
+        // Checked synchronously, before any await below (buildAllPlayerDTOs in
+        // particular): the Run button isn't hidden until well into this
+        // function, so a second click landing in that window would otherwise
+        // start a concurrent run sharing this._upgradeAborted and clobbering
+        // the first run's results.
+        if (this._upgradeRunning) return;
+        this._upgradeRunning = true;
+
         const playerIndex = parseInt(this.panel.querySelector('#mwi-labsim-upgrade-player')?.value) || 0;
         const monsterHrid = this.panel.querySelector('#mwi-labsim-monster')?.value;
         // "Uncapped" ignores the Max fights / Max hrs numbers (they stay in the
@@ -2573,6 +2588,7 @@ class LabSimUI {
         const plan = this._planFromControls();
         if (plan.kind === 'none') {
             this._setStatus(plan.error);
+            this._upgradeRunning = false;
             return;
         }
         const isAllFights = plan.kind === 'allFights';
@@ -2582,6 +2598,7 @@ class LabSimUI {
         const gameData = buildGameDataPayload();
         if (!gameData) {
             this._setStatus('No game data available.');
+            this._upgradeRunning = false;
             return;
         }
 
@@ -2596,6 +2613,7 @@ class LabSimUI {
 
         if (!playerDTOs?.length || !playerDTOs[playerIndex]) {
             this._setStatus('No player data available.');
+            this._upgradeRunning = false;
             return;
         }
 
@@ -2685,6 +2703,7 @@ class LabSimUI {
                 progressEl.style.display = 'none';
                 runBtn.style.display = '';
                 stopBtn.style.display = 'none';
+                this._upgradeRunning = false;
                 return;
             }
         }
@@ -2751,6 +2770,7 @@ class LabSimUI {
                 progressEl.style.display = 'none';
                 runBtn.style.display = '';
                 stopBtn.style.display = 'none';
+                this._upgradeRunning = false;
             }
             return;
         }
@@ -2835,6 +2855,7 @@ class LabSimUI {
             progressEl.style.display = 'none';
             runBtn.style.display = '';
             stopBtn.style.display = 'none';
+            this._upgradeRunning = false;
         }
     }
 

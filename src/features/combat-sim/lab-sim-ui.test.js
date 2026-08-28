@@ -829,6 +829,22 @@ describe('a house room level reaches the character the simulation is handed', ()
         expect(JSON.stringify(houseRoomsSimmed())).not.toContain('brewery');
     });
 
+    test('a second click landing before the editor resolves does not start a concurrent run', async () => {
+        // Regression: the Run button is not hidden until after `await
+        // buildAllPlayerDTOs()` resolves (reached here because game.editedDTOs
+        // is unset), so a second call landing in that window used to start a
+        // fully independent second analysis — sharing _upgradeAborted with the
+        // first and racing it to write resultsEl/saveUpgradeResults.
+        checkOnlyHouse();
+
+        const first = ui._onUpgradeAnalyze();
+        const second = ui._onUpgradeAnalyze();
+        await Promise.all([first, second]);
+
+        // One baseline plus one run per combat-relevant room — not doubled
+        expect(sim.calls).toHaveLength(3);
+    });
+
     test('the panel’s own character is never the one that gets the level', async () => {
         checkOnlyHouse();
 
