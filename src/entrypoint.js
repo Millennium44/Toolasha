@@ -1808,6 +1808,16 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'characterActivityStatus',
+            name: 'Character Activity Status',
+            category: 'General',
+            module: Actions.characterActivity,
+            async: true,
+            // Writes only this character's own projection record; nothing else reads it while
+            // the game is running
+            concurrent: true,
+        },
+        {
             key: 'sessionBriefing',
             name: 'Session Briefing',
             category: 'General',
@@ -1898,6 +1908,11 @@ if (isCombatSimulatorPage()) {
 
     // CRITICAL: Start centralized DOM observer SECOND, before features initialize
     domObserver.start();
+
+    // Always-on character-select watcher. Registered here rather than through the feature
+    // registry because character select can be the very first screen of a session, with no
+    // character initialized and so no feature lifecycle running to start it.
+    Actions.characterSelectRenderer.startWatching();
 
     // Set up scroll listener to dismiss stuck tooltips
     setupScrollTooltipDismissal();

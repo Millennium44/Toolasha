@@ -120,6 +120,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Shows estimated queue time remaining for your other characters in a floating widget',
             },
+            characterSelect_activityStatus: {
+                id: 'characterSelect_activityStatus',
+                label: 'Character select: Show activity status',
+                type: 'checkbox',
+                default: true,
+                help: 'On the character-select screen, shows what each character is expected to be doing and the earliest point it may need attention (action or queue end, materials, or offline cap)',
+            },
         },
     },
 

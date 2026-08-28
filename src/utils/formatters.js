@@ -547,3 +547,50 @@ export function formatDateTime(date, options = {}) {
 
     return parts.join(' ');
 }
+
+/**
+ * True if two timestamps fall on the same local calendar day.
+ * @param {number} a - Epoch ms
+ * @param {number} b - Epoch ms
+ * @returns {boolean}
+ */
+export function isSameLocalDay(a, b) {
+    const dateA = new Date(a);
+    const dateB = new Date(b);
+    return (
+        dateA.getFullYear() === dateB.getFullYear() &&
+        dateA.getMonth() === dateB.getMonth() &&
+        dateA.getDate() === dateB.getDate()
+    );
+}
+
+/**
+ * Format a timestamp for Character Activity Status on the character-select screen.
+ *
+ * `formatDateTime` above reads `config` directly, which is exactly what cannot be done here:
+ * character select renders before any character has been initialized, so the per-character
+ * settings context does not exist yet and `config` would silently hand back schema defaults.
+ * Callers pass the account-level preference mirror instead. Same-day shows time only; a
+ * different day shows a short date + time. Seconds are never shown here.
+ * @param {number} timestamp - Epoch ms to format
+ * @param {{dateFormat?: string, timeFormat?: string}} prefs - `dateFormat`: 'MM-DD'|'DD-MM'; `timeFormat`: '12hour'|'24hour'
+ * @param {number} [now] - Epoch ms to compare against (defaults to `Date.now()`)
+ * @returns {string}
+ */
+export function formatActivityStatusTime(timestamp, prefs = {}, now = Date.now()) {
+    const { dateFormat = 'MM-DD', timeFormat = '24hour' } = prefs;
+    const date = new Date(timestamp);
+    const use24h = timeFormat === '24hour';
+
+    const timePart = date.toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hour12: !use24h }).trim();
+
+    if (isSameLocalDay(timestamp, now)) {
+        return timePart;
+    }
+
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const datePart = dateFormat === 'DD-MM' ? `${day}-${month}` : `${month}-${day}`;
+
+    return `${datePart} ${timePart}`;
+}

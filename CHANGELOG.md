@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Character select tells you what your other characters are doing
+
+Each populated slot on the character-select screen now shows what that character is expected to be doing and the earliest point it may need attention — the action or queue ending, materials running out, or its own offline-progress cap. Combat, Labyrinth and Enhancing are always reported as having no knowable end time rather than guessed at, and a MooPass that could expire mid-offline-period drops the estimate rather than reassuring you falsely. Ported from upstream; on by default under General → "Character select: Show activity status".
+
 ### A run that starves of materials stops haunting the briefing
 
 The enhancement tracker only closed a session when a differently-configured run started, so a run that ended by running out of materials (or being cancelled) stayed "In Progress" for ever — and the Session Briefing kept announcing it weeks later. The queue entry ending now finalizes the session outright, and the briefing additionally ignores any session whose last attempt is over an hour old.

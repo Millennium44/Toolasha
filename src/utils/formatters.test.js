@@ -17,6 +17,8 @@ import {
     formatCurrency,
     formatCompactNumber,
     formatLargeNumber,
+    isSameLocalDay,
+    formatActivityStatusTime,
 } from './formatters.js';
 
 // Mock config module for formatLargeNumber tests
@@ -388,5 +390,54 @@ describe('formatLargeNumber', () => {
     test('respects decimal parameter', () => {
         expect(formatLargeNumber(1500000, 2)).toBe('1.50M');
         expect(formatLargeNumber(2300, 0)).toBe('2K');
+    });
+});
+
+describe('isSameLocalDay', () => {
+    test('two instants on the same calendar day match', () => {
+        const morning = new Date(2026, 7, 27, 1, 0, 0).getTime();
+        const evening = new Date(2026, 7, 27, 23, 0, 0).getTime();
+        expect(isSameLocalDay(morning, evening)).toBe(true);
+    });
+
+    test('an hour apart across midnight does not match', () => {
+        const before = new Date(2026, 7, 27, 23, 30, 0).getTime();
+        const after = new Date(2026, 7, 28, 0, 30, 0).getTime();
+        expect(isSameLocalDay(before, after)).toBe(false);
+    });
+
+    test('the same day one year apart does not match', () => {
+        const thisYear = new Date(2026, 7, 27, 12, 0, 0).getTime();
+        const lastYear = new Date(2025, 7, 27, 12, 0, 0).getTime();
+        expect(isSameLocalDay(thisYear, lastYear)).toBe(false);
+    });
+});
+
+describe('formatActivityStatusTime', () => {
+    const now = new Date(2026, 7, 27, 12, 0, 0).getTime();
+
+    test('a time later today needs no date', () => {
+        const later = new Date(2026, 7, 27, 18, 30, 0).getTime();
+        expect(formatActivityStatusTime(later, { timeFormat: '24hour' }, now)).toBe('18:30');
+    });
+
+    test('a different day carries a short date, in the requested order', () => {
+        const tomorrow = new Date(2026, 7, 28, 6, 5, 0).getTime();
+        expect(formatActivityStatusTime(tomorrow, { dateFormat: 'MM-DD', timeFormat: '24hour' }, now)).toBe(
+            '08-28 06:05'
+        );
+        expect(formatActivityStatusTime(tomorrow, { dateFormat: 'DD-MM', timeFormat: '24hour' }, now)).toBe(
+            '28-08 06:05'
+        );
+    });
+
+    test('12-hour preference is honoured', () => {
+        const later = new Date(2026, 7, 27, 18, 30, 0).getTime();
+        expect(formatActivityStatusTime(later, { timeFormat: '12hour' }, now)).toBe('6:30 PM');
+    });
+
+    test('no preferences at all still formats, on the schema defaults', () => {
+        const later = new Date(2026, 7, 27, 18, 30, 0).getTime();
+        expect(formatActivityStatusTime(later, {}, now)).toBe('18:30');
     });
 });

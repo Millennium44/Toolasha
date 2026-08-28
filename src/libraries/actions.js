@@ -49,6 +49,13 @@ import '../features/planner/goal-planner-row.js';
 // planner fills, not a per-bundle duplicate asking the server twice.
 import marketLiquidity from '../features/planner/market-liquidity.js';
 
+// Character Activity Status. It lives in this bundle rather than the ui one because its
+// projection engine reuses Action Time Display's per-action duration and material-limit maths:
+// imported from ui, that whole engine would be copied into a second bundle as a second, stale
+// singleton. Its two halves ship together so nothing has to cross a bundle boundary at all.
+import characterActivity from '../features/character-activity/character-activity.js';
+import characterSelectRenderer from '../features/character-activity/character-select-renderer.js';
+
 // Export to global namespace
 const toolashaRoot = window.Toolasha || {};
 window.Toolasha = toolashaRoot;
@@ -91,6 +98,10 @@ toolashaRoot.Actions = {
     skillingOptimizer,
     goalPlanner,
     marketLiquidity,
+    characterActivity,
+    // Started by the entrypoint outside the feature lifecycle — character select renders before
+    // any character exists, so the registry is not running yet when this has to draw
+    characterSelectRenderer,
 };
 
 // Console-driven debug tools, kept out of the feature namespaces because
