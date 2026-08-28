@@ -1873,9 +1873,13 @@ class OverlayPanel {
         const wrap = document.createElement('label');
         Object.assign(wrap.style, { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer' });
         wrap.title =
-            'What a tile does before it has anything to show. By tile: it keeps its place in the grid and ' +
-            'shrinks to a dim name, so the line closes up without anything moving sideways. Hide takes the ' +
-            'tile away entirely, which leaves a gap where it sat.';
+            'What a tile does before it has anything to show.\n\n' +
+            'Dim name: it keeps its place in the grid and shrinks to a strip carrying its own name, so the ' +
+            'line closes up without anything moving sideways. A tile with nothing to show and nowhere to ' +
+            'click goes away instead, since its strip would offer nothing to do about it.\n' +
+            'Dim name, always: the same, including those.\n' +
+            'Hide: the tile goes away entirely, which leaves a gap where it sat in the grid.\n' +
+            'Full message: it says at full size what it is waiting for.';
 
         const label = document.createElement('span');
         label.textContent = 'Empty tiles';
@@ -1893,10 +1897,12 @@ class OverlayPanel {
             padding: '2px 4px',
         });
         for (const [value, text] of [
-            [EMPTY_POLICY.AUTO, 'By tile'],
-            [EMPTY_POLICY.COMPACT, 'Compact'],
+            // Named for what they do rather than for how they decide. "By tile"
+            // described the mechanism to somebody who wanted to know the outcome.
+            [EMPTY_POLICY.AUTO, 'Dim name'],
+            [EMPTY_POLICY.COMPACT, 'Dim name, always'],
             [EMPTY_POLICY.HIDE, 'Hide'],
-            [EMPTY_POLICY.FULL, 'Full'],
+            [EMPTY_POLICY.FULL, 'Full message'],
         ]) {
             const option = document.createElement('option');
             option.value = value;

@@ -499,4 +499,19 @@ describe('resetting to the default tiles', () => {
         expect(overlayPanel.settings.visible).toEqual({ dps: false, luck: true, houses: true });
         expect(chipState()).toEqual({ dps: false, luck: true, houses: true });
     });
+    test('the empty-tile modes are named for what they do', () => {
+        // "By tile" described how the panel decides to somebody who wanted to
+        // know what they would see
+        overlayPanel._renderPicker();
+        const options = [...overlayPanel.pickerEl.querySelectorAll('[data-overlay-setting="emptyTiles"] option')];
+
+        expect(options.map((option) => option.textContent)).toEqual([
+            'Dim name',
+            'Dim name, always',
+            'Hide',
+            'Full message',
+        ]);
+        // The values are what is stored, and none of them may drift
+        expect(options.map((option) => option.value)).toEqual(['auto', 'compact', 'hide', 'full']);
+    });
 });
