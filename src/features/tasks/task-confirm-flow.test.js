@@ -357,6 +357,40 @@ describe('the game keeps its clicks', () => {
         expect(click(buttonNamed(card, 'Pay 320K')).defaultPrevented).toBe(false);
     });
 
+    test('a lockdown timer that outlives disable() does not arm a confirmed bypass', async () => {
+        // The scenario: a player clicks a protected/capped reroll (arming the
+        // 3s lockdown timer), then switches character before it fires — the
+        // same "character switches mid-flow" shape as the reconnect races
+        // elsewhere in this audit. disable() used to tear down the dataset
+        // and the document listener but had no way to cancel the in-flight
+        // timer (it lived only in a WeakMap, which cannot be iterated), so it
+        // fired anyway and stamped `mwiRerollConfirmed = '1'` onto the card.
+        // If the same DOM node is reused for the arriving character's board
+        // (or the feature simply reinitializes for the same one), the next
+        // click on that card's reroll button reads as already-confirmed and
+        // is let straight through — a reroll nobody actually confirmed.
+        vi.useFakeTimers();
+        const card = await guardedCard(['Back', 'Pay 320K']);
+
+        click(buttonNamed(card, 'Pay 320K'));
+        expect(card.dataset.mwiRerollLocked).toBe('1');
+
+        taskRerollProtection.disable();
+        expect(card.dataset.mwiRerollLocked).toBeUndefined();
+
+        // The lockdown timer's 3s elapses after teardown; it must not still
+        // be armed
+        vi.advanceTimersByTime(3000);
+        expect(card.dataset.mwiRerollConfirmed).toBeUndefined();
+
+        // Reinitializing (as a character switch would) and clicking the same
+        // button again must run the full lockdown again, not fast-path
+        // through a stale "confirmed" flag
+        await taskRerollProtection.initialize();
+        expect(click(buttonNamed(card, 'Pay 320K')).defaultPrevented).toBe(true);
+        expect(card.dataset.mwiRerollConfirmed).toBeUndefined();
+    });
+
     test('switching the feature off takes the interceptor off the document', async () => {
         const card = await guardedCard(['Back', 'Pay 320K']);
 

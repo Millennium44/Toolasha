@@ -17,6 +17,7 @@ import { isCardInConfirmState, armConfirmSettleWatch, onConfirmFlowSettled } fro
 import { findRerollOptions } from './task-reroll-options.js';
 import { questForTaskCard } from './task-card-quest.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
+import { createTimerRegistry } from '../../utils/timer-registry.js';
 
 const STORAGE_KEY_PREFIX = 'taskProtectedHrids';
 
@@ -37,7 +38,10 @@ class TaskRerollProtection {
         this.coinThreshold = 320000;
         this.cowbellThreshold = 32;
         this.unregisterHandlers = [];
-        this.confirmTimers = new WeakMap(); // taskCard → timeout ID
+        this.confirmTimers = new WeakMap(); // taskCard → timeout ID, for the "same card clicked again" replace
+        // A WeakMap cannot be iterated, so it cannot cancel every pending
+        // lockdown/confirm timer on disable() by itself — see `disable()`.
+        this.timerRegistry = createTimerRegistry();
         this._documentInterceptorAttached = false;
         this._interceptHandler = null;
     }
@@ -82,13 +86,13 @@ class TaskRerollProtection {
         // so its quest) is not yet reachable on the first pass.
         const unregister = domObserver.onClass('TaskRerollProtection', 'RandomTask_randomTask', (taskNode) => {
             this._processTaskCard(taskNode);
-            setTimeout(() => this._processTaskCard(taskNode), 150);
+            this.timerRegistry.registerTimeout(setTimeout(() => this._processTaskCard(taskNode), 150));
         });
         this.unregisterHandlers.push(unregister);
 
         // Re-process on quest updates (task content may change after reroll)
         const questHandler = () => {
-            setTimeout(() => this._processAllCards(), 300);
+            this.timerRegistry.registerTimeout(setTimeout(() => this._processAllCards(), 300));
         };
         webSocketHook.on('quests_updated', questHandler);
         this.unregisterHandlers.push(() => webSocketHook.off('quests_updated', questHandler));
@@ -345,7 +349,15 @@ class TaskRerollProtection {
         const existingTimer = this.confirmTimers.get(card);
         if (existingTimer) clearTimeout(existingTimer);
 
-        // After 3s lockdown → open confirmation window
+        // After 3s lockdown → open confirmation window. Registered on the
+        // timer registry as well as the per-card WeakMap: the WeakMap lets a
+        // second click on the same card replace its own timer, but it cannot
+        // be iterated, so it cannot cancel every card's pending timer on
+        // disable() — a character switch mid-lockdown used to leave this
+        // timer alive, and it would go on to stamp `mwiRerollConfirmed = '1'`
+        // onto a card the feature had already reset (and that a reinitialize
+        // may have repainted with a *different* task by the time it fires),
+        // arming a reroll-confirmed bypass nobody clicked to confirm.
         const lockdownTimer = setTimeout(() => {
             card.dataset.mwiRerollLocked = '';
             card.dataset.mwiRerollConfirmed = '1';
@@ -357,8 +369,10 @@ class TaskRerollProtection {
                 this._clearWarning(card);
             }, 3000);
             this.confirmTimers.set(card, confirmTimer);
+            this.timerRegistry.registerTimeout(confirmTimer);
         }, 3000);
         this.confirmTimers.set(card, lockdownTimer);
+        this.timerRegistry.registerTimeout(lockdownTimer);
     }
 
     /**
@@ -813,6 +827,12 @@ class TaskRerollProtection {
             unregister();
         }
         this.unregisterHandlers = [];
+
+        // Every pending lockdown/confirm timer, cancelled before it can stamp
+        // a dataset flag onto a card this feature (or the character it
+        // belonged to) has already left behind
+        this.timerRegistry.clearAll();
+        this.confirmTimers = new WeakMap();
 
         // The click interceptor outlives everything else unless it is taken off
         // here: it is bound to the document, not to a card, so a feature that
