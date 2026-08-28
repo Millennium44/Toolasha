@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Action ETAs stop drifting later on every reload
+
+The completion estimate rebuilt itself from the full remaining model on each reload or character switch, forgetting how far into the current action cycle you already were — a long cycle's ETA walked later every time. The moment the current unit started is now tracked from the action stream, persisted per character, and subtracted from the estimate; any doubt about its validity falls back to exactly the old behavior.
+
 ### Import from Toolasha now works on the szerra combat simulator
 
 The szerra shrine combat simulator (a fork of the same lineage as Shykai's) is now a supported import target: it shares the export JSON format and the selectors the integration already drives, so recognising the domain was all it took. It also joins the sidebar's external tool links as "Combat Sim (Shrine)". The supported-simulator list is now one module, with a test that keeps the entrypoint's detection and both userscript `@match` headers in sync with it.
