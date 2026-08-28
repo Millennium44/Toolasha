@@ -272,6 +272,29 @@ describe('rosterFromBattle', () => {
         const roster = rosterFromBattle({ players: [{ character: { id: 1, name: 'Tib' } }, { character: {} }] });
         expect(Object.keys(roster)).toEqual(['0']);
     });
+
+    test('a slot with an id but no name asks the resolver before giving up on it', () => {
+        // Reported: a 48-player trial's own message carried the id but not the
+        // name for a chunk of the roster, which is what turned real members
+        // into "Player 7", "Player 10", "Player 36" on the damage panel
+        const resolveName = (characterId) => (characterId === 42 ? 'Atlan' : null);
+        const roster = rosterFromBattle(
+            { players: [{ character: { id: 42 } }, { character: { id: 99 } }, { character: { id: 1, name: 'Tib' } }] },
+            resolveName
+        );
+
+        expect(roster[0]).toEqual({ name: 'Atlan', characterId: 42 });
+        // The resolver not knowing this one either is still no placeholder here —
+        // a weaker source (vitals, portrait) gets the chance this module cannot
+        expect(roster[1]).toBeUndefined();
+        // A name the payload already stated is never sent through the resolver
+        expect(roster[2]).toEqual({ name: 'Tib', characterId: 1 });
+    });
+
+    test('no resolver at all behaves exactly as before', () => {
+        const roster = rosterFromBattle({ players: [{ character: { id: 42 } }] });
+        expect(roster[0]).toBeUndefined();
+    });
 });
 
 describe('the roster outranks everything', () => {

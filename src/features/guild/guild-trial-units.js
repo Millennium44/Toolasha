@@ -167,19 +167,37 @@ export function fightViewBossNames(root = typeof document === 'undefined' ? null
  * `players` is missing, is not an array, or holds entries without a name gives
  * back the slots it could read and nothing for the rest.
  *
+ * A fifty-player trial's payload has been seen carrying a slot's `character.id`
+ * with no `character.name` beside it — trimmed, presumably, the same way the
+ * game trims other bulk payloads. An id with nothing else to say is still a
+ * fact worth having: the guild already knows this member's name from elsewhere
+ * (the Members list, the trial's own sign-ups), so `resolveName` is asked
+ * before the slot is given up on. It is what turned "Player 7", "Player 10",
+ * "Player 36" — real members of a live forty-eight-player trial, resolvable by
+ * id and simply not carrying a name on this particular message — back into
+ * their actual names.
+ *
  * @param {Object} data - A `new_guild_battle` payload
+ * @param {function(number): (string|null)} [resolveName] - Given a character id the
+ *   payload itself named nobody for, returns a name from elsewhere (the guild
+ *   roster, the trial sign-ups), or null when that source does not know it either
  * @returns {Object<string, {name: string, characterId: number|null}>} Slot → who
  */
-export function rosterFromBattle(data) {
+export function rosterFromBattle(data, resolveName = null) {
     const players = Array.isArray(data?.players) ? data.players : [];
     const roster = {};
 
     players.forEach((player, index) => {
-        const name = String(player?.character?.name || player?.name || '').trim();
+        const id = Number(player?.character?.id);
+        const characterId = Number.isFinite(id) && id > 0 ? id : null;
+
+        let name = String(player?.character?.name || player?.name || '').trim();
+        if (!name && characterId !== null && typeof resolveName === 'function') {
+            name = String(resolveName(characterId) || '').trim();
+        }
         if (!name) return;
 
-        const id = Number(player?.character?.id);
-        roster[index] = { name, characterId: Number.isFinite(id) && id > 0 ? id : null };
+        roster[index] = { name, characterId };
     });
 
     return roster;

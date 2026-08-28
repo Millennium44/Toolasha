@@ -103,6 +103,7 @@ import webSocketHook from '../../core/websocket.js';
 import { attributeTick, foldEvents, newAttributionState, noteActions } from '../../utils/damage-attribution.js';
 import { guildLoadoutCapture } from './guild-loadout-capture.js';
 import guildTrialAbilities from './guild-trial-abilities.js';
+import { guildXPTracker } from './guild-xp-tracker.js';
 import { isMonsterUnit } from './guild-loadouts.js';
 import { autoAttackDps } from './guild-trial-forecast.js';
 import {
@@ -855,6 +856,30 @@ class GuildTrialDamage {
     }
 
     /**
+     * A member's name, from the guild itself, when a trial's own messages
+     * have not said it.
+     *
+     * A large trial's `new_guild_battle` has been seen carrying a slot's
+     * `character.id` with no `character.name` beside it, and the end-of-trial
+     * `guildTrialStatList` names nobody at all — only ids. Both are covered by
+     * the same lookup: `guildXPTracker.memberMeta` is the whole guild roster,
+     * kept current off `guild_updated` independently of whether a trial or its
+     * fight view is even open (it is also what the Members list itself draws
+     * from — `guild-roster-view.js`), and it carries every signed-up member's
+     * name along with their skills — sign-ups included, since a member on the
+     * roster this week's trial fields is on the roster either way.
+     *
+     * @param {number} characterId
+     * @returns {string|null} The name, or null when this id is not on the roster either
+     */
+    _knownName(characterId) {
+        const id = Number(characterId);
+        if (!Number.isFinite(id) || id <= 0) return null;
+        const name = String(guildXPTracker.getMemberMeta(String(id))?.name || '').trim();
+        return name || null;
+    }
+
+    /**
      * A tier of the trial has begun.
      *
      * The single most useful message in the family, and it fires at *every*
@@ -902,8 +927,11 @@ class GuildTrialDamage {
             if (Number.isFinite(tier)) this.tierStarts[tier] = now;
 
             // The roster replaces every weaker source, and a new battle restates
-            // it — a slot that changed hands must not keep the old name
-            const roster = rosterFromBattle(data);
+            // it — a slot that changed hands must not keep the old name. A slot
+            // whose id the payload sent with no name beside it still gets one,
+            // from the guild roster this client already keeps regardless of
+            // whether the fight view is even open (`_knownName`)
+            const roster = rosterFromBattle(data, (characterId) => this._knownName(characterId));
             if (Object.keys(roster).length) {
                 this.roster = roster;
                 for (const [index, entry] of Object.entries(roster)) {
@@ -1036,9 +1064,11 @@ class GuildTrialDamage {
      * `guildTrialStatList` keys by character id and states the exact damage,
      * healing and pre-mitigation damage taken the server credited each member —
      * the authoritative figure this module's live tick-by-tick attribution is
-     * estimating. Captured, named through the cumulative id→name map, and saved
-     * beside a snapshot of the live measurement so the two can be compared, and so
-     * the comparison survives a refresh until the week's ladder rolls over.
+     * estimating. Captured, named through the cumulative id→name map — filled
+     * out by the guild roster (`_knownName`) for an id this trial's own
+     * messages never happened to name — and saved beside a snapshot of the
+     * live measurement so the two can be compared, and so the comparison
+     * survives a refresh until the week's ladder rolls over.
      *
      * Not gated on `active` or stream liveness: it arrives a few seconds after
      * `end_guild_battle`, once the fight is already over and the stream quiet.
@@ -1058,7 +1088,15 @@ class GuildTrialDamage {
                 // so a second trial's numbers cannot land on this one's card.
                 if (!trial || trial.kind !== 'combat') continue;
                 if (this.encounter && trial.key !== this.encounter) continue;
-                const name = this.characterNames[Number(entry?.characterId)];
+                const characterId = Number(entry?.characterId);
+                let name = this.characterNames[characterId];
+                if (!name) {
+                    // This trial's own messages never happened to name this id —
+                    // a mid-tier join, or a roster message that carried the id
+                    // with no name beside it. The guild already knows it.
+                    name = this._knownName(characterId);
+                    if (name) this.characterNames[characterId] = name;
+                }
                 if (!name) continue;
                 const row = reported[name] || (reported[name] = { damage: 0, healing: 0, taken: 0 });
                 row.damage += Number(entry?.damageDealt) || 0;

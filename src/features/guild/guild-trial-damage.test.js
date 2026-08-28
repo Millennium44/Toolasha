@@ -24,6 +24,10 @@ const game = vi.hoisted(() => ({
     storedRoster: null,
     storedStats: null,
     casts: [],
+    // characterId → name, as `guildXPTracker.memberMeta` would answer it —
+    // the whole-guild roster (and its trial sign-ups), kept regardless of
+    // whether this trial's own messages ever named the id themselves
+    guildMembers: {},
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -68,6 +72,18 @@ vi.mock('./guild-trial-abilities.js', () => ({
         noteAbilityCast: (name, hrid) => {
             game.casts.push([name, hrid]);
             return true;
+        },
+    },
+}));
+
+// The whole-guild roster this module falls back to for an id its own
+// messages never happened to name. Kept as a fixture map rather than the
+// real singleton, whose `guild_updated` wiring is not what this file tests.
+vi.mock('./guild-xp-tracker.js', () => ({
+    guildXPTracker: {
+        getMemberMeta: (characterId) => {
+            const name = game.guildMembers[String(characterId)];
+            return name ? { name } : null;
         },
     },
 }));
@@ -1144,6 +1160,7 @@ describe('the tier-opening message', () => {
         game.loadouts = [];
         game.ownName = null;
         game.storedRoster = null;
+        game.guildMembers = {};
         guildTrialDamage.storedRoster = null;
         guildTrialDamage.initialize();
         guildTrialDamage.reset();
@@ -1172,6 +1189,49 @@ describe('the tier-opening message', () => {
         game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
         expect(guildTrialDamage.breakdown().roster['19']).toMatchObject({ name: 'Player20' });
         expect(guildTrialDamage.breakdown().roster['0'].characterId).toBe(900001);
+    });
+
+    test('a slot the battle names by id only is still named, from the guild roster', () => {
+        // Reported live, in a 48-player trial: rows read "Player 7", "Player
+        // 10", "Player 36" for real members interleaved with real names
+        // elsewhere. The message that opens each tier had carried the id for
+        // these slots but not the name; the guild already knows it.
+        game.guildMembers = { 900001: 'Atlan', 900002: 'Bilibili' };
+        const trimmed = {
+            ...NEW_GUILD_BATTLE,
+            players: NEW_GUILD_BATTLE.players.map((player, index) =>
+                index < 2 ? { ...player, character: { id: player.character.id }, name: undefined } : player
+            ),
+        };
+        game.wsHandlers.new_guild_battle(trimmed);
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.names['0']).toMatchObject({ name: 'Atlan', source: 'roster' });
+        expect(report.names['1']).toMatchObject({ name: 'Bilibili', source: 'roster' });
+        expect(report.nameCoverage.placeholders).toEqual([]);
+    });
+
+    test('an id the guild roster does not know either falls through, rather than a wrong guess', () => {
+        game.guildMembers = {};
+        const trimmed = {
+            ...NEW_GUILD_BATTLE,
+            players: NEW_GUILD_BATTLE.players.map((player, index) =>
+                index === 0 ? { ...player, character: { id: player.character.id }, name: undefined } : player
+            ),
+        };
+        game.wsHandlers.new_guild_battle(trimmed);
+        // Slot 0 earns no roster entry, so it is only named once a tick asks
+        // `resolveUnitNames` to place it — nothing else can match it here
+        game.wsHandlers[GUILD_BATTLE_MESSAGE]({
+            type: 'guild_battle_updated',
+            battleId: 1,
+            tier: 1,
+            pMap: { 0: { cHP: 100, mHP: 100 } },
+            mMap: {},
+        });
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.names['0'].source).toBe('placeholder');
     });
 
     test('the roster outranks a name already resolved from a build', () => {
@@ -1461,6 +1521,7 @@ describe('the game’s own end-of-trial stats, saved for comparison', () => {
         game.ownName = null;
         game.storedRoster = null;
         game.storedStats = null;
+        game.guildMembers = {};
         guildTrialDamage.storedRoster = null;
         guildTrialDamage.initialize();
         guildTrialDamage.reset();
@@ -1512,6 +1573,29 @@ describe('the game’s own end-of-trial stats, saved for comparison', () => {
         expect(report.reported.Player01).toEqual({ damage: 1_000_000, healing: 0, taken: 50_000 });
         expect(report.reported.Player02).toEqual({ damage: 400_000, healing: 20_000, taken: 10_000 });
         expect(Object.keys(report.reported)).toEqual(['Player01', 'Player02']);
+    });
+
+    test('an id this trial never happened to name is still named, from the guild roster', () => {
+        // No `new_guild_battle` at all this test — a viewer whose tab opened
+        // after every tier's opening message had already gone by. The
+        // end-of-trial stats carry the id regardless, and the guild roster
+        // is what fills in the name `characterNames` never got a chance to.
+        game.guildMembers = { 900007: 'Cleric' };
+        guildTrialDamage.encounter = 'badger';
+        game.wsHandlers.guild_trial_stats_updated({
+            guildTrialStatList: [
+                {
+                    characterId: 900007,
+                    trialHrid: '/guild_combat/badger',
+                    damageDealt: 250_000,
+                    healingDone: 5_000,
+                    premitigatedDamageTaken: 1_000,
+                },
+            ],
+        });
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.reported.Cleric).toEqual({ damage: 250_000, healing: 5_000, taken: 1_000 });
     });
 
     test('a different trial’s stats do not land on this one', () => {
