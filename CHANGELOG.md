@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Five combat-sim fixes from the audit's deepest pass
+
+The skilling upgrade advisor no longer drops a valid candidate when two loadouts wear the same accessory at different enhancement levels; the labyrinth Upgrade Analyze button gains the reentrancy guard the combat one always had, so a double-click can't race two runs against one Stop flag; the labyrinth clear-chance cache finally notices combat token upgrades (its key never included them, so a bought damage upgrade kept answering with the old number forever); the consumables auto-rate stops guessing "self" from party-slot order, which could file your food usage under a party member; and the sim comparison view stops fabricating zero baselines for players absent from the comparison run.
+
+
 ### Second audit round: four more fixes and six more conveniences
 
 Fixes: the damage-taken table no longer keeps departed party members (or hands their totals to whoever inherits the slot); the inventory badge cooldown stops being consumed by renders that bailed; a mid-run enhancement pickup infers the correct start level near the protection threshold; and an undercut alert can no longer be swallowed by its own predecessor's cooldown after you reprice — a reprice mints a fresh notification key. Features: mooket watchlist chips say how fresh their price reading is; the Trade Ledger gets an item filter (the CSV export follows it); the Combat Statistics popup copies as text; the attendance ledger tooltips each member's last-attended date; the gold-sources calendar clicks through to that day's breakdown; and the guild roster's contribution table exports to CSV.
