@@ -21,6 +21,7 @@ import dungeonTrackerUI from '../features/combat/dungeon-tracker-ui.js';
 import dungeonTrackerChatAnnotations from '../features/combat/dungeon-tracker-chat-annotations.js';
 import combatSummary from '../features/combat/combat-summary.js';
 import combatBattleCounter from '../features/combat/combat-battle-counter.js';
+import combatBossEta from '../features/combat/combat-boss-eta.js';
 import combatDropLuck from '../features/combat/combat-drop-luck.js';
 import { partyLuckPanel } from '../features/combat/party-luck-panel.js';
 import combatDPS from '../features/combat/combat-dps.js';
@@ -113,6 +114,7 @@ toolashaRoot.Combat = {
     dungeonTrackerChatAnnotations,
     combatSummary,
     combatBattleCounter,
+    combatBossEta,
     combatDropLuck,
     partyLuckPanel,
     combatDPS,

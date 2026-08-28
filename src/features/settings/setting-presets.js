@@ -130,6 +130,7 @@ const COMBAT_EXTRAS = [
     'combatScore',
     'combatStats',
     'combatBattleCounter',
+    'combatBossEta',
     'combatSummary',
     'combatDropLuck',
     'combatDps',

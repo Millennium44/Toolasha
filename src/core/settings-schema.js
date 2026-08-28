@@ -2242,6 +2242,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Displays "Battle #N" for regular zones or "Wave N" for dungeons in the top-left action panel',
             },
+            combatBossEta: {
+                id: 'combatBossEta',
+                label: 'Show battles/time until the boss is defeated next to the battle counter',
+                type: 'checkbox',
+                default: true,
+                help: 'For zones with a boss cycle, shows how many battles remain and — once a few battles have been timed — an estimate of when the boss will be defeated and you are free to start another action',
+            },
             combatSummary: {
                 id: 'combatSummary',
                 label: 'Combat Summary: Add rate stats to Battle Info panel',

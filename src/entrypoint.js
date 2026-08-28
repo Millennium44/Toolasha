@@ -1140,6 +1140,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'combatBossEta',
+            name: 'Combat Boss ETA',
+            category: 'Combat',
+            module: Combat.combatBossEta,
+            async: false,
+        },
+        {
             key: 'combatSummary',
             name: 'Combat Summary',
             category: 'Combat',
