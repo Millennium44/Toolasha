@@ -6,6 +6,18 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The overlay stops jumbling
+
+The overlay's layout system was reworked end to end. Each built-in preset now materializes a designed two-column grid against the panel's real width — aligned rows, logical grouping, no truncated names — and switching to a preset now deterministically installs exactly its tiles and coordinates, including switching OFF tiles the preset doesn't name (previously a legacy layout's extras stayed on and got corner-packed underneath). New tiles flow to a corner of the existing arrangement instead of the first 10px sliver that fits; placements persist instead of reshuffling as tiles come and go; Autogrid packs real columns sized to the median tile; empty tiles compact to a thin named strip instead of leaving a hole or a tall blank band, and lines close up to what their tiles actually drew (hand-arranged layouts are left alone). Paired tiles align exactly, and a clipped character name says itself in full on hover. Verified live: preset switch, reset, and autogrid each produce a clean grid.
+
+### Dropdowns are readable when open
+
+Every select the script injects (40 of them) now styles its options with an explicit dark background and light text, so Firefox's native white dropdown popup can no longer render them white-on-white.
+
+### Enhancement Tracker header and resizing
+
+The session indicator "(N/M)" gets its own line under the title instead of being crushed to "(2" by the control buttons, and the panel is now resizable from its bottom-right corner — the size persists, and collapse/expand remembers it.
+
 ### Pin items in the Enhance Item picker
 
 The alchemy picker's pin ability comes to Enhancing: hover a tile, pin it to the front of the grid. Pins persist per character and survive the panel remounting; the pin logic is now shared between both pickers. Toggleable.
