@@ -156,6 +156,7 @@ const {
     houseUpgradeCost,
     houseChoices,
     houseRoomLevels,
+    default: equipmentSavings,
 } = await import('./equipment-savings-row.js');
 const { flushSavingsWrites } = await import('../../utils/equipment-savings.js');
 
@@ -275,6 +276,35 @@ describe('costing a target', () => {
         const [target] = watchedTargets();
         expect(target.cost).toBeNull();
         expect(target.affordable).toBe(false);
+    });
+});
+
+describe('cleanup on a character switch', () => {
+    test('empties targets and goals synchronously, before reload() has had a chance to run', async () => {
+        // The overlay panel re-initializes and starts redrawing on its 1s
+        // timer as soon as character_switching fires — well before this
+        // feature's own reload() (bound to character_initialized /
+        // character_switched) finishes its async read of the new
+        // character's savings record. Without a synchronous reset here, the
+        // equipmentWatch tile would show the outgoing character's gear
+        // target (or ability/house goal) under the incoming character's
+        // name for that gap.
+        watchTarget('/items/holy_sword');
+        await watchAbility('/abilities/fierce_aura', 46);
+        await watchHouse('/house_rooms/mystical_study', 5);
+        expect(watchedTargets().length).toBeGreaterThan(0);
+        expect(watchedAbilityGoals().length).toBeGreaterThan(0);
+        expect(watchedHouseGoals().length).toBeGreaterThan(0);
+
+        equipmentSavings.cleanup();
+
+        expect(watchedTargets()).toEqual([]);
+        expect(watchedAbilityGoals()).toEqual([]);
+        expect(watchedHouseGoals()).toEqual([]);
+        const plan = everything();
+        expect(plan.targets).toEqual([]);
+        expect(plan.abilities).toEqual([]);
+        expect(plan.houses).toEqual([]);
     });
 });
 

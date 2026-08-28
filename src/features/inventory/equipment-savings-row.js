@@ -395,7 +395,14 @@ export function selectTarget(itemHrid) {
     persist();
 }
 
-/** Forget everything, for a test that must not inherit the last one */
+/**
+ * Forget everything.
+ *
+ * Originally test-only, so a test would not inherit the last one's state; also
+ * called from `cleanup()` below so a character switch cannot leave the
+ * equipmentWatch tile showing the outgoing character's target under the
+ * incoming character's name.
+ */
 export function resetEquipmentSavings() {
     editing.itemHrid = '';
     editing.enhancementLevel = 0;
@@ -3479,6 +3486,17 @@ export default {
         detachMenuObserver?.();
         detachMenuObserver = null;
         document.querySelectorAll(`.${MENU_BUTTON_CLASS}`).forEach((button) => button.remove());
+        // `state` (and the ability/house goal maps behind `abilityGoals()` and
+        // `houseGoals()`) are module-scope and outlive a character switch —
+        // the overlay panel re-initializes and starts redrawing on its 1s
+        // timer before `reload()` (fired from
+        // character_initialized/character_switched) has finished its async
+        // read. Left as-is, the equipmentWatch tile shows the outgoing
+        // character's savings target under the incoming character's name
+        // until that read lands. `resetEquipmentSavings()` was previously
+        // test-only; calling it here clears everything synchronously, the
+        // same shape as watchlist's and treasure-tracker's resets.
+        resetEquipmentSavings();
     },
 };
 
