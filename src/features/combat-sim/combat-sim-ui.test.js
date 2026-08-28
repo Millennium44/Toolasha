@@ -785,6 +785,33 @@ describe('the panel', () => {
         expect(container.scrollTop).toBe(240);
     });
 
+    test('the remembered-run banner Clear button forgets the saved run and removes itself', async () => {
+        ui._restoredUpgradeAt = Date.now();
+        ui._restoredUpgradeMeta = { characterName: 'Millennium44', zoneName: null };
+        ui._renderUpgradeResults({
+            baseline: BASELINE,
+            results: [row('Cheap ring', { slot: '/equipment_types/ring' })],
+            food: null,
+        });
+
+        const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+        const clearBtn = container.querySelector('[data-clear-remembered-upgrade]');
+        expect(clearBtn).toBeTruthy();
+        expect(container.textContent).toContain('Showing results remembered from');
+
+        clearBtn.click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(ui._restoredUpgradeAt).toBeNull();
+        expect(ui._restoredUpgradeMeta).toBeNull();
+        expect(container.querySelector('[data-clear-remembered-upgrade]')).toBeNull();
+        expect(container.textContent).not.toContain('Showing results remembered from');
+        // The table itself is untouched — Clear forgets the saved copy, not
+        // what is already on screen
+        expect(container.textContent).toContain('Cheap ring');
+    });
+
     test('the seek table exports the zone and tier as their own columns', () => {
         const rows = [
             {

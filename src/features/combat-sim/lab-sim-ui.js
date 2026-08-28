@@ -85,7 +85,7 @@ import {
 } from '../../utils/marketplace-tabs.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
-import { saveUpgradeResults, loadUpgradeResults } from './upgrade-results-store.js';
+import { saveUpgradeResults, loadUpgradeResults, clearUpgradeResults } from './upgrade-results-store.js';
 import { formatWithSeparator, formatKMB, parseKMB } from '../../utils/formatters.js';
 import { createEtaTracker } from '../../utils/progress-eta.js';
 import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
@@ -4074,9 +4074,14 @@ class LabSimUI {
         // No zone half here - the lab is the zone
         const who = meta?.characterName ? escapeHtmlAttribute(meta.characterName) : null;
         return (
-            `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; ` +
+            `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; display:flex; ` +
+            `align-items:center; justify-content:space-between; gap:8px; ` +
             `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
-            `Showing results remembered from ${when}${who ? ` — ${who}` : ''}. Run a new analysis to refresh them.</div>`
+            `<span>Showing results remembered from ${when}${who ? ` — ${who}` : ''}. Run a new analysis to refresh them.</span>` +
+            `<button data-clear-remembered-upgrade title="Forget these remembered results. Does not affect a running analysis." ` +
+            `style="flex:0 0 auto; background:transparent; color:#9ab; border:1px solid rgba(120,150,190,0.4); ` +
+            `border-radius:3px; padding:1px 6px; font-size:10px; cursor:pointer; font-family:inherit;">Clear</button>` +
+            `</div>`
         );
     }
 
@@ -4330,6 +4335,19 @@ class LabSimUI {
             // Re-wired on every render: a sort rebuilds the table, and buttons
             // wired to the elements it threw away do nothing at all
             combatSimUI.wireUpgradeRowActions(container, 'LabSimUI');
+
+            // Forgets the saved run only — the table on screen came from this
+            // render call and stays right there
+            const clearBtn = container.querySelector('[data-clear-remembered-upgrade]');
+            if (clearBtn) {
+                clearBtn.addEventListener('click', async () => {
+                    clearBtn.disabled = true;
+                    await clearUpgradeResults(LAB_UPGRADE_RESULTS_KEY);
+                    this._restoredUpgradeAt = null;
+                    this._restoredUpgradeMeta = null;
+                    clearBtn.closest('div')?.remove();
+                });
+            }
         };
 
         renderAll();

@@ -18,7 +18,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { makeDraggable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
-import { saveUpgradeResults, loadUpgradeResults } from './upgrade-results-store.js';
+import { saveUpgradeResults, loadUpgradeResults, clearUpgradeResults } from './upgrade-results-store.js';
 import { readScoped, writeScoped } from '../../utils/character-key.js';
 import {
     ALL_ZONES_SNAPSHOT_KEY,
@@ -7967,9 +7967,14 @@ class CombatSimUI {
             : null;
         const who = [meta?.characterName, zone].filter(Boolean).map(escapeAttribute).join(', ');
         return (
-            `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; ` +
+            `<div style="margin:0 0 8px; padding:5px 8px; font-size:11px; color:#9ab; display:flex; ` +
+            `align-items:center; justify-content:space-between; gap:8px; ` +
             `background:rgba(120,150,190,0.10); border:1px solid rgba(120,150,190,0.25); border-radius:5px;">` +
-            `Showing results remembered from ${when}${who ? ` — ${who}` : ''}. Run a new analysis to refresh them.</div>`
+            `<span>Showing results remembered from ${when}${who ? ` — ${who}` : ''}. Run a new analysis to refresh them.</span>` +
+            `<button data-clear-remembered-upgrade title="Forget these remembered results. Does not affect a running analysis." ` +
+            `style="flex:0 0 auto; background:transparent; color:#9ab; border:1px solid rgba(120,150,190,0.4); ` +
+            `border-radius:3px; padding:1px 6px; font-size:10px; cursor:pointer; font-family:inherit;">Clear</button>` +
+            `</div>`
         );
     }
 
@@ -8061,6 +8066,20 @@ class CombatSimUI {
         wireSort('data-sort-key', '_upgradeSort');
         wireSort('data-level-sort-key', '_upgradeLevelSort');
         wireSort('data-unpriced-sort-key', '_unpricedSort');
+
+        // Forgets the saved run only — the table on screen came from this
+        // render call and stays right there; there is simply nothing left to
+        // restore on the next reload.
+        const clearBtn = container.querySelector('[data-clear-remembered-upgrade]');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', async () => {
+                clearBtn.disabled = true;
+                await clearUpgradeResults(UPGRADE_RESULTS_KEY);
+                this._restoredUpgradeAt = null;
+                this._restoredUpgradeMeta = null;
+                clearBtn.closest('div')?.remove();
+            });
+        }
         this._wireUpgradeColumnMenu(container);
         this._wireUpgradeBudget(container);
         wireUpgradeRowActions(container);

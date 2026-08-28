@@ -14,7 +14,8 @@
  */
 
 import config from '../../core/config.js';
-import { readScoped, writeScoped } from '../../utils/character-key.js';
+import storage from '../../core/storage.js';
+import { characterKey, readScoped, writeScoped } from '../../utils/character-key.js';
 
 const STORE = 'combatExport';
 const SETTING = 'combatSim_rememberUpgradeResults';
@@ -57,5 +58,20 @@ export async function loadUpgradeResults(key) {
     } catch (error) {
         console.error('[UpgradeResultsStore] Loading upgrade results failed:', error);
         return null;
+    }
+}
+
+/**
+ * Forget this character's remembered upgrade analysis, so the panel opens
+ * clean instead of restoring an old run. Reversible only by running Analyze
+ * again — there is no undo, so callers should ask before clearing.
+ * @param {string} key - Unscoped storage key (distinct per sim)
+ * @returns {Promise<void>}
+ */
+export async function clearUpgradeResults(key) {
+    try {
+        await storage.delete(characterKey(key), STORE);
+    } catch (error) {
+        console.error('[UpgradeResultsStore] Clearing upgrade results failed:', error);
     }
 }

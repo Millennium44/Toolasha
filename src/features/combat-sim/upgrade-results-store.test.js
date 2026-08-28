@@ -10,6 +10,7 @@ vi.mock('../../core/config.js', () => ({
 
 const store = vi.hoisted(() => ({ data: {} }));
 vi.mock('../../utils/character-key.js', () => ({
+    characterKey: (base) => `${base}_char1`,
     writeScoped: vi.fn(async (key, value) => {
         store.data[key] = value;
         return true;
@@ -17,7 +18,21 @@ vi.mock('../../utils/character-key.js', () => ({
     readScoped: vi.fn(async (key, _store, def = null) => (key in store.data ? store.data[key] : def)),
 }));
 
-import { saveUpgradeResults, loadUpgradeResults, rememberUpgradeResultsEnabled } from './upgrade-results-store.js';
+vi.mock('../../core/storage.js', () => ({
+    default: {
+        delete: vi.fn(async (key) => {
+            delete store.data[key];
+            return true;
+        }),
+    },
+}));
+
+import {
+    saveUpgradeResults,
+    loadUpgradeResults,
+    clearUpgradeResults,
+    rememberUpgradeResultsEnabled,
+} from './upgrade-results-store.js';
 
 const KEY = 'combatSimUpgradeResults';
 const sampleResults = () => ({ baseline: { dps: 1 }, results: [{ candidate: { type: 'tier' }, cost: 5 }] });
@@ -79,5 +94,24 @@ describe('upgrade-results-store', () => {
         expect(rememberUpgradeResultsEnabled()).toBe(true);
         settings.enabled = false;
         expect(rememberUpgradeResultsEnabled()).toBe(false);
+    });
+
+    test("clearUpgradeResults deletes this character's scoped key", async () => {
+        store.data[`${KEY}_char1`] = { data: sampleResults(), savedAt: 1 };
+        await clearUpgradeResults(KEY);
+        expect(store.data[`${KEY}_char1`]).toBeUndefined();
+    });
+
+    test("clearUpgradeResults leaves the other sim's key untouched", async () => {
+        store.data[`${KEY}_char1`] = { data: sampleResults(), savedAt: 1 };
+        store.data['labSimUpgradeResults_char1'] = { data: sampleResults(), savedAt: 1 };
+        await clearUpgradeResults(KEY);
+        expect(store.data['labSimUpgradeResults_char1']).toBeTruthy();
+    });
+
+    test('clearUpgradeResults swallows a storage failure rather than throwing', async () => {
+        const storageModule = await import('../../core/storage.js');
+        storageModule.default.delete.mockRejectedValueOnce(new Error('boom'));
+        await expect(clearUpgradeResults(KEY)).resolves.toBeUndefined();
     });
 });

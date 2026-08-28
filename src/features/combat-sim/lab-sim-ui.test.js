@@ -70,6 +70,10 @@ vi.mock('../../core/storage.js', () => ({
         set: async (key, value) => {
             storage.written[key] = value;
         },
+        delete: async (key) => {
+            delete storage.written[key];
+            return true;
+        },
     },
 }));
 
@@ -1323,6 +1327,28 @@ describe('the upgrade table reads like the combat sim’s', () => {
 
         const costCell = container.querySelector('tr[data-gold-row="0"] td:nth-child(2)');
         expect(costCell.getAttribute('style')).toContain('white-space:nowrap');
+    });
+
+    test('the remembered-run banner Clear button forgets the saved run and removes itself', async () => {
+        ui._restoredUpgradeAt = Date.now();
+        ui._restoredUpgradeMeta = { characterName: 'Millennium44' };
+        ui._renderUpgradeResults(analysis(), container);
+
+        const clearBtn = container.querySelector('[data-clear-remembered-upgrade]');
+        expect(clearBtn).toBeTruthy();
+        expect(container.textContent).toContain('Showing results remembered from');
+
+        clearBtn.click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(ui._restoredUpgradeAt).toBeNull();
+        expect(ui._restoredUpgradeMeta).toBeNull();
+        expect(container.querySelector('[data-clear-remembered-upgrade]')).toBeNull();
+        expect(container.textContent).not.toContain('Showing results remembered from');
+        // The table itself is untouched — Clear forgets the saved copy, not
+        // what is already on screen
+        expect(container.textContent).toContain('Fireball');
     });
 });
 
