@@ -58,7 +58,7 @@ class ItemCountDisplay {
      */
     setupInventoryListener() {
         let debounceTimer = null;
-        this.itemsUpdatedHandler = () => {
+        const scheduleUpdate = () => {
             if (debounceTimer) clearTimeout(debounceTimer);
             debounceTimer = setTimeout(() => {
                 const container = document.querySelector('[class*="MarketplacePanel_marketItems"]');
@@ -67,7 +67,27 @@ class ItemCountDisplay {
                 }
             }, 250);
         };
+        this.itemsUpdatedHandler = scheduleUpdate;
         dataManager.on('items_updated', this.itemsUpdatedHandler);
+
+        // The marketplace panel is not tied to any one character, so a browser
+        // running several characters (1 main + 3 ironcow, say) that keeps it
+        // open across a character switch never gets a childList mutation or an
+        // 'items_updated' out of the switch itself — the container is already
+        // there, and `character_switched` fires before the new character's
+        // inventory has even loaded. Without this, the tile counts kept
+        // showing the previous character's inventory until some unrelated
+        // items_updated happened to arrive for the new one. `character_initialized`
+        // fires once the new character's data (characterItems included) is in.
+        this.characterInitializedHandler = scheduleUpdate;
+        dataManager.on('character_initialized', this.characterInitializedHandler);
+
+        this._clearInventoryDebounce = () => {
+            if (debounceTimer) {
+                clearTimeout(debounceTimer);
+                debounceTimer = null;
+            }
+        };
     }
 
     /**
@@ -187,6 +207,16 @@ class ItemCountDisplay {
             if (this.itemsUpdatedHandler) {
                 dataManager.off('items_updated', this.itemsUpdatedHandler);
                 this.itemsUpdatedHandler = null;
+            }
+
+            if (this.characterInitializedHandler) {
+                dataManager.off('character_initialized', this.characterInitializedHandler);
+                this.characterInitializedHandler = null;
+            }
+
+            if (this._clearInventoryDebounce) {
+                this._clearInventoryDebounce();
+                this._clearInventoryDebounce = null;
             }
 
             // Remove all injected count displays and reset opacity
