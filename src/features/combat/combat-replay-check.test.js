@@ -29,6 +29,8 @@ const game = vi.hoisted(() => ({
     zone: { zoneHrid: '/actions/combat/fly', difficultyTier: 0 },
     lastRun: null,
     simResult: {},
+    /** data-manager event → handlers, so a test can fire a character switch */
+    characterHandlers: new Map(),
 }));
 
 /** Storage, as a map, with the quota switch the recorders stand down on */
@@ -69,8 +71,18 @@ vi.mock('../../core/data-manager.js', () => ({
         // The panel's draw reaches storage through the character key
         getCurrentCharacterId: () => 'char1',
         getCurrentCharacterGameMode: () => 'standard',
-        on: () => {},
-        off: () => {},
+        // Captured so a test can fire a character switch at whatever the
+        // module subscribed at import time
+        on: (event, handler) => {
+            if (!game.characterHandlers.has(event)) game.characterHandlers.set(event, []);
+            game.characterHandlers.get(event).push(handler);
+        },
+        off: (event, handler) => {
+            game.characterHandlers.set(
+                event,
+                (game.characterHandlers.get(event) || []).filter((entry) => entry !== handler)
+            );
+        },
     },
 }));
 vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => {} } }));
@@ -170,6 +182,9 @@ function loadout({ weapon = '/items/sword', enhancement = 5, attack = 90, abilit
 
 /** Let the awaits inside a fire-and-forget handler settle */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** Fire one data-manager event at whatever the module subscribed at import time */
+const emitCharacter = (event, data) => (game.characterHandlers.get(event) || []).forEach((handler) => handler(data));
 
 beforeEach(() => {
     store.data.clear();
@@ -1115,6 +1130,44 @@ describe('surviving a refresh', () => {
         await settle();
 
         expect(store.data.get(CHECKPOINT_KEY)).toBe(null);
+    });
+});
+
+/**
+ * This module lives outside the feature registry — it starts lazily from the
+ * overlay row's render rather than an `initialize()` — so nothing calls
+ * `disable()` for it except a `character_switching` handler registered at
+ * module scope for exactly this. Without it, `ensureWatching()`'s own guard
+ * (`if (this.watching) return`) meant the second character in a session never
+ * got a fresh watch at all: the first character's observations, history and
+ * comparison kept being read as the second's, main and ironcow alts alike.
+ */
+describe('a character switch', () => {
+    test('stops watching, so the arriving character gets a fresh ensureWatching', async () => {
+        replayCheck.ensureWatching();
+        await settle();
+        expect(replayCheck.watching).toBe(true);
+
+        emitCharacter('character_switching', {});
+
+        expect(replayCheck.watching).toBe(false);
+    });
+
+    test('clears the departing character’s observations rather than carrying them into the next', async () => {
+        replayCheck.ensureWatching();
+        await settle();
+        replayCheck.remember(observeRecording(recording, { zoneHrid: '/actions/combat/fly', recordedAt: 1_000 }));
+        expect(replayCheck.observations).toHaveLength(1);
+
+        emitCharacter('character_switching', {});
+
+        expect(replayCheck.observations).toHaveLength(0);
+
+        // And the arriving character's own ensureWatching (from its session
+        // start, or from opening the panel) is a real re-watch rather than a
+        // no-op against the stale `watching` flag
+        replayCheck.ensureWatching();
+        expect(replayCheck.watching).toBe(true);
     });
 });
 

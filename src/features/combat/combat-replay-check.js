@@ -2156,6 +2156,17 @@ setNoiseProvider((file) => replayCheck.liveMarginPct(file));
 // hidden by default may be never.
 onSessionStart(() => replayCheck.ensureWatching());
 
+// `disable()`'s own comment describes ensureWatching() as "how a character
+// switch arrives here", but nothing actually called disable() on a switch —
+// this module lives outside the feature registry (it starts lazily from the
+// overlay row's render, not an initialize()), so no character_switching
+// handler ever ran it. `ensureWatching()` early-returns once `watching` is
+// true, so without this, `watching` stayed true across every switch and the
+// arriving character's session start (above) was a no-op: the previous
+// character's observations, history, comparison and Sim Accuracy record
+// target kept being read as this one's, main and ironcow alts alike.
+dataManager.on?.('character_switching', () => replayCheck.disable());
+
 /**
  * The comparison table.
  *
