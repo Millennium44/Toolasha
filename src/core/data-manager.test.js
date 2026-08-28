@@ -92,6 +92,7 @@ function resetCharacter(dataManager) {
     dataManager.guildShrineHydrated = false;
     dataManager.guildShrineHydration = null;
     dataManager.guildShrineGuildId = null;
+    dataManager.activeSocket = null;
 }
 
 describe('DataManager', () => {
@@ -996,5 +997,201 @@ describe('rapid character switches', () => {
             dataManager.off('character_switching', onSwitching);
             vi.useRealTimers();
         }
+    });
+});
+
+/**
+ * The old character's socket, still delivering after the switch.
+ *
+ * Switching character does not swap one connection for another cleanly: the
+ * departing character's socket is open, and still sending, while the arriving
+ * character's socket delivers its opening state. Nothing in an `items_updated` or
+ * a `skills_updated` says whose it is, so before ownership was tracked those late
+ * messages were applied to the arriving character as though they were theirs — a
+ * misattribution that is not visible on screen and does not go away until the
+ * next full init.
+ */
+describe('socket ownership across a character switch', () => {
+    /** Two connections that are distinguishable and nothing else. */
+    const socketA = { url: 'wss://api.milkywayidle.com/ws', id: 'A' };
+    const socketB = { url: 'wss://api.milkywayidle.com/ws', id: 'B' };
+
+    /**
+     * Log in as one character on one socket.
+     * @param {Object} character - `{id, name}`
+     * @param {Object} socket - The socket the init arrived on
+     * @returns {Promise<void>}
+     */
+    async function loginOn(character, socket) {
+        await webSocketHandlers.get('init_character_data')(initPayload({ character }), { socket });
+    }
+
+    test('a late update from the old socket is rejected by every character-scoped handler', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+        dataManager.lastCharacterSwitchTime = 0;
+
+        await loginOn({ id: 'char-1', name: 'One' }, socketA);
+        dataManager.lastCharacterSwitchTime = 0;
+        await loginOn({ id: 'char-2', name: 'Two' }, socketB);
+
+        const stale = { socket: socketA };
+
+        // Inventory: char-1's last gather, arriving after char-2 is live
+        dataManager.characterItems = [];
+        webSocketHandlers.get('items_updated')(
+            {
+                endCharacterItems: [
+                    {
+                        id: 'i-1',
+                        itemHrid: '/items/coin',
+                        count: 999,
+                        itemLocationHrid: '/item_locations/inventory',
+                    },
+                ],
+            },
+            stale
+        );
+        expect(dataManager.characterItems).toEqual([]);
+
+        // Skills: char-1's levels would otherwise overwrite char-2's wholesale
+        dataManager.characterSkills = [{ skillHrid: '/skills/milking', level: 10 }];
+        webSocketHandlers.get('skills_updated')(
+            { characterSkills: [{ skillHrid: '/skills/milking', level: 99 }] },
+            stale
+        );
+        expect(dataManager.characterSkills).toEqual([{ skillHrid: '/skills/milking', level: 10 }]);
+
+        // The action queue, which drives every ETA on screen
+        dataManager.characterActions = [];
+        webSocketHandlers.get('actions_updated')(
+            { endCharacterActions: [{ id: 'a-1', isDone: false, ordinal: 1 }] },
+            stale
+        );
+        expect(dataManager.characterActions).toEqual([]);
+
+        // Quests, character info and settings, none of which name a character
+        dataManager.characterQuests = [];
+        webSocketHandlers.get('quests_updated')(
+            { endCharacterQuests: [{ id: 'q-1', status: '/quest_status/active' }] },
+            stale
+        );
+        expect(dataManager.characterQuests).toEqual([]);
+
+        dataManager.characterData = { characterInfo: { taskSlots: 1 }, characterSetting: { crate: 'none' } };
+        webSocketHandlers.get('character_info_updated')({ characterInfo: { taskSlots: 8 } }, stale);
+        webSocketHandlers.get('setting_updated')({ characterSetting: { crate: 'all' } }, stale);
+        expect(dataManager.characterData.characterInfo).toEqual({ taskSlots: 1 });
+        expect(dataManager.characterData.characterSetting).toEqual({ crate: 'none' });
+
+        // And the combat baseline the sim exports
+        dataManager.battleData = null;
+        webSocketHandlers.get('new_battle')({ combatMonsterHrid: '/monsters/abyssal_imp' }, stale);
+        expect(dataManager.battleData).toBeNull();
+    });
+
+    test('the new socket owns the character, and its own messages are applied', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+        dataManager.lastCharacterSwitchTime = 0;
+
+        await loginOn({ id: 'char-1', name: 'One' }, socketA);
+        dataManager.lastCharacterSwitchTime = 0;
+        await loginOn({ id: 'char-2', name: 'Two' }, socketB);
+
+        dataManager.characterSkills = [{ skillHrid: '/skills/milking', level: 10 }];
+        webSocketHandlers.get('skills_updated')(
+            { characterSkills: [{ skillHrid: '/skills/milking', level: 11 }] },
+            { socket: socketB }
+        );
+
+        expect(dataManager.characterSkills).toEqual([{ skillHrid: '/skills/milking', level: 11 }]);
+    });
+
+    test('binding happens before the switch chain drains, not inside it', async () => {
+        // The init handler queues its body behind _switchChain, which suspends on a
+        // storage flush and on awaited character_switching listeners. Everything the
+        // old socket delivers during that drain would still be accepted if ownership
+        // were bound inside the handler — which is the window this closes.
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+        dataManager.lastCharacterSwitchTime = 0;
+
+        await loginOn({ id: 'char-1', name: 'One' }, socketA);
+        dataManager.lastCharacterSwitchTime = 0;
+
+        // Deliberately NOT awaited: the switch is still in flight
+        const pending = webSocketHandlers.get('init_character_data')(
+            initPayload({ character: { id: 'char-2', name: 'Two' } }),
+            { socket: socketB }
+        );
+
+        expect(dataManager.activeSocket).toBe(socketB);
+
+        dataManager.characterSkills = [{ skillHrid: '/skills/milking', level: 10 }];
+        webSocketHandlers.get('skills_updated')(
+            { characterSkills: [{ skillHrid: '/skills/milking', level: 99 }] },
+            { socket: socketA }
+        );
+        expect(dataManager.characterSkills).toEqual([{ skillHrid: '/skills/milking', level: 10 }]);
+
+        await pending;
+    });
+
+    test('a switch with no socket context unbinds rather than keeping the old owner', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+        dataManager.lastCharacterSwitchTime = 0;
+
+        await loginOn({ id: 'char-1', name: 'One' }, socketA);
+        expect(dataManager.activeSocket).toBe(socketA);
+
+        dataManager.lastCharacterSwitchTime = 0;
+        await webSocketHandlers.get('init_character_data')(initPayload({ character: { id: 'char-2', name: 'Two' } }));
+
+        // Keeping socketA bound would mean accepting exactly the messages this is
+        // here to reject. Unknown ownership is permissive, but it is not wrong.
+        expect(dataManager.activeSocket).toBeNull();
+    });
+
+    test('with no socket ever bound, handlers called without a context are accepted', async () => {
+        // The check is permissive until ownership is actually known: an install that
+        // never sees a socket behaves exactly as it did before, which is what keeps
+        // every existing test — all of which drive these handlers with the payload
+        // alone — passing unchanged
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+        dataManager.lastCharacterSwitchTime = 0;
+
+        await webSocketHandlers.get('init_character_data')(initPayload({ character: { id: 'char-1', name: 'One' } }));
+        expect(dataManager.activeSocket).toBeNull();
+
+        dataManager.characterSkills = [{ skillHrid: '/skills/milking', level: 10 }];
+        webSocketHandlers.get('skills_updated')({ characterSkills: [{ skillHrid: '/skills/milking', level: 11 }] });
+
+        expect(dataManager.characterSkills).toEqual([{ skillHrid: '/skills/milking', level: 11 }]);
+    });
+
+    test('global data is exempt: order books and community buffs come from any socket', async () => {
+        const { default: dataManager } = await import('./data-manager.js');
+        resetCharacter(dataManager);
+        dataManager.lastCharacterSwitchTime = 0;
+
+        await loginOn({ id: 'char-1', name: 'One' }, socketB);
+
+        const listener = vi.fn();
+        dataManager.on('market_item_order_books_updated', listener);
+        const payload = { marketItemOrderBooks: { itemHrid: '/items/gourmet_tea' } };
+        webSocketHandlers.get('market_item_order_books_updated')(payload, { socket: socketA });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        dataManager.off('market_item_order_books_updated', listener);
+        expect(listener).toHaveBeenCalledWith(payload);
+
+        dataManager.characterData = { communityBuffs: [{ hrid: '/community_buff_types/experience', level: 3 }] };
+        webSocketHandlers.get('community_buffs_updated')(
+            { communityBuffs: [{ hrid: '/community_buff_types/experience', level: 4 }] },
+            { socket: socketA }
+        );
+        expect(dataManager.getCommunityBuffLevel('/community_buff_types/experience')).toBe(4);
     });
 });

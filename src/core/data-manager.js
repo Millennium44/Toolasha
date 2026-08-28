@@ -98,6 +98,21 @@ class DataManager {
         this.lastCharacterSwitchTime = 0; // Prevent rapid-fire switch loops
         this._switchChain = null; // Serialises overlapping init_character_data handling
 
+        // Which WebSocket owns the character whose state these fields hold.
+        //
+        // A character switch does not swap one connection for another cleanly: the
+        // departing character's socket is still open, and still delivering, while the
+        // arriving character's socket is already sending its opening state. Nothing in
+        // an items_updated or a skills_updated says which character it is for, so a
+        // late message from the old socket used to be applied to the new character's
+        // inventory and skills as though it were theirs.
+        //
+        // Bound to whichever socket delivered the most recent init_character_data — see
+        // the handler in setupMessageHandlers, which binds it synchronously, before the
+        // work is queued. Null means "no socket has ever been seen", which is
+        // permissive: see _isFromActiveSocket.
+        this.activeSocket = null;
+
         // Event listeners
         this.eventListeners = new Map();
 
@@ -473,8 +488,18 @@ class DataManager {
         // They are queued behind one another instead; the arrival timestamp is
         // captured here so the rapid-switch guard still measures when the
         // messages showed up, not when the queue got round to them.
-        this.webSocketHook.on('init_character_data', (data) => {
+        this.webSocketHook.on('init_character_data', (data, context) => {
             const arrivedAt = Date.now();
+
+            // Bind ownership HERE, synchronously, and not inside
+            // _handleInitCharacterData. That handler runs deferred behind
+            // _switchChain — it may not start until a previous init's storage flush
+            // and awaited character_switching listeners have finished. Everything the
+            // old socket delivers during that drain would still be accepted if the
+            // binding waited for the handler to run, which is precisely the window
+            // this is meant to close.
+            this._bindActiveSocket(data, context);
+
             this._switchChain = (this._switchChain || Promise.resolve())
                 .then(() => this._handleInitCharacterData(data, arrivedAt))
                 .catch((error) => {
@@ -487,7 +512,9 @@ class DataManager {
         });
 
         // Handle actions_updated (action queue changes)
-        this.webSocketHook.on('actions_updated', (data) => {
+        this.webSocketHook.on('actions_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
             // Update action list.
             //
             // This used to rebuild the whole array once per incoming action —
@@ -519,7 +546,9 @@ class DataManager {
         });
 
         // Handle action_completed (action progress)
-        this.webSocketHook.on('action_completed', (data) => {
+        this.webSocketHook.on('action_completed', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
             const action = data.endCharacterAction;
             if (action.isDone === false) {
                 for (let i = 0; i < this.characterActions.length; i++) {
@@ -599,7 +628,9 @@ class DataManager {
         // labyrinth, which equips a loadout per room and restores on exit:
         // equipment tracked those swaps because items_updated was handled, and
         // abilities did not because this message was not.
-        this.webSocketHook.on('abilities_updated', (data) => {
+        this.webSocketHook.on('abilities_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
             if (this.applyAbilityUpdates(data.endCharacterAbilities)) {
                 this.emit('abilities_updated', data);
             }
@@ -608,7 +639,8 @@ class DataManager {
         // The Bestiary, as the Achievements tab fetches it (`get_monsters`):
         // one row per monster with its defeated count. Nothing asks for it
         // here — it arrives when the tab is opened or refreshed
-        this.webSocketHook.on('monsters_updated', (data) => {
+        this.webSocketHook.on('monsters_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
             if (!Array.isArray(data?.monsters)) return;
             this.characterMonsters = data.monsters;
             this.characterMonstersAt = Date.now();
@@ -616,7 +648,9 @@ class DataManager {
         });
 
         // Handle items_updated (inventory/equipment changes)
-        this.webSocketHook.on('items_updated', (data) => {
+        this.webSocketHook.on('items_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
             if (data.endCharacterItems) {
                 if (!this.characterItems) {
                     this.emit('items_updated', data);
@@ -649,8 +683,11 @@ class DataManager {
             this.emit('items_updated', data);
         });
 
-        // Handle market_listings_updated (market order changes)
-        this.webSocketHook.on('market_listings_updated', (data) => {
+        // Handle market_listings_updated (this character's own market orders — character-
+        // scoped, unlike the global order books below)
+        this.webSocketHook.on('market_listings_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
             if (!this.characterData || !Array.isArray(data?.endMarketListings)) {
                 return;
             }
@@ -671,13 +708,17 @@ class DataManager {
             });
         });
 
-        // Handle market_item_order_books_updated (order book updates)
+        // Handle market_item_order_books_updated (order book updates). Genuinely global
+        // market data — the same book whichever character is looking at it — so it is
+        // deliberately left unguarded by the socket-ownership check.
         this.webSocketHook.on('market_item_order_books_updated', (data) => {
             this.emit('market_item_order_books_updated', data);
         });
 
         // Handle action_type_consumable_slots_updated (when user changes tea assignments)
-        this.webSocketHook.on('action_type_consumable_slots_updated', (data) => {
+        this.webSocketHook.on('action_type_consumable_slots_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
             // Update drink slots map with new consumables
             if (data.actionTypeDrinkSlotsMap) {
                 this.updateDrinkSlotsMap(data.actionTypeDrinkSlotsMap);
@@ -687,7 +728,9 @@ class DataManager {
         });
 
         // Handle consumable_buffs_updated (when buffs expire/refresh)
-        this.webSocketHook.on('consumable_buffs_updated', (data) => {
+        this.webSocketHook.on('consumable_buffs_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
             // Buffs updated - next hover will show updated values
             this.emit('buffs_updated', data);
         });
@@ -696,6 +739,8 @@ class DataManager {
         // expiry). Without this, every community buff level reads as it was at
         // login — the tea optimizer, efficiency and profit calculators all go
         // quietly stale as the server buff moves.
+        // Server-wide buffs, the same for every character on the world — left unguarded
+        // by the socket-ownership check for the same reason as the order books.
         this.webSocketHook.on('community_buffs_updated', (data) => {
             if (this.characterData && Array.isArray(data.communityBuffs)) {
                 this.characterData.communityBuffs = data.communityBuffs;
@@ -704,7 +749,9 @@ class DataManager {
         });
 
         // Handle personal_buffs_updated (seal buffs from Labyrinth)
-        this.webSocketHook.on('personal_buffs_updated', (data) => {
+        this.webSocketHook.on('personal_buffs_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
             if (data.personalActionTypeBuffsMap) {
                 this.personalActionTypeBuffsMap = data.personalActionTypeBuffsMap;
             }
@@ -712,7 +759,9 @@ class DataManager {
         });
 
         // Handle house_rooms_updated (when user upgrades house rooms)
-        this.webSocketHook.on('house_rooms_updated', (data) => {
+        this.webSocketHook.on('house_rooms_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
             // Update house room map with new levels
             if (data.characterHouseRoomMap) {
                 this.updateHouseRoomMap(data.characterHouseRoomMap);
@@ -722,7 +771,9 @@ class DataManager {
         });
 
         // Handle skills_updated (when user gains skill levels)
-        this.webSocketHook.on('skills_updated', (data) => {
+        this.webSocketHook.on('skills_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
             // Update character skills with new levels
             if (data.characterSkills) {
                 this.characterSkills = data.characterSkills;
@@ -732,7 +783,9 @@ class DataManager {
         });
 
         // Handle new_battle (combat start - for Combat Sim export on Steam)
-        this.webSocketHook.on('new_battle', (data) => {
+        this.webSocketHook.on('new_battle', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
             // Store battle data (includes party consumables)
             this.battleData = data;
 
@@ -758,12 +811,21 @@ class DataManager {
         // them to, and usually only once the guild panel has been opened. They
         // are matched by shape rather than by message type so a rename upstream
         // cannot quietly stop the capture — the check is two property reads.
-        this.webSocketHook.on('*', (data) => {
+        // Guarded like the rest: the levels it captures are cleared on a character
+        // switch and re-read for the arriving character, so they are character-scoped
+        // state even though the guild they describe may be shared. Registered after
+        // the init handler above, and wildcards are dispatched after typed handlers,
+        // so the arriving character's own init has already bound its socket by the
+        // time this sees it.
+        this.webSocketHook.on('*', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
             this.captureGuildShrineData(data);
         });
 
         // Handle character_info_updated (task slot changes, cooldown timestamps, etc.)
-        this.webSocketHook.on('character_info_updated', (data) => {
+        this.webSocketHook.on('character_info_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
             if (this.characterData && data.characterInfo) {
                 this.characterData.characterInfo = data.characterInfo;
             }
@@ -771,7 +833,9 @@ class DataManager {
         });
 
         // Handle setting_updated (labyrinth skip thresholds, crate selection, etc.)
-        this.webSocketHook.on('setting_updated', (data) => {
+        this.webSocketHook.on('setting_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
             if (this.characterData && data.characterSetting) {
                 this.characterData.characterSetting = data.characterSetting;
             }
@@ -779,7 +843,9 @@ class DataManager {
         });
 
         // Handle quests_updated (keep characterQuests in sync mid-session)
-        this.webSocketHook.on('quests_updated', (data) => {
+        this.webSocketHook.on('quests_updated', (data, context) => {
+            if (!this._isFromActiveSocket(context)) return;
+
             if (data.endCharacterQuests && Array.isArray(data.endCharacterQuests)) {
                 for (const updatedQuest of data.endCharacterQuests) {
                     const index = this.characterQuests.findIndex((q) => q.id === updatedQuest.id);
@@ -793,6 +859,50 @@ class DataManager {
                 this.characterQuests = this.characterQuests.filter((q) => q.status !== '/quest_status/claimed');
             }
         });
+    }
+
+    /**
+     * Record which socket owns the character this init_character_data announces.
+     *
+     * Called synchronously from the init handler, before the handling itself is
+     * queued — see the call site for why the timing is the whole point.
+     *
+     * @param {Object} data - The init_character_data payload
+     * @param {{socket?: Object}|null} context - Delivery context from the WebSocket hook
+     * @private
+     */
+    _bindActiveSocket(data, context) {
+        if (context?.socket) {
+            this.activeSocket = context.socket;
+            return;
+        }
+
+        // No socket context. If the character is changing, the socket currently bound
+        // belongs to the character who is leaving, and keeping it would mean accepting
+        // exactly the messages this is here to reject — so fail closed to "unknown",
+        // which is permissive but at least not actively wrong. If the character is not
+        // changing (first login, a reconnect for the same character, or a test that
+        // drives the handler directly) there is nothing to unbind.
+        const incomingId = data?.character?.id;
+        if (incomingId && this.currentCharacterId && this.currentCharacterId !== incomingId) {
+            this.activeSocket = null;
+        }
+    }
+
+    /**
+     * Whether a character-scoped update may be applied to the current character.
+     *
+     * True unless the update is provably from a stale connection: some socket has been
+     * bound by an accepted init_character_data, and this message came from a different
+     * one. Permissive whenever no socket is bound — before the first init, and for
+     * every caller that invokes a handler without a delivery context — so this never
+     * becomes a requirement that each payload identify its own character.
+     *
+     * @param {{socket?: Object}|null} [context] - Delivery context from the WebSocket hook
+     * @returns {boolean} True when the update belongs to the active character
+     */
+    _isFromActiveSocket(context) {
+        return !this.activeSocket || context?.socket === this.activeSocket;
     }
 
     /**
