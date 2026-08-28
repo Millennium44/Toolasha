@@ -2013,7 +2013,8 @@ if (isCombatSimulatorPage()) {
                     const missing = await dualInstallGuard.checkSettingsFingerprint(
                         Core.settingsStorage.getCharacterStorageKey(),
                         await config.storedSettingIds(),
-                        Utils.scriptVersion.scriptVersion() || 'unknown'
+                        Utils.scriptVersion.scriptVersion() || 'unknown',
+                        Core.getAllSettingIds()
                     );
                     if (dualInstallClaimed || dualInstallGuard.claimLost() || missing.length > 0) warnDualInstall();
                 } catch (error) {

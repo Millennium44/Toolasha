@@ -114,9 +114,13 @@ export function claimLost() {
  * @param {string} characterKey - The settings key the map was read from
  * @param {Array<string>|null} storedIds - Ids in the stored map, or null when absent
  * @param {string} version - This build's version
+ * @param {Array<string>|null} [schemaIds] - Every id this build's schema defines. A vanished id
+ *   the CURRENT schema no longer carries was removed by this build on purpose — dev builds keep
+ *   one version string across schema changes, so without this a deliberately deleted setting
+ *   read as another script's overwrite on the next dev reload.
  * @returns {Promise<Array<string>>} The ids that went missing since the last load
  */
-export async function checkSettingsFingerprint(characterKey, storedIds, version) {
+export async function checkSettingsFingerprint(characterKey, storedIds, version, schemaIds = null) {
     if (!Array.isArray(storedIds) || storedIds.length === 0) return [];
     const key = `${FINGERPRINT_KEY}_${characterKey}`;
     let missing = [];
@@ -124,7 +128,8 @@ export async function checkSettingsFingerprint(characterKey, storedIds, version)
         const previous = await storage.getJSON(key, STORE, null);
         if (previous && previous.version === version && Array.isArray(previous.ids)) {
             const now = new Set(storedIds);
-            missing = previous.ids.filter((id) => !now.has(id));
+            const known = Array.isArray(schemaIds) ? new Set(schemaIds) : null;
+            missing = previous.ids.filter((id) => !now.has(id) && (!known || known.has(id)));
         }
         await storage.setJSON(key, { version, ids: storedIds, at: Date.now() }, STORE, true);
     } catch (error) {

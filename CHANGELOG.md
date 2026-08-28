@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The dual-install warning stops accusing the dev loader of being two scripts
+
+Removing a setting from the schema made the next dev reload trip the dual-install guard: dev builds keep one version string, so the deliberately deleted id read as another script rewriting the map. The fingerprint now also knows which ids the current build's schema defines — an id this build removed on purpose is expected to vanish, while a fork-only id the schema still carries going missing still accuses.
+
 ### Character select tells you what your other characters are doing
 
 Each populated slot on the character-select screen now shows what that character is expected to be doing and the earliest point it may need attention — the action or queue ending, materials running out, or its own offline-progress cap. Combat, Labyrinth and Enhancing are always reported as having no knowable end time rather than guessed at, and a MooPass that could expire mid-offline-period drops the estimate rather than reassuring you falsely. Ported from upstream; on by default under General → "Character select: Show activity status".

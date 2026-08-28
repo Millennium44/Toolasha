@@ -90,6 +90,19 @@ describe('the settings fingerprint', () => {
         expect(await checkSettingsFingerprint(KEY, ['a', 'b'], '3.24.0')).toEqual([]);
     });
 
+    test('a setting this build deliberately removed is not an accusation on a dev reload', async () => {
+        // Dev builds keep one version string across schema changes: the map
+        // losing an id the CURRENT schema no longer defines is the removal
+        // taking effect, not another script's overwrite
+        await checkSettingsFingerprint(KEY, ['a', 'b', 'removedByThisBuild'], '3.23.0', ['a', 'b']);
+        expect(await checkSettingsFingerprint(KEY, ['a', 'b'], '3.23.0', ['a', 'b'])).toEqual([]);
+    });
+
+    test('a vanished id the schema still carries accuses even with schema ids supplied', async () => {
+        await checkSettingsFingerprint(KEY, ['a', 'b', 'forkOnly'], '3.23.0', ['a', 'b', 'forkOnly']);
+        expect(await checkSettingsFingerprint(KEY, ['a', 'b'], '3.23.0', ['a', 'b', 'forkOnly'])).toEqual(['forkOnly']);
+    });
+
     test('an absent or empty map says nothing and records nothing', async () => {
         expect(await checkSettingsFingerprint(KEY, null, '3.23.0')).toEqual([]);
         expect(await checkSettingsFingerprint(KEY, [], '3.23.0')).toEqual([]);
