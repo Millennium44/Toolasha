@@ -80,7 +80,11 @@ export function simulateRuin({
             ruinProbability: 1,
             ruinCount: trials,
             trials,
-            ruinStepCounts: [0],
+            // Every trial is already ruined before taking an action, i.e. at step 0 — this is
+            // a count indexed by step, not a literal list, so it holds `trials` at index 0,
+            // not the number 0 (which findPeakExposureStep would then read as "no ruin ever
+            // happened" despite ruinProbability reporting 100%).
+            ruinStepCounts: [trials],
             meanStepsToRuin: 0,
             undecidedCount: 0,
         };

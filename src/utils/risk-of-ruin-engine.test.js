@@ -55,6 +55,11 @@ describe('simulateRuin', () => {
 
         expect(result.ruinProbability).toBe(1);
         expect(result.ruinCount).toBe(100);
+        // Regression: ruinStepCounts is indexed by step, so "all 100 trials ruined at step 0"
+        // must be [100] (count at index 0), not the literal [0] — which findPeakExposureStep
+        // would read as "index 0 has a count of 0", reporting no peak despite 100% ruin.
+        expect(result.ruinStepCounts).toEqual([100]);
+        expect(findPeakExposureStep(result.ruinStepCounts)).toBe(0);
     });
 
     test('is deterministic for a fixed seed', () => {

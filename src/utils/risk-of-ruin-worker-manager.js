@@ -116,7 +116,9 @@ export function runBatch(model) {
             trials: model.trials,
             totalRuinSteps: 0,
             undecidedCount: 0,
-            ruinStepCounts: [0],
+            // Indexed by step: every trial is already ruined at step 0, so index 0 holds the
+            // trial count, not the literal number 0 (see risk-of-ruin-engine.js's simulateRuin).
+            ruinStepCounts: [model.trials],
         };
     }
     const rng = createSeededRng(model.rngSeed);
@@ -221,7 +223,7 @@ function runLevelWalkTrials(model, rng) {
 
 function runBatch(model) {
     if (model.startingBalance <= 0) {
-        return { ruinCount: model.trials, trials: model.trials, totalRuinSteps: 0, undecidedCount: 0, ruinStepCounts: [0] };
+        return { ruinCount: model.trials, trials: model.trials, totalRuinSteps: 0, undecidedCount: 0, ruinStepCounts: [model.trials] };
     }
     const rng = createSeededRng(model.rngSeed);
     return model.type === 'levelWalk' ? runLevelWalkTrials(model, rng) : runFixedOutcomeTrials(model, rng);

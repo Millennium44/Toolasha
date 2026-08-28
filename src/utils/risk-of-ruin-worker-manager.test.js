@@ -111,6 +111,11 @@ describe('runBatch', () => {
         const result = runBatch({ startingBalance: 0, trials: 42, type: 'fixedOutcome' });
         expect(result.ruinCount).toBe(42);
         expect(result.trials).toBe(42);
+        // Regression: this used to be the literal [0] (a one-element array holding the number
+        // 0) instead of a step-indexed count of all 42 trials at step 0, which merges into
+        // mergeRuinChunks/findPeakExposureStep as "no ruin ever recorded" despite ruinCount
+        // reporting every trial as ruined.
+        expect(result.ruinStepCounts).toEqual([42]);
     });
 
     test('dispatches to the level-walk path for type "levelWalk"', () => {
