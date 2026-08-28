@@ -12,8 +12,10 @@ import {
     watchedChange,
     normaliseWatchlist,
     describeUpdateAge,
+    isStalePrice,
     DISPLAY_MODES,
     MAX_WATCHED,
+    STALE_PRICE_MS,
 } from './market-watchlist.js';
 
 const price = { ask: 120, bid: 100, at: 500 };
@@ -118,5 +120,28 @@ describe('describeUpdateAge', () => {
     test('older readings carry the relative age and "ago"', () => {
         expect(describeUpdateAge(now - 5 * 60_000, now)).toBe('Updated 5m ago');
         expect(describeUpdateAge(now - 2 * 3_600_000, now)).toBe('Updated 2h 0m ago');
+    });
+});
+
+describe('isStalePrice', () => {
+    const now = 1_000_000_000;
+
+    test('a price with no reading yet is stale — nothing fresher to trust', () => {
+        expect(isStalePrice(null, now)).toBe(true);
+        expect(isStalePrice(undefined, now)).toBe(true);
+        expect(isStalePrice(0, now)).toBe(true);
+    });
+
+    test('within the threshold is not stale', () => {
+        expect(isStalePrice(now - (STALE_PRICE_MS - 1), now)).toBe(false);
+    });
+
+    test('past the threshold is stale', () => {
+        expect(isStalePrice(now - (STALE_PRICE_MS + 1), now)).toBe(true);
+    });
+
+    test('a custom threshold is honored', () => {
+        expect(isStalePrice(now - 5000, now, 1000)).toBe(true);
+        expect(isStalePrice(now - 500, now, 1000)).toBe(false);
     });
 });

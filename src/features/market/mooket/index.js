@@ -44,6 +44,7 @@ import {
     watchedChange,
     normaliseWatchlist,
     describeUpdateAge,
+    isStalePrice,
 } from './market-watchlist.js';
 import { createCuratedRecord, mergeById } from '../../../utils/persisted-record.js';
 import { attachMinimize } from '../../../utils/panel-minimize.js';
@@ -566,15 +567,18 @@ class MarketHistoryPanel {
             const price = marketPriceStore.get(itemHrid, Number(level));
             const change = watchedChange(entry, price);
 
+            const stale = isStalePrice(price?.at);
+
             const chip = document.createElement('div');
             chip.style.cssText =
                 'display:inline-flex; align-items:center; gap:3px; padding:1px 3px; cursor:pointer; ' +
-                'border:1px solid #4a5a8a; border-radius:3px; background:rgba(0,0,0,0.2); white-space:nowrap;';
+                `border:1px ${stale ? 'dashed #6a6a7a' : 'solid #4a5a8a'}; border-radius:3px; ` +
+                `background:rgba(0,0,0,0.2); white-space:nowrap; opacity:${stale ? '0.6' : '1'};`;
             chip.title =
                 `${this.itemName(itemHrid)}${Number(level) > 0 ? ` +${level}` : ''}\n` +
                 `Ask ${change.ask === null ? '—' : formatWithSeparator(change.ask)} · ` +
                 `Bid ${change.bid === null ? '—' : formatWithSeparator(change.bid)}\n` +
-                `${describeUpdateAge(price?.at)}\n` +
+                `${describeUpdateAge(price?.at)}${stale ? ' — stale, treat with caution' : ''}\n` +
                 'Click to chart it, right-click to unpin';
 
             const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');

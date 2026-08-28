@@ -17,6 +17,15 @@
 import { formatRelativeTime } from '../../../utils/formatters.js';
 
 /**
+ * A reading older than this is stale enough to flag visually, not just say so
+ * in the tooltip. The pooled dataset updates on the community's own trading
+ * activity rather than a fixed clock, so a quiet item can go a while between
+ * readings without anything being wrong — ten minutes is long enough that a
+ * chip flagged this way is worth a second look before acting on it.
+ */
+export const STALE_PRICE_MS = 10 * 60 * 1000;
+
+/**
  * How much of each pinned item to show. Cycling through these is one button
  * rather than a settings page, because the right amount of detail depends on how
  * many items are pinned and that changes constantly.
@@ -123,6 +132,22 @@ export function describeUpdateAge(at, now = Date.now()) {
     if (!(at > 0)) return 'Updated —';
     const age = formatRelativeTime(now - at);
     return age === 'Just now' ? 'Updated just now' : `Updated ${age} ago`;
+}
+
+/**
+ * Whether a chip's reading is old enough to flag visually.
+ *
+ * A price never read at all (`at` unset) counts as stale too — there is
+ * nothing fresher to justify showing it as trustworthy.
+ *
+ * @param {number|null|undefined} at - When the price was last recorded (ms), or unset
+ * @param {number} [now] - Current time (ms), injectable for tests
+ * @param {number} [thresholdMs] - How old counts as stale
+ * @returns {boolean}
+ */
+export function isStalePrice(at, now = Date.now(), thresholdMs = STALE_PRICE_MS) {
+    if (!(at > 0)) return true;
+    return now - at > thresholdMs;
 }
 
 /**
