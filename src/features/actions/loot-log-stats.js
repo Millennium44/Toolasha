@@ -83,6 +83,53 @@ export function buildLootLogRows(entries, { itemInfo, actionName }) {
 }
 
 /**
+ * A loot-log entry as plain text, for the copy button on its value block.
+ *
+ * Pure, like `buildLootLogRows` — pricing and naming come in as functions, so this can be tested
+ * without a game and shares its resolution with the panel and the CSV export rather than
+ * inventing a third. Text rather than a table because the point is that it can be pasted
+ * straight into a chat message.
+ *
+ * @param {Object} logData - A loot log entry (`{startTime, endTime, actionHrid, actionCount, drops}`)
+ * @param {Object} resolve - How to read the entry
+ * @param {Function} resolve.itemInfo - `(baseHrid) => {name, askPerItem, bidPerItem}`
+ * @param {Function} resolve.actionName - `(actionHrid) => string`
+ * @param {{askProfit: number, bidProfit: number}|null} [resolve.profit] - From `calculateProfit`
+ * @returns {string}
+ */
+export function buildLootLogSummaryText(logData, { itemInfo, actionName, profit } = {}) {
+    if (!logData) return '';
+
+    const started = logData.startTime ? new Date(logData.startTime) : null;
+    const ended = logData.endTime ? new Date(logData.endTime) : null;
+    const range =
+        started && ended && !Number.isNaN(started.getTime()) && !Number.isNaN(ended.getTime())
+            ? ` (${started.toLocaleString()} – ${ended.toLocaleString()})`
+            : '';
+
+    const lines = [`${actionName(logData.actionHrid)} × ${numberFormatter(logData.actionCount || 0)}${range}`];
+
+    let askTotal = 0;
+    let bidTotal = 0;
+    for (const [hrid, count] of Object.entries(logData.drops || {})) {
+        const baseHrid = hrid.replace(/::\d+$/, '');
+        const info = itemInfo(baseHrid);
+        const askItemTotal = (info.askPerItem || 0) * count;
+        const bidItemTotal = (info.bidPerItem || 0) * count;
+        askTotal += askItemTotal;
+        bidTotal += bidItemTotal;
+        lines.push(`  ${info.name} ×${numberFormatter(count)} — ${formatKMB(askItemTotal)}/${formatKMB(bidItemTotal)}`);
+    }
+
+    lines.push(`Total: ${formatKMB(askTotal)}/${formatKMB(bidTotal)} (ask/bid)`);
+    if (profit) {
+        lines.push(`Profit: ${formatKMB(profit.askProfit)}/${formatKMB(profit.bidProfit)}`);
+    }
+
+    return lines.join('\n');
+}
+
+/**
  * Shortest run whose 24-hour extrapolation is presented as a rate rather than as
  * "what this would come to if it kept up". Ten minutes: long enough that a single
  * rare drop no longer sets the whole figure.
@@ -773,6 +820,21 @@ class LootLogStats {
 
         // Profit line (revenue after tax minus consumed inputs)
         const profit = this.calculateProfit(logData);
+
+        // A copy affordance for this one session — the same figures the panel shows, as text
+        // that pastes straight into a chat message rather than a screenshot.
+        const copyButton = document.createElement('button');
+        copyButton.className = 'mwi-loot-log-copy';
+        copyButton.textContent = '⧉';
+        copyButton.title = 'Copy this session — action, items, and totals — as text';
+        copyButton.style.cssText =
+            'margin-left: 6px; padding: 0 4px; font-size: 11px; line-height: 1.4; cursor: pointer; ' +
+            'border-radius: 3px; border: 1px solid rgba(255,255,255,0.25); background: transparent; color: rgba(232,236,245,0.7);';
+        copyButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.copyLootLogSummary(logData, profit, copyButton);
+        });
+        wrapper.appendChild(copyButton);
         if (profit) {
             const profitLine = document.createElement('div');
             profitLine.style.cssText = `text-align: right; font-weight: bold; color: ${this.getProfitColor(profit.askProfit, profit.bidProfit)};`;
@@ -870,6 +932,43 @@ class LootLogStats {
         if (!session) return null;
 
         return { session, income: gatheringLootValue(session, logData.drops) };
+    }
+
+    /**
+     * Copy one session's summary to the clipboard, flashing the button to say whether it landed.
+     * @param {Object} logData - The loot log entry the button sits next to
+     * @param {{askProfit: number, bidProfit: number}|null} profit - From `calculateProfit`
+     * @param {HTMLElement} button - The button clicked, for feedback
+     */
+    async copyLootLogSummary(logData, profit, button) {
+        const text = buildLootLogSummaryText(logData, {
+            itemInfo: (baseHrid) => this.resolveItemPricing(baseHrid),
+            actionName: (actionHrid) => this.getActionName(actionHrid),
+            profit,
+        });
+        if (!text) return;
+
+        try {
+            await navigator.clipboard.writeText(text);
+            this.flashCopyButton(button, '✓');
+        } catch (error) {
+            // A clipboard that refuses is not a reason to lose the summary
+            console.error('[LootLogStats] Copying the session summary failed:', error);
+            console.log(text);
+            this.flashCopyButton(button, '⚠');
+        }
+    }
+
+    /**
+     * @param {HTMLElement} button
+     * @param {string} text - What it should say for a moment
+     */
+    flashCopyButton(button, text) {
+        const original = button.textContent;
+        button.textContent = text;
+        setTimeout(() => {
+            if (button.isConnected) button.textContent = original;
+        }, 1200);
     }
 
     /**

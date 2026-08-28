@@ -3,7 +3,7 @@ import { describe, test, expect, vi, beforeEach } from 'vitest';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrices } from '../../utils/market-data.js';
 import expectedValueCalculator from '../market/expected-value-calculator.js';
-import { LootLogStats, buildLootLogRows, LOOT_LOG_CSV_COLUMNS } from './loot-log-stats.js';
+import { LootLogStats, buildLootLogRows, buildLootLogSummaryText, LOOT_LOG_CSV_COLUMNS } from './loot-log-stats.js';
 
 vi.mock('../../core/config.js', () => ({
     default: {
@@ -292,6 +292,57 @@ describe('buildLootLogRows, the CSV export', () => {
         for (const column of LOOT_LOG_CSV_COLUMNS) {
             expect(row).toHaveProperty(column.key);
         }
+    });
+});
+
+describe('buildLootLogSummaryText, the copy-button text', () => {
+    const resolve = {
+        itemInfo: (hrid) => {
+            if (hrid === '/items/coin') return { name: 'Coins', askPerItem: 1, bidPerItem: 1 };
+            if (hrid === '/items/log') return { name: 'Log', askPerItem: 40, bidPerItem: 30 };
+            return { name: hrid.split('/').pop(), askPerItem: 0, bidPerItem: 0 };
+        },
+        actionName: () => 'Tree',
+    };
+
+    test('an empty entry is an empty string, not a header with nothing under it', () => {
+        expect(buildLootLogSummaryText(null, resolve)).toBe('');
+    });
+
+    test('names the action, the item lines, and the running total', () => {
+        const text = buildLootLogSummaryText(
+            {
+                actionHrid: '/actions/woodcutting/tree',
+                actionCount: 100,
+                drops: { '/items/log': 10, '/items/coin': 50 },
+            },
+            resolve
+        );
+
+        expect(text).toContain('Tree × 100');
+        expect(text).toContain('Log ×10');
+        expect(text).toContain('Coins ×50');
+        // Total: 10*40+50*1 ask = 450, 10*30+50*1 bid = 350
+        expect(text).toContain('Total: 450/350');
+    });
+
+    test('a profit figure is appended when one was computed, and omitted when there was none', () => {
+        const entry = { actionHrid: '/actions/woodcutting/tree', actionCount: 1, drops: { '/items/log': 1 } };
+
+        const withProfit = buildLootLogSummaryText(entry, { ...resolve, profit: { askProfit: 12, bidProfit: -3 } });
+        expect(withProfit).toContain('Profit: 12/-3');
+
+        const withoutProfit = buildLootLogSummaryText(entry, resolve);
+        expect(withoutProfit).not.toContain('Profit:');
+    });
+
+    test('a session with no drops is still one line naming the action', () => {
+        const text = buildLootLogSummaryText(
+            { actionHrid: '/actions/woodcutting/tree', actionCount: 5, drops: {} },
+            resolve
+        );
+
+        expect(text).toBe('Tree × 5\nTotal: 0/0 (ask/bid)');
     });
 });
 
