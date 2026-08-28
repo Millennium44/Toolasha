@@ -21,8 +21,16 @@ vi.mock('../dev/health-status.js', () => ({
     refreshStorageFacts: async () => {},
 }));
 
-const { createDiagnosticsSection, buildReport, statusLine, timeAgo, buildStampFrom, allClear } =
-    await import('./diagnostics-section.js');
+const featureRegistry = (await import('../../core/feature-registry.js')).default;
+const {
+    createDiagnosticsSection,
+    buildReport,
+    statusLine,
+    timeAgo,
+    buildStampFrom,
+    allClear,
+    readEnabledFeatureNames,
+} = await import('./diagnostics-section.js');
 
 const NOW = Date.parse('2026-08-22T12:00:00Z');
 
@@ -274,6 +282,20 @@ describe('the report', () => {
         expect(element.querySelector('.toolasha-diagnostics-copy').textContent).toBe('Copied ✓');
     });
 
+    test('names the enabled features so a bug report says what was actually running', async () => {
+        const { element, open } = draw({ enabledFeatures: () => ['Command Palette', 'Net Worth'] });
+        open();
+        element.querySelector('.toolasha-diagnostics-copy').click();
+        await settle();
+        expect(copied).toContain('Enabled features (2)');
+        expect(copied).toContain('Command Palette, Net Worth');
+    });
+
+    test('buildReport omits the enabled-features block when none are given', () => {
+        const report = buildReport({ status: status(), results: null, errors: [], now: NOW });
+        expect(report).not.toContain('Enabled features');
+    });
+
     test('before the checks run it says so, and caps the errors at fifty', () => {
         const errors = Array.from({ length: 70 }, (_, i) => ({
             ts: NOW - i * 1000,
@@ -303,6 +325,32 @@ describe('helpers', () => {
         expect(buildStampFrom('3.19.0.20260822153000')).toBe('2026-08-22 15:30:00');
         expect(buildStampFrom('3.19.0')).toBeNull();
         expect(buildStampFrom(null)).toBeNull();
+    });
+
+    test('readEnabledFeatureNames names only what is on, alphabetically', () => {
+        const original = featureRegistry.getAllFeatures;
+        featureRegistry.getAllFeatures = () => [
+            { key: 'networth', name: 'Net Worth' },
+            { key: 'palette', name: 'Command Palette' },
+            { key: 'offSwitch', name: 'Off By Custom Check', customCheck: () => false },
+        ];
+        try {
+            expect(readEnabledFeatureNames()).toEqual(['Command Palette', 'Net Worth']);
+        } finally {
+            featureRegistry.getAllFeatures = original;
+        }
+    });
+
+    test('readEnabledFeatureNames does not throw when the registry cannot answer', () => {
+        const original = featureRegistry.getAllFeatures;
+        featureRegistry.getAllFeatures = () => {
+            throw new Error('not ready');
+        };
+        try {
+            expect(readEnabledFeatureNames()).toEqual([]);
+        } finally {
+            featureRegistry.getAllFeatures = original;
+        }
     });
 
     test('allClear', () => {

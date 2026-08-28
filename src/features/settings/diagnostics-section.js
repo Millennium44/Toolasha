@@ -103,6 +103,29 @@ export function readStatus() {
 }
 
 /**
+ * The enabled features' names, sorted.
+ *
+ * `readStatus` already counts them, but a bug report is more useful naming
+ * what was actually running than saying "40/52" — the count alone leaves the
+ * other person guessing which forty. Names rather than keys, because a player
+ * pasting this somewhere is not expected to know the schema's internal ids.
+ *
+ * @returns {string[]} Enabled feature names, alphabetical
+ */
+export function readEnabledFeatureNames() {
+    try {
+        const features = typeof featureRegistry.getAllFeatures === 'function' ? featureRegistry.getAllFeatures() : [];
+        return features
+            .filter(featureEnabled)
+            .map((feature) => feature.name)
+            .filter(Boolean)
+            .sort((a, b) => a.localeCompare(b));
+    } catch {
+        return [];
+    }
+}
+
+/**
  * The status as one line of text.
  * @param {ReturnType<typeof readStatus>} status - The facts
  * @param {number} errorCount - How many error entries are captured
@@ -303,16 +326,18 @@ function errorLine(entry, now) {
 }
 
 /**
- * The whole report: status line, check results, the last errors. No setting
- * values and nothing from storage — this is meant to be pasted anywhere.
+ * The whole report: status line, the enabled features by name, check results,
+ * the last errors. No setting values and nothing from storage — this is meant
+ * to be pasted anywhere.
  * @param {Object} parts - What to include
  * @param {ReturnType<typeof readStatus>} parts.status - The facts
  * @param {Object|null} parts.results - From runAllChecks, or null
  * @param {Array<Object>} parts.errors - Error-log entries, newest first
  * @param {number} [parts.now] - Now
+ * @param {string[]} [parts.enabledFeatureNames] - Names of the features currently switched on
  * @returns {string} The report
  */
-export function buildReport({ status, results, errors, now = Date.now() }) {
+export function buildReport({ status, results, errors, now = Date.now(), enabledFeatureNames = [] }) {
     const lines = [];
     lines.push('Toolasha diagnostics');
     lines.push('='.repeat(60));
@@ -320,6 +345,12 @@ export function buildReport({ status, results, errors, now = Date.now() }) {
     lines.push(`takenAt: ${new Date(now).toISOString()}`);
     lines.push(`agent: ${typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown'}`);
     lines.push('');
+    if (enabledFeatureNames.length) {
+        lines.push(`Enabled features (${enabledFeatureNames.length})`);
+        lines.push('-'.repeat(60));
+        lines.push(enabledFeatureNames.join(', '));
+        lines.push('');
+    }
     lines.push(...checkResultLines(results));
     lines.push('');
     const shown = errors.slice(0, REPORT_ERROR_LIMIT);
@@ -367,6 +398,7 @@ function button(label, onClick) {
  * @param {Object} [options.errorLog] - getEntries/clear/subscribe
  * @param {Object} [options.checks] - health/canary/schema/selectorAudit
  * @param {Function} [options.status] - Returns the status facts
+ * @param {Function} [options.enabledFeatures] - Returns the enabled features' names
  * @param {Function} [options.writeClipboard] - Puts text on the clipboard
  * @param {Function} [options.now] - The clock
  * @returns {{element: HTMLElement, open: Function, runChecks: Function, copyReport: Function, destroy: Function}}
@@ -375,6 +407,7 @@ export function createDiagnosticsSection(options = {}) {
     const errorLog = options.errorLog || defaultErrorLog;
     const checks = { ...defaultChecks(), ...(options.checks || {}) };
     const status = options.status || readStatus;
+    const enabledFeatures = options.enabledFeatures || readEnabledFeatureNames;
     const writeClipboard = options.writeClipboard || defaultWriteClipboard;
     const now = options.now || (() => Date.now());
 
@@ -562,7 +595,13 @@ export function createDiagnosticsSection(options = {}) {
     };
 
     const copyReport = async () => {
-        const text = buildReport({ status: status(), results: lastResults, errors: currentErrors(), now: now() });
+        const text = buildReport({
+            status: status(),
+            results: lastResults,
+            errors: currentErrors(),
+            now: now(),
+            enabledFeatureNames: enabledFeatures(),
+        });
         const ok = await writeClipboard(text);
         return { ok, text };
     };
