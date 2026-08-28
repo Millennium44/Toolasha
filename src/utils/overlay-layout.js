@@ -176,23 +176,42 @@ export function resolveLayout(rows, layout, width, sizeFor = null) {
     const sizes = layout?.sizes || {};
     const zooms = layout?.zoom || {};
 
-    const tiles = [];
-    for (const row of rows) {
+    const measured = rows.map((row) => {
         const given = sizes[row.key] || row.defaultSize || DEFAULT_TILE;
-        const size = sizeFor ? sizeFor(row, given) : given;
-        const saved = positions[row.key];
-        const spot = saved ? clampTile(saved, size, { width }) : findFreeSpot(tiles, size, width);
+        return { row, size: sizeFor ? sizeFor(row, given) : given, saved: positions[row.key] };
+    });
 
-        tiles.push({
-            ...row,
-            x: spot.x,
-            y: spot.y,
-            width: size.width,
-            height: size.height,
-            zoom: clampZoom(zooms[row.key] ?? row.defaultZoom ?? DEFAULT_ZOOM),
-        });
+    // Everything that knows where it goes, before anything that has to be found
+    // somewhere. In one pass this was row order, and `findFreeSpot` could only
+    // see the tiles that happened to come earlier — so a row with no saved
+    // position, sitting near the front of the order, was dropped on the origin
+    // regardless of what was already sitting there. A watch list arriving ahead
+    // of a preset's own tiles landed squarely on top of the first one.
+    const placed = [];
+    const spots = new Map();
+    for (const { row, size, saved } of measured) {
+        if (!saved) continue;
+        const spot = clampTile(saved, size, { width });
+        spots.set(row.key, spot);
+        placed.push({ ...spot, width: size.width, height: size.height });
     }
-    return tiles;
+    for (const { row, size, saved } of measured) {
+        if (saved) continue;
+        const spot = findFreeSpot(placed, size, width);
+        spots.set(row.key, spot);
+        placed.push({ ...spot, width: size.width, height: size.height });
+    }
+
+    // Handed back in the order they came, which is the order they are drawn and
+    // the order the row picker lists them in
+    return measured.map(({ row, size }) => ({
+        ...row,
+        x: spots.get(row.key).x,
+        y: spots.get(row.key).y,
+        width: size.width,
+        height: size.height,
+        zoom: clampZoom(zooms[row.key] ?? row.defaultZoom ?? DEFAULT_ZOOM),
+    }));
 }
 
 /**

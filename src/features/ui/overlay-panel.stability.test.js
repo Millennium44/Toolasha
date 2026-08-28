@@ -235,6 +235,110 @@ describe('tiles coming and going', () => {
     });
 });
 
+describe('a preset with rows switched on that it does not name', () => {
+    /**
+     * Every tile as it is actually drawn, which is the only geometry that can
+     * be seen to collide.
+     * @returns {Array<Object>} `{key, x, y, width, height}`
+     */
+    function drawnBoxes() {
+        return [...overlayPanel.tiles.entries()]
+            .filter(([, tile]) => tile.style.display !== 'none')
+            .map(([key, tile]) => ({
+                key,
+                x: Number.parseFloat(tile.style.left),
+                y: Number.parseFloat(tile.style.top),
+                width: Number.parseFloat(tile.style.width),
+                height: Number.parseFloat(tile.style.height),
+            }));
+    }
+
+    /**
+     * Give the panel a canvas the fixture below actually fits on, so what is
+     * being measured is where tiles were put rather than the squeeze.
+     * @param {number} canvas - Usable width, in pixels
+     */
+    function canvasIs(canvas) {
+        const outer = canvas + 12 + 16;
+        for (const property of ['offsetWidth', 'clientWidth']) {
+            Object.defineProperty(overlayPanel.scrollEl, property, { value: outer, configurable: true });
+        }
+        overlayPanel.lastCanvasWidth = overlayPanel._canvasWidth();
+        overlayPanel._renderBody();
+    }
+
+    /** A Skilling-preset-shaped arrangement, with three of its tiles empty */
+    function skillingWithStrays() {
+        const empty = (key, size) => ({ ...sometimes(key, size), quiet: true });
+        registry.rows = [
+            // Two rows the preset does not name, ahead of it in the order —
+            // which is where a row the saved order has never heard of ends up
+            empty('watchlist', { width: 230, height: 30 }),
+            empty('charmValue', { width: 230, height: 30 }),
+            speaking('skillLevel', { width: 230, height: 30 }),
+            speaking('timeToLevel', { width: 230, height: 30 }),
+            speaking('experiencePerHour', { width: 230, height: 30 }),
+            speaking('queueTimeLeft', { width: 230, height: 30 }),
+            empty('consumables', { width: 460, height: 80 }),
+            empty('houses', { width: 460, height: 50 }),
+        ];
+        overlayPanel.settings.visible = Object.fromEntries(registry.rows.map((row) => [row.key, true]));
+        overlayPanel.settings.order = registry.rows.map((row) => row.key);
+        // The preset's own tiles are placed; the two strays are not
+        overlayPanel.settings.positions = {
+            skillLevel: { x: 0, y: 0 },
+            timeToLevel: { x: 230, y: 0 },
+            experiencePerHour: { x: 0, y: 30 },
+            queueTimeLeft: { x: 230, y: 30 },
+            consumables: { x: 0, y: 60 },
+            houses: { x: 0, y: 140 },
+        };
+        overlayPanel.settings.sizes = {
+            skillLevel: { width: 230, height: 30 },
+            timeToLevel: { width: 230, height: 30 },
+            experiencePerHour: { width: 230, height: 30 },
+            queueTimeLeft: { width: 230, height: 30 },
+            consumables: { width: 460, height: 80 },
+            houses: { width: 460, height: 50 },
+        };
+    }
+
+    test('draws nothing on top of anything else, locked or unlocked', () => {
+        // Reported live: the watch list and the houses tile drew over each
+        // other, their placeholder lines colliding, in both states
+        skillingWithStrays();
+        overlayPanel.settings.locked = true;
+        overlayPanel.show();
+        canvasIs(460);
+
+        expect(drawnBoxes().length).toBe(registry.rows.length);
+        expect(anyOverlap(drawnBoxes())).toBe(false);
+
+        // Arranging shows every tile at full size, which is the state the
+        // collision was plainest in
+        overlayPanel.settings.locked = false;
+        overlayPanel._renderBody();
+        expect(anyOverlap(drawnBoxes())).toBe(false);
+
+        overlayPanel.settings.locked = true;
+        overlayPanel._renderBody();
+        expect(anyOverlap(drawnBoxes())).toBe(false);
+    });
+
+    test('and the preset keeps its own tiles exactly where it put them', () => {
+        skillingWithStrays();
+        overlayPanel.show();
+        canvasIs(460);
+
+        const at = Object.fromEntries(drawnBoxes().map((tile) => [tile.key, tile]));
+        expect(at.skillLevel.x).toBe(0);
+        expect(at.timeToLevel.x).toBe(230);
+        // The strays went below the arrangement rather than into it
+        expect(at.watchlist.y).toBeGreaterThanOrEqual(at.houses.y);
+        expect(at.charmValue.y).toBeGreaterThanOrEqual(at.houses.y);
+    });
+});
+
 describe('lines settling to what they drew', () => {
     /**
      * Where each tile is actually drawn, as the panel styled it.

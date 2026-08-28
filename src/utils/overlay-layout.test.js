@@ -152,6 +152,39 @@ describe('resolveLayout', () => {
         expect(second.y).toBe(0);
     });
 
+    test('a row with nowhere to go does not land on a row that has somewhere', () => {
+        // Reported live: the watch list, which the Skilling preset does not name
+        // and which therefore had no saved position, drew on top of the first
+        // tile of the preset. `findFreeSpot` could only see the tiles placed
+        // before it in row order, and this one came first.
+        const mixed = [{ key: 'newcomer' }, { key: 'a' }, { key: 'b' }];
+        const layout = {
+            positions: { a: { x: 0, y: 0 }, b: { x: 160, y: 0 } },
+            sizes: { a: { width: 160, height: 30 }, b: { width: 160, height: 30 } },
+        };
+
+        const tiles = resolveLayout(mixed, layout, 400);
+        for (const [first, second] of pairs(tiles)) expect(overlaps(first, second)).toBe(false);
+        // And the two that knew where they went are still exactly there
+        expect(tiles[1]).toMatchObject({ key: 'a', x: 0, y: 0 });
+        expect(tiles[2]).toMatchObject({ key: 'b', x: 160, y: 0 });
+    });
+
+    test('several rows with nowhere to go do not land on each other either', () => {
+        const many = [{ key: 'p' }, { key: 'q' }, { key: 'anchor' }, { key: 'r' }];
+        const layout = { positions: { anchor: { x: 0, y: 0 } }, sizes: { anchor: { width: 320, height: 40 } } };
+
+        const tiles = resolveLayout(many, layout, 400);
+        for (const [first, second] of pairs(tiles)) expect(overlaps(first, second)).toBe(false);
+    });
+
+    test('the rows come back in the order they went in, however they were placed', () => {
+        const mixed = [{ key: 'newcomer' }, { key: 'a' }];
+        const layout = { positions: { a: { x: 0, y: 0 } }, sizes: { a: { width: 160, height: 30 } } };
+
+        expect(resolveLayout(mixed, layout, 400).map((tile) => tile.key)).toEqual(['newcomer', 'a']);
+    });
+
     test('a row can ask for its own default size', () => {
         const wide = [{ key: 'a', defaultSize: { width: 280, height: 70 } }];
         expect(resolveLayout(wide, {}, 400)[0]).toMatchObject({ width: 280, height: 70 });
