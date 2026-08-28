@@ -100,8 +100,15 @@ vi.mock('./setting-presets.js', async (importOriginal) => {
 
 // The fork changelog is a build-time virtual module; the first-run tests never
 // render the popup, so an empty string is enough to let the import resolve. The
-// renderer tests pass their own markdown in directly.
-vi.mock('virtual:fork-changelog', () => ({ default: '' }));
+// renderer tests pass their own markdown in directly. Held in a mutable ref
+// rather than a fixed string so the "Copy changelog" test can give the popup
+// something to copy.
+const virtualChangelog = vi.hoisted(() => ({ text: '' }));
+vi.mock('virtual:fork-changelog', () => ({
+    get default() {
+        return virtualChangelog.text;
+    },
+}));
 
 // The newcomer overview is the other build-time virtual module. A distinctive
 // marker lets the popup tests tell "the overview is on screen" from "it isn't".
@@ -143,7 +150,9 @@ beforeEach(() => {
     mocks.copySucceeds = true;
     mocks.knownCount = 1;
     whatsNew._pending = null;
+    virtualChangelog.text = '';
     delete whatsNew._pickSourceCharacter; // restore the real method if a test replaced it
+    delete whatsNew._writeClipboard; // restore the real method if a test replaced it
     defineSchema();
 });
 
@@ -267,6 +276,49 @@ describe('the popup shows the overview only to newcomers', () => {
         whatsNew._buildPanel({ ...base, isNewcomer: false });
         expect(whatsNew.panel.textContent).not.toContain('overview-marker-text');
         expect(whatsNew.panel.textContent).not.toContain('Toolasha — at a glance');
+        whatsNew.close();
+    });
+});
+
+describe('the changelog copy button', () => {
+    const base = { headline: 'x', forkChanged: false, newIds: [], turnedOff: new Set(), isNewcomer: false };
+
+    test('is not offered when there is no changelog to copy', () => {
+        virtualChangelog.text = '';
+        whatsNew._buildPanel(base);
+        expect(whatsNew.panel.querySelector('.toolasha-whats-new-copy-changelog')).toBeNull();
+        whatsNew.close();
+    });
+
+    test('copies the raw changelog markdown, and reports success on the button', async () => {
+        virtualChangelog.text = '### Combat\n\n- Something changed\n';
+        let copied = null;
+        whatsNew._writeClipboard = async (text) => {
+            copied = text;
+            return true;
+        };
+
+        whatsNew._buildPanel(base);
+        const button = whatsNew.panel.querySelector('.toolasha-whats-new-copy-changelog');
+        expect(button).not.toBeNull();
+        button.click();
+        await Promise.resolve();
+
+        expect(copied).toBe('### Combat\n\n- Something changed');
+        expect(button.textContent).toBe('Copied ✓');
+        whatsNew.close();
+    });
+
+    test('says so when nothing accepted the text', async () => {
+        virtualChangelog.text = '- Something changed\n';
+        whatsNew._writeClipboard = async () => false;
+
+        whatsNew._buildPanel(base);
+        const button = whatsNew.panel.querySelector('.toolasha-whats-new-copy-changelog');
+        button.click();
+        await Promise.resolve();
+
+        expect(button.textContent).toBe('Copy failed');
         whatsNew.close();
     });
 });

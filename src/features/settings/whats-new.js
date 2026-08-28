@@ -42,6 +42,38 @@ import forkOverview from 'virtual:fork-overview';
 const STATE_KEY_PREFIX = 'whatsNew_state';
 
 /**
+ * Put text on the clipboard; the async API where it exists, a hidden textarea
+ * and `execCommand` where it does not — the same fallback the diagnostics
+ * section uses, kept local rather than shared because the two are small enough
+ * that a shared module would cost more to find than to duplicate.
+ * @param {string} text - What to copy
+ * @returns {Promise<boolean>} True when something accepted the text
+ */
+async function writeToClipboard(text) {
+    try {
+        if (navigator?.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch {
+        /* fall through to the textarea */
+    }
+    try {
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', '');
+        area.style.cssText = 'position:fixed; top:-1000px; left:-1000px; opacity:0;';
+        document.body.appendChild(area);
+        area.select();
+        const ok = document.execCommand ? document.execCommand('copy') : false;
+        area.remove();
+        return Boolean(ok);
+    } catch {
+        return false;
+    }
+}
+
+/**
  * The first-run answer that opens the character picker instead of applying a
  * preset. A sentinel rather than a preset id so `getPreset` never matches it and
  * the copy path stays distinct from "apply this bundle".
@@ -167,6 +199,18 @@ class WhatsNew {
         // reopen it after it was dismissed (kept in memory for this session,
         // persisted below so it survives a refresh).
         this._shownData = null;
+    }
+
+    /**
+     * Put text on the clipboard. A method rather than a bare module call so a
+     * test can replace it, the same way `_pickSourceCharacter` is replaced
+     * elsewhere in this file.
+     * @param {string} text - What to copy
+     * @returns {Promise<boolean>} True when something accepted the text
+     * @private
+     */
+    _writeClipboard(text) {
+        return writeToClipboard(text);
     }
 
     /** @private */
@@ -821,12 +865,41 @@ class WhatsNew {
             const log = document.createElement('div');
             const heading = document.createElement('div');
             Object.assign(heading.style, {
-                fontWeight: '700',
-                color: COLORS.accent,
+                display: 'flex',
+                alignItems: 'baseline',
+                justifyContent: 'space-between',
+                gap: '8px',
                 margin: '10px 0 6px',
-                fontSize: '14px',
             });
-            heading.textContent = 'Changelog';
+            const headingLabel = document.createElement('span');
+            Object.assign(headingLabel.style, { fontWeight: '700', color: COLORS.accent, fontSize: '14px' });
+            headingLabel.textContent = 'Changelog';
+            heading.appendChild(headingLabel);
+
+            // A plain-text copy, for pasting into a bug report or a message to
+            // someone who has not seen this build's notes — the markdown box
+            // above is for reading, not for lifting text back out of.
+            const copyChangelog = document.createElement('button');
+            copyChangelog.type = 'button';
+            copyChangelog.className = 'toolasha-whats-new-copy-changelog';
+            copyChangelog.textContent = 'Copy changelog';
+            Object.assign(copyChangelog.style, {
+                background: 'rgba(96, 165, 250, 0.1)',
+                border: `1px solid ${COLORS.border}`,
+                borderRadius: '4px',
+                color: COLORS.accent,
+                fontSize: '11px',
+                padding: '2px 8px',
+                cursor: 'pointer',
+            });
+            copyChangelog.addEventListener('click', async () => {
+                const ok = await this._writeClipboard(forkChangelog.trim());
+                copyChangelog.textContent = ok ? 'Copied ✓' : 'Copy failed';
+                setTimeout(() => {
+                    copyChangelog.textContent = 'Copy changelog';
+                }, 2000);
+            });
+            heading.appendChild(copyChangelog);
             log.appendChild(heading);
             const box = document.createElement('div');
             Object.assign(box.style, {
