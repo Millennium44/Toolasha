@@ -110,6 +110,22 @@ function removeOverlays() {
 }
 
 let unregisterHandler = null;
+let itemsUpdatedHandler = null;
+let characterSwitchedHandler = null;
+let refreshTimer = null;
+
+/**
+ * Debounced re-annotate, for events that can arrive in a burst (a stack of
+ * inventory deltas on one websocket frame, or a character switch that touches
+ * several stores at once).
+ */
+function scheduleRefresh() {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        annotateLoadout();
+    }, 250);
+}
 
 function initialize() {
     if (!config.getSetting('loadoutEnhancementDisplay')) return;
@@ -121,6 +137,20 @@ function initialize() {
         },
         { debounce: true, debounceDelay: 200 }
     );
+
+    // The badge is "highest enhancement level owned", read fresh from
+    // characterItems each time it draws — but nothing re-triggers that draw
+    // when the underlying inventory changes without also touching the DOM
+    // (enhancing an item further, a trade landing, gear arriving from a
+    // dungeon) or when the active character changes (1 main + 3 ironcow
+    // sharing a browser). The generic domObserver above only fires on
+    // childList mutations, which a same-loadout inventory change does not
+    // necessarily produce, so the badge was left showing the previous
+    // character's — or the previous inventory's — highest level.
+    itemsUpdatedHandler = () => scheduleRefresh();
+    characterSwitchedHandler = () => scheduleRefresh();
+    dataManager.on('items_updated', itemsUpdatedHandler);
+    dataManager.on('character_switched', characterSwitchedHandler);
 
     // Run immediately for any already-open loadout
     annotateLoadout();
@@ -138,6 +168,18 @@ function cleanup() {
     if (unregisterHandler) {
         unregisterHandler();
         unregisterHandler = null;
+    }
+    if (itemsUpdatedHandler) {
+        dataManager.off('items_updated', itemsUpdatedHandler);
+        itemsUpdatedHandler = null;
+    }
+    if (characterSwitchedHandler) {
+        dataManager.off('character_switched', characterSwitchedHandler);
+        characterSwitchedHandler = null;
+    }
+    if (refreshTimer) {
+        clearTimeout(refreshTimer);
+        refreshTimer = null;
     }
     removeOverlays();
 }
