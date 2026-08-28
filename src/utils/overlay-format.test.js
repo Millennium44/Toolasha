@@ -82,6 +82,17 @@ describe('drawLine', () => {
         expect(host.children[0].style.textOverflow).toBe('ellipsis');
         expect(host.children[1].style.flex).toBe('0 0 auto');
     });
+
+    test('a piece that can be clipped can say what it says in full', () => {
+        // `MillenniumT…` is a name the tile has stopped telling you, and the
+        // tile's own tooltip is about the figure rather than about whose it is
+        const host = document.createElement('div');
+        drawLine(host, [{ text: 'MillenniumTech', ellipsis: true, title: 'MillenniumTech' }, { text: '12.0M' }]);
+
+        expect(host.children[0].title).toBe('MillenniumTech');
+        // And nothing else grows a tooltip it did not ask for
+        expect(host.children[1].title).toBe('');
+    });
 });
 
 describe('aligned rows', () => {

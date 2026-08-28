@@ -206,7 +206,7 @@ function drawPerPlayer(container, breakdown) {
         names.push(player.name);
 
         lines.push([
-            { text: player.name, color: ROW_COLORS.gold, ellipsis: true },
+            { text: player.name, color: ROW_COLORS.gold, ellipsis: true, title: player.name },
             { text: dpsFigure(player.dps), color: ROW_COLORS.good },
             {
                 // Null accuracy is no swings seen, which is not a 0% hit rate

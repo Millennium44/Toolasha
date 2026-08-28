@@ -245,6 +245,12 @@ export function glyph(name, size = 16) {
  * @property {string} [color] - From `ROW_COLORS`, or any CSS colour
  * @property {boolean} [bold] - Emphasis
  * @property {boolean} [ellipsis] - This is the piece that gives way when the tile is too narrow
+ * @property {string} [title] - What this piece says in full, on hover. For the
+ *   pieces that give way: a name clipped to `MillenniumT…` is a name the tile is
+ *   no longer telling you, and the tile's own tooltip is about the figure rather
+ *   than about whose it is. Only worth setting where the text can genuinely be
+ *   too long for its tile — a clipped rate wants the tile's tooltip, not a
+ *   repeat of itself.
  * @property {boolean} [push] - Push this and everything after it to the right
  */
 
@@ -291,6 +297,7 @@ export function drawLine(host, segments) {
         if (segment.color) span.style.color = segment.color;
         if (segment.bold) span.style.fontWeight = 'bold';
         if (segment.push) span.style.marginLeft = 'auto';
+        if (segment.title) span.title = segment.title;
 
         if (segment.ellipsis) {
             Object.assign(span.style, { overflow: 'hidden', textOverflow: 'ellipsis', minWidth: '0' });

@@ -692,7 +692,7 @@ export function registerTrialLedgerRow() {
             const noShows = table.rows.filter((entry) => entry.noShow).length;
             const top = table.rows.find((entry) => Number.isFinite(entry.damageShare) && entry.damageShare > 0);
             row(container, [
-                { text: top?.name || '—', color: ROW_COLORS.dim, ellipsis: true },
+                { text: top?.name || '—', color: ROW_COLORS.dim, ellipsis: true, title: top?.name || '' },
                 { text: percent(top?.damageShare), color: ROW_COLORS.gold },
                 {
                     text: noShows ? `${noShows} no-show` : `${table.trialsRun} trials`,

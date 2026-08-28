@@ -722,7 +722,7 @@ export function registerGuildRosterRow() {
 
             const quiet = snapshot.rows.filter((member) => member.quiet).length;
             row(container, [
-                { text: top.name, color: ROW_COLORS.dim, ellipsis: true },
+                { text: top.name, color: ROW_COLORS.dim, ellipsis: true, title: top.name },
                 { text: percent(top.share7d), color: ROW_COLORS.gold },
                 { text: quiet ? `${quiet} quiet` : 'all active', color: quiet ? ROW_COLORS.bad : ROW_COLORS.good },
             ]);

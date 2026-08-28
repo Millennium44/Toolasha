@@ -802,7 +802,7 @@ function overCell(percent) {
  */
 function tileLine(name, mine, figures, onlyNumbers) {
     if (onlyNumbers) return figures;
-    return [{ text: name, color: mine ? ROW_COLORS.gold : ROW_COLORS.dim, ellipsis: true }, ...figures];
+    return [{ text: name, color: mine ? ROW_COLORS.gold : ROW_COLORS.dim, ellipsis: true, title: name }, ...figures];
 }
 
 /**
