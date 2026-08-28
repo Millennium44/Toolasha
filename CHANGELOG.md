@@ -1309,6 +1309,73 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.24.0](https://github.com/Millennium44/Toolasha/compare/v3.23.0...v3.24.0) (2026-08-28)
+
+
+### Features
+
+* clickable player names in trial abilities and guild roster; controls above the plan ([9b445e5](https://github.com/Millennium44/Toolasha/commit/9b445e586a1509f39df5a45ea3603580a9f8ebe7))
+* open a profile from a name in the Combat Trial Stats table ([185fab5](https://github.com/Millennium44/Toolasha/commit/185fab51d9eb3602a1f0b21e70f232d2a43dec32))
+* right-click an unsigned trial name to open their profile ([7909067](https://github.com/Millennium44/Toolasha/commit/790906719a2793aa147dad8f27b9fda8735b2ef4))
+* show character activity status on character select ([f41e5c1](https://github.com/Millennium44/Toolasha/commit/f41e5c1990e91f2e6e67f1fea0bb3409ad7a9fcc))
+* shrine next-buy rows wrap, hand off to the market, and price token conversion ([da96d66](https://github.com/Millennium44/Toolasha/commit/da96d666c81ce85802126558430d590aad60e478))
+* shrine planner can be told to pay missing credits with tokens or gold ([cd77f55](https://github.com/Millennium44/Toolasha/commit/cd77f553b0b8e405525a2cce6ee6a8befe007ad7))
+* shrine planner knows the token rates and recommends the cheaper path ([8f58525](https://github.com/Millennium44/Toolasha/commit/8f585252065cdf118086b1d12f158d0ca1d822c8))
+* shrine planner nets held items and hands the shortfall to the marketplace ([18c4015](https://github.com/Millennium44/Toolasha/commit/18c4015251c695d34443f238ccac2d97be20654b))
+* shrine planner remembers its targets and suggests the next buys ([e9ac105](https://github.com/Millennium44/Toolasha/commit/e9ac105ff56b6f1d4792ca76ba5b05060fd68218))
+* sim Upgrade banners name the character (and zone) a remembered run belongs to ([3f647a1](https://github.com/Millennium44/Toolasha/commit/3f647a13de8a2ee770efa1ef290624371a3a90a3))
+* support the szerra combat simulator for Import from Toolasha ([7143aa6](https://github.com/Millennium44/Toolasha/commit/7143aa6c5e5993b14063d8999ed2c7032a5972b0))
+* tab export filename carries character, game-mode tag and date ([cb19054](https://github.com/Millennium44/Toolasha/commit/cb190543389983f29ca1c72280e95f5c4c67ea95))
+* the labyrinth section gets its own Buy all ([3623bc0](https://github.com/Millennium44/Toolasha/commit/3623bc031161bea78f6b901cd7c6c9971cdb134a))
+* the suggested next buys fold away, and remember it ([948fb2c](https://github.com/Millennium44/Toolasha/commit/948fb2c069b512dcd82620f8e360770021d72704))
+* warn when a second Toolasha is sharing this page's storage ([548783c](https://github.com/Millennium44/Toolasha/commit/548783ce486fae9da75c51ea32123d3ecf4c140d))
+
+
+### Bug Fixes
+
+* account for the active action's partial progress in Action Time Display ETA ([5014644](https://github.com/Millennium44/Toolasha/commit/50146445fdda18b6344afa7c4c19c86d4359b330))
+* character-select slots resolve — the slot element IS its navigation anchor ([e4eabe0](https://github.com/Millennium44/Toolasha/commit/e4eabe07044085be9cf0c383a7b170c89073964c))
+* coin drops are worth their face value in the gold attribution ([7aaf8ff](https://github.com/Millennium44/Toolasha/commit/7aaf8ff3fcee6972cbe49983de4534f419a2bf33))
+* combat drops fall back to the battle feed when the loot log is silent ([49b6cc5](https://github.com/Millennium44/Toolasha/commit/49b6cc5f47c175b6d13c8133354b8d39b001d7c0))
+* combat sessions spread their loot across the days the run spanned ([8efa5cd](https://github.com/Millennium44/Toolasha/commit/8efa5cda678c7d36a4d7021da8f38f8c3328b314))
+* combat sim Overview shows Deaths/hr to three decimals ([60b3f2d](https://github.com/Millennium44/Toolasha/commit/60b3f2d7228c53e7ea9deea4ffe64f9403bef816))
+* custom inventory tabs are no longer pruned at load by tombstones ([5ac285f](https://github.com/Millennium44/Toolasha/commit/5ac285fa624194fc3551fcb011731442e7167cab))
+* custom tabs keep untouched siblings when a deleted subtree is revived ([26aa0b8](https://github.com/Millennium44/Toolasha/commit/26aa0b8b6da1d056f6dce8ef28d8211932583b7e))
+* custom-tab import no longer produces a config that deletes itself ([0e307e2](https://github.com/Millennium44/Toolasha/commit/0e307e2568634b92c29556734c612495008390fd))
+* dual-install guard no longer fires when a dev build removes a setting ([150717b](https://github.com/Millennium44/Toolasha/commit/150717bd21d7dd87f65984a785200acf76eae520))
+* enhancement session ends when its queue entry does, and the briefing drops stale runs ([c1d67ca](https://github.com/Millennium44/Toolasha/commit/c1d67cad3beb54f0a4cc200dafc6079de7ad5cc6))
+* exclude the guild trial diagnostic trace from backups and sync ([4519e69](https://github.com/Millennium44/Toolasha/commit/4519e69934955f007502d1ce79ae29eb29087100))
+* gold attribution counts the live combat session, and days run on local midnights ([1f854f1](https://github.com/Millennium44/Toolasha/commit/1f854f1701b1b097a2418a4c37bf5ed66f02a0c4))
+* gold panel window start uses the local day id, not the UTC calendar date ([a33d3aa](https://github.com/Millennium44/Toolasha/commit/a33d3aaaf1ed4bbbc22252520823549eec91cd78))
+* labyrinth automation badges no longer show clearable combat rooms as 0% ([037d3e9](https://github.com/Millennium44/Toolasha/commit/037d3e94663273a748636d4cc66903f3c47b0515))
+* match Level Malus to the server's own combat level formula ([2dfccbf](https://github.com/Millennium44/Toolasha/commit/2dfccbfba6781eb710ab980eb84fdd6056ffd2f1))
+* Party Loot panel overflow, first-open history, and skewed session durations ([37a1601](https://github.com/Millennium44/Toolasha/commit/37a160104121a75ec6c279bd8a3a7eae47208f2d))
+* share dungeon-key-forecast so a second bundle doesn't inline its own copy ([a0aa77a](https://github.com/Millennium44/Toolasha/commit/a0aa77a2032e869709e8fdd5685dd46c690f409c))
+* shared ToolashaDB tracks upstream's v20 so a dual install cannot blind this fork ([2c556b5](https://github.com/Millennium44/Toolasha/commit/2c556b567ff45bd262d83980ec7d61174766fe98))
+* shrine missing-mats button appears after an upgrade drains holdings ([23fb359](https://github.com/Millennium44/Toolasha/commit/23fb3594af1453639a906eb4cc8d2a0969587784))
+* stop crediting tea that does not close an action's level gap ([f3f687e](https://github.com/Millennium44/Toolasha/commit/f3f687e85fc6567e50a1e5dc9ef7b6b38d6d2c05))
+* sync tabs coordinate through a browser-wide lock instead of racing the gist ([3e06048](https://github.com/Millennium44/Toolasha/commit/3e06048dfe56951091fb30f76d78a158ecf63184))
+* T21 is the last trial tier — no "+" on the badge and no forecast above it ([31244a1](https://github.com/Millennium44/Toolasha/commit/31244a1deedd8d1c91aa20e3a57f38e22cb5d48b))
+* tombstones keep their hands off unstamped tabs, and dead syncs stay dead ([a9d42cc](https://github.com/Millennium44/Toolasha/commit/a9d42cc87e04cf6bc23ca92a835cf1ad39687b73))
+* trade ledger records instant fills, and its rows open the marketplace ([264bbe9](https://github.com/Millennium44/Toolasha/commit/264bbe925f18844550876486d29a4f0853cd2f70))
+
+
+### Documentation
+
+* changelog for the action ETA partial-progress fix ([85ba283](https://github.com/Millennium44/Toolasha/commit/85ba28375722f847cff4e64e0db372c056f4fa56))
+* changelog for the custom-tabs audit fixes ([6699d16](https://github.com/Millennium44/Toolasha/commit/6699d16769a1ec4b093d9a433c1a19f0c6d282fa))
+* changelog for the fold and the spend-mode control ([29d1a10](https://github.com/Millennium44/Toolasha/commit/29d1a10dc47889cc5dc402cb1a40153bb3dbee20))
+* changelog for the lab buy-all and the T21 cap ([c67bb6b](https://github.com/Millennium44/Toolasha/commit/c67bb6b79bce5a96018f444b86d9d7bd0d625ad9))
+* changelog for the shrine planner ([8fcbddc](https://github.com/Millennium44/Toolasha/commit/8fcbddcb78aaca7570811229782b23369bb6492d))
+* changelog for the shrine planner flow and layout fixes ([8b210df](https://github.com/Millennium44/Toolasha/commit/8b210df7baa93f9c5e6fccc293aa88059af4ea53))
+* changelog for the shrine planner's missing-mats hand-off ([568d857](https://github.com/Millennium44/Toolasha/commit/568d857c11bc6f34d4c8e667d3ae8a140aca5c16))
+* changelog for the token rates and cheapest-path recommendation ([66e3c73](https://github.com/Millennium44/Toolasha/commit/66e3c73b58cad97a3b7c933c8fb9129e8058a018))
+
+
+### Miscellaneous Chores
+
+* remove stray patch file committed by accident ([6fb7056](https://github.com/Millennium44/Toolasha/commit/6fb7056790f703e5b694aa1b76407945c4b2e415))
+
 ## [3.23.0](https://github.com/Millennium44/Toolasha/compare/v3.22.0...v3.23.0) (2026-08-27)
 
 ### Features
