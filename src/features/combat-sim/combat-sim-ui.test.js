@@ -881,6 +881,47 @@ describe('the panel', () => {
             expect(detail.textContent).toContain('Baseline:');
         });
     });
+
+    describe('the Δ columns tooltip the exact arithmetic', () => {
+        // ΔDPS is hidden by default (DEFAULT_HIDDEN_COLUMNS) — show it so the
+        // column, and its tooltip, are actually on the table to inspect
+        beforeEach(() => {
+            ui._upgradeHiddenColumns = new Set();
+        });
+        afterEach(() => {
+            ui._upgradeHiddenColumns = null;
+        });
+
+        test('names the baseline, the upgraded value and the difference', () => {
+            ui._renderUpgradeResults({
+                baseline: BASELINE,
+                results: [row('Cheap ring', { slot: '/equipment_types/ring', dps: 142.314, profitGain: 231 })],
+                food: null,
+            });
+
+            const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            const header = [...container.querySelectorAll('thead th')].findIndex((th) =>
+                th.textContent.startsWith('ΔDPS')
+            );
+            const dpsCell = container.querySelector(`[data-upgrade-row="0"] td:nth-child(${header + 1}) span[title]`);
+            expect(dpsCell.getAttribute('title')).toBe('100.00 baseline → 142.31 with this upgrade = +42.31');
+        });
+
+        test('is silent rather than fabricating arithmetic for a non-finite measurement', () => {
+            ui._renderUpgradeResults({
+                baseline: { ...BASELINE, dps: NaN },
+                results: [row('Cheap ring', { slot: '/equipment_types/ring' })],
+                food: null,
+            });
+
+            const container = ui.panel.querySelector('#mwi-csim-upgrade-results');
+            const header = [...container.querySelectorAll('thead th')].findIndex((th) =>
+                th.textContent.startsWith('ΔDPS')
+            );
+            const dpsCell = container.querySelector(`[data-upgrade-row="0"] td:nth-child(${header + 1})`);
+            expect(dpsCell.querySelector('span[title]')).toBeNull();
+        });
+    });
 });
 
 describe('gearFingerprint', () => {

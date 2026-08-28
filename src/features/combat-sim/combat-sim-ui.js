@@ -7338,6 +7338,16 @@ class CombatSimUI {
             if (!Number.isFinite(val) || Math.abs(val) < 1e-9) return '—';
             return `${val > 0 ? '+' : ''}${Math.abs(val) >= 1000 ? formatKMB(val) : val.toFixed(digits)}`;
         };
+        // Same rendering as `delta`, but with the two measurements it was
+        // subtracted from in a tooltip — "how was this number arrived at" for
+        // a reader who does not take a Δ column's word for it
+        const deltaWithArithmetic = (baselineVal, currentVal, digits = 1) => {
+            const body = delta(currentVal - (baselineVal ?? 0), digits);
+            if (!Number.isFinite(baselineVal) || !Number.isFinite(currentVal)) return body;
+            const fmt = (v) => (Math.abs(v) >= 1000 ? formatKMB(v) : v.toFixed(digits));
+            const title = `${fmt(baselineVal)} baseline → ${fmt(currentVal)} with this upgrade = ${delta(currentVal - baselineVal, digits)}`;
+            return `<span title="${escapeAttribute(title)}">${body}</span>`;
+        };
         // Never-repays shows blank rather than ∞: the column is a duration, and
         // "infinite hours" reads as a measurement when it is really an absence
         const hours = (h) => {
@@ -7422,7 +7432,7 @@ class CombatSimUI {
                 numeric: true,
                 lowerIsBetter: false,
                 value: (r) => r.metrics.dps - (baseline.dps ?? 0),
-                render: (r, v) => delta(v, 2),
+                render: (r) => deltaWithArithmetic(baseline.dps ?? 0, r.metrics.dps, 2),
             },
             {
                 key: 'dps',
@@ -7441,7 +7451,7 @@ class CombatSimUI {
                 numeric: true,
                 lowerIsBetter: false,
                 value: (r) => r.metrics.xpPerHour - (baseline.xpPerHour ?? 0),
-                render: (r, v) => delta(v),
+                render: (r) => deltaWithArithmetic(baseline.xpPerHour ?? 0, r.metrics.xpPerHour),
             },
             {
                 key: 'xp',
@@ -7460,7 +7470,7 @@ class CombatSimUI {
                 numeric: true,
                 lowerIsBetter: false,
                 value: (r) => r.economics?.profitGainPerHour ?? 0,
-                render: (r, v) => delta(v),
+                render: (r) => deltaWithArithmetic(baseline.profitPerHour ?? 0, r.metrics.profitPerHour),
             },
             {
                 key: 'profit',
@@ -7478,7 +7488,7 @@ class CombatSimUI {
                 numeric: true,
                 lowerIsBetter: false,
                 value: (r) => r.metrics.encountersPerHour - (baseline.encountersPerHour ?? 0),
-                render: (r, v) => delta(v, 2),
+                render: (r) => deltaWithArithmetic(baseline.encountersPerHour ?? 0, r.metrics.encountersPerHour, 2),
             },
             {
                 key: 'encounters',
@@ -7495,7 +7505,7 @@ class CombatSimUI {
                 label: 'ΔDPH',
                 numeric: true,
                 value: (r) => r.metrics.deathsPerHour - (baseline.deathsPerHour ?? 0),
-                render: (r, v) => delta(v, 2),
+                render: (r) => deltaWithArithmetic(baseline.deathsPerHour ?? 0, r.metrics.deathsPerHour, 2),
             },
             {
                 key: 'deaths',
