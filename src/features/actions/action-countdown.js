@@ -19,6 +19,7 @@ class ActionCountdown {
         this.fillBar = null;
         this.totalTime = null;
         this.unregisterObserver = null;
+        this.unregisterReady = null;
         this.actionCompletedHandler = null;
         this.lastCompletedAt = null;
         this.settingChangeHandler = null;
@@ -49,10 +50,15 @@ class ActionCountdown {
             this._onProgressBarText(el);
         });
 
-        const existing = document.querySelector('[class*="ProgressBar_text"]');
-        if (existing) {
-            this._onProgressBarText(existing);
-        }
+        // @run-at document-start: a progress bar rendered before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up scan waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterReady = domObserver.onReady('ActionCountdownCatchUp', () => {
+            const existing = document.querySelector('[class*="ProgressBar_text"]');
+            if (existing) {
+                this._onProgressBarText(existing);
+            }
+        });
 
         this.initialized = true;
     }
@@ -201,6 +207,10 @@ class ActionCountdown {
             if (this.unregisterObserver) {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
+            }
+            if (this.unregisterReady) {
+                this.unregisterReady();
+                this.unregisterReady = null;
             }
             this.textEl = null;
             this.fillBar = null;

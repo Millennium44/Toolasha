@@ -6,7 +6,12 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const handlers = vi.hoisted(() => ({ classCallback: null, actionCompleted: null }));
+const handlers = vi.hoisted(() => ({
+    classCallback: null,
+    readyCallback: null,
+    domReady: true,
+    actionCompleted: null,
+}));
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: vi.fn(() => true), onSettingChange: vi.fn() },
@@ -15,6 +20,13 @@ vi.mock('../../core/dom-observer.js', () => ({
     default: {
         onClass: vi.fn((_name, _cls, callback) => {
             handlers.classCallback = callback;
+            return () => {};
+        }),
+        // Mirrors the real DOMObserver.onReady: immediate when already attached (the default),
+        // deferred until the readiness-gap test fires it by hand otherwise.
+        onReady: vi.fn((_name, callback) => {
+            handlers.readyCallback = callback;
+            if (handlers.domReady) callback();
             return () => {};
         }),
     },
@@ -40,6 +52,8 @@ function mountBar() {
 beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal('requestAnimationFrame', vi.fn());
+    handlers.domReady = true;
+    handlers.readyCallback = null;
 });
 
 afterEach(() => {
@@ -77,5 +91,15 @@ describe('tick loop lifetime', () => {
         actionCountdown.cachedDuration = 12;
         handlers.actionCompleted();
         expect(actionCountdown.cachedDuration).toBeNull();
+    });
+
+    test('a bar mounted before the shared observer is ready is picked up at readiness', () => {
+        handlers.domReady = false;
+        mountBar();
+        actionCountdown.initialize();
+        expect(actionCountdown.timerId).toBeNull();
+
+        handlers.readyCallback();
+        expect(actionCountdown.timerId).not.toBeNull();
     });
 });
