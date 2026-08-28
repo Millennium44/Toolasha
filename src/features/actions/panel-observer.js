@@ -215,15 +215,21 @@ function refreshProfitPanel() {
  * The enhancing panel may already exist when MWI Tools initializes
  */
 function checkExistingEnhancingPanel() {
-    // Wait a moment for page to settle
-    const checkTimeout = setTimeout(() => {
-        const existingPanel = document.querySelector(SELECTORS.ENHANCING_PANEL);
-        if (existingPanel) {
-            handleEnhancingPanel(existingPanel);
-            registerEnhancingPanelWatcher(existingPanel);
-        }
-    }, 500);
-    timerRegistry.registerTimeout(checkTimeout);
+    // @run-at document-start: an enhancing panel rendered before the shared observer attaches to
+    // document.body is invisible to the class watcher, so the catch-up scan waits for the
+    // observer's actual-ready signal (immediate if it is already attached), then lets the page
+    // settle before scanning.
+    const unregisterReady = domObserver.onReady('ActionPanelObserver-EnhancingCatchUp', () => {
+        const checkTimeout = setTimeout(() => {
+            const existingPanel = document.querySelector(SELECTORS.ENHANCING_PANEL);
+            if (existingPanel) {
+                handleEnhancingPanel(existingPanel);
+                registerEnhancingPanelWatcher(existingPanel);
+            }
+        }, 500);
+        timerRegistry.registerTimeout(checkTimeout);
+    });
+    unregisterHandlers.push(unregisterReady);
 }
 
 /**
