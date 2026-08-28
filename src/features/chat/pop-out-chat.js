@@ -173,6 +173,11 @@ class PopOutChat {
         this.relayChannel = null;
         this.sendChannel = null;
         this.popoutWindow = null;
+        // Identifies *this tab's* currently open pop-out window so a second
+        // game tab (a second character logged in in another browser tab, common
+        // in this genre) doesn't answer this tab's handshake or execute sends
+        // meant for it — BroadcastChannel is origin-wide, not per-tab.
+        this.popoutInstanceId = null;
         this.messageBuffer = new Map(); // hrid → Array<resolved message>
         this.discoveredChannels = new Map(); // hrid → {hrid, name} for channels seen via messages but not in DOM
         this.wsHandler = null;
@@ -204,7 +209,7 @@ class PopOutChat {
 
         // Start keepalive ping
         const pingTimer = setInterval(() => {
-            this.relayChannel?.postMessage({ type: 'ping' });
+            this._relayPost({ type: 'ping' });
         }, PING_INTERVAL_MS);
         this.timerRegistry.registerInterval(pingTimer);
 
@@ -283,9 +288,7 @@ class PopOutChat {
                 .replace(/\b\w/g, (c) => c.toUpperCase());
             this.discoveredChannels.set(resolved.channel, { hrid: resolved.channel, name });
             // Notify pop-out of the updated channel list
-            if (this.relayChannel) {
-                this.relayChannel.postMessage({ type: 'channels_updated', channels: this._getLiveChannels() });
-            }
+            this._relayPost({ type: 'channels_updated', channels: this._getLiveChannels() });
         }
 
         // Buffer the message
@@ -297,9 +300,17 @@ class PopOutChat {
         if (buf.length > MAX_BUFFER) buf.shift();
 
         // Relay to pop-out if open
-        if (this.relayChannel) {
-            this.relayChannel.postMessage(resolved);
-        }
+        this._relayPost(resolved);
+    }
+
+    /**
+     * Post a message to this tab's pop-out via the relay channel, tagged with
+     * this tab's pop-out instance id.
+     * @param {Object} msg
+     */
+    _relayPost(msg) {
+        if (!this.relayChannel) return;
+        this.relayChannel.postMessage({ ...msg, instanceId: this.popoutInstanceId });
     }
 
     /**
@@ -308,6 +319,11 @@ class PopOutChat {
      */
     _onSendChannelMessage(data) {
         if (!data?.type) return;
+        // BroadcastChannel is origin-wide: a second game tab (a second character
+        // logged in in another tab) is on the same channel and would otherwise
+        // answer this pop-out's handshake, or execute a send meant for this tab,
+        // with its own character. Only react to a pop-out this tab itself opened.
+        if (!this.popoutInstanceId || data.instanceId !== this.popoutInstanceId) return;
 
         if (data.type === 'ready') {
             this._sendInit();
@@ -368,7 +384,7 @@ class PopOutChat {
             bufferSnapshot[hrid] = messages.filter((msg) => msg.isSystem || !chatBlockList.isBlocked(msg.sName));
         }
 
-        this.relayChannel.postMessage({
+        this._relayPost({
             type: 'init',
             channels: this._getLiveChannels(),
             characterName: dataManager.getCurrentCharacterName() || '',
@@ -384,6 +400,10 @@ class PopOutChat {
             this.popoutWindow.focus();
             return;
         }
+
+        // Fresh id per window: ties this specific pop-out to this specific tab
+        // so BroadcastChannel traffic from/to another tab's pop-out is ignored.
+        this.popoutInstanceId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
         const html = this._buildPopoutHTML();
         const blob = new Blob([html], { type: 'text/html' });
@@ -628,6 +648,11 @@ class PopOutChat {
 
   const RELAY = '${RELAY_CHANNEL}';
   const SEND  = '${SEND_CHANNEL}';
+  // Ties this window to the tab that opened it: BroadcastChannel is shared by
+  // every same-origin tab, so without this a second game tab (a second
+  // character logged in in another tab) would answer this window's handshake
+  // and execute sends meant for the tab that actually opened it.
+  const INSTANCE_ID = '${this.popoutInstanceId}';
   const MAX_PER_CHANNEL = 500;
   const STORAGE_KEY = 'mwi-chat-popout-layout';
   // Shared with chat-profile-link.js — same "click a name to fill /profile <name>" behavior,
@@ -693,6 +718,8 @@ class PopOutChat {
 
   // ── BroadcastChannel messages ─────────────────────────────────
   relay.onmessage = ({ data }) => {
+    // Ignore relay traffic from any game tab other than the one that opened us.
+    if (data.instanceId !== INSTANCE_ID) return;
     if (data.type === 'ping') {
       resetPingWatchdog();
       return;
@@ -726,7 +753,7 @@ class PopOutChat {
   };
 
   // Signal ready
-  sendCh.postMessage({ type: 'ready' });
+  sendCh.postMessage({ type: 'ready', instanceId: INSTANCE_ID });
   resetPingWatchdog();
 
   // ── Pane management ───────────────────────────────────────────
@@ -806,7 +833,7 @@ class PopOutChat {
     const doSend = () => {
       const text = input.value.trim();
       if (!text || !paneObj.channelHrid) return;
-      sendCh.postMessage({ type: 'send', channel: paneObj.channelHrid, text });
+      sendCh.postMessage({ type: 'send', channel: paneObj.channelHrid, text, instanceId: INSTANCE_ID });
       input.value = '';
       input.focus();
     };
@@ -1181,6 +1208,7 @@ class PopOutChat {
             this.popoutWindow.close();
         }
         this.popoutWindow = null;
+        this.popoutInstanceId = null;
 
         this.timerRegistry.clearAll();
 

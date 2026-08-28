@@ -44,3 +44,84 @@ describe('pop-out chat window: clickable names', () => {
         expect(() => new Function(script)).not.toThrow();
     });
 });
+
+/**
+ * BroadcastChannel is shared by every same-origin tab, not scoped per tab or per pop-out
+ * window. A second game tab (a second character logged in in another browser tab, common
+ * in this genre) runs its own PopOutChat instance on the same two channel names. Without
+ * an instance id, that second tab's _onSendChannelMessage would answer the first tab's
+ * pop-out handshake and execute sends meant for the first tab's character. These tests
+ * exercise the instance-id guard directly (relayChannel/sendChannel are replaced with
+ * plain spies — a real BroadcastChannel would fan the same behavior out across instances,
+ * which is exactly the bug being guarded against).
+ */
+describe('pop-out chat window: cross-tab isolation', () => {
+    test("_relayPost tags every outgoing message with this tab's pop-out instance id", () => {
+        const chat = new PopOutChat();
+        chat.relayChannel = { postMessage: vi.fn() };
+        chat.popoutInstanceId = 'tab-a-instance';
+
+        chat._relayPost({ type: 'ping' });
+
+        expect(chat.relayChannel.postMessage).toHaveBeenCalledWith({ type: 'ping', instanceId: 'tab-a-instance' });
+    });
+
+    test("ignores a send-channel message tagged with a different tab's instance id", () => {
+        const chat = new PopOutChat();
+        chat.popoutInstanceId = 'tab-a-instance';
+        chat._sendInit = vi.fn();
+        chat._executeSend = vi.fn();
+
+        // A second game tab's pop-out sent this (its own, different, instance id).
+        chat._onSendChannelMessage({ type: 'ready', instanceId: 'tab-b-instance' });
+        chat._onSendChannelMessage({
+            type: 'send',
+            channel: '/chat_channel_types/general',
+            text: 'hi',
+            instanceId: 'tab-b-instance',
+        });
+
+        expect(chat._sendInit).not.toHaveBeenCalled();
+        expect(chat._executeSend).not.toHaveBeenCalled();
+    });
+
+    test("handles a send-channel message tagged with this tab's own instance id", () => {
+        const chat = new PopOutChat();
+        chat.popoutInstanceId = 'tab-a-instance';
+        chat._sendInit = vi.fn();
+        chat._executeSend = vi.fn();
+
+        chat._onSendChannelMessage({ type: 'ready', instanceId: 'tab-a-instance' });
+        chat._onSendChannelMessage({
+            type: 'send',
+            channel: '/chat_channel_types/general',
+            text: 'hi',
+            instanceId: 'tab-a-instance',
+        });
+
+        expect(chat._sendInit).toHaveBeenCalledTimes(1);
+        expect(chat._executeSend).toHaveBeenCalledWith('/chat_channel_types/general', 'hi');
+    });
+
+    test('ignores send-channel messages entirely before this tab has opened its own pop-out', () => {
+        const chat = new PopOutChat();
+        chat.popoutInstanceId = null;
+        chat._sendInit = vi.fn();
+
+        chat._onSendChannelMessage({ type: 'ready', instanceId: 'anything' });
+
+        expect(chat._sendInit).not.toHaveBeenCalled();
+    });
+
+    test("the generated pop-out script embeds this tab's instance id and stamps it on every outgoing message", () => {
+        const chat = new PopOutChat();
+        chat.popoutInstanceId = 'tab-a-instance';
+
+        const html = chat._buildPopoutHTML();
+
+        expect(html).toContain(`const INSTANCE_ID = 'tab-a-instance';`);
+        expect(html).toContain(`sendCh.postMessage({ type: 'ready', instanceId: INSTANCE_ID });`);
+        expect(html).toContain('instanceId: INSTANCE_ID });');
+        expect(html).toContain('if (data.instanceId !== INSTANCE_ID) return;');
+    });
+});
