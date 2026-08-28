@@ -43,11 +43,17 @@ class ViewActionButton {
         });
         this.unregisterHandlers.push(unregister);
 
-        // Check if dictionary is already open
-        const existingTitle = document.querySelector('[class*="ItemDictionary_title"]');
-        if (existingTitle) {
-            this.injectButton(existingTitle);
-        }
+        // @run-at document-start: a dictionary already open before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up scan waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterHandlers.push(
+            domObserver.onReady('ViewActionButtonCatchUp', () => {
+                const existingTitle = document.querySelector('[class*="ItemDictionary_title"]');
+                if (existingTitle) {
+                    this.injectButton(existingTitle);
+                }
+            })
+        );
 
         // Watch for item action menu popups (e.g. clicking an item within an action)
         const unregisterPopup = domObserver.onClass('ViewActionButton_popup', 'Item_actionMenu', (actionMenu) => {
