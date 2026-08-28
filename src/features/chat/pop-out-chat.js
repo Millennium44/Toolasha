@@ -239,6 +239,7 @@ class PopOutChat {
         this.timerRegistry = createTimerRegistry();
         this.unregisterObserver = null;
         this.popoutBtn = null;
+        this.resetGeometryBtn = null;
     }
 
     /**
@@ -305,17 +306,48 @@ class PopOutChat {
         btn.addEventListener('mouseleave', () => (btn.style.opacity = '0.75'));
         btn.addEventListener('click', () => this._openPopout());
 
+        // Small recovery affordance sitting right next to the pop-out button: clears the
+        // saved window geometry so the next pop-out opens at the default centered spot
+        // instead of wherever was last saved. Exists for the case where that saved spot was
+        // on a second monitor that's since been unplugged/disconnected — Firefox has no
+        // Window Management API to detect or auto-correct that, so a manual reset is it.
+        const resetBtn = document.createElement('button');
+        resetBtn.setAttribute('data-mwi-popout-chat-reset', 'true');
+        resetBtn.textContent = '⟲';
+        resetBtn.title = 'Reset pop-out chat window position (use if it opens off-screen)';
+        resetBtn.style.cssText = `
+            padding: 2px 6px;
+            font-size: 13px;
+            background: none;
+            color: #8b949e;
+            border: none;
+            cursor: pointer;
+            user-select: none;
+            flex-shrink: 0;
+            line-height: 1;
+            opacity: 0.75;
+        `;
+        resetBtn.addEventListener('mouseenter', () => (resetBtn.style.opacity = '1'));
+        resetBtn.addEventListener('mouseleave', () => (resetBtn.style.opacity = '0.75'));
+        resetBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this._resetSavedGeometry();
+        });
+
         // Insert into the same parent as the expandCollapseButton, after it
         const collapseBtn = container.querySelector('[class*="TabsComponent_expandCollapseButton"]');
         if (collapseBtn?.parentElement) {
             collapseBtn.parentElement.insertBefore(btn, collapseBtn.nextSibling);
+            collapseBtn.parentElement.insertBefore(resetBtn, btn.nextSibling);
         } else {
             // Fallback: append to the tabsComponentContainer
             const tabsContainer = container.querySelector('[class*="Chat_tabsComponentContainer"]') || container;
             tabsContainer.appendChild(btn);
+            tabsContainer.appendChild(resetBtn);
         }
 
         this.popoutBtn = btn;
+        this.resetGeometryBtn = resetBtn;
     }
 
     /**
@@ -466,6 +498,17 @@ class PopOutChat {
         const blob = new Blob([html], { type: 'text/html' });
         const url = URL.createObjectURL(blob);
 
+        // No automatic recovery here for a pop-out reopened onto a since-unplugged monitor:
+        // Firefox exposes no Window Management API, so there's no "list of real monitors" to
+        // compare the restored screenX/screenY against, and window.open's placement request
+        // is a hint the OS/WM is free to reposition however it likes anyway — a window.open'd
+        // window on a disconnected monitor typically gets shoved back onto a live screen by
+        // the OS/WM before this code ever sees it, and where it doesn't, an arbitrarily large
+        // or negative screenX/screenY is indistinguishable from a legitimate, if unusual,
+        // second-monitor layout (ultrawide + portrait secondary, monitors above/left of
+        // primary, etc.). There is no threshold that reliably separates "off a real monitor"
+        // from "on a real monitor we don't know about". The manual reset button next to the
+        // pop-out button (_resetSavedGeometry) is the recovery path for this case.
         const features = buildPopoutWindowFeatures(this._readSavedGeometry(), window.screen);
         this.popoutWindow = window.open(url, 'mwi-chat-popout', features);
 
@@ -491,6 +534,21 @@ class PopOutChat {
             return parsed;
         } catch {
             return null;
+        }
+    }
+
+    /**
+     * Clear the saved pop-out window geometry so the next open falls back to the default
+     * centered placement, instead of whatever position/size was last saved. This is the
+     * recovery affordance for a pop-out that was left on a monitor that's since been
+     * unplugged or rearranged: the position is trusted verbatim on reopen (see
+     * buildPopoutWindowFeatures), so nothing else clamps it back onto a visible screen.
+     */
+    _resetSavedGeometry() {
+        try {
+            localStorage.removeItem(POPOUT_GEOMETRY_KEY);
+        } catch (error) {
+            console.error('[PopOutChat] Failed to reset saved window geometry:', error);
         }
     }
 
@@ -1339,6 +1397,11 @@ class PopOutChat {
             this.popoutBtn.remove();
         }
         this.popoutBtn = null;
+
+        if (this.resetGeometryBtn && document.contains(this.resetGeometryBtn)) {
+            this.resetGeometryBtn.remove();
+        }
+        this.resetGeometryBtn = null;
 
         this.messageBuffer.clear();
         this.blockedCount = 0;

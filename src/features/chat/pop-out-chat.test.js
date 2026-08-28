@@ -223,6 +223,66 @@ describe('pop-out chat window: _readSavedGeometry', () => {
     });
 });
 
+describe('pop-out chat window: reset saved geometry (recovery affordance)', () => {
+    afterEach(() => {
+        localStorage.removeItem(POPOUT_GEOMETRY_KEY);
+    });
+
+    test('_resetSavedGeometry clears the saved geometry so the next open uses defaults', () => {
+        localStorage.setItem(POPOUT_GEOMETRY_KEY, JSON.stringify({ width: 800, height: 600, left: 5000, top: 5000 }));
+        const chat = new PopOutChat();
+
+        chat._resetSavedGeometry();
+
+        expect(chat._readSavedGeometry()).toBeNull();
+        expect(localStorage.getItem(POPOUT_GEOMETRY_KEY)).toBeNull();
+    });
+
+    test('_resetSavedGeometry is a no-op, not a throw, when nothing was saved', () => {
+        const chat = new PopOutChat();
+        expect(() => chat._resetSavedGeometry()).not.toThrow();
+    });
+
+    test('injects a reset-position button next to the pop-out button', () => {
+        document.body.innerHTML = `
+            <div>
+                <div class="Chat_tabsComponentContainer">
+                    <button class="TabsComponent_expandCollapseButton">v</button>
+                </div>
+            </div>
+        `;
+        const chat = new PopOutChat();
+        const outer = document.querySelector('.Chat_tabsComponentContainer').parentElement;
+
+        chat._injectButton(outer);
+
+        const popoutBtn = outer.querySelector('[data-mwi-popout-chat]');
+        const resetBtn = outer.querySelector('[data-mwi-popout-chat-reset]');
+        expect(popoutBtn).not.toBeNull();
+        expect(resetBtn).not.toBeNull();
+        // Sits right after the pop-out button, the least intrusive spot in that row.
+        expect(popoutBtn.nextElementSibling).toBe(resetBtn);
+    });
+
+    test('clicking the reset button clears the saved geometry', () => {
+        localStorage.setItem(POPOUT_GEOMETRY_KEY, JSON.stringify({ width: 800, height: 600, left: 5000, top: 5000 }));
+        document.body.innerHTML = `
+            <div>
+                <div class="Chat_tabsComponentContainer">
+                    <button class="TabsComponent_expandCollapseButton">v</button>
+                </div>
+            </div>
+        `;
+        const chat = new PopOutChat();
+        const outer = document.querySelector('.Chat_tabsComponentContainer').parentElement;
+        chat._injectButton(outer);
+
+        outer.querySelector('[data-mwi-popout-chat-reset]').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+        expect(localStorage.getItem(POPOUT_GEOMETRY_KEY)).toBeNull();
+    });
+});
+
 describe('pop-out chat window: blocked-message count', () => {
     afterEach(() => {
         blockState.blockedNames.clear();
