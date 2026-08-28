@@ -138,7 +138,10 @@ export function findPopulatedCharacterSlots(rootElement) {
     const slotsById = new Map();
 
     for (const slot of slots) {
-        const link = slot.querySelector('a[href*="characterId="]');
+        // On the live page the slot element IS the anchor (`<a class="…_slot"
+        // href="/game?characterId=…">`); the descendant lookup is kept for a
+        // markup where the link sits inside instead.
+        const link = slot.matches?.('a[href*="characterId="]') ? slot : slot.querySelector('a[href*="characterId="]');
         if (!link) continue;
 
         const characterId = getCharacterIdFromSlotLink(link);

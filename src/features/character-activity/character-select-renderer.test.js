@@ -104,16 +104,26 @@ function mountCharacterSelect(ids, withSlots = true) {
  * @param {string[]} ids
  * @returns {Element} The slots container
  */
-function addSlots(root, ids) {
+function addSlots(root, ids, { nestedLink = false } = {}) {
     const container = document.createElement('div');
     container.className = 'CharacterSelectPage_characterSlots__def456';
     for (const id of ids) {
-        const slot = document.createElement('div');
-        slot.className = 'CharacterSelectPage_slot__ghi789';
-        const link = document.createElement('a');
-        link.setAttribute('href', `/game?characterId=${id}`);
-        link.textContent = `Char ${id}`;
-        slot.appendChild(link);
+        // The live page's slot IS the anchor; nestedLink covers a markup where
+        // the link sits inside a wrapper instead
+        let slot;
+        if (nestedLink) {
+            slot = document.createElement('div');
+            slot.className = 'CharacterSelectPage_slot__ghi789';
+            const link = document.createElement('a');
+            link.setAttribute('href', `/game?characterId=${id}`);
+            link.textContent = `Char ${id}`;
+            slot.appendChild(link);
+        } else {
+            slot = document.createElement('a');
+            slot.className = 'MuiLink-root CharacterSelectPage_slot__ghi789';
+            slot.setAttribute('href', `/game?characterId=${id}`);
+            slot.textContent = `Char ${id}`;
+        }
         container.appendChild(slot);
     }
     // The empty "create character" slot: same class, no navigation link
@@ -162,6 +172,14 @@ describe('drawing into character select', () => {
         expect(blocks()).toHaveLength(1);
         expect(blocks()[0].textContent).toContain('Cow');
         expect(blocks()[0].textContent).toContain('Queue ends');
+    });
+
+    test('a slot whose link is nested inside a wrapper still resolves', async () => {
+        const root = mountCharacterSelect([], false);
+        addSlots(root, ['30404'], { nestedLink: true });
+        await renderer.onCharacterSelectMounted(root);
+
+        expect(blocks()).toHaveLength(1);
     });
 
     test('every populated slot is drawn, and the empty one is left alone', async () => {
