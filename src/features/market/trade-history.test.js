@@ -40,17 +40,30 @@ const storageMock = vi.hoisted(() => {
     };
 });
 
-const dataManagerMock = vi.hoisted(() => ({
-    characterId: 'market123',
-    on: () => {},
-    off: () => {},
-    getCurrentCharacterId: () => dataManagerMock.characterId,
-}));
+const dataManagerMock = vi.hoisted(() => {
+    const handlers = {};
+    return {
+        characterId: 'market123',
+        on: (event, handler) => {
+            (handlers[event] ||= []).push(handler);
+        },
+        off: (event, handler) => {
+            handlers[event] = (handlers[event] || []).filter((h) => h !== handler);
+        },
+        // Fires the module-level 'character_switched' subscription registered
+        // when trade-history.js first loaded. Returns a promise so a test can
+        // await the (fire-and-forget in production) async handler settling.
+        _emit: (event, data) => Promise.all((handlers[event] || []).map((handler) => handler(data))),
+        getCurrentCharacterId: () => dataManagerMock.characterId,
+    };
+});
+
+const configMock = vi.hoisted(() => ({ tradeHistoryEnabled: true }));
 
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({ default: dataManagerMock }));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => true, onSettingChange: () => {} },
+    default: { getSetting: () => configMock.tradeHistoryEnabled, onSettingChange: () => {} },
 }));
 
 const { default: tradeHistory, mergeHistory, pruneHistory } = await import('./trade-history.js');
@@ -71,9 +84,11 @@ beforeEach(() => {
     storageMock.reset();
     storageMock.unavailable = false;
     dataManagerMock.characterId = 'market123';
+    configMock.tradeHistoryEnabled = true;
     tradeHistory.characterId = 'market123';
     tradeHistory.history = {};
     tradeHistory.isLoaded = false;
+    tradeHistory.isInitialized = false;
     tradeHistory._saveChain = null;
     tradeHistory._cancelScheduledSave();
     for (const fn of [storageMock.getJSON, storageMock.setJSON, storageMock.tryGet]) fn.mockClear();
@@ -227,5 +242,30 @@ describe('the history cannot be wiped by a failed read or a stale copy', () => {
         tradeHistory.handleMarketUpdate({ endMarketListings: [order('/items/b', true, 2)] });
         await tradeHistory.flushSave();
         expect(stored()).toEqual({ '/items/b:0': { sell: 2 } });
+    });
+});
+
+describe('a character switch resets in-memory state even while the feature is off', () => {
+    test('toggling off, switching character, then back on does not merge the old character under the new one', async () => {
+        // Character A has a price in memory (as if the feature had been on for them).
+        tradeHistory.history = { '/items/a:0': { buy: 1 } };
+        tradeHistory.isLoaded = true;
+
+        // The player disables the setting, still on character A.
+        configMock.tradeHistoryEnabled = false;
+        tradeHistory.disable();
+        expect(tradeHistory.history).toEqual({ '/items/a:0': { buy: 1 } });
+
+        // They switch to character B while the feature is off. Before the fix,
+        // the module's character_switched listener skipped handleCharacterSwitch()
+        // whenever the setting was off, so nothing here was cleared.
+        dataManagerMock.characterId = 'iron456';
+        await dataManagerMock._emit('character_switched');
+
+        // Re-enabling now must not let character A's price survive into B's history.
+        configMock.tradeHistoryEnabled = true;
+        await tradeHistory.initialize();
+
+        expect(tradeHistory.history['/items/a:0']).toBeUndefined();
     });
 });

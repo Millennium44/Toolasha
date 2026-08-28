@@ -348,11 +348,15 @@ class TradeHistory {
 const tradeHistory = new TradeHistory();
 tradeHistory.setupSettingListener();
 
-// Setup character switch handler
+// Setup character switch handler. Always reset in-memory state, even while
+// the feature is off: initialize() itself no-ops until the setting is on,
+// but if we only reset while it's on, toggling the feature off, switching
+// characters, then back on leaves the previous character's `history` map in
+// memory. loadHistory() then merges the new character's stored data
+// underneath that stale copy instead of replacing it, corrupting the new
+// character's price history.
 dataManager.on('character_switched', () => {
-    if (config.getSetting('market_tradeHistory')) {
-        tradeHistory.handleCharacterSwitch();
-    }
+    tradeHistory.handleCharacterSwitch();
 });
 
 export default tradeHistory;

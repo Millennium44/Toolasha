@@ -713,10 +713,14 @@ class TradeLedgerStore {
 const tradeLedgerStore = new TradeLedgerStore();
 tradeLedgerStore.setupSettingListener();
 
+// Always reset in-memory state on a character switch, even while the feature
+// is off: initialize() itself no-ops until the setting is on, but if we only
+// reset while it's on, toggling the feature off, switching characters, then
+// back on leaves the previous character's records/states in memory. load()
+// then merges the new character's stored data underneath that stale copy
+// instead of replacing it, corrupting the new character's ledger.
 dataManager.on('character_switched', () => {
-    if (config.getSetting('market_tradeLedger')) {
-        tradeLedgerStore.handleCharacterSwitch();
-    }
+    tradeLedgerStore.handleCharacterSwitch();
 });
 
 export default tradeLedgerStore;

@@ -64,15 +64,29 @@ const storageMock = vi.hoisted(() => {
     };
 });
 
-const dataManagerMock = vi.hoisted(() => ({
-    characterId: 'market123',
-    characterData: null,
-    on: () => {},
-    off: () => {},
-    getMarketListings: () => [],
-    getCurrentCharacterId: () => dataManagerMock.characterId,
-    getCurrentCharacterGameMode: () => 'standard',
-}));
+const dataManagerMock = vi.hoisted(() => {
+    const handlers = {};
+    return {
+        characterId: 'market123',
+        characterData: null,
+        on: (event, handler) => {
+            (handlers[event] ||= []).push(handler);
+        },
+        off: (event, handler) => {
+            handlers[event] = (handlers[event] || []).filter((h) => h !== handler);
+        },
+        // Fires the module-level 'character_switched' subscription registered
+        // when trade-ledger-store.js first loaded — not a re-subscription.
+        // Returns a promise so a test can await the (fire-and-forget in
+        // production) async handler settling.
+        _emit: (event, data) => Promise.all((handlers[event] || []).map((handler) => handler(data))),
+        getMarketListings: () => [],
+        getCurrentCharacterId: () => dataManagerMock.characterId,
+        getCurrentCharacterGameMode: () => 'standard',
+    };
+});
+
+const configMock = vi.hoisted(() => ({ tradeLedgerEnabled: true }));
 
 vi.mock('../../utils/adoption-consent.js', () => ({
     getAdoptionTargetId: async () => 'market123',
@@ -81,7 +95,7 @@ vi.mock('../../utils/adoption-consent.js', () => ({
 vi.mock('../../core/storage.js', () => ({ default: storageMock }));
 vi.mock('../../core/data-manager.js', () => ({ default: dataManagerMock }));
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => true, onSettingChange: () => {} },
+    default: { getSetting: () => configMock.tradeLedgerEnabled, onSettingChange: () => {} },
 }));
 
 const {
@@ -188,9 +202,11 @@ beforeEach(() => {
     storageMock.unavailable = false;
     _resetAdoptionCache();
     dataManagerMock.characterId = 'market123';
+    configMock.tradeLedgerEnabled = true;
     tradeLedgerStore.records = [];
     tradeLedgerStore.states = {};
     tradeLedgerStore.isLoaded = false;
+    tradeLedgerStore.isInitialized = false;
     tradeLedgerStore._legacy = false;
     tradeLedgerStore._recordsChain = null;
     tradeLedgerStore._statesChain = null;
@@ -525,5 +541,29 @@ describe('the ledger cannot be wiped by a failed read or a stale copy', () => {
         const copy = tradeLedgerStore.getRecords();
         copy[0].price = 0;
         expect(tradeLedgerStore.records[0].price).toBe(100);
+    });
+});
+
+describe('a character switch resets in-memory state even while the feature is off', () => {
+    test('toggling off, switching character, then back on does not merge the old character under the new one', async () => {
+        // Character A has a fill in memory (as if the feature had been on for them).
+        memory([fill(1, DAY3)], {});
+
+        // The player disables the setting, still on character A.
+        configMock.tradeLedgerEnabled = false;
+        tradeLedgerStore.disable();
+        expect(tradeLedgerStore.records).toHaveLength(1);
+
+        // They switch to character B while the feature is off. Before the fix,
+        // the module's character_switched listener skipped handleCharacterSwitch()
+        // whenever the setting was off, so nothing here was cleared.
+        dataManagerMock.characterId = 'iron456';
+        await dataManagerMock._emit('character_switched');
+
+        // Re-enabling now must not let character A's fill survive into B's ledger.
+        configMock.tradeLedgerEnabled = true;
+        await tradeLedgerStore.initialize();
+
+        expect(tradeLedgerStore.records.some((r) => r.listingId === 1)).toBe(false);
     });
 });
