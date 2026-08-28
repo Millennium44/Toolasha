@@ -418,6 +418,22 @@ async function write() {
 }
 
 /**
+ * Bumped on every call. A character switch fires `character_switched` (and
+ * `character_initialized`), each of which calls this — and if two switches
+ * happen close enough together (three ironcows tabbed through in a hurry),
+ * the first call can still be waiting on `storage.tryGet` when the second one
+ * starts. Storage's own generation counter (`persisted-record.js`) keeps that
+ * race from corrupting what is written to IndexedDB, but it says nothing
+ * about the plain module-scope `goals`/`rooms`/`record` below: without a
+ * check here, whichever call happened to finish LAST would win regardless of
+ * which character it was for, and the first character's ability and house
+ * goals could land — silently — on the second character's screen. Only the
+ * call with the highest token when it finishes is the most recently
+ * requested one, and only it may commit.
+ */
+let loadCall = 0;
+
+/**
  * Read the whole savings record, keeping the level goals and handing back the
  * rest.
  *
@@ -430,10 +446,14 @@ async function write() {
  * goals are not blanked, and the next write merges rather than overwrites —
  * unless it is another character's, which must not stand in for this one's.
  *
- * @returns {Promise<Object|null>} The record without the goals, or null when
- *   nothing has been stored for this character
+ * @returns {Promise<Object|null|undefined>} The record without the goals,
+ *   `null` when nothing has been stored for this character, or `undefined`
+ *   when a later call for a different character has since superseded this
+ *   one — in which case nothing here was touched and a caller should do
+ *   nothing at all, rather than treat it as "nothing stored"
  */
 export async function loadSavingsRecord() {
+    const call = ++loadCall;
     try {
         await storage.ready;
         const who = dataManager.getCurrentCharacterId() || null;
@@ -441,6 +461,13 @@ export async function loadSavingsRecord() {
         owner = who;
         savings.reset();
         const readable = await savings.load();
+
+        // A newer call has since started (and may already have committed its
+        // own goals/gear below) for whichever character is now selected.
+        // Committing this stale read on top of it would swap that data back
+        // out from under the character actually on screen.
+        if (call !== loadCall) return undefined;
+
         if (!readable && previous) savings.set(previous);
         const saved = readable || previous ? savings.get() : null;
 

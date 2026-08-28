@@ -614,3 +614,58 @@ describe('the stored record and a store that cannot be read', () => {
         expect(Object.keys(stored.record.abilities)).toEqual(['/abilities/toxic_pollen']);
     });
 });
+
+describe('two switches close enough together to overlap', () => {
+    test('a slow read for the character switched away from does not land on top of the one switched to', async () => {
+        // One main and three ironcows in one browser: switching through them
+        // fast enough that the first character's storage read is still in
+        // flight when the second switch's own read starts is exactly the
+        // "1 main + 3 ironcow" scenario this exists for.
+        dataManagerMock.characterId = 'char2';
+        storageMock.storeFor('settings').set('equipmentSavings_char2', {
+            abilities: { '/abilities/toxic_pollen': { targetLevel: 20, cost: 2, label: 'Toxic Pollen Lv20' } },
+        });
+
+        let releaseChar2Read;
+        const gate = new Promise((resolve) => {
+            releaseChar2Read = resolve;
+        });
+        storageMock.tryGet.mockImplementationOnce(async (key, store = 'settings') => {
+            await gate;
+            if (storageMock.unavailable) return null;
+            const map = storageMock.storeFor(store);
+            return map.has(key) && map.get(key) != null
+                ? { found: true, value: structuredClone(map.get(key)) }
+                : { found: false, value: null };
+        });
+
+        // char2's read starts, and is parked on the gate before it can commit
+        const staleLoad = loadSavingsRecord();
+        // Let it run up to (and stall on) the gated storage read before the
+        // character is switched again — otherwise this call would itself
+        // observe the character-3 switch below and the race would never be
+        // set up
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // The player switches on again, to char3, before char2's read lands
+        dataManagerMock.characterId = 'char3';
+        storageMock.storeFor('settings').set('equipmentSavings_char3', {
+            abilities: { '/abilities/fierce_aura': { targetLevel: 55, cost: 3, label: 'Fierce Aura Lv55' } },
+        });
+        await loadSavingsRecord();
+
+        expect(abilityGoals().map((goal) => goal.abilityHrid)).toEqual(['/abilities/fierce_aura']);
+
+        // Now char2's stale read is allowed to land
+        releaseChar2Read();
+        const result = await staleLoad;
+
+        // It must not have been allowed to commit: char3's goals are what the
+        // screen is showing, and must still be what it shows afterwards
+        expect(result).toBeUndefined();
+        expect(abilityGoals().map((goal) => goal.abilityHrid)).toEqual(['/abilities/fierce_aura']);
+        expect(abilityGoalFor('/abilities/fierce_aura')).toMatchObject({ targetLevel: 55 });
+        expect(hasAbilityGoal('/abilities/toxic_pollen')).toBe(false);
+    });
+});

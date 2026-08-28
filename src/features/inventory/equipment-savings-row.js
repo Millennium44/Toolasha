@@ -196,6 +196,13 @@ const editing = {
 async function reload() {
     try {
         const saved = await loadSavingsRecord();
+        // `undefined` means a later reload() — for a character switched to
+        // (and possibly away from again) while this one was still reading
+        // storage — has already run and committed its own state. Resetting
+        // to defaults here would blank whatever that later call just loaded;
+        // doing nothing is correct, since only the most recent switch's
+        // reload() is allowed to touch `state`.
+        if (saved === undefined) return;
         Object.assign(
             state,
             { targets: {}, noSell: false, marketValue: true, selected: null, locked: false },
