@@ -131,6 +131,15 @@ class ProductionArbitrageBoard {
         this.query = '';
         this.craftableOnly = false;
         this.error = null;
+        /**
+         * Bumped whenever a ranking run is abandoned — a character switch
+         * (disable) or a Recompute superseding one already in flight. The
+         * running `ensureRows()` call captures the value at its own start and
+         * checks it again at every point it resumes after an await (the
+         * progress callback, and after the ranking settles); a mismatch means
+         * a newer run has taken over and this one's result belongs nowhere.
+         */
+        this.generation = 0;
     }
 
     /** Feature-registry entry point */
@@ -163,6 +172,11 @@ class ProductionArbitrageBoard {
     /** Feature-registry teardown */
     disable() {
         try {
+            // Any ranking still in flight for the character this instance was
+            // just serving is now stale — the panel it would render into is
+            // about to be torn down, and a new one may be built for a
+            // different character before that ranking's next callback fires.
+            this.generation++;
             this.unregisterTitleObserver?.();
             this.unregisterTitleObserver = null;
             document.querySelectorAll(`.${OPEN_BUTTON_CLASS}`).forEach((button) => button.remove());
@@ -215,10 +229,18 @@ class ProductionArbitrageBoard {
         this.ensureRows();
     }
 
-    /** Forget the ranking and cost everything again */
+    /** Forget the ranking and cost everything again, even if one is already running */
     recompute() {
         clearProductionArbitrageCache();
+        // Supersede whatever is in flight: bumping the generation makes its
+        // next callback a no-op, and resetting `computing` is what lets
+        // ensureRows() below actually start a new run instead of seeing a
+        // run "already in progress" and quietly doing nothing — which is
+        // what a Recompute clicked during "Costing recipes…" used to do.
+        this.generation++;
         this.rows = null;
+        this.computing = false;
+        this.error = null;
         this.ensureRows();
     }
 
@@ -228,6 +250,7 @@ class ProductionArbitrageBoard {
      */
     async ensureRows() {
         if (this.rows || this.computing) return;
+        const generation = ++this.generation;
         this.computing = true;
         this.error = null;
         this.progress = { done: 0, total: 0 };
@@ -236,18 +259,28 @@ class ProductionArbitrageBoard {
         try {
             const rows = await rankProductionArbitrage({
                 onProgress: (done, total, partial) => {
+                    // A newer run (a switch, or a Recompute) has taken over —
+                    // this partial result is not for the character or the
+                    // panel currently on screen
+                    if (generation !== this.generation) return;
                     this.progress = { done, total };
                     this.rows = partial;
                     this.panel?.render();
                 },
             });
+            if (generation !== this.generation) return;
             this.rows = rows;
         } catch (error) {
+            if (generation !== this.generation) return;
             console.error('[ProductionArbitrage] Ranking failed:', error);
             this.error = error;
         } finally {
-            this.computing = false;
-            this.panel?.render();
+            // Only this run's own bookkeeping — a superseded run must not
+            // clear the `computing` flag the run that replaced it is using
+            if (generation === this.generation) {
+                this.computing = false;
+                this.panel?.render();
+            }
         }
     }
 
