@@ -4,24 +4,36 @@
  * Finding the "Enhance Item" picker on the enhancing panel, and reading what
  * is in it.
  *
- * The enhancing panel carries two item selectors that share the same
- * component and class names — the item to enhance, and the protection item —
- * and, as with alchemy's pickers, the open menu is **portalled**: rendered
- * outside the selector that owns it, so it cannot be identified by what it
- * sits inside.
+ * The container this module first looked for —
+ * `SkillActionDetail_upgradeItemSelectorInput` — does not exist. Live-DOM
+ * inspection on the test server found the item-to-enhance slot wrapped in
+ * `SkillActionDetail_primaryItemSelectorContainer`, the exact same class
+ * alchemy's own primary slot uses (`alchemy-item-selector.js`). The two
+ * panels are never open at once, so the shared name is harmless as long as a
+ * caller also confirms the enhancing panel itself
+ * (`SkillActionDetail_enhancing…`) is what is on screen — otherwise this
+ * module would just as happily answer for alchemy's slot.
  *
- * Unlike alchemy's catalyst selector, the protection selector does not name
- * itself with a label either, so the same "watch which selector was clicked"
- * approach from alchemy-item-selector.js is used here instead of a label
- * comparison.
+ * The open menu is **portalled** further than alchemy's ever is: it does not
+ * even land inside the `SkillActionDetail` panel, only under a detached MUI
+ * tooltip popper at the document root (`ItemSelector_menu` > `MuiTooltip-*`
+ * > `MuiPopper-root` > unclassed). So unlike alchemy, where the menu is
+ * sometimes still contained in its owning slot, here it never is — the
+ * "watch which selector was clicked" fallback from alchemy-item-selector.js
+ * is not a fallback here, it is the only mechanism that works. The
+ * protection item selector does not name itself with a label either
+ * (alchemy's catalyst selector at least has one), so this uses the same
+ * click-tracking approach rather than a label comparison.
  */
 
 import { MENU_SELECTOR, TILE_SELECTOR, tileItemHrid, menuTiles } from '../../utils/item-selector-dom.js';
 
 export { tileItemHrid, menuTiles };
 
-/** The enhancing panel's own name for the slot the item to enhance goes in */
-const PRIMARY_SELECTOR = '[class*="SkillActionDetail_upgradeItemSelectorInput"]';
+/** The enhancing panel itself, so the shared PRIMARY_SELECTOR class below is never read as alchemy's */
+const ENHANCING_PANEL_SELECTOR = '[class*="SkillActionDetail_enhancing"]';
+/** The slot the item to enhance goes in — the same class alchemy's primary slot uses */
+const PRIMARY_SELECTOR = '[class*="SkillActionDetail_primaryItemSelectorContainer"]';
 /** The other item selector on the same panel, which must never be mistaken for the primary one */
 const PROTECTION_SELECTOR = '[class*="protectionItemInputContainer"]';
 
@@ -72,11 +84,15 @@ function trackSelectorClicks() {
 export function findEnhanceItemMenu() {
     trackSelectorClicks();
 
-    // Nothing to identify unless the enhance item slot is on the page
-    if (!document.querySelector(PRIMARY_SELECTOR)) return null;
+    // Nothing to identify unless the enhancing panel is actually up — the
+    // slot's own class is shared with alchemy's primary slot, so this gate is
+    // what keeps the two apart
+    const panel = document.querySelector(ENHANCING_PANEL_SELECTOR);
+    if (!panel || !panel.querySelector(PRIMARY_SELECTOR)) return null;
 
     for (const menu of document.querySelectorAll(MENU_SELECTOR)) {
-        // Not portalled after all: the structure answers it outright
+        // Kept in case a future layout nests the menu after all; today the
+        // menu is portalled to a detached tooltip popper and never matches
         if (menu.closest(PRIMARY_SELECTOR)) return menu;
         // Never claim the protection item's own menu
         if (menu.closest(PROTECTION_SELECTOR)) continue;
@@ -109,10 +125,12 @@ export function describeEnhanceMenus() {
         };
     });
 
+    const panel = document.querySelector(ENHANCING_PANEL_SELECTOR);
     console.log(
         `[Toolasha] ${menus.length} item selector menu(s) open. ` +
             `findEnhanceItemMenu() ${found ? `matched menu ${menus.indexOf(found)}` : 'matched nothing'}; ` +
-            `primary slot on page = ${!!document.querySelector(PRIMARY_SELECTOR)}; ` +
+            `enhancing panel on page = ${!!panel}; ` +
+            `primary slot inside it = ${!!panel?.querySelector(PRIMARY_SELECTOR)}; ` +
             `last selector clicked was the primary one = ${lastOpened.primary}.\n` +
             'Open the Enhance Item picker before running this — with no menu open there is nothing to find.'
     );
