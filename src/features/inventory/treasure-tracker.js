@@ -399,7 +399,7 @@ class TreasureTracker {
         // panel is not up, which is the usual case.
         this._render();
 
-        this.lootOpenedHandler = (data) => this._onLootOpened(data);
+        this.lootOpenedHandler = (data, context) => this._onLootOpened(data, context);
         webSocketHook.on('loot_opened', this.lootOpenedHandler);
     }
 
@@ -427,9 +427,22 @@ class TreasureTracker {
 
     /**
      * Record an opening and redraw if anyone is looking.
+     *
+     * The ledger is one character's, and it is the arriving character's from the
+     * moment the switch re-initializes this feature. A chest the departing character
+     * opened whose message lands after that would be folded into the wrong lifetime
+     * tally — and pop up over the wrong character's screen — so an opening from a
+     * socket that no longer owns the active character is dropped.
+     *
      * @param {Object} data - `loot_opened` message
+     * @param {{socket?: Object}|null} [context] - Delivery context from the WebSocket hook
      */
-    _onLootOpened(data) {
+    _onLootOpened(data, context) {
+        // Optional-call for the same reason as the other dataManager reaches here:
+        // Core is a separate bundle in the split build, and "not yet loaded" has to
+        // mean permissive rather than throw
+        if (dataManager.isFromActiveSocket?.(context) === false) return;
+
         const chestHrid = data?.openedItem?.itemHrid;
         if (!chestHrid) return;
 

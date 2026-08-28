@@ -147,7 +147,7 @@ class ChestOpeningRecorder {
         if (this.isActive) return;
 
         this._handlers = {
-            lootOpened: (data) => this._onLootOpened(data),
+            lootOpened: (data, context) => this._onLootOpened(data, context),
             characterSwitching: () => this._forget(),
         };
 
@@ -244,11 +244,23 @@ class ChestOpeningRecorder {
 
     /**
      * Record one `loot_opened` message.
+     *
+     * `_forget()` on `character_switching` stops the departing character's rows being
+     * written under the arriving character's key, but it cannot help with a chest the
+     * *departing* character opened whose message arrives after the switch: by then the
+     * rows are the new character's, `_currentCharId()` names the new character, and the
+     * opening is filed under them. Only the socket it came from tells the two apart.
+     *
      * @param {Object} data - The message
+     * @param {{socket?: Object}|null} [context] - Delivery context from the WebSocket hook
      * @returns {Promise<void>}
      */
-    async _onLootOpened(data) {
+    async _onLootOpened(data, context) {
         try {
+            // Optional-call, like every other dataManager reach in this file: in the
+            // split build Core is a separate bundle, and a permissive answer while it is
+            // still loading is the same answer an unbound socket gives.
+            if (dataManager.isFromActiveSocket?.(context) === false) return;
             if (!config.getSetting('networth_goldSources')) return;
             if (storage.isQuotaExceeded?.()) return;
 

@@ -73,6 +73,7 @@ vi.mock('../../core/data-manager.js', () => ({
             labyrinthShopItemDetailMap: dm.labyrinthShop,
         }),
         getCurrentCharacterId: () => 'char-1',
+        isFromActiveSocket: () => true,
         getCurrentCharacterGameMode: () => 'standard',
         on: () => {},
         off: () => {},

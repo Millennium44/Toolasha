@@ -906,6 +906,23 @@ class DataManager {
     }
 
     /**
+     * The same check, for the features that subscribe to `webSocketHook` directly.
+     *
+     * A feature that records something per character off a raw message — the chest
+     * ledgers are the ones that do — has the same problem DataManager does and no way
+     * to see the binding otherwise. A method rather than a module-level export on
+     * purpose: in the split production build `src/core/data-manager.js` resolves to
+     * this singleton at `Toolasha.Core.dataManager`, so a bare exported function is
+     * not reachable from another bundle but a method on the singleton is.
+     *
+     * @param {{socket?: Object}|null} [context] - Delivery context from the WebSocket hook
+     * @returns {boolean} True when the message belongs to the active character
+     */
+    isFromActiveSocket(context) {
+        return this._isFromActiveSocket(context);
+    }
+
+    /**
      * Update equipment map from character items
      * @param {Array} items - Character items array
      */
