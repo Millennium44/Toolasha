@@ -46,6 +46,54 @@ const STORE_NAME = 'rerollSpending';
 const RECENT_TASK_GRACE_MS = 5 * 60 * 1000;
 
 /**
+ * Cumulative gold spent from a coin reroll count.
+ * Formula: 10K, 20K, 40K, 80K, 160K, 320K (doubles, caps at 320K)
+ *
+ * A module-level function rather than only a method, so anything that needs
+ * to price a reroll count — the badge that sums it across the board, a test —
+ * can do so without an instance.
+ *
+ * @param {number} rerollCount - Number of gold rerolls
+ * @returns {number} Total gold spent
+ */
+export function calculateGoldSpent(rerollCount) {
+    if (rerollCount === 0) return 0;
+
+    let total = 0;
+    let cost = 10000; // Start at 10K
+
+    for (let i = 0; i < rerollCount; i++) {
+        total += cost;
+        // Double the cost, but cap at 320K
+        cost = Math.min(cost * 2, 320000);
+    }
+
+    return total;
+}
+
+/**
+ * Cumulative cowbells spent from a cowbell reroll count.
+ * Formula: 1, 2, 4, 8, 16, 32 (doubles, caps at 32)
+ *
+ * @param {number} rerollCount - Number of cowbell rerolls
+ * @returns {number} Total cowbells spent
+ */
+export function calculateCowbellSpent(rerollCount) {
+    if (rerollCount === 0) return 0;
+
+    let total = 0;
+    let cost = 1; // Start at 1
+
+    for (let i = 0; i < rerollCount; i++) {
+        total += cost;
+        // Double the cost, but cap at 32
+        cost = Math.min(cost * 2, 32);
+    }
+
+    return total;
+}
+
+/**
  * Fold a stored history under the in-memory one: the union by task, oldest
  * first, capped at {@link HISTORY_CAP}.
  * @param {Array} stored - Entries as read back
@@ -421,44 +469,20 @@ class TaskRerollTracker {
 
     /**
      * Calculate cumulative gold spent from coin reroll count
-     * Formula: 10K, 20K, 40K, 80K, 160K, 320K (doubles, caps at 320K)
      * @param {number} rerollCount - Number of gold rerolls
      * @returns {number} Total gold spent
      */
     calculateGoldSpent(rerollCount) {
-        if (rerollCount === 0) return 0;
-
-        let total = 0;
-        let cost = 10000; // Start at 10K
-
-        for (let i = 0; i < rerollCount; i++) {
-            total += cost;
-            // Double the cost, but cap at 320K
-            cost = Math.min(cost * 2, 320000);
-        }
-
-        return total;
+        return calculateGoldSpent(rerollCount);
     }
 
     /**
      * Calculate cumulative cowbells spent from cowbell reroll count
-     * Formula: 1, 2, 4, 8, 16, 32 (doubles, caps at 32)
      * @param {number} rerollCount - Number of cowbell rerolls
      * @returns {number} Total cowbells spent
      */
     calculateCowbellSpent(rerollCount) {
-        if (rerollCount === 0) return 0;
-
-        let total = 0;
-        let cost = 1; // Start at 1
-
-        for (let i = 0; i < rerollCount; i++) {
-            total += cost;
-            // Double the cost, but cap at 32
-            cost = Math.min(cost * 2, 32);
-        }
-
-        return total;
+        return calculateCowbellSpent(rerollCount);
     }
 
     /**

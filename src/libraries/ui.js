@@ -52,6 +52,7 @@ import taskStatistics from '../features/tasks/task-statistics.js';
 import '../features/tasks/task-tokens-row.js';
 import taskClaimCollector from '../features/tasks/task-claim-collector.js';
 import taskClaimToast from '../features/tasks/task-claim-toast.js';
+import taskRerollBadge from '../features/tasks/task-reroll-badge.js';
 import taskRerollProtection from '../features/tasks/task-reroll-protection.js';
 import taskAutoReroll from '../features/tasks/task-auto-reroll.js';
 import taskRerollWalk from '../features/tasks/task-reroll-walk.js';
@@ -199,6 +200,7 @@ toolashaRoot.UI = {
     taskStatistics,
     taskClaimCollector,
     taskClaimToast,
+    taskRerollBadge,
     taskRerollProtection,
     taskAutoReroll,
     taskRerollWalk,

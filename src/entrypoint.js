@@ -1518,6 +1518,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'taskRerollSpendBadge',
+            name: 'Task Reroll Spend Badge',
+            category: 'Tasks',
+            module: UI.taskRerollBadge,
+            async: false,
+        },
+        {
             key: 'taskRerollProtection',
             name: 'Task Reroll Protection',
             category: 'Tasks',

@@ -162,6 +162,7 @@ export const TOOLASHA = {
     REROLL_COST_DISPLAY: '.mwi-reroll-cost-display',
     TASK_STATS_BTN: '.toolasha-task-stats-btn',
     TASK_STATS_OVERLAY: '.toolasha-task-stats-overlay',
+    TASK_REROLL_SPEND_BADGE: '.toolasha-reroll-spend-badge',
 
     // Action features
     QUEUE_TOTAL_TIME: '#mwi-queue-total-time',

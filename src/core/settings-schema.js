@@ -2693,6 +2693,13 @@ export const settingsGroups = {
                 default: true,
                 help: 'Pops a brief toast naming the coins, tokens, and items a claimed task paid out — the reward the claimed card no longer shows once it is gone.',
             },
+            taskRerollSpendBadge: {
+                id: 'taskRerollSpendBadge',
+                label: 'Show total reroll spend next to the task slot count',
+                type: 'checkbox',
+                default: true,
+                help: 'Sums the reroll cost already sunk into the tasks currently on the board and shows it next to the slot count, without opening Statistics.',
+            },
             taskGoMerge: {
                 id: 'taskGoMerge',
                 label: 'Merge duplicate tasks on Go',
