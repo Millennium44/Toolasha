@@ -18,6 +18,7 @@ import {
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
     visibleTabsContainer,
+    attachRegularTabClearListener,
 } from '../../utils/marketplace-tabs.js';
 
 class HouseCostDisplay {
@@ -795,18 +796,11 @@ class HouseCostDisplay {
         // Enable flex wrapping
         tabsContainer.style.flexWrap = 'wrap';
 
-        // Use event delegation on tabs container to clear quantity when regular tabs are clicked
-        // This avoids memory leaks from adding listeners to each tab repeatedly
-        if (!tabsContainer.hasAttribute('data-mwi-delegated-listener')) {
-            tabsContainer.setAttribute('data-mwi-delegated-listener', 'true');
-            tabsContainer.addEventListener('click', (e) => {
-                // Check if clicked element is a regular tab (not our custom tab)
-                const clickedTab = e.target.closest('button');
-                if (clickedTab && !clickedTab.hasAttribute('data-mwi-custom-tab')) {
-                    this.autofillManager.clearQuantity();
-                }
-            });
-        }
+        // See attachRegularTabClearListener: clears the armed quantity when a
+        // *different* native tab is picked, but not on "+ New Buy Listing" /
+        // "+ New Sell Listing" — those live in the same flex row but aren't MUI
+        // Tabs.
+        attachRegularTabClearListener(tabsContainer, () => this.autofillManager.clearQuantity());
 
         // Create tab for each missing material
         this.currentMaterialsTabs.length = 0; // Clear without reassigning (preserves observer reference)

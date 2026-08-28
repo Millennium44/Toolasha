@@ -311,6 +311,39 @@ export function visibleTabsContainer(contains = 'My Listings') {
 }
 
 /**
+ * Attach (once) a delegated click listener to a tab strip that fires when the
+ * user picks a *different* native tab — meaning "never mind, I'm not buying
+ * that", which is when a quantity armed for a pinned material tab should be
+ * dropped.
+ *
+ * Matches on `[role="tab"]` rather than any `button`. Tab strips this is used
+ * on (the marketplace's, the Tester shop's) also hold action buttons in the
+ * same row — "+ New Buy Listing" / "+ New Sell Listing" are `Button_buy` /
+ * `Button_sell` components, not MUI Tabs, so they carry no `role="tab"`.
+ * Matching on `button` used to catch those too and clear the just-armed
+ * quantity a beat before their dialog opened, so the buy dialog you reached by
+ * clicking "+ New Buy Listing" right after a missing-material tab always
+ * landed on the default quantity of 1 instead of the missing count.
+ *
+ * Idempotent via `data-mwi-delegated-listener`, so a caller that rebuilds its
+ * tabs on every open (as the missing-materials features do) never stacks a
+ * second listener on the same container.
+ *
+ * @param {HTMLElement} tabsContainer - The tab strip to delegate from
+ * @param {Function} onOtherTabClick - Called with no args when a genuine other tab is clicked
+ */
+export function attachRegularTabClearListener(tabsContainer, onOtherTabClick) {
+    if (!tabsContainer || tabsContainer.hasAttribute('data-mwi-delegated-listener')) return;
+    tabsContainer.setAttribute('data-mwi-delegated-listener', 'true');
+    tabsContainer.addEventListener('click', (e) => {
+        const clickedTab = e.target.closest('[role="tab"]');
+        if (clickedTab && !clickedTab.hasAttribute('data-mwi-custom-tab')) {
+            onOtherTabClick();
+        }
+    });
+}
+
+/**
  * Remove all custom material tabs from the marketplace
  */
 export function removeMaterialTabs() {

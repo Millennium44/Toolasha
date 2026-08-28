@@ -29,6 +29,7 @@ import {
     setupMarketplaceCleanupObserver,
     navigateToMarketplace,
     visibleTabsContainer,
+    attachRegularTabClearListener,
 } from '../../utils/marketplace-tabs.js';
 import { getProtectionItemFromUI, getProtectFromLevelFromUI } from './enhancement-display.js';
 import { calculateEnhancementPath } from '../enhancement/tooltip-enhancement.js';
@@ -836,15 +837,7 @@ function createTesterShopTabs(missingMaterials, testerTab) {
     currentMaterialsTabs.length = 0;
     tabsContainer.style.flexWrap = 'wrap';
 
-    if (!tabsContainer.hasAttribute('data-mwi-delegated-listener')) {
-        tabsContainer.setAttribute('data-mwi-delegated-listener', 'true');
-        tabsContainer.addEventListener('click', (e) => {
-            const clickedTab = e.target.closest('button');
-            if (clickedTab && !clickedTab.hasAttribute('data-mwi-custom-tab')) {
-                autofillManager.clearQuantity();
-            }
-        });
-    }
+    attachRegularTabClearListener(tabsContainer, () => autofillManager.clearQuantity());
 
     for (const material of missingMaterials) {
         const sold = testerShopCoinCost(material.itemHrid) > 0;
@@ -1270,18 +1263,11 @@ function createMissingMaterialTabs(missingMaterials, strategyInfo = null) {
         tabsContainer.style.flexWrap = 'wrap';
     }
 
-    // Use event delegation on tabs container to clear quantity when regular tabs are clicked
-    // This avoids memory leaks from adding listeners to each tab repeatedly
-    if (!tabsContainer.hasAttribute('data-mwi-delegated-listener')) {
-        tabsContainer.setAttribute('data-mwi-delegated-listener', 'true');
-        tabsContainer.addEventListener('click', (e) => {
-            // Check if clicked element is a regular tab (not our custom tab)
-            const clickedTab = e.target.closest('button');
-            if (clickedTab && !clickedTab.hasAttribute('data-mwi-custom-tab')) {
-                autofillManager.clearQuantity();
-            }
-        });
-    }
+    // See attachRegularTabClearListener: clears the armed quantity when a
+    // *different* native tab is picked, but not on "+ New Buy Listing" /
+    // "+ New Sell Listing" — those live in the same flex row but aren't MUI
+    // Tabs.
+    attachRegularTabClearListener(tabsContainer, () => autofillManager.clearQuantity());
 
     // Create tab for each missing material
     currentMaterialsTabs.length = 0; // Clear without reassigning (preserves observer reference)

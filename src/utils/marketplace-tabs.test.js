@@ -33,6 +33,7 @@ import {
     createClearAllTabsControl,
     ensureClearAllTabsControl,
     watchTabForAcquisition,
+    attachRegularTabClearListener,
 } from './marketplace-tabs.js';
 
 /** Fire the exact wildcard path watchTabForAcquisition listens on — the same
@@ -315,6 +316,98 @@ describe('removeMaterialTabs / removeShrineMarketTabs', () => {
         removeShrineMarketTabs();
 
         expect(document.body.contains(shrine)).toBe(false);
+    });
+});
+
+describe('attachRegularTabClearListener', () => {
+    beforeEach(() => {
+        document.body.innerHTML = '';
+    });
+
+    /** A native MUI tab (My Listings / Market Listings), the real thing this
+     * should fire on. */
+    function nativeTab(text) {
+        const tab = document.createElement('button');
+        tab.setAttribute('role', 'tab');
+        tab.textContent = text;
+        return tab;
+    }
+
+    /** One of our own pinned material tabs — cloned from a native tab, so it
+     * also carries role="tab", but is tagged and must never trigger the clear. */
+    function customTab(text) {
+        const tab = nativeTab(text);
+        tab.setAttribute('data-mwi-custom-tab', 'true');
+        return tab;
+    }
+
+    /** "+ New Buy Listing" / "+ New Sell Listing" — a Button_buy/Button_sell
+     * component in the same flex row, not a MUI Tab, so no role="tab". */
+    function actionButton(text) {
+        const button = document.createElement('button');
+        button.className = 'Button_button Button_buy';
+        button.textContent = text;
+        return button;
+    }
+
+    test('fires when a different native tab is clicked', () => {
+        const container = document.createElement('div');
+        const myListings = nativeTab('My Listings');
+        container.appendChild(myListings);
+        document.body.appendChild(container);
+
+        const onOtherTabClick = vi.fn();
+        attachRegularTabClearListener(container, onOtherTabClick);
+        myListings.click();
+
+        expect(onOtherTabClick).toHaveBeenCalledTimes(1);
+    });
+
+    test('does not fire when our own pinned material tab is clicked', () => {
+        const container = document.createElement('div');
+        const pinned = customTab('Labyrinth Refinement Shard — Missing: 286');
+        container.appendChild(pinned);
+        document.body.appendChild(container);
+
+        const onOtherTabClick = vi.fn();
+        attachRegularTabClearListener(container, onOtherTabClick);
+        pinned.click();
+
+        expect(onOtherTabClick).not.toHaveBeenCalled();
+    });
+
+    test('does not fire for "+ New Buy Listing" sharing the tab row — the reported bug', () => {
+        // Regression: clicking "+ New Buy Listing" right after picking a missing-
+        // material tab used to clear the quantity armed for the buy dialog it was
+        // about to open, so the dialog always landed on the default quantity of 1
+        // instead of the missing count (286 in the reported case).
+        const container = document.createElement('div');
+        container.append(nativeTab('My Listings'), actionButton('+ New Buy Listing'));
+        document.body.appendChild(container);
+
+        const onOtherTabClick = vi.fn();
+        attachRegularTabClearListener(container, onOtherTabClick);
+        container.querySelector('.Button_buy').click();
+
+        expect(onOtherTabClick).not.toHaveBeenCalled();
+    });
+
+    test('is idempotent — a second call on the same container does not attach a second listener', () => {
+        const container = document.createElement('div');
+        const myListings = nativeTab('My Listings');
+        container.appendChild(myListings);
+        document.body.appendChild(container);
+
+        const onOtherTabClick = vi.fn();
+        attachRegularTabClearListener(container, onOtherTabClick);
+        attachRegularTabClearListener(container, onOtherTabClick);
+        myListings.click();
+
+        expect(onOtherTabClick).toHaveBeenCalledTimes(1);
+    });
+
+    test('does nothing when passed no container', () => {
+        expect(() => attachRegularTabClearListener(null, vi.fn())).not.toThrow();
     });
 });
 
