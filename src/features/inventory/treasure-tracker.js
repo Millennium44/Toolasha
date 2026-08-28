@@ -149,6 +149,11 @@ const DEFAULT_SETTINGS = {
     hiddenChests: [],
     popupPinned: false,
     sortMode: 'luck',
+    // Which chests are expanded to their item breakdown. Remembered so a panel
+    // reopened later — or after the page reloads — comes back open on the chest
+    // you were actually looking at, rather than the collapsed list every panel
+    // starts with.
+    expandedChests: [],
 };
 
 /**
@@ -382,6 +387,11 @@ class TreasureTracker {
         this.tally = this.ledger.get();
         const saved = await readScoped(SETTINGS_KEY, 'settings', null, ADOPT_LEGACY);
         if (saved) this.settings = { ...DEFAULT_SETTINGS, ...saved };
+        // Reapplied every initialize, not just the first: a character switch
+        // re-initializes the same instance, and the previous character's
+        // expanded chests would otherwise still be sitting in `this.expanded`
+        // when the new one's settings load.
+        this.expanded = new Set(this.settings.expandedChests || []);
 
         // A panel reopened at start-up is created before this runs, so it drew
         // the whole chest list against an empty ledger and read "Nothing opened
@@ -1825,6 +1835,8 @@ class TreasureTracker {
             if (this.configMode) return;
             if (this.expanded.has(row.chestHrid)) this.expanded.delete(row.chestHrid);
             else this.expanded.add(row.chestHrid);
+            this.settings.expandedChests = [...this.expanded];
+            this._saveSettings();
             this._render();
         });
 

@@ -6,7 +6,13 @@ import { describe, test, expect, afterEach, vi } from 'vitest';
 const pointer = vi.hoisted(() => ({ touch: false }));
 
 vi.mock('../../core/config.js', () => ({
-    default: { getSetting: () => false, getSettingValue: (id, fallback) => fallback, Z_FLOATING_PANEL: 1100 },
+    default: {
+        // A vi.fn so the initialize() gate can be flipped on for the one test
+        // that needs it, then handed back to the default every other test relies on
+        getSetting: vi.fn(() => false),
+        getSettingValue: (id, fallback) => fallback,
+        Z_FLOATING_PANEL: 1100,
+    },
 }));
 /** A small in-memory store, with a switch for "the database cannot be read" */
 const storageMock = vi.hoisted(() => {
@@ -120,6 +126,7 @@ const {
     TREASURE_DETAIL_COLUMNS,
     default: treasureTracker,
 } = await import('./treasure-tracker.js');
+const { default: config } = await import('../../core/config.js');
 
 describe('formatReturn', () => {
     test('reads as a gain or a shortfall against expectation', () => {
@@ -824,5 +831,49 @@ describe('_untradableValue at token value', () => {
 
         // market-data is mocked to price everything at 1, so the fallback answers 1
         expect(treasureTracker._untradableValue('/items/cape')).toBe(10_001);
+    });
+});
+
+describe('which chests are expanded is remembered', () => {
+    const CHEST = '/items/chimerical_chest';
+    const row = { chestHrid: CHEST, opened: 3, perChestValue: 10, ratio: 1 };
+
+    afterEach(() => {
+        storageMock.reset();
+        config.getSetting.mockImplementation(() => false);
+    });
+
+    test('expanding a row saves it, so a reopened panel remembers what you were looking at', () => {
+        treasureTracker.settings = {
+            capeValue: 'token',
+            valueCowbells: true,
+            hiddenChests: [],
+            popupPinned: false,
+            sortMode: 'luck',
+            expandedChests: [],
+        };
+        treasureTracker.expanded = new Set();
+
+        const header = treasureTracker._chestRow(row).firstElementChild;
+        header.click();
+
+        expect(treasureTracker.expanded.has(CHEST)).toBe(true);
+        expect(treasureTracker.settings.expandedChests).toEqual([CHEST]);
+
+        // Collapsing again drops it from both
+        header.click();
+        expect(treasureTracker.expanded.has(CHEST)).toBe(false);
+        expect(treasureTracker.settings.expandedChests).toEqual([]);
+    });
+
+    test('initialize() seeds `expanded` from the stored settings', async () => {
+        config.getSetting.mockImplementation(() => true);
+        storageMock.storeFor('settings').set('treasureSettings_char-1', { expandedChests: [CHEST] });
+        treasureTracker.isInitialized = false;
+
+        await treasureTracker.initialize();
+
+        expect(treasureTracker.expanded.has(CHEST)).toBe(true);
+        treasureTracker.disable();
     });
 });
