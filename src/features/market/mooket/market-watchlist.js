@@ -14,6 +14,8 @@
  * Pure: state in, state out.
  */
 
+import { formatRelativeTime } from '../../../utils/formatters.js';
+
 /**
  * How much of each pinned item to show. Cycling through these is one button
  * rather than a settings page, because the right amount of detail depends on how
@@ -104,6 +106,23 @@ export function watchedChange(entry, price) {
         askChange: percent(entry?.ask, price?.ask),
         bidChange: percent(entry?.bid, price?.bid),
     };
+}
+
+/**
+ * How stale a chip's reading is, worded for its tooltip.
+ *
+ * The chip shows the last price the pooled dataset reported, not a live quote,
+ * so a reader deciding whether to trust it needs to know when that was — a
+ * price with no reading yet says so honestly rather than claiming an age of zero.
+ *
+ * @param {number|null|undefined} at - When the price was last recorded (ms), or unset
+ * @param {number} [now] - Current time (ms), injectable for tests
+ * @returns {string} e.g. "Updated 5m ago", "Updated just now", "Updated —"
+ */
+export function describeUpdateAge(at, now = Date.now()) {
+    if (!(at > 0)) return 'Updated —';
+    const age = formatRelativeTime(now - at);
+    return age === 'Just now' ? 'Updated just now' : `Updated ${age} ago`;
 }
 
 /**

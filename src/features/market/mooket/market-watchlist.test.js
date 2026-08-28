@@ -11,6 +11,7 @@ import {
     nextDisplayMode,
     watchedChange,
     normaliseWatchlist,
+    describeUpdateAge,
     DISPLAY_MODES,
     MAX_WATCHED,
 } from './market-watchlist.js';
@@ -98,5 +99,24 @@ describe('normaliseWatchlist', () => {
     test('junk reads as an empty list', () => {
         expect(normaliseWatchlist(null)).toEqual([]);
         expect(normaliseWatchlist([{ nope: 1 }])).toEqual([]);
+    });
+});
+
+describe('describeUpdateAge', () => {
+    const now = 1_000_000_000;
+
+    test('a price with no reading yet says so honestly, not "0 ago"', () => {
+        expect(describeUpdateAge(null, now)).toBe('Updated —');
+        expect(describeUpdateAge(undefined, now)).toBe('Updated —');
+        expect(describeUpdateAge(0, now)).toBe('Updated —');
+    });
+
+    test('under a minute reads as "just now", not "Just now ago"', () => {
+        expect(describeUpdateAge(now - 30_000, now)).toBe('Updated just now');
+    });
+
+    test('older readings carry the relative age and "ago"', () => {
+        expect(describeUpdateAge(now - 5 * 60_000, now)).toBe('Updated 5m ago');
+        expect(describeUpdateAge(now - 2 * 3_600_000, now)).toBe('Updated 2h 0m ago');
     });
 });

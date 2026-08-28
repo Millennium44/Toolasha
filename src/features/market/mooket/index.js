@@ -43,6 +43,7 @@ import {
     nextDisplayMode,
     watchedChange,
     normaliseWatchlist,
+    describeUpdateAge,
 } from './market-watchlist.js';
 import { createCuratedRecord, mergeById } from '../../../utils/persisted-record.js';
 import { attachMinimize } from '../../../utils/panel-minimize.js';
@@ -573,6 +574,7 @@ class MarketHistoryPanel {
                 `${this.itemName(itemHrid)}${Number(level) > 0 ? ` +${level}` : ''}\n` +
                 `Ask ${change.ask === null ? '—' : formatWithSeparator(change.ask)} · ` +
                 `Bid ${change.bid === null ? '—' : formatWithSeparator(change.bid)}\n` +
+                `${describeUpdateAge(price?.at)}\n` +
                 'Click to chart it, right-click to unpin';
 
             const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
