@@ -24,7 +24,12 @@ vi.mock('../../utils/house-cost-calculator.js', () => ({
 }));
 vi.mock('../../utils/overlay-rows.js', () => ({ registerRow: () => {} }));
 vi.mock('../../utils/formatters.js', () => ({ formatLargeNumber: (n) => String(n) }));
-vi.mock('../../utils/market-data.js', () => ({ getItemPrice: () => 1 }));
+vi.mock('../../utils/market-data.js', () => ({
+    // ask/bid genuinely differ, so a call site that forwards `side` incorrectly
+    // (e.g. through an unrecognised `context` that always resolves to ask) is
+    // caught by asserting the two actually differ.
+    getItemPrice: (_hrid, options = {}) => (options.mode === 'bid' ? 2 : 1),
+}));
 vi.mock('../../utils/marketplace-tabs.js', () => ({ navigateToMarketplace: () => {} }));
 vi.mock('../../core/storage.js', () => ({
     default: {
@@ -156,5 +161,15 @@ describe('both sides of the book', () => {
         expect(materialsCost([], 'ask')).toBe(0);
         expect(materialsCost(null, 'bid')).toBe(0);
         expect(materialsCost([{ itemHrid: '/items/x' }], 'ask')).toBe(0);
+    });
+
+    test('bid actually prices at bid, not silently at ask', () => {
+        // Regression: `priceOfMaterial` used to call `getItemPrice` with
+        // `{ context: 'cost', side }`, a context `getPricingMode` does not
+        // recognise, so it always fell through to its 'ask' default and the
+        // bid column matched the ask column on every room.
+        const priced = [{ itemHrid: '/items/birch_lumber', count: 300 }];
+        expect(materialsCost(priced, 'bid')).not.toBe(materialsCost(priced, 'ask'));
+        expect(materialsCost(priced, 'bid')).toBe(300 * 2);
     });
 });

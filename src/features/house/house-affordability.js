@@ -66,7 +66,11 @@ const COLORS = {
  * @returns {number} Price, or 0 when the market has no answer
  */
 function priceOfMaterial(itemHrid, side = 'ask') {
-    return getItemPrice(itemHrid, { context: 'cost', side }) || 0;
+    // `mode`, not `context` + `side`: `getPricingMode` only recognises the
+    // 'profit' and 'networth' contexts and otherwise falls through to its
+    // default branch, which always resolves to 'ask' regardless of `side`.
+    // That silently made the bid column identical to the ask column.
+    return getItemPrice(itemHrid, { mode: side }) || 0;
 }
 
 /**
