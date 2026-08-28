@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Chest rooms stop wearing combat badges on the labyrinth map
+
+A treasure room carrying a stray monster field in the game's data was classified as a fight and given a clear-chance badge. Room classification now trusts the room's own type — the convention every other classifier in the codebase already followed — on both the calculation and cache-restore paths.
+
+
 ### The philo calculator's craft costs account for Artisan tea, and show their arithmetic
 
 The Philosopher's Stone Calculator's own refinement craft estimate priced the raw recipe — 100 shards when the game's requirement line says 88.9 with Artisan tea active — overstating cape costs there by the whole tea bonus. This was specific to that calculator: every other craft-cost surface (equipment savings, the crafting plan, missing-mats, the profit displays) already applied the artisan reduction. The calculator now does too, and hovering its ⚒ cost shows the full accounting: each material's effective count, unit price and subtotal, plus what happened to the base item (untradable bases add no market cost; a tradable-but-unlisted base is disclosed as understating rather than silently omitted).
