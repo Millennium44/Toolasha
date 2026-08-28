@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Seven guild fixes from the audit fleet
+
+Trial state stops leaking across boundaries: a new trial no longer inherits the previous trial's game-reported totals and boss sheets; the personally-fought path resets its per-slot HP/MP baselines at wave boundaries like the spectated path always did, ending phantom revives and bogus healing swings when slots re-deal; and a character or guild switch mid-trial now closes the recording out properly — accruing it to the attendance ledger instead of leaving a forever-open session that never counted. The attendance ledger itself serialises its writes so two trials finishing close together can't clobber each other's rows, the ledger view guards against out-of-order redraws, the XP tracker stamps its guild id before awaiting the read so overlapping guild switches can't mismatch histories, and the skilling stats keep a stated zero consistently.
+
+
 ### Pinned market tabs stop reading the next character's bags
 
 A lab-sim shopping-plan tab left pinned across a character switch kept its acquisition watcher alive, so the new character's inventory could retire it as "✓ Acquired" for items the planning character never bought. The watchers now tear down synchronously during the switch, before the new inventory is visible.
