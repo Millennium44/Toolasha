@@ -586,6 +586,13 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'collectableListingsSort',
+            name: 'Collectable Listings Sort',
+            category: 'Market',
+            module: Market.collectableListingsSort,
+            async: false,
+        },
+        {
             key: 'marketplaceBadgeFilter',
             name: 'Marketplace Badge Filter',
             category: 'Market',

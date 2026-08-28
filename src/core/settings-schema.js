@@ -1269,6 +1269,15 @@ export const settingsGroups = {
                     'Adds a "Refresh" button on My Listings that opens your first listing\'s order book, then a ' +
                     '"Next" button on each listing\'s page to move to the next one, ending in "Back to My Listings"',
             },
+            market_collectableListingsToTop: {
+                id: 'market_collectableListingsToTop',
+                label: 'Market: Move collectable listings to top of My Listings',
+                type: 'checkbox',
+                default: true,
+                help:
+                    'Listings with something to collect are moved to the top so you can see what "Collect All" ' +
+                    'grabbed without scrolling. Manually sorting a column takes over until sort is cleared',
+            },
             market_bulkSellAssistant: {
                 id: 'market_bulkSellAssistant',
                 label: 'Market: Bulk Sell Assistant',
