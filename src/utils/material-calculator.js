@@ -132,6 +132,23 @@ export function calculateQueuedMaterialsForAction(actionHrid = null) {
  * @param {boolean} accountForQueue - Whether to subtract queued materials from available inventory (default: false)
  * @returns {Array<Object>} Array of material requirement objects (includes upgrade items)
  */
+/**
+ * Items a buy order has already bought for `itemHrid`, still sitting unclaimed
+ * on the listing rather than in the inventory. Counting them keeps every
+ * "Missing" figure falling while an order fills instead of only after the
+ * claim; a claim moves them to the inventory and drops this by the same
+ * amount, so nothing is counted twice.
+ *
+ * @param {string} itemHrid - Item
+ * @returns {number} Unclaimed bought units across the character's buy listings
+ */
+export function unclaimedBoughtCount(itemHrid) {
+    const listings = dataManager.getMarketListings?.() || [];
+    return listings
+        .filter((l) => l && !l.isSell && l.itemHrid === itemHrid && !(l.enhancementLevel > 0))
+        .reduce((sum, l) => sum + (l.unclaimedItemCount || 0), 0);
+}
+
 export function calculateMaterialRequirements(actionHrid, numActions, accountForQueue = false) {
     const actionDetails = dataManager.getActionDetails(actionHrid);
     const inventory = dataManager.getInventory() || [];
@@ -161,10 +178,13 @@ export function calculateMaterialRequirements(actionHrid, numActions, accountFor
             const totalRequired = calculateTotalRequired(basePerAction, artisanBonus, numActions, artisanMode);
 
             // Only count unenhanced items — enhanced copies are distinct items the player
-            // would not want consumed as crafting materials
-            const have = inventory
-                .filter((i) => i.itemHrid === input.itemHrid && !i.enhancementLevel)
-                .reduce((sum, i) => sum + (i.count || 0), 0);
+            // would not want consumed as crafting materials. Bought-but-unclaimed
+            // units on the player's own buy orders count too (see unclaimedBoughtCount).
+            const have =
+                unclaimedBoughtCount(input.itemHrid) +
+                inventory
+                    .filter((i) => i.itemHrid === input.itemHrid && !i.enhancementLevel)
+                    .reduce((sum, i) => sum + (i.count || 0), 0);
 
             // Calculate queued and available amounts
             const queued = queuedMaterialsMap.get(input.itemHrid) || 0;
@@ -347,9 +367,11 @@ export function calculateEnhancementMaterialRequirements(
         }
 
         const totalQuantity = Math.ceil(cost.count * (repeatCount ?? calc.attempts));
-        const have = inventory
-            .filter((i) => i.itemHrid === cost.itemHrid && !i.enhancementLevel)
-            .reduce((sum, i) => sum + (i.count || 0), 0);
+        const have =
+            unclaimedBoughtCount(cost.itemHrid) +
+            inventory
+                .filter((i) => i.itemHrid === cost.itemHrid && !i.enhancementLevel)
+                .reduce((sum, i) => sum + (i.count || 0), 0);
         const missing = Math.max(0, totalQuantity - have);
 
         materials.push({

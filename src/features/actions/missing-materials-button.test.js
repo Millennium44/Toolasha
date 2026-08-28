@@ -13,6 +13,7 @@ import { describe, test, expect, vi } from 'vitest';
 const state = vi.hoisted(() => ({
     inventory: [],
     items: {},
+    unclaimed: {},
 }));
 
 vi.mock('../../core/data-manager.js', () => ({
@@ -43,6 +44,7 @@ vi.mock('../../utils/action-panel-helper.js', () => ({
 vi.mock('../../utils/material-calculator.js', () => ({
     calculateMaterialRequirements: () => [],
     calculateEnhancementMaterialRequirements: () => [],
+    unclaimedBoughtCount: (itemHrid) => state.unclaimed?.[itemHrid] || 0,
 }));
 vi.mock('../../utils/marketplace-autofill.js', () => ({
     createAutofillManager: () => ({
@@ -113,6 +115,18 @@ describe('a bill of materials against the inventory', () => {
                 isUpgradeItem: false,
             },
         ]);
+    });
+
+    test('items bought but not yet claimed off a buy order count as held', () => {
+        state.inventory = [{ itemHrid: '/items/eyessence', count: 1000, enhancementLevel: 0 }];
+        state.unclaimed = { '/items/eyessence': 112852 };
+        state.items = { '/items/eyessence': { name: 'Eyessence', isTradable: true } };
+
+        const [line] = materialsFromList([{ itemHrid: '/items/eyessence', count: 151275 }]);
+
+        expect(line.have).toBe(113852);
+        expect(line.missing).toBe(151275 - 113852);
+        state.unclaimed = {};
     });
 
     test('enough on hand is a line with nothing missing; an unknown item is named from its hrid', () => {

@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Missing-mats tabs count what a buy order has already bought
+
+The "Missing" badges on the marketplace hand-off tabs only counted the inventory, and items a buy order has filled sit unclaimed on the listing until collected — so a 112K purchase moved the badge not at all until a trip to My Listings. Bought-but-unclaimed units on your own buy orders now count as held, across the shrine hand-off, production recipes and enhancement lists alike; claiming moves them to the inventory and off the listing in the same breath, so nothing counts twice.
+
+
 ### Gold attribution counts the fight you are still in, on days you actually live
 
 Two fixes to "Where the gold came from". A combat session only enters the archive when the NEXT one starts, so a character deep in one long fight had that whole run's loot in no session at all — the combat row read 0 while the residual carried the day; the run in progress now counts, deduplicated against the archive the moment it lands there. And days now run midnight to midnight in your local time instead of UTC, matching the net worth calendar, so an evening's grinding stops being split across two rows. (A follow-up closed the seam that left: the window's start date was still derived from the UTC calendar, which put an evening's Day view entirely in the future for anyone west of Greenwich.) A session's loot and consumables are also now spread across the days the run actually spanned, by time — a twelve-day AFK grind used to book everything to its start day, which sat outside every window.

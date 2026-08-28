@@ -18,6 +18,7 @@ import {
 import {
     calculateMaterialRequirements,
     calculateEnhancementMaterialRequirements,
+    unclaimedBoughtCount,
 } from '../../utils/material-calculator.js';
 import { formatWithSeparator } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
@@ -1490,9 +1491,14 @@ export function materialsFromList(lines) {
         const required = Math.max(0, Math.floor(Number(line?.count) || 0));
         if (!line?.itemHrid || required <= 0) continue;
         const details = itemDetailMap[line.itemHrid];
-        const have = inventory
-            .filter((i) => i.itemHrid === line.itemHrid && !i.enhancementLevel)
-            .reduce((sum, i) => sum + (i.count || 0), 0);
+        // Bought-but-unclaimed units on the player's own buy orders count as
+        // held — it is what makes the Missing figure fall while the order
+        // fills instead of only after a trip to My Listings
+        const have =
+            unclaimedBoughtCount(line.itemHrid) +
+            inventory
+                .filter((i) => i.itemHrid === line.itemHrid && !i.enhancementLevel)
+                .reduce((sum, i) => sum + (i.count || 0), 0);
         out.push({
             itemHrid: line.itemHrid,
             itemName: details?.name || line.itemHrid.split('/').pop().replace(/_/g, ' '),
