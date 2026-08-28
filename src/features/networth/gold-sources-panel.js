@@ -429,7 +429,8 @@ export function buildPanelBody(attribution, { series = null, now = undefined } =
     const note = document.createElement('div');
     note.className = 'mwi-gold-sources-note';
     note.style.cssText = 'font-size: 10px; color: #9ca3af; margin-bottom: 6px;';
-    note.textContent = 'Days run midnight to midnight UTC. Everything is priced at today’s market, not the day’s.';
+    note.textContent =
+        'Days run midnight to midnight in your local time. Everything is priced at today’s market, not the day’s.';
     body.appendChild(note);
 
     body.appendChild(buildBars(attribution));

@@ -45,7 +45,7 @@ import { calculateOfflineEconomics } from '../../utils/offline-economics-calcula
 import { createChunkedHistory, timeChunkId } from '../../utils/chunked-history.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { PRODUCTION_TYPES } from '../../utils/profit-constants.js';
-import { utcDayId, dayStart } from './gold-sources.js';
+import { localDayId, dayStart } from './gold-sources.js';
 
 const STORE_NAME = 'networthHistory';
 const RECORD_PREFIX = 'prodIncomeRec';
@@ -68,7 +68,7 @@ const rowChunkId = (row) => timeChunkId(dayStart(row?.d), 'month');
  * can show what a day of production grossed as well as what it actually added.
  *
  * @typedef {Object} ProductionDay
- * @property {string} d - UTC day id, `YYYY-MM-DD`
+ * @property {string} d - Local day id, `YYYY-MM-DD`
  * @property {number} outputValue - What the recipes produced, at market
  * @property {number} inputValue - What they consumed, at market
  * @property {number} actions - Actions completed and valued
@@ -195,7 +195,7 @@ class ProductionIncomeRecorder {
 
     /**
      * The row for a day, created if the day is new.
-     * @param {string} day - UTC day id
+     * @param {string} day - Local day id
      * @returns {ProductionDay} The live row
      */
     _rowFor(day) {
@@ -220,7 +220,7 @@ class ProductionIncomeRecorder {
     _save() {
         if (!this._charId) return;
 
-        const floor = utcDayId(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
+        const floor = localDayId(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000);
         const kept = this._rows.filter((row) => row.d >= floor);
         if (kept.length !== this._rows.length) this._rows = kept;
 
@@ -281,7 +281,7 @@ class ProductionIncomeRecorder {
             // actions belong to whoever left
             if (this._generation !== generation) return;
 
-            const row = this._rowFor(utcDayId(Date.now()));
+            const row = this._rowFor(localDayId(Date.now()));
             if (unpriced) {
                 row.unpricedActions = (row.unpricedActions || 0) + completed;
             } else {
@@ -351,7 +351,7 @@ class ProductionIncomeRecorder {
             if (!Number.isFinite(economics?.profit) || economics.profit === 0) return;
 
             const when = Date.parse(data.currentTimestamp);
-            const day = utcDayId(Number.isFinite(when) ? when : Date.now());
+            const day = localDayId(Number.isFinite(when) ? when : Date.now());
 
             // The rows have to be read before one of them is added to, or the
             // save would take this single row for the whole history

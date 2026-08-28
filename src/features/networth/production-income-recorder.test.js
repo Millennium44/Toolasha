@@ -43,9 +43,9 @@ vi.mock('../../utils/chunked-history.js', () => ({
 }));
 
 const { default: recorder } = await import('./production-income-recorder.js');
-const { utcDayId } = await import('./gold-sources.js');
+const { localDayId } = await import('./gold-sources.js');
 
-const TODAY = utcDayId(Date.now());
+const TODAY = localDayId(Date.now());
 
 /** A cooking action that turns 2 milk into 1 cheese */
 const COOKING = {

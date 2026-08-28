@@ -39,7 +39,7 @@
  * combat row reported a confident measured zero while the consumables row —
  * fed from the archived combat runs — proved the fighting happened.
  *
- * So the row reads both. Per UTC day: if the loot log has any combat entry that
+ * So the row reads both. Per local day: if the loot log has any combat entry that
  * day, that day is the loot log's, because it includes runs this client never
  * watched. Otherwise the day falls back to the archived runs' own loot maps.
  * Never both for one day — the same drop is in both recordings, and summing
@@ -50,12 +50,13 @@
  * that neither recording covers are counted and reported rather than left to
  * look like days of no combat, and what they were worth stays in the residual.
  *
- * ## Days are UTC
+ * ## Days are local
  *
- * Every recorder this reads buckets on UTC day boundaries (see
- * `utils/chunked-history.js`), and a per-day table that disagreed with the
- * records it is built from would be worse than one that says which midnight it
- * means. The panel says so.
+ * A day here means the day the user experienced, midnight to midnight in
+ * their own timezone — the same keying the net worth calendar uses. Storage
+ * still CHUNKS some histories by UTC day (`utils/chunked-history.js`), but a
+ * chunk id is where a record lives, not what day its own timestamp belongs
+ * to; every entry is re-bucketed here from its timestamp.
  *
  * ## Purity
  *
@@ -66,7 +67,7 @@
  */
 
 /** Milliseconds in a day */
-const DAY_MS = 24 * 60 * 60 * 1000;
+import { localDayKey, localDayStart } from './networth-calendar.js';
 
 /**
  * How many archived combat runs the history keeps, when the caller does not
@@ -156,24 +157,22 @@ export const SOURCE_META = {
 };
 
 /**
- * The UTC day a timestamp falls in.
+ * The LOCAL calendar day a timestamp falls in — the day the user experienced.
+ * Delegates to the net worth calendar's keying so the two can never disagree.
  * @param {number} t - Milliseconds since the epoch
  * @returns {string} `YYYY-MM-DD`
  */
-export function utcDayId(t) {
-    const date = new Date(Number.isFinite(t) ? t : 0);
-    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(date.getUTCDate()).padStart(2, '0');
-    return `${date.getUTCFullYear()}-${month}-${day}`;
+export function localDayId(t) {
+    return localDayKey(Number.isFinite(t) ? t : 0);
 }
 
 /**
- * Midnight UTC at the start of a day id.
+ * Local midnight at the start of a day id.
  * @param {string} dayId - `YYYY-MM-DD`
  * @returns {number} Milliseconds since the epoch
  */
 export function dayStart(dayId) {
-    return Date.parse(`${dayId}T00:00:00.000Z`);
+    return localDayStart(dayId);
 }
 
 /**
@@ -185,7 +184,13 @@ export function dayStart(dayId) {
 export function daysBetween(from, to) {
     const days = [];
     if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return days;
-    for (let t = dayStart(utcDayId(from)); t <= to; t += DAY_MS) days.push(utcDayId(t));
+    // Stepped by calendar date rather than 24h, so a DST day (23 or 25 hours)
+    // neither repeats nor skips an id
+    const cursor = new Date(dayStart(localDayId(from)));
+    while (cursor.getTime() <= to) {
+        days.push(localDayId(cursor.getTime()));
+        cursor.setDate(cursor.getDate() + 1);
+    }
     return days;
 }
 
@@ -361,7 +366,7 @@ export function enhancementSessionNet(session, price) {
 }
 
 /**
- * Realised marketplace profit and tax paid, per UTC day.
+ * Realised marketplace profit and tax paid, per local day.
  *
  * Average-cost matched per item and enhancement level, chronologically over the
  * *whole* ledger rather than the window — a sell inside the window was very
@@ -384,7 +389,7 @@ export function marketplaceByDay(fills, marketTax) {
     const byDay = {};
 
     const dayFor = (t) => {
-        const id = utcDayId(t);
+        const id = localDayId(t);
         if (!byDay[id]) byDay[id] = { realisedGross: 0, tax: 0 };
         return byDay[id];
     };
@@ -445,7 +450,7 @@ export function dailyCloses(series) {
     const seen = {};
     for (const point of Array.isArray(series) ? series : []) {
         if (!point || !Number.isFinite(point.t) || !Number.isFinite(point.total)) continue;
-        const id = utcDayId(point.t);
+        const id = localDayId(point.t);
         if (seen[id] !== undefined && seen[id] > point.t) continue;
         seen[id] = point.t;
         closes[id] = point.total;
@@ -559,15 +564,15 @@ export function attributeGoldSources(input) {
         const type = actionType(entry.actionHrid);
         if (type === '/action_types/combat') {
             if (lastCombatLootLog === null || t > lastCombatLootLog) lastCombatLootLog = t;
-            const day = utcDayId(t);
+            const day = localDayId(t);
             combatLootDays.set(day, (combatLootDays.get(day) || 0) + lootEntryValue(entry, price));
             continue;
         }
         if (!GATHERING_ACTION_TYPES.includes(type)) continue;
-        add(utcDayId(t), 'gathering', lootEntryValue(entry, price));
+        add(localDayId(t), 'gathering', lootEntryValue(entry, price));
     }
 
-    // Production recorder: already per UTC day, already valued
+    // Production recorder: already per day, already valued
     let unpricedProductionActions = 0;
     for (const row of productionDays || []) {
         if (!row?.d) continue;
@@ -583,7 +588,7 @@ export function attributeGoldSources(input) {
     for (const session of alchemySessions || []) {
         const t = num(session?.startTime);
         if (!t) continue;
-        add(utcDayId(t), 'alchemy', alchemySessionNet(session, price));
+        add(localDayId(t), 'alchemy', alchemySessionNet(session, price));
     }
 
     let unpricedEnhancementSessions = 0;
@@ -592,10 +597,10 @@ export function attributeGoldSources(input) {
         if (!t) continue;
         const net = enhancementSessionNet(session, price);
         if (net === null) {
-            if (inWindow.has(utcDayId(t))) unpricedEnhancementSessions += 1;
+            if (inWindow.has(localDayId(t))) unpricedEnhancementSessions += 1;
             continue;
         }
-        add(utcDayId(t), 'enhancement', net);
+        add(localDayId(t), 'enhancement', net);
     }
 
     const market = marketplaceByDay(tradeFills, marketTax);
@@ -623,7 +628,7 @@ export function attributeGoldSources(input) {
             if (consumed <= 0) continue;
             cost += consumed * num(price(consumable.itemHrid, 0));
         }
-        const day = utcDayId(t);
+        const day = localDayId(t);
         add(day, 'consumables', -cost);
 
         if (!inWindow.has(day)) continue;

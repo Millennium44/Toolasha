@@ -175,9 +175,9 @@ describe('buildPanelBody', () => {
         expect(body.querySelector('.mwi-gold-sources-unpriced').textContent).toContain('2 enhancement sessions');
     });
 
-    test('the UTC and today’s-prices caveats are on the panel', () => {
+    test('the local-time and today’s-prices caveats are on the panel', () => {
         const body = buildPanelBody(attribution());
-        expect(body.querySelector('.mwi-gold-sources-note').textContent).toContain('UTC');
+        expect(body.querySelector('.mwi-gold-sources-note').textContent).toContain('local time');
         expect(body.querySelector('.mwi-gold-sources-note').textContent).toContain('today');
     });
 });

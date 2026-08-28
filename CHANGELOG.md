@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Gold attribution counts the fight you are still in, on days you actually live
+
+Two fixes to "Where the gold came from". A combat session only enters the archive when the NEXT one starts, so a character deep in one long fight had that whole run's loot in no session at all — the combat row read 0 while the residual carried the day; the run in progress now counts, deduplicated against the archive the moment it lands there. And days now run midnight to midnight in your local time instead of UTC, matching the net worth calendar, so an evening's grinding stops being split across two rows.
+
 ### The dual-install warning stops accusing the dev loader of being two scripts
 
 Removing a setting from the schema made the next dev reload trip the dual-install guard: dev builds keep one version string, so the deliberately deleted id read as another script rewriting the map. The fingerprint now also knows which ids the current build's schema defines — an id this build removed on purpose is expected to vanish, while a fork-only id the schema still carries going missing still accuses.

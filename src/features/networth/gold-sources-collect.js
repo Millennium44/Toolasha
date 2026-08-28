@@ -13,7 +13,12 @@
 
 import dataManager from '../../core/data-manager.js';
 import tradeLedgerStore from '../market/trade-ledger-store.js';
-import { loadSessions as loadCombatSessions, MAX_SESSIONS } from '../combat-stats/combat-session-history.js';
+import {
+    loadSessions as loadCombatSessions,
+    sessionKey,
+    MAX_SESSIONS,
+} from '../combat-stats/combat-session-history.js';
+import combatStatsDataCollector from '../combat-stats/combat-stats-data-collector.js';
 import { loadSessions as loadEnhancementSessions } from '../enhancement/enhancement-storage.js';
 import { createAlchemySessionStore, NO_CHARACTER } from '../alchemy/alchemy-session-store.js';
 import lootLogHistory from '../actions/loot-log-history.js';
@@ -110,6 +115,24 @@ export async function collectGoldSourceInputs({ price = createPricer() } = {}) {
         async () => (tradeLedgerStore.isReady?.() ? tradeLedgerStore.getRecords() : []),
         []
     );
+
+    // The run in progress. A session is only archived when the NEXT one starts,
+    // so a character deep in one long fight has today's whole loot in no
+    // archived session at all — the combat row read 0 while the residual
+    // carried the day. Keyed the same way the archive keys, so the moment this
+    // run IS archived it stops being counted twice.
+    const liveSession = await attempt(
+        'the live combat session',
+        async () => {
+            const live = combatStatsDataCollector.getLatestData?.();
+            if (!live?.players?.length) return null;
+            const key = sessionKey(live);
+            if (key && combatSessions.some((session) => session?.key === key)) return null;
+            return live;
+        },
+        null
+    );
+    if (liveSession) combatSessions.push(liveSession);
 
     return {
         series: networthHistory.getHistory?.() || [],

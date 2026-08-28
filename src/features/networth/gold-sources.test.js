@@ -10,7 +10,8 @@ import {
     combatSessionLootValue,
     ownCombatPlayer,
     splitDropKey,
-    utcDayId,
+    localDayId,
+    dayStart,
 } from './gold-sources.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -34,8 +35,8 @@ const priceTable = {
 const price = (itemHrid, enhancementLevel = 0) => priceTable[`${itemHrid}:${enhancementLevel || 0}`] ?? null;
 
 describe('day helpers', () => {
-    test('utcDayId and daysBetween walk whole UTC days', () => {
-        expect(utcDayId(D20)).toBe('2026-08-20');
+    test('localDayId and daysBetween walk whole local days', () => {
+        expect(localDayId(D20)).toBe('2026-08-20');
         expect(daysBetween(D18, D20)).toEqual(['2026-08-18', '2026-08-19', '2026-08-20']);
     });
 
@@ -342,7 +343,7 @@ describe('attributeGoldSources', () => {
         });
 
         expect(result.coverage.combat).toBe(D18);
-        expect(result.coverage.production).toBe(Date.parse('2026-08-19T00:00:00.000Z'));
+        expect(result.coverage.production).toBe(dayStart('2026-08-19'));
         expect(result.coverage.alchemy).toBeNull();
     });
 
