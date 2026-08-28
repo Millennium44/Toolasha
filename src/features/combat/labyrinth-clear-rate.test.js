@@ -2955,6 +2955,39 @@ describe('precision and the fight cap reach the cache', () => {
     });
 });
 
+/**
+ * The labyrinth token combat upgrades (damage/attack speed/cast speed/crit)
+ * are read live off characterInfo and folded into the sim as extra buffs, but
+ * buying a level changes no gear, no loadout and no crate — nothing else marks
+ * a cached result as belonging to the levels it was simmed under. Without the
+ * levels in the key, a result cached before a purchase kept answering for the
+ * monster/room/loadout forever, since nothing else about the lookup changed.
+ */
+describe('a labyrinth token upgrade changes the cache slot', () => {
+    afterEach(() => {
+        dataManagerMock.characterData = null;
+    });
+
+    test('raising a token level moves the key, so an old result is not served back', () => {
+        dataManagerMock.characterData = { characterInfo: { labyrinthCombatDamageLevel: 0 } };
+        const before = labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200);
+
+        dataManagerMock.characterData = { characterInfo: { labyrinthCombatDamageLevel: 5 } };
+        const after = labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200);
+
+        expect(after).not.toBe(before);
+    });
+
+    test('two levels with no combat upgrades bought share the same key', () => {
+        dataManagerMock.characterData = { characterInfo: {} };
+        const first = labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200);
+        dataManagerMock.characterData = { characterInfo: { labyrinthCombatDamageLevel: 0 } };
+        const second = labyrinthClearRate.buildCombatCacheKey('/monsters/imp', 200);
+
+        expect(first).toBe(second);
+    });
+});
+
 const adapterMock = await import('../combat-sim/combat-sim-adapter.js');
 
 /**

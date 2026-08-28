@@ -312,7 +312,17 @@ export const simCacheMethods = {
         // must not share a cache slot — flipping it re-sims rather than serving a
         // result computed under the other rule.
         const abilities = this.labyrinthFullAbilities() ? ':fullabil' : '';
-        return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}${abilities}`;
+        // The labyrinth token combat upgrades (damage/attack speed/cast speed/
+        // crit) are read live off characterInfo and folded into the sim as
+        // extra buffs, but nothing else marks a result as theirs: buying a
+        // level changes no gear, no loadout and no crate, so without this the
+        // key an old result was cached under stays valid forever and a badge
+        // kept quoting the pre-upgrade clear chance until an unrelated cache
+        // wipe (a gear swap, a version bump) happened to clear it.
+        const upgrades = this.getLabyrinthCombatBuffs()
+            .map((buff) => `${buff.typeHrid}=${buff.ratioBoost || 0}|${buff.flatBoost || 0}`)
+            .join(',');
+        return `${monsterHrid}:${roomLevel}:${loadoutId}:${mode}:${crateHrids.join(',')}${abilities}:${upgrades}`;
     },
 
     /**
