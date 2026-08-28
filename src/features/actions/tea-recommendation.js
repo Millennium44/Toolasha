@@ -13,6 +13,24 @@ import { formatKMB } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 
+// Shown next to a gold recommendation that counts an action whose score leans on an item with
+// no price data (see actionHasUnpricedMaterials in tea-optimizer.js) — the number is real but
+// treats that unpriced material as free, so it can make a combo or action look best for the
+// wrong reason. Same wording as the skilling optimizer's marker, so the warning reads the same
+// wherever a player runs into it.
+export const UNPRICED_WARNING_TITLE = 'Leans on an unpriced material — gold figures treat it as free';
+
+/**
+ * Whether a gold-goal recommendation should carry the "leans on an unpriced material" marker.
+ * XP recommendations never touch prices, so the marker is gold-only.
+ * @param {string} goal - 'xp', 'gold', or 'both'
+ * @param {boolean|undefined} hasMissingPrices
+ * @returns {boolean}
+ */
+export function shouldWarnUnpriced(goal, hasMissingPrices) {
+    return goal === 'gold' && !!hasMissingPrices;
+}
+
 /**
  * Get the currently selected location tab name
  * @returns {string|null} Location name or null if no location tabs exist
@@ -431,11 +449,14 @@ class TeaRecommendation {
         const avgValue = result.optimal ? formatKMB(result.optimal.avgScore) : '0';
         const profitableCount = result.profitableActionsCount || result.actionsEvaluated;
         const excludedCount = result.excludedActions?.length || 0;
+        const unpricedWarningHtml = shouldWarnUnpriced(goal, result.optimal?.hasMissingPrices)
+            ? ` <sup title="${UNPRICED_WARNING_TITLE}" style="cursor: help;">⚠</sup>`
+            : '';
 
         stats.innerHTML = `
             <div style="margin-bottom: 4px;">
                 <span style="color: ${goal === 'xp' ? config.COLOR_INFO : config.COLOR_PROFIT};">
-                    Avg ${goalLabel}/hr: ${avgValue}
+                    Avg ${goalLabel}/hr: ${avgValue}${unpricedWarningHtml}
                 </span>
             </div>
             <div style="font-size: 11px;">
@@ -516,6 +537,13 @@ class TeaRecommendation {
                 const actionScore = document.createElement('span');
                 actionScore.textContent = formatKMB(actionData.score);
                 actionScore.style.color = actionData.score >= 0 ? config.COLOR_PROFIT : config.COLOR_LOSS;
+                if (shouldWarnUnpriced(goal, actionData.hasMissingPrices)) {
+                    const warn = document.createElement('sup');
+                    warn.textContent = ' ⚠';
+                    warn.title = UNPRICED_WARNING_TITLE;
+                    warn.style.cursor = 'help';
+                    actionScore.appendChild(warn);
+                }
 
                 actionRow.appendChild(actionName);
                 actionRow.appendChild(actionScore);
@@ -977,7 +1005,10 @@ class TeaRecommendation {
                 color: ${config.COLOR_PROFIT};
                 margin-bottom: 8px;
             `;
-            goldHeader.textContent = `Gold/hr: ${formatKMB(goldResult.optimal.avgScore)}`;
+            const goldUnpricedWarningHtml = shouldWarnUnpriced('gold', goldResult.optimal.hasMissingPrices)
+                ? ` <sup title="${UNPRICED_WARNING_TITLE}" style="cursor: help;">⚠</sup>`
+                : '';
+            goldHeader.innerHTML = `Gold/hr: ${formatKMB(goldResult.optimal.avgScore)}${goldUnpricedWarningHtml}`;
             goldCol.appendChild(goldHeader);
 
             for (const tea of goldResult.optimal.teas) {
