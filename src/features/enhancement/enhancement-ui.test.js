@@ -1,7 +1,8 @@
 /**
  * @vitest-environment happy-dom
  *
- * The Enhancement Tracker panel's header, exercised rather than reasoned about.
+ * The Enhancement Tracker panel's header and resize wiring, exercised rather
+ * than reasoned about.
  *
  * A user reported the header title wrapping to two lines with a session
  * indicator clipped to "(2" right after it — the indicator was assigned its
@@ -47,7 +48,9 @@ vi.mock('../../core/dom-observer.js', () => ({
     },
 }));
 
-// Geometry is held in IndexedDB, which is not what this file is about.
+// Geometry is held in IndexedDB, which is not what this file is about; the
+// resize grip itself (from floating-panel.js) is real, so its markup is
+// still exercised.
 vi.mock('../../utils/panel-geometry.js', () => ({
     restoreGeometry: () => Promise.resolve(),
     saveGeometry: () => {},
@@ -129,5 +132,29 @@ describe('header layout', () => {
         enhancementUI.updateSessionCounter();
 
         expect(document.getElementById('enhancementSessionCounter').textContent).toBe('(merge 1/2)');
+    });
+});
+
+describe('resizability', () => {
+    test('the panel gets a resize grip', () => {
+        const panel = enhancementUI.createFloatingUI();
+        expect(panel.querySelector('.toolasha-resize-grip')).not.toBeNull();
+    });
+
+    test('collapsing hides the grip and drops to the fixed collapsed width; expanding restores the last size', () => {
+        const panel = enhancementUI.createFloatingUI();
+
+        // Stand in for a completed resize drag: `makeResizable`'s onResize
+        // callback is what normally updates these together.
+        panel.style.width = '500px';
+        enhancementUI.expandedWidth = 500;
+
+        enhancementUI.toggleCollapse();
+        expect(panel.style.width).toBe('250px');
+        expect(panel.querySelector('.toolasha-resize-grip').style.display).toBe('none');
+
+        enhancementUI.toggleCollapse();
+        expect(panel.style.width).toBe('500px');
+        expect(panel.querySelector('.toolasha-resize-grip').style.display).toBe('');
     });
 });

@@ -15,6 +15,24 @@ import domObserver from '../../core/dom-observer.js';
 import { formatPercentage, formatLargeNumber } from '../../utils/formatters.js';
 import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } from '../../utils/panel-z-index.js';
+import { makeResizable } from '../../utils/floating-panel.js';
+import { restoreGeometry, saveGeometry } from '../../utils/panel-geometry.js';
+
+/** Storage key the panel's user-dragged size is remembered under. */
+const GEOMETRY_KEY = 'enhancementTrackerPanel';
+
+/** Default size a fresh install opens at, and the floor `makeResizable` enforces. */
+const DEFAULT_SIZE = { width: 350, height: 200 };
+
+/**
+ * Content's expanded max-height, in the collapse/expand transition.
+ *
+ * Not the panel's real height ceiling — that is whatever the resize grip was
+ * dragged to, or `auto`. This only needs to be bigger than any realistic
+ * resized height so the `max-height` transition (which animates 0 -> this on
+ * expand) never itself becomes the thing capping the content.
+ */
+const EXPANDED_CONTENT_MAX_HEIGHT = '3000px';
 
 // UI Style Constants (matching Ultimate Enhancement Tracker)
 const STYLE = {
@@ -153,6 +171,11 @@ class EnhancementUI {
         this.dragMouseDownHandler = null;
         this.dragMoveHandler = null;
         this.dragUpHandler = null;
+        this.detachResize = null;
+        // The size to snap back to on expand — either the default, or whatever
+        // the user last dragged the resize grip to.
+        this.expandedWidth = DEFAULT_SIZE.width;
+        this.expandedHeight = null;
     }
 
     /**
@@ -427,7 +450,7 @@ class EnhancementUI {
             boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
             overflow: 'hidden',
             // Clamped so the first open on a phone is not wider than the screen
-            width: 'min(350px, 92vw)',
+            width: `min(${DEFAULT_SIZE.width}px, 92vw)`,
             minHeight: 'auto',
             background: 'rgba(25, 0, 35, 0.92)',
             backdropFilter: 'blur(12px)',
@@ -435,7 +458,10 @@ class EnhancementUI {
             color: STYLE.colors.textPrimary,
             display: 'flex',
             flexDirection: 'column',
-            transition: 'width 0.2s ease',
+            // No blanket transition here — a resize drag sets `width`/`height` on
+            // every pointermove, and animating each of those makes the panel trail
+            // behind the cursor. Collapse/expand applies its own transition just
+            // for the moment it needs one.
         });
 
         // Create header
@@ -449,16 +475,37 @@ class EnhancementUI {
         content.style.flexGrow = '1';
         content.style.overflow = 'auto';
         content.style.transition = 'max-height 0.2s ease, opacity 0.2s ease';
-        content.style.maxHeight = '600px';
+        content.style.maxHeight = EXPANDED_CONTENT_MAX_HEIGHT;
         content.style.opacity = '1';
         this.floatingUI.appendChild(content);
 
         // Make draggable
         this.makeDraggable(header);
 
+        // Make resizable — a grip in the bottom-right corner, matching every
+        // other floating panel. Only the size is remembered (not position): the
+        // panel already has its own drag-to-move that does not persist, and
+        // this only has to answer the user having to redo a resize every load.
+        this.detachResize = makeResizable(this.floatingUI, {
+            minWidth: 280,
+            minHeight: 160,
+            onResize: ({ width, height }) => {
+                this.expandedWidth = width;
+                this.expandedHeight = height;
+                saveGeometry(GEOMETRY_KEY, { width, height });
+            },
+        });
+
         // Add to page
         document.body.appendChild(this.floatingUI);
         registerFloatingPanel(this.floatingUI);
+
+        restoreGeometry(this.floatingUI, GEOMETRY_KEY, DEFAULT_SIZE, { position: false }).then(() => {
+            const width = parseFloat(this.floatingUI?.style.width);
+            if (Number.isFinite(width)) this.expandedWidth = width;
+            const height = parseFloat(this.floatingUI?.style.height);
+            if (Number.isFinite(height)) this.expandedHeight = height;
+        });
 
         return this.floatingUI;
     }
@@ -858,8 +905,28 @@ class EnhancementUI {
         this.isCollapsed = !this.isCollapsed;
         const content = document.getElementById('enhancementPanelContent');
         const button = document.getElementById('enhancementCollapseButton');
+        const grip = this.floatingUI.querySelector('.toolasha-resize-grip');
+
+        // Collapse/expand is the one time the panel's width should visibly
+        // animate; a resize drag sets the same property every pointermove and
+        // must not inherit this or it would trail behind the cursor. Cleared
+        // once the animation has had time to finish.
+        this.floatingUI.style.transition = 'width 0.2s ease';
+        const clearTransition = setTimeout(() => {
+            if (this.floatingUI) this.floatingUI.style.transition = '';
+        }, 220);
+        this.timerRegistry.registerTimeout(clearTransition);
 
         if (this.isCollapsed) {
+            // Remember whatever size the resize grip left the panel at, so
+            // expanding returns to it instead of snapping to the default.
+            const currentWidth = parseFloat(this.floatingUI.style.width);
+            if (Number.isFinite(currentWidth)) this.expandedWidth = currentWidth;
+            if (this.floatingUI.style.height) {
+                const currentHeight = parseFloat(this.floatingUI.style.height);
+                if (Number.isFinite(currentHeight)) this.expandedHeight = currentHeight;
+            }
+
             // Collapsed state
             content.style.maxHeight = '0px';
             content.style.opacity = '0';
@@ -867,6 +934,10 @@ class EnhancementUI {
             button.innerHTML = '▶';
             button.title = 'Expand panel';
             this.floatingUI.style.width = '250px';
+            // Let the panel shrink to just its header — an explicit resized
+            // height would otherwise leave a blank gap below the collapsed content
+            this.floatingUI.style.height = '';
+            if (grip) grip.style.display = 'none';
 
             // Show compact summary after content fades
             const summaryTimeout = setTimeout(() => {
@@ -876,12 +947,14 @@ class EnhancementUI {
         } else {
             // Expanded state
             this.hideCollapsedSummary();
-            content.style.maxHeight = '600px';
+            content.style.maxHeight = EXPANDED_CONTENT_MAX_HEIGHT;
             content.style.opacity = '1';
             content.style.padding = '15px';
             button.innerHTML = '▼';
             button.title = 'Collapse panel';
-            this.floatingUI.style.width = '350px';
+            this.floatingUI.style.width = `${this.expandedWidth}px`;
+            if (this.expandedHeight) this.floatingUI.style.height = `${this.expandedHeight}px`;
+            if (grip) grip.style.display = '';
         }
     }
 
@@ -1815,6 +1888,11 @@ class EnhancementUI {
 
         this.dragHandle = null;
         this.dragMouseDownHandler = null;
+
+        if (this.detachResize) {
+            this.detachResize();
+            this.detachResize = null;
+        }
 
         this.timerRegistry.clearAll();
 
