@@ -9,6 +9,8 @@ const game = vi.hoisted(() => ({
     wsHandlers: {},
     dmHandlers: {},
     observers: {},
+    readyHandlers: [],
+    domReady: true,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -40,6 +42,16 @@ vi.mock('../../core/dom-observer.js', () => ({
         onClass: (id, className, callback) => {
             game.observers[className] = callback;
             return () => delete game.observers[className];
+        },
+        // Mirrors the real DOMObserver.onReady: immediate when already attached (the default),
+        // deferred until the readiness-gap test fires it by hand otherwise.
+        onReady: (id, callback) => {
+            const handler = { id, callback };
+            game.readyHandlers.push(handler);
+            if (game.domReady) callback();
+            return () => {
+                game.readyHandlers = game.readyHandlers.filter((h) => h !== handler);
+            };
         },
     },
 }));
@@ -183,9 +195,25 @@ describe('mention tracker — tabs and badges', () => {
         game.characterName = 'Millennium44';
         game.wsHandlers = {};
         game.observers = {};
+        game.readyHandlers = [];
+        game.domReady = true;
         mentionTracker.disable();
         document.body.innerHTML = '';
         await mentionTracker.initialize();
+    });
+
+    test('tabs mounted before the shared observer is ready get their badges at readiness', async () => {
+        mentionTracker.disable();
+        game.domReady = false;
+        const container = buildTabs(['Party']);
+
+        await mentionTracker.initialize();
+        game.wsHandlers.chat_message_received(chatMessage({ m: '@Millennium44', chan: '/chat_channel_types/party' }));
+        expect(container.querySelector('.mwi-mention-badge')).toBeNull();
+
+        game.readyHandlers.forEach((h) => h.callback());
+        game.wsHandlers.chat_message_received(chatMessage({ m: '@Millennium44', chan: '/chat_channel_types/party' }));
+        expect(container.querySelector('.mwi-mention-badge')).not.toBeNull();
     });
 
     test('a mention adds a numeric badge to the matching tab', () => {

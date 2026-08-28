@@ -215,6 +215,7 @@ class ChatCommands {
         this.initialized = false;
         this.timerRegistry = createTimerRegistry();
         this.unregisterObserver = null;
+        this.unregisterReady = null;
     }
 
     /**
@@ -237,11 +238,15 @@ class ChatCommands {
             this.attachToInput(input);
         });
 
-        // Attach to any already-present input
-        const existing = document.querySelector('[class*="Chat_chatInputContainer"] input');
-        if (existing) {
-            this.attachToInput(existing);
-        }
+        // @run-at document-start: a chat input rendered before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up scan waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterReady = domObserver.onReady('ChatCommandsCatchUp', () => {
+            const existing = document.querySelector('[class*="Chat_chatInputContainer"] input');
+            if (existing) {
+                this.attachToInput(existing);
+            }
+        });
     }
 
     /**
@@ -269,6 +274,10 @@ class ChatCommands {
         if (this.unregisterObserver) {
             this.unregisterObserver();
             this.unregisterObserver = null;
+        }
+        if (this.unregisterReady) {
+            this.unregisterReady();
+            this.unregisterReady = null;
         }
         this.initialized = false;
     }

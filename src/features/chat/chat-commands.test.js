@@ -46,8 +46,21 @@ vi.mock('../../core/data-manager.js', () => ({
         on: () => {},
     },
 }));
+const observerReady = vi.hoisted(() => ({ handlers: [], domReady: true }));
 vi.mock('../../core/dom-observer.js', () => ({
-    default: { onClass: () => () => {} },
+    default: {
+        onClass: () => () => {},
+        // Mirrors the real DOMObserver.onReady: immediate when already attached (the default),
+        // deferred until the readiness-gap test fires it by hand otherwise.
+        onReady: (name, callback) => {
+            const handler = { name, callback };
+            observerReady.handlers.push(handler);
+            if (observerReady.domReady) callback();
+            return () => {
+                observerReady.handlers = observerReady.handlers.filter((h) => h !== handler);
+            };
+        },
+    },
 }));
 vi.mock('../../utils/timer-registry.js', () => ({
     createTimerRegistry: () => ({ registerTimeout: () => {}, clearAll: () => {} }),
@@ -478,5 +491,20 @@ describe('setupGameCore', () => {
         const cmd = await chatCommandsFeature.initialize();
 
         expect(cmd.gameCore).toBeNull();
+    });
+
+    test('a chat input mounted before the shared observer is ready is attached at readiness', async () => {
+        observerReady.handlers = [];
+        observerReady.domReady = false;
+        document.body.innerHTML = '<div class="Chat_chatInputContainer__x"><input /></div>';
+
+        const cmd = await chatCommandsFeature.initialize();
+        expect(cmd.chatInput).toBeNull();
+
+        observerReady.handlers.forEach((h) => h.callback());
+        expect(cmd.chatInput).not.toBeNull();
+
+        cmd.cleanup();
+        observerReady.domReady = true;
     });
 });

@@ -17,6 +17,7 @@ class MentionTracker {
         this.mentionPattern = null; // @name matcher, built once per character
         this.handlers = {};
         this.unregisterObserver = null;
+        this.unregisterReady = null;
     }
 
     /**
@@ -58,11 +59,15 @@ class MentionTracker {
             }
         );
 
-        // Check for existing tabs
-        const existingTabs = document.querySelector('.Chat_tabsComponentContainer__3ZoKe');
-        if (existingTabs) {
-            this.setupTabBadges(existingTabs);
-        }
+        // @run-at document-start: tabs rendered before the shared observer attaches to
+        // document.body are invisible to the class watcher, so the catch-up scan waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterReady = domObserver.onReady('MentionTrackerCatchUp', () => {
+            const existingTabs = document.querySelector('.Chat_tabsComponentContainer__3ZoKe');
+            if (existingTabs) {
+                this.setupTabBadges(existingTabs);
+            }
+        });
     }
 
     /**
@@ -297,6 +302,11 @@ class MentionTracker {
             if (this.unregisterObserver) {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
+            }
+
+            if (this.unregisterReady) {
+                this.unregisterReady();
+                this.unregisterReady = null;
             }
 
             // Close popup if open

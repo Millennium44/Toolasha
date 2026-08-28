@@ -13,8 +13,21 @@ vi.mock('../../core/config.js', () => ({
     },
 }));
 
+const observerReady = vi.hoisted(() => ({ handlers: [], domReady: true }));
 vi.mock('../../core/dom-observer.js', () => ({
-    default: { onClass: vi.fn(() => () => {}) },
+    default: {
+        onClass: vi.fn(() => () => {}),
+        // Mirrors the real DOMObserver.onReady: immediate when already attached (the default),
+        // deferred until the readiness-gap test fires it by hand otherwise.
+        onReady: vi.fn((name, callback) => {
+            const handler = { name, callback };
+            observerReady.handlers.push(handler);
+            if (observerReady.domReady) callback();
+            return () => {
+                observerReady.handlers = observerReady.handlers.filter((h) => h !== handler);
+            };
+        }),
+    },
 }));
 
 import chatHistoryExtender from './chat-history-extender.js';
@@ -56,6 +69,8 @@ describe('chat-history-extender', () => {
     beforeEach(() => {
         settingValues.chatHistoryExtender = true;
         settingValues.chatHistoryExtender_maxHistory = null;
+        observerReady.handlers = [];
+        observerReady.domReady = true;
     });
 
     afterEach(() => {
@@ -96,6 +111,32 @@ describe('chat-history-extender', () => {
         expect(link.hasAttribute('data-mwi-uid')).toBe(true);
         expect(link.classList.contains('mwi-interactive')).toBe(true);
         expect(onClick).not.toHaveBeenCalled();
+    });
+
+    test('a container mounted before the shared observer is ready is hydrated at readiness', () => {
+        observerReady.domReady = false;
+        const container = buildChatContainer();
+        const message = document.createElement('div');
+        message.className = 'ChatMessage_chatMessage__xyz';
+        const link = document.createElement('span');
+        message.appendChild(link);
+        container.appendChild(message);
+
+        installFiberTree({
+            stateNode: document.getElementById('root'),
+            children: [
+                {
+                    stateNode: container,
+                    children: [{ stateNode: message, children: [{ stateNode: link, props: { onClick: vi.fn() } }] }],
+                },
+            ],
+        });
+
+        chatHistoryExtender.initialize();
+        expect(link.hasAttribute('data-mwi-uid')).toBe(false);
+
+        observerReady.handlers.forEach((h) => h.callback());
+        expect(link.hasAttribute('data-mwi-uid')).toBe(true);
     });
 
     test('a message with no fiber-backed handlers is left un-hydrated rather than throwing', () => {

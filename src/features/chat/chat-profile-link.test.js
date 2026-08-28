@@ -14,7 +14,22 @@ import { describe, test, expect, vi, afterEach } from 'vitest';
 const settings = vi.hoisted(() => ({ chat_profileLink: false }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: (key) => settings[key] ?? false } }));
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+const observerReady = vi.hoisted(() => ({ handlers: [], domReady: true }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: () => () => {},
+        // Mirrors the real DOMObserver.onReady: immediate when already attached (the default),
+        // deferred until the readiness-gap test fires it by hand otherwise.
+        onReady: (name, callback) => {
+            const handler = { name, callback };
+            observerReady.handlers.push(handler);
+            if (observerReady.domReady) callback();
+            return () => {
+                observerReady.handlers = observerReady.handlers.filter((h) => h !== handler);
+            };
+        },
+    },
+}));
 vi.mock('../../utils/dom.js', () => ({ addStyles: () => {} }));
 
 const {
@@ -31,6 +46,8 @@ const partyNameIn = (message) => message.match(PARTY_RE)?.[1] ?? null;
 afterEach(() => {
     settings.chat_profileLink = false;
     document.body.innerHTML = '';
+    observerReady.handlers = [];
+    observerReady.domReady = true;
 });
 
 describe('announcements that get a link', () => {
@@ -203,6 +220,20 @@ describe('end-to-end: an announcement message decorated by the feature is clicka
 
         nameSpan.dispatchEvent(new Event('click', { bubbles: true }));
         expect(input.value).toBe('/profile Briggsy99');
+
+        chatProfileLinkFeature.disable();
+    });
+
+    test('a message mounted before the shared observer is ready is decorated at readiness', () => {
+        settings.chat_profileLink = true;
+        observerReady.domReady = false;
+        document.body.innerHTML = '<div class="ChatMessage_chatMessage">Player11 has joined the guild!</div>';
+
+        chatProfileLinkFeature.initialize();
+        expect(document.querySelector('.mwi-chat-profile-name')).toBeNull();
+
+        observerReady.handlers.forEach((h) => h.callback());
+        expect(document.querySelector('.mwi-chat-profile-name')?.textContent).toBe('Player11');
 
         chatProfileLinkFeature.disable();
     });

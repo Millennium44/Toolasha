@@ -291,8 +291,14 @@ class ChatHistoryExtender {
         const unregister = domObserver.onClass('ChatHistoryExtender', 'ChatHistory_chatHistory', attachHandler);
         this.unregisterHandlers.push(unregister);
 
-        // Attach to any already-open containers
-        document.querySelectorAll('[class*="ChatHistory_chatHistory"]').forEach(attachHandler);
+        // @run-at document-start: containers rendered before the shared observer attaches to
+        // document.body are invisible to the class watcher, so the catch-up scan waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterHandlers.push(
+            domObserver.onReady('ChatHistoryExtenderCatchUp', () => {
+                document.querySelectorAll('[class*="ChatHistory_chatHistory"]').forEach(attachHandler);
+            })
+        );
 
         // Periodic cache cleanup to prevent unbounded memory growth
         const cleanupInterval = setInterval(() => {

@@ -238,6 +238,7 @@ class PopOutChat {
         this.initialized = false;
         this.timerRegistry = createTimerRegistry();
         this.unregisterObserver = null;
+        this.unregisterReady = null;
         this.popoutBtn = null;
         this.resetGeometryBtn = null;
     }
@@ -274,9 +275,13 @@ class PopOutChat {
             if (parent) this._injectButton(parent);
         });
 
-        // Handle existing container
-        const existing = document.querySelector('[class*="Chat_tabsComponentContainer"]');
-        if (existing?.parentElement) this._injectButton(existing.parentElement);
+        // @run-at document-start: a chat tabs row rendered before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up scan waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterReady = domObserver.onReady('PopOutChatCatchUp', () => {
+            const existing = document.querySelector('[class*="Chat_tabsComponentContainer"]');
+            if (existing?.parentElement) this._injectButton(existing.parentElement);
+        });
     }
 
     /**
@@ -1391,6 +1396,11 @@ class PopOutChat {
         if (this.unregisterObserver) {
             this.unregisterObserver();
             this.unregisterObserver = null;
+        }
+
+        if (this.unregisterReady) {
+            this.unregisterReady();
+            this.unregisterReady = null;
         }
 
         if (this.popoutBtn && document.contains(this.popoutBtn)) {

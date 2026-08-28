@@ -56,6 +56,7 @@ class ChatProfileLink {
         this.delegatedClickHandler = null;
         this.observerActive = false;
         this.unregisterObserver = null;
+        this.unregisterReady = null;
     }
 
     /**
@@ -93,7 +94,12 @@ class ChatProfileLink {
             this._decorateMessage(messageEl)
         );
 
-        document.querySelectorAll('[class*="ChatMessage_chatMessage"]').forEach((el) => this._decorateMessage(el));
+        // @run-at document-start: messages rendered before the shared observer attaches to
+        // document.body are invisible to the class watcher, so the catch-up scan waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterReady = domObserver.onReady('ChatProfileLinkCatchUp', () => {
+            document.querySelectorAll('[class*="ChatMessage_chatMessage"]').forEach((el) => this._decorateMessage(el));
+        });
     }
 
     /**
@@ -136,6 +142,10 @@ class ChatProfileLink {
         if (this.unregisterObserver) {
             this.unregisterObserver();
             this.unregisterObserver = null;
+        }
+        if (this.unregisterReady) {
+            this.unregisterReady();
+            this.unregisterReady = null;
         }
         if (this.delegatedClickHandler) {
             document.removeEventListener('click', this.delegatedClickHandler);
