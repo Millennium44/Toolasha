@@ -541,5 +541,14 @@ export default {
         // character switch is not somebody dismissing anything, and the next
         // character is owed its own briefing
         shellHide({ remember: false });
+        // The overlay panel re-initializes and redraws well before this
+        // feature's own initialize() reaches loadListingDelta() — it is far
+        // earlier in the registry and not `concurrent`, so it is fully
+        // awaited first. Left uncleared, that redraw (and every one-second
+        // tick after it, until our own init eventually runs) shows the
+        // outgoing character's filled-listing count under the incoming
+        // character's name. Cleared here, at the moment the switch begins,
+        // so the tile reads "nothing to report" for that gap instead.
+        listingDelta = null;
     },
 };

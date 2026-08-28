@@ -428,6 +428,21 @@ describe('showing and dismissing', () => {
         expect(briefingPanel.panel).toBeNull();
         expect(maybeShowBriefing()).toBe(true);
     });
+
+    test('a character switch clears the stale market-fill count before the new character has loaded its own', async () => {
+        // char-1 filled a listing this session
+        game.listings = [{ id: 1, status: '/market_listing_status/filled' }];
+        await feature.initialize();
+        expect(collectFacts().listings.filled).toBe(1);
+
+        // character_switching fires: the overlay panel re-initializes and can
+        // redraw the tile well before this feature's own initialize() (and
+        // its loadListingDelta) runs again for the new character — cleanup()
+        // is the only thing that runs synchronously at that moment
+        feature.cleanup();
+
+        expect(collectFacts().listings.filled).toBe(0);
+    });
 });
 
 describe('what the market did while away', () => {
