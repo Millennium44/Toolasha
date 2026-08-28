@@ -17,6 +17,8 @@ class EquipmentLevelDisplay {
         this.isActive = false;
         this.processedHrefs = new WeakMap(); // Track last href per div
         this.isInitialized = false;
+        this.hrefObserver = null; // Watches SVG href swaps that don't add/remove nodes
+        this.hrefDebounceTimer = null;
     }
 
     /**
@@ -72,8 +74,46 @@ class EquipmentLevelDisplay {
         // Process any existing items on page
         this.addItemLevels();
 
+        // The game frequently swaps an equipped/inventory item in place — the same
+        // Item_item div stays mounted and only the SVG <use> href changes (e.g.
+        // re-equipping a different enhancement level into the same slot). That is
+        // an attribute mutation, not a childList one, so the shared domObserver
+        // (childList/subtree only, see dom-observer.js) never re-fires for it and
+        // the level overlay is left showing the previous item's requirement until
+        // some unrelated childList change happens to sweep the page. Watch href
+        // changes directly, the same way alchemy-profit-display.js does for its
+        // catalyst icon.
+        this.hrefObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                if (mutation.target.tagName === 'use') {
+                    this._scheduleHrefUpdate();
+                    return;
+                }
+            }
+        });
+        this.hrefObserver.observe(document.body, {
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['href', 'xlink:href'],
+        });
+
         this.isActive = true;
         this.isInitialized = true;
+    }
+
+    /**
+     * Debounce rapid href swaps (e.g. hovering across a row of equipment icons)
+     * into a single re-scan.
+     * @private
+     */
+    _scheduleHrefUpdate() {
+        if (this.hrefDebounceTimer) {
+            clearTimeout(this.hrefDebounceTimer);
+        }
+        this.hrefDebounceTimer = setTimeout(() => {
+            this.hrefDebounceTimer = null;
+            this.addItemLevels();
+        }, 150);
     }
 
     /**
@@ -83,6 +123,14 @@ class EquipmentLevelDisplay {
         if (this.unregisterHandler) {
             this.unregisterHandler();
             this.unregisterHandler = null;
+        }
+        if (this.hrefObserver) {
+            this.hrefObserver.disconnect();
+            this.hrefObserver = null;
+        }
+        if (this.hrefDebounceTimer) {
+            clearTimeout(this.hrefDebounceTimer);
+            this.hrefDebounceTimer = null;
         }
         this.isActive = false;
     }
@@ -238,6 +286,15 @@ class EquipmentLevelDisplay {
             if (this.unregisterHandler) {
                 this.unregisterHandler();
                 this.unregisterHandler = null;
+            }
+
+            if (this.hrefObserver) {
+                this.hrefObserver.disconnect();
+                this.hrefObserver = null;
+            }
+            if (this.hrefDebounceTimer) {
+                clearTimeout(this.hrefDebounceTimer);
+                this.hrefDebounceTimer = null;
             }
 
             // Remove all level overlays
