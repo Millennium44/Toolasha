@@ -10,11 +10,9 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 A performance trace showed three startup paths awaiting the storage module's three-second write debounce — the character-activity collector twice in a row (six seconds), the session briefing's listing baseline (three), and the what's-new state stamp (three, before features even began). None of them needed the write landed to continue; the first two now fire and forget, the third writes immediately. Roughly nine of the ten blocking startup seconds gone.
 
-
 ### The restock tabs finally watch you buy
 
 The earlier missing-mats fix covered the action-panel tabs but not the shopping-list hand-off (the labyrinth Buy-all and the shrine plan use it) — those tabs were built once with static counts and never looked again. Each line now remembers the holdings it opened against and counts everything acquired since — inventory and bought-but-unclaimed buy-order units alike — so badges fall as purchases land, a filled line turns green, and clicking a half-filled tab arms the buy box with only what is left.
-
 
 ### The gold panel's unexplained residual now says what it was made of
 
@@ -1354,15 +1352,13 @@ The simulator valued every drop at its gross market price, so profit ignored the
 
 ## [3.25.1](https://github.com/Millennium44/Toolasha/compare/v3.25.0...v3.25.1) (2026-08-28)
 
-
 ### Bug Fixes
 
-* shopping-list restock tabs update as purchases land ([c6cb550](https://github.com/Millennium44/Toolasha/commit/c6cb550bc3e761bc6c0b568b0fbbc7188cca266f))
-
+- shopping-list restock tabs update as purchases land ([c6cb550](https://github.com/Millennium44/Toolasha/commit/c6cb550bc3e761bc6c0b568b0fbbc7188cca266f))
 
 ### Performance Improvements
 
-* startup no longer awaits the storage write debounce ([01b6046](https://github.com/Millennium44/Toolasha/commit/01b604656902ba5d48e814eab5c5acfeaf457c00))
+- startup no longer awaits the storage write debounce ([01b6046](https://github.com/Millennium44/Toolasha/commit/01b604656902ba5d48e814eab5c5acfeaf457c00))
 
 ## [3.25.0](https://github.com/Millennium44/Toolasha/compare/v3.24.0...v3.25.0) (2026-08-28)
 
