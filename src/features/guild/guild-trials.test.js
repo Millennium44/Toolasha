@@ -40,6 +40,7 @@ const game = vi.hoisted(() => ({
     scoreboardContext: null,
     skilling: {},
     skillingEnded: {},
+    skillingResets: 0,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -174,6 +175,14 @@ vi.mock('./guild-trial-skilling.js', () => ({
     default: {
         initialize: vi.fn(),
         cleanup: vi.fn(),
+        // A real reset wipes `updates`/`ended`; this fake holds them on the
+        // shared `game` object, so a reset here clears exactly what the real
+        // one would — the cache a stale character or guild left behind
+        reset: () => {
+            game.skillingResets += 1;
+            game.skilling = {};
+            game.skillingEnded = {};
+        },
         forTrial: (name) => game.skilling[String(name).toLowerCase()] || null,
         endedFor: (name) => game.skillingEnded[String(name).toLowerCase()] || null,
         participating: (name, id) => {
@@ -2541,6 +2550,65 @@ describe('the panel, end to end', () => {
         game.characterId = 222;
         game.guildName = 'New Guild';
         expect(guildTrials._resolveGuildName()).toBe('New Guild');
+    });
+
+    test('a character switch clears the skilling socket cache, so the arriving guild’s bar cannot bounce against the departing one’s', async () => {
+        // Reported live: "Fill rate" and the bar's own current/max flipped
+        // between two values, repeatedly, over a long session running several
+        // alts — and a page refresh cured it. `guild-trial-skilling.js` keeps
+        // its last `guild_skilling_updated` reading per trial *name only* —
+        // no guild or character scoping — and `_withSocketSkilling` grafts
+        // that cached reading onto any card whose own bar the DOM has not
+        // drawn yet (a card that has just mounted, or one caught between
+        // renders). Without a reset on the switch, the departing character's
+        // guild's own "Alchemy" pool — a completely different trial, at a
+        // completely different size — kept answering for up to fifteen
+        // seconds after the arriving character's, so a render that caught the
+        // bar-less moment drew the old guild's number, and the very next
+        // render, once the DOM had painted, drew the real one: two figures
+        // for the one card, alternating.
+        trialsFeature.cleanup();
+        game.characterId = 111;
+        game.guildName = 'Old Guild';
+        game.store = {};
+        await trialsFeature.initialize();
+
+        // Old Guild's own Alchemy trial, mid-run and nothing like New Guild's
+        game.skilling.alchemy = {
+            trial: { kind: 'skilling', key: 'alchemy', name: 'Alchemy' },
+            tier: 9,
+            reading: { current: 120_000, max: 400_000 },
+            personal: {},
+            participantIds: [111],
+            at: now,
+        };
+        fire(buildTab([{ name: 'Alchemy', level: 170, bar: '120,000 / 400,000' }]));
+        expect(guildTrials.record.tiles['skilling::alchemy'].samples.at(-1).readings[0]).toEqual({
+            current: 120_000,
+            max: 400_000,
+        });
+
+        game.dmHandlers.character_switching.forEach((handler) => handler({ oldId: 111, newId: 222 }));
+        await vi.advanceTimersByTimeAsync(0);
+        game.characterId = 222;
+        game.guildName = 'New Guild';
+
+        // The cache is gone the moment the old character leaves — proof the
+        // reset ran rather than an accident of timing
+        expect(game.skillingResets).toBeGreaterThan(0);
+        expect(game.skilling.alchemy).toBeUndefined();
+
+        // New Guild's own Alchemy card, caught before its bar has painted —
+        // exactly the moment `_withSocketSkilling` is free to fill in from
+        // the cache
+        const root = buildTab([{ name: 'Alchemy', level: 40, bar: '' }]);
+        root.querySelectorAll('[class*="ProgressBar_text"]').forEach((el) => el.remove());
+        fire(root);
+
+        // Nothing of Old Guild's pool reached the new character's card
+        const tile = guildTrials.record.tiles['skilling::alchemy'];
+        const reading = tile?.samples?.at(-1)?.readings?.[0];
+        expect(reading).not.toEqual({ current: 120_000, max: 400_000 });
     });
 
     test('the fresh character draws its own empty state, not the last one’s', async () => {

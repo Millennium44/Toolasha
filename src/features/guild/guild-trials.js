@@ -2416,6 +2416,19 @@ class GuildTrials {
             guildLoadoutCapture.setGuildName?.(null)?.catch?.(() => {});
             guildTrialAlerts.reset?.();
             guildMemberSkills.forget?.();
+            // The skilling socket cache is keyed by trial name alone — no guild
+            // or character scoping at all, unlike everything else here — so an
+            // arriving character's card can be handed the departing character's
+            // guild's own "Alchemy" reading for as long as `SKILLING_FRESH_MS`
+            // still calls it fresh. `_withSocketSkilling` only grafts a socket
+            // reading onto a card whose bar the DOM has not drawn yet, so this
+            // shows up as an occasional wrong figure rather than a permanent
+            // one — the card alternates between the real bar (once the DOM has
+            // it) and the stale socket answer (whenever a render catches the
+            // bar before the DOM does), for up to fifteen seconds after every
+            // switch. A session with several alts read as a trial that would
+            // not hold still.
+            guildTrialSkilling.reset?.();
             this.phase = null;
             // The recorder session cached for the last-trial readout is the
             // departing character's; the arriving one is asked for afresh
@@ -2657,6 +2670,11 @@ class GuildTrials {
                 // arriving-character path does
                 this.record = stored ?? emptyRecord(trialWeekStart(Date.now()), { guildId: this._guildId() });
                 this.recordUnread = stored === null;
+                // Same leak as the character-switch one: the skilling socket
+                // cache is keyed by trial name alone, so the guild just left
+                // behind can still answer for "Alchemy" on the guild just
+                // joined for up to fifteen seconds
+                guildTrialSkilling.reset?.();
             } else {
                 // The name is adopted either way; a record under it that could
                 // not be read now is folded in by the next save's re-read
