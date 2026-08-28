@@ -17,6 +17,14 @@ const RELAY_CHANNEL = 'mwi-chat-relay';
 const SEND_CHANNEL = 'mwi-chat-send';
 const MAX_BUFFER = 500;
 const PING_INTERVAL_MS = 10_000;
+// A blob: URL's document inherits the origin of the page that created it, so localStorage
+// here is the same store the game page itself uses — good enough for a UI convenience like
+// remembered window geometry, without needing a BroadcastChannel round trip to save it.
+const POPOUT_GEOMETRY_KEY = 'mwi-chat-popout-geometry';
+const DEFAULT_POPOUT_WIDTH = 960;
+const DEFAULT_POPOUT_HEIGHT = 720;
+const MIN_POPOUT_WIDTH = 320;
+const MIN_POPOUT_HEIGHT = 240;
 
 const CHANNELS = [
     { hrid: '/chat_channel_types/general', name: 'General' },
@@ -166,6 +174,38 @@ function resolveMessage(message) {
         isSystem: !!message.isSystemMessage,
         renderedLinks,
     };
+}
+
+/**
+ * Build the `window.open` features string for the pop-out window, restoring a previously
+ * saved size/position when one is available, clamped to fit the current screen so a
+ * geometry saved on a bigger or differently-arranged monitor can never open off-screen.
+ * @param {{width:number, height:number, left:number, top:number}|null|undefined} geometry
+ * @param {{availWidth:number, availHeight:number}|null|undefined} screenBounds
+ * @returns {string}
+ */
+function buildPopoutWindowFeatures(geometry, screenBounds) {
+    const availWidth = screenBounds?.availWidth > 0 ? screenBounds.availWidth : DEFAULT_POPOUT_WIDTH;
+    const availHeight = screenBounds?.availHeight > 0 ? screenBounds.availHeight : DEFAULT_POPOUT_HEIGHT;
+
+    let width = DEFAULT_POPOUT_WIDTH;
+    let height = DEFAULT_POPOUT_HEIGHT;
+    if (Number.isFinite(geometry?.width) && Number.isFinite(geometry?.height)) {
+        width = geometry.width;
+        height = geometry.height;
+    }
+    width = Math.min(Math.max(width, MIN_POPOUT_WIDTH), availWidth);
+    height = Math.min(Math.max(height, MIN_POPOUT_HEIGHT), availHeight);
+
+    const parts = [`width=${Math.round(width)}`, `height=${Math.round(height)}`, 'resizable=yes'];
+
+    if (Number.isFinite(geometry?.left) && Number.isFinite(geometry?.top)) {
+        const left = Math.min(Math.max(geometry.left, 0), Math.max(availWidth - width, 0));
+        const top = Math.min(Math.max(geometry.top, 0), Math.max(availHeight - height, 0));
+        parts.push(`left=${Math.round(left)}`, `top=${Math.round(top)}`);
+    }
+
+    return parts.join(',');
 }
 
 class PopOutChat {
@@ -409,13 +449,31 @@ class PopOutChat {
         const blob = new Blob([html], { type: 'text/html' });
         const url = URL.createObjectURL(blob);
 
-        this.popoutWindow = window.open(url, 'mwi-chat-popout', 'width=960,height=720,resizable=yes');
+        const features = buildPopoutWindowFeatures(this._readSavedGeometry(), window.screen);
+        this.popoutWindow = window.open(url, 'mwi-chat-popout', features);
 
         // Defer revocation — revoking synchronously races the new window's fetch of the blob
         this.timerRegistry.registerTimeout(setTimeout(() => URL.revokeObjectURL(url), 10000));
 
         if (!this.popoutWindow) {
             console.error('[PopOutChat] Popup blocked by browser');
+        }
+    }
+
+    /**
+     * Read the pop-out window's last saved size/position, written by the pop-out itself
+     * on resize/move. Best-effort: any missing/malformed value falls back to defaults.
+     * @returns {{width:number, height:number, left:number, top:number}|null}
+     */
+    _readSavedGeometry() {
+        try {
+            const raw = localStorage.getItem(POPOUT_GEOMETRY_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object') return null;
+            return parsed;
+        } catch {
+            return null;
         }
     }
 
@@ -655,6 +713,7 @@ class PopOutChat {
   const INSTANCE_ID = '${this.popoutInstanceId}';
   const MAX_PER_CHANNEL = 500;
   const STORAGE_KEY = 'mwi-chat-popout-layout';
+  const GEOMETRY_KEY = '${POPOUT_GEOMETRY_KEY}';
   // Shared with chat-profile-link.js — same "click a name to fill /profile <name>" behavior,
   // reusing its exact regex/name-validity rules instead of re-deriving them here.
   const ANNOUNCE_RE = ${ANNOUNCE_RE};
@@ -1150,6 +1209,29 @@ class PopOutChat {
     } catch { return null; }
   }
 
+  // ── Window geometry persistence ─────────────────────────────────
+  // Saves this window's size/position so the next pop-out opens where this one was left,
+  // instead of always at the same fixed spot. Read back by the opener (pop-out-chat.js
+  // _readSavedGeometry) before the *next* window.open call — window features can only be
+  // set at creation time, so this window can't resize itself, only inform the next one.
+  function saveGeometry() {
+    try {
+      localStorage.setItem(GEOMETRY_KEY, JSON.stringify({
+        width: window.outerWidth,
+        height: window.outerHeight,
+        left: window.screenX,
+        top: window.screenY,
+      }));
+    } catch { /* ignore */ }
+  }
+
+  let geometryDebounce;
+  window.addEventListener('resize', () => {
+    clearTimeout(geometryDebounce);
+    geometryDebounce = setTimeout(saveGeometry, 400);
+  });
+  window.addEventListener('beforeunload', saveGeometry);
+
   // ── Init ──────────────────────────────────────────────────────
   verticalToggle.addEventListener('change', () => { updateGrid(); saveLayout(); });
 
@@ -1229,7 +1311,7 @@ class PopOutChat {
 
 // Exported for tests: the pop-out window is a separate self-contained document, so its
 // generated markup/script is what a test can actually inspect.
-export { PopOutChat };
+export { PopOutChat, buildPopoutWindowFeatures, POPOUT_GEOMETRY_KEY };
 
 export default {
     name: 'Pop-Out Chat',

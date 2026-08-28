@@ -8,7 +8,7 @@
  * interpolation didn't produce broken JavaScript.
  */
 
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, vi, afterEach } from 'vitest';
 
 vi.mock('../../core/config.js', () => ({
     default: { getSetting: () => true, getSettingValue: (_key, def) => def },
@@ -18,7 +18,7 @@ vi.mock('../../core/websocket.js', () => ({ default: { on: () => {}, off: () => 
 vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
 vi.mock('./chat-block-list.js', () => ({ chatBlockList: { isBlocked: () => false } }));
 
-const { PopOutChat } = await import('./pop-out-chat.js');
+const { PopOutChat, buildPopoutWindowFeatures, POPOUT_GEOMETRY_KEY } = await import('./pop-out-chat.js');
 const { ANNOUNCE_RE, VALID_NAME_RE } = await import('./chat-profile-link.js');
 
 describe('pop-out chat window: clickable names', () => {
@@ -123,5 +123,85 @@ describe('pop-out chat window: cross-tab isolation', () => {
         expect(html).toContain(`sendCh.postMessage({ type: 'ready', instanceId: INSTANCE_ID });`);
         expect(html).toContain('instanceId: INSTANCE_ID });');
         expect(html).toContain('if (data.instanceId !== INSTANCE_ID) return;');
+    });
+});
+
+describe('pop-out chat window: remembered size and position', () => {
+    test('with no saved geometry, falls back to the fixed default size and no position', () => {
+        expect(buildPopoutWindowFeatures(null, { availWidth: 1920, availHeight: 1080 })).toBe(
+            'width=960,height=720,resizable=yes'
+        );
+    });
+
+    test('restores a saved size and position that fits on screen', () => {
+        const features = buildPopoutWindowFeatures(
+            { width: 700, height: 500, left: 200, top: 100 },
+            { availWidth: 1920, availHeight: 1080 }
+        );
+        expect(features).toBe('width=700,height=500,resizable=yes,left=200,top=100');
+    });
+
+    test('clamps a saved size larger than the current screen', () => {
+        const features = buildPopoutWindowFeatures(
+            { width: 3000, height: 2000, left: 0, top: 0 },
+            { availWidth: 1280, availHeight: 800 }
+        );
+        expect(features).toBe('width=1280,height=800,resizable=yes,left=0,top=0');
+    });
+
+    test('never shrinks below a sane minimum even if a bad value was saved', () => {
+        const features = buildPopoutWindowFeatures(
+            { width: 10, height: 10, left: 0, top: 0 },
+            { availWidth: 1920, availHeight: 1080 }
+        );
+        expect(features).toBe('width=320,height=240,resizable=yes,left=0,top=0');
+    });
+
+    test('clamps a saved position that would open the window off-screen', () => {
+        const features = buildPopoutWindowFeatures(
+            { width: 700, height: 500, left: 5000, top: 5000 },
+            { availWidth: 1920, availHeight: 1080 }
+        );
+        // left/top clamped so the window stays fully within the available screen area
+        expect(features).toBe('width=700,height=500,resizable=yes,left=1220,top=580');
+    });
+
+    test('ignores a malformed geometry object and falls back to defaults', () => {
+        expect(buildPopoutWindowFeatures({ width: 'nope' }, { availWidth: 1920, availHeight: 1080 })).toBe(
+            'width=960,height=720,resizable=yes'
+        );
+    });
+
+    test('the generated pop-out script saves its own geometry under the shared key on resize and unload', () => {
+        const chat = new PopOutChat();
+        const html = chat._buildPopoutHTML();
+
+        expect(html).toContain(`const GEOMETRY_KEY = '${POPOUT_GEOMETRY_KEY}';`);
+        expect(html).toContain("window.addEventListener('resize'");
+        expect(html).toContain("window.addEventListener('beforeunload', saveGeometry);");
+        expect(html).toContain('localStorage.setItem(GEOMETRY_KEY');
+    });
+});
+
+describe('pop-out chat window: _readSavedGeometry', () => {
+    afterEach(() => {
+        localStorage.removeItem(POPOUT_GEOMETRY_KEY);
+    });
+
+    test('returns null when nothing has been saved yet', () => {
+        const chat = new PopOutChat();
+        expect(chat._readSavedGeometry()).toBeNull();
+    });
+
+    test('returns the parsed geometry object when one is stored', () => {
+        localStorage.setItem(POPOUT_GEOMETRY_KEY, JSON.stringify({ width: 800, height: 600, left: 10, top: 20 }));
+        const chat = new PopOutChat();
+        expect(chat._readSavedGeometry()).toEqual({ width: 800, height: 600, left: 10, top: 20 });
+    });
+
+    test('returns null instead of throwing on corrupted stored JSON', () => {
+        localStorage.setItem(POPOUT_GEOMETRY_KEY, '{not json');
+        const chat = new PopOutChat();
+        expect(chat._readSavedGeometry()).toBeNull();
     });
 });
