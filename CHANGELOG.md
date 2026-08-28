@@ -6,6 +6,10 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### A run that starves of materials stops haunting the briefing
+
+The enhancement tracker only closed a session when a differently-configured run started, so a run that ended by running out of materials (or being cancelled) stayed "In Progress" for ever — and the Session Briefing kept announcing it weeks later. The queue entry ending now finalizes the session outright, and the briefing additionally ignores any session whose last attempt is over an hour old.
+
 ### Action ETAs stop drifting later on every reload
 
 The completion estimate rebuilt itself from the full remaining model on each reload or character switch, forgetting how far into the current action cycle you already were — a long cycle's ETA walked later every time. The moment the current unit started is now tracked from the action stream, persisted per character, and subtracted from the estimate; any doubt about its validity falls back to exactly the old behavior.

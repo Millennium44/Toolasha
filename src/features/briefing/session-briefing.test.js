@@ -279,7 +279,14 @@ describe('the card', () => {
         ];
         game.consumable = { name: 'Coffee', secondsLeft: 900 };
         game.undercutStates = new Map([[1, { armed: false }]]);
-        game.enhancementSession = { itemName: 'Sword', currentLevel: 3, targetLevel: 7, protectionCount: 1 };
+        game.enhancementSession = {
+            itemName: 'Sword',
+            currentLevel: 3,
+            targetLevel: 7,
+            protectionCount: 1,
+            state: 'tracking',
+            lastUpdateTime: Date.now(),
+        };
         game.guildMeta = { week: 'w', signupWeekStartAt: 'w', signedUpSkillingTrialHrid: '/trial/looms' };
         game.labyrinth = { ok: true, available: 2, isFull: false };
         game.snapshots = [
@@ -313,8 +320,40 @@ describe('the links', () => {
         expect(game.opened).toContain('navigationBar.labyrinth');
     });
 
+    test('a stopped enhancement run is not news — stale or non-tracking sessions stay off the card', () => {
+        game.enhancementSession = {
+            itemName: 'Sword',
+            currentLevel: 3,
+            targetLevel: 7,
+            protectionCount: 1,
+            state: 'tracking',
+            lastUpdateTime: Date.now() - 2 * 60 * 60 * 1000,
+        };
+        briefingPanel.show({ remember: false });
+        expect(lineRows().map((row) => row.dataset.briefingKey)).not.toContain('enhancement');
+        briefingPanel.hide();
+
+        game.enhancementSession = {
+            itemName: 'Sword',
+            currentLevel: 7,
+            targetLevel: 7,
+            protectionCount: 1,
+            state: 'completed',
+            lastUpdateTime: Date.now(),
+        };
+        briefingPanel.show({ remember: false });
+        expect(lineRows().map((row) => row.dataset.briefingKey)).not.toContain('enhancement');
+    });
+
     test('the enhancement line opens the enhancing action', () => {
-        game.enhancementSession = { itemName: 'Sword', currentLevel: 1, targetLevel: 4, protectionCount: 0 };
+        game.enhancementSession = {
+            itemName: 'Sword',
+            currentLevel: 1,
+            targetLevel: 4,
+            protectionCount: 0,
+            state: 'tracking',
+            lastUpdateTime: Date.now(),
+        };
         briefingPanel.show({ remember: false });
         lineRows()
             .find((entry) => entry.dataset.briefingKey === 'enhancement')

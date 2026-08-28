@@ -54,7 +54,13 @@ vi.mock('./enhancement-tracker.js', () => ({
         trackCoinCost: async () => {},
         trackMaterialCost: async () => {},
         trackProtectionCost: vi.fn(async (...a) => state.calls.push(['prot', ...a])),
-        finalizeCurrentSession: async () => {},
+        finalizeCurrentSession: vi.fn(async () => {
+            state.calls.push(['finalize']);
+            state.current = null;
+        }),
+        setPendingStart: vi.fn(() => {
+            state.calls.push(['pendingStart']);
+        }),
     },
 }));
 
@@ -89,5 +95,38 @@ describe('a run already going when the script comes up', () => {
         // The next attempt has a baseline and is recorded
         await state.handlers.action_completed(attempt(6, 79));
         expect(state.calls.at(-1)).toEqual(['success', 5, 6, false]);
+    });
+});
+
+describe('the run ending in the queue', () => {
+    const enhanceRow = (extra = {}) => ({
+        actionHrid: '/actions/enhancing/enhance',
+        enhancingMaxLevel: 15,
+        enhancingProtectionMinLevel: 2,
+        ...extra,
+    });
+
+    test('an isDone row — cancelled, finished, or out of materials — finalizes the session', async () => {
+        state.current = { id: 's1', targetLevel: 15, protectFrom: 2 };
+        await state.handlers['actions_updated']({ endCharacterActions: [enhanceRow({ isDone: true })] });
+
+        expect(state.calls).toContainEqual(['finalize']);
+        expect(state.calls).not.toContainEqual(['pendingStart']);
+    });
+
+    test('an isDone row with no session does nothing', async () => {
+        await state.handlers['actions_updated']({ endCharacterActions: [enhanceRow({ isDone: true })] });
+
+        expect(state.calls).toEqual([]);
+    });
+
+    test('an ended run alongside the next queued one is a start, not a stop', async () => {
+        state.current = { id: 's1', targetLevel: 15, protectFrom: 2 };
+        await state.handlers['actions_updated']({
+            endCharacterActions: [enhanceRow({ isDone: true }), enhanceRow({ isDone: false })],
+        });
+
+        expect(state.calls).not.toContainEqual(['finalize']);
+        expect(state.calls).toContainEqual(['pendingStart']);
     });
 });

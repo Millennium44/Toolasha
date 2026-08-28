@@ -69,6 +69,9 @@ const LISTING_BASELINE_PREFIX = 'sessionBriefingListings_';
 /** Nothing here moves fast; a slow redraw is the point */
 const REFRESH_MS = 15_000;
 
+/** A current enhancement session whose last attempt is older than this is a stopped run, not news */
+const ENHANCEMENT_STALE_MS = 60 * 60 * 1000;
+
 /** Character ids whose briefing has been read and closed this page session */
 const dismissed = new Set();
 
@@ -305,6 +308,13 @@ export function collectFacts(now = Date.now()) {
         enhancement: attempt('the enhancement session', () => {
             const session = enhancementTracker.getCurrentSession?.();
             if (!session) return null;
+            // The tracker only closes a session when a DIFFERENT enhancement
+            // starts — simply stopping leaves it "current" for ever, and the
+            // briefing was still announcing a run from weeks ago. An attempt
+            // lands every few seconds while enhancing actually runs, so a
+            // last-attempt stamp older than an hour is a stopped run, not news.
+            const lastTouch = session.lastUpdateTime || session.startTime || 0;
+            if (session.state !== 'tracking' || now - lastTouch > ENHANCEMENT_STALE_MS) return null;
             return {
                 itemName: session.itemName,
                 currentLevel: session.currentLevel,

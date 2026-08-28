@@ -37,8 +37,22 @@ async function handleActionsUpdated(data) {
     const actions = data.endCharacterActions;
     if (!Array.isArray(actions)) return;
 
-    const enhancingAction = actions.find((a) => a.actionHrid === '/actions/enhancing/enhance');
-    if (!enhancingAction) return;
+    const enhancingRows = actions.filter((a) => a.actionHrid === '/actions/enhancing/enhance');
+    if (!enhancingRows.length) return;
+
+    // One message can carry an ended run alongside the next queued one, so a
+    // live row wins; only when EVERY enhancing row in the message has ended is
+    // this a stop. isDone: true is the queue entry ENDING — cancelled,
+    // finished, or starved of materials. Nothing else ever says so: without
+    // this, running dry left the session "In Progress" (and on the briefing)
+    // indefinitely, since only a differently-configured restart finalized it.
+    const enhancingAction = enhancingRows.find((a) => a.isDone === false) || enhancingRows[0];
+    if (enhancingAction.isDone === true) {
+        if (enhancementTracker.getCurrentSession()) {
+            await enhancementTracker.finalizeCurrentSession();
+        }
+        return;
+    }
 
     enhancementTracker.setPendingStart();
 
