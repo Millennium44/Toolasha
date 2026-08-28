@@ -133,6 +133,21 @@ describe('gatheringSessionLuck against a distribution that can be written down',
         }
     });
 
+    test('one expensive drop cannot shrink the window under its own payout', () => {
+        // 50 actions at a guaranteed 500M drop: the old heuristic window
+        // (max(1e8, 2e5 x 50) = 1e8) is far below the 25B the transform must
+        // represent, which aliased the CDF into nonsense
+        const session = {
+            drops: [{ itemHrid: '/items/big', minCount: 1, maxCount: 1, dropRate: 1, price: 5e8 }],
+            actionCount: 50,
+        };
+        const { limit, percentile } = gatheringSessionLuck(session, 50 * 5e8);
+        expect(limit).toBeGreaterThanOrEqual(50 * 5e8);
+        // A guaranteed income is neither lucky nor unlucky nonsense
+        expect(percentile).toBeGreaterThanOrEqual(0);
+        expect(percentile).toBeLessThanOrEqual(1);
+    });
+
     test('reports a percentile, not a value', () => {
         const session = {
             drops: [{ itemHrid: '/items/x', minCount: 1, maxCount: 1, dropRate: 0.5, price: 1000 }],

@@ -152,9 +152,12 @@ export function gatheringSessionLuck(session, income, options = {}) {
     const cf = powCF(multiplyCFs(session.drops.map(dropCF)), session.actionCount);
 
     // Opening guess: generous enough that the search shrinks onto the answer
-    // rather than having to widen, which it cannot do — same reasoning and same
-    // scale as `sessionLuck`, with actions standing in for waves
-    const startingLimit = Math.max(1e8, 2e5 * Math.max(session.actionCount, 1));
+    // rather than having to widen, which it cannot do — same reasoning as
+    // `sessionLuck`, floored at the session's own theoretical maximum payout
+    // (and the observed income) so one expensive drop table cannot alias the
+    // transform into a window smaller than the values it must represent
+    const maxPossible = session.actionCount * session.drops.reduce((sum, drop) => sum + drop.maxCount * drop.price, 0);
+    const startingLimit = Math.max(1e8, 2e5 * Math.max(session.actionCount, 1), maxPossible * 1.5, (income || 0) * 1.5);
 
     const { limit, cdf } = invertToCDF(cf, startingLimit, options);
     return { percentile: cdf(income), limit, cdf };

@@ -423,7 +423,7 @@ function getActiveSeals() {
  * @returns {Object} Achievement buff map with enabled flags per tier
  */
 function getAchievementBuffMap(characterData, gameData) {
-    const tiers = ['beginner', 'novice', 'adept', 'veteran', 'champion'];
+    const tiers = ['beginner', 'novice', 'adept', 'veteran', 'elite', 'champion'];
     const achievementBuffMap = {};
 
     for (const tier of tiers) {

@@ -399,8 +399,22 @@ describe('scrolls and achievements', () => {
             novice: { type: 'novice', enabled: false },
             adept: { type: 'adept', enabled: false },
             veteran: { type: 'veteran', enabled: false },
+            elite: { type: 'elite', enabled: false },
             champion: { type: 'champion', enabled: false },
         });
+    });
+
+    test('a completed elite tier is exported enabled', async () => {
+        game.clientData.achievementDetailMap = {
+            '/achievements/e1': { tierHrid: '/achievement_tiers/elite' },
+            '/achievements/e2': { tierHrid: '/achievement_tiers/elite' },
+        };
+        game.characterData.characterAchievements = [
+            { achievementHrid: '/achievements/e1', isCompleted: true },
+            { achievementHrid: '/achievements/e2', isCompleted: true },
+        ];
+
+        expect((await constructMilkonomyExport()).achievementBuffMap.elite.enabled).toBe(true);
     });
 
     test('an achievement the game data does not list is ignored rather than counted', async () => {
