@@ -55,6 +55,18 @@ const SAMPLE_MS = 5000;
  */
 const history = createSkillHistory({ windowMs: WINDOW_MS, sampleMs: SAMPLE_MS });
 
+// skill-history.js only self-corrects a reading that goes *backwards* — a
+// switch to a character further along in a skill (an iron cow to the main,
+// the ordinary direction on this account) looks exactly like a burst of real
+// progress, not a different character, until the ten-minute window rolls the
+// old reading out on its own. This row keeps its own history instance
+// deliberately apart from combat-level-panel.js's (see the module note above),
+// so combat-level-panel.js's own character_switching reset does not reach it —
+// it needs the same reset for the same reason, or Time to Level can report an
+// enormous xp/hr and a nonsense ETA under the arriving character's name for up
+// to ten minutes after every switch.
+dataManager.on('character_switching', () => history.clear());
+
 /**
  * Take a reading of every skill, if one is due.
  *

@@ -12,14 +12,18 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ skills: [], table: [] }));
+const game = vi.hoisted(() => ({ skills: [], table: [], dmHandlers: {} }));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         getSkills: () => game.skills,
         getInitClientData: () => ({ levelExperienceTable: game.table }),
-        on: () => {},
-        off: () => {},
+        on: (event, handler) => {
+            game.dmHandlers[event] = handler;
+        },
+        off: (event, handler) => {
+            if (game.dmHandlers[event] === handler) delete game.dmHandlers[event];
+        },
         getCurrentCharacterId: () => 'char1',
     },
 }));
@@ -171,5 +175,30 @@ describe('with a target chosen in the panel', () => {
 
         clearSelection();
         expect(draw()).toContain('Melee');
+    });
+});
+
+describe('this row keeps its own history, apart from combat-level-panel.js', () => {
+    test('character_switching clears it, so a switch to a higher-xp character is not read as a burst of progress', () => {
+        // This row's own skill-history instance only self-corrects a reading
+        // that goes *backwards* — a switch to a character further along in a
+        // skill looks exactly like real progress until the ten-minute window
+        // rolls the old reading out on its own. Without a reset tied to
+        // character_switching, the tile would report a huge xp/hr and a
+        // nonsense ETA under the arriving character's name.
+        train('melee', 1000000);
+        expect(draw()).toContain('Melee 135');
+
+        // The switch: a different character, already much further along in
+        // the same skill — nothing here looks like a decrease
+        game.skills = game.skills.map((skill) =>
+            skill.skillHrid === '/skills/melee' ? { ...skill, experience: skill.experience + 50_000_000 } : skill
+        );
+        game.dmHandlers.character_switching();
+
+        // Without the reset, this reads an enormous rate from the 50M jump
+        // over the last sample interval — with it, there is nothing measurable
+        // again until two fresh readings land
+        expect(draw()).toBe('');
     });
 });
