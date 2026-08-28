@@ -294,6 +294,7 @@ export function navigationFor(step) {
  */
 function select(options) {
     const element = document.createElement('select');
+    element.classList.add('toolasha-select');
     Object.assign(element.style, {
         background: 'rgba(0, 0, 0, 0.35)',
         border: `1px solid ${COLORS.hairline}`,

@@ -1295,7 +1295,7 @@ class TaskProfitDisplay {
 
         let html = '<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">';
         html +=
-            '<select class="mwi-combat-est-loadout" style="font-size:11px; background:#1a1a1a; color:#ccc; border:1px solid #444; border-radius:3px; padding:2px 4px;">';
+            '<select class="mwi-combat-est-loadout toolasha-select" style="font-size:11px; background:#1a1a1a; color:#ccc; border:1px solid #444; border-radius:3px; padding:2px 4px;">';
         html += `<option value=""${!defaultLoadout ? ' selected' : ''}>— Current Gear —</option>`;
         for (const s of snapshots) {
             const selected = s.name === defaultLoadout ? ' selected' : '';

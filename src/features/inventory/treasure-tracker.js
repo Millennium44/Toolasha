@@ -1255,6 +1255,7 @@ class TreasureTracker {
      */
     _sortPicker() {
         const picker = document.createElement('select');
+        picker.classList.add('toolasha-select');
         picker.title =
             'How to order the chests. Luck answers "which one let me down"; ' +
             'the alphabet answers "where is the one I am looking for".';

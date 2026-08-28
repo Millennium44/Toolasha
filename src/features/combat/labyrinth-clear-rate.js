@@ -2587,6 +2587,7 @@ class LabyrinthClearRate {
 
         const unknownSelect = document.createElement('select');
         unknownSelect.className = `${TILE_CONTROLS_CLASS}-path-unknown`;
+        unknownSelect.classList.add('toolasha-select');
         unknownSelect.title = 'How the path treats unrevealed rooms';
         unknownSelect.style.cssText =
             'height:20px; box-sizing:border-box; border:1px solid rgba(150,190,255,0.45); border-radius:4px; ' +

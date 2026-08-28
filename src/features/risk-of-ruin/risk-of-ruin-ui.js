@@ -422,7 +422,7 @@ class RiskOfRuinUI {
 
         return `
             <label style="${labelStyle}">Mode</label>
-            <select id="mwi-ror-mode" style="${inputStyle} margin-bottom:10px;">
+            <select class="toolasha-select" id="mwi-ror-mode" style="${inputStyle} margin-bottom:10px;">
                 <option value="chest">Dungeon Chest</option>
                 <option value="alchemy">Alchemy (Transmute)</option>
                 <option value="enhancement">Enhancing</option>
@@ -463,7 +463,7 @@ class RiskOfRuinUI {
             }).join('');
             container.innerHTML = `
                 <label style="${labelStyle}">Chest type</label>
-                <select id="mwi-ror-chest" style="${inputStyle}">${options}</select>
+                <select class="toolasha-select" id="mwi-ror-chest" style="${inputStyle}">${options}</select>
                 <label style="${labelStyle}">Chests to open</label>
                 <input id="mwi-ror-target" type="number" min="1" step="1" value="100" style="${inputStyle}">
             `;
@@ -472,7 +472,7 @@ class RiskOfRuinUI {
                 <label style="${labelStyle}">Item to Transmute</label>
                 <input id="mwi-ror-item" list="mwi-ror-transmute-items" style="${inputStyle}" placeholder="Start typing an item name...">
                 <label style="${labelStyle}">Catalyst</label>
-                <select id="mwi-ror-catalyst" style="${inputStyle}">
+                <select class="toolasha-select" id="mwi-ror-catalyst" style="${inputStyle}">
                     <option value="best">Best available (auto)</option>
                     <option value="none">None</option>
                     <option value="typeSpecific">Type-specific catalyst</option>

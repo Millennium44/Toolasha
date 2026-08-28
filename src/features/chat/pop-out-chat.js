@@ -934,6 +934,7 @@ class PopOutChat {
 
     const select = document.createElement('select');
     select.className = 'pane-channel-select';
+    select.classList.add('toolasha-select');
     populateSelect(select, channels, hrid);
 
     const closeBtn = document.createElement('button');
@@ -952,6 +953,7 @@ class PopOutChat {
 
     const filterSelect = document.createElement('select');
     filterSelect.className = 'pane-filter-preset';
+    filterSelect.classList.add('toolasha-select');
     FILTER_PRESETS.forEach(p => {
       const opt = document.createElement('option');
       opt.value = p.value;

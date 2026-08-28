@@ -1067,6 +1067,7 @@ class ConsumablesPanel {
 
             const picker = document.createElement('select');
             picker.className = `${BUY_CHIP_ID}-source`;
+            picker.classList.add('toolasha-select');
             picker.style.cssText =
                 `border:1px solid ${COLORS.border}; border-radius:5px; background:rgba(20,26,44,0.95); ` +
                 `color:${COLORS.text}; font-size:12px; padding:2px 4px; max-width:150px; cursor:pointer; ` +
@@ -1546,6 +1547,7 @@ class ConsumablesPanel {
      */
     _idleSelect(options, selected, title, onChange) {
         const select = document.createElement('select');
+        select.classList.add('toolasha-select');
         Object.assign(select.style, {
             background: 'rgba(255, 255, 255, 0.07)',
             border: `1px solid ${COLORS.border}`,

@@ -314,6 +314,7 @@ class SkillingSimulatorUI {
             compareLabel.textContent = 'Compare:';
             compareLabel.style.cssText = 'color: rgba(255,255,255,0.5); font-size: 12px; width: 56px; flex-shrink: 0;';
             const compareSelect = document.createElement('select');
+            compareSelect.classList.add('toolasha-select');
             compareSelect.style.cssText =
                 'background: #2a2a2a; color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 4px 8px; font-size: 12px; flex: 1; cursor: pointer;';
             const noneOpt = document.createElement('option');
@@ -461,6 +462,7 @@ class SkillingSimulatorUI {
         // Skill
         const skillRow = makeRow('Skill:');
         const skillSelect = document.createElement('select');
+        skillSelect.classList.add('toolasha-select');
         skillSelect.style.cssText = inputCss + ' flex: 1; cursor: pointer;';
         for (const s of SKILL_NAMES) {
             const opt = document.createElement('option');
@@ -487,6 +489,7 @@ class SkillingSimulatorUI {
         if (this.currentMode === 'simulator') {
             const loadoutRow = makeRow('Loadout:');
             const loadoutSelect = document.createElement('select');
+            loadoutSelect.classList.add('toolasha-select');
             loadoutSelect.style.cssText = inputCss + ' flex: 1; cursor: pointer;';
             this._populateLoadoutSelect(loadoutSelect);
             loadoutRow.appendChild(loadoutSelect);

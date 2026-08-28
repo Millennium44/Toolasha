@@ -512,7 +512,7 @@ export class SimEditor {
             html += `<div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">`;
             if (filteredSnapshots.length > 0) {
                 html += `<label style="color:#888; font-size:11px; flex-shrink:0;">Loadout</label>`;
-                html += `<select id="mwi-csim-loadout-select" style="
+                html += `<select class="toolasha-select" id="mwi-csim-loadout-select" style="
                     flex:1; min-width:0; background:#1a1a2e; color:#e0e0e0; border:1px solid #444;
                     border-radius:4px; padding:2px 6px; font-size:12px; font-family:inherit;">`;
                 html += `<option value=""${!this._selectedLoadoutName ? ' selected' : ''}>— Current Gear —</option>`;
@@ -1414,12 +1414,12 @@ export class SimEditor {
 
                     html += `<div style="border:1px solid #2a2a4e; border-radius:5px; padding:6px; margin-bottom:6px;">`;
                     html += `<div style="display:flex; gap:4px; align-items:center; margin-bottom:4px;">`;
-                    html += `<select data-trig-dep="${i}" style="${selectStyle}">${buildOptions(depHrids, row.dependencyHrid, (h) => displayName(depMap, h))}</select>`;
-                    html += `<select data-trig-cond="${i}" style="${selectStyle}">${buildOptions(condOptions, row.conditionHrid, (h) => displayName(condMap, h))}</select>`;
+                    html += `<select class="toolasha-select" data-trig-dep="${i}" style="${selectStyle}">${buildOptions(depHrids, row.dependencyHrid, (h) => displayName(depMap, h))}</select>`;
+                    html += `<select class="toolasha-select" data-trig-cond="${i}" style="${selectStyle}">${buildOptions(condOptions, row.conditionHrid, (h) => displayName(condMap, h))}</select>`;
                     html += `<button data-trig-remove="${i}" title="Remove trigger" style="background:none; border:none; color:#f44; font-size:15px; cursor:pointer; padding:0 2px; line-height:1; flex-shrink:0;">×</button>`;
                     html += `</div>`;
                     html += `<div style="display:flex; gap:4px; align-items:center;">`;
-                    html += `<select data-trig-comp="${i}" style="${selectStyle}">${buildOptions(compOptions, row.comparatorHrid, (h) => displayName(compMap, h))}</select>`;
+                    html += `<select class="toolasha-select" data-trig-comp="${i}" style="${selectStyle}">${buildOptions(compOptions, row.comparatorHrid, (h) => displayName(compMap, h))}</select>`;
                     html += `<input type="number" data-trig-value="${i}" value="${row.value}" min="0"
                         style="width:70px; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:3px;
                         padding:2px 4px; font-size:11px; text-align:center; ${hideValue ? 'visibility:hidden;' : ''}">`;

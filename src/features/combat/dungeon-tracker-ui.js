@@ -319,7 +319,7 @@ class DungeonTrackerUI {
                     ">
                         <div style="margin-bottom: 6px;">
                             <label style="margin-right: 6px;">Group by:</label>
-                            <select id="mwi-dt-group-by" style="
+                            <select class="toolasha-select" id="mwi-dt-group-by" style="
                                 background: #333;
                                 color: #fff;
                                 border: 1px solid #555;
@@ -334,7 +334,7 @@ class DungeonTrackerUI {
                         <div style="display: flex; gap: 12px;">
                             <div>
                                 <label style="margin-right: 6px;">Dungeon:</label>
-                                <select id="mwi-dt-filter-dungeon" style="
+                                <select class="toolasha-select" id="mwi-dt-filter-dungeon" style="
                                     background: #333;
                                     color: #fff;
                                     border: 1px solid #555;
@@ -348,7 +348,7 @@ class DungeonTrackerUI {
                             </div>
                             <div>
                                 <label style="margin-right: 6px;">Team:</label>
-                                <select id="mwi-dt-filter-team" style="
+                                <select class="toolasha-select" id="mwi-dt-filter-team" style="
                                     background: #333;
                                     color: #fff;
                                     border: 1px solid #555;
@@ -362,7 +362,7 @@ class DungeonTrackerUI {
                             </div>
                             <div>
                                 <label style="margin-right: 6px;">Character:</label>
-                                <select id="mwi-dt-filter-character" style="
+                                <select class="toolasha-select" id="mwi-dt-filter-character" style="
                                     background: #333;
                                     color: #fff;
                                     border: 1px solid #555;

@@ -134,6 +134,7 @@ class MarketFilter {
         label.style.cssText = 'font-size: 12px; color: rgba(255, 255, 255, 0.7);';
 
         const select = document.createElement('select');
+        select.classList.add('toolasha-select');
         select.id = `toolasha-level-${type}`;
         select.style.cssText =
             'padding: 4px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.3); color: #fff; border: 1px solid rgba(91, 141, 239, 0.3);';
@@ -182,6 +183,7 @@ class MarketFilter {
         label.style.cssText = 'font-size: 12px; color: rgba(255, 255, 255, 0.7);';
 
         const select = document.createElement('select');
+        select.classList.add('toolasha-select');
         select.id = 'toolasha-class-filter';
         select.style.cssText =
             'padding: 4px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.3); color: #fff; border: 1px solid rgba(91, 141, 239, 0.3);';
@@ -226,6 +228,7 @@ class MarketFilter {
         label.style.cssText = 'font-size: 12px; color: rgba(255, 255, 255, 0.7);';
 
         const select = document.createElement('select');
+        select.classList.add('toolasha-select');
         select.id = 'toolasha-slot-filter';
         select.style.cssText =
             'padding: 4px 8px; border-radius: 4px; background: rgba(0, 0, 0, 0.3); color: #fff; border: 1px solid rgba(91, 141, 239, 0.3);';

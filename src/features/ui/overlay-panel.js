@@ -1363,6 +1363,7 @@ class OverlayPanel {
         const offered = offeredLayouts(Object.fromEntries(names.map((name) => [name, true])));
 
         const select = document.createElement('select');
+        select.classList.add('toolasha-select');
         // Named so it stays findable now that the popover holds more than one
         select.dataset.overlayLayoutSelect = 'true';
         Object.assign(select.style, {
@@ -1483,6 +1484,7 @@ class OverlayPanel {
         wrap.appendChild(name);
 
         const select = document.createElement('select');
+        select.classList.add('toolasha-select');
         select.dataset.overlayActivityFor = entry.name;
         Object.assign(select.style, {
             background: 'rgba(255, 255, 255, 0.06)',
@@ -1809,6 +1811,7 @@ class OverlayPanel {
         label.style.color = COLORS.textDim;
 
         const select = document.createElement('select');
+        select.classList.add('toolasha-select');
         select.dataset.overlaySetting = 'emptyTiles';
         Object.assign(select.style, {
             background: 'rgba(255, 255, 255, 0.06)',

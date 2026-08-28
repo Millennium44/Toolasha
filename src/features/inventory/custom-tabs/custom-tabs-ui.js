@@ -2297,7 +2297,7 @@ export default class CustomTabsUI {
                 <label>Items</label>
                 <div class="toolasha-ct-search-row">
                     <input type="search" class="toolasha-ct-editor-search" placeholder="Search items to add...">
-                    <select class="toolasha-ct-cat-filter">
+                    <select class="toolasha-ct-cat-filter toolasha-select">
                         <option value="">All</option>
                     </select>
                 </div>

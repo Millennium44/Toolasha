@@ -341,7 +341,7 @@ export function renderLabComparisonPanel(runs, baselineId) {
     html += '<div style="display:flex; align-items:center; gap:6px; margin-bottom:6px; font-size:11px;">';
     html += '<span style="color:#888;">Baseline:</span>';
     html +=
-        '<select id="mwi-labsim-cmp-baseline" style="flex:1; background:#1a1a2e; color:#e0e0e0; ' +
+        '<select class="toolasha-select" id="mwi-labsim-cmp-baseline" style="flex:1; background:#1a1a2e; color:#e0e0e0; ' +
         'border:1px solid #444; border-radius:4px; padding:1px 4px; font-size:11px; font-family:inherit;">';
     for (const entry of runs) {
         const selected = entry === baselineEntry ? ' selected' : '';

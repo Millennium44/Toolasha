@@ -428,6 +428,7 @@ class DungeonRoiBoardUI {
         wrap.appendChild(document.createTextNode(`${label}:`));
 
         const select = document.createElement('select');
+        select.classList.add('toolasha-select');
         select.id = id;
         select.style.cssText =
             'background: #333; color: #fff; border: 1px solid #555; border-radius: 3px; padding: 2px 4px; font-size: 11px;';

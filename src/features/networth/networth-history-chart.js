@@ -298,6 +298,7 @@ class NetworthHistoryChart {
 
         const maSelect = document.createElement('select');
         maSelect.className = 'mwi-nw-ma-select';
+        maSelect.classList.add('toolasha-select');
         maSelect.style.cssText = `
             background: #2a2a2a;
             color: #ccc;

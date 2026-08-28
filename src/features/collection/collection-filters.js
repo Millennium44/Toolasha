@@ -888,7 +888,7 @@ class CollectionFilters {
             'beforeend',
             `<div class="toolasha-cf cf-sort-row" style="display:flex;align-items:center;gap:6px;margin-top:4px;">` +
                 `<span style="font-size:12px;color:#aaa;">Sort:</span>` +
-                `<select class="toolasha-cf cf-sort-select" style="font-size:12px;background:#222;color:#eee;border:1px solid #444;border-radius:4px;padding:1px 4px;">` +
+                `<select class="toolasha-cf cf-sort-select toolasha-select" style="font-size:12px;background:#222;color:#eee;border:1px solid #444;border-radius:4px;padding:1px 4px;">` +
                 `<option value="default"${this.sortMode === 'default' ? ' selected' : ''}>Default</option>` +
                 `<option value="items-needed"${this.sortMode === 'items-needed' ? ' selected' : ''}>Items to next tier</option>` +
                 `<option value="gold-cost"${this.sortMode === 'gold-cost' ? ' selected' : ''}>Gold cost to next tier</option>` +

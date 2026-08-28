@@ -26,6 +26,9 @@ const settings = {};
 /** The registry entries the entrypoint hands to `replaceFeatures` */
 let registered = [];
 
+/** `(css, id)` pairs passed to `Utils.dom.addStyles` while the entrypoint loaded */
+const styleCalls = [];
+
 /** A library stand-in: every property is a callable that returns another one */
 function makeStub() {
     return new Proxy(function stub() {}, {
@@ -72,7 +75,10 @@ beforeAll(async () => {
             errorLog: { install: () => true, getEntries: () => [], clear: () => {} },
         },
         Utils: {
-            dom: { setupScrollTooltipDismissal: () => {} },
+            dom: {
+                setupScrollTooltipDismissal: () => {},
+                addStyles: (css, id) => styleCalls.push({ css, id }),
+            },
             toast: { showToast: () => null },
             selectors: { GAME },
         },
@@ -100,6 +106,20 @@ function checkFor(key) {
 beforeEach(() => {
     document.body.innerHTML = '';
     for (const key of Object.keys(settings)) delete settings[key];
+});
+
+describe('select option contrast', () => {
+    // Firefox opens a native <select>'s dropdown on its own popup rather than
+    // the select's own dark background, so every injected select carries a
+    // shared `toolasha-select` class and one global rule gives its <option>s
+    // an explicit dark background *and* light text — see entrypoint.js. A
+    // rule that set only `color` would still read as light-on-white there.
+    test('injects one rule giving every toolasha-select option both a background and a text color', () => {
+        const call = styleCalls.find((c) => c.id === 'toolasha-select-option-contrast');
+        expect(call, 'expected addStyles to be called with the option-contrast rule').toBeTruthy();
+        expect(call.css).toMatch(/\.toolasha-select\s+option\s*\{[^}]*background-color\s*:[^}]+\}/);
+        expect(call.css).toMatch(/\.toolasha-select\s+option\s*\{[^}]*\bcolor\s*:[^}]+\}/);
+    });
 });
 
 describe('the registry the entrypoint builds', () => {

@@ -1016,6 +1016,7 @@ class WhatsNew {
             control.addEventListener('change', () => config.setSetting(id, Number(control.value)));
         } else if (type === 'select' && Array.isArray(definition.options)) {
             control = document.createElement('select');
+            control.classList.add('toolasha-select');
             for (const option of definition.options) {
                 const el = document.createElement('option');
                 el.value = option.value ?? option;

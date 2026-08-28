@@ -378,6 +378,7 @@ function drawControls(card, table) {
     Object.assign(bar.style, { display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' });
 
     const select = document.createElement('select');
+    select.classList.add('toolasha-select');
     select.style.cssText =
         'background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.18); color: #e8ecf5; ' +
         'border-radius: 5px; padding: 3px 6px; font-size: 12px;';

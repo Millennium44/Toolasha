@@ -404,6 +404,7 @@ class HouseCostDisplay {
         label.textContent = 'Cumulative to Level:';
 
         const dropdown = document.createElement('select');
+        dropdown.classList.add('toolasha-select');
         dropdown.style.cssText = `
             padding: 4px 8px;
             background: rgba(0, 0, 0, 0.3);

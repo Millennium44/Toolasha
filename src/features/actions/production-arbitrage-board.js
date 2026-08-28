@@ -347,6 +347,7 @@ class ProductionArbitrageBoard {
         }
 
         const skillSelect = document.createElement('select');
+        skillSelect.classList.add('toolasha-select');
         skillSelect.setAttribute('data-arb-skill', 'true');
         Object.assign(skillSelect.style, {
             marginLeft: '8px',

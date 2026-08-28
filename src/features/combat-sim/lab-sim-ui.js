@@ -264,7 +264,7 @@ const LAB_MODE_OPTIONS = {
     ability_level: `
         <span id="mwi-labsim-upgrade-level-group" data-lab-mode-options="ability_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:#2a2a4a;">|</span>
-            <select id="mwi-labsim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
+            <select class="toolasha-select" id="mwi-labsim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
                 <option value="increment">+Levels</option>
                 <option value="target">Target Lv</option>
             </select>
@@ -626,7 +626,7 @@ class LabSimUI {
         `;
         configureControls.innerHTML = `
             <label style="color:#888; font-size:12px;">Monster</label>
-            <select id="mwi-labsim-monster" style="${selectStyle}"></select>
+            <select class="toolasha-select" id="mwi-labsim-monster" style="${selectStyle}"></select>
             <label style="color:#888; font-size:12px;">Level</label>
             <input id="mwi-labsim-level" type="number" min="20" max="300" value="100" style="${inputStyle}">
         `;
@@ -645,21 +645,21 @@ class LabSimUI {
             'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px;';
         crateRow.innerHTML = `
             <label style="color:#888;">Tea</label>
-            <select id="mwi-labsim-tea" style="${crateSelectStyle}">
+            <select class="toolasha-select" id="mwi-labsim-tea" style="${crateSelectStyle}">
                 <option value="">None</option>
                 <option value="/items/basic_tea_crate">Basic</option>
                 <option value="/items/advanced_tea_crate">Advanced</option>
                 <option value="/items/expert_tea_crate" selected>Expert</option>
             </select>
             <label style="color:#888;">Coffee</label>
-            <select id="mwi-labsim-coffee" style="${crateSelectStyle}">
+            <select class="toolasha-select" id="mwi-labsim-coffee" style="${crateSelectStyle}">
                 <option value="">None</option>
                 <option value="/items/basic_coffee_crate">Basic</option>
                 <option value="/items/advanced_coffee_crate">Advanced</option>
                 <option value="/items/expert_coffee_crate" selected>Expert</option>
             </select>
             <label style="color:#888;">Food</label>
-            <select id="mwi-labsim-food" style="${crateSelectStyle}">
+            <select class="toolasha-select" id="mwi-labsim-food" style="${crateSelectStyle}">
                 <option value="">None</option>
                 <option value="/items/basic_food_crate">Basic</option>
                 <option value="/items/advanced_food_crate">Advanced</option>
@@ -800,7 +800,7 @@ class LabSimUI {
             'padding:3px 6px; font-size:12px; flex:0 1 auto; min-width:150px; max-width:100%;';
         upgradeControls.innerHTML = `
             <label style="color:#888; font-size:12px;">Player</label>
-            <select id="mwi-labsim-upgrade-player" style="${upgradeSelectStyle}"></select>
+            <select class="toolasha-select" id="mwi-labsim-upgrade-player" style="${upgradeSelectStyle}"></select>
             <label style="color:#888; font-size:12px;">Include</label>
             ${LAB_UPGRADE_DIMENSIONS.map(
                 (dimension) => `
@@ -867,7 +867,7 @@ class LabSimUI {
         `;
         upgradeScopeRow.innerHTML = `
             <label style="color:#888; font-size:12px;">Targets</label>
-            <select id="mwi-labsim-upgrade-scope" style="${upgradeSelectStyle}">
+            <select class="toolasha-select" id="mwi-labsim-upgrade-scope" style="${upgradeSelectStyle}">
                 ${LAB_SCOPES.map(
                     (scope) =>
                         `<option value="${scope.key}" title="${scope.title.replace(/"/g, '&quot;')}">${scope.label}</option>`
@@ -881,7 +881,7 @@ class LabSimUI {
             <label id="mwi-labsim-level-source-label" style="display:none; align-items:center; gap:4px; color:#888; font-size:12px;"
                 title="Which level the Configure fight is analysed at. The other scopes take each fight's own room level from the automation table.">
                 At
-                <select id="mwi-labsim-level-source" style="${upgradeSelectStyle}">
+                <select class="toolasha-select" id="mwi-labsim-level-source" style="${upgradeSelectStyle}">
                     ${LAB_LEVEL_SOURCES.map(
                         (levelSource) =>
                             `<option value="${levelSource.key}" title="${levelSource.title.replace(/"/g, '&quot;')}">${levelSource.label}</option>`
@@ -998,7 +998,7 @@ class LabSimUI {
                 Use Skip Levels
             </label>
             <label style="color:#888; font-size:12px;">Skill</label>
-            <select id="mwi-labsim-skilling-filter" title="Restrict calculations, upgrade analysis, and the loadout table to one skill" style="
+            <select class="toolasha-select" id="mwi-labsim-skilling-filter" title="Restrict calculations, upgrade analysis, and the loadout table to one skill" style="
                 background:#1a1a2e;
                 color:#e0e0e0;
                 border:1px solid #444;
@@ -1063,21 +1063,21 @@ class LabSimUI {
         `;
         skillingCrateRow.innerHTML = `
             <label style="color:#888;">Tea</label>
-            <select id="mwi-labsim-skilling-tea" style="${crateSelectStyle}">
+            <select class="toolasha-select" id="mwi-labsim-skilling-tea" style="${crateSelectStyle}">
                 <option value="">None</option>
                 <option value="/items/basic_tea_crate">Basic</option>
                 <option value="/items/advanced_tea_crate">Advanced</option>
                 <option value="/items/expert_tea_crate" selected>Expert</option>
             </select>
             <label style="color:#888;">Coffee</label>
-            <select id="mwi-labsim-skilling-coffee" style="${crateSelectStyle}">
+            <select class="toolasha-select" id="mwi-labsim-skilling-coffee" style="${crateSelectStyle}">
                 <option value="">None</option>
                 <option value="/items/basic_coffee_crate">Basic</option>
                 <option value="/items/advanced_coffee_crate">Advanced</option>
                 <option value="/items/expert_coffee_crate" selected>Expert</option>
             </select>
             <label style="color:#888;">Food</label>
-            <select id="mwi-labsim-skilling-food" style="${crateSelectStyle}">
+            <select class="toolasha-select" id="mwi-labsim-skilling-food" style="${crateSelectStyle}">
                 <option value="">None</option>
                 <option value="/items/basic_food_crate">Basic</option>
                 <option value="/items/advanced_food_crate">Advanced</option>
@@ -4815,7 +4815,7 @@ class LabSimUI {
             const current = this._skillLoadouts[skill.hrid] || '';
             html += `<div style="display:flex; align-items:center; gap:4px; font-size:11px;">`;
             html += `<span style="color:#888; width:85px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${skill.label}">${skill.label}</span>`;
-            html += `<select data-skill-loadout="${skill.hrid}" style="${selectStyle}">`;
+            html += `<select class="toolasha-select" data-skill-loadout="${skill.hrid}" style="${selectStyle}">`;
             html += `<option value=""${!current ? ' selected' : ''}>Current Gear</option>`;
             for (const snap of [...nonCombatSnapshots, ...allSkillsSnapshots]) {
                 const label = snap.name + (snap.actionTypeHrid ? '' : ' (All)');

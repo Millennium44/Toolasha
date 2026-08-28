@@ -422,6 +422,7 @@ class BulkSellAssistant {
 
         const tabSel = document.createElement('select');
         tabSel.className = `${CHIP_ID}-tab`;
+        tabSel.classList.add('toolasha-select');
         tabSel.title =
             'What to sell. "Watchlist" is whatever the Watchlist is tracking, at every enhancement level. ' +
             'A Toolasha inventory tab sells only the items assigned to it (a parent tab includes its child tabs), ' +

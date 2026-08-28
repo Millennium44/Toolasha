@@ -1341,7 +1341,7 @@ const MODE_OPTIONS = {
     ability_level: `
         <span id="mwi-csim-upgrade-level-group" data-mode-options="ability_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:#2a2a4a;">|</span>
-            <select id="mwi-csim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
+            <select class="toolasha-select" id="mwi-csim-upgrade-level-type" style="${CHIP_INPUT_STYLE}">
                 <option value="increment">+Levels</option>
                 <option value="target">Target Lv</option>
             </select>
@@ -1362,7 +1362,7 @@ const MODE_OPTIONS = {
         <span id="mwi-csim-charm-group" data-mode-options="combat_level" style="display:none; align-items:center; gap:4px;">
             <span style="color:#2a2a4a;">|</span>
             <label style="color:#888; font-size:12px;">Charm</label>
-            <select id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time — Auto matches the equipped charm's tier" style="${CHIP_INPUT_STYLE}"></select>
+            <select class="toolasha-select" id="mwi-csim-charm-select" title="Which charm family to swap in per skill when estimating leveling time — Auto matches the equipped charm's tier" style="${CHIP_INPUT_STYLE}"></select>
             <input id="mwi-csim-charm-enh" type="number" min="0" max="20" placeholder="+" style="
                 width:44px; text-align:center; ${CHIP_INPUT_STYLE}"
                 title="Enhancement level to sim the charm at (e.g. 5 for Expert +5). Leave blank to keep the equipped charm's level.">
@@ -1661,9 +1661,9 @@ class CombatSimUI {
 
         controls.innerHTML = `
             <label style="color:#888; font-size:12px;">Zone</label>
-            <select id="mwi-csim-zone" style="${selectStyle}"></select>
+            <select class="toolasha-select" id="mwi-csim-zone" style="${selectStyle}"></select>
             <label style="color:#888; font-size:12px;">Tier</label>
-            <select id="mwi-csim-tier" style="${selectStyle} flex:0; width:64px; min-width:64px;">
+            <select class="toolasha-select" id="mwi-csim-tier" style="${selectStyle} flex:0; width:64px; min-width:64px;">
             </select>
             <label style="color:#888; font-size:12px;">Hours</label>
             <input id="mwi-csim-hours" type="number" min="1" max="10000" value="${config.getSettingValue('combatSim_defaultHours', 100)}" style="${inputStyle}">
@@ -1905,7 +1905,7 @@ class CombatSimUI {
             'background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:3px 6px; font-size:12px;';
         upgradeControls.innerHTML = `
             <label style="color:#888; font-size:12px;">Player</label>
-            <select id="mwi-csim-upgrade-player" style="${upgradeSelectStyle}"></select>
+            <select class="toolasha-select" id="mwi-csim-upgrade-player" style="${upgradeSelectStyle}"></select>
             <label style="color:#888; font-size:12px;">Include</label>
             ${UPGRADE_MODES.map(
                 (mode) => `
@@ -3171,7 +3171,7 @@ class CombatSimUI {
         box.innerHTML = `
             <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11px;">
                 <span style="color:#ffb74d; font-weight:600;" title="Which zones, in which order, earn the most Bestiary points in the time given: fight wherever the next point lands soonest, then move on. Uses the kills per hour this run simulated and your current defeated counts.">Bestiary plan</span>
-                <select id="mwi-csim-bestiary-plan-mode" title="Hours: what a time budget earns. Points: how long a points target takes, and where." style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; font-family:inherit; cursor:pointer;">
+                <select class="toolasha-select" id="mwi-csim-bestiary-plan-mode" title="Hours: what a time budget earns. Points: how long a points target takes, and where." style="background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; font-family:inherit; cursor:pointer;">
                     <option value="hours"${mode === 'hours' ? ' selected' : ''}>Hours</option>
                     <option value="points"${mode === 'points' ? ' selected' : ''}>Points</option>
                 </select>
@@ -5670,7 +5670,7 @@ class CombatSimUI {
         html += '<div style="display:flex; align-items:center; gap:6px; margin-bottom:6px; font-size:11px;">';
         html += '<span style="color:#888;">Baseline:</span>';
         html +=
-            '<select id="mwi-csim-baseline-select" style="flex:1; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:1px 4px; font-size:11px; font-family:inherit;">';
+            '<select class="toolasha-select" id="mwi-csim-baseline-select" style="flex:1; background:#1a1a2e; color:#e0e0e0; border:1px solid #444; border-radius:4px; padding:1px 4px; font-size:11px; font-family:inherit;">';
         for (let i = 0; i < history.length; i++) {
             const sel = i === baseIdx ? ' selected' : '';
             html += '<option value="' + i + '"' + sel + '>' + history[i].label + '</option>';
@@ -5814,7 +5814,7 @@ class CombatSimUI {
         if (available.length > 0) {
             html += '<div style="margin-top:6px;">';
             html +=
-                '<select id="mwi-csim-add-comparison" style="width:100%; background:#1a1a2e; color:#aaa; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; font-family:inherit;">';
+                '<select class="toolasha-select" id="mwi-csim-add-comparison" style="width:100%; background:#1a1a2e; color:#aaa; border:1px solid #444; border-radius:4px; padding:2px 4px; font-size:11px; font-family:inherit;">';
             html += '<option value="">+ Add sim to comparison...</option>';
             for (const i of available) {
                 html += '<option value="' + i + '">' + history[i].label + '</option>';
@@ -7293,7 +7293,7 @@ class CombatSimUI {
                         Five is a podium and leaves most of a long run on zero; deeper turns the column into a
                         ranking of the whole table.">
                         <span>Places</span>
-                        <select id="mwi-csim-score-depth" style="${selectStyle}">${depthOptions}</select>
+                        <select class="toolasha-select" id="mwi-csim-score-depth" style="${selectStyle}">${depthOptions}</select>
                     </label>
                     <label style="${box}" title="Colour the nine best values in Score and in every column that
                         counts toward it — green through amber to red — so you can see at a glance which row is
@@ -7880,7 +7880,7 @@ class CombatSimUI {
                 <input id="mwi-csim-budget-input" type="text" inputmode="numeric" placeholder="e.g. 500m"
                     value="${this._upgradeBudgetText || ''}" style="${inputStyle}">
                 <span style="color:#666;">for</span>
-                <select id="mwi-csim-budget-metric" style="${selectStyle}">${options}</select>
+                <select class="toolasha-select" id="mwi-csim-budget-metric" style="${selectStyle}">${options}</select>
                 <button id="mwi-csim-budget-plan" style="${btnStyle}">Plan</button>
                 <span style="color:#555;" title="Two pieces for one equipment slot cannot both be worn, and two
                     targets for one ability are the same purchase twice — so the plan takes the better of each.

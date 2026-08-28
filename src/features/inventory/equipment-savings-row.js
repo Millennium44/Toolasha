@@ -1564,6 +1564,7 @@ function slotPicker(slot) {
     card.appendChild(heading);
 
     const list = document.createElement('select');
+    list.classList.add('toolasha-select');
     list.dataset.pickItem = 'true';
     // A list box, not a dropdown: the shape of the list is visible and nothing
     // can close it
@@ -2820,6 +2821,7 @@ function housePicker() {
     const chosen = choices.find((choice) => choice.houseRoomHrid === editing.houseRoomHrid) || null;
 
     const list = document.createElement('select');
+    list.classList.add('toolasha-select');
     list.dataset.pickHouse = 'true';
     Object.assign(list.style, {
         background: 'rgba(0, 0, 0, 0.35)',
@@ -3036,6 +3038,7 @@ function abilityPicker() {
     const chosen = choices.find((choice) => choice.abilityHrid === editing.abilityHrid) || null;
 
     const list = document.createElement('select');
+    list.classList.add('toolasha-select');
     list.dataset.pickAbility = 'true';
     Object.assign(list.style, {
         background: 'rgba(0, 0, 0, 0.35)',

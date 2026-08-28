@@ -757,6 +757,7 @@ class MarketHistoryViewer {
 
         // Type filter
         const typeFilter = document.createElement('select');
+        typeFilter.classList.add('toolasha-select');
         typeFilter.style.cssText = `
             padding: 6px 12px;
             border: 1px solid #555;
@@ -786,6 +787,7 @@ class MarketHistoryViewer {
 
         // Status filter
         const statusFilter = document.createElement('select');
+        statusFilter.classList.add('toolasha-select');
         statusFilter.style.cssText = `
             padding: 6px 12px;
             border: 1px solid #555;

@@ -243,6 +243,10 @@ describe('saving and switching named layouts', () => {
         await overlayPanel._refreshLayoutNames();
 
         const select = overlayPanel.pickerEl.querySelector('[data-overlay-layout-select]');
+        // The class the shared option-contrast CSS rule targets (see
+        // entrypoint.js) — this is the "preset" dropdown the Firefox
+        // unreadable-options report was about.
+        expect(select.classList.contains('toolasha-select')).toBe(true);
         const options = [...select.querySelectorAll('option')].map((o) => o.textContent);
         // "Market" is saved, so the preset of that name is shadowed rather than
         // offered a second time

@@ -1533,6 +1533,7 @@ class CombatLevelPanel {
      */
     _select(state, chosen, control, onChange, withCombat = false) {
         const select = document.createElement('select');
+        select.classList.add('toolasha-select');
         select.dataset.control = control;
         Object.assign(select.style, {
             background: 'rgba(255, 255, 255, 0.06)',

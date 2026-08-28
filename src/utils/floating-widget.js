@@ -339,6 +339,7 @@ export function widgetSelectRow({ key, fallback, label, options, title = '', onC
 
     const select = document.createElement('select');
     select.className = `mwi-widget-setting-${key}`;
+    select.classList.add('toolasha-select');
     select.style.cssText =
         'border:1px solid rgba(74,158,255,0.35); border-radius:4px; background:rgba(20,26,44,0.95); ' +
         'color:#cfd8ea; font-size:11px; padding:2px 4px; cursor:pointer; font-family:inherit;';

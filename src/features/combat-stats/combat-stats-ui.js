@@ -560,6 +560,7 @@ class CombatStatsUI {
         if (this.sessions.length > 0) {
             const picker = document.createElement('select');
             picker.className = 'toolasha-combat-stats-session-picker';
+            picker.classList.add('toolasha-select');
             picker.style.cssText = `
                 background: #2a2a2a;
                 color: ${textColor};

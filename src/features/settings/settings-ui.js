@@ -859,7 +859,7 @@ class SettingsUI {
                     .join('');
 
                 return `
-                    <select id="${settingId}" class="toolasha-select-input">
+                    <select id="${settingId}" class="toolasha-select-input toolasha-select">
                         ${optionsHTML}
                     </select>
                 `;
@@ -903,7 +903,7 @@ class SettingsUI {
                                 `<option value="${t.value}" ${t.value === tier ? 'selected' : ''}>${t.label}</option>`
                         )
                         .join('');
-                    tierHTML = `<select id="${settingId}_tier" class="toolasha-select-input" style="width:100px; font-size:12px; padding:2px 4px; ${disabledStyle}">${options}</select>`;
+                    tierHTML = `<select id="${settingId}_tier" class="toolasha-select-input toolasha-select" style="width:100px; font-size:12px; padding:2px 4px; ${disabledStyle}">${options}</select>`;
                 }
 
                 return `

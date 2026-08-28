@@ -476,6 +476,7 @@ class MarketHistoryPanel {
         });
 
         const range = document.createElement('select');
+        range.classList.add('toolasha-select');
         range.title = 'How far back to chart';
         range.style.cssText =
             'background:#1a1a2e; color:#e7e7e7; border:1px solid #4a5a8a; border-radius:3px; ' +

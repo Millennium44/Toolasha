@@ -1238,6 +1238,7 @@ class PhiloCalculator {
         drinkLabel.style.cssText = 'display: flex; align-items: center; gap: 6px; font-size: 13px;';
         drinkLabel.textContent = 'Drink Concentration: ';
         const drinkSelect = document.createElement('select');
+        drinkSelect.classList.add('toolasha-select');
         drinkSelect.style.cssText = `
             padding: 4px 8px;
             background: #1a1a1a;
@@ -1397,6 +1398,7 @@ class PhiloCalculator {
             'Choose Global to follow the shared setting instead.';
 
         const select = document.createElement('select');
+        select.classList.add('toolasha-select');
         select.style.cssText = `
             padding: 4px 8px;
             background: #1a1a1a;

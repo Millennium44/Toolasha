@@ -181,9 +181,20 @@ function warnDualInstall() {
 // older library) just leaves the Diagnostics section's error list empty.
 errorLog?.install?.();
 
-const { setupScrollTooltipDismissal } = Utils.dom;
+const { setupScrollTooltipDismissal, addStyles } = Utils.dom;
 const { showToast } = Utils.toast;
 const { GAME } = Utils.selectors;
+
+// Every native <select> the script injects carries the `toolasha-select` class
+// (see AGENTS.md / the select-option-contrast sweep). Firefox's open dropdown
+// renders on its own native popup rather than picking up the select's inline
+// dark background, so an option with only its `color` set (light, to match
+// the closed control) reads as light-on-white — unreadable except for the
+// highlighted row. Options need an explicit background *and* text color of
+// their own; setting both here (rather than per-select inline styles) covers
+// every current and future `toolasha-select` from one rule, and reads
+// correctly whether the platform's native popup default is light or dark.
+addStyles('.toolasha-select option { background-color: #1a1a2e; color: #e0e0e0; }', 'toolasha-select-option-contrast');
 
 /**
  * Detect if running on a supported Combat Simulator page.

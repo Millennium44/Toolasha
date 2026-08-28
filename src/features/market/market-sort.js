@@ -252,6 +252,7 @@ class MarketSort {
 
         // Create the mode dropdown
         const modeSelect = document.createElement('select');
+        modeSelect.classList.add('toolasha-select');
         modeSelect.id = 'toolasha-market-sort-mode';
         modeSelect.style.cssText = `
             padding: 5px 6px;

@@ -760,8 +760,8 @@ class TaskRerollProtection {
                 capRow.innerHTML = `
                     <span style="width:18px; text-align:center; color:#f0a830; font-weight:700;">✓</span>
                     <span style="color:#e0e0e0;">Block rerolls at</span>
-                    <select id="mwi-cap-coin" style="${selectCss}">${coinOpts}</select>
-                    <select id="mwi-cap-cowbell" style="${selectCss}">${cowbellOpts}</select>
+                    <select class="toolasha-select" id="mwi-cap-coin" style="${selectCss}">${coinOpts}</select>
+                    <select class="toolasha-select" id="mwi-cap-cowbell" style="${selectCss}">${cowbellOpts}</select>
                 `;
                 const coinSel = capRow.querySelector('#mwi-cap-coin');
                 const cowbellSel = capRow.querySelector('#mwi-cap-cowbell');

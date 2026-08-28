@@ -342,6 +342,7 @@ function drawTopBar(body, party) {
     });
 
     const picker = document.createElement('select');
+    picker.classList.add('toolasha-select');
     Object.assign(picker.style, {
         background: 'rgba(255, 255, 255, 0.06)',
         color: ROW_COLORS.neutral,
