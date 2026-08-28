@@ -838,4 +838,37 @@ describe('opening, folding and switching', () => {
 
         expect(combatLevelPanel.panel).toBe(null);
     });
+
+    test('switching to a character with more combat experience does not credit the gap to this session', async () => {
+        // The one direction `sessionIsStale` cannot see: experience going *up*
+        // across a switch looks exactly like a very good few seconds of combat.
+        // An iron cow's low totals swapped for the main's much higher ones is
+        // the ordinary case this account produces.
+        const { registeredRows } = await import('../../utils/overlay-rows.js');
+        const sessionRow = registeredRows().find((entry) => entry.key === 'combatSession');
+
+        const readSessionTotal = () => {
+            const container = document.createElement('div');
+            sessionRow.render(container);
+            return container.textContent;
+        };
+
+        // A real few seconds of combat, so there is a legitimate small gain on
+        // the books before the switch
+        fire('new_battle');
+        vi.advanceTimersByTime(30_000);
+        grant('melee', 500);
+        expect(readSessionTotal()).toContain('500 exp');
+
+        // The switch: a different character, already much further along in the
+        // same skills — nothing here looks like a decrease
+        game.skills = game.skills.map((skill) => ({ ...skill, experience: skill.experience + 50_000_000 }));
+        dataManager.emit('character_switched', {});
+
+        // Without the reset this reports ~50,000,000 gained in this session,
+        // which is the other character's progress, not this one's
+        const after = readSessionTotal();
+        expect(after).not.toContain('50.0M');
+        expect(after).not.toContain('50M');
+    });
 });

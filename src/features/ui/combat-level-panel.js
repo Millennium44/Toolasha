@@ -1673,7 +1673,25 @@ export const combatLevelPanel = new CombatLevelPanel();
 // the character that has just been left. Which sections are folded is not — that
 // is how you like the panel laid out — so it stays. Reopened only if it was
 // already up: a switch is not the user opening a panel, or closing one.
+//
+// `session` and `history` are module scope and unconditional here, unlike the
+// panel rebuild below — they drive the always-visible overlay rows too, which
+// keep sampling whether or not the panel is open. Both only self-correct when a
+// reading goes *backwards* (`sessionIsStale`, and the per-skill reset inside
+// `skill-history.js`), because that is the one case that cannot be a real gain.
+// A switch from a character with less combat experience to one with more —
+// an iron cow to the main, the ordinary direction for this account — goes the
+// other way: nothing looks stale, so the old baseline is kept and the next
+// render reports the *other* character's whole experience total as gained in
+// this session, and a rate history spanning two characters as an impossible
+// spike. Clearing both here is the same "different character, start again"
+// rule `sessionIsStale` already states, applied to the one case its own check
+// cannot see.
 dataManager.on('character_switched', () => {
+    session = null;
+    inCombat = false;
+    history.clear();
+
     if (!combatLevelPanel.panel) return;
     combatLevelPanel.hide();
     combatLevelPanel.targets = {};
