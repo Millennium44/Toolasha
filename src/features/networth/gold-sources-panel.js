@@ -33,7 +33,7 @@
 
 import config from '../../core/config.js';
 import { networthFormatter } from '../../utils/formatters.js';
-import { attributeGoldSources, SOURCE_KEYS, SOURCE_META, dayStart, localDayId } from './gold-sources.js';
+import { attributeGoldSources, SOURCE_KEYS, SOURCE_META, CATEGORY_KEYS, dayStart, localDayId } from './gold-sources.js';
 import { collectGoldSourceInputs } from './gold-sources-collect.js';
 import { buildNetworthCalendar, CALENDAR_WEEKS } from './networth-calendar.js';
 
@@ -54,6 +54,8 @@ const SOURCE_COLORS = {
     combat: '#ef4444',
     gathering: '#22c55e',
     production: '#3b82f6',
+    tasks: '#f472b6',
+    chests: '#c084fc',
     alchemy: '#a855f7',
     enhancement: '#f97316',
     marketplace: '#eab308',
@@ -67,6 +69,108 @@ const RESIDUAL_NOTE =
     'Everything the recordings cannot account for: market movement repricing what you already own, ' +
     'activity older than a recorder’s window, and activity nothing records (quests, task rewards, ' +
     'chests, gifts). It is shown as it falls out, never spread over the other rows.';
+
+/** What each category of the residual decomposition is called on screen */
+const CATEGORY_LABELS = { gold: 'gold', items: 'items', fixed: 'fixed' };
+
+/**
+ * The residual decomposition, as one line.
+ *
+ * The residual is one grey number and it cannot say which of its four causes it
+ * was. These three can: the same two snapshots the day's delta is measured from
+ * also carry the coins, the item valuations and the house-and-abilities cost
+ * separately, so a residual that is all `items` is the market repricing stock
+ * that never moved, and one that is all `gold` is coins arriving from something
+ * nothing here records.
+ *
+ * Nothing is subtracted from them — a marketplace fill moves gold and items at
+ * once, and splitting the sources across the three would be an invention. A
+ * category the snapshots cannot measure says so rather than reading zero.
+ *
+ * @param {Object|null} categories - A row's or the totals' `categories`
+ * @returns {string} The line, or '' when there is nothing measurable to say
+ */
+export function categoryLineText(categories) {
+    if (!categories) return '';
+    const parts = [];
+    for (const key of CATEGORY_KEYS) {
+        const value = categories[key];
+        parts.push(
+            `${CATEGORY_LABELS[key]} ` +
+                (Number.isFinite(value)
+                    ? (value > 0 ? '+' : '') + networthFormatter(Math.round(value))
+                    : 'not recorded')
+        );
+    }
+    if (parts.length === 0) return '';
+    return `Measured change by asset: ${parts.join(' · ')}`;
+}
+
+/**
+ * The longer version, for a tooltip: what the three are and why they may not
+ * add up to the figure beside them.
+ * @param {Object|null} categories - A row's or the totals' `categories`
+ * @returns {string} Tooltip text, or '' when there is nothing to say
+ */
+export function categoryTooltipText(categories) {
+    if (!categories) {
+        return (
+            'There is no pair of net worth snapshots to difference here, so the change cannot be split by asset ' +
+            'category. It is not a change of zero in each.'
+        );
+    }
+
+    const lines = [
+        'Where the measured change actually sat, from the same two snapshots the change itself is measured from.',
+        'gold — coins on hand. items — inventory, equipment and open listings. fixed — houses, abilities and shrines.',
+        'These are the raw category changes, not the residual split up: no source is subtracted from them, because ' +
+            'a marketplace fill moves gold and items at once and any split would be invented.',
+    ];
+
+    const unmeasured = CATEGORY_KEYS.filter((key) => !Number.isFinite(categories[key]));
+    if (unmeasured.length > 0) {
+        lines.push(
+            `${unmeasured.map((key) => CATEGORY_LABELS[key]).join(' and ')} could not be measured — one of the two ` +
+                'snapshots predates the field, so it is left blank rather than counted as no change.'
+        );
+    }
+
+    if (Number.isFinite(categories.sum) && Number.isFinite(categories.total) && categories.sum !== categories.total) {
+        lines.push(
+            `The three add to ${networthFormatter(Math.round(categories.sum))} against a total change of ` +
+                `${networthFormatter(Math.round(categories.total))}; the difference is assets you excluded from ` +
+                'net worth, which the total carries and the categories do not.'
+        );
+    }
+
+    return lines.join('\n');
+}
+
+/**
+ * The market movement line: price drift on stock held through the detail
+ * snapshots' own window.
+ *
+ * Scoped out loud to the hours it actually covers, because that window is
+ * whatever the tab has been open for and is not one of the local days in the
+ * table above.
+ *
+ * @param {Object|null} movement - `attribution.marketMovement`
+ * @returns {string} The line, or '' when there is nothing to report
+ */
+export function marketMovementText(movement) {
+    if (!movement || !Number.isFinite(movement.value)) {
+        return (
+            'Market movement: not enough recorded — item-level snapshots are taken hourly while the game is open, ' +
+            'and two of them are needed to compare a price against itself.'
+        );
+    }
+    const hours = movement.hours >= 1 ? Math.round(movement.hours) : Math.round(movement.hours * 10) / 10;
+    const amount = (movement.value > 0 ? '+' : '') + networthFormatter(Math.round(movement.value));
+    return (
+        `Market movement (last ${hours}h): ${amount} on ${plural(movement.heldItems, 'item')} held right ` +
+        'through that window'
+    );
+}
 
 /**
  * A day id as `MM-DD`, which is what a per-day axis needs.
@@ -264,10 +368,11 @@ export function buildBars(attribution) {
         const total = document.createElement('span');
         total.style.cssText = 'width: 74px; flex: 0 0 74px; text-align: right;';
         total.appendChild(goldCell(row.delta));
+        const categoryLine = categoryLineText(row.categories);
         total.title =
             row.delta === null
                 ? 'No net worth snapshot on this day, so there is no measured change to split.'
-                : `Measured net worth change on ${row.day}`;
+                : `Measured net worth change on ${row.day}` + (categoryLine ? `\n${categoryLine}` : '');
         line.appendChild(total);
 
         block.appendChild(line);
@@ -367,6 +472,22 @@ export function buildTotalsTable(attribution) {
 
     addRow('residual', 'Unexplained residual', residual, RESIDUAL_NOTE, 'Not attributed', true);
 
+    // The sub-line under the residual: not a split of the residual, but the
+    // same window's change read off the snapshots by asset category, which is
+    // what separates "the market repriced the vault" from "coins appeared"
+    const categories = attribution?.totals?.categories || null;
+    const categoryRow = document.createElement('tr');
+    categoryRow.className = 'mwi-gold-sources-row-categories';
+    categoryRow.title = categoryTooltipText(categories);
+    const categoryCell = document.createElement('td');
+    categoryCell.colSpan = 4;
+    categoryCell.style.cssText = 'padding: 0 6px 4px 20px; font-size: 10px; color: #9ca3af;';
+    categoryCell.textContent =
+        categoryLineText(categories) ||
+        'No pair of snapshots in this window, so the change cannot be split by asset category.';
+    categoryRow.appendChild(categoryCell);
+    table.appendChild(categoryRow);
+
     const totalRow = document.createElement('tr');
     totalRow.className = 'mwi-gold-sources-row-total';
     totalRow.title = 'The net worth history’s own figure for this window: the last snapshot against the one before it.';
@@ -436,6 +557,22 @@ export function buildPanelBody(attribution, { series = null, now = undefined } =
     body.appendChild(buildBars(attribution));
     body.appendChild(buildTotalsTable(attribution));
 
+    // Deliberately outside the table and outside the per-day bars: the detail
+    // snapshots cover whatever the tab has been open for, which is not a local
+    // day, and folding this figure into a day row would claim an alignment it
+    // does not have
+    const movement = document.createElement('div');
+    movement.className = 'mwi-gold-sources-market-movement';
+    movement.style.cssText = 'font-size: 11px; color: #d1d5db; margin-top: 8px;';
+    movement.textContent = marketMovementText(attribution?.marketMovement);
+    movement.title =
+        'The one thing the today’s-prices caveat says this panel cannot see. Each item-level snapshot recorded ' +
+        'both a count and a value, so value ÷ count is that holding’s price at the time. This is the shares held ' +
+        'through the whole window times the change in their price — quantity changes are excluded, and coins, ' +
+        'houses and abilities are not counted because they do not reprice on the order book. It overlaps the days ' +
+        'above rather than being one of them, so it is not added to anything.';
+    body.appendChild(movement);
+
     const unpriced = attribution?.unpricedEnhancementSessions || 0;
     if (unpriced > 0) {
         const warning = document.createElement('div');
@@ -481,6 +618,28 @@ export function buildPanelBody(attribution, { series = null, now = undefined } =
             `${unpricedProduction} production action${unpricedProduction === 1 ? '' : 's'} could not be valued — ` +
             'an input or output has no market price — so the production row is short by whatever they were worth ' +
             'and the difference sits in the residual.';
+        body.appendChild(warning);
+    }
+
+    // The chest row's own version of the same warning: an opening nothing could
+    // price is not an opening that paid nothing
+    const unpricedChests = attribution?.unpricedChests || 0;
+    const unpricedChestItems = attribution?.unpricedChestItems || 0;
+    if (unpricedChests > 0 || unpricedChestItems > 0) {
+        const warning = document.createElement('div');
+        warning.className = 'mwi-gold-sources-unpriced-chests';
+        warning.style.cssText = 'font-size: 10px; color: #fbbf24; margin-top: 6px;';
+        const pieces = [];
+        if (unpricedChests > 0) {
+            pieces.push(
+                `${plural(unpricedChests, 'chest')} had no market price of their own, so what they paid ` +
+                    'could not be netted against what they were worth and the whole opening was left out'
+            );
+        }
+        if (unpricedChestItems > 0) {
+            pieces.push(`${plural(unpricedChestItems, 'item')} that came out of a chest could not be priced`);
+        }
+        warning.textContent = `${pieces.join(', and ')} — the chest row is short by that much, and it sits in the residual.`;
         body.appendChild(warning);
     }
 

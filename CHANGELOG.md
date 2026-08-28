@@ -6,6 +6,15 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### The gold panel's unexplained residual now says what it was made of
+
+Four additions to "Where the gold came from", all aimed at the grey residual row:
+
+- a sub-line under it splits the window's measured change by asset — `gold · items · fixed` — off the same snapshots the change is measured from, so "the market repriced the vault" and "coins arrived from nowhere" stop reading the same. A category the snapshots cannot measure says so rather than showing a zero.
+- a "Market movement (last ~24h)" line prices the drift on stock held right through the item-level snapshot window, which is the one thing the today's-prices caveat says the panel cannot see. Scoped to the hours it really covers and never folded into the per-day table.
+- a **Tasks** row, from the reward payload the task completion tracker already records at each claim.
+- a **Chests opened** row, from a new per-day openings recorder: what came out, less what the chests were worth — realised luck against the expected value they were already carried at.
+
 ### The trial signups block folds away
 
 A hundred unsigned names twice over is most of the trials tab. The block now has a heading — "Trial signups — Skilling N · Combat M unsigned" — that folds and unfolds the lists on click, remembered across reloads.
@@ -20,21 +29,17 @@ On My Listings and History the game keeps the last item's node in the DOM but hi
 
 A "measured / full capacity" pill on the Labyrinth block chooses whether a run is planned at the average your recorded runs actually spent or at the whole capacity every run (also a setting). And the measured average was badly low — a run first seen mid-way (a reload, a tab opened late) recorded "spent" from wherever it was joined, dragging 350-torch runs down to ~100. Only runs watched from the door count now; older records that cannot say which they were are excluded, so the figure rebuilds honestly over your next few runs.
 
-
 ### The credit exchange gets a Max button and a held count per row
 
 The exchange dialog's "You give" box gains a Max button that fills in everything held, floored to whole exchanges so the game accepts it as-is. The gold-per-credit table also shows how many of each item you hold beside its name, so the cheapest route and the routes you can actually feed read off one screen.
-
 
 ### Shrine buff levels stop leaking between characters
 
 The shrine planner could show another character's buff levels — "lvl 1" while the game said 3/3. The capture listens on the raw socket with no character scoping, so during a switch a late message from the departing character's stream was persisted under the arriving character's key. Every buff row names its owner, so a capture whose rows belong to someone else is now refused outright, and a persisted record contaminated before this fix is ignored on load and overwritten by the next clean capture.
 
-
 ### Missing-mats tabs count what a buy order has already bought
 
 The "Missing" badges on the marketplace hand-off tabs only counted the inventory, and items a buy order has filled sit unclaimed on the listing until collected — so a 112K purchase moved the badge not at all until a trip to My Listings. Bought-but-unclaimed units on your own buy orders now count as held, across the shrine hand-off, production recipes and enhancement lists alike; claiming moves them to the inventory and off the listing in the same breath, so nothing counts twice.
-
 
 ### Gold attribution counts the fight you are still in, on days you actually live
 

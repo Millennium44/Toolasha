@@ -22,8 +22,10 @@ import combatStatsDataCollector from '../combat-stats/combat-stats-data-collecto
 import { loadSessions as loadEnhancementSessions } from '../enhancement/enhancement-storage.js';
 import { createAlchemySessionStore, NO_CHARACTER } from '../alchemy/alchemy-session-store.js';
 import lootLogHistory from '../actions/loot-log-history.js';
+import taskCompletionTracker from '../tasks/task-completion-tracker.js';
 import networthHistory from './networth-history.js';
 import productionIncomeRecorder from './production-income-recorder.js';
+import chestOpeningRecorder from './chest-opening-recorder.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { MARKET_TAX } from '../../utils/profit-constants.js';
 
@@ -102,12 +104,26 @@ async function collectAlchemySessions() {
  * @returns {Promise<Object>} The `attributeGoldSources` input, minus the window
  */
 export async function collectGoldSourceInputs({ price = createPricer() } = {}) {
-    const [lootEntries, productionDays, alchemySessions, enhancementSessions, combatSessions] = await Promise.all([
+    const [
+        lootEntries,
+        productionDays,
+        alchemySessions,
+        enhancementSessions,
+        combatSessions,
+        taskCompletions,
+        chestDays,
+    ] = await Promise.all([
         attempt('the loot log', () => lootLogHistory.getHistoricalEntries(new Set()), []),
         attempt('the production recorder', () => productionIncomeRecorder.load(), []),
         collectAlchemySessions(),
         attempt('the enhancement sessions', () => loadEnhancementSessions(), {}),
         attempt('the combat session history', () => loadCombatSessions(), []),
+        // The task board's own payout record. No new recorder is needed: the
+        // completion tracker already stores the reward payload the server
+        // itemised at the moment of each claim, per character, on an eight-week
+        // rolling window
+        attempt('the task completions', () => taskCompletionTracker.getCompletions(), []),
+        attempt('the chest openings', () => chestOpeningRecorder.load(), []),
     ]);
 
     const tradeFills = await attempt(
@@ -136,6 +152,12 @@ export async function collectGoldSourceInputs({ price = createPricer() } = {}) {
 
     return {
         series: networthHistory.getHistory?.() || [],
+        // The item-level window, which prices each holding at the moment its
+        // snapshot was taken and so is the only record here that can separate a
+        // price change from a quantity change
+        detailSnapshots: networthHistory.detailWindow?.() || [],
+        taskCompletions,
+        chestDays,
         lootEntries,
         actionType: (actionHrid) => dataManager.getActionDetails?.(actionHrid)?.type || null,
         productionDays,

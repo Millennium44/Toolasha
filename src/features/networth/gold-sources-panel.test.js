@@ -29,6 +29,8 @@ const {
     combatCoverageText,
     calendarSummaryText,
     calendarCellKind,
+    categoryLineText,
+    marketMovementText,
     MODAL_ID,
 } = await import('./gold-sources-panel.js');
 
@@ -278,6 +280,104 @@ describe('buildBars', () => {
     test('an empty window says so rather than drawing nothing', () => {
         const bars = buildBars({ days: [] });
         expect(bars.textContent).toContain('No days in this window yet');
+    });
+});
+
+describe('the residual’s category sub-line', () => {
+    const categories = { gold: 2_000_000, items: 11_000_000, fixed: 0, sum: 13_000_000, total: 13_000_000 };
+
+    test('says where the measured change actually sat', () => {
+        const line = categoryLineText(categories);
+        expect(line).toContain('gold +2.00M');
+        expect(line).toContain('items +11.00M');
+        expect(line).toContain('fixed 0');
+    });
+
+    test('a category the snapshots cannot measure is not a zero', () => {
+        const line = categoryLineText({ ...categories, fixed: null, sum: null });
+        expect(line).toContain('fixed not recorded');
+        expect(line).not.toContain('fixed 0');
+    });
+
+    test('there is no line at all without a pair of snapshots', () => {
+        expect(categoryLineText(null)).toBe('');
+    });
+
+    test('the sub-line is drawn under the residual row', () => {
+        const body = buildPanelBody(attribution({ totals: { ...attribution().totals, categories } }));
+        const line = body.querySelector('.mwi-gold-sources-row-categories');
+        expect(line.textContent).toContain('items +11.00M');
+        expect(line.title).toContain('no source is subtracted from them');
+    });
+
+    test('a window with no pair says so rather than showing three zeroes', () => {
+        const body = buildPanelBody(attribution());
+        const line = body.querySelector('.mwi-gold-sources-row-categories');
+        expect(line.textContent).toContain('cannot be split by asset category');
+    });
+
+    test('the tooltip explains a sum that does not match the total', () => {
+        const text = buildPanelBody(
+            attribution({ totals: { ...attribution().totals, categories: { ...categories, total: 20_000_000 } } })
+        ).querySelector('.mwi-gold-sources-row-categories').title;
+        expect(text).toContain('excluded from');
+    });
+});
+
+describe('the market movement row', () => {
+    test('names the window it actually covers and what it measured', () => {
+        const text = marketMovementText({ from: D19, to: D20, hours: 23.6, value: 4_500_000, heldItems: 812 });
+        expect(text).toContain('last 24h');
+        expect(text).toContain('+4.50M');
+        expect(text).toContain('812 items');
+    });
+
+    test('says not enough recorded rather than reporting a zero', () => {
+        expect(marketMovementText(null)).toContain('not enough recorded');
+        expect(marketMovementText(null)).not.toContain('+0');
+    });
+
+    test('is drawn outside the per-day table, and says it is not one of the days', () => {
+        const body = buildPanelBody(
+            attribution({ marketMovement: { from: D19, to: D20, hours: 12, value: -2_000_000, heldItems: 40 } })
+        );
+        const row = body.querySelector('.mwi-gold-sources-market-movement');
+        expect(row.textContent).toContain('last 12h');
+        expect(row.textContent).toContain('-2.00M');
+        expect(row.title).toContain('not added to anything');
+        // Not one of the source rows, and not in the table
+        expect(row.closest('table')).toBeNull();
+    });
+
+    test('an attribution with no detail snapshots still draws the row', () => {
+        const body = buildPanelBody(attribution());
+        expect(body.querySelector('.mwi-gold-sources-market-movement').textContent).toContain('not enough recorded');
+    });
+});
+
+describe('the new source rows', () => {
+    test('tasks and chests are listed and labelled measured', () => {
+        const body = buildPanelBody(attribution({ sources: { tasks: 3_000_000, chests: -1_500_000 } }));
+        expect(body.textContent).toContain('Tasks');
+        expect(body.textContent).toContain('Chests opened');
+        expect(body.querySelector('.mwi-gold-sources-row-tasks').textContent).toContain('Measured');
+        expect(body.querySelector('.mwi-gold-sources-row-chests').textContent).toContain('-1.50M');
+    });
+
+    test('the chest tooltip says the figure is luck against expectation', () => {
+        expect(sourceTooltip('chests', {})).toContain('expected value');
+    });
+
+    test('chests nothing could price are called out rather than left silent', () => {
+        const body = buildPanelBody(attribution({ unpricedChests: 3, unpricedChestItems: 2 }));
+        const note = body.querySelector('.mwi-gold-sources-unpriced-chests');
+        expect(note.textContent).toContain('3 chests');
+        expect(note.textContent).toContain('2 items');
+        expect(note.textContent).toContain('residual');
+    });
+
+    test('nothing is said when every chest and drop was priced', () => {
+        expect(buildPanelBody(attribution()).querySelector('.mwi-gold-sources-unpriced-chests')).toBeNull();
     });
 });
 

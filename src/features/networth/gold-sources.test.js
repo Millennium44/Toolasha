@@ -12,6 +12,11 @@ import {
     splitDropKey,
     localDayId,
     dayStart,
+    categoryBreakdown,
+    categoryDelta,
+    marketMovement,
+    taskCompletionValue,
+    chestOpeningDayValue,
 } from './gold-sources.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -609,5 +614,281 @@ describe('attributeGoldSources', () => {
             ],
         });
         expect(result.totals.sources.combat).toBe(0);
+    });
+});
+
+describe('residual decomposition by asset category', () => {
+    const open = { t: D19, total: 1000, gold: 100, inventory: 400, equipment: 300, listings: 0, house: 200 };
+    const close = { t: D20, total: 1600, gold: 150, inventory: 800, equipment: 300, listings: 50, house: 300 };
+
+    test('differences the three groups off the same pair of closes', () => {
+        expect(categoryBreakdown(open, close)).toEqual({ gold: 50, items: 450, fixed: 100, sum: 600, total: 600 });
+    });
+
+    test('a field present on one close and missing on the other makes its group null', () => {
+        const partial = { ...close };
+        delete partial.house;
+        const breakdown = categoryBreakdown(open, partial);
+        expect(breakdown.fixed).toBeNull();
+        // The measurable groups still report, and the sum refuses to
+        expect(breakdown.gold).toBe(50);
+        expect(breakdown.items).toBe(450);
+        expect(breakdown.sum).toBeNull();
+    });
+
+    test('a field missing from both closes is skipped, not counted as a zero', () => {
+        // Neither close carries guildShrines — an account with no shrines,
+        // which is not the same as one whose shrines did not move
+        expect(categoryDelta(open, close, ['house', 'guildShrines'])).toBe(100);
+        // Nothing measurable at all is null rather than zero
+        expect(categoryDelta(open, close, ['guildShrines'])).toBeNull();
+    });
+
+    test('there is no breakdown without two snapshots', () => {
+        expect(categoryBreakdown(null, close)).toBeNull();
+        expect(categoryBreakdown(open, null)).toBeNull();
+    });
+
+    test('the categories and the total may differ, and both are reported', () => {
+        // `total` carries assets excluded from net worth; the fields do not
+        const breakdown = categoryBreakdown(open, { ...close, total: 2000 });
+        expect(breakdown.sum).toBe(600);
+        expect(breakdown.total).toBe(1000);
+    });
+
+    test('the attribution carries a breakdown per day and for the window', () => {
+        const result = attributeGoldSources({
+            from: D19,
+            to: D20 + 3600_000,
+            price,
+            series: [
+                { t: D18, total: 1000, gold: 100, inventory: 400, equipment: 300, listings: 0, house: 200 },
+                { t: D19, total: 1200, gold: 200, inventory: 500, equipment: 300, listings: 0, house: 200 },
+                { t: D20, total: 1600, gold: 150, inventory: 800, equipment: 300, listings: 50, house: 300 },
+            ],
+        });
+
+        expect(result.days[0].categories).toMatchObject({ gold: 100, items: 100, fixed: 0 });
+        expect(result.days[1].categories).toMatchObject({ gold: -50, items: 350, fixed: 100 });
+        expect(result.totals.categories).toMatchObject({ gold: 50, items: 450, fixed: 100, sum: 600 });
+    });
+
+    test('a day with only one close has no breakdown at all', () => {
+        const result = attributeGoldSources({
+            from: D19,
+            to: D20 + 3600_000,
+            price,
+            series: [{ t: D20, total: 1600, gold: 150, inventory: 800, equipment: 0, listings: 0, house: 0 }],
+        });
+        expect(result.days[0].categories).toBeNull();
+        expect(result.days[0].delta).toBeNull();
+    });
+});
+
+describe('market movement over the detail snapshots', () => {
+    const HOUR = 3600_000;
+
+    test('prices the shares held right through the window', () => {
+        const movement = marketMovement([
+            { t: D20, items: { '/items/cheese:0': { count: 10, value: 1000 } } },
+            { t: D20 + 24 * HOUR, items: { '/items/cheese:0': { count: 10, value: 1500 } } },
+        ]);
+        // 10 held × (150 − 100)
+        expect(movement.value).toBe(500);
+        expect(movement.hours).toBe(24);
+        expect(movement.heldItems).toBe(1);
+    });
+
+    test('only the shares held through both ends count', () => {
+        const movement = marketMovement([
+            { t: D20, items: { '/items/cheese:0': { count: 10, value: 1000 } } },
+            { t: D20 + HOUR, items: { '/items/cheese:0': { count: 30, value: 4500 } } },
+        ]);
+        // min(10, 30) × (150 − 100); the twenty bought inside the window
+        // changed hands at a price this has no record of
+        expect(movement.value).toBe(500);
+    });
+
+    test('an item that appeared or disappeared contributes nothing', () => {
+        const movement = marketMovement([
+            { t: D20, items: { '/items/milk:0': { count: 5, value: 200 } } },
+            { t: D20 + HOUR, items: { '/items/cheese:0': { count: 5, value: 900 } } },
+        ]);
+        expect(movement.value).toBe(0);
+        expect(movement.heldItems).toBe(0);
+    });
+
+    test('coins never revalue and are skipped', () => {
+        const movement = marketMovement([
+            { t: D20, items: { '/items/coin:0': { count: 100, value: 100 } } },
+            { t: D20 + HOUR, items: { '/items/coin:0': { count: 500, value: 500 } } },
+        ]);
+        expect(movement.value).toBe(0);
+        expect(movement.heldItems).toBe(0);
+    });
+
+    test('houses and the other non-market holdings are skipped too', () => {
+        const movement = marketMovement([
+            { t: D20, items: { 'house:/house_rooms/kitchen': { count: 4, value: 400 } } },
+            { t: D20 + HOUR, items: { 'house:/house_rooms/kitchen': { count: 4, value: 800 } } },
+        ]);
+        expect(movement.heldItems).toBe(0);
+    });
+
+    test('a zero count cannot make a unit price and is skipped', () => {
+        const movement = marketMovement([
+            { t: D20, items: { '/items/cheese:0': { count: 0, value: 0 } } },
+            { t: D20 + HOUR, items: { '/items/cheese:0': { count: 10, value: 1500 } } },
+        ]);
+        expect(movement.heldItems).toBe(0);
+    });
+
+    test('fewer than two usable snapshots is null, never a zero', () => {
+        expect(marketMovement([])).toBeNull();
+        expect(marketMovement([{ t: D20, items: {} }])).toBeNull();
+        expect(marketMovement(undefined)).toBeNull();
+        // Two at the same instant span nothing to measure a drift over
+        expect(
+            marketMovement([
+                { t: D20, items: {} },
+                { t: D20, items: {} },
+            ])
+        ).toBeNull();
+    });
+
+    test('the attribution reports it beside the days without folding it in', () => {
+        const result = attributeGoldSources({
+            from: D19,
+            to: D20 + 3600_000,
+            price,
+            detailSnapshots: [
+                { t: D20, items: { '/items/cheese:0': { count: 10, value: 1000 } } },
+                { t: D20 + HOUR, items: { '/items/cheese:0': { count: 10, value: 1500 } } },
+            ],
+        });
+        expect(result.marketMovement.value).toBe(500);
+        // Not a source, and in no day's explained figure
+        expect(result.totals.explained).toBe(0);
+    });
+});
+
+describe('task rewards', () => {
+    const taskPrice = (itemHrid) =>
+        ({ '/items/task_token': 300, '/items/cheese': 100 })[itemHrid] ?? priceTable[`${itemHrid}:0`] ?? null;
+
+    test('coins at face value, tokens and items at market', () => {
+        const value = taskCompletionValue(
+            { coins: 5000, tokens: 2, items: [{ itemHrid: '/items/cheese', count: 3 }] },
+            taskPrice
+        );
+        expect(value).toBe(5000 + 600 + 300);
+    });
+
+    test('an unpriceable reward item adds nothing rather than breaking the row', () => {
+        expect(taskCompletionValue({ coins: 100, tokens: 0, items: [{ itemHrid: '/items/mystery' }] }, taskPrice)).toBe(
+            100
+        );
+    });
+
+    test('claims are bucketed by the local day they were claimed on', () => {
+        const result = attributeGoldSources({
+            from: D19,
+            to: D20 + 3600_000,
+            price: taskPrice,
+            series: [
+                { t: D18, total: 0 },
+                { t: D20, total: 100000 },
+            ],
+            taskCompletions: [
+                { completedAt: D19, coins: 1000, tokens: 1, items: [] },
+                { completedAt: D20, coins: 2000, tokens: 0, items: [] },
+                // Outside the window entirely
+                { completedAt: D18, coins: 999999, tokens: 0, items: [] },
+            ],
+        });
+
+        expect(result.days[0].sources.tasks).toBe(1300);
+        expect(result.days[1].sources.tasks).toBe(2000);
+        expect(result.totals.sources.tasks).toBe(3300);
+        expect(result.coverage.tasks).toBe(D18);
+    });
+});
+
+describe('chest openings', () => {
+    const chestPrice = (itemHrid) =>
+        ({ '/items/purple_chest': 1000, '/items/cheese': 100, '/items/milk': 40 })[itemHrid] ?? null;
+
+    test('the loot, less what the chests themselves were worth', () => {
+        const day = chestOpeningDayValue(
+            { d: '2026-08-20', openings: { '/items/purple_chest': { count: 3, gained: { '/items/cheese': 40 } } } },
+            chestPrice
+        );
+        expect(day.value).toBe(4000 - 3000);
+        expect(day.unpricedItems).toBe(0);
+        expect(day.unpricedChests).toBe(0);
+    });
+
+    test('an unlucky day is negative, because the chests already carried their expectation', () => {
+        const day = chestOpeningDayValue(
+            { d: '2026-08-20', openings: { '/items/purple_chest': { count: 3, gained: { '/items/milk': 10 } } } },
+            chestPrice
+        );
+        expect(day.value).toBe(400 - 3000);
+    });
+
+    test('coins out of a chest are face value', () => {
+        const day = chestOpeningDayValue(
+            { d: '2026-08-20', openings: { '/items/purple_chest': { count: 1, gained: { '/items/coin': 5000 } } } },
+            chestPrice
+        );
+        expect(day.value).toBe(5000 - 1000);
+    });
+
+    test('a chest with no price of its own is left out whole, not reported as gross income', () => {
+        const day = chestOpeningDayValue(
+            { d: '2026-08-20', openings: { '/items/mystery_chest': { count: 2, gained: { '/items/cheese': 50 } } } },
+            chestPrice
+        );
+        expect(day.value).toBe(0);
+        expect(day.unpricedChests).toBe(2);
+    });
+
+    test('an unpriceable drop is counted and left out of the figure', () => {
+        const day = chestOpeningDayValue(
+            {
+                d: '2026-08-20',
+                openings: { '/items/purple_chest': { count: 1, gained: { '/items/relic': 1, '/items/cheese': 20 } } },
+            },
+            chestPrice
+        );
+        expect(day.value).toBe(2000 - 1000);
+        expect(day.unpricedItems).toBe(1);
+    });
+
+    test('the attribution buckets the rows by their own day and discloses the gaps', () => {
+        const result = attributeGoldSources({
+            from: D19,
+            to: D20 + 3600_000,
+            price: chestPrice,
+            series: [
+                { t: D18, total: 0 },
+                { t: D20, total: 100000 },
+            ],
+            chestDays: [
+                {
+                    d: localDayId(D19),
+                    openings: { '/items/purple_chest': { count: 1, gained: { '/items/cheese': 20 } } },
+                },
+                { d: localDayId(D20), openings: { '/items/mystery_chest': { count: 4, gained: {} } } },
+                { d: localDayId(D18), openings: { '/items/purple_chest': { count: 99, gained: {} } } },
+            ],
+        });
+
+        expect(result.days[0].sources.chests).toBe(1000);
+        expect(result.days[1].sources.chests).toBe(0);
+        expect(result.unpricedChests).toBe(4);
+        // The out-of-window day is neither counted nor disclosed
+        expect(result.totals.sources.chests).toBe(1000);
+        expect(result.coverage.chests).toBe(dayStart(localDayId(D18)));
     });
 });

@@ -31,6 +31,23 @@
  *
  * A balancing plug hides all four. The residual names them.
  *
+ * ## Naming them is not the same as reading them
+ *
+ * A single grey number still cannot say WHICH of the four it was, and two
+ * readings alongside it can:
+ *
+ * - the **category decomposition** ({@link categoryBreakdown}) differences the
+ *   per-asset fields of the same two closes the day's delta comes from, so a
+ *   day reads "the whole change is item valuation" or "coins arrived from
+ *   something nothing records" rather than only "unexplained";
+ * - the **market movement estimate** ({@link marketMovement}) uses the
+ *   item-level detail snapshots, each of which priced its holdings at the time
+ *   it was taken, to measure price drift on stock held through the last day —
+ *   the one thing the today's-prices caveat says this cannot see.
+ *
+ * Neither is subtracted from anything. The residual stays exactly as large as
+ * it falls out.
+ *
  * ## Combat has two recordings, and they must not be added together
  *
  * The loot log is the game's own record of what an action produced, but the
@@ -85,6 +102,8 @@ export const SOURCE_KEYS = [
     'combat',
     'gathering',
     'production',
+    'tasks',
+    'chests',
     'alchemy',
     'enhancement',
     'marketplace',
@@ -117,6 +136,25 @@ export const SOURCE_META = {
         note:
             'Outputs minus inputs for cooking, brewing, crafting, tailoring and cheesesmithing, ' +
             'estimated from the recipe and the number of actions completed — rare extras are not counted.',
+    },
+    tasks: {
+        label: 'Tasks',
+        measured: true,
+        source: 'Task completion tracker',
+        note:
+            'What the task board actually paid: the coins, task tokens and items itemised in the reward payload of ' +
+            'every task you claimed while the tracker was listening. Tokens and items are priced at today’s market; ' +
+            'the coins are face value. Only the last eight weeks of claims are kept.',
+    },
+    chests: {
+        label: 'Chests opened',
+        measured: true,
+        source: 'Chest opening recorder',
+        note:
+            'What came out of the chests you opened, less what the chests themselves were worth. An unopened ' +
+            'chest is already priced at its expected value in your net worth, so opening one only moves the ' +
+            'account by the difference between what it owed and what it paid: this row is realised luck against ' +
+            'expectation, and it is as often negative as positive.',
     },
     alchemy: {
         label: 'Alchemy',
@@ -473,15 +511,271 @@ export function marketplaceByDay(fills, marketTax) {
  */
 export function dailyCloses(series) {
     const closes = {};
+    for (const [day, snapshot] of Object.entries(dailyCloseSnapshots(series))) closes[day] = snapshot.total;
+    return closes;
+}
+
+/**
+ * The whole closing snapshot of each day, not just its total.
+ *
+ * The category decomposition needs the per-asset fields beside the total, and
+ * they only mean anything when they come off the same snapshot the total does.
+ *
+ * @param {Array<Object>} series - Net worth snapshots `{t, total, ...}`, any order
+ * @returns {Object<string, Object>} day id → the day's last snapshot
+ */
+export function dailyCloseSnapshots(series) {
+    const closes = {};
     const seen = {};
     for (const point of Array.isArray(series) ? series : []) {
         if (!point || !Number.isFinite(point.t) || !Number.isFinite(point.total)) continue;
         const id = localDayId(point.t);
         if (seen[id] !== undefined && seen[id] > point.t) continue;
         seen[id] = point.t;
-        closes[id] = point.total;
+        closes[id] = point;
     }
     return closes;
+}
+
+/**
+ * Which snapshot fields make up each of the three things a residual can be.
+ *
+ * `guildShrines` is deliberately optional even on a current snapshot — the
+ * tracker writes it only when the calculator actually costed the shrines — so a
+ * group is read field by field rather than all-or-nothing.
+ */
+export const CATEGORY_FIELDS = {
+    gold: ['gold'],
+    items: ['inventory', 'equipment', 'listings'],
+    fixed: ['house', 'abilities', 'guildShrines'],
+};
+
+/** The three category keys, in the order the panel says them */
+export const CATEGORY_KEYS = ['gold', 'items', 'fixed'];
+
+/**
+ * One category's change between two closes, or null when it cannot be measured.
+ *
+ * Three states per field, and they are not the same thing:
+ *
+ * - in **both** closes — a real delta, and it counts;
+ * - in **neither** — the account has never recorded it (an account with no
+ *   guild shrines, a build before the field existed), so it is skipped rather
+ *   than counted as a zero that did not move;
+ * - in **exactly one** — the record itself is discontinuous across this pair,
+ *   and any number built on it would be the missing side reported as a gain or
+ *   a loss. The whole group is null.
+ *
+ * A group whose every field is absent from both closes is null too: nothing was
+ * measured, and zero would be a claim that nothing moved.
+ *
+ * @param {Object} open - The earlier close
+ * @param {Object} close - The later close
+ * @param {Array<string>} fields - The snapshot fields in this category
+ * @returns {number|null} Coins, or null when unmeasurable
+ */
+export function categoryDelta(open, close, fields) {
+    if (!open || !close) return null;
+    let total = 0;
+    let measured = 0;
+    for (const field of fields) {
+        const before = open[field];
+        const after = close[field];
+        const hasBefore = Number.isFinite(before);
+        const hasAfter = Number.isFinite(after);
+        if (hasBefore !== hasAfter) return null;
+        if (!hasBefore) continue;
+        total += after - before;
+        measured += 1;
+    }
+    return measured > 0 ? total : null;
+}
+
+/**
+ * What the day's measured change was made of, by asset category.
+ *
+ * The residual is a single grey number and it hides the one distinction that
+ * matters most: a residual that is entirely `items` is the market repricing
+ * stock that never moved, and a residual that is entirely `gold` is coins
+ * arriving from something nothing here records. The sources are deliberately
+ * NOT subtracted from these — a marketplace fill moves gold and items at once,
+ * production consumes items to make items, and any split of them across the
+ * three would be an invention. These are the raw category deltas, reported
+ * beside the residual rather than instead of it.
+ *
+ * `sum` is the three added up, which is the non-excluded net worth: `total`
+ * also carries whatever the user excluded from their net worth, so the two can
+ * differ and the panel says so rather than pretending they balance.
+ *
+ * @param {Object|null} open - The earlier close snapshot
+ * @param {Object|null} close - The later close snapshot
+ * @returns {{gold: number|null, items: number|null, fixed: number|null,
+ *   sum: number|null, total: number|null}|null} The breakdown, or null with no pair
+ */
+export function categoryBreakdown(open, close) {
+    if (!open || !close) return null;
+
+    const breakdown = { gold: null, items: null, fixed: null, sum: null, total: null };
+    let sum = 0;
+    let complete = true;
+    for (const key of CATEGORY_KEYS) {
+        const value = categoryDelta(open, close, CATEGORY_FIELDS[key]);
+        breakdown[key] = value;
+        if (value === null) complete = false;
+        else sum += value;
+    }
+    breakdown.sum = complete ? sum : null;
+    if (Number.isFinite(open.total) && Number.isFinite(close.total)) breakdown.total = close.total - open.total;
+    return breakdown;
+}
+
+/**
+ * Coins keep their face value forever, so they cannot revalue.
+ * @param {string} key - A detail snapshot key
+ * @returns {boolean} True when the key is a tradeable item holding
+ */
+function isPriceableDetailKey(key) {
+    const id = String(key || '');
+    if (id.startsWith('/items/coin:')) return false;
+    // Only genuine `itemHrid:enhancementLevel` holdings. `house:`, `ability:`,
+    // `abilitybook:` and `listing:` entries either are not priced from an order
+    // book at all or pack several rows into one count, and value/count on those
+    // is not a unit price
+    return id.startsWith('/items/');
+}
+
+/**
+ * How much of the recent window's change was the market repricing what was
+ * already owned.
+ *
+ * The panel's standing caveat is that everything is priced at today's market and
+ * so it cannot see price drift. For the span the item-level detail snapshots
+ * cover — about a day — it can: each snapshot records `value` and `count` per
+ * holding AT THE TIME IT WAS TAKEN, so `value / count` is that holding's unit
+ * price then, and the same item's price now is the other end of the same line.
+ *
+ * Only stock held THROUGH the window is counted: `min(countThen, countNow)`
+ * shares. Anything bought or sold inside it changed hands at prices this has no
+ * record of, and counting the extra shares would mix a trade into a price
+ * figure. An item that appeared or disappeared entirely contributes nothing.
+ *
+ * @param {Array<Object>} snapshots - Detail snapshots `{t, items: {key: {count, value}}}`
+ * @returns {{from: number, to: number, hours: number, value: number, heldItems: number,
+ *   movedItems: number}|null} The estimate, or null when there is no pair to measure
+ */
+export function marketMovement(snapshots) {
+    const usable = (Array.isArray(snapshots) ? snapshots : [])
+        .filter((snapshot) => snapshot && Number.isFinite(snapshot.t) && snapshot.items)
+        .sort((a, b) => a.t - b.t);
+    if (usable.length < 2) return null;
+
+    const then = usable[0];
+    const now = usable[usable.length - 1];
+    if (!(now.t > then.t)) return null;
+
+    let value = 0;
+    let heldItems = 0;
+    let movedItems = 0;
+
+    for (const [key, before] of Object.entries(then.items)) {
+        if (!isPriceableDetailKey(key)) continue;
+        const after = now.items[key];
+        if (!after) continue;
+
+        const countThen = num(before.count);
+        const countNow = num(after.count);
+        if (!(countThen > 0) || !(countNow > 0)) continue;
+
+        const priceThen = num(before.value) / countThen;
+        const priceNow = num(after.value) / countNow;
+        if (!Number.isFinite(priceThen) || !Number.isFinite(priceNow)) continue;
+
+        heldItems += 1;
+        const move = Math.min(countThen, countNow) * (priceNow - priceThen);
+        if (move !== 0) movedItems += 1;
+        value += move;
+    }
+
+    return {
+        from: then.t,
+        to: now.t,
+        hours: (now.t - then.t) / (60 * 60 * 1000),
+        value,
+        heldItems,
+        movedItems,
+    };
+}
+
+/**
+ * What a day of chest opening did to the account.
+ *
+ * An unopened chest is already carried in net worth at its expected value, so
+ * opening it exchanges one valuation for another and the only thing that moves
+ * is the gap between them: the loot at market, less the chests' own price.
+ *
+ * A chest with no price of its own cannot be netted against anything, so the
+ * whole opening is left out and counted rather than reported as pure gross
+ * income — the mistake the production recorder had to be fixed for. A gained
+ * item with no price is counted too, and the day's figure is short by it.
+ *
+ * @param {Object} row - A recorder row `{d, openings: {chestHrid: {count, gained}}}`
+ * @param {Function} price - `(itemHrid, enhancementLevel) => number|null`
+ * @returns {{value: number, unpricedItems: number, unpricedChests: number}} The day
+ */
+export function chestOpeningDayValue(row, price) {
+    let value = 0;
+    let unpricedItems = 0;
+    let unpricedChests = 0;
+
+    for (const [chestHrid, entry] of Object.entries(row?.openings || {})) {
+        const count = num(entry?.count);
+        if (count <= 0) continue;
+
+        const chestPrice = price(chestHrid, 0);
+        if (!Number.isFinite(chestPrice)) {
+            unpricedChests += count;
+            continue;
+        }
+
+        let loot = 0;
+        for (const [itemHrid, gained] of Object.entries(entry?.gained || {})) {
+            const amount = num(gained);
+            if (amount === 0) continue;
+            const unit = itemHrid === COIN_HRID ? 1 : price(itemHrid, 0);
+            if (!Number.isFinite(unit)) {
+                unpricedItems += 1;
+                continue;
+            }
+            loot += unit * amount;
+        }
+
+        value += loot - chestPrice * count;
+    }
+
+    return { value, unpricedItems, unpricedChests };
+}
+
+/**
+ * What one claimed task paid, in coins.
+ *
+ * Coins at face value, tokens and item rewards at today's market — the same
+ * convention every other row here uses. The reward payload is itemised on the
+ * wire and recorded verbatim at the moment of the claim, so this is a
+ * measurement and not an inference from an inventory diff.
+ *
+ * @param {Object} entry - A task completion record
+ * @param {Function} price - `(itemHrid, enhancementLevel) => number|null`
+ * @returns {number} Coins
+ */
+export function taskCompletionValue(entry, price) {
+    if (!entry) return 0;
+    let total = num(entry.coins);
+    total += num(entry.tokens) * num(price('/items/task_token', 0));
+    for (const item of entry.items || []) {
+        if (!item?.itemHrid) continue;
+        total += num(price(item.itemHrid, 0)) * num(item.count);
+    }
+    return total;
 }
 
 /**
@@ -527,13 +821,18 @@ function earlierOf(a, b) {
  * @param {Array<Object>} [input.enhancementSessions] - Stored enhancement sessions
  * @param {Array<Object>} [input.tradeFills] - Trade ledger fill records
  * @param {Array<Object>} [input.combatSessions] - Archived combat runs
+ * @param {Array<Object>} [input.taskCompletions] - Claimed task records `{completedAt, coins, tokens, items}`
+ * @param {Array<Object>} [input.chestDays] - Chest opening recorder rows `{d, openings}`
+ * @param {Array<Object>} [input.detailSnapshots] - Item-level snapshots `{t, items}`
  * @param {number} [input.sessionCap] - How many runs the history keeps
  * @param {Function} input.price - `(itemHrid, enhancementLevel) => number|null`
  * @param {number} [input.marketTax] - Sell tax rate
  * @returns {{
  *   from: number, to: number,
- *   days: Array<{day: string, sources: Object, explained: number, delta: number|null, residual: number|null}>,
- *   totals: {sources: Object, explained: number, delta: number|null, residual: number|null},
+ *   days: Array<{day: string, sources: Object, explained: number, delta: number|null, residual: number|null,
+ *     categories: Object|null}>,
+ *   totals: {sources: Object, explained: number, delta: number|null, residual: number|null, categories: Object|null},
+ *   marketMovement: Object|null,
  *   coverage: Object<string, number|null>,
  *   unpricedEnhancementSessions: number,
  *   unpricedProductionActions: number,
@@ -554,6 +853,9 @@ export function attributeGoldSources(input) {
         enhancementSessions = [],
         tradeFills = [],
         combatSessions = [],
+        taskCompletions = [],
+        chestDays = [],
+        detailSnapshots = [],
         sessionCap = DEFAULT_SESSION_CAP,
         price = () => null,
         marketTax = 0.05,
@@ -609,6 +911,26 @@ export function attributeGoldSources(input) {
         // production row, and the panel says so rather than letting the
         // production figure look complete
         if (inWindow.has(row.d)) unpricedProductionActions += num(row.unpricedActions);
+    }
+
+    // Task claims: the reward payload as the server itemised it, per local day
+    for (const entry of taskCompletions || []) {
+        const t = num(entry?.completedAt);
+        if (!t) continue;
+        add(localDayId(t), 'tasks', taskCompletionValue(entry, price));
+    }
+
+    // Chest openings: already per day, and netted against what the chests were
+    // themselves worth
+    let unpricedChestItems = 0;
+    let unpricedChests = 0;
+    for (const row of chestDays || []) {
+        if (!row?.d) continue;
+        const day = chestOpeningDayValue(row, price);
+        add(row.d, 'chests', day.value);
+        if (!inWindow.has(row.d)) continue;
+        unpricedChestItems += day.unpricedItems;
+        unpricedChests += day.unpricedChests;
     }
 
     for (const session of alchemySessions || []) {
@@ -709,16 +1031,24 @@ export function attributeGoldSources(input) {
 
     // The net worth each day closed at, and what the day before closed at, so a
     // day's delta is a measurement rather than a difference of interpolations
-    const closes = dailyCloses(series);
-    const closeBefore = (day) => {
+    const closeSnapshots = dailyCloseSnapshots(series);
+    const closes = {};
+    for (const [id, snapshot] of Object.entries(closeSnapshots)) closes[id] = snapshot.total;
+
+    /**
+     * The last day's close before a day, as the whole snapshot.
+     * @param {string} day - Day id
+     * @returns {Object|null} The snapshot, or null
+     */
+    const snapshotBefore = (day) => {
         let best = null;
         const start = dayStart(day);
-        for (const [id, total] of Object.entries(closes)) {
+        for (const [id, snapshot] of Object.entries(closeSnapshots)) {
             const t = dayStart(id);
             if (t >= start) continue;
-            if (best === null || t > best.t) best = { t, total };
+            if (best === null || t > best.t) best = { t, snapshot };
         }
-        return best?.total ?? null;
+        return best?.snapshot ?? null;
     };
 
     const rows = [];
@@ -734,8 +1064,10 @@ export function attributeGoldSources(input) {
         }
         totalExplained += explained;
 
+        const closeSnapshot = closeSnapshots[day] || null;
+        const previousSnapshot = snapshotBefore(day);
         const close = closes[day];
-        const previous = closeBefore(day);
+        const previous = previousSnapshot?.total ?? null;
         const delta = Number.isFinite(close) && Number.isFinite(previous) ? close - previous : null;
 
         rows.push({
@@ -744,6 +1076,9 @@ export function attributeGoldSources(input) {
             explained,
             delta,
             residual: delta === null ? null : delta - explained,
+            // What the day's change was made of, by asset category — null on a
+            // day with only one close, because there is no pair to difference
+            categories: delta === null ? null : categoryBreakdown(previousSnapshot, closeSnapshot),
         });
     }
 
@@ -757,13 +1092,15 @@ export function attributeGoldSources(input) {
     // was asked for.
     const firstDay = days[0];
     const closedDays = days.filter((day) => Number.isFinite(closes[day]));
-    let openingClose = firstDay ? closeBefore(firstDay) : null;
+    let openingSnapshot = firstDay ? snapshotBefore(firstDay) : null;
     let firstClosed = 0;
-    if (openingClose === null && closedDays.length > 0) {
-        openingClose = closes[closedDays[0]];
+    if (openingSnapshot === null && closedDays.length > 0) {
+        openingSnapshot = closeSnapshots[closedDays[0]];
         firstClosed = 1;
     }
-    const lastClose = closedDays.length > firstClosed ? closes[closedDays[closedDays.length - 1]] : null;
+    const closingSnapshot = closedDays.length > firstClosed ? closeSnapshots[closedDays[closedDays.length - 1]] : null;
+    const openingClose = openingSnapshot?.total ?? null;
+    const lastClose = closingSnapshot?.total ?? null;
     const windowDelta = Number.isFinite(lastClose) && Number.isFinite(openingClose) ? lastClose - openingClose : null;
 
     return {
@@ -775,7 +1112,12 @@ export function attributeGoldSources(input) {
             explained: totalExplained,
             delta: windowDelta,
             residual: windowDelta === null ? null : windowDelta - totalExplained,
+            categories: windowDelta === null ? null : categoryBreakdown(openingSnapshot, closingSnapshot),
         },
+        // Price drift on stock held through the detail snapshots' own window,
+        // which is about a day and is NOT one of the local days above. Reported
+        // on its own for exactly that reason
+        marketMovement: marketMovement(detailSnapshots),
         coverage: {
             // Split the same way the attribution loop above splits them: the
             // loot log holds both, and answering "combat has been recorded
@@ -796,6 +1138,8 @@ export function attributeGoldSources(input) {
                 GATHERING_ACTION_TYPES.includes(actionType(entry?.actionHrid)) ? Date.parse(entry?.startTime) : NaN
             ),
             production: earliest(productionDays, (row) => dayStart(row?.d)),
+            tasks: earliest(taskCompletions, (entry) => num(entry?.completedAt) || NaN),
+            chests: earliest(chestDays, (row) => dayStart(row?.d)),
             offline: earliest(productionDays, (row) => (row?.offlineProfit ? dayStart(row?.d) : NaN)),
             alchemy: earliest(alchemySessions, (session) => num(session?.startTime) || NaN),
             enhancement: earliest(enhancementSessions, (session) => num(session?.startTime) || NaN),
@@ -805,6 +1149,8 @@ export function attributeGoldSources(input) {
         },
         unpricedEnhancementSessions,
         unpricedProductionActions,
+        unpricedChestItems,
+        unpricedChests,
         // What actually fed the combat row, so the panel can say so rather than
         // calling a fallback and a gap alike "Measured"
         combatBasis: {

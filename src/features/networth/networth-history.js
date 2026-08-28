@@ -388,6 +388,20 @@ class NetworthHistory {
     }
 
     /**
+     * The whole rolling window of item-level detail snapshots, oldest first.
+     *
+     * Read-only — a copy, not the live array — because the only caller outside
+     * this class wants to difference the two ends of the window and has no
+     * business holding the array this class trims in place. About a day of
+     * hourly snapshots, or fewer when the tab has not been open that long.
+     *
+     * @returns {Array<{t: number, items: Object}>} Snapshots, oldest first
+     */
+    detailWindow() {
+        return [...this.detailHistory].sort((a, b) => a.t - b.t);
+    }
+
+    /**
      * The recent slice of the history, for a trend rather than the whole record.
      *
      * A read rather than exposing `history` itself: a caller outside this
