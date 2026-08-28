@@ -52,6 +52,7 @@ import {
     combatSimUI,
     labSimUI,
     guildTrialScoreboard,
+    philoCalculator,
 } from '../../utils/bundle-bridge.js';
 
 const PALETTE_ID = 'toolasha-command-palette';
@@ -224,6 +225,19 @@ function panelCommands() {
             // A real panel, and reached the way every other panel here is
             target: guildTrialScoreboard(),
         },
+        // Gated on its own setting rather than just presence, unlike the other
+        // bridge entries above: the calculator has no toggle/show of its own to
+        // no-op when switched off, and openModal() would happily draw the modal
+        // for a feature the player turned off in Settings.
+        ...(config.getSetting('market_showPhiloCalculator') && philoCalculator()
+            ? [
+                  {
+                      name: 'Philo Gamba',
+                      hint: 'Enhancing gamba profitability, costed against the market',
+                      run: () => philoCalculator().openModal(),
+                  },
+              ]
+            : []),
         { name: 'Settings', hint: "Toolasha's settings tab", run: () => openSettings() },
         // Same UI bundle as the palette. Offered only when a push could
         // succeed — a sync command on an unconfigured install would only toast

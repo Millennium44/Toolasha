@@ -46,6 +46,16 @@ const overlay = vi.hoisted(() => ({
 }));
 vi.mock('./overlay-panel.js', () => ({ default: overlay }));
 
+// Every other accessor on the bridge stays exactly as it is off-page — several
+// unrelated modules (loadout-snapshot's websocket hook, for one) resolve
+// through this same file at import time, so only the one accessor under test
+// is overridden. Null unless a test asks for an instance.
+const philo = vi.hoisted(() => ({ instance: null }));
+vi.mock('../../utils/bundle-bridge.js', async (importOriginal) => {
+    const actual = await importOriginal();
+    return { ...actual, philoCalculator: () => philo.instance };
+});
+
 const {
     default: palette,
     fuzzyScore,
@@ -167,6 +177,7 @@ beforeEach(() => {
     overlay.listLayouts.mockClear();
     overlay.listLayouts.mockResolvedValue([]);
     overlay.applyNamedLayout.mockClear();
+    philo.instance = null;
     document.body.replaceChildren();
 });
 
@@ -304,6 +315,28 @@ describe('the palette in the page', () => {
         editable.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
 
         expect(palette.isOpen).toBe(false);
+    });
+
+    test('the Philo Gamba entry opens the calculator when the bundle has one', async () => {
+        philo.instance = { openModal: vi.fn() };
+
+        palette.initialize();
+        palette.open();
+        type('philo gamba');
+        expect(drawnLabels()[0]).toBe('Philo Gamba');
+
+        press('Enter');
+        expect(philo.instance.openModal).toHaveBeenCalled();
+    });
+
+    test('the Philo Gamba entry is not offered when the market bundle has not loaded', () => {
+        philo.instance = null;
+
+        palette.initialize();
+        palette.open();
+        type('philo');
+
+        expect(drawnLabels()).not.toContain('Philo Gamba');
     });
 
     test('it lists panels, rows with an onOpen, and settings by label', async () => {

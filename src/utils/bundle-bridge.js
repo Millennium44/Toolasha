@@ -133,6 +133,14 @@ export function expectedValueCalculator() {
     return toolashaRoot()?.Market?.expectedValueCalculator || null;
 }
 
+/**
+ * The Philo Gamba calculator, for its `openModal()`.
+ * @returns {Object|null} The calculator, or null when the market bundle is absent
+ */
+export function philoCalculator() {
+    return toolashaRoot()?.Market?.philoCalculator || null;
+}
+
 // ---------------------------------------------------------------------------
 // Actions bundle singletons
 // ---------------------------------------------------------------------------
