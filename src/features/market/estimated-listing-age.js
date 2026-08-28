@@ -156,6 +156,37 @@ function listingTime(listing) {
 }
 
 /**
+ * Whether a known listing is the one an expired My Listings row describes.
+ *
+ * Enhancement level is compared alongside side/price/quantity because two
+ * listings of the same item at different levels (a +0 and a +10 of the same
+ * equipment, say) can otherwise collide on all three — without it, marking one
+ * expired risks stamping the wrong one, permanently mislabeling a still-active
+ * listing and losing track of the one that actually expired. Pure, so the
+ * matching rule can be tested without a DOM.
+ * @param {Object} listing - A known listing
+ * @param {Object} candidate - Fields read off the expired row
+ * @param {string|null} candidate.itemHrid
+ * @param {number} candidate.enhancementLevel
+ * @param {boolean} candidate.isSell
+ * @param {number} candidate.price
+ * @param {number} candidate.orderQuantity
+ * @param {number} candidate.filledQuantity
+ * @returns {boolean}
+ */
+function matchesExpiredRow(listing, candidate) {
+    return (
+        (!candidate.itemHrid || listing.itemHrid === candidate.itemHrid) &&
+        (listing.status === 'active' || listing.status === 'unknown') &&
+        (listing.enhancementLevel || 0) === (candidate.enhancementLevel || 0) &&
+        listing.isSell === candidate.isSell &&
+        listing.price === candidate.price &&
+        listing.orderQuantity === candidate.orderQuantity &&
+        listing.filledQuantity === candidate.filledQuantity
+    );
+}
+
+/**
  * The personal log with its retention applied: listings older than
  * LISTING_RETENTION_MS before the newest one go, then, if more than
  * LISTING_RETENTION_MAX remain, the oldest beyond that cap go too. A listing
@@ -1217,16 +1248,27 @@ class EstimatedListingAge {
                     }
                 }
 
+                // Extract enhancement level (disambiguates two listings of the same item
+                // at different levels that happen to share side/price/quantity — a +0 and
+                // a +10 of the same equipment can easily collide on all three)
+                let enhancementLevel = 0;
+                const enhNode = row.querySelector('[class*="enhancementLevel"]');
+                if (enhNode && enhNode.textContent) {
+                    const enhMatch = enhNode.textContent.match(/\+\s*(\d+)/);
+                    if (enhMatch) enhancementLevel = Number(enhMatch[1]);
+                }
+
                 // Find matching listing in our stored data (only active/unknown listings
                 // are candidates — already-resolved listings must not be re-marked)
-                const matchingListing = this.knownListings.find(
-                    (listing) =>
-                        (!itemHrid || listing.itemHrid === itemHrid) &&
-                        (listing.status === 'active' || listing.status === 'unknown') &&
-                        listing.isSell === isSell &&
-                        listing.price === price &&
-                        listing.orderQuantity === orderQuantity &&
-                        listing.filledQuantity === filledQuantity
+                const matchingListing = this.knownListings.find((listing) =>
+                    matchesExpiredRow(listing, {
+                        itemHrid,
+                        enhancementLevel,
+                        isSell,
+                        price,
+                        orderQuantity,
+                        filledQuantity,
+                    })
                 );
 
                 if (matchingListing && matchingListing.status !== 'expired') {
@@ -1819,4 +1861,5 @@ export {
     LISTING_SAVE_DEBOUNCE_MS,
     ORDER_BOOK_REPAINT_MS,
     mergeListingLogs,
+    matchesExpiredRow,
 };

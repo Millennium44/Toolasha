@@ -102,6 +102,7 @@ const {
     ORDER_BOOK_PERSISTED_ROWS,
     LISTING_SAVE_DEBOUNCE_MS,
     ORDER_BOOK_REPAINT_MS,
+    matchesExpiredRow,
 } = await import('./estimated-listing-age.js');
 const { _resetAdoptionCache } = await import('../../utils/character-key.js');
 
@@ -1232,5 +1233,48 @@ describe('listing log retention — the personal log no longer grows for life', 
     test('the window is 90 days and the cap 5000', () => {
         expect(LISTING_RETENTION_MS).toBe(90 * DAY);
         expect(LISTING_RETENTION_MAX).toBe(5000);
+    });
+});
+
+describe('matchesExpiredRow — disambiguating an expired My Listings row', () => {
+    const base = {
+        itemHrid: '/items/sword',
+        status: 'active',
+        isSell: true,
+        price: 100,
+        orderQuantity: 1,
+        filledQuantity: 0,
+        enhancementLevel: 0,
+    };
+    const row = {
+        itemHrid: '/items/sword',
+        enhancementLevel: 0,
+        isSell: true,
+        price: 100,
+        orderQuantity: 1,
+        filledQuantity: 0,
+    };
+
+    test('matches on item, side, price and quantity when levels agree', () => {
+        expect(matchesExpiredRow(base, row)).toBe(true);
+    });
+
+    test('does not match a listing of the same item at a different enhancement level', () => {
+        // A +0 sword and a +10 sword sitting at the same price with nothing filled on either —
+        // identical on every field this used to check. Without the level compared, the +10
+        // listing (still very much alive) would get wrongly stamped "expired" for a +0 row.
+        const plusTen = { ...base, enhancementLevel: 10 };
+        expect(matchesExpiredRow(plusTen, row)).toBe(false);
+        expect(matchesExpiredRow(base, row)).toBe(true);
+    });
+
+    test('an unknown enhancement level (undefined) still matches a level-0 candidate', () => {
+        const legacy = { ...base, enhancementLevel: undefined };
+        expect(matchesExpiredRow(legacy, row)).toBe(true);
+    });
+
+    test('a resolved listing is never re-matched', () => {
+        const filled = { ...base, status: 'filled' };
+        expect(matchesExpiredRow(filled, row)).toBe(false);
     });
 });
