@@ -38,6 +38,51 @@ export function filterItemsByName(items, query, getName) {
     return items.filter((item) => getName(item.itemHrid).toLowerCase().includes(needle));
 }
 
+/**
+ * Totals across a set of filtered item rows — bought/sold quantity and coins,
+ * and realized profit when at least one row has a known one.
+ *
+ * Shown only above a filtered table: the weekly lines already answer "how did
+ * everything do", so this exists to answer "how did the item(s) I just
+ * searched for do" without adding up rows by hand.
+ *
+ * @param {Array<Object>} items - Aggregated item rows (shape of aggregateLedger's `items`)
+ * @returns {{boughtQty: number, boughtCoins: number, soldQty: number, soldCoinsNet: number,
+ *   realizedProfit: number|null, unmatchedRevenue: number}|null} Totals, or null for an empty set
+ */
+export function summarizeItems(items) {
+    if (!items || items.length === 0) return null;
+
+    let boughtQty = 0;
+    let boughtCoins = 0;
+    let soldQty = 0;
+    let soldCoinsNet = 0;
+    let unmatchedRevenue = 0;
+    let realizedProfit = 0;
+    let anyRealized = false;
+
+    for (const item of items) {
+        boughtQty += item.boughtQty || 0;
+        boughtCoins += item.boughtCoins || 0;
+        soldQty += item.soldQty || 0;
+        soldCoinsNet += item.soldCoinsNet || 0;
+        unmatchedRevenue += item.unmatchedRevenue || 0;
+        if (item.realizedProfit !== null && item.realizedProfit !== undefined) {
+            realizedProfit += item.realizedProfit;
+            anyRealized = true;
+        }
+    }
+
+    return {
+        boughtQty,
+        boughtCoins,
+        soldQty,
+        soldCoinsNet,
+        realizedProfit: anyRealized ? realizedProfit : null,
+        unmatchedRevenue,
+    };
+}
+
 /** Stable key for persisting the modal's minimized state; there is no geometry to key off. */
 const PANEL_KEY = 'tradeLedgerModal';
 
@@ -437,6 +482,48 @@ class TradeLedgerView {
     }
 
     /**
+     * A one-line total for whatever the filter box currently narrows the
+     * table to, so a search for one item does not require adding its rows
+     * up by hand.
+     * @param {Array<Object>} items - The filtered item rows
+     * @returns {HTMLElement} The summary line
+     */
+    buildFilterSummary(items) {
+        const totals = summarizeItems(items);
+        const line = document.createElement('div');
+        line.style.cssText = `
+            padding: 6px 10px;
+            margin-bottom: 8px;
+            background: rgba(74, 158, 255, 0.08);
+            border: 1px solid rgba(74, 158, 255, 0.3);
+            border-radius: 4px;
+            font-size: 12px;
+            color: #cbd5e1;
+        `;
+
+        const parts = [
+            `${items.length} item${items.length === 1 ? '' : 's'} matched:`,
+            `bought ${totals.boughtQty} (${this.formatCoins(totals.boughtCoins)})`,
+            `sold ${totals.soldQty} (${this.formatCoins(totals.soldCoinsNet)} net)`,
+        ];
+        line.textContent = parts.join('  ·  ');
+
+        const realizedSpan = document.createElement('span');
+        if (totals.realizedProfit !== null) {
+            realizedSpan.textContent = `  ·  realized ${this.formatSigned(totals.realizedProfit)}`;
+            realizedSpan.style.color = totals.realizedProfit >= 0 ? '#4ade80' : '#f87171';
+            realizedSpan.title = BASIS_TOOLTIP;
+        } else if (totals.soldCoinsNet > 0) {
+            realizedSpan.textContent = `  ·  realized — (revenue only, no ledger-known cost)`;
+            realizedSpan.style.color = '#9ca3af';
+            realizedSpan.title = BASIS_TOOLTIP;
+        }
+        line.appendChild(realizedSpan);
+
+        return line;
+    }
+
+    /**
      * Per-item rows sorted by most recent activity
      */
     renderItemTable() {
@@ -447,6 +534,10 @@ class TradeLedgerView {
 
         const allItems = this.aggregates.items;
         const items = filterItemsByName(allItems, this.filterText, (itemHrid) => this.getItemName(itemHrid));
+
+        if (this.filterText.trim() && items.length > 0) {
+            tableContainer.appendChild(this.buildFilterSummary(items));
+        }
 
         if (items.length === 0) {
             const empty = document.createElement('div');
