@@ -95,3 +95,26 @@ describe('EnhancementTracker Blessed tracking', () => {
         expect(session.attemptsPerLevel[0].blessed).toBe(0);
     });
 });
+
+describe('EnhancementTracker.disable() — character switch teardown', () => {
+    test('clears sessions, the current session id, and a pending-start flag left over from the departing character', async () => {
+        // Reproduces: actions_updated flags a pending start for character A's
+        // still-running queue, then the user switches characters before the
+        // action_completed that would have consumed the flag arrives. Without
+        // resetting it here, character B inherits a stale "always start a new
+        // session" flag: their first attempt with no active session takes the
+        // shouldStartNew path (which always creates a fresh session) instead of
+        // the normal path that tries to extend a matching completed session
+        // first — fragmenting what should have been one continued run.
+        await loadWith(createSession('/items/sword', 'Sword', 0, 10, 0));
+        enhancementTracker.setPendingStart();
+        expect(enhancementTracker.pendingSessionStart).toBe(true);
+
+        enhancementTracker.disable();
+
+        expect(enhancementTracker.pendingSessionStart).toBe(false);
+        expect(enhancementTracker.getCurrentSession()).toBeNull();
+        expect(enhancementTracker.getAllSessions()).toEqual({});
+        expect(enhancementTracker.isInitialized).toBe(false);
+    });
+});

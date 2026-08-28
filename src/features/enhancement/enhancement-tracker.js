@@ -350,6 +350,18 @@ class EnhancementTracker {
         this.sessions = {};
         this.currentSessionId = null;
         this.isInitialized = false;
+
+        // A character switch can land while actions_updated has flagged a pending
+        // start but the action_completed that would consume it hasn't arrived yet
+        // (the queue was mid-attempt when the user switched away). Left set, that
+        // flag survives into the next character: its first "no active session"
+        // attempt then takes the shouldStartNew path — which always creates a
+        // fresh session — instead of the normal !currentSession path, which tries
+        // findExtendableSession() first. A character resuming a COMPLETED session
+        // at a matching level would get a brand-new fragment instead of its
+        // existing session extended, losing the extension baseline the leg
+        // counters and predictions depend on.
+        this.pendingSessionStart = false;
     }
 }
 
