@@ -371,7 +371,9 @@ registerRow({
         Object.assign(container.style, {
             display: 'flex',
             flexDirection: 'column',
-            justifyContent: 'center',
+            // From the top, so this tile's first line is level with the first
+            // line of whatever is beside it
+            justifyContent: 'flex-start',
             alignItems: 'stretch',
             textAlign: 'left',
             lineHeight: '1.3',

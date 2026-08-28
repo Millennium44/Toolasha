@@ -265,16 +265,22 @@ export function glyph(name, size = 16) {
  * @param {Segment[]} segments - The line
  */
 export function drawLine(host, segments) {
-    // Text on a line together is aligned on its baseline, which is what makes a
-    // row of figures read as a row. An icon has no baseline: it is a box, and
-    // against baselined text it sits low and drags the line's height with it.
-    // So a line carrying one is centred instead — the box and the numbers are
-    // then aligned on the only thing they share, their middles.
-    const hasIcon = segments.some((segment) => segment?.icon);
-
+    // Centred, always, whether or not there is an icon on the line. It used to
+    // depend: text alone was aligned on its baseline and a line carrying an icon
+    // was centred, because an icon has no baseline and against baselined text it
+    // sits low and drags the line's height with it.
+    //
+    // That was right about the line and wrong about the tile. `row` hands this
+    // the tile's own content box, which is the full height of the tile — so the
+    // fork was not choosing how the pieces sat against each other, it was
+    // choosing where the whole line sat in the tile. Two 30-pixel tiles side by
+    // side, Queue and Coins, therefore drew their text a few pixels apart,
+    // because one of them happened to have a coin on it. Centring both ways
+    // costs nothing for text of one size and is the only rule that lets a tile
+    // with an icon line up with the tile beside it.
     Object.assign(host.style, {
         display: 'flex',
-        alignItems: hasIcon ? 'center' : 'baseline',
+        alignItems: 'center',
         gap: '5px',
         whiteSpace: 'nowrap',
         overflow: 'hidden',
@@ -324,9 +330,28 @@ export function drawLine(host, segments) {
  */
 export function row(container, segments, { center = false } = {}) {
     container.replaceChildren();
-    container.style.flexDirection = '';
-    drawLine(container, segments);
-    container.style.justifyContent = center ? 'center' : '';
+
+    // The line goes in a box of its own height, and that box sits at the top of
+    // the tile — the same shape `rows` gives a tile with several lines, and for
+    // the same reason it gives `alignedRows`: tiles sit beside each other, and
+    // the first line of every one of them has to be at the same height. Drawn
+    // straight into the tile's full-height content box, a one-line tile floated
+    // wherever its own alignment put it, which is how a coin ended up a few
+    // pixels below the queue beside it.
+    Object.assign(container.style, {
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'flex-start',
+        overflow: 'hidden',
+    });
+
+    const line = document.createElement('div');
+    drawLine(line, segments);
+    // Horizontal, not vertical: for a tile whose pieces are one phrase — an
+    // icon, a count and a price — pushing the price to the far edge of a
+    // resized tile puts a gap in the middle of it
+    if (center) line.style.justifyContent = 'center';
+    container.appendChild(line);
 }
 
 /**
@@ -360,7 +385,10 @@ export function rows(container, lines, { align = false } = {}) {
     Object.assign(container.style, {
         display: 'flex',
         flexDirection: 'column',
-        justifyContent: 'center',
+        // From the top, for the reason `alignedRows` gives below: these tiles
+        // sit beside each other and carry different numbers of lines, and
+        // centring puts the single line of one halfway down the two of the next
+        justifyContent: 'flex-start',
         lineHeight: '1.3',
         overflow: 'hidden',
     });

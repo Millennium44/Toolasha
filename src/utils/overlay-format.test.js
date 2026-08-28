@@ -1,7 +1,7 @@
 /** @vitest-environment happy-dom */
 
 import { describe, test, expect } from 'vitest';
-import { signedPercent, shortDuration, drawLine, rows, glyph, GLYPHS, ROW_COLORS } from './overlay-format.js';
+import { signedPercent, shortDuration, drawLine, row, rows, glyph, GLYPHS, ROW_COLORS } from './overlay-format.js';
 
 describe('signedPercent', () => {
     test('signs both directions', () => {
@@ -62,16 +62,20 @@ describe('drawLine', () => {
         expect(host.textContent).toBe('43');
     });
 
-    test('a line with an icon centres, and one without keeps its baseline', () => {
-        // An icon is a box with no baseline. Against baselined text it sits low
-        // and the phrase reads as two things at different heights.
+    test('every line centres, whether or not there is an icon on it', () => {
+        // It used to depend, and the fork was the bug: `row` hands this the
+        // tile's own full-height content box, so choosing between centre and
+        // baseline was choosing where the whole line sat in the tile rather than
+        // how the pieces sat against each other. Queue and Coins are both
+        // 30-pixel tiles side by side, and only one of them has a coin on it.
         const withIcon = document.createElement('div');
         drawLine(withIcon, [{ icon: '/items/smack_book' }, { text: '43' }]);
-        expect(withIcon.style.alignItems).toBe('center');
 
         const textOnly = document.createElement('div');
         drawLine(textOnly, [{ text: '43' }, { text: 'books' }]);
-        expect(textOnly.style.alignItems).toBe('baseline');
+
+        expect(withIcon.style.alignItems).toBe('center');
+        expect(textOnly.style.alignItems).toBe(withIcon.style.alignItems);
     });
 
     test('only the ellipsis segment is allowed to shrink', () => {
@@ -92,6 +96,54 @@ describe('drawLine', () => {
         expect(host.children[0].title).toBe('MillenniumTech');
         // And nothing else grows a tooltip it did not ask for
         expect(host.children[1].title).toBe('');
+    });
+});
+
+describe('a tile drawn as one line', () => {
+    /**
+     * A tile's content box, which is the full height of the tile.
+     * @returns {HTMLElement}
+     */
+    function contentBox() {
+        const box = document.createElement('div');
+        Object.assign(box.style, { width: '100%', height: '100%', overflow: 'hidden' });
+        return box;
+    }
+
+    test('two tiles side by side start their line at the same height', () => {
+        // Reported live: the Coins tile sat a few pixels below the Queue tile
+        // beside it, because Coins draws a coin sprite and Queue does not
+        const queue = contentBox();
+        row(queue, [{ text: 'Queue' }, { text: '4h 12m', push: true }]);
+
+        const coins = contentBox();
+        row(coins, [glyph('coin'), { text: '1.2M', push: true }]);
+
+        // Both put the line in a box of its own height at the top of the tile,
+        // rather than letting the line's own alignment place it in the tile
+        expect(queue.style.flexDirection).toBe('column');
+        expect(queue.style.justifyContent).toBe('flex-start');
+        expect(coins.style.flexDirection).toBe(queue.style.flexDirection);
+        expect(coins.style.justifyContent).toBe(queue.style.justifyContent);
+        expect(coins.children[0].style.alignItems).toBe(queue.children[0].style.alignItems);
+    });
+
+    test('centring is horizontal, so a phrase stays a phrase', () => {
+        const host = contentBox();
+        row(host, [glyph('coin'), { text: '12' }], { center: true });
+
+        expect(host.children[0].style.justifyContent).toBe('center');
+        // Not the tile: centring the column would move the line down the tile
+        expect(host.style.justifyContent).toBe('flex-start');
+    });
+
+    test('redrawing replaces the line rather than stacking another under it', () => {
+        const host = contentBox();
+        row(host, [{ text: 'first' }]);
+        row(host, [{ text: 'second' }]);
+
+        expect(host.children).toHaveLength(1);
+        expect(host.textContent).toBe('second');
     });
 });
 

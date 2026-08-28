@@ -3550,7 +3550,8 @@ registerRow({
         Object.assign(container.style, {
             display: 'flex',
             flexDirection: 'column',
-            justifyContent: 'center',
+            // From the top, level with the first line of the tile beside it
+            justifyContent: 'flex-start',
             gap: '3px',
             lineHeight: '1.3',
             overflow: 'hidden',
