@@ -20,6 +20,7 @@ import { calculateTaskCompletionSeconds } from './task-profit-display.js';
 import taskCompletionTracker from './task-completion-tracker.js';
 import taskRerollTracker from './task-reroll-tracker.js';
 import { forecastTaskSlots } from './task-slot-forecast.js';
+import { buildTaskStatisticsCsv } from './task-statistics-export.js';
 import { timeReadable, formatKMB, formatDateTime } from '../../utils/formatters.js';
 import { TOOLASHA } from '../../utils/selectors.js';
 
@@ -505,6 +506,11 @@ class TaskStatistics {
         title.textContent = 'Task Statistics';
         title.style.cssText = `margin: 0; color: ${textColor}; font-size: 24px;`;
 
+        const headerButtons = document.createElement('div');
+        headerButtons.style.cssText = 'display: flex; align-items: center; gap: 10px;';
+
+        const copyCsvButton = this.createCopyCsvButton(statsData.rewards, textColor);
+
         const closeButton = document.createElement('button');
         closeButton.textContent = '\u00d7';
         closeButton.style.cssText = `
@@ -518,8 +524,11 @@ class TaskStatistics {
         `;
         closeButton.onclick = () => this.closePopup();
 
+        headerButtons.appendChild(copyCsvButton);
+        headerButtons.appendChild(closeButton);
+
         header.appendChild(title);
-        header.appendChild(closeButton);
+        header.appendChild(headerButtons);
         popup.appendChild(header);
 
         // Content sections
@@ -541,6 +550,46 @@ class TaskStatistics {
         overlay.appendChild(popup);
         document.body.appendChild(overlay);
         this.overlay = overlay;
+    }
+
+    /**
+     * Build the "Copy CSV" button that puts the per-task figures on the
+     * clipboard, for a spreadsheet or a chat message rather than retyping them.
+     *
+     * @param {Object} rewards - `calculateRewardsSummary()` output
+     * @param {string} textColor - Text color
+     * @returns {HTMLElement} The button
+     */
+    createCopyCsvButton(rewards, textColor) {
+        const button = document.createElement('button');
+        const label = 'Copy CSV';
+        button.textContent = label;
+        button.style.cssText = `
+            background: #2a2a2a;
+            border: 1px solid #3a3a3a;
+            border-radius: 4px;
+            color: ${textColor};
+            font-size: 12px;
+            cursor: pointer;
+            padding: 4px 8px;
+        `;
+
+        button.onclick = async () => {
+            try {
+                const csv = buildTaskStatisticsCsv(rewards);
+                await navigator.clipboard.writeText(csv);
+                button.textContent = 'Copied!';
+            } catch (error) {
+                console.error('[TaskStatistics] Copying the CSV failed:', error);
+                button.textContent = 'Copy failed';
+            } finally {
+                setTimeout(() => {
+                    button.textContent = label;
+                }, 1500);
+            }
+        };
+
+        return button;
     }
 
     /**
