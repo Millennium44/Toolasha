@@ -8,6 +8,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import { readScoped } from '../../utils/character-key.js';
 
 const mocks = vi.hoisted(() => ({
     upgradeResult: { baseline: null, results: [], food: null },
@@ -886,6 +887,42 @@ describe('gearFingerprint', () => {
     test('nothing to sign is null rather than a signature of nothing', () => {
         expect(gearFingerprint([])).toBeNull();
         expect(gearFingerprint(null)).toBeNull();
+    });
+});
+
+/**
+ * Regression: the persisted rate used to be read off `Object.keys(...)[0]` of
+ * `consumablesUsed`, which is party-slot order, not "self". A character who
+ * joined a party after another member sits at a later slot, so their own
+ * consumption used to be filed under whichever member happened to occupy slot
+ * one — silently corrupting the Consumables panel's auto-rate feature with
+ * someone else's numbers.
+ */
+describe('persisted consumable rates name the character explicitly', () => {
+    beforeEach(() => {
+        mocks.store.clear();
+    });
+
+    test('the rate is filed under the hrid the caller names, not the first key in consumablesUsed', async () => {
+        const simResult = {
+            simulatedTime: 3600 * 1e9,
+            zoneName: '/actions/combat/fly',
+            difficultyTier: 0,
+            // player1 (a party member ahead of self in slot order) used far more
+            // than self (player2) — the old first-key read would have filed
+            // player1's rate under "the sim's own character"
+            consumablesUsed: {
+                player1: { '/items/mystery_stew': 100 },
+                player2: { '/items/cheese': 5 },
+            },
+        };
+
+        ui._persistConsumableRates(simResult, 'player2');
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const stored = await readScoped('simConsumableRates', 'combatExport', null);
+        expect(stored.perHour).toEqual({ '/items/cheese': 5 });
     });
 });
 

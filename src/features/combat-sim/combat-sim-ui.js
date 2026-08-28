@@ -4051,7 +4051,7 @@ class CombatSimUI {
             this._lastSimResult = simResult;
             this._lastSimHours = hours;
             this._lastGameData = gameData;
-            this._persistConsumableRates(simResult);
+            this._persistConsumableRates(simResult, selfHrid);
 
             // Generate label before displaying (display may re-render)
             const historyLabel = this._editor?.generateSimLabel() || 'Current Gear';
@@ -4299,14 +4299,19 @@ class CombatSimUI {
      * The one figure the Consumables panel cannot compute for itself: food has
      * no arithmetic rate (it fires on health and mana triggers), so the sim is
      * the only thing that can say how fast a zone eats it while nothing is
-     * being fought. First player only — the sim's own character — as
-     * per-hour counts keyed by item, stamped with the zone they were simmed in.
+     * being fought. The sim's own character only — named explicitly by the
+     * caller rather than guessed from key order: `consumablesUsed`'s keys
+     * mirror party-slot order, and self is not always `player1` or first in
+     * that order (a character who joined a party after others sits at
+     * whatever slot the game gave them) — as per-hour counts keyed by item,
+     * stamped with the zone they were simmed in.
      *
      * @param {Object} simResult - The finished SimResult
+     * @param {string} selfHrid - The character's own hrid in this run's DTOs
      */
-    _persistConsumableRates(simResult) {
+    _persistConsumableRates(simResult, selfHrid) {
         try {
-            const playerHrid = Object.keys(simResult?.consumablesUsed || {})[0];
+            const playerHrid = selfHrid || Object.keys(simResult?.consumablesUsed || {})[0];
             const used = playerHrid ? simResult.consumablesUsed[playerHrid] : null;
             if (!used) return;
             const simHours = (Number(simResult.simulatedTime) || 0) / (3600 * 1e9) || 1;
