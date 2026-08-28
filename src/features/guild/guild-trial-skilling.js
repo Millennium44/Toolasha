@@ -109,11 +109,15 @@ export function personalFromSkilling(data) {
     const double = percent(Number(data?.doubleProgressChance));
     if (double) personal['Double Progress'] = double;
 
+    // A stated zero is kept, exactly as it is above: neither is divided by
+    // anywhere in this codebase, so there is no arithmetic a zero could
+    // poison, and "Work Power 0" is a fact about a participant contributing
+    // nothing this tick — a different claim from the field being absent
     const perAction = Number(data?.progressPerAction);
-    if (Number.isFinite(perAction) && perAction > 0) personal['Work Power'] = String(perAction);
+    if (Number.isFinite(perAction) && perAction >= 0) personal['Work Power'] = String(perAction);
 
     const actionMs = Number(data?.actionTimeMs);
-    if (Number.isFinite(actionMs) && actionMs > 0) personal['Work Time'] = `${(actionMs / 1000).toFixed(2)}s`;
+    if (Number.isFinite(actionMs) && actionMs >= 0) personal['Work Time'] = `${(actionMs / 1000).toFixed(2)}s`;
 
     return personal;
 }

@@ -88,6 +88,14 @@ describe('personalFromSkilling', () => {
         expect(personalFromSkilling({})).toEqual({});
         expect(personalFromSkilling(null)).toEqual({});
     });
+
+    test('a stated zero work power or work time is kept too', () => {
+        // Neither is divided by anywhere downstream, so there is no arithmetic
+        // a zero could poison — a participant contributing nothing this tick
+        // is a fact, same as a zero double-progress chance
+        expect(personalFromSkilling({ progressPerAction: 0 })).toEqual({ 'Work Power': '0' });
+        expect(personalFromSkilling({ actionTimeMs: 0 })).toEqual({ 'Work Time': '0.00s' });
+    });
 });
 
 describe('the live skilling tracker', () => {
