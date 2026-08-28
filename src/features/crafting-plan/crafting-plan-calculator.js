@@ -27,10 +27,16 @@ function findProductionAction(itemHrid) {
 
 /**
  * Get artisan tea material reduction bonus for an action type.
+ *
+ * Exported so other consumers of a recipe's inputs — `craft-arbitrage-adapter.js`
+ * in particular — apply the exact same reduction to the exact same inputs as the
+ * plan itself does, rather than reporting the printed (undiscounted) counts next
+ * to a cost that already assumes the discount.
+ *
  * @param {string} actionType - e.g. '/action_types/brewing'
  * @returns {number} Reduction as decimal (e.g. 0.112 for 11.2%)
  */
-function getArtisanBonus(actionType) {
+export function getArtisanBonus(actionType) {
     try {
         const gameData = dataManager.getInitClientData();
         const equipment = dataManager.getEquipment();

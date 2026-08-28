@@ -14,7 +14,12 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const game = vi.hoisted(() => ({ prices: {}, data: null, stats: { actionTime: 10, totalEfficiency: 100 } }));
+const game = vi.hoisted(() => ({
+    prices: {},
+    data: null,
+    stats: { actionTime: 10, totalEfficiency: 100 },
+    artisanBonus: 0,
+}));
 
 vi.mock('../../core/data-manager.js', () => ({
     default: {
@@ -33,7 +38,7 @@ vi.mock('../../utils/market-data.js', () => ({
 vi.mock('../../utils/game-lookups.js', () => ({ getShopCoinCost: () => 0 }));
 
 vi.mock('../../utils/tea-parser.js', () => ({
-    parseArtisanBonus: () => 0,
+    parseArtisanBonus: () => game.artisanBonus,
     getDrinkConcentration: () => 0,
 }));
 
@@ -47,6 +52,7 @@ const HAT = '/items/cheese_hat';
 
 beforeEach(() => {
     game.stats = { actionTime: 10, totalEfficiency: 100 };
+    game.artisanBonus = 0;
     game.prices = { [MILK]: 10, [CHEESE]: 100, [HAT]: 1000 };
     // A fresh object each time, so the adapter's index cache is invalidated the
     // same way a reload invalidates it
@@ -94,6 +100,30 @@ describe('describeCraft', () => {
         // needs telling that making it is currently the worse of the two
         game.prices[CHEESE] = 5;
         expect(describeCraft(CHEESE)).toMatchObject({ unitCost: 20, strategy: 'buy' });
+    });
+
+    test('reported input quantities agree with the artisan-discounted cost, not the printed recipe', () => {
+        // 2 milk per cheese, 10% artisan reduction → the plan costs cheese at
+        // 2 × 0.9 × 10 = 18, so a caller checking "do I have enough milk" against
+        // `inputs` must see 1.8, not the printed 2 — otherwise it demands milk the
+        // craft will never actually consume.
+        game.artisanBonus = 0.1;
+
+        const craft = describeCraft(CHEESE);
+        expect(craft.unitCost).toBeCloseTo(18, 10);
+        expect(craft.inputs).toEqual([{ itemHrid: MILK, quantityPerUnit: 1.8 }]);
+    });
+
+    test('the upgrade item is not artisan-discounted in the reported inputs either', () => {
+        game.data.actionDetailMap['/actions/crafting/cheese_hat'].upgradeItemHrid = MILK;
+        game.artisanBonus = 0.5;
+
+        const craft = describeCraft(HAT);
+        // cheese input (3) is halved by the tea; the upgrade slot (milk) is not
+        expect(craft.inputs).toEqual([
+            { itemHrid: CHEESE, quantityPerUnit: 0.75 },
+            { itemHrid: MILK, quantityPerUnit: 0.5 },
+        ]);
     });
 
     test('an action that yields several divides everything by the yield', () => {

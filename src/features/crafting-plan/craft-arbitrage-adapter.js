@@ -20,7 +20,7 @@
  */
 
 import dataManager from '../../core/data-manager.js';
-import { computeBestCraftingPlan } from './crafting-plan-calculator.js';
+import { computeBestCraftingPlan, getArtisanBonus } from './crafting-plan-calculator.js';
 import { calculateActionStats } from '../../utils/action-calculator.js';
 import { calculateEfficiencyMultiplier } from '../../utils/efficiency.js';
 
@@ -162,9 +162,12 @@ export function describeCraft(itemHrid, options = {}) {
     if (!Number.isFinite(unitCost) || unitCost <= 0) return null;
 
     const perUnit = outputCount > 0 ? 1 / outputCount : 1;
+    // Same reduction `computeBestCraftingPlan` applied to reach `unitCost` above —
+    // the upgrade item is deliberately left out of it, matching the plan.
+    const artisanBonus = getArtisanBonus(action.type);
     const inputs = (action.inputItems || []).map((input) => ({
         itemHrid: input.itemHrid,
-        quantityPerUnit: (input.count || 1) * perUnit,
+        quantityPerUnit: (input.count || 1) * (1 - artisanBonus) * perUnit,
     }));
     if (action.upgradeItemHrid) {
         inputs.push({ itemHrid: action.upgradeItemHrid, quantityPerUnit: perUnit });
