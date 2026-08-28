@@ -1845,6 +1845,43 @@ describe('generateSkillingEquipmentCandidates targetSkill filtering', () => {
         // explanation for a cost that looks too high
         expect(swap.costDetail.keptValue).toBeGreaterThanOrEqual(0);
     });
+
+    test('philo-accessory dedup keys on enhancement level, so two loadouts wearing the same ring at different levels each get their own candidate', () => {
+        // Regression: the philo dedup key used to omit currentLevel, so the
+        // second loadout's candidate (same slot/upgrade/current hrid, different
+        // level) was silently dropped as "already seen" — and since
+        // applyToEquipment matches on the exact (hrid, enhancementLevel) pair,
+        // that loadout's Philosopher's-ring upgrade never got offered at all.
+        const gameData = skillingGameData();
+        gameData.itemDetailMap['/items/ring_of_speed'] = {
+            name: 'Ring of Speed',
+            itemLevel: 50,
+            equipmentDetail: { type: '/equipment_types/ring', noncombatStats: {} },
+        };
+        gameData.itemDetailMap['/items/philosophers_ring'] = {
+            name: "Philosopher's Ring",
+            itemLevel: 1,
+            equipmentDetail: { type: '/equipment_types/ring', noncombatStats: { skillingSpeed: 0.02 } },
+        };
+
+        const editorDTO = {
+            equipment: { '/equipment_types/ring': { hrid: '/items/ring_of_speed', enhancementLevel: 10 } },
+        };
+        const map = {
+            '/skills/alchemy': {
+                '/equipment_types/ring': { hrid: '/items/ring_of_speed', enhancementLevel: 5 },
+            },
+        };
+
+        const all = generateSkillingEquipmentCandidates(editorDTO, gameData, map);
+        // type 'tier' is specific to addPhiloAccessoryCandidates — the generic
+        // "gear you aren't wearing" generator can also offer this same item as
+        // a 'skilling_gear' candidate for unrelated skills, which isn't what
+        // this regression is about
+        const philoCandidates = all.filter((c) => c.type === 'tier' && c.upgradeHrid === '/items/philosophers_ring');
+
+        expect(philoCandidates.map((c) => c.currentLevel).sort((a, b) => a - b)).toEqual([5, 10]);
+    });
 });
 
 describe('the off-hand a two-hander is traded for', () => {

@@ -6025,7 +6025,13 @@ export function generateSkillingEquipmentCandidates(editorDTO, gameData, skillEq
         const philoCandidates = [];
         addPhiloAccessoryCandidates({ equipment }, gameData, philoCandidates);
         for (const candidate of philoCandidates) {
-            const dedupKey = `philo:${candidate.slot}:${candidate.upgradeHrid}:${candidate.currentHrid}`;
+            // Enhancement level is part of the key, same as the ordinary
+            // candidates above: two skill loadouts can wear the same jewelry
+            // item at different levels, and application matches on the exact
+            // (hrid, enhancementLevel) pair (see applyToEquipment's
+            // isTheSameItem) — omitting the level here let the philo candidate
+            // for one loadout's level silently swallow the other's.
+            const dedupKey = `philo:${candidate.slot}:${candidate.upgradeHrid}:${candidate.currentHrid}:${candidate.currentLevel}`;
             if (seen.has(dedupKey)) continue;
             seen.add(dedupKey);
             candidate.cost = calculateUpgradeCost(candidate, gameData);
