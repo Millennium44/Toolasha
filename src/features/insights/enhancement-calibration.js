@@ -245,6 +245,24 @@ class EnhancementCalibration {
         this.records = [];
         await this._save({ overwrite: true });
     }
+
+    /**
+     * Forget the current character's observations without touching storage.
+     *
+     * This recorder is passive — nothing calls initialize()/disable() around
+     * a character switch the way the other two calibrations do, since it has
+     * no subscription to bring up. But getCachedRecords() (unlike getRecords())
+     * returns `this.records` straight from memory without going through the
+     * owner check in _store(), so without this the panel keeps showing the
+     * departing character's observations under the arriving one's name until
+     * an enhancement session happens to complete and call _store() itself.
+     * Called from insights/index.js's cleanup() alongside the other two.
+     */
+    disable() {
+        this.store.reset();
+        this.records = null;
+        this.owner = null;
+    }
 }
 
 const enhancementCalibration = new EnhancementCalibration();

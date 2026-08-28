@@ -225,4 +225,22 @@ describe('the observations survive a failed read and a second tab', () => {
         expect(ids(game.stored[KEY])).toEqual(['session_1:5']);
         game.characterId = 'char-1';
     });
+
+    test('disable() clears getCachedRecords() immediately, before any new session completes', async () => {
+        // getCachedRecords() (unlike getRecords()/recordCompletion()) reads
+        // `this.records` straight from memory without going through the
+        // owner check in _store(). insights/index.js calls disable() on
+        // character_switching so a panel reading the cache right after a
+        // switch — before the arriving character has completed any
+        // enhancement session of their own — never shows the departing
+        // character's observations under the new character's name.
+        await calibration.recordCompletion(completedSession());
+        expect(ids(calibration.getCachedRecords())).toEqual(['session_1:5']);
+
+        game.characterId = 'char-2';
+        calibration.disable();
+
+        expect(calibration.getCachedRecords()).toBeNull();
+        game.characterId = 'char-1';
+    });
 });

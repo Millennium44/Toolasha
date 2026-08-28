@@ -39,6 +39,7 @@ export default {
     cleanup: () => {
         combatCalibration.disable();
         predictionCalibration.disable();
+        enhancementCalibration.disable();
     },
     getRecords: () => predictionCalibration.getRecords(),
     clear: () => predictionCalibration.clear(),
