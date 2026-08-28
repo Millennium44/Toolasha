@@ -1422,6 +1422,79 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.27.0](https://github.com/Millennium44/Toolasha/compare/v3.26.0...v3.27.0) (2026-08-28)
+
+### Features
+
+- copy an Enhancement Tracker session as text ([de643e5](https://github.com/Millennium44/Toolasha/commit/de643e584ef3db8a9f54eef399137b23dccb65c6))
+- custom tab headers tooltip their item count and total value ([2b0554e](https://github.com/Millennium44/Toolasha/commit/2b0554e3361eee66f4daee75c4f4a5f1b4410fcb))
+- exclusion popup shows the total value currently omitted ([41b45d0](https://github.com/Millennium44/Toolasha/commit/41b45d0e5789697809862b3ea1c94bb59c76c93a))
+- gold sources panel gains a copy-as-text export ([998c8c0](https://github.com/Millennium44/Toolasha/commit/998c8c0570032dd20e9489209e73d8198ce8e948))
+- guild roster contribution list gets a name filter box ([23c93b8](https://github.com/Millennium44/Toolasha/commit/23c93b84ec405ec8dc249c35f4bee177f1023069))
+- guild trial ledger has a Copy as text button ([18ba59b](https://github.com/Millennium44/Toolasha/commit/18ba59b67be6642fb0753206c4c17ed72e9f2fd1))
+- guild trial ledger shows a totals row ([f679b0d](https://github.com/Millennium44/Toolasha/commit/f679b0db959719a2dd55d666d365d3268f3e5130))
+- guild trial ledger table has a name filter box ([d361e97](https://github.com/Millennium44/Toolasha/commit/d361e970bb8ad5beba113e65edb19fab39865d35))
+- networth history chart shows the all-time high alongside the current total ([fb93e20](https://github.com/Millennium44/Toolasha/commit/fb93e20a5ff5cc8146fdae8c28fbe1cf0951d683))
+- philo calculator gets a copy-as-text button ([ecdfb64](https://github.com/Millennium44/Toolasha/commit/ecdfb649e9f87155669b820e74f560c112f108bf))
+- remembered-results banner offers a one-click Clear ([e5851d1](https://github.com/Millennium44/Toolasha/commit/e5851d1454ebb89168f434594fb25a72cad463a4))
+- trade ledger shows filtered-item totals ([0ea7244](https://github.com/Millennium44/Toolasha/commit/0ea7244c5e5846b717e699eef5fede05f6793f05))
+- treasure tracker remembers which chests were expanded ([7f88d47](https://github.com/Millennium44/Toolasha/commit/7f88d4730d67e83654ac1e12058bedc9b032ad1c))
+- Upgrade table sort survives closing the panel ([0277a0d](https://github.com/Millennium44/Toolasha/commit/0277a0dc9238ba32cf9a96f9ae59f1a179458ed8))
+- Upgrade table Δ columns tooltip the exact arithmetic ([c6ad11f](https://github.com/Millennium44/Toolasha/commit/c6ad11f2836a781eb752dfa1109eeaf49db3c885))
+- watchlist chips flag stale price readings ([2820bd8](https://github.com/Millennium44/Toolasha/commit/2820bd8133c5c239c25f53080e24c6f207fc29a6))
+
+### Bug Fixes
+
+- a superseded push/pull can still overwrite what took it over ([cfd1b36](https://github.com/Millennium44/Toolasha/commit/cfd1b361915845a922bbab5bea6c12b566f08037))
+- **abilities:** ability book calculator no longer claims a maxed ability needs 0 books ([cc9bd5e](https://github.com/Millennium44/Toolasha/commit/cc9bd5eafadb97458ee7739ad0efd598a27e2f49))
+- **abilities:** reset ability book targets on character switch ([1af5025](https://github.com/Millennium44/Toolasha/commit/1af50254cbed74ebea0bc4aded97ff29cb0387d6))
+- ability book cost rounds partial books up, not down ([fec036b](https://github.com/Millennium44/Toolasha/commit/fec036b0efb1a5ea3c7b30ce7c7d08dac6c380d3))
+- alchemy gold summary overstates actions a partial item stack can fund ([e55af75](https://github.com/Millennium44/Toolasha/commit/e55af75e18bb83570544fa4c5a7edbdde6fed25a))
+- arbitrage board renders a stale character's ranking into the new panel ([0a287de](https://github.com/Millennium44/Toolasha/commit/0a287dee15e216fafb0387b801d7ca2d91860cd0))
+- budget calculator leaves its panel-position observer running after disable() ([4b78b23](https://github.com/Millennium44/Toolasha/commit/4b78b23d95dbdf9646ca89b254eebe35824eeaa2))
+- character-select activity icon stops updating after the first queued action ends ([13e2c49](https://github.com/Millennium44/Toolasha/commit/13e2c49dc3b2621fc9a96325581b9236c0f120ae))
+- chat history extender reads react props via removed fiber key ([a4349df](https://github.com/Millennium44/Toolasha/commit/a4349df79626e281c0b6e2d4330e12708ec8264d))
+- coinify tracker warns when an item has no sellPrice to bill by ([ec17611](https://github.com/Millennium44/Toolasha/commit/ec17611fd8dd634c4c8bf78396b1bd58660c148d))
+- collection navigation stops watching for tiles after one panel remount ([ed22464](https://github.com/Millennium44/Toolasha/commit/ed22464d0f4eb5ece7c1a2213cb7cb3a043a52a2))
+- combat level session and rate history survive a character switch upward ([015fe08](https://github.com/Millennium44/Toolasha/commit/015fe0834b534f55f275f9810097becc29cec79c))
+- combat session fallback no longer double-spends a mixed-coverage run ([9555ba7](https://github.com/Millennium44/Toolasha/commit/9555ba799ffd2a934e4df9bcd648f946bb38e799))
+- combat sim exp rate extraction drops thousand-separated figures ([b14742e](https://github.com/Millennium44/Toolasha/commit/b14742ef71b83469ed15020edcf7fa19cabe95f3))
+- combined combat session view showed 0 experience ([ee2aa57](https://github.com/Millennium44/Toolasha/commit/ee2aa572d1cb7fa5c73081579edca94fed7bef0d))
+- crafting-plan input quantities agree with the artisan-discounted cost ([b297d06](https://github.com/Millennium44/Toolasha/commit/b297d06f15ec0322c7f0bf3bdd52cbaadaeec5bd))
+- damage tracker stops naming a new battle after the last one it saw ([4b2d9ed](https://github.com/Millennium44/Toolasha/commit/4b2d9eddb76afdbaa4c0269fbc5cabc6769c4ab8))
+- decompose history undercounts successes in batched messages ([8b00218](https://github.com/Millennium44/Toolasha/commit/8b00218904f4492521d0cc61eb85962f41ab1926))
+- drink timer low-supply alert stays disarmed across a character switch ([ffb8d8c](https://github.com/Millennium44/Toolasha/commit/ffb8d8ca1454260ca78efbaccde1ec15c50d9a06))
+- dungeon tracker no longer restarts a run on a resent wave 0 ([5e231db](https://github.com/Millennium44/Toolasha/commit/5e231dbd2173805b974d56956203f449b29a17ee))
+- elite achievement reminder icon survives same-modal profile switch ([fccb77e](https://github.com/Millennium44/Toolasha/commit/fccb77e1a46cddacdc3645b1f87bbf9366554bd3))
+- enhancement calibration panel shows previous character's data ([0c05d32](https://github.com/Millennium44/Toolasha/commit/0c05d320679d8d667edfa5e90bc1ffca47b8624c))
+- formatKMB3Digits overflows to 4 digits past a billion ([69f78eb](https://github.com/Millennium44/Toolasha/commit/69f78eb5c37e050bf871634e1d6acedbb52d84ee))
+- goal planner drops the priced context and plans on character switch ([4c53062](https://github.com/Millennium44/Toolasha/commit/4c53062686607c09d97fc44cec2c0324852b12e0))
+- guard guild shrine hydration against a character-switch race ([2a58702](https://github.com/Millennium44/Toolasha/commit/2a5870250cb92ff4252ee224630b2197fd526a88))
+- house panel bid price silently matched the ask price ([bf553ef](https://github.com/Millennium44/Toolasha/commit/bf553effcb1e70c78ae474d8a097d6c735424d3d))
+- ironcow panel inherits previous character's costed loop ([4af9e4b](https://github.com/Millennium44/Toolasha/commit/4af9e4bea14066aabc51f13ee1ed81cebd9e83e4))
+- labyrinth map no longer badges chest rooms as fights ([1be996f](https://github.com/Millennium44/Toolasha/commit/1be996f37f276c7a5ebd8c9267a4895946da59b4))
+- labyrinth run ledger no longer nets mid-run shop top-ups against spend ([b3b3614](https://github.com/Millennium44/Toolasha/commit/b3b3614d8ac028ece67009e1b16b8779c7cced79))
+- level calculator ignores current level for sim-imported skills ([36e9924](https://github.com/Millennium44/Toolasha/commit/36e9924909715e3afe34dbbfe819c6b86f32fdf4))
+- loadout snapshots stop leaking into the next character ([f7dbb8a](https://github.com/Millennium44/Toolasha/commit/f7dbb8ae4983787e564c354ba727ff1f02025147))
+- loot log delete-historical-entry crashes on a nonexistent method ([4a27331](https://github.com/Millennium44/Toolasha/commit/4a27331fcc679b1035854de92780e40f8ad6902e))
+- loot log merge can write a character switch's data under the wrong keys ([b1ad600](https://github.com/Millennium44/Toolasha/commit/b1ad600aa7cf183c843beb47750b3c96d2709ab5))
+- marketAPI.fetch dedup can still burst with multiple forced callers ([8fb406d](https://github.com/Millennium44/Toolasha/commit/8fb406dc94576d38b22d7204c6e642c70afe9fe6))
+- mention badge click wipes unread mentions on an already-open popup ([7cccdc1](https://github.com/Millennium44/Toolasha/commit/7cccdc12f907898fb2e8c879277bec400917dc82))
+- net worth exclusions leak from one character onto another after a switch ([daccf66](https://github.com/Millennium44/Toolasha/commit/daccf66d860459703f52ca2270d7db2e8bbbcb58))
+- pop-out chat cross-talks between multiple game tabs ([269c45e](https://github.com/Millennium44/Toolasha/commit/269c45e5d2428a566209b708b116087021a12bc4))
+- production per-action breakdown double-counts efficiency in bonus drop subsections ([847dc62](https://github.com/Millennium44/Toolasha/commit/847dc62620a735395e69b217ec30652d55691b3c))
+- queue time left tile rounds to whole actions like the snapshot does ([06eff6f](https://github.com/Millennium44/Toolasha/commit/06eff6fef9a06b3814512a6eb47f2ee179b9dfa9))
+- Sim Accuracy checker actually resets on a character switch ([c3b1222](https://github.com/Millennium44/Toolasha/commit/c3b12229893061b3e80c5b99ff42a02ec79b2ffd))
+- skilling optimizer shows a previous character's result after switching ([ea11f46](https://github.com/Millennium44/Toolasha/commit/ea11f46045f9ecbdb9d36d27f1e54f8d7ca36528))
+- task reroll protection's lockdown timer survives disable() ([93c0e8f](https://github.com/Millennium44/Toolasha/commit/93c0e8f664416a95f20f955c7f068e501bbaff24))
+
+### Documentation
+
+- changelog for fifth audit round ([967d6f8](https://github.com/Millennium44/Toolasha/commit/967d6f89f3af55b0b9aab1b13746a721c40fcedf))
+- changelog for fourth audit round ([1afcf1f](https://github.com/Millennium44/Toolasha/commit/1afcf1f8a7933c43f45e64993a85d266b0702503))
+- changelog for the chest-badge fix ([5b55b7d](https://github.com/Millennium44/Toolasha/commit/5b55b7def4431ca724ea674490369948b458e3ce))
+- changelog for third audit round ([9eafa89](https://github.com/Millennium44/Toolasha/commit/9eafa8993fc2e84708c64f1897ba7e252a1a8ea7))
+
 ## [3.26.0](https://github.com/Millennium44/Toolasha/compare/v3.25.1...v3.26.0) (2026-08-28)
 
 ### Features
