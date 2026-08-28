@@ -194,8 +194,15 @@ class MarketHistoryPanel {
         });
         // The marketplace panel announces itself instead of being hunted for once
         // a second. Seeded with a scan because the panel may already be open when
-        // the feature initializes.
-        for (const el of document.querySelectorAll(MARKETPLACE_SELECTOR)) this.marketplacePanels.add(el);
+        // the feature initializes; @run-at document-start the seed scan (and the
+        // tab-button catch-up below) waits for the shared observer's actual-ready
+        // signal (immediate if it is already attached).
+        this.cleanupRegistry.registerCleanup(
+            domObserver.onReady('MarketHistoryCatchUp', () => {
+                for (const el of document.querySelectorAll(MARKETPLACE_SELECTOR)) this.marketplacePanels.add(el);
+                this.ensureTabButton();
+            })
+        );
         const marketplaceWatcher = domObserver.onClass(
             'MarketHistoryMarketplacePanel',
             ['MarketplacePanel_marketplacePanel'],
@@ -210,7 +217,6 @@ class MarketHistoryPanel {
             this.marketplace = null;
             this.marketplacePanels.clear();
         });
-        this.ensureTabButton();
 
         const poll = setInterval(() => this.followMarketplace(), POLL_MS);
         this.cleanupRegistry.registerInterval(poll);

@@ -21,17 +21,23 @@ class NetworkAlert {
             return;
         }
 
-        // 1. Check if header exists already
-        const existingElem = document.querySelector('[class*="Header_totalLevel"]');
-        if (existingElem) {
-            this.prepareContainer(existingElem);
-        }
-
-        // 2. Watch for header to appear (handles SPA navigation)
+        // 1. Watch for header to appear (handles SPA navigation)
         const unregister = domObserver.onClass('NetworkAlert', 'Header_totalLevel', (elem) => {
             this.prepareContainer(elem);
         });
         this.unregisterHandlers.push(unregister);
+
+        // 2. Cover a header that exists already. @run-at document-start: a header rendered
+        // before the shared observer attaches to document.body is invisible to the class
+        // watcher, so the catch-up waits for its actual-ready signal (immediate if attached).
+        this.unregisterHandlers.push(
+            domObserver.onReady('NetworkAlertCatchUp', () => {
+                const existingElem = document.querySelector('[class*="Header_totalLevel"]');
+                if (existingElem) {
+                    this.prepareContainer(existingElem);
+                }
+            })
+        );
     }
 
     /**

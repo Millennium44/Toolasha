@@ -59,11 +59,17 @@ class InventoryBadgeManager {
 
         this.isInitialized = true;
 
-        // Check if inventory is already open
-        const existingInv = document.querySelector('[class*="Inventory_items"]');
-        if (existingInv) {
-            this.currentInventoryElem = existingInv;
-        }
+        // Check if inventory is already open. @run-at document-start: an inventory rendered
+        // before the shared observer attaches to document.body is invisible to the class
+        // watcher, so the catch-up waits for its actual-ready signal (immediate if attached).
+        this.unregisterHandlers.push(
+            domObserver.onReady('InventoryBadgeManagerCatchUp', () => {
+                const existingInv = document.querySelector('[class*="Inventory_items"]');
+                if (existingInv && !this.currentInventoryElem) {
+                    this.currentInventoryElem = existingInv;
+                }
+            })
+        );
 
         // Watch for inventory panel
         const unregister = domObserver.onClass('InventoryBadgeManager', 'Inventory_items', (elem) => {

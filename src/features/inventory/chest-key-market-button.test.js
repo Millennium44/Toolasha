@@ -20,7 +20,14 @@ vi.mock('../../core/data-manager.js', () => ({
     default: { getInitClientData: () => game.clientData },
 }));
 vi.mock('../../core/dom-observer.js', () => ({
-    default: { register: () => () => {} },
+    default: {
+        register: () => () => {},
+        // Mirrors the real DOMObserver.onReady in its already-attached steady state
+        onReady: (name, callback) => {
+            callback();
+            return () => {};
+        },
+    },
 }));
 vi.mock('../../utils/marketplace-tabs.js', () => ({
     navigateToMarketplace: (hrid) => game.navigated.push(hrid),

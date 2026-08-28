@@ -93,7 +93,16 @@ vi.mock('../../../core/config.js', () => ({
         onSettingChange: () => () => {},
     },
 }));
-vi.mock('../../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../../core/dom-observer.js', () => ({
+    default: {
+        onClass: () => () => {},
+        // Mirrors the real DOMObserver.onReady in its already-attached steady state
+        onReady: (name, callback) => {
+            callback();
+            return () => {};
+        },
+    },
+}));
 vi.mock('../inventory-sort.js', () => ({ default: { onModeChange: () => () => {} } }));
 vi.mock('../inventory-badge-manager.js', () => ({
     default: { currentInventoryElem: null, renderAllBadges: vi.fn(async () => {}) },

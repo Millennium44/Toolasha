@@ -33,7 +33,14 @@ vi.mock('../../core/config.js', () => ({
 }));
 
 vi.mock('../../core/dom-observer.js', () => ({
-    default: { onClass: () => () => {} },
+    default: {
+        onClass: () => () => {},
+        // Mirrors the real DOMObserver.onReady in its already-attached steady state
+        onReady: (name, callback) => {
+            callback();
+            return () => {};
+        },
+    },
 }));
 
 vi.mock('../../core/data-manager.js', () => ({

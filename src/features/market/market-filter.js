@@ -70,11 +70,20 @@ class MarketFilter {
 
         this.unregisterHandlers.push(unregisterItems);
 
-        // Also check immediately in case marketplace is already open
-        const existingFilterContainer = document.querySelector('div[class*="MarketplacePanel_itemFilterContainer"]');
-        if (existingFilterContainer) {
-            this.injectFilterUI(existingFilterContainer);
-        }
+        // Also cover a marketplace that is already open. @run-at document-start: a container
+        // rendered before the shared observer attaches to document.body is invisible to the
+        // class watcher, so the catch-up waits for its actual-ready signal (immediate if
+        // it is already attached).
+        this.unregisterHandlers.push(
+            domObserver.onReady('market-filter-catch-up', () => {
+                const existingFilterContainer = document.querySelector(
+                    'div[class*="MarketplacePanel_itemFilterContainer"]'
+                );
+                if (existingFilterContainer) {
+                    this.injectFilterUI(existingFilterContainer);
+                }
+            })
+        );
     }
 
     /**

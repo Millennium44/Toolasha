@@ -17,7 +17,16 @@ import { describe, test, expect, beforeEach, vi } from 'vitest';
 const game = vi.hoisted(() => ({ listings: null, styles: new Map(), handlers: [], notified: [] }));
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true } }));
-vi.mock('../../core/dom-observer.js', () => ({ default: { register: () => () => {} } }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        register: () => () => {},
+        // Mirrors the real DOMObserver.onReady in its already-attached steady state
+        onReady: (name, callback) => {
+            callback();
+            return () => {};
+        },
+    },
+}));
 // The badge and the "a listing finished" notification read the same count.
 // These tests are about the badge, so the telling half is stubbed out — the
 // alternative is a real toast for every listing this file invents.

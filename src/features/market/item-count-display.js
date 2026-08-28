@@ -12,6 +12,7 @@ import config from '../../core/config.js';
 class ItemCountDisplay {
     constructor() {
         this.unregisterObserver = null;
+        this.unregisterReady = null;
         this.isInitialized = false;
         this.itemsUpdatedHandler = null;
     }
@@ -46,11 +47,15 @@ class ItemCountDisplay {
             }
         );
 
-        // Check for existing market container
-        const existingContainer = document.querySelector('[class*="MarketplacePanel_marketItems"]');
-        if (existingContainer) {
-            this.updateItemCounts(existingContainer);
-        }
+        // Check for an existing market container. @run-at document-start: a container rendered
+        // before the shared observer attaches to document.body is invisible to the class
+        // watcher, so the catch-up waits for its actual-ready signal (immediate if attached).
+        this.unregisterReady = domObserver.onReady('ItemCountDisplayCatchUp', () => {
+            const existingContainer = document.querySelector('[class*="MarketplacePanel_marketItems"]');
+            if (existingContainer) {
+                this.updateItemCounts(existingContainer);
+            }
+        });
     }
 
     /**
@@ -202,6 +207,11 @@ class ItemCountDisplay {
             if (this.unregisterObserver) {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
+            }
+
+            if (this.unregisterReady) {
+                this.unregisterReady();
+                this.unregisterReady = null;
             }
 
             if (this.itemsUpdatedHandler) {

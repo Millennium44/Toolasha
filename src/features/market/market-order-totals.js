@@ -17,6 +17,7 @@ class MarketOrderTotals {
     constructor() {
         this.unregisterWebSocket = null;
         this.unregisterObserver = null;
+        this.unregisterReady = null;
         this.isInitialized = false;
         this.displayElement = null;
         this.marketplaceClickHandler = (event) => {
@@ -67,15 +68,20 @@ class MarketOrderTotals {
      * Setup DOM observer for header area
      */
     setupObserver() {
-        // 1. Check if element already exists (handles late initialization)
-        const existingElem = document.querySelector('[class*="Header_totalLevel"]');
-        if (existingElem) {
-            this.injectDisplay(existingElem);
-        }
-
-        // 2. Watch for future additions (handles SPA navigation, page reloads)
+        // 1. Watch for future additions (handles SPA navigation, page reloads)
         this.unregisterObserver = domObserver.onClass('MarketOrderTotals', 'Header_totalLevel', (totalLevelElem) => {
             this.injectDisplay(totalLevelElem);
+        });
+
+        // 2. Cover an element that already exists (handles late initialization). @run-at
+        // document-start: a header rendered before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up waits for its
+        // actual-ready signal (immediate if it is already attached).
+        this.unregisterReady = domObserver.onReady('MarketOrderTotalsCatchUp', () => {
+            const existingElem = document.querySelector('[class*="Header_totalLevel"]');
+            if (existingElem) {
+                this.injectDisplay(existingElem);
+            }
         });
     }
 
@@ -297,6 +303,11 @@ class MarketOrderTotals {
             if (this.unregisterObserver) {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
+            }
+
+            if (this.unregisterReady) {
+                this.unregisterReady();
+                this.unregisterReady = null;
             }
 
             this.clearDisplay();

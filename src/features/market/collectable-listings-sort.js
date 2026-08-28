@@ -40,10 +40,17 @@ class CollectableListingsSort {
         });
         this.cleanupRegistry.registerCleanup(unregister);
 
-        const existingTable = document.querySelector(`[class*="${TABLE_CLASS}"]`);
-        if (existingTable) {
-            this._watchTable(existingTable);
-        }
+        // @run-at document-start: a table rendered before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.cleanupRegistry.registerCleanup(
+            domObserver.onReady('CollectableListingsSortCatchUp', () => {
+                const existingTable = document.querySelector(`[class*="${TABLE_CLASS}"]`);
+                if (existingTable) {
+                    this._watchTable(existingTable);
+                }
+            })
+        );
     }
 
     /**

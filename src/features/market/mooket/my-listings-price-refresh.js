@@ -141,7 +141,12 @@ class MyListingsPriceRefresh {
             { debounce: true }
         );
         this.cleanupRegistry.registerCleanup(unregister);
-        this.ensureControls();
+        // @run-at document-start: a listings header rendered before the shared observer attaches
+        // to document.body is invisible to the class watcher, so the catch-up waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.cleanupRegistry.registerCleanup(
+            domObserver.onReady('MooketListingsRefreshCatchUp', () => this.ensureControls())
+        );
     }
 
     cleanup() {

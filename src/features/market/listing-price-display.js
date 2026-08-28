@@ -226,11 +226,17 @@ class ListingPriceDisplay {
             }
         });
 
-        // Check for existing table
-        const existingTable = document.querySelector('[class*="MarketplacePanel_myListingsTable"]');
-        if (existingTable) {
-            this.scheduleTableRefresh(existingTable);
-        }
+        // Check for an existing table. @run-at document-start: a table rendered before the
+        // shared observer attaches to document.body is invisible to the class watcher, so the
+        // catch-up waits for its actual-ready signal (immediate if it is already attached).
+        this.cleanupRegistry.registerCleanup(
+            domObserver.onReady('ListingPriceDisplayCatchUp', () => {
+                const existingTable = document.querySelector('[class*="MarketplacePanel_myListingsTable"]');
+                if (existingTable) {
+                    this.scheduleTableRefresh(existingTable);
+                }
+            })
+        );
     }
 
     /**

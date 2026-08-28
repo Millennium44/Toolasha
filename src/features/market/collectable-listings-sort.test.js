@@ -7,7 +7,14 @@ vi.mock('../../core/config.js', () => ({
 }));
 
 vi.mock('../../core/dom-observer.js', () => ({
-    default: { onClass: vi.fn(() => () => {}) },
+    default: {
+        onClass: vi.fn(() => () => {}),
+        // Mirrors the real DOMObserver.onReady in its already-attached steady state
+        onReady: vi.fn((name, callback) => {
+            callback();
+            return () => {};
+        }),
+    },
 }));
 
 const { default: collectableListingsSort } = await import('./collectable-listings-sort.js');

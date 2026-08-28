@@ -333,7 +333,14 @@ class MarketplaceBadgeFilter {
         if (!this.unwatchAdded) {
             this.unwatchAdded = domObserver.register('MarketplaceBadge', () => this._attach(), { debounce: true });
         }
-        this._attach();
+        // @run-at document-start: a badge rendered before the shared observer attaches to
+        // document.body is invisible to it, so the catch-up waits for the observer's
+        // actual-ready signal (immediate if it is already attached).
+        if (!this.unwatchReady) {
+            this.unwatchReady = domObserver.onReady('MarketplaceBadgeCatchUp', () => this._attach());
+        } else {
+            this._attach();
+        }
     }
 
     /**
@@ -367,6 +374,8 @@ class MarketplaceBadgeFilter {
     _stopWatching() {
         this.unwatchAdded?.();
         this.unwatchAdded = null;
+        this.unwatchReady?.();
+        this.unwatchReady = null;
         this.textWatcher?.disconnect();
         this.textWatcher = null;
         this.watchedHolder = null;

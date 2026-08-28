@@ -92,13 +92,19 @@ class InventorySort {
             50 // Priority: render before bid/ask badges (lower = earlier)
         );
 
-        // Check if inventory is already open
-        const existingInv = document.querySelector('[class*="Inventory_items"]');
-        if (existingInv) {
-            this.currentInventoryElem = existingInv;
-            this.injectSortControls(existingInv);
-            this.applyCurrentSort();
-        }
+        // Check if inventory is already open. @run-at document-start: an inventory rendered
+        // before the shared observer attaches to document.body is invisible to the class
+        // watcher, so the catch-up waits for its actual-ready signal (immediate if attached).
+        this.unregisterHandlers.push(
+            domObserver.onReady('InventorySortCatchUp', () => {
+                const existingInv = document.querySelector('[class*="Inventory_items"]');
+                if (existingInv) {
+                    this.currentInventoryElem = existingInv;
+                    this.injectSortControls(existingInv);
+                    this.applyCurrentSort();
+                }
+            })
+        );
 
         // Watch for inventory panel (for future opens/reloads)
         const unregister = domObserver.onClass('InventorySort', 'Inventory_items', (elem) => {

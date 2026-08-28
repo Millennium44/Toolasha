@@ -51,7 +51,14 @@ class ChestKeyMarketButton {
         const unregister = domObserver.register('ChestKeyMarketButton', (node) => this._scan(node));
         this.unregisterHandlers.push(unregister);
 
-        this._scan(document.body);
+        // @run-at document-start: a menu rendered before the shared observer attaches to
+        // document.body is invisible to it, so the catch-up scan waits for the observer's
+        // actual-ready signal (immediate if it is already attached).
+        this.unregisterHandlers.push(
+            domObserver.onReady('ChestKeyMarketButtonCatchUp', () => {
+                this._scan(document.body);
+            })
+        );
     }
 
     /**

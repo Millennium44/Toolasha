@@ -606,23 +606,30 @@ export default class CustomTabsUI {
         this._styleEl.textContent = PANEL_CSS;
         document.head.appendChild(this._styleEl);
 
-        // Inject tab button into character panel tab bar
-        this._tryInjectTabButton();
-
         const unregister = domObserver.onClass('CustomTabs', 'TabsComponent_tabsContainer', () => {
             this._tryInjectTabButton();
         });
         this._unregisterHandlers.push(unregister);
 
-        if (!this._tabBtn) {
-            let retries = 0;
-            const retryInterval = setInterval(() => {
-                retries++;
+        // Inject tab button into character panel tab bar. @run-at document-start: a tab bar
+        // rendered before the shared observer attaches to document.body is invisible to the
+        // class watcher, so the catch-up (and its retry fallback) waits for the observer's
+        // actual-ready signal (immediate if it is already attached).
+        this._unregisterHandlers.push(
+            domObserver.onReady('CustomTabsCatchUp', () => {
                 this._tryInjectTabButton();
-                if (this._tabBtn || retries >= 20) clearInterval(retryInterval);
-            }, 500);
-            this._unregisterHandlers.push(() => clearInterval(retryInterval));
-        }
+
+                if (!this._tabBtn) {
+                    let retries = 0;
+                    const retryInterval = setInterval(() => {
+                        retries++;
+                        this._tryInjectTabButton();
+                        if (this._tabBtn || retries >= 20) clearInterval(retryInterval);
+                    }, 500);
+                    this._unregisterHandlers.push(() => clearInterval(retryInterval));
+                }
+            })
+        );
 
         // Live setting change for default-tab behaviour
         const unregisterDefaultTab = config.onSettingChange('inventoryTabs_defaultTab', () => {
