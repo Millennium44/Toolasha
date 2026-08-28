@@ -29,12 +29,26 @@ class QueueMonitorUI {
         this.isDragging = false;
         this.dragOffset = { x: 0, y: 0 };
         this._expandedChars = new Set();
+        this._initialized = false;
     }
 
     /**
      * Initialize the UI
+     *
+     * Guarded against being called twice without an intervening `disable()`.
+     * `character_initialized` fires on a plain WebSocket reconnect to the same
+     * character, not only on a character switch, and the entrypoint's own
+     * "first load" path re-runs `featureRegistry.initializeFeatures()` whenever
+     * that event's `_isCharacterSwitch` flag is false — which it is on a
+     * reconnect. Without this guard a reconnect would register a second
+     * `setInterval` redraw loop and a second `character_initialized` listener
+     * every time it happened; only the most recently stored one could ever be
+     * torn down again, so every earlier one leaked for the rest of the session.
      */
     async initialize() {
+        if (this._initialized) return;
+        this._initialized = true;
+
         // Load collapse state
         this.collapsed = await storage.get('queueMonitor_collapsed', 'settings', false);
 
@@ -61,11 +75,19 @@ class QueueMonitorUI {
             dataManager.off('character_initialized', this._boundOnInit);
             this._boundOnInit = null;
         }
+        // A drag in progress holds document-level pointermove/pointerup
+        // listeners that only remove themselves on pointerup — closing the
+        // panel mid-drag (e.g. the queueMonitor setting is switched off while
+        // the user is dragging it) would otherwise leak them for the rest of
+        // the page's life, each one then throwing against the panel this is
+        // about to null out.
+        this._endDrag();
         if (this.panel) {
             unregisterFloatingPanel(this.panel);
             this.panel.remove();
             this.panel = null;
         }
+        this._initialized = false;
     }
 
     /**
@@ -152,23 +174,14 @@ class QueueMonitorUI {
         // touchscreen, and touch-action:none stops the browser claiming the
         // gesture for scrolling
         header.style.touchAction = 'none';
+        this._dragHeader = header;
 
-        const onPointerDown = (e) => {
-            if (e.target.tagName === 'BUTTON') return;
-            this.isDragging = true;
-            this.dragOffset.x = e.clientX - this.panel.getBoundingClientRect().left;
-            this.dragOffset.y = e.clientY - this.panel.getBoundingClientRect().top;
-            header.style.cursor = 'grabbing';
-            e.preventDefault();
-
-            // Attach document listeners only for the duration of the drag
-            document.addEventListener('pointermove', onPointerMove);
-            document.addEventListener('pointerup', onPointerUp);
-            document.addEventListener('pointercancel', onPointerUp);
-        };
-
-        const onPointerMove = (e) => {
-            if (!this.isDragging) return;
+        // Stored on the instance, rather than kept as closures private to this
+        // method, so `disable()` can remove them from `document` if it runs
+        // mid-drag instead of only ever being able to remove them from a
+        // `pointerup` that already fired.
+        this._onPointerMove = (e) => {
+            if (!this.isDragging || !this.panel) return;
             const x = e.clientX - this.dragOffset.x;
             const y = e.clientY - this.dragOffset.y;
             this.panel.style.left = `${x}px`;
@@ -177,17 +190,40 @@ class QueueMonitorUI {
             this.panel.style.bottom = 'auto';
         };
 
-        const onPointerUp = () => {
-            if (this.isDragging) {
-                this.isDragging = false;
-                header.style.cursor = 'grab';
-            }
-            document.removeEventListener('pointermove', onPointerMove);
-            document.removeEventListener('pointerup', onPointerUp);
-            document.removeEventListener('pointercancel', onPointerUp);
+        this._onPointerUp = () => {
+            this._endDrag();
         };
 
-        header.addEventListener('pointerdown', onPointerDown);
+        this._onPointerDown = (e) => {
+            if (e.target.tagName === 'BUTTON') return;
+            this.isDragging = true;
+            this.dragOffset.x = e.clientX - this.panel.getBoundingClientRect().left;
+            this.dragOffset.y = e.clientY - this.panel.getBoundingClientRect().top;
+            header.style.cursor = 'grabbing';
+            e.preventDefault();
+
+            // Attach document listeners only for the duration of the drag
+            document.addEventListener('pointermove', this._onPointerMove);
+            document.addEventListener('pointerup', this._onPointerUp);
+            document.addEventListener('pointercancel', this._onPointerUp);
+        };
+
+        header.addEventListener('pointerdown', this._onPointerDown);
+    }
+
+    /**
+     * End a drag in progress and remove the document-level listeners it holds,
+     * however it ends: a normal pointerup/pointercancel, or `disable()` cutting
+     * the panel down mid-drag.
+     */
+    _endDrag() {
+        document.removeEventListener('pointermove', this._onPointerMove);
+        document.removeEventListener('pointerup', this._onPointerUp);
+        document.removeEventListener('pointercancel', this._onPointerUp);
+        if (this.isDragging) {
+            this.isDragging = false;
+            if (this._dragHeader) this._dragHeader.style.cursor = 'grab';
+        }
     }
 
     /**
