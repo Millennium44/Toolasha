@@ -1661,6 +1661,16 @@ function registerFeatures() {
             async: false,
         },
         {
+            key: 'enhancementItemPins',
+            name: 'Enhancement Item Pins',
+            category: 'Enhancement',
+            module: UI.enhancementItemPins,
+            async: true,
+            // Waits only on its own pin record; the menu observer it
+            // registers afterwards does not race anything else on the panel.
+            concurrent: true,
+        },
+        {
             key: 'riskOfRuin',
             name: 'Risk of Ruin Calculator',
             category: 'Risk of Ruin',

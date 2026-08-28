@@ -92,6 +92,7 @@ import enhancementFeature from '../features/enhancement/enhancement-feature.js';
 // Side-effect import: registers the Enhancement Session overlay row
 import '../features/enhancement/enhancement-session-row.js';
 import xphCalculator from '../features/enhancement/xph-calculator.js';
+import enhancementItemPins from '../features/enhancement/enhancement-item-pins.js';
 
 // Risk of Ruin
 import riskOfRuinUI from '../features/risk-of-ruin/risk-of-ruin-ui.js';
@@ -222,6 +223,7 @@ toolashaRoot.UI = {
     alchemyActionProtection,
     enhancementFeature,
     xphCalculator,
+    enhancementItemPins,
     riskOfRuinUI,
     predictionCalibration,
     leaderboardXPTracker,

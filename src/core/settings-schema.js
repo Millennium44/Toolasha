@@ -876,6 +876,13 @@ export const settingsGroups = {
                 default: false,
                 help: 'Most players should leave this off to see realistic professional enhancer costs',
             },
+            enhancementItemPins: {
+                id: 'enhancementItemPins',
+                label: 'Enhancing panel: Pin items in the item picker',
+                type: 'checkbox',
+                default: true,
+                help: 'Adds a 📌 to each item in the Enhance Item list that moves it to the front. Pins reorder but do not exempt: a pinned item that does not match the filter box stays hidden',
+            },
             // --- ENHANCING ---
             enhanceSim_enhancingLevel: {
                 id: 'enhanceSim_enhancingLevel',
