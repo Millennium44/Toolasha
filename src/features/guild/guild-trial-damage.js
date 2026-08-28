@@ -1379,6 +1379,30 @@ class GuildTrialDamage {
             // gets filed under Hedgehog
             this.spectatedBossName = null;
             this.encounter = null;
+
+            // A *previous* battle's own answers do not belong to this one
+            // either — but only a previous battle. `this.guildBattleId` is
+            // still null the first time a session ever sees a tick, and a click
+            // on the boss (`battle_unit_fetched`) routinely lands before that
+            // first tick, seeding `bossSheets` with a sheet this would then
+            // erase the instant the stream started.
+            if (this.guildBattleId !== null) {
+                // `reported`/`reportedMeasured` are this *session's* figures for
+                // whichever encounter was last identified — the week's copy
+                // already lives in `storedStats`, so nothing is lost by dropping
+                // the session copy here. Left in place, a still-open card kept
+                // showing the *previous* trial's "game reported 1,000,000
+                // damage" under the new encounter's name.
+                //
+                // `bossSheets` is keyed by tier, not by encounter, so a previous
+                // trial that reached tier 5 left tiers 3-5 sitting in the map
+                // for a new trial that has only reached tier 1 — inflating
+                // `bossHpCeiling()` with bosses this trial never fought and
+                // weakening the over-attribution guard it exists to be.
+                this.reported = null;
+                this.reportedMeasured = null;
+                this.bossSheets = {};
+            }
         }
 
         this.guildBattleId = battleId;

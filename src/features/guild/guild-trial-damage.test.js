@@ -1494,6 +1494,42 @@ describe('the game’s own end-of-trial stats, saved for comparison', () => {
         expect(guildTrialDamage.breakdown().reported).toBe(null);
     });
 
+    test('a new trial does not inherit the previous one’s reported totals or boss sheets', () => {
+        // First trial: Badger, tiers 1 and 2, plus its game-reported totals
+        game.wsHandlers.new_guild_battle(NEW_GUILD_BATTLE);
+        guildTrialDamage.encounter = 'badger';
+        game.wsHandlers.guild_trial_stats_updated({
+            guildTrialStatList: [
+                {
+                    characterId: 900001,
+                    trialHrid: '/guild_combat/badger',
+                    damageDealt: 1_000_000,
+                    healingDone: 0,
+                    premitigatedDamageTaken: 50_000,
+                },
+            ],
+        });
+        game.wsHandlers.new_guild_battle({ ...NEW_GUILD_BATTLE, tier: 2 });
+        expect(guildTrialDamage.breakdown().reported).not.toBe(null);
+        expect(Object.keys(guildTrialDamage.breakdown().bossSheets).sort()).toEqual(['1', '2']);
+
+        // A different combat trial: a new battle id and a different encounter —
+        // the badger's tier 2 sheet was never reached this trial and must not
+        // linger to inflate this trial's damage ceiling, and the badger's
+        // reported totals are a different trial's answer to a different card
+        game.wsHandlers.new_guild_battle({
+            ...NEW_GUILD_BATTLE,
+            battleId: 2,
+            tier: 1,
+            monsters: [{ ...NEW_GUILD_BATTLE.monsters[0], hrid: '/monsters/trial_hedgehog', name: 'Trial Hedgehog' }],
+        });
+
+        const report = guildTrialDamage.breakdown();
+        expect(report.reported).toBe(null);
+        expect(Object.keys(report.bossSheets)).toEqual(['1']);
+        expect(report.bossSheets[1].name).toBe('Trial Hedgehog');
+    });
+
     test('compareTrialStats pairs measured against reported with a delta', () => {
         const rows = compareTrialStats({
             reported: {
