@@ -62,6 +62,8 @@ import remainingXP from '../features/skills/remaining-xp.js';
 import xpTracker from '../features/skills/xp-tracker.js';
 // Side-effect import: registers the Time to Level overlay row
 import '../features/skills/skill-ttl-row.js';
+// Side-effect import: registers the Skill Level overlay row
+import '../features/skills/skill-level-row.js';
 
 // Action features
 import lootLogStats from '../features/actions/loot-log-stats.js';

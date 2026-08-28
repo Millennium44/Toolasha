@@ -186,6 +186,8 @@ const TILE_CLASSES = {
     combatSession: TILE_CLASS.MEASUREMENT,
     manaPerFight: TILE_CLASS.MEASUREMENT,
     timeToLevel: TILE_CLASS.MEASUREMENT,
+    // Waits on a skilling action the same way combatStatus waits on a fight
+    skillLevel: TILE_CLASS.MEASUREMENT,
     treasure: TILE_CLASS.MEASUREMENT,
     charmValue: TILE_CLASS.MEASUREMENT,
     replayCheck: TILE_CLASS.MEASUREMENT,
