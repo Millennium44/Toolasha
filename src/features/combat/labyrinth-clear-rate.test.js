@@ -2905,6 +2905,49 @@ describe('cancelling a floor calculation', () => {
 });
 
 /**
+ * A treasure/chest room is directly openable — no fight stands between the
+ * player and the loot. The game's room objects can still carry a leftover
+ * `monsterHrid` on a treasure room (as `combat-battle-counter.js` and
+ * `labyrinth-tracker.js` already have to guard against by checking
+ * `roomType` rather than trusting `monsterHrid`'s mere presence), so a tile
+ * badge painter that keys off `monsterHrid` alone mistakes the chest for a
+ * monster and simulates — and draws — a combat clear-chance badge on it.
+ */
+describe('a chest (treasure room) never gets a combat clear-chance badge', () => {
+    afterEach(() => {
+        document.body.innerHTML = '';
+        labyrinthClearRate.roomData = null;
+        labyrinthClearRate.combatCache.clear();
+    });
+
+    test('a treasure room carrying a leftover monsterHrid is not simulated or badged', async () => {
+        const parent = document.createElement('div');
+        const cell = document.createElement('div');
+        cell.className = 'LabyrinthPanel_roomCell_abc';
+        parent.appendChild(cell);
+        document.body.appendChild(parent);
+
+        labyrinthClearRate.roomData = [
+            [
+                {
+                    roomType: '/labyrinth_room_types/treasure',
+                    monsterHrid: '/monsters/imp',
+                    recommendedLevel: 100,
+                    isCleared: false,
+                },
+            ],
+        ];
+        const spy = vi.spyOn(labyrinthClearRate, 'computeCombatClear');
+
+        await labyrinthClearRate.runTileCalculation();
+
+        expect(spy).not.toHaveBeenCalled();
+        expect(cell.querySelector('.mwi-labyrinth-tile-badge')).toBeNull();
+        spy.mockRestore();
+    });
+});
+
+/**
  * A precision is part of a result's identity — two rooms simulated to ±1pp and
  * ±0.2pp are different measurements — and so is whether the run was allowed to
  * finish. Both have to survive the trip through the cache, or the Automation

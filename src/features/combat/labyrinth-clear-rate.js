@@ -2406,6 +2406,11 @@ class LabyrinthClearRate {
             const room = flatRooms[i];
             const cell = cells[i];
             if (!room || !cell || room.isCleared) continue;
+            // Same chest gate as runTileCalculation: a cached result keyed by
+            // grid position can survive under a treasure room (e.g. a stale
+            // key left behind by a floor change), which must never be
+            // repainted onto a chest as a combat badge.
+            if (String(room.roomType || '').endsWith('/treasure')) continue;
             if (cell.querySelector(`.${TILE_BADGE_CLASS}`)) continue;
             const tileKey = `${i % cols},${Math.floor(i / cols)}`;
             const result = this._tileResults.get(tileKey);
@@ -2933,6 +2938,14 @@ class LabyrinthClearRate {
             const room = flatRooms[i];
             const cell = cells[i];
             if (!room || !cell || room.isCleared) continue;
+            // A treasure (chest) room is directly openable — no fight, no
+            // gathering. The room object can still carry a leftover
+            // `monsterHrid`/`skillHrid` from the game (the same reason
+            // combat-battle-counter.js and labyrinth-tracker.js key off
+            // `roomType` instead of trusting those fields' mere presence),
+            // so without this gate a chest tile got simmed and badged like
+            // a monster room.
+            if (String(room.roomType || '').endsWith('/treasure')) continue;
 
             const roomLevel = Math.max(0, Math.floor(Number(room.recommendedLevel) || 0));
             if (roomLevel <= 0) continue;
