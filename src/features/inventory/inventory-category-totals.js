@@ -65,10 +65,26 @@ class InventoryCategoryTotals {
         // something unrelated (an item click, a settings toggle) happens to
         // clear the tracking. This module owns its own freshness instead of
         // borrowing a sibling feature's.
+        //
+        // Invalidating is not enough on its own, and re-summing on its own is
+        // worth nothing: a category total is the sum of each item container's
+        // `dataset[...Value]`, and those attributes are written only by
+        // `renderAllBadges()` -> `calculatePricesForAllItems()`. Invalidating
+        // makes the *next* render recompute them — but with Sort and Badge
+        // Prices off there is no next render (only an item click's popper
+        // triggers one), so `scheduleUpdate()` would re-add the same stale
+        // numbers and write the identical label back. The render has to be
+        // driven from here; its own pass calls this module's provider, which
+        // schedules the totals off the freshly written attributes.
         this.itemsUpdatedHandler = () => {
             clearTimeout(this.itemsUpdatedDebounceTimer);
             this.itemsUpdatedDebounceTimer = setTimeout(() => {
                 inventoryBadgeManager.invalidateCache();
+                Promise.resolve(inventoryBadgeManager.renderAllBadges?.()).catch((error) =>
+                    console.error('[Inventory Category Totals] Re-pricing after an inventory change failed:', error)
+                );
+                // Still scheduled directly: a render that bails on its cooldown
+                // or on a closed inventory must not leave the label unwritten.
                 this.scheduleUpdate();
             }, ITEMS_UPDATED_DEBOUNCE_MS);
         };

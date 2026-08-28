@@ -33,10 +33,27 @@ const dm = vi.hoisted(() => {
 
 const badgeManagerMock = vi.hoisted(() => ({
     currentInventoryElem: null,
-    registerProvider: vi.fn(),
+    providerFn: null,
+    /** What `calculatePricesForAllItems` would write, keyed by item hrid */
+    prices: new Map(),
+    registerProvider: vi.fn((_name, renderFn) => {
+        badgeManagerMock.providerFn = renderFn;
+    }),
     unregisterProvider: vi.fn(),
     clearProcessedTracking: vi.fn(),
     invalidateCache: vi.fn(),
+    // The real one writes `dataset.askValue` on every item container from live
+    // prices and inventory counts, then calls each registered provider. Nothing
+    // else in the app writes those attributes, which is the whole point of the
+    // test below: a totals pass that is not preceded by one of these re-adds
+    // the numbers that are already there.
+    renderAllBadges: vi.fn(async () => {
+        const items = badgeManagerMock.currentInventoryElem?.querySelectorAll('[class*="Item_itemContainer"]') || [];
+        for (const item of items) {
+            item.dataset.askValue = String(badgeManagerMock.prices.get(item.dataset.hrid) ?? 0);
+            badgeManagerMock.providerFn?.(item);
+        }
+    }),
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -60,6 +77,10 @@ beforeEach(() => {
     badgeManagerMock.unregisterProvider.mockClear();
     badgeManagerMock.clearProcessedTracking.mockClear();
     badgeManagerMock.invalidateCache.mockClear();
+    badgeManagerMock.renderAllBadges.mockClear();
+    badgeManagerMock.providerFn = null;
+    badgeManagerMock.prices.clear();
+    document.body.innerHTML = '';
     inventoryCategoryTotals.isInitialized = false;
     inventoryCategoryTotals.pendingUpdate = false;
     inventoryCategoryTotals.itemsUpdatedHandler = null;
@@ -98,6 +119,41 @@ describe('freshness against items_updated', () => {
         vi.advanceTimersByTime(300);
 
         expect(badgeManagerMock.invalidateCache).toHaveBeenCalledTimes(1);
+    });
+
+    test('the label actually moves: the change is re-priced, not just re-added', async () => {
+        // Invalidating the cache and re-summing cannot move a total on their
+        // own. `updateAllCategoryTotals` sums `dataset.askValue` off each item
+        // container, and only `renderAllBadges()` -> `calculatePricesForAllItems()`
+        // ever writes those. With Sort and Badge Prices off nothing else calls
+        // it, so a handler that invalidates and re-sums writes the same number
+        // back and the total stays stale — the reported bug, intact.
+        const inventory = document.createElement('div');
+        const category = document.createElement('div');
+        const label = document.createElement('div');
+        label.className = 'Inventory_label';
+        label.textContent = 'Loots';
+        const item = document.createElement('div');
+        item.className = 'Item_itemContainer';
+        item.dataset.hrid = '/items/cheese';
+        item.dataset.askValue = '1000';
+        category.append(label, item);
+        inventory.appendChild(category);
+        document.body.appendChild(inventory);
+        badgeManagerMock.currentInventoryElem = inventory;
+
+        inventoryCategoryTotals.initialize();
+        inventoryCategoryTotals.updateAllCategoryTotals();
+        expect(label.textContent).toContain('1000');
+
+        // The player sells most of the stack: same DOM, different holdings
+        badgeManagerMock.prices.set('/items/cheese', 250);
+        dm.emit('items_updated', {});
+        vi.advanceTimersByTime(300);
+        await vi.runAllTimersAsync();
+
+        expect(label.textContent).toContain('250');
+        expect(label.textContent).not.toContain('1000');
     });
 
     test('disable() unsubscribes, so a later inventory change does nothing', () => {
