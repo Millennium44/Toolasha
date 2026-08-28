@@ -338,6 +338,32 @@ describe('achievements section', () => {
         expect(editor._renderAchievementsSection({ achievementCombatBuffs: [] })).toBe('');
     });
 
+    test('a derived import captions itself as derived from achievements', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        const html = editor._renderAchievementsSection({
+            achievementCombatBuffs: [damage, wisdom],
+            achievementBuffsOff: ['/buff_types/damage'],
+            achievementBuffsDerived: true,
+        });
+        expect(html).toContain('Derived from their completed achievements — adjust if needed.');
+    });
+
+    test('a manual import (no derivation) keeps the "set manually" caption', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        const html = editor._renderAchievementsSection({
+            achievementCombatBuffs: [damage, wisdom],
+            achievementBuffsOff: ['/buff_types/damage', '/buff_types/wisdom'],
+            achievementBuffsManual: true,
+        });
+        expect(html).toContain('Not in shared profiles — set manually.');
+    });
+
+    test('your own character keeps the live-detected caption', () => {
+        const editor = new SimEditor({ editorEl: document.createElement('div') });
+        const html = editor._renderAchievementsSection({ achievementCombatBuffs: [damage, wisdom] });
+        expect(html).toContain('From your completed achievements. Untick to sim without one.');
+    });
+
     test('the skilling tab hides it', () => {
         const editor = new SimEditor({ editorEl: document.createElement('div'), skillingMode: true });
         expect(editor._renderAchievementsSection({ achievementCombatBuffs: [damage] })).toBe('');

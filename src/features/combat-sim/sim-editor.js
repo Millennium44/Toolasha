@@ -1696,11 +1696,15 @@ export class SimEditor {
      * The combat buffs the player's completed achievements grant (e.g. Damage
      * +2%). For your own character these are auto-detected off your own data and
      * applied by default; the section lets you untick one to sim without it. A
-     * shared profile carries no equivalent field, so an imported/party-member DTO
-     * (`achievementBuffsManual`) instead offers the same three buffs as manual
-     * toggles, defaulted off — the caption below says which situation applies.
-     * A player with no achievement combat buffs at all, or the skilling tab,
-     * shows nothing.
+     * shared profile carries no resolved field for this, but when it carries
+     * `characterAchievements` and the achievement catalog is loaded, an
+     * imported/party-member DTO (`achievementBuffsDerived`) instead has the
+     * three buffs pre-checked from that player's completed achievement tiers.
+     * Older payloads without `characterAchievements` fall back to
+     * `achievementBuffsManual` — the same three buffs offered unchecked. Either
+     * way the checkboxes stay manually toggleable — the caption below says
+     * which situation applies. A player with no achievement combat buffs at
+     * all, or the skilling tab, shows nothing.
      * @private
      */
     _renderAchievementsSection(dto) {
@@ -1726,9 +1730,11 @@ export class SimEditor {
             html += `<span style="color:#888;">${achievementBuffLabel(buff)}</span>`;
             html += '</label>';
         }
-        const caption = dto.achievementBuffsManual
-            ? 'Not in shared profiles — set manually.'
-            : 'From your completed achievements. Untick to sim without one.';
+        const caption = dto.achievementBuffsDerived
+            ? 'Derived from their completed achievements — adjust if needed.'
+            : dto.achievementBuffsManual
+              ? 'Not in shared profiles — set manually.'
+              : 'From your completed achievements. Untick to sim without one.';
         html += `<div style="color:#666; font-size:10px; margin-top:4px;">${caption}</div>`;
 
         html += '</div></div>';
