@@ -206,6 +206,38 @@ describe('what each slot is doing to the party this fight', () => {
         expect(tracker.battleTakenBreakdown().enemies).toEqual({});
     });
 
+    test('a party member who leaves does not haunt the table, and their slot is not inherited', () => {
+        // Player 0 fights alongside a partner in slot 1, then leaves; a
+        // different character joins and is dealt slot 0 in the next battle.
+        // Without a roster check the tally is still keyed by slot, so the new
+        // arrival's row would open already carrying the last person's damage,
+        // and the departed member would keep a row of their own forever.
+        listeners.new_battle({
+            players: { 0: { name: 'Alice' }, 1: { name: 'Bob' } },
+            monsters: { 0: { name: 'Eye' } },
+            combatStartTime: 't1',
+        });
+        tick({ 0: { hp: 500, dmg: 0 }, 1: { hp: 500, dmg: 0 } }, { 0: { hp: 2000 } });
+        tick({ 0: { hp: 420, dmg: 1 }, 1: { hp: 400, dmg: 1 } }, { 0: { hp: 2000 } });
+
+        let players = tracker.takenBreakdown().players;
+        expect(players.map((p) => p.name).sort()).toEqual(['Alice', 'Bob']);
+        expect(players.find((p) => p.name === 'Alice').damage).toBe(80);
+
+        // Alice leaves; Carol takes over slot 0 in a fresh session
+        listeners.new_battle({
+            players: { 0: { name: 'Carol' } },
+            monsters: { 0: { name: 'Veyes' } },
+            combatStartTime: 't2',
+        });
+        tick({ 0: { hp: 500, dmg: 0 } }, { 0: { hp: 2000 } }, 2);
+        tick({ 0: { hp: 470, dmg: 1 } }, { 0: { hp: 2000 } }, 2);
+
+        players = tracker.takenBreakdown().players;
+        expect(players.map((p) => p.name)).toEqual(['Carol']);
+        expect(players[0].damage).toBe(30);
+    });
+
     test('too little of a fight gives damage and no rate', () => {
         listeners.new_battle({
             players: { 0: { name: 'You' } },

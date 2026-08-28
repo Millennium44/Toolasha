@@ -71,6 +71,9 @@ let monsters = {};
 /** The wave currently being fought, so its damage lands in the right bucket */
 let currentWave = null;
 
+/** Who is fighting and since when; a change is a new run — see `sessionKeyFor` */
+let sessionKey = null;
+
 /**
  * Whether this session has seen a battle begin.
  *
@@ -102,6 +105,7 @@ const MAX_TICK_GAP_MS = 2000;
 /** Forget the run and measure again from here */
 export function resetDamageTaken() {
     state = newTakenState();
+    sessionKey = null;
     tally = {};
     enemyTally = {};
     waves = {};
@@ -110,6 +114,27 @@ export function resetDamageTaken() {
     seconds = 0;
     lastTickAt = 0;
     startedAt = Date.now();
+}
+
+/**
+ * Which run this is: who is in it, and when it started.
+ *
+ * Mirrors `damage-tracker.js`'s function of the same name, and for the same
+ * reason: `tally` and `enemyTally` are keyed by player slot and by name, and a
+ * party that changes mid-session reuses those slots for somebody else. Without
+ * this a member who left stayed in the taken-damage table forever, and worse,
+ * a new member landing in their old slot inherited their damage-taken total —
+ * the exact bug the outgoing tracker fixed here first.
+ *
+ * @param {Object} data - `new_battle` message
+ * @returns {string|null} A key, or null when the message cannot say
+ */
+export function sessionKeyFor(data) {
+    const players = Object.values(data?.players || {});
+    if (!players.length) return null;
+
+    const roster = players.map((player) => player?.name || player?.character?.name || '?').join(',');
+    return `${roster}|${data?.combatStartTime || ''}`;
 }
 
 /**
@@ -238,6 +263,24 @@ export default {
         onNewBattle = (data) => {
             try {
                 announced = true;
+                const players = data?.players || {};
+
+                // Leaving a party is a new session, and the run before it is not
+                // this run — see `sessionKeyFor`. Adopted rather than reset on the
+                // very first statement, exactly as the outgoing tracker does: a
+                // reload lands ticks before anything names the run, and those
+                // ticks belong to the fight still on screen.
+                const key = sessionKeyFor(data);
+                if (key && key !== sessionKey) {
+                    const seenSlots = Object.keys(state.playersHP || {});
+                    const adoptable = sessionKey === null && seenSlots.every((index) => index in players);
+                    if (!adoptable) {
+                        resetDamageTaken();
+                        names = {};
+                    }
+                }
+                sessionKey = key || sessionKey;
+
                 for (const [index, player] of Object.entries(data?.players || {})) {
                     names[index] = player?.name || player?.character?.name || names[index];
                     // So a party member who has not been touched yet still gets
