@@ -267,6 +267,27 @@ export function tileClassFor(row) {
  * you can do about it, which means the tile has to be able to open the panel you
  * would add to. A watch tile with no `onOpen` is a dead end, and stands down.
  *
+ * ## Why `auto` no longer hides a measurement
+ *
+ * It used to, and the reasoning was sound in isolation: a dungeon run that may
+ * never happen is not worth a placeholder, so the tile went away until it had
+ * something to say.
+ *
+ * What that reasoning did not account for is that tiles now sit in a **grid**
+ * with saved positions, and a tile that goes away does not take its slot with
+ * it. It leaves a hole. On a character crafting quietly, the top line of the
+ * Skilling preset came out as an empty left cell with "Melee 151: —" hugging the
+ * right column — reported, correctly, as the layout being jumbled. Hiding is a
+ * good answer for a list, where the tiles below close up behind it, and a bad
+ * one for a grid, where the arrangement is the point.
+ *
+ * So `auto` compacts instead: the tile keeps its slot and its column and shrinks
+ * to a dim strip carrying its own name, and the line it is in settles to the
+ * height of whatever is actually drawn in it. Nothing moves sideways, nothing
+ * leaves a gap, and the wall-of-promises worry the old rule guarded against is
+ * met by the strip being twenty pixels of dim name rather than a placeholder
+ * sentence. `hide` is still there for anyone who preferred it.
+ *
  * @param {Object} row - A row definition
  * @param {string} [setting] - The panel's `emptyTiles` setting
  * @returns {string} `hide`, `compact` or `full`
@@ -276,14 +297,10 @@ export function emptyPolicyFor(row, setting = EMPTY_POLICY.AUTO) {
     if (forced.includes(setting)) return setting;
     if (forced.includes(row?.whenEmpty)) return row.whenEmpty;
 
-    switch (tileClassFor(row)) {
-        case TILE_CLASS.MEASUREMENT:
-            return EMPTY_POLICY.HIDE;
-        case TILE_CLASS.WATCH:
-            return typeof row?.onOpen === 'function' ? EMPTY_POLICY.COMPACT : EMPTY_POLICY.HIDE;
-        default:
-            return EMPTY_POLICY.COMPACT;
-    }
+    // A watch tile you cannot act on is the one case still worth hiding: it has
+    // no panel to open, so its strip would name a feature and offer nothing
+    if (tileClassFor(row) === TILE_CLASS.WATCH && typeof row?.onOpen !== 'function') return EMPTY_POLICY.HIDE;
+    return EMPTY_POLICY.COMPACT;
 }
 
 /**

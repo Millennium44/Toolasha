@@ -212,17 +212,48 @@ describe('a tile with nothing to show', () => {
         overlayPanel.show();
     }
 
-    test('a measurement waiting on an activity stays away until there is one', async () => {
+    test('the left tile of a pair going quiet does not leave a hole', async () => {
+        // Reported from the Skilling preset on a character crafting quietly: the
+        // top line came out as an empty left cell with the time-to-level tile
+        // hugging the right column, which reads as the layout being jumbled
+        game.rows = [
+            row('experiencePerHour', { name: 'Experience/hr', empty: 'No experience yet' }),
+            row('timeToLevel', { name: 'Time to Level', text: 'Melee 151: —' }),
+        ];
+        saved.read = {
+            visible: { experiencePerHour: true, timeToLevel: true },
+            order: ['experiencePerHour', 'timeToLevel'],
+            positions: { experiencePerHour: { x: 0, y: 0 }, timeToLevel: { x: 220, y: 0 } },
+            sizes: { experiencePerHour: { width: 220, height: 30 }, timeToLevel: { width: 220, height: 30 } },
+            emptyTiles: EMPTY_POLICY.AUTO,
+            locked: true,
+        };
+        await overlayPanel.initialize();
+        overlayPanel.show();
+
+        const quiet = tiles().get('experiencePerHour');
+        expect(quiet.style.display).not.toBe('none');
+        expect(quiet.style.left).toBe('0px');
+        expect(quiet._content.textContent).toBe('Experience/hr');
+        // And the tile beside it has not moved to fill the space
+        expect(tiles().get('timeToLevel').style.left).toBe('220px');
+    });
+
+    test('a measurement waiting on an activity keeps its slot and names itself', async () => {
+        // It used to go away, which in a grid of saved positions leaves a hole
+        // where it sat rather than closing the line up
         await open([row('dps', { name: 'DPS', empty: 'No damage tracked yet' }), row('coins', { text: '1,024' })]);
 
-        expect(shown()).toEqual(['coins']);
+        expect(shown()).toEqual(['coins', 'dps']);
+        expect(tiles().get('dps')._content.textContent).toBe('DPS');
+        expect(tiles().get('dps').style.height).toBe('20px');
         expect(text()).not.toContain('No damage tracked yet');
     });
 
-    test('and appears, at full size, the moment it has something to say', async () => {
+    test('and comes back to full size the moment it has something to say', async () => {
         const dps = row('dps', { name: 'DPS', empty: 'No damage tracked yet' });
         await open([dps, row('coins', { text: '1,024' })]);
-        expect(shown()).toEqual(['coins']);
+        expect(tiles().get('dps').style.height).toBe('20px');
 
         // The fight starts
         dps.render = (el) => (el.textContent = '412 dps');
@@ -302,8 +333,8 @@ describe('a tile with nothing to show', () => {
         expect(shown()).toEqual(['coins']);
     });
 
-    test('the panel says why it is blank when every tile has stood down', async () => {
-        await open([row('dps', { empty: 'No damage tracked yet' })]);
+    test('the panel says why it is blank when every tile has been taken away', async () => {
+        await open([row('dps', { empty: 'No damage tracked yet' })], EMPTY_POLICY.HIDE);
 
         expect(shown()).toEqual([]);
         expect(text()).toContain('appear as data arrives');
@@ -370,8 +401,8 @@ describe('the empty-tiles setting', () => {
     test('arranging the layout shows everything, whatever the policy says', async () => {
         // Unlocked, the tiles are being placed rather than read — and a tile
         // that has hidden itself cannot be placed
-        await openWith(EMPTY_POLICY.AUTO);
-        expect(shown()).toEqual(['netWorth']);
+        await openWith(EMPTY_POLICY.HIDE);
+        expect(shown()).toEqual([]);
 
         overlayPanel.settings.locked = false;
         overlayPanel.refresh();
@@ -463,7 +494,10 @@ describe('switching a tile on by hand', () => {
         game.rows[0].render = (el) => el.replaceChildren();
         overlayPanel.refresh();
 
-        expect(shown()).toEqual(['coins']);
+        // Standing down is now a dim strip in its own slot rather than an
+        // absence, so the tile is still there — just no longer promising
+        expect(shown()).toEqual(['coins', 'guildTrialsPace']);
+        expect(tiles().get('guildTrialsPace')._content.textContent).toBe('Guild Trials');
     });
 
     test('switching it off again withdraws the question', async () => {
@@ -475,7 +509,7 @@ describe('switching a tile on by hand', () => {
         expect(shown()).toEqual(['coins']);
     });
 
-    test('a tile nobody touched is still hidden, which is the point of the policy', async () => {
+    test('a tile nobody touched names itself rather than pleading, which is the point', async () => {
         await openWithOffRow([
             row('guildTrialsPace', { name: 'Guild Trials', empty: 'Open the guild In Progress tab' }),
             row('dps', { name: 'DPS', empty: 'No damage tracked yet' }),
@@ -485,8 +519,10 @@ describe('switching a tile on by hand', () => {
         overlayPanel.refresh();
 
         // `dps` is on, empty, and was switched on by a saved setting rather than
-        // by a click in front of the player — so it stays away
-        expect(shown()).toEqual(['coins']);
+        // by a click in front of the player — so it gets a dim name rather than
+        // the placeholder sentence the gesture would have earned it
+        expect(tiles().get('dps')._content.textContent).toBe('DPS');
+        expect(text()).not.toContain('No damage tracked yet');
     });
 
     test('the explicit empty-tiles setting still outranks the gesture', async () => {
@@ -524,7 +560,7 @@ describe('switching a tile on by hand', () => {
 describe('the policy each row gets', () => {
     test('classes a row by its key, and lets a row say for itself', () => {
         expect(emptyPolicyFor({ key: 'netWorth' })).toBe(EMPTY_POLICY.COMPACT);
-        expect(emptyPolicyFor({ key: 'dps' })).toBe(EMPTY_POLICY.HIDE);
+        expect(emptyPolicyFor({ key: 'dps' })).toBe(EMPTY_POLICY.COMPACT);
         expect(emptyPolicyFor({ key: 'dps', whenEmpty: EMPTY_POLICY.FULL })).toBe(EMPTY_POLICY.FULL);
         expect(emptyPolicyFor({ key: 'dps', tileClass: TILE_CLASS.VALUE })).toBe(EMPTY_POLICY.COMPACT);
     });
@@ -535,10 +571,10 @@ describe('the policy each row gets', () => {
         expect(compactLabel({ key: 'somethingNew', name: 'Something New' })).toBe('Something New');
     });
 
-    test('the trials tile stands down when nobody has asked for it', () => {
-        // Its data comes off a game tab that may never have been opened, so
-        // hide-until-data is right for it — passively
-        expect(emptyPolicyFor({ key: 'guildTrialsPace' })).toBe(EMPTY_POLICY.HIDE);
+    test('the trials tile stands down to its name when nobody has asked for it', () => {
+        // Its data comes off a game tab that may never have been opened, so it
+        // says nothing about itself until then — but keeps its place while
+        expect(emptyPolicyFor({ key: 'guildTrialsPace' })).toBe(EMPTY_POLICY.COMPACT);
         expect(waitingLine({ key: 'guildTrialsPace' })).toBe('waiting for data');
         expect(emptyContract({ key: 'guildTrialsPace' })).toBe('shows when it has data');
     });

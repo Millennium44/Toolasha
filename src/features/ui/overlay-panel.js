@@ -1813,8 +1813,9 @@ class OverlayPanel {
         const wrap = document.createElement('label');
         Object.assign(wrap.style, { display: 'inline-flex', alignItems: 'center', gap: '4px', cursor: 'pointer' });
         wrap.title =
-            'What a tile does before it has anything to show. By tile: figures that fill themselves in shrink ' +
-            'to a dim name, and tiles waiting on a fight or a run stay away until there is something to report.';
+            'What a tile does before it has anything to show. By tile: it keeps its place in the grid and ' +
+            'shrinks to a dim name, so the line closes up without anything moving sideways. Hide takes the ' +
+            'tile away entirely, which leaves a gap where it sat.';
 
         const label = document.createElement('span');
         label.textContent = 'Empty tiles';

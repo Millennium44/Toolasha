@@ -127,9 +127,11 @@ describe('resolveRows with curated defaults', () => {
 });
 
 describe('what a tile does when it has drawn nothing', () => {
-    test('a measurement waits out of sight; a value shrinks to its name', () => {
+    test('it keeps its slot and shrinks to its name, measurement or not', () => {
+        // Tiles sit in a grid with saved positions, and a tile that goes away
+        // does not take its slot with it — it leaves a hole in the line
         expect(tileClassFor({ key: 'dps' })).toBe(TILE_CLASS.MEASUREMENT);
-        expect(emptyPolicyFor({ key: 'dps' })).toBe(EMPTY_POLICY.HIDE);
+        expect(emptyPolicyFor({ key: 'dps' })).toBe(EMPTY_POLICY.COMPACT);
         expect(tileClassFor({ key: 'coins' })).toBe(TILE_CLASS.VALUE);
         expect(emptyPolicyFor({ key: 'coins' })).toBe(EMPTY_POLICY.COMPACT);
     });
@@ -162,7 +164,7 @@ describe('what a tile does when it has drawn nothing', () => {
         for (const setting of [EMPTY_POLICY.HIDE, EMPTY_POLICY.COMPACT, EMPTY_POLICY.FULL]) {
             expect(emptyPolicyFor({ key: 'dps' }, setting)).toBe(setting);
         }
-        expect(emptyPolicyFor({ key: 'dps' }, 'nonsense')).toBe(EMPTY_POLICY.HIDE);
+        expect(emptyPolicyFor({ key: 'dps' }, 'nonsense')).toBe(EMPTY_POLICY.COMPACT);
     });
 
     test('registerRow carries a row’s own class and answer through', () => {
