@@ -6,6 +6,26 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Boss countdown next to the battle counter
+
+Combat zones with a boss cycle now show "N to boss · ~Xm Ys left" beside the battle number — the estimate targets the boss's defeat (when you're free to start another action), from a rolling average of your recent battle times. Toggleable; skips dungeons and the labyrinth.
+
+### Late messages from a closing connection can't cross characters
+
+Adopted (and extended) an upstream idea: character-scoped game messages are now bound to the connection that owns the character, so a message straggling in from the previous character's still-closing socket right after a switch is rejected instead of being filed under the new character — closing the last known cross-character attribution hole. Message dedup is also per-connection now, so a fresh connection's first messages can't be silently dropped as "duplicates" of the old one's.
+
+### Three more upstream fixes ported
+
+A filter typed on a production panel no longer blanks the Combat Zones grid; the enhancing tooltip's rate and minimum-sell figures show three significant digits (1.20B and 1.29B stop both reading "1.2B"); and the character-select activity display no longer races the DOM observer at startup, via a new observer-readiness lifecycle other features can adopt.
+
+### Collectable listings float to the top of My Listings
+
+Ported from upstream, default on: rows with a Collect button move to the top, yielding to any manual column sort.
+
+### Warnings, gates, and the pop-out window
+
+The tea recommendation and skilling optimizer mark gold figures that lean on an unpriced material with a ⚠ instead of silently pricing it as free. The pop-out chat window's remembered position now survives on a second monitor, with a small ⟲ reset control beside the pop-out button in case a monitor disappears.
+
 ### Seventh audit round: the deep passes and the review of the reviewers
 
 The audit's heaviest round yet — senior-model agents on the most delicate paths, plus first-ever deep reads of the files every earlier round skipped as too large. Rapid character switches (under a second apart) now run the full per-character lifecycle — settings, resets, and all — while still coalescing the expensive feature teardown to once per burst; before, the second character kept the first one's settings until a later slow switch. A verification pass re-derived every fix shipped in 3.28.0: most held, and the eight that didn't are corrected — most notably the notice log's switch handling, which had armed a write that could save an empty log over the departing character's entries, and the loadout badge listening for an event it could never receive. Deep passes found: the equipment-savings feature leaked a settings listener per character switch and could let a slow load overwrite the new character's goals; the guild exchange advisor misread the You-give field as whole exchanges, over-reporting credits several-fold on 5:1 and 10:1 conversions and double-scaling sell proceeds; the shrine planner's targets survived switches; an unsaved trial-plan draft could cross a guild switch and overwrite the new guild's plan on save; expired-listing matching and beyond-top-20 age matching ignored enhancement level, letting two levels of the same item swap fates; the listing refresh walk restarted from the top when a row lacked an id; the queue monitor stacked timers and listeners on every reconnect and could leak drag handlers; a second Welcome Back modal could tear down the first's block on the wrong character; the gathering luck window gains the same own-payout floor the combat one got; and the milkonomy export now includes the elite achievement tier it had silently dropped.
