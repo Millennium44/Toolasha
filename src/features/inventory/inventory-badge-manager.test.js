@@ -120,6 +120,29 @@ describe('calculateCraftingCost', () => {
     });
 });
 
+describe('renderAllBadges cooldown/concurrency', () => {
+    afterEach(() => {
+        inventoryBadgeManager.currentInventoryElem = null;
+        inventoryBadgeManager.isRendering = false;
+        inventoryBadgeManager.lastRenderTime = 0;
+    });
+
+    test('a call that bails because a render is already in flight does not consume the cooldown', async () => {
+        inventoryBadgeManager.currentInventoryElem = document.createElement('div');
+        inventoryBadgeManager.lastRenderTime = 0;
+        inventoryBadgeManager.isRendering = true;
+
+        await inventoryBadgeManager.renderAllBadges();
+
+        // Bailing on a concurrent render must not itself count as a render — a
+        // burst of triggers while one is in flight would otherwise keep pushing
+        // `lastRenderTime` forward, and the first REAL render after the
+        // in-flight one finishes would then find itself still inside a
+        // cooldown that was never actually spent rendering anything.
+        expect(inventoryBadgeManager.lastRenderTime).toBe(0);
+    });
+});
+
 describe('itemHasBadges', () => {
     test('detects a bid price badge', () => {
         const el = document.createElement('div');

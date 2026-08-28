@@ -150,12 +150,19 @@ class InventoryBadgeManager {
         if (timeSinceLastRender < this.RENDER_COOLDOWN) {
             return;
         }
-        this.lastRenderTime = now;
 
-        // Prevent concurrent renders
+        // Prevent concurrent renders. Checked (and `lastRenderTime` advanced) only
+        // once a render is actually about to start: a call that bails here because
+        // another render is already running must not consume the cooldown, or a
+        // burst of triggers arriving while a render is in flight (each one moving
+        // `lastRenderTime` forward without rendering anything) pushes every
+        // request that follows outside the window too — including the one after
+        // the in-flight render finishes, which then has to wait out a cooldown
+        // measured from a render that never happened.
         if (this.isRendering) {
             return;
         }
+        this.lastRenderTime = now;
         this.isRendering = true;
 
         try {
