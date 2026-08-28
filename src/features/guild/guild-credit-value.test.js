@@ -27,6 +27,10 @@ const game = vi.hoisted(() => ({
     storage: {},
     writes: 0,
     listeners: {},
+    // Which character the scoped-storage mocks key against. Only the
+    // character-switch reset test moves this off 'char1' — every other test
+    // in this file relies on the '_char1' suffix it has always had.
+    currentCharId: 'char1',
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -70,14 +74,14 @@ vi.mock('../../core/storage.js', () => ({
     },
 }));
 vi.mock('../../utils/character-key.js', () => ({
-    characterKey: (base) => `${base}_char1`,
+    characterKey: (base) => `${base}_${game.currentCharId}`,
     readScoped: async (base, store = 'settings', fallback = null) => {
-        const k = `${store}:${base}_char1`;
+        const k = `${store}:${base}_${game.currentCharId}`;
         return k in game.storage ? game.storage[k] : fallback;
     },
     writeScoped: async (base, value, store = 'settings') => {
         game.writes += 1;
-        game.storage[`${store}:${base}_char1`] = JSON.parse(JSON.stringify(value));
+        game.storage[`${store}:${base}_${game.currentCharId}`] = JSON.parse(JSON.stringify(value));
         return true;
     },
 }));
@@ -2150,6 +2154,64 @@ describe('shrine upgrade planner — saved plan and next-buy suggestions', () =>
                 expect(shopping.calls[1].items.map((i) => i.itemHrid).sort()).toEqual(['/items/rune', '/items/silk']);
             });
         });
+    });
+});
+
+describe('guild credit value — shrine plan record on a character switch', () => {
+    // The scoped-storage mocks above key everything off `game.currentCharId`;
+    // this is the only describe block that ever moves it off 'char1'.
+    beforeEach(() => {
+        game.settings = { guildCreditValue: true, guildShrineUpgradePlanner: true };
+        game.observers = {};
+        // Not `game.listeners = {}`: the character_switching handler this
+        // block is testing is registered once, at module import — clearing
+        // the registry here would drop it for good, not just for this test.
+        game.storage = {};
+        game.currentCharId = 'char1';
+        game.clientData = { itemDetailMap: {} };
+        shrinePlanRecord.reset();
+        guildCreditValue.cleanup();
+        guildCreditValue.initialize();
+    });
+
+    afterEach(() => {
+        game.currentCharId = 'char1';
+        shrinePlanRecord.reset();
+    });
+
+    test('character_switching clears the in-memory plan so the next load cannot merge it over the arriving character', async () => {
+        // Character 1 has a saved shrine target in storage, and it is read
+        // into memory the way opening the exchange modal would do it.
+        game.storage['settings:guildShrinePlan_char1'] = { targets: { forceBuff: 5 }, spendMode: 'tokens' };
+        await shrinePlanRecord.load();
+        expect(shrinePlanRecord.get().targets).toEqual({ forceBuff: 5 });
+
+        // feature-registry.js fires this before the id changes and re-inits
+        // every feature; nothing else in this file clears the record's memory.
+        expect(game.listeners['character_switching']).toBeTruthy();
+        game.listeners['character_switching'].forEach((fn) => fn());
+        expect(shrinePlanRecord.get()).toEqual({});
+
+        // Character 2 has never set a target for this buff. Without the reset,
+        // the curated record's pre-first-load merge would fold character 1's
+        // still-resident `targets` over character 2's own (empty) stored plan
+        // — a target neither this character nor this session ever set.
+        game.currentCharId = 'char2';
+        await shrinePlanRecord.load();
+
+        expect(shrinePlanRecord.get().targets ?? {}).toEqual({});
+    });
+
+    test('a switch does not block the arriving character from seeing its own saved plan', async () => {
+        game.storage['settings:guildShrinePlan_char1'] = { targets: { forceBuff: 5 } };
+        await shrinePlanRecord.load();
+
+        game.listeners['character_switching'].forEach((fn) => fn());
+        game.currentCharId = 'char2';
+        game.storage['settings:guildShrinePlan_char2'] = { targets: { scholarBuff: 2 } };
+        await shrinePlanRecord.load();
+
+        expect(shrinePlanRecord.get().targets).toEqual({ scholarBuff: 2 });
     });
 });
 

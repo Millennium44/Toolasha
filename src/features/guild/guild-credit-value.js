@@ -66,6 +66,18 @@ const shrinePlanRecord = createCuratedRecord({
     label: 'GuildShrinePlanner',
 });
 
+// A character switch re-initializes this feature (see feature-registry.js's
+// character_switching / character_switched handlers) without a page reload,
+// but the record is a module-level singleton: nothing else clears its
+// in-memory copy between characters. Left alone, the next `load()` — a
+// curated-record merge until the first readable load completes — would fold
+// the departing character's still-resident targets, spend mode and fold
+// state OVER the arriving character's own stored plan (memory wins per key),
+// the same class of leak `loot-log-history.js` guards against for its own
+// record. `reset()` is exactly what a character switch calls for — see its
+// docstring in persisted-record.js.
+dataManager.on('character_switching', () => shrinePlanRecord.reset());
+
 /**
  * The saved plan with its shape guaranteed — `targets` always an object.
  * @returns {{targets: Object<string, number>, collapsed: boolean}} The live record
