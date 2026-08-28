@@ -66,7 +66,7 @@ function findTile() {
  * @returns {{count: number, stop: Function}} A live counter
  */
 function countStyleWrites(tile) {
-    const WATCHED = ['display', 'left', 'top', 'width', 'height', 'fontSize', 'cursor', 'touchAction', 'border'];
+    const WATCHED = ['display', 'gridColumn', 'minHeight', 'fontSize', 'cursor', 'touchAction', 'border'];
     const real = tile.style;
     const held = {};
     for (const property of WATCHED) held[property] = real[property];

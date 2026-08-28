@@ -111,21 +111,8 @@ import {
     pauseForManualChoice,
 } from './overlay-layouts.js';
 import { hasCoarsePointer } from '../../utils/mobile.js';
-import {
-    resolveLayout,
-    autoGrid,
-    compactColumns,
-    contentBounds,
-    settleLines,
-    squeezeToWidth,
-    clampTile,
-    clampZoom,
-    snap,
-    snapUp,
-    GRID,
-    MIN_TILE,
-    COMPACT_TILE,
-} from '../../utils/overlay-layout.js';
+import { clampZoom, DEFAULT_ZOOM } from '../../utils/overlay-layout.js';
+import { columnsFor, spanFor, seedSpan, migrate, GAP } from '../../utils/overlay-flow.js';
 
 /**
  * The layout, per character.
@@ -136,7 +123,19 @@ import {
  * you saved by name is a template, and templates are worth sharing across
  * characters.
  */
-const STORAGE_KEY = 'overlayPanel';
+const STORAGE_KEY = 'overlayPanelV2';
+
+/**
+ * Where the layout lived before it stopped being pixels.
+ *
+ * Read once, when there is no v2 record to read, and never written. A separate
+ * key rather than a version field in the same one, deliberately: it makes a
+ * rollback a build swap with no data step, because the old build's record is
+ * still sitting there exactly as it left it. The price is one dead key to sweep
+ * up in a later release, which is a much better price than a migration that has
+ * to be run backwards.
+ */
+const LEGACY_STORAGE_KEY = 'overlayPanel';
 /** Where the floating panel sits, shared by every character (see panel-geometry) */
 const GEOMETRY_KEY = 'overlayPanel';
 const PANEL_ID = 'toolasha-overlay-panel';
@@ -169,34 +168,17 @@ const MIN_PICKER_HEIGHT = 120;
  */
 const MIN_HEADER_HEIGHT = 28;
 
-/**
- * The width below which the canvas holds one column of tiles and no more.
- *
- * A phone is around 400 pixels across and a tile is a label and a figure; two of
- * them side by side is two ellipses. So anything under this is one column, and
- * above it the columns are as many as {@link MIN_FLOW_COLUMN} allows.
- */
-const ONE_COLUMN_WIDTH = 500;
-
 /** What the game calls a labyrinth action, for telling one run of combat from another */
 const LABYRINTH_ACTION_TYPE = '/action_types/labyrinth';
-/** The narrowest a flowed column may be and still hold a readout */
-const MIN_FLOW_COLUMN = 240;
-/** Between flowed tiles, so two readouts never touch */
-const FLOW_GAP = 4;
 
-/**
- * How much of the scroller's width is never laid out on.
- *
- * Wider than any ordinary scrollbar, and that is a requirement rather than a
- * margin of taste — see {@link OverlayPanel#_canvasWidth}, where holding this
- * back unconditionally is what keeps the width the tiles are arranged against
- * from moving when a scrollbar arrives.
- */
-const SCROLLBAR_RESERVE = 16;
+/** The CSS custom property the grid reads its column count from */
+const COLUMN_VARIABLE = '--overlay-columns';
 
 /** The scroller's own padding, which the canvas sits inside — `6px` on each side */
 const SCROLLER_PADDING = 12;
+
+/** What a tile is worth in height when its row declares nothing */
+const DEFAULT_TILE_HEIGHT = 30;
 
 /**
  * A tile's content box, as it stands before any row has drawn into it.
@@ -208,17 +190,7 @@ const SCROLLER_PADDING = 12;
  * carries the last shape it was given, and whatever the panel puts in it next
  * is laid out by somebody else's rules.
  */
-const CONTENT_STYLE = { width: '100%', height: '100%', overflow: 'hidden' };
-
-/**
- * A tile's own padding and border, which its content sits inside.
- *
- * One pixel of padding and one of border on each of the top and bottom edges —
- * see `_tileFor`, which is where both are set. Named rather than inlined because
- * a tile measured without it is a tile that clips the last pixel of its own last
- * line every time it is fitted to its content.
- */
-const TILE_CHROME = 4;
+const CONTENT_STYLE = { width: '100%', height: 'auto', minHeight: '0', overflow: 'hidden' };
 
 /** Marks the container the docked panel was put into, so the sheet can find it */
 const DOCK_HOST_CLASS = 'toolasha-overlay-dock-host';
@@ -295,13 +267,15 @@ const COLORS = {
  */
 function defaultSettings() {
     return {
+        /** Version 2: an order and a set of spans, rather than pixels — see `migrate` */
+        version: 2,
         visible: {},
+        /** Reading order, and the layout itself */
         order: [],
-        positions: {},
-        sizes: {},
+        /** How many columns each tile takes; absent is one */
+        span: {},
         zoom: {},
         locked: true,
-        snapToGrid: true,
         separators: true,
         textScale: 100,
         open: false,
@@ -408,13 +382,8 @@ class OverlayPanel {
         this.onWindowResize = null;
         /** Watches the panel's own box, which changes without a window resize */
         this.panelObserver = null;
-        /** The canvas width the tiles were last laid out for */
-        this.lastCanvasWidth = null;
-        /**
-         * Whether the tiles are being flowed into columns rather than placed
-         * where the saved layout says — see `_flowTiles`.
-         */
-        this.flowing = false;
+        /** How many columns the grid currently has, so a resize can tell a change from a nudge */
+        this.columns = 0;
         this.canvasEl = null;
         this.pickerEl = null;
         /** The header band, which the popover is never allowed to cover */
@@ -425,8 +394,6 @@ class OverlayPanel {
         this.onPickerKey = null;
         /** Keeps the shared Escape-to-close off the panels while the popover is up */
         this.releaseEscapeHold = null;
-        /** Whether the tiles were flowed at the last draw, so a change can redraw the popover */
-        this.wasFlowing = false;
         this.timerRegistry = createTimerRegistry();
         this.detachDrag = null;
         this.detachResize = null;
@@ -463,7 +430,7 @@ class OverlayPanel {
         // Rebuilt from defaults rather than merged onto what is in memory: this
         // runs again after a character switch, and the character switched away
         // from must not leave its tiles behind
-        const saved = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
+        const saved = await this._readSettings();
         this.settings =
             saved && typeof saved === 'object'
                 ? // Never spread in from the defaults: a saved layout that predates
@@ -558,14 +525,42 @@ class OverlayPanel {
     /**
      * Whether tiles can currently be moved and resized.
      *
-     * Never while the tiles are flowed. A flowed tile is not where the layout
-     * put it — it is where the width available put it — so a drag would be
-     * arranging a layout that is not on screen, and dropping it would write a
-     * phone's column back over the arrangement made on a desktop. The same
-     * account is logged in on both, so that write is not recoverable.
+     * There is no longer a second answer to hold this off. A layout is an order
+     * and a set of spans, so it is correct at every width and there is no state
+     * in which the tiles on screen are not the ones the layout describes.
      */
     get isEditable() {
-        return !this.settings.locked && !this.flowing;
+        return !this.settings.locked;
+    }
+
+    /**
+     * This character's settings, reading the old record when there is no new one.
+     *
+     * The migration is the only thing that happens here, and it happens by
+     * **merging over the record that was loaded** rather than by rebuilding one
+     * from the fields the new schema knows about. That is not a stylistic
+     * preference: four row options — the luck and expected-value sub-switches —
+     * live in this record and are read from another bundle entirely, through the
+     * bundle bridge. A rewrite that constructed a fresh object from `order`,
+     * `span` and the settings it could name would switch all four off without
+     * ever mentioning them.
+     *
+     * @returns {Promise<Object|null>} The settings, or null for a fresh character
+     */
+    async _readSettings() {
+        const current = await readScoped(STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
+        if (current && typeof current === 'object') return current;
+
+        const legacy = await readScoped(LEGACY_STORAGE_KEY, 'settings', null, { migrate: 'adopt' });
+        if (!legacy || typeof legacy !== 'object') return null;
+
+        // Everything that was never geometry comes across untouched; the pixels
+        // become an order and a set of spans, and are then dropped
+        const { positions, sizes, snapToGrid, ...rest } = legacy;
+        void positions;
+        void sizes;
+        void snapToGrid;
+        return { ...rest, ...migrate(legacy) };
     }
 
     _save() {
@@ -611,7 +606,20 @@ class OverlayPanel {
         });
 
         this.canvasEl = document.createElement('div');
-        Object.assign(this.canvasEl.style, { position: 'relative', minHeight: '100%' });
+        Object.assign(this.canvasEl.style, {
+            display: 'grid',
+            // `minmax(0, 1fr)` rather than `1fr`, and it is load-bearing: a bare
+            // `1fr` is `minmax(auto, 1fr)`, and `auto` lets a long unbreakable
+            // string force its track wider than its share — which is every tile
+            // holding an item name
+            gridTemplateColumns: `repeat(var(${COLUMN_VARIABLE}, 2), minmax(0, 1fr))`,
+            gap: `${GAP}px`,
+            // Every tile in a grid row is drawn to the height of the tallest in
+            // it, which used to be computed and written into both of them
+            alignItems: 'stretch',
+            alignContent: 'start',
+        });
+        this._applyColumns();
         this.scrollEl.appendChild(this.canvasEl);
         this.panel.appendChild(this.scrollEl);
 
@@ -649,15 +657,14 @@ class OverlayPanel {
         // DOM has no reason to implement an API that measures nothing
         if (typeof ResizeObserver !== 'function' || !this.panel) return;
 
-        this.lastCanvasWidth = this._canvasWidth();
         this.panelObserver = new ResizeObserver(() => {
-            const width = this._canvasWidth();
-            // Only when the width the tiles were laid out for has actually
-            // changed. Drawing sets the canvas's own size, and a redraw on
-            // every observation of that is a loop
-            if (width === this.lastCanvasWidth) return;
-            this.lastCanvasWidth = width;
-            this._renderBody();
+            // Only the column count, and only when it has actually changed. The
+            // redraw loop this used to guard against — the draw writing the
+            // canvas's own width, which the observer then saw — cannot happen
+            // any more, because nothing writes the canvas a width.
+            const before = this.columns;
+            this._applyColumns();
+            if (this.columns !== before) this._renderBody();
             this._placePicker();
         });
         this.panelObserver.observe(this.panel);
@@ -685,7 +692,7 @@ class OverlayPanel {
         if (!this.panel) return;
         this._clampToViewport();
         this._fitDock();
-        this.lastCanvasWidth = this._canvasWidth();
+        this._applyColumns();
         this._renderBody();
         this._placePicker();
     }
@@ -1738,17 +1745,9 @@ class OverlayPanel {
         try {
             const map = await loadLayouts();
             const key = normalizeName(name);
-            // A preset is built against the canvas it is about to land on: its
-            // arrangement is a grid of columns rather than a set of coordinates,
-            // and the columns are only the right width once somebody has said
-            // how wide the panel is
-            const saved =
-                map[key]?.file ||
-                presetFile(key, {
-                    width: this._canvasWidth(),
-                    rows: registeredRows(),
-                    snapToGrid: this.settings.snapToGrid !== false,
-                });
+            // Nothing to build it against: a preset is an order and a set of
+            // spans, and is correct at whatever width it lands on
+            const saved = map[key]?.file || presetFile(key, { rows: registeredRows() });
             if (!saved) return false;
 
             const read = fromOPanelConfig(saved);
@@ -1931,7 +1930,6 @@ class OverlayPanel {
         const controls = document.createElement('div');
         Object.assign(controls.style, { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' });
 
-        controls.appendChild(this._optionBox(`Snap to ${GRID}px grid`, 'snapToGrid'));
         controls.appendChild(
             this._optionBox('Separators', 'separators', { on: (settings) => settings.separators !== false })
         );
@@ -1975,9 +1973,6 @@ class OverlayPanel {
         textSize.append(scaleLabel, smaller, larger);
         controls.appendChild(textSize);
 
-        const autogrid = this._textButton('Autogrid', 'Repack every tile from the top left, in order', () =>
-            this._autoGrid()
-        );
         const importBtn = this._textButton(
             'Import layout',
             'Read a layout from an OPanel or Toolasha overlay file',
@@ -2000,21 +1995,17 @@ class OverlayPanel {
             : null;
         if (undo) undo.style.color = COLORS.accent;
 
+        // There is no longer a "too narrow for your arrangement" case to explain,
+        // because there is no arrangement that can fail to fit: a layout is an
+        // order and a set of spans, and a span clamps to the columns there are.
         const hint = document.createElement('div');
-        if (this.flowing) {
-            // Said rather than left to be discovered: the tiles are visibly not
-            // where they were put, and unlocking does not bring the drag back
-            hint.textContent =
-                'Too narrow for the saved arrangement, so the tiles are flowed into columns. ' +
-                'Your layout is untouched — widen the panel or open it on a larger screen to arrange it.';
-        } else {
-            hint.textContent = this.settings.locked
-                ? 'Unlock (🔒) to drag tiles, resize them, and set each one’s text size.'
-                : 'Drag a tile to move it, its corner to resize it, and hover it for − and + to size its text.';
-        }
+        hint.textContent = this.settings.locked
+            ? 'Unlock (🔒) to reorder tiles, set how wide they are, and size their text.'
+            : 'Drag a tile to move it through the order, its right edge to set how many columns it takes, ' +
+              'and hover it for − and + to size its text.';
         Object.assign(hint.style, { color: COLORS.textDim, flexBasis: '100%', marginTop: '2px' });
 
-        controls.append(autogrid, importBtn, exportBtn, ...(undo ? [undo] : []), reset, hint);
+        controls.append(importBtn, exportBtn, ...(undo ? [undo] : []), reset, hint);
         return controls;
     }
 
@@ -2094,45 +2085,6 @@ class OverlayPanel {
         this._renderBody();
         this._renderPicker();
         this._placePicker();
-    }
-
-    /** Repack every visible tile into columns, against the top left */
-    _autoGrid() {
-        this._snapshot('Autogrid');
-        this._packVisible();
-        this._save();
-        this._renderBody();
-        this._renderPicker();
-        this._placePicker();
-    }
-
-    /**
-     * Lay every visible tile out as a column grid, and write it down.
-     *
-     * Sizes as well as positions, which is the part that makes it a grid rather
-     * than a shelf: column edges can only agree if the tiles in a column are the
-     * same width, so the packer widens each one to a whole number of columns and
-     * this writes that back. Nothing is ever narrowed below what it asked for —
-     * see `autoGrid`.
-     *
-     * @returns {number} How many tiles were placed
-     */
-    _packVisible() {
-        // The layout as saved, not as flowed: this writes what it is handed back
-        // to storage, and a phone's single column is not an arrangement anyone
-        // asked to keep
-        const laid = this._layout({ flow: false });
-        const positions = { ...this.settings.positions };
-        const sizes = { ...this.settings.sizes };
-
-        const packed = autoGrid(laid, this._canvasWidth(), this.settings.snapToGrid ? GRID : 1);
-        for (const tile of packed) {
-            positions[tile.key] = { x: tile.x, y: tile.y };
-            sizes[tile.key] = { width: tile.width, height: tile.height };
-        }
-        this.settings.positions = positions;
-        this.settings.sizes = sizes;
-        return packed.length;
     }
 
     /**
@@ -2274,68 +2226,26 @@ class OverlayPanel {
     async _applyLayout(read, what) {
         this._snapshot(what);
 
-        // A file this overlay wrote already holds this overlay's own
-        // coordinates, measured against this overlay's own tiles. There
-        // is nothing to correct, and correcting it anyway is what turned
-        // an export and a re-import on the *same character* into a
-        // different layout: growing sizes to fit and then repacking the
-        // columns moves tiles that were exactly where they were put.
-        // Refitting is for OPanel's files, whose sizes measure OPanel's
-        // rendering rather than ours.
-        if (read.native) {
-            this.settings = { ...this.settings, ...read.settings };
-        } else {
-            this.settings = { ...this.settings, ...read.settings, sizes: this._fitSizes(read.settings.sizes) };
-
-            // Laid out against the width the file asks for, not the width
-            // the panel happens to be. Using the current width clamps every
-            // tile that sits beyond the right edge back inside it, which
-            // drops a second column on top of the first — and settling then
-            // stacks the collision into one very tall column. The panel is
-            // resized to fit a moment later, so the width it is about to
-            // have is the honest one to lay out against.
-            const laidWidth = this._importWidth(this.settings);
-            const laid = resolveLayout(
-                resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
-                this.settings,
-                laidWidth
-            );
-
-            // OPanel measured those tiles against OPanel's rendering, and
-            // the same rows drawn here are not the same size — so they are
-            // grown to fit and then settled, which resolves the collisions
-            // that causes and closes the gaps it leaves
-            const positions = { ...this.settings.positions };
-            for (const { key, x, y } of compactColumns(laid, laidWidth)) positions[key] = { x, y };
-            this.settings.positions = positions;
-        }
+        // A layout arrives either already in this overlay's own terms — an
+        // order and a set of spans — or as pixels, from OPanel or from a file
+        // this overlay wrote before the flow rework. Pixels go through the same
+        // `migrate` a stored v1 record does, so an old file costs no second
+        // code path and an OPanel one costs none at all.
+        const arriving = read.settings.version >= 2 ? read.settings : { ...read.settings, ...migrate(read.settings) };
+        this.settings = { ...this.settings, ...arriving };
+        // Nothing carries pixels any more, and a stale pair left behind would be
+        // written back out on the next export
+        delete this.settings.positions;
+        delete this.settings.sizes;
+        delete this.settings.snapToGrid;
 
         this._save();
 
-        // The frame came sized for OPanel's tiles too, so it is grown to
-        // whatever ours actually need. Left smaller, the imported layout
-        // arrives half below the fold, which reads as tiles that failed
-        // to import rather than as a panel that needs dragging. Our own
-        // file needs none of that — it was written from a frame that
-        // already fitted, so it is restored as it was written.
+        // The frame a file remembers is restored as it was written. There is
+        // nothing to grow it to any more: a layout fits whatever width it lands
+        // on, so an imported one cannot arrive half below the fold.
         const geometry = read.geometry || {};
-        if (read.native) {
-            if (Object.keys(geometry).length) await saveGeometry(GEOMETRY_KEY, geometry);
-        } else {
-            const width = this._importWidth(this.settings);
-            const bounds = contentBounds(
-                resolveLayout(
-                    resolveRows(registeredRows(), this.settings).filter((row) => row.visible),
-                    this.settings,
-                    width
-                )
-            );
-            await saveGeometry(GEOMETRY_KEY, {
-                ...geometry,
-                width: Math.max(geometry.width || 0, bounds.width + 30),
-                height: Math.max(geometry.height || 0, bounds.height + 80),
-            });
-        }
+        if (Object.keys(geometry).length) await saveGeometry(GEOMETRY_KEY, geometry);
         await restoreGeometry(this.panel, GEOMETRY_KEY, { width: 220, height: 120 });
 
         this._refreshLockButton();
@@ -2423,189 +2333,60 @@ class OverlayPanel {
     }
 
     /**
-     * The width a layout is arranged against.
+     * How many columns the canvas currently holds.
      *
-     * Measured from the scroller's **border box**, not from `clientWidth`, and
-     * that is the whole of a bug a player reported as tiles shifting back and
-     * forth once a second.
+     * The only measured quantity in the whole panel, and it is an integer — see
+     * `columnsFor`. Measured from the scroller's border box rather than its
+     * content box, so a scrollbar arriving cannot change it; with a stable
+     * gutter it does not change the content box either, but the border box is
+     * the honest thing to ask and costs nothing.
      *
-     * `clientWidth` has the scrollbar taken out of it. The border box does not
-     * move when a scrollbar appears inside it. Arranging against `clientWidth`
-     * therefore means the width the tiles were laid out for *changes by fifteen
-     * pixels the moment the tiles grow tall enough to scroll* — and a two-column
-     * arrangement built to fit the canvas exactly then overflows, `_needsFlow`
-     * fires, and every tile is dealt into one full-width column. Which is
-     * shorter, so the scrollbar goes, so the canvas widens, so it goes back to
-     * two columns. Round and round, for as long as a tile near the boundary kept
-     * filling in and emptying.
-     *
-     * So the scrollbar's room is held back **unconditionally** rather than
-     * discovered from whether one is currently there. The figure is the same
-     * either way, which is the property that matters: nothing about how tall the
-     * tiles happen to be can change how wide they are arranged.
-     *
-     * @returns {number} Pixels
+     * @returns {number} Between 1 and `MAX_SPAN`
      */
-    _canvasWidth() {
-        // `offsetWidth` is zero in a DOM that measures nothing, where the
-        // panel's own design width is a better answer than a hundred and twenty
+    _columns() {
         const outer = this.scrollEl?.offsetWidth || this.scrollEl?.clientWidth || DEFAULT_PANEL.width;
-        return Math.max(120, outer - SCROLLER_PADDING - SCROLLBAR_RESERVE);
+        return columnsFor(outer - SCROLLER_PADDING);
     }
 
     /**
-     * The visible rows, placed.
+     * Tell the grid how many columns it has.
      *
-     * @param {Object} [options] - How to place them
-     * @param {Function} [options.sizeFor] - A last word on tile sizes, for empty tiles
-     * @param {Set<string>} [options.skip] - Rows to leave out altogether. Left in
-     *   and merely undrawn, a hidden tile still claims the space it would have
-     *   taken, and the layout is a grid with holes in it.
-     * @param {boolean} [options.flow] - False to see the layout as saved, without
-     *   the narrow-width fallback. For Autogrid, which writes what it is given
-     *   and so must never be given a phone's arrangement.
-     * @returns {Array<Object>} Laid-out rows
+     * Written to a custom property rather than to `grid-template-columns`
+     * directly, so the rule that reads it is set once when the canvas is built
+     * and this is a single small write on resize.
      */
-    _layout({ sizeFor = null, skip = null, flow = true } = {}) {
-        const visible = resolveRows(registeredRows(), this.settings).filter(
-            (row) => row.visible && !skip?.has(row.key)
-        );
-        const width = this._canvasWidth();
-        const tiles = resolveLayout(visible, this.settings, width, sizeFor);
-        if (!flow) return tiles;
+    _applyColumns() {
+        if (!this.canvasEl) return;
+        const columns = this._columns();
+        if (columns === this.columns) return;
 
-        if (!tiles.length || !this._needsFlow(tiles, width)) {
-            this.flowing = false;
-            return tiles;
-        }
-
-        // Too wide, but perhaps only just. Laid out again against its own extent
-        // so nothing is clamped — `resolveLayout` would otherwise have dragged
-        // the right-hand column left on top of the left-hand one, and there is
-        // no recovering the arrangement from that — and then scaled down to the
-        // width there actually is.
-        const extent = this._savedExtent(tiles);
-        const roomy = resolveLayout(visible, this.settings, extent, sizeFor);
-        const squeezed = squeezeToWidth(roomy, width);
-        if (squeezed !== roomy) {
-            this.flowing = false;
-            return squeezed;
-        }
-
-        this.flowing = true;
-        return this._flowTiles(tiles, width);
+        this.columns = columns;
+        this.canvasEl.style.setProperty(COLUMN_VARIABLE, String(columns));
     }
 
     /**
-     * How wide the arrangement is, as it was saved rather than as it was drawn.
+     * The rows to draw, in the order they are to be read.
      *
-     * Taken from the saved positions because the drawn ones have already been
-     * held inside the canvas, and a tile pulled back from past the right edge no
-     * longer says how far past it the layout goes.
+     * All of the layout there is. `resolveRows` puts the saved order first and
+     * anything it has never heard of after it; everything else here is a span
+     * clamped to the columns that exist and a height floor the row declared for
+     * itself.
      *
-     * @param {Array<Object>} tiles - Laid-out rows
-     * @returns {number} Pixels
+     * @returns {Array<Object>} Visible rows, each with `span`, `minHeight` and `zoom`
      */
-    _savedExtent(tiles) {
-        const saved = this.settings.positions || {};
-        return tiles.reduce((widest, tile) => {
-            const x = Number.isFinite(saved[tile.key]?.x) ? saved[tile.key].x : tile.x;
-            return Math.max(widest, x + tile.width);
-        }, 0);
-    }
+    _visibleRows() {
+        const columns = this.columns || this._columns();
+        const spans = this.settings.span || {};
+        const zooms = this.settings.zoom || {};
 
-    /**
-     * Whether the saved arrangement still fits the width there is.
-     *
-     * This is the whole of the jumble, and it is not a drawing bug. A saved
-     * layout is pixels — two columns of tiles at x=0 and x=250 — and the panel
-     * is opened on a phone where the canvas is 370 across. `clampTile` then does
-     * exactly what it promises: it holds every tile inside the canvas, which
-     * means the right-hand column is dragged left until it is sitting on top of
-     * the left-hand one. Tiles over tiles, text over text, and every one of them
-     * technically on screen.
-     *
-     * So the test is asked before the clamping rather than after it: the *saved*
-     * right edge is what says whether this layout was drawn for a wider window
-     * than this one. When it fits, nothing here happens and the arrangement is
-     * the arrangement — a desktop is untouched by any of this.
-     *
-     * @param {Array<Object>} tiles - Laid-out tiles
-     * @param {number} width - Canvas width
-     * @returns {boolean} True when the tiles have to be flowed instead
-     */
-    _needsFlow(tiles, width) {
-        const saved = this.settings.positions || {};
-        return tiles.some((tile) => {
-            const spot = saved[tile.key];
-            const x = Number.isFinite(spot?.x) ? spot.x : tile.x;
-            // A pixel of slack: a tile flush with the right edge fits
-            return x + tile.width > width + 1;
-        });
-    }
-
-    /**
-     * Deal the tiles into as many columns as the width can hold.
-     *
-     * Not a rescale. Making everything smaller until the desktop arrangement
-     * fits gives a phone a two-column layout at six-point text, which is a
-     * screenshot rather than a readout. The tiles keep their height and their
-     * text and are dealt into columns of the width that is actually there —
-     * one of them, below {@link ONE_COLUMN_WIDTH}.
-     *
-     * Reading order is kept: the tiles are ordered by where the saved layout put
-     * them, top to bottom then left to right, so the column on a phone runs in
-     * the order the eye ran across the desktop. Each tile then goes to whichever
-     * column is currently shortest, which keeps the columns level without any
-     * tile changing size.
-     *
-     * Overlap is impossible by construction rather than by clamping: within a
-     * column each tile starts where the last one ended, and the columns do not
-     * share any horizontal space.
-     *
-     * @param {Array<Object>} tiles - Laid-out tiles
-     * @param {number} width - Canvas width
-     * @returns {Array<Object>} The same tiles, re-placed and re-widened
-     */
-    _flowTiles(tiles, width) {
-        const columns = this._flowColumns(width);
-        const columnWidth = Math.max(MIN_TILE.width, Math.floor((width - FLOW_GAP * (columns - 1)) / columns));
-
-        const saved = this.settings.positions || {};
-        const at = (tile) => {
-            const spot = saved[tile.key];
-            return Number.isFinite(spot?.x) && Number.isFinite(spot?.y) ? spot : { x: tile.x, y: tile.y };
-        };
-        const ordered = [...tiles].sort((a, b) => at(a).y - at(b).y || at(a).x - at(b).x);
-
-        const bottoms = new Array(columns).fill(0);
-        const placed = new Map();
-        for (const tile of ordered) {
-            let column = 0;
-            for (let index = 1; index < columns; index += 1) {
-                if (bottoms[index] < bottoms[column]) column = index;
-            }
-            placed.set(tile.key, {
-                x: column * (columnWidth + FLOW_GAP),
-                y: bottoms[column],
-                width: columnWidth,
-            });
-            bottoms[column] += tile.height + FLOW_GAP;
-        }
-
-        // Handed back in the order they arrived: what changed is where they are
-        // drawn, and nothing downstream should have to notice a reordering
-        return tiles.map((tile) => ({ ...tile, ...placed.get(tile.key) }));
-    }
-
-    /**
-     * How many columns of tiles fit the width there is.
-     * @param {number} width - Canvas width
-     * @returns {number} At least one
-     */
-    _flowColumns(width) {
-        if (width < ONE_COLUMN_WIDTH) return 1;
-        return Math.max(1, Math.floor((width + FLOW_GAP) / (MIN_FLOW_COLUMN + FLOW_GAP)));
+        return resolveRows(registeredRows(), this.settings)
+            .filter((row) => row.visible)
+            .map((row) => ({
+                ...row,
+                span: spanFor(spans[row.key] ?? seedSpan(row), columns),
+                minHeight: row.defaultSize?.height > 0 ? row.defaultSize.height : DEFAULT_TILE_HEIGHT,
+                zoom: clampZoom(zooms[row.key] ?? row.defaultZoom ?? DEFAULT_ZOOM),
+            }));
     }
 
     /**
@@ -2624,23 +2405,6 @@ class OverlayPanel {
      */
     _renderBody() {
         this._drawBody();
-        this._noteFlowChange();
-    }
-
-    /**
-     * Tell the popover when the tiles start or stop being flowed.
-     *
-     * Flowing is decided at draw time from the width there is, and it is the one
-     * thing the popover reports that the popover itself cannot cause — a window
-     * dragged narrower with the gear open left it saying "unlock to drag tiles"
-     * about tiles that can no longer be dragged. Only on the change, because
-     * this runs on every tick and rebuilding the popover every second would take
-     * the control out from under whoever is using it.
-     */
-    _noteFlowChange() {
-        if (this.flowing === this.wasFlowing) return;
-        this.wasFlowing = this.flowing;
-        this._refreshPicker();
     }
 
     /** The drawing itself — see {@link _renderBody}, which is how it is reached */
@@ -2652,9 +2416,7 @@ class OverlayPanel {
         // anyway.
         if (this.interacting) return;
 
-        this._adoptPlacements();
-
-        const full = this._layout();
+        const full = this._visibleRows();
         if (!full.length) {
             this.tiles.clear();
             this.canvasEl.replaceChildren();
@@ -2678,209 +2440,62 @@ class OverlayPanel {
             if (!child.dataset.overlayRow) child.remove();
         }
 
-        // Pass one: place and draw everything, at the size it would have if it
-        // had something to say
-        const empty = new Set();
+        // One pass. Draw every tile, then say what the empty ones do about it —
+        // and that is the end of it, because the grid works out the rest. There
+        // used to be a second layout pass here for the tiles that stood down and
+        // a third that measured what each one had drawn; both were the browser's
+        // job being done in JavaScript once a second.
+        let drawn = 0;
         for (const row of full) {
             const tile = this._tileFor(row);
             this._styleTile(tile, row);
-            if (this._drawRow(tile, row)) empty.add(row.key);
+
+            const blank = this._drawRow(tile, row);
             // It has been seen working, which is all a switched-on tile was
             // ever owed — see `_emptyPolicy`
-            else this.justEnabled.delete(row.key);
+            if (!blank) this.justEnabled.delete(row.key);
+
+            const policy = blank ? this._emptyPolicy(row) : null;
+            if (policy === EMPTY_POLICY.COMPACT) this._drawCompact(tile, row);
+            else if (policy === EMPTY_POLICY.FULL) this._drawPlaceholder(tile, row);
+
+            // A hidden tile leaves the flow and everything after it closes up.
+            // Kept rather than destroyed: it is one refresh away from having
+            // something to say, and rebuilding it every second would churn the
+            // DOM and its listeners for a tile nobody can see.
+            const gone = policy === EMPTY_POLICY.HIDE ? 'none' : '';
+            if (tile.style.display !== gone) tile.style.display = gone;
+            if (!gone) drawn += 1;
         }
 
-        // Pass two: what the ones that drew nothing do about it
-        const hidden = new Set();
-        const compact = new Set();
-        for (const row of full) {
-            if (!empty.has(row.key)) continue;
+        // Reading order *is* the layout, so the DOM has to be in it — which also
+        // makes the panel tabbable and coherent to a screen reader, for free
+        this._orderTiles(full);
 
-            const policy = this._emptyPolicy(row);
-            if (policy === EMPTY_POLICY.HIDE) hidden.add(row.key);
-            else if (policy === EMPTY_POLICY.COMPACT) {
-                compact.add(row.key);
-                this._drawCompact(this.tiles.get(row.key), row);
-            } else this._drawPlaceholder(this.tiles.get(row.key), row);
-        }
-
-        let laid = full;
-        if (hidden.size || compact.size) {
-            laid = this._layout({
-                skip: hidden,
-                sizeFor: (row, size) =>
-                    compact.has(row.key)
-                        ? { width: size.width, height: Math.min(size.height, COMPACT_TILE.height) }
-                        : size,
-            });
-        }
-        laid = this._settleToContent(laid, full, hidden);
-        for (const row of laid) this._styleTile(this.tiles.get(row.key), row);
-
-        // Kept rather than destroyed: a hidden tile is one refresh away from
-        // having something to say again, and rebuilding it every second would
-        // churn the DOM and its listeners for a tile nobody can see
-        for (const key of hidden) {
-            const tile = this.tiles.get(key);
-            if (tile) tile.style.display = 'none';
-        }
-
-        if (!laid.length) {
+        if (!drawn) {
             this.canvasEl.appendChild(this._canvasNote('Nothing to report yet — tiles appear as data arrives.'));
         }
-
-        const bounds = contentBounds(laid);
-        this.canvasEl.style.width = `${bounds.width}px`;
-        this.canvasEl.style.height = `${bounds.height}px`;
     }
 
     /**
-     * Shrink each tile to what it drew, and close the lines up behind it.
+     * Put the tiles in the document in the order they are meant to be read.
      *
-     * The tiles are sized for what a row *can* show. Consumables is four lines
-     * tall because a party of five with a limiting item is four lines; on a
-     * character crafting alone it is one, and the other three lines are a blank
-     * band under a heading. Reported as the biggest remaining contributor to a
-     * panel that still felt gappy, and the reading was right: the columns were
-     * straight by then, and what was left was vertical air.
+     * Only where they are not already, because moving a node the grid is drawing
+     * costs a reflow and this runs every tick for a list that changes when
+     * somebody drags something.
      *
-     * Display-time only, and nothing here is written back — the saved layout
-     * stays the arrangement that was designed, and a tile that fills in tomorrow
-     * gets its full height back. And only while the layout is locked: unlocked,
-     * the point is to arrange the tiles, which means seeing them at the size
-     * they were given rather than at the size today's data happens to need.
-     * Dragging writes back where a tile was dropped, so a settled position must
-     * never be under the pointer.
-     *
-     * @param {Array<Object>} tiles - Laid-out rows, without the hidden ones
-     * @param {Array<Object>} full - Every visible row at its full size, which is
-     *   the only place a hidden row's own slot can still be read from
-     * @param {Set<string>} hidden - Rows that took themselves off screen
-     * @returns {Array<Object>} The same rows, fitted and closed up
+     * @param {Array<Object>} rows - The visible rows, in order
      */
-    _settleToContent(tiles, full, hidden) {
-        if (this.isEditable || this.flowing || !tiles.length) return tiles;
+    _orderTiles(rows) {
+        let previous = null;
+        for (const row of rows) {
+            const tile = this.tiles.get(row.key);
+            if (!tile) continue;
 
-        // What the layout allotted, which is what a line's spacing is measured
-        // against — read off the full-size pass rather than off these rows,
-        // whose heights have already been cut down for the tiles standing down.
-        // Taken from the shrunken height instead, a compact tile looks like a
-        // small tile with a lot of deliberate air under it, and nothing moves.
-        const allotted = new Map(full.map((row) => [row.key, row.height]));
-        const given = (row) => allotted.get(row.key) ?? row.height;
-
-        const fitted = tiles.map((row) => ({ ...row, given: given(row), height: this._drawnHeight(row) }));
-
-        // A hidden row is still a member of the line it was laid out on, at no
-        // height at all. Left out altogether, the space it vacated reads as
-        // spacing somebody left there and is kept; counted at zero, a line every
-        // one of whose tiles has gone takes no room.
-        const gone = full.filter((row) => hidden.has(row.key)).map((row) => ({ ...row, given: row.height, height: 0 }));
-
-        const settled = new Map(settleLines([...fitted, ...gone]).map((row) => [row.key, row]));
-        return tiles.map((row) => settled.get(row.key) || row);
-    }
-
-    /**
-     * How tall a tile has to be for what is currently in it.
-     *
-     * Measured from the content's own children rather than from the content box,
-     * which is the full height of the tile and would only ever measure itself.
-     * Rounded up to the grid so a pixel of font metrics cannot make a tile
-     * oscillate between two heights once a second, and never taller than the
-     * tile was given — growing is how a size somebody chose gets overruled.
-     *
-     * Cached per tile and recomputed only when the row actually redrew, because
-     * reading an offset forces the browser to lay the panel out and this runs
-     * for every tile on every tick. Most ticks redraw nothing.
-     *
-     * @param {Object} row - A laid-out row
-     * @returns {number} Pixels
-     */
-    _drawnHeight(row) {
-        const tile = this.tiles.get(row.key);
-        const content = tile?._content;
-        if (!content) return row.height;
-
-        if (tile._redrawn || !Number.isFinite(tile._contentHeight)) {
-            let extent = 0;
-            for (const child of content.children) extent = Math.max(extent, child.offsetTop + child.offsetHeight);
-            tile._contentHeight = extent;
-            tile._redrawn = false;
+            const wanted = previous ? previous.nextSibling : this.canvasEl.firstChild;
+            if (tile !== wanted) this.canvasEl.insertBefore(tile, wanted);
+            previous = tile;
         }
-
-        // No measurement to be had — a test DOM, or a tile not yet in the
-        // document. The tile keeps the height it was given, which is the honest
-        // answer to "how tall is this" when nothing can be measured.
-        if (!(tile._contentHeight > 0)) return row.height;
-
-        // The tile's own padding and border, which the content sits inside
-        const needed = snapUp(tile._contentHeight + TILE_CHROME, GRID);
-        return Math.max(MIN_TILE.height, Math.min(row.height, needed));
-    }
-
-    /**
-     * Write down where a tile that had no saved position ended up.
-     *
-     * This is the other half of the jumble, and it is the half that made it look
-     * like the overlay was rearranging itself. A tile with no saved position is
-     * placed by `resolveLayout` **against the tiles that happen to be on screen
-     * at that moment**, and the result was never written down — so it was
-     * recomputed on the next draw, against a different set. Every measurement
-     * tile that starts or stops reporting, every activity change, every second
-     * pass of `_drawBody` (which lays out again without the tiles that stood
-     * down) moved every unplaced tile somewhere else. Worse, a tile placed in
-     * the gap left by one that had gone quiet was sitting on top of it the
-     * moment it had something to say again.
-     *
-     * So a placement is a decision, and decisions are saved. Once a tile has a
-     * position it keeps it: neighbours can appear and vanish around it and it
-     * stays where it was put, which is what a layout is.
-     *
-     * Two placements, for two situations. Nothing placed at all is a fresh
-     * character or a layout just reset, and gets the whole set packed as a grid —
-     * the same one Autogrid produces, because "what does the overlay look like
-     * before you arrange it" and "tidy this up" have the same right answer. One
-     * new tile among placed ones gets the corner search, which puts it at the
-     * first free corner of the arrangement it is joining.
-     *
-     * The flow does not stop any of this, and used to. Flowing is a way of
-     * *drawing* a layout that does not fit, not a reason to stop deciding where
-     * the layout puts things — and while it did stop them, a row that arrived
-     * on a narrow panel was placed afresh on every draw against whatever was on
-     * screen that tick, which is precisely the wandering this exists to end.
-     * What is written is `flow: false` geometry throughout, so a phone's column
-     * is never what gets saved. The one thing still held back is building a
-     * whole arrangement from nothing, which would be measuring a phone and
-     * calling the result this character's layout.
-     *
-     * @returns {boolean} Whether anything was written
-     */
-    _adoptPlacements() {
-        const visible = resolveRows(registeredRows(), this.settings).filter((row) => row.visible);
-        if (!visible.length) return false;
-
-        const positions = this.settings.positions || {};
-        const placed = (row) => Number.isFinite(positions[row.key]?.x) && Number.isFinite(positions[row.key]?.y);
-        if (visible.every(placed)) return false;
-
-        if (!visible.some(placed)) {
-            // Nothing has ever been arranged, and the panel is currently too
-            // narrow for the arrangement it would build. Packing now would
-            // measure a phone and write the result down as this character's
-            // layout, which is a decision a phone does not get to make.
-            if (this.flowing) return false;
-            this._packVisible();
-        } else {
-            const next = { ...positions };
-            for (const tile of this._layout({ flow: false })) {
-                if (!Number.isFinite(next[tile.key]?.x)) next[tile.key] = { x: tile.x, y: tile.y };
-            }
-            this.settings.positions = next;
-        }
-
-        this._save();
-        return true;
     }
 
     /**
@@ -2910,10 +2525,12 @@ class OverlayPanel {
         // does not touch layout.
         const want = {
             display: '',
-            left: `${row.x}px`,
-            top: `${row.y}px`,
-            width: `${row.width}px`,
-            height: `${row.height}px`,
+            // The whole of a tile's geometry. Width comes from the columns it
+            // spans, height from what it drew — with a floor its own row
+            // declared, which keeps a tile whose content changes every second
+            // from resizing the grid under the reader.
+            gridColumn: `span ${row.span}`,
+            minHeight: `${row.minHeight}px`,
             fontSize: `${row.zoom}%`,
             cursor: this.isEditable ? 'move' : row.onOpen ? 'pointer' : 'default',
             // While unlocked a finger drag must not become a scroll; locked
@@ -3168,7 +2785,7 @@ class OverlayPanel {
         const tile = document.createElement('div');
         tile.dataset.overlayRow = row.key;
         Object.assign(tile.style, {
-            position: 'absolute',
+            position: 'relative',
             boxSizing: 'border-box',
             overflow: 'hidden',
             borderRadius: '3px',
@@ -3203,9 +2820,6 @@ class OverlayPanel {
         tile.appendChild(grip);
         tile._grip = grip;
 
-        this._attachTileDrag(tile, row.key);
-        this._attachTileResize(tile, grip, row.key);
-
         const zoomControl = this._tileZoomControl(tile, row.key);
         tile.appendChild(zoomControl);
         tile._zoom = zoomControl;
@@ -3234,127 +2848,6 @@ class OverlayPanel {
         this.canvasEl.appendChild(tile);
         this.tiles.set(row.key, tile);
         return tile;
-    }
-
-    /**
-     * @param {HTMLElement} tile - The tile
-     * @param {string} key - Row key
-     */
-    _attachTileDrag(tile, key) {
-        let startX = 0;
-        let startY = 0;
-        let originX = 0;
-        let originY = 0;
-        let dragging = false;
-
-        const onPointerMove = (event) => {
-            if (!dragging) return;
-            const step = this.settings.snapToGrid ? GRID : 1;
-            const wanted = {
-                x: snap(originX + event.clientX - startX, step),
-                y: snap(originY + event.clientY - startY, step),
-            };
-            const held = clampTile(
-                wanted,
-                { width: tile.offsetWidth, height: tile.offsetHeight },
-                {
-                    width: this._canvasWidth(),
-                }
-            );
-            tile.style.left = `${held.x}px`;
-            tile.style.top = `${held.y}px`;
-        };
-
-        const onPointerUp = () => {
-            if (!dragging) return;
-            dragging = false;
-            this.interacting = false;
-            document.removeEventListener('pointermove', onPointerMove);
-            document.removeEventListener('pointerup', onPointerUp);
-            document.removeEventListener('pointercancel', onPointerUp);
-
-            this.settings.positions = {
-                ...this.settings.positions,
-                [key]: { x: parseFloat(tile.style.left), y: parseFloat(tile.style.top) },
-            };
-            this._save();
-            this._renderBody();
-        };
-
-        // Pointer events so a finger can arrange tiles too; touch-action stays
-        // default while locked so the panel still scrolls — the drag only ever
-        // starts while the layout is unlocked
-        tile.addEventListener('pointerdown', (event) => {
-            // Locked is the normal state, where a tile is something you read and
-            // click rather than something you move
-            if (!this.isEditable || event.button !== 0) return;
-            if (event.target === tile._grip || event.target.closest('button, input, select, a')) return;
-
-            dragging = true;
-            this.interacting = true;
-            startX = event.clientX;
-            startY = event.clientY;
-            originX = parseFloat(tile.style.left) || 0;
-            originY = parseFloat(tile.style.top) || 0;
-            document.addEventListener('pointermove', onPointerMove);
-            document.addEventListener('pointerup', onPointerUp);
-            document.addEventListener('pointercancel', onPointerUp);
-            event.preventDefault();
-        });
-    }
-
-    /**
-     * @param {HTMLElement} tile - The tile
-     * @param {HTMLElement} grip - Its corner
-     * @param {string} key - Row key
-     */
-    _attachTileResize(tile, grip, key) {
-        let startX = 0;
-        let startY = 0;
-        let startWidth = 0;
-        let startHeight = 0;
-        let resizing = false;
-
-        const onPointerMove = (event) => {
-            if (!resizing) return;
-            const step = this.settings.snapToGrid ? GRID : 1;
-            tile.style.width = `${Math.max(MIN_TILE.width, snap(startWidth + event.clientX - startX, step))}px`;
-            tile.style.height = `${Math.max(MIN_TILE.height, snap(startHeight + event.clientY - startY, step))}px`;
-        };
-
-        const onPointerUp = () => {
-            if (!resizing) return;
-            resizing = false;
-            this.interacting = false;
-            document.removeEventListener('pointermove', onPointerMove);
-            document.removeEventListener('pointerup', onPointerUp);
-            document.removeEventListener('pointercancel', onPointerUp);
-
-            this.settings.sizes = {
-                ...this.settings.sizes,
-                [key]: { width: tile.offsetWidth, height: tile.offsetHeight },
-            };
-            this._save();
-            this._renderBody();
-        };
-
-        // Pointer events so a finger works too; the grip only shows while the
-        // layout is unlocked, so it can opt out of scrolling outright
-        grip.style.touchAction = 'none';
-        grip.addEventListener('pointerdown', (event) => {
-            if (event.button !== 0) return;
-            resizing = true;
-            this.interacting = true;
-            startX = event.clientX;
-            startY = event.clientY;
-            startWidth = tile.offsetWidth;
-            startHeight = tile.offsetHeight;
-            document.addEventListener('pointermove', onPointerMove);
-            document.addEventListener('pointerup', onPointerUp);
-            document.addEventListener('pointercancel', onPointerUp);
-            event.preventDefault();
-            event.stopPropagation();
-        });
     }
 
     /**

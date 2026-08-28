@@ -121,6 +121,17 @@ describe('columnUnit', () => {
         expect(columnUnit(tiles)).toEqual({ unit: 240, width: 480 });
     });
 
+    test('finds it from a tile edge even when nothing starts on the boundary', () => {
+        // A narrow tile in the left column above a full-width one: no tile
+        // *begins* at 200, so left edges alone would read this as one column
+        // and flatten every span to 1
+        const tiles = [
+            { key: 'narrow', x: 0, y: 0, w: 200, h: 30 },
+            { key: 'wide', x: 0, y: 30, w: 400, h: 30 },
+        ];
+        expect(columnUnit(tiles)).toEqual({ unit: 200, width: 400 });
+    });
+
     test('a single full-width tile is its own unit', () => {
         expect(columnUnit([{ key: 'a', x: 0, y: 0, w: 440, h: 30 }])).toEqual({ unit: 440, width: 440 });
     });

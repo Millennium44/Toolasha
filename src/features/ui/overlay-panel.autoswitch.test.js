@@ -179,30 +179,15 @@ describe('applying a preset', () => {
         expect(overlayPanel.settings.visible.dps).toBeFalsy();
     });
 
-    test('a preset arrives as a grid rather than as a pile', async () => {
+    test('a preset arrives as an arrangement rather than as a pile', async () => {
         await overlayPanel.applyNamedLayout('Combat');
 
-        // Placed against the canvas it landed on, rather than shipped as
-        // coordinates or left for the packer to guess at one tile at a time
-        const placed = PRESET_LAYOUTS.Combat.order.map((key) => ({
-            key,
-            ...overlayPanel.settings.positions[key],
-            ...overlayPanel.settings.sizes[key],
-        }));
-
-        expect(placed.every((tile) => Number.isFinite(tile.x) && Number.isFinite(tile.y))).toBe(true);
-        // Two columns, and every tile starts at one of them — the jumble was
-        // tiles starting wherever the last one happened to end
-        expect(new Set(placed.map((tile) => tile.x)).size).toBe(2);
-
-        for (let i = 0; i < placed.length; i += 1) {
-            for (let j = i + 1; j < placed.length; j += 1) {
-                const [a, b] = [placed[i], placed[j]];
-                expect(
-                    a.x >= b.x + b.width || b.x >= a.x + a.width || a.y >= b.y + b.height || b.y >= a.y + a.height
-                ).toBe(true);
-            }
-        }
+        // The whole of a layout: which tiles, in what order, how wide each one
+        expect(overlayPanel.settings.order).toEqual(PRESET_LAYOUTS.Combat.order);
+        expect(overlayPanel.settings.span).toEqual(PRESET_LAYOUTS.Combat.span);
+        // And nothing measured, so nothing can have been measured wrongly
+        expect(overlayPanel.settings.positions).toBeUndefined();
+        expect(overlayPanel.settings.sizes).toBeUndefined();
         expect(overlayPanel.canvasEl.children.length).toBeGreaterThan(1);
     });
 
@@ -464,18 +449,18 @@ describe('following what you are doing', () => {
 });
 
 describe('reloading the page', () => {
-    test('brings back the same tiles at the same coordinates', async () => {
+    test('brings back the same tiles in the same order', async () => {
         // A preset is applied, the page is reloaded, and the panel reads its
         // settings back from storage. Nothing in that round trip may change
         // which tiles are up or where they sit.
         Object.defineProperty(overlayPanel.scrollEl, 'offsetWidth', { value: 488, configurable: true });
-        overlayPanel.lastCanvasWidth = overlayPanel._canvasWidth();
+        overlayPanel._applyColumns();
 
         await overlayPanel.applyNamedLayout('Skilling');
         const before = {
             shown: shown(),
-            positions: { ...overlayPanel.settings.positions },
-            sizes: { ...overlayPanel.settings.sizes },
+            order: [...overlayPanel.settings.order],
+            span: { ...overlayPanel.settings.span },
         };
         expect(before.shown).toEqual(PRESET_LAYOUTS.Skilling.order);
 
@@ -493,9 +478,12 @@ describe('reloading the page', () => {
         // The order grows to name every registered row — opening the picker
         // needs a full one to reorder against — but which of them are *on*, and
         // where they sit, is the layout, and none of that may move
+        // The order grows to name every row the registry knows about — that is
+        // what load-time materialization is for — but the tiles that are *on*,
+        // in the order they read, and how wide each is, is the layout
         expect(shown()).toEqual(before.shown);
-        expect(overlayPanel.settings.positions).toEqual(before.positions);
-        expect(overlayPanel.settings.sizes).toEqual(before.sizes);
+        expect(overlayPanel.settings.order.slice(0, before.order.length)).toEqual(before.order);
+        expect(overlayPanel.settings.span).toEqual(before.span);
     });
 
     test('and does not switch layout on its own with auto-switching off', async () => {
@@ -541,10 +529,9 @@ describe('applying a preset over a layout somebody had already made', () => {
         overlayPanel.settings.positions = { dps: { x: 17, y: 3 }, luck: { x: 240, y: 41 } };
         overlayPanel.settings.sizes = { dps: { width: 240, height: 40 } };
 
-        // 460 of usable canvas, once the scroller's padding and the room always
-        // kept for a scrollbar come off — what SKILLING_AT_460 is worked out for
+        // Wide enough for the two columns every preset is written for
         Object.defineProperty(overlayPanel.scrollEl, 'offsetWidth', { value: 488, configurable: true });
-        overlayPanel.lastCanvasWidth = overlayPanel._canvasWidth();
+        overlayPanel._applyColumns();
         overlayPanel._renderBody();
     });
 

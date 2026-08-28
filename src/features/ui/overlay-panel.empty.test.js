@@ -43,9 +43,11 @@ vi.mock('../../utils/opanel-config.js', () => ({ fromOPanelConfig: () => null, t
 vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => null }));
 
 /** What storage hands back for this character, and what the panel wrote to it */
-const saved = vi.hoisted(() => ({ read: null, written: null }));
+const saved = vi.hoisted(() => ({ read: null, legacy: null, written: null }));
 vi.mock('../../utils/character-key.js', () => ({
-    readScoped: async () => saved.read,
+    // Key-aware, because the panel reads two: the current record and, when
+    // there is none, the one the pixel-era build left behind
+    readScoped: async (key) => (key === 'overlayPanelV2' ? saved.read : saved.legacy),
     writeScoped: async (key, value) => {
         saved.written = value;
     },
@@ -113,6 +115,7 @@ function text() {
 
 beforeEach(() => {
     saved.read = null;
+    saved.legacy = null;
     saved.written = null;
     game.rows = [];
     document.body.replaceChildren();
@@ -146,9 +149,11 @@ describe('a character who has never arranged the overlay', () => {
         await overlayPanel.initialize();
         overlayPanel.show();
 
-        const first = tiles().get(CURATED_ROWS[0]);
-        expect(first.style.left).toBe('0px');
-        expect(first.style.top).toBe('0px');
+        // Reading order is the layout, so it is the document order that says it
+        const drawn = [...overlayPanel.canvasEl.querySelectorAll('[data-overlay-row]')].map(
+            (tile) => tile.dataset.overlayRow
+        );
+        expect(drawn).toEqual(CURATED_ROWS.filter((key) => drawn.includes(key)));
     });
 
     test('nothing is said about a row that failed to draw', async () => {
@@ -176,21 +181,26 @@ describe('a character who arranged the overlay before the curated set existed', 
         expect(overlayPanel.settings.curatedDefaults).toBe(false);
     });
 
-    test('their saved positions and sizes are left exactly as they were', async () => {
-        game.rows = [row('luck', { text: 'x' })];
-        saved.read = {
-            visible: { luck: true },
-            order: ['luck'],
-            positions: { luck: { x: 40, y: 90 } },
-            sizes: { luck: { width: 200, height: 60 } },
+    test('their pixel layout is read as an order and a set of spans', async () => {
+        game.rows = [row('luck', { text: 'x' }), row('dps', { text: 'x' })];
+        saved.legacy = {
+            visible: { luck: true, dps: true },
+            order: ['dps', 'luck'],
+            // Two columns of 200, luck across both — the shape a v1 record has
+            positions: { dps: { x: 0, y: 0 }, luck: { x: 0, y: 30 } },
+            sizes: { dps: { width: 200, height: 30 }, luck: { width: 400, height: 30 } },
         };
 
         await overlayPanel.initialize();
         overlayPanel.show();
 
-        expect(tiles().get('luck').style.left).toBe('40px');
-        expect(tiles().get('luck').style.top).toBe('90px');
-        expect(tiles().get('luck').style.height).toBe('60px');
+        expect(overlayPanel.settings.version).toBe(2);
+        expect(overlayPanel.settings.order).toEqual(['dps', 'luck']);
+        expect(overlayPanel.settings.span.luck).toBe(2);
+        expect(tiles().get('luck').style.gridColumn).toBe('span 2');
+        // And the pixels are gone rather than left to be written out again
+        expect(overlayPanel.settings.positions).toBeUndefined();
+        expect(overlayPanel.settings.sizes).toBeUndefined();
     });
 });
 
@@ -223,8 +233,8 @@ describe('a tile with nothing to show', () => {
         saved.read = {
             visible: { experiencePerHour: true, timeToLevel: true },
             order: ['experiencePerHour', 'timeToLevel'],
-            positions: { experiencePerHour: { x: 0, y: 0 }, timeToLevel: { x: 220, y: 0 } },
-            sizes: { experiencePerHour: { width: 220, height: 30 }, timeToLevel: { width: 220, height: 30 } },
+            version: 2,
+            span: {},
             emptyTiles: EMPTY_POLICY.AUTO,
             locked: true,
         };
@@ -233,10 +243,12 @@ describe('a tile with nothing to show', () => {
 
         const quiet = tiles().get('experiencePerHour');
         expect(quiet.style.display).not.toBe('none');
-        expect(quiet.style.left).toBe('0px');
         expect(quiet._content.textContent).toBe('Experience/hr');
-        // And the tile beside it has not moved to fill the space
-        expect(tiles().get('timeToLevel').style.left).toBe('220px');
+        // It keeps its place in the order, so nothing beside it moves
+        const drawn = [...overlayPanel.canvasEl.querySelectorAll('[data-overlay-row]')].map(
+            (tile) => tile.dataset.overlayRow
+        );
+        expect(drawn).toEqual(['experiencePerHour', 'timeToLevel']);
     });
 
     test('a measurement waiting on an activity keeps its slot and names itself', async () => {
@@ -248,8 +260,9 @@ describe('a tile with nothing to show', () => {
         expect(tiles().get('dps')._content.textContent).toBe('DPS');
         // Level with the tile it shares a line with, rather than a short box at
         // the top of a taller line — the line is that tall either way
-        expect(tiles().get('dps').style.height).toBe(tiles().get('coins').style.height);
-        expect(tiles().get('dps').style.top).toBe(tiles().get('coins').style.top);
+        // Level with its neighbour by the grid's own doing — `align-items:
+        // stretch` draws every tile in a row to the height of the tallest
+        expect(overlayPanel.canvasEl.style.alignItems).toBe('stretch');
         expect(text()).not.toContain('No damage tracked yet');
     });
 
@@ -263,7 +276,7 @@ describe('a tile with nothing to show', () => {
         overlayPanel.refresh();
 
         expect(shown()).toEqual(['coins', 'dps']);
-        expect(tiles().get('dps').style.height).toBe('40px');
+        expect(tiles().get('dps')._content.textContent).toContain('412 dps');
         expect(text()).toContain('412 dps');
     });
 
@@ -273,7 +286,6 @@ describe('a tile with nothing to show', () => {
         const tile = tiles().get('netWorth');
         expect(tile.style.display).not.toBe('none');
         expect(tile._content.textContent).toBe('Net Worth');
-        expect(tile.style.height).toBe('20px');
         expect(text()).not.toContain('No net worth yet');
     });
 
@@ -413,7 +425,6 @@ describe('the empty-tiles setting', () => {
 
         expect(shown()).toEqual(['dps', 'netWorth']);
         expect(tiles().get('dps')._content.textContent).toBe('DPS');
-        expect(tiles().get('dps').style.height).toBe('20px');
     });
 
     test('full is the old behaviour: the row says its own line, at full size', async () => {
@@ -421,7 +432,6 @@ describe('the empty-tiles setting', () => {
 
         expect(shown()).toEqual(['dps', 'netWorth']);
         expect(tiles().get('dps')._content.textContent).toBe('No damage tracked yet');
-        expect(tiles().get('dps').style.height).toBe('40px');
     });
 
     test('is offered in the gear popover, and changing it redraws', async () => {

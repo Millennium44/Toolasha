@@ -127,11 +127,15 @@ function rectangles(v1) {
  *
  * Derived rather than assumed, because a v1 layout could have been built against
  * any panel width — the packer used `floor(canvas / columns)` snapped to ten, so
- * the unit is 220 on one character and 240 on another. The left edges of the
- * tiles plus the layout's right edge are exactly the column boundaries that
- * layout used, and the smallest gap between two consecutive boundaries is one
- * column. A layout of one full-width tile has no interior boundary, so its own
- * width is the unit.
+ * the unit is 220 on one character and 240 on another.
+ *
+ * Every edge of every tile is a boundary that layout used, and the smallest gap
+ * between two consecutive boundaries is one column. **Both** edges, left and
+ * right: a layout whose only narrow tile sits in the left column above a
+ * full-width one has no tile *starting* at the column boundary, so taking left
+ * edges alone finds no interior boundary at all and reads the whole panel as one
+ * column — which then flattens every span to 1. A layout genuinely one tile wide
+ * has no interior boundary either way, and its own width is the unit.
  *
  * @param {Array<Object>} tiles - Rectangles
  * @returns {{unit: number, width: number}} The column unit and the layout's full width
@@ -140,7 +144,7 @@ export function columnUnit(tiles) {
     const width = tiles.reduce((widest, tile) => Math.max(widest, tile.x + tile.w), 0);
     if (!(width > 0)) return { unit: 0, width: 0 };
 
-    const edges = [...new Set([...tiles.map((tile) => tile.x), width])].sort((a, b) => a - b);
+    const edges = [...new Set(tiles.flatMap((tile) => [tile.x, tile.x + tile.w]))].sort((a, b) => a - b);
 
     let unit = width;
     for (let index = 1; index < edges.length; index += 1) {

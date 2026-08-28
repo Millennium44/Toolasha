@@ -404,20 +404,16 @@ describe('the popover keeps up with what it is showing', () => {
         expect(pickerText()).toContain('Drag a tile to move it');
     });
 
-    test('flowing into columns says so while the popover is open', () => {
-        overlayPanel.settings.positions = { dps: { x: 0, y: 0 }, luck: { x: 250, y: 0 } };
-        overlayPanel.settings.sizes = { dps: { width: 240, height: 40 }, luck: { width: 240, height: 40 } };
+    test('the hint describes reordering, because that is what unlocking gives you', () => {
+        // There is no "too narrow for your arrangement" case left to explain: a
+        // layout is an order and a set of spans, and a span clamps to the
+        // columns there are, so no arrangement can fail to fit
         panelAt({ left: 20, top: 100, width: 400, height: 200 });
         pickerWants(200);
         openGear();
 
         expect(pickerText()).not.toContain('flowed into columns');
-
-        Object.defineProperty(overlayPanel.scrollEl, 'clientWidth', { value: 360, configurable: true });
-        overlayPanel._renderBody();
-
-        expect(overlayPanel.flowing).toBe(true);
-        expect(pickerText()).toContain('flowed into columns');
+        expect(pickerText()).toContain('reorder tiles');
     });
 
     test('switching layout redraws the tile checkboxes', async () => {
