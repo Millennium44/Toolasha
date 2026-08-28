@@ -548,6 +548,31 @@ describe('a character switch', () => {
         expect(guildTrialRecorder.session).toBeNull();
         expect(guildTrialRecorder.recording).toBe(false);
     });
+
+    test('a session still recording when the character switches is closed out, not just dropped', () => {
+        guildTrialRecorder.start('button');
+        const session = guildTrialRecorder.session;
+
+        guildTrialRecorder.forget();
+
+        // Stopped and folded into the ledger before it was thrown away — a
+        // session left with `endedAt: null` reads as still running forever,
+        // and skipping `_accrue()` is a trial that silently never counts
+        expect(session.endedAt).not.toBeNull();
+        expect(session.endedBy).toBe('character switched');
+        expect(game.accrued).toHaveLength(1);
+        expect(game.accrued[0].session).toBe(session);
+    });
+
+    test('a session already ended is not folded into the ledger a second time', () => {
+        guildTrialRecorder.start('button');
+        guildTrialRecorder.stop('button');
+        expect(game.accrued).toHaveLength(1);
+
+        guildTrialRecorder.forget();
+
+        expect(game.accrued).toHaveLength(1);
+    });
 });
 
 describe('a guild switch', () => {
@@ -562,6 +587,20 @@ describe('a guild switch', () => {
 
         expect(guildTrialRecorder.session).toBeNull();
         expect(guildTrialRecorder.guildName).toBe('SuperMoo');
+    });
+
+    test('a session still recording when the guild switches mid-trial is closed out first', () => {
+        guildTrialRecorder.setGuildName('Testmaxxing');
+        guildTrialRecorder.start('button');
+        const session = guildTrialRecorder.session;
+
+        guildTrialRecorder.setGuildName('SuperMoo');
+
+        expect(session.endedAt).not.toBeNull();
+        expect(game.accrued).toHaveLength(1);
+        // Folded in under the guild it was actually recorded in, not the one
+        // arriving — `_accrue` reads `this.guildName` before `forget` clears it
+        expect(game.accrued[0].guildName).toBe('Testmaxxing');
     });
 
     test('a name arriving over none is the ordinary adoption and keeps the session', () => {

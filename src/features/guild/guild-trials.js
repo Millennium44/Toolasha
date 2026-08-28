@@ -2401,11 +2401,17 @@ class GuildTrials {
             this.blockHtml.clear();
             guildTrialScoreboard.close?.();
 
+            // The recorder closes its own open session first, and that close
+            // folds it into the attendance ledger off the damage module's
+            // still-live breakdown (`_accrue` reads `guildTrialDamage.breakdown()`
+            // synchronously) — so it has to run before that breakdown is wiped
+            // below, or a trial cut short by this very character switch would
+            // be folded in with no encounter, no tier and no roster
+            guildTrialRecorder.forget?.();
+            guildTrialRecorder.setGuildName?.(null);
             // The gate's "this week's combat trials" is the old guild's answer
             guildTrialDamage.setTrialNames?.([]);
             guildTrialDamage.reset?.();
-            guildTrialRecorder.forget?.();
-            guildTrialRecorder.setGuildName?.(null);
             guildTrialAbilities.setGuildName?.(null);
             guildLoadoutCapture.setGuildName?.(null)?.catch?.(() => {});
             guildTrialAlerts.reset?.();

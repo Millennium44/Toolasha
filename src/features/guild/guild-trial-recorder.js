@@ -210,8 +210,17 @@ class GuildTrialRecorder {
      * Called when the tab changes character: a session belongs to the character
      * that recorded it, and carrying one across would file the next guild's
      * trial under the last one's snapshots.
+     *
+     * A session still recording is closed out first, exactly as {@link restart}
+     * already does before starting a fresh one. Dropping it here instead —
+     * `this.session = null` with no `stop()` — left the persisted copy with
+     * `endedAt: null` forever, reading as a trial still running long after the
+     * character that recorded it was gone, and skipped `_accrue()` outright: a
+     * trial cut short by a character switch never reached the attendance
+     * ledger at all.
      */
     forget() {
+        if (this.recording) this.stop('character switched');
         this.session = null;
         this.lastActivityAt = 0;
         this.phase = null;
