@@ -63,7 +63,13 @@ export function calculateLevelsAfterDays(skills, expRates, days, levelExpTable) 
             continue;
         }
 
-        const currentExp = skill.experience;
+        // Skill data pulled from the combat sim's level inputs (rather than
+        // dataManager) carries a real `level` but stamps `experience: 0` — the
+        // sim only tracks levels, not exp. Projecting from that 0 treated a
+        // level-90 loadout imported from the sim as though it were starting
+        // from scratch, showing an absurdly low level "after N days" instead
+        // of one built on the level actually entered.
+        const currentExp = skill.experience || (skill.level > 1 ? (levelExpTable[skill.level] ?? 0) : 0);
         const expRate = expRates[skillName] || 0;
         const expGained = expRate * days * 24;
         const finalExp = currentExp + expGained;
