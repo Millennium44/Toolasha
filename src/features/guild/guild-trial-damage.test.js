@@ -585,6 +585,43 @@ describe('the live tracker', () => {
         expect(breakdown.stale).toBe(true);
         expect(breakdown.measured).toBe(false);
     });
+
+    test('a slot re-dealt to a different player at the next tier is not a revive of the last one', () => {
+        // Tib dies in slot 0 at the end of the tier
+        game.wsHandlers.new_battle({
+            battleId: 20,
+            monsters: [{ name: 'Trial Chameleon' }],
+            players: [{ character: { name: 'Tib' }, isPreparingAutoAttack: true }],
+        });
+        game.wsHandlers.battle_updated({
+            battleId: 20,
+            pMap: { 0: { atkCounter: 1, cHP: 1923, mHP: 1923, isAutoAtk: true } },
+            mMap: { 0: monster(1_000_000, 0) },
+        });
+        vi.advanceTimersByTime(1000);
+        game.wsHandlers.battle_updated({
+            battleId: 20,
+            pMap: { 0: { atkCounter: 1, cHP: 0, mHP: 1923, isAutoAtk: true } },
+            mMap: { 0: monster(999_000, 1) },
+        });
+
+        // The next tier's own `new_battle` re-deals slot 0 to a different
+        // player, entering full — not the same player coming back from zero
+        game.wsHandlers.new_battle({
+            battleId: 21,
+            monsters: [{ name: 'Trial Chameleon' }],
+            players: [{ character: { name: 'Moo' }, isPreparingAutoAttack: true }],
+        });
+        game.wsHandlers.battle_updated({
+            battleId: 21,
+            pMap: { 0: { atkCounter: 1, cHP: 1923, mHP: 1923, isAutoAtk: true } },
+            mMap: { 0: monster(618_000, 0) },
+        });
+
+        const moo = guildTrialDamage.breakdown().support.players.find((entry) => entry.name === 'Moo');
+        expect(moo.revives).toBe(0);
+        expect(moo.healingReceived).toBe(0);
+    });
 });
 
 /**

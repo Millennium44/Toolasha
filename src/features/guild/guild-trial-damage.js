@@ -1344,22 +1344,7 @@ class GuildTrialDamage {
         // that is not stable. Banked history is by name and immutable; a name
         // correction may relabel the live wave's slots, never the past.
         this._bankCurrentWave();
-
-        this.state.monstersHP = {};
-        this.state.monstersMaxHP = {};
-        this.state.dmgCounter = {};
-        this.state.critCounter = {};
-        // The counter baselines, actions and party keys are all per-slot, and
-        // the slots have just been re-dealt: a new wave's counters compared
-        // against another player's baselines mis-swing the first tick
-        this.state.playersAtk = {};
-        this.state.playersMP = {};
-        this.state.actions = {};
-        this.state.party = {};
-        this.state.lastSwing = null;
-        this.support.lastHP = {};
-        this.support.lastMP = {};
-        this.playersHP = {};
+        this._resetWaveBaselines();
 
         // Every wave re-deals the slots — a tier change included, which the
         // rule this replaces ("the same thirty people fight every tier")
@@ -1449,6 +1434,41 @@ class GuildTrialDamage {
         this.support.players = {};
         this.support.lastAtk = {};
         this.support.emptySince = {};
+    }
+
+    /**
+     * Drop every per-slot baseline a wave boundary invalidates.
+     *
+     * Every wave — a tier change included — re-deals the party's slots, and an
+     * index-keyed baseline read against a different player's counters
+     * afterwards mis-reads as that player's own action: a fresh boss at full
+     * health against the last one's corpse is a 618,000-point heal, a slot's
+     * full-health arrival against the last occupant's zero reads as a revive
+     * nobody had, and an attack counter compared to a stranger's baseline
+     * mis-swings the first tick.
+     *
+     * Called at every wave boundary, spectated ({@link _newSpectatedWave}) or
+     * personally fought ({@link _onNewBattle}) alike, straight after
+     * {@link _bankCurrentWave} has tallied what the outgoing slots earned —
+     * both paths re-deal slots identically, so both need the same baselines
+     * dropped. Missing from the personal-fight path is exactly what let a
+     * tier's dead player's slot pass its full-health replacement off as a
+     * revive, and the healer's own healing and mana spend off as a swing sized
+     * by someone else's stats.
+     */
+    _resetWaveBaselines() {
+        this.state.monstersHP = {};
+        this.state.monstersMaxHP = {};
+        this.state.dmgCounter = {};
+        this.state.critCounter = {};
+        this.state.playersAtk = {};
+        this.state.playersMP = {};
+        this.state.actions = {};
+        this.state.party = {};
+        this.state.lastSwing = null;
+        this.support.lastHP = {};
+        this.support.lastMP = {};
+        this.playersHP = {};
     }
 
     /**
@@ -1734,8 +1754,11 @@ class GuildTrialDamage {
 
             // The fight that just ended banks under its own names before the
             // roster below re-deals the slots — the same immutability rule the
-            // spectated path enforces at every wave
+            // spectated path enforces at every wave, and the same baselines
+            // must go with it: a dead player's slot passing its full-health
+            // replacement off as a revive is not a spectated-only mistake
             this._bankCurrentWave();
+            this._resetWaveBaselines();
 
             const players = data?.players || {};
             noteActions(this.state, players);
