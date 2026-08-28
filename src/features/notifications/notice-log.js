@@ -304,3 +304,24 @@ export function _resetNoticeLog() {
     const host = typeof globalThis === 'undefined' ? {} : globalThis;
     delete host[GLOBAL_STATE_KEY];
 }
+
+// `loadNoticeLog()` only clears `entries` once it actually runs — from
+// notice-log-panel.js's `initialize()`, which fires on `character_switched`,
+// deferred, well after this switch has begun. Until then `shared.characterId`
+// still equals the departing character's id, so `loadNoticeLog()`'s own
+// staleness check would not even fire if something called it early. The
+// overlay's 1s redraw is on its own timer and can land in that gap, at which
+// point unreadNoticeCount()/noticeCount() would answer for the character that
+// just left, under the arriving character's name on the Notices tile.
+//
+// Clearing `entries` here, at `character_switching`, closes that without
+// risking the entries the departing character has not yet had persisted:
+// `data-manager.js` awaits `storage.flushAll()` before ever emitting
+// `character_switching`, so every debounced `persist()` this module has
+// queued has already been written by the time this runs. `characterId` is
+// left as the departing id — the same "switched" comparison
+// `loadNoticeLog()` makes when it eventually runs for the arriving character
+// still needs it to be the *old* one to notice the change.
+dataManager.on?.('character_switching', () => {
+    state().entries = [];
+});

@@ -15,10 +15,18 @@
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
 
-const store = vi.hoisted(() => ({ data: new Map(), character: 'char-1' }));
+const store = vi.hoisted(() => ({ data: new Map(), character: 'char-1', dmHandlers: {} }));
 
 vi.mock('../../core/data-manager.js', () => ({
-    default: { getCurrentCharacterId: () => store.character },
+    default: {
+        getCurrentCharacterId: () => store.character,
+        on: (event, handler) => {
+            store.dmHandlers[event] = handler;
+        },
+        off: (event, handler) => {
+            if (store.dmHandlers[event] === handler) delete store.dmHandlers[event];
+        },
+    },
 }));
 
 vi.mock('../../core/storage.js', () => ({
@@ -209,5 +217,55 @@ describe('what has been read', () => {
 
         expect(noticeCount()).toBe(0);
         expect(store.data.get(noticeLogKey('char-1')).entries).toEqual([]);
+    });
+});
+
+describe('character_switching', () => {
+    test('clears the in-memory log immediately, before loadNoticeLog() would notice the switch', async () => {
+        // loadNoticeLog() only clears entries once it actually runs — from
+        // notice-log-panel.js's initialize(), on character_switched, deferred
+        // well after the switch begins. The overlay's own redraw timer can
+        // land in that gap and read the departing character's count under
+        // the arriving character's name. This is what closes it: entries are
+        // gone as soon as character_switching fires, with no loadNoticeLog()
+        // call in between.
+        appendNotice(notice({ at: 10 }));
+        appendNotice(notice({ at: 20 }));
+        await settle();
+        expect(noticeCount()).toBe(2);
+
+        store.dmHandlers.character_switching();
+
+        expect(noticeCount()).toBe(0);
+        expect(unreadNoticeCount()).toBe(0);
+        expect(readNotices()).toEqual([]);
+    });
+
+    test('does not lose anything: the write queued by appendNotice already landed by then', async () => {
+        // data-manager.js awaits storage.flushAll() before it ever emits
+        // character_switching, so by the time this fires, appendNotice's
+        // debounced persist() is not still in flight to overwrite the store
+        // with a since-cleared in-memory array.
+        appendNotice(notice({ at: 10 }));
+        await settle();
+
+        store.dmHandlers.character_switching();
+        await settle();
+
+        expect(store.data.get(noticeLogKey('char-1')).entries).toHaveLength(1);
+    });
+
+    test('the arriving character still gets their own log once loadNoticeLog() runs', async () => {
+        appendNotice(notice({ at: 10 }));
+        await settle();
+
+        store.dmHandlers.character_switching();
+        store.character = 'char-2';
+        store.data.set(noticeLogKey('char-2'), { entries: [notice({ at: 30, text: 'char-2 notice' })], seenAt: 0 });
+
+        await loadNoticeLog();
+
+        expect(noticeCount()).toBe(1);
+        expect(readNotices()[0].text).toBe('char-2 notice');
     });
 });
