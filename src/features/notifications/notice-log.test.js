@@ -268,4 +268,33 @@ describe('character_switching', () => {
         expect(noticeCount()).toBe(1);
         expect(readNotices()[0].text).toBe('char-2 notice');
     });
+
+    test('a write started during the gap does not save the emptied log over the departing character', async () => {
+        // The clear above empties `entries` while `characterId` and
+        // `loadedFor` both still name the departing character — which is
+        // exactly the state `persist()` accepts a write in. Anything that
+        // persists before the arriving character's loadNoticeLog() runs (a
+        // notice the websocket delivers mid-switch, or the panel being opened,
+        // which marks everything seen) would then write an empty array over
+        // the departing character's saved log. flushAll() only covers writes
+        // already in flight when the switch begins, not ones started after it.
+        for (let index = 0; index < 5; index += 1) appendNotice(notice({ at: 10 + index }));
+        await settle();
+        expect(store.data.get(noticeLogKey('char-1')).entries).toHaveLength(5);
+
+        store.dmHandlers.character_switching();
+
+        // The panel being opened in the gap marks everything seen, which
+        // persists. The saved log must be untouched, not emptied.
+        markNoticesSeen(50);
+        await settle();
+        expect(store.data.get(noticeLogKey('char-1')).entries).toHaveLength(5);
+
+        // A notice arriving in the gap must not replace the saved log with
+        // itself either — it loads first, so the five are still underneath.
+        appendNotice(notice({ at: 60, text: 'arrived mid-switch' }));
+        for (let tick = 0; tick < 5; tick += 1) await settle();
+        const savedAt = store.data.get(noticeLogKey('char-1')).entries.map((entry) => entry.at);
+        expect(savedAt).toEqual(expect.arrayContaining([10, 11, 12, 13, 14]));
+    });
 });

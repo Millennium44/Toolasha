@@ -322,6 +322,19 @@ export function _resetNoticeLog() {
 // left as the departing id — the same "switched" comparison
 // `loadNoticeLog()` makes when it eventually runs for the arriving character
 // still needs it to be the *old* one to notice the change.
+//
+// `loadedFor` is cleared with it, and that is not cosmetic. `persist()` writes
+// under `characterId` and only refuses when `loadedFor` disagrees with it.
+// Leaving both as the departing id while `entries` is empty arms every write
+// path that can still run in this gap — `appendNotice()` for a notice the
+// websocket delivers mid-switch, `markNoticesSeen()` if the panel is opened —
+// to write `{entries: []}` over the departing character's saved two hundred.
+// The flushAll() above only guarantees nothing is *already* in flight; it says
+// nothing about a write started after this runs. With `loadedFor` null those
+// writes bail, and `appendNotice()` takes its load-first branch instead, which
+// merges under the arriving character's log where the notice belongs.
 dataManager.on?.('character_switching', () => {
-    state().entries = [];
+    const shared = state();
+    shared.entries = [];
+    shared.loadedFor = null;
 });
