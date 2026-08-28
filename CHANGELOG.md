@@ -1344,6 +1344,28 @@ The 8/13 marketplace layout gave the price row its own "Max" button and put it a
 
 The simulator valued every drop at its gross market price, so profit ignored the sale tax entirely — which is why the 8/13 rise to 5% never moved it. Every drop-revenue path now nets the tax off each non-coin drop (cowbell bags at their own 18%): the Results **Summary** (Profit/day, Revenue), the **Drops** table's Gold columns, and the comparison/upgrade rows all go through one shared `taxedDropValue`. Coin drops stay whole, and the expected-value fallback is left alone since it is already taxed.
 
+## [3.25.0](https://github.com/Millennium44/Toolasha/compare/v3.24.0...v3.25.0) (2026-08-28)
+
+
+### Features
+
+* gold panel residual says what it was made of ([9c769f6](https://github.com/Millennium44/Toolasha/commit/9c769f6766473c948bd87fb6169a378b69894f3b))
+* labyrinth per-run basis pill, and the measured spend only trusts runs seen from the door ([8a15360](https://github.com/Millennium44/Toolasha/commit/8a1536030e9b457d82e2d7b86ec48d28ac5c6539))
+* Max button on the credit exchange, and held counts in the ranking table ([5ddfded](https://github.com/Millennium44/Toolasha/commit/5ddfdedc2a1717fbf8eed81c7a688c8243f3d85b))
+* the trial signups block folds from its heading, remembered across reloads ([c7e58d1](https://github.com/Millennium44/Toolasha/commit/c7e58d1226768ed14bc17d7cfba68a9f4c8caad6))
+
+
+### Bug Fixes
+
+* hide the price-panel pin when the marketplace shows no item ([b01163b](https://github.com/Millennium44/Toolasha/commit/b01163b2e4df6e282a8dc831290fea8d30f93015))
+* Missing badges count items a buy order bought but the player has not claimed ([31dfbf1](https://github.com/Millennium44/Toolasha/commit/31dfbf1f3999cc1050c6fee99d0204d3b5042800))
+* shrine buff levels refuse captures and records owned by another character ([51efba9](https://github.com/Millennium44/Toolasha/commit/51efba974997d9849c78604403d21ddf7a1f71d2))
+
+
+### Tests
+
+* cross-tab lock test brings its own Web Locks — CI's Node 20 has no navigator ([8aee09c](https://github.com/Millennium44/Toolasha/commit/8aee09cff50240d646663de6ac3eb80f46ab4180))
+
 ## [3.24.0](https://github.com/Millennium44/Toolasha/compare/v3.23.0...v3.24.0) (2026-08-28)
 
 ### Features
