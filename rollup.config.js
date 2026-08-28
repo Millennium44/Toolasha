@@ -148,6 +148,9 @@ const utilsExternalGlobals = new Map([
     // exactly the mess the shared toast replaced
     [normalize(join(__dirname, 'src/utils/toast.js')), 'Toolasha.Utils.toast'],
     [normalize(join(__dirname, 'src/utils/simple-panel.js')), 'Toolasha.Utils.simplePanel'],
+    // One Escape stack for the whole script: a copy per bundle would close one
+    // panel per bundle on a single keypress instead of the panel in front
+    [normalize(join(__dirname, 'src/utils/panel-escape.js')), 'Toolasha.Utils.panelEscape'],
     // Holds the chosen target in memory, and the panel that sets it is in a
     // different bundle from the tile that colours against it. Two copies means
     // the tile never hears about a change and quietly keeps its own answer.

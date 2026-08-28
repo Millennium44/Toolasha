@@ -74,6 +74,7 @@ vi.mock('../../utils/choice-dialog.js', () => ({
 }));
 
 const { registerRow } = await import('../../utils/overlay-rows.js');
+const { registerEscapeClose } = await import('../../utils/panel-escape.js');
 const overlayPanel = (await import('./overlay-panel.js')).default;
 
 /** The header band, which is the one part of the panel that must stay clickable */
@@ -288,6 +289,31 @@ describe('getting out of the gear popover', () => {
 
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         expect(overlayPanel.isPickerOpen).toBe(false);
+    });
+
+    test('the Escape that closes it does not also reach the panel stack', () => {
+        panelAt({ left: 20, top: 100, width: 400, height: 200 });
+        pickerWants(200);
+        openGear();
+
+        // A floating panel under the shared Escape-to-close, as far as the
+        // stack is concerned
+        const close = vi.fn();
+        const reg = registerEscapeClose(close);
+
+        // Cancelable like a real keystroke: the popover marks the Escape it
+        // acts on as spent, which is what keeps it off the panel stack
+        const keypress = () =>
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+
+        keypress();
+        expect(overlayPanel.isPickerOpen).toBe(false);
+        expect(close).not.toHaveBeenCalled();
+
+        // With the popover gone, the same key reaches the panels again
+        keypress();
+        expect(close).toHaveBeenCalledTimes(1);
+        reg.release();
     });
 
     test('a press outside it closes it', () => {

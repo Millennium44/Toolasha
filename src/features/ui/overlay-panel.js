@@ -93,6 +93,7 @@ import {
 } from '../../utils/overlay-rows.js';
 import { fromOPanelConfig, toOPanelConfig } from '../../utils/opanel-config.js';
 import { askChoice } from '../../utils/choice-dialog.js';
+import { holdEscapeWhile } from '../../utils/panel-escape.js';
 import {
     loadLayouts,
     saveLayout,
@@ -372,6 +373,8 @@ class OverlayPanel {
         this.onPickerDismiss = null;
         /** Dismisses the popover on Escape */
         this.onPickerKey = null;
+        /** Keeps the shared Escape-to-close off the panels while the popover is up */
+        this.releaseEscapeHold = null;
         /** Whether the tiles were flowed at the last draw, so a change can redraw the popover */
         this.wasFlowing = false;
         this.timerRegistry = createTimerRegistry();
@@ -1131,9 +1134,17 @@ class OverlayPanel {
 
         this.onPickerKey = (event) => {
             if (event.key !== 'Escape' || !this.isPickerOpen) return;
+            // Spent: dismissing the popover is the whole keypress, and the
+            // shared Escape-to-close declines an Escape already acted on
+            event.preventDefault();
             this.closePicker();
         };
         document.addEventListener('keydown', this.onPickerKey);
+
+        // Belt and braces beside the preventDefault above, for the order the
+        // marker cannot cover: listeners run in registration order, and a
+        // panel opened before this popover existed hears the keypress first
+        this.releaseEscapeHold = holdEscapeWhile(() => this.isPickerOpen);
     }
 
     /**
@@ -3168,6 +3179,8 @@ class OverlayPanel {
             document.removeEventListener('keydown', this.onPickerKey);
             this.onPickerKey = null;
         }
+        this.releaseEscapeHold?.();
+        this.releaseEscapeHold = null;
         this.pickerEl?.remove();
         this.pickerEl = null;
         this.headerEl = null;

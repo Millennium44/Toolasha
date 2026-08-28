@@ -40,6 +40,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { makeDraggable, makeResizable } from '../../utils/floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from '../../utils/panel-geometry.js';
 import { attachMinimize } from '../../utils/panel-minimize.js';
+import { registerEscapeClose } from '../../utils/panel-escape.js';
 import {
     createFloatingWidget,
     widgetDivider,
@@ -160,8 +161,8 @@ class ConsumablesPanel {
         this.panel = null;
         this.bodyEl = null;
         this.refreshId = null;
-        /** The Escape-to-close listener, live only while the panel is open */
-        this._onEscapeKey = null;
+        /** This panel's place in the shared Escape-to-close stack, while open */
+        this._escapeReg = null;
         /** The Buy-all walk's floating control, and what it is offering */
         this.buyWidget = null;
         this._buyWidgetPosition = null;
@@ -188,6 +189,8 @@ class ConsumablesPanel {
         this._refreshStoredReadings();
         if (this.panel && document.body.contains(this.panel)) {
             bringPanelToFront(this.panel);
+            // Escape's idea of "in front" has to follow the eye's
+            this._escapeReg?.raise();
             return;
         }
         // Held but no longer in the document — torn down rather than abandoned,
@@ -1225,19 +1228,7 @@ class ConsumablesPanel {
         // Stock and rates both move as you play, and prices move under them
         this.refreshId = setInterval(() => this._tick(), REFRESH_MS);
 
-        // Every other floating panel in this script closes on Escape by way of
-        // the picker/popover it usually hosts; this one has no popover, so it
-        // never got the gesture despite being the panel people leave open the
-        // longest while shopping. Global rather than scoped to the panel — the
-        // panel has no text input of its own to steal Escape's more usual
-        // meaning of "cancel what I am typing", only buttons and selects, and a
-        // native <select> dropdown keeps its own Escape for itself before this
-        // ever sees it.
-        this._onEscapeKey = (event) => {
-            if (event.key !== 'Escape' || !this.panel) return;
-            this.hide();
-        };
-        document.addEventListener('keydown', this._onEscapeKey);
+        this._escapeReg = registerEscapeClose(() => this.hide());
     }
 
     /**
@@ -2246,8 +2237,8 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
         this.detachResize = null;
         this.minimizeCtl?.destroy();
         this.minimizeCtl = null;
-        if (this._onEscapeKey) document.removeEventListener('keydown', this._onEscapeKey);
-        this._onEscapeKey = null;
+        this._escapeReg?.release();
+        this._escapeReg = null;
 
         if (!this.panel) return;
         unregisterFloatingPanel(this.panel);

@@ -58,6 +58,7 @@ vi.mock('./panel-minimize.js', () => ({
 }));
 
 const { createPanel, panelCard, panelLine, panelNote } = await import('./simple-panel.js');
+const { holdEscapeWhile } = await import('./panel-escape.js');
 const { bringPanelToFront } = await import('./panel-z-index.js');
 const { default: dataManager } = await import('../core/data-manager.js');
 
@@ -283,6 +284,140 @@ describe('where a newly opened panel sits', () => {
         // left running alongside the new one
         expect(draw).toHaveBeenCalledTimes(1);
         expect(panel.panel).not.toBe(first);
+    });
+});
+
+/**
+ * Escape closes the panel in front.
+ *
+ * One document-level listener in `panel-escape.js`, a stack of open panels
+ * under it, and three things the keypress must never reach past: a control
+ * being typed in, a game modal, and anything of ours holding Escape for
+ * itself. Exercised through `createPanel` because that is how every panel
+ * joins the stack.
+ */
+describe('Escape closes the panel in front', () => {
+    const escape = (target = document) =>
+        target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+
+    beforeEach(() => {
+        vi.useFakeTimers();
+        document.body.replaceChildren();
+        minimize.collapsed = false;
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test('the most recently opened panel goes first, and the next keypress peels the next', () => {
+        const first = createPanel({ id: 'esc-first', title: 'First', size: SIZE, draw: () => {} });
+        const second = createPanel({ id: 'esc-second', title: 'Second', size: SIZE, draw: () => {} });
+        first.show();
+        second.show();
+
+        escape();
+        expect(second.panel).toBeNull();
+        expect(first.panel).not.toBeNull();
+
+        escape();
+        expect(first.panel).toBeNull();
+    });
+
+    test('re-showing an open panel makes it the one Escape closes', () => {
+        const behind = createPanel({ id: 'esc-behind', title: 'Behind', size: SIZE, draw: () => {} });
+        const front = createPanel({ id: 'esc-front', title: 'Front', size: SIZE, draw: () => {} });
+        front.show();
+        behind.show();
+        // What clicking its hotkey again does to a panel already up
+        front.show();
+
+        escape();
+        expect(front.panel).toBeNull();
+        expect(behind.panel).not.toBeNull();
+        behind.hide();
+    });
+
+    test('closing by any other gesture leaves Escape pointed at what remains', () => {
+        const stays = createPanel({ id: 'esc-stays', title: 'Stays', size: SIZE, draw: () => {} });
+        const goes = createPanel({ id: 'esc-goes', title: 'Goes', size: SIZE, draw: () => {} });
+        stays.show();
+        goes.show();
+        // The ✕ rather than Escape — a stale stack entry here would leave the
+        // next keypress closing a panel that is already gone, and nothing else
+        goes.hide();
+
+        escape();
+        expect(stays.panel).toBeNull();
+    });
+
+    test('a keystroke aimed at something that takes text is not a close', () => {
+        const panel = createPanel({
+            id: 'esc-typing',
+            title: 'Typing',
+            size: SIZE,
+            draw: (body) => body.appendChild(document.createElement('input')),
+        });
+        panel.show();
+
+        escape(panel.panel.querySelector('input'));
+        expect(panel.panel).not.toBeNull();
+
+        escape();
+        expect(panel.panel).toBeNull();
+    });
+
+    test('a game modal on screen owns the keypress', () => {
+        const modal = document.createElement('div');
+        modal.className = 'Modal_modalContainer__3B80m';
+        document.body.appendChild(modal);
+
+        const panel = createPanel({ id: 'esc-modal', title: 'Modal', size: SIZE, draw: () => {} });
+        panel.show();
+
+        escape();
+        expect(panel.panel).not.toBeNull();
+
+        // The game closed its modal on that same keypress; the next one is ours
+        modal.remove();
+        escape();
+        expect(panel.panel).toBeNull();
+    });
+
+    test('a hold keeps Escape off the panels for exactly as long as it is true', () => {
+        let popoverUp = true;
+        const release = holdEscapeWhile(() => popoverUp);
+        const panel = createPanel({ id: 'esc-hold', title: 'Hold', size: SIZE, draw: () => {} });
+        panel.show();
+
+        escape();
+        expect(panel.panel).not.toBeNull();
+
+        popoverUp = false;
+        escape();
+        expect(panel.panel).toBeNull();
+        release();
+    });
+
+    test('an Escape something else already acted on is not acted on twice', () => {
+        const panel = createPanel({ id: 'esc-spent', title: 'Spent', size: SIZE, draw: () => {} });
+        panel.show();
+
+        const spend = (event) => event.preventDefault();
+        document.addEventListener('keydown', spend, true);
+        escape(document.body);
+        document.removeEventListener('keydown', spend, true);
+
+        expect(panel.panel).not.toBeNull();
+        panel.hide();
+    });
+
+    test('with every panel shut, a stray Escape has nothing to do and does it quietly', () => {
+        const panel = createPanel({ id: 'esc-shut', title: 'Shut', size: SIZE, draw: () => {} });
+        panel.show();
+        panel.hide();
+
+        expect(() => escape()).not.toThrow();
     });
 });
 

@@ -58,6 +58,7 @@ import * as damageAttribution from '../utils/damage-attribution.js';
 import * as panelGeometry from '../utils/panel-geometry.js';
 import * as choiceDialog from '../utils/choice-dialog.js';
 import * as simplePanel from '../utils/simple-panel.js';
+import * as panelEscape from '../utils/panel-escape.js';
 import * as consumableTarget from '../utils/consumable-target.js';
 import * as dropLuck from '../utils/drop-luck.js';
 import * as complexFft from '../utils/complex-fft.js';
@@ -201,6 +202,7 @@ toolashaRoot.Utils = {
     panelGeometry,
     choiceDialog,
     simplePanel,
+    panelEscape,
     consumableTarget,
     dropLuck,
     complexFft,

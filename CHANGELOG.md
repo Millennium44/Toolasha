@@ -6,20 +6,21 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Escape closes the floating panel in front
+
+Every floating panel now closes on Escape — most recently opened or raised first, one panel per keypress — via one shared document-level handler instead of the Consumables panel's one-off listener. The keypress is left alone while you are typing in an input, while a game modal or popover is up, and while the overlay's gear popover is open (dismissing it is the whole keypress).
+
 ### Five market fixes from the audit fleet
 
 The price-history chart no longer stays blank after a character switch or feature re-enable (a stale drawn-key survived the teardown). Trade history finally shows last prices for non-equipment items — regular fills were written under an `undefined` enhancement key no reader ever looked up. The marketplace shortcut buttons (÷2/×2 and the quick-input accumulator) stop truncating comma-formatted figures now that the game's fields are text — one click could previously slam a 45M listing to 45. The shopping-list unclaimed-fill counting now also covers upgrade and protection items. And disabling the trade ledger or history around a character switch no longer folds the old character's in-memory records under the new character's stored data.
-
 
 ### Three fixes from the audit fleet: races and free alchemy
 
 The consumable target could survive an overlapping character switch with the departed character's value — the load now carries a generation guard like the persisted records do. An alchemy session consuming an unpriceable input was valued as if the input were free, overstating the alchemy row; it now reports as unpriceable and is disclosed like the enhancement equivalent. And a combat run that ended while the tab was closed was silently dropped instead of archived — the restored snapshot now remembers its own session key, so the first new fight after a reload archives it properly and its loot reaches the gold attribution.
 
-
 ### Six small conveniences across the panels
 
 From this round's feature agents: the Consumables panel closes on Escape; external tool links tooltip the site they actually open; the Party Loot panel gains a Copy button for the run on screen (the CSV export only covered the archive); expired character-select activity blocks say how long ago they were last seen; loot-log sessions get a copy-summary button; and the action ETA marks with an ⓘ exactly how much in-progress time it subtracted.
-
 
 ### Startup stops waiting nine seconds for write timers
 

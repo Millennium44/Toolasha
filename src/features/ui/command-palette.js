@@ -40,6 +40,7 @@ import { PANEL_Z_CAP } from '../../utils/panel-z-index.js';
 import { registeredRows } from '../../utils/overlay-rows.js';
 import { showToast } from '../../utils/toast.js';
 import { clickThroughReact } from '../../utils/react-click.js';
+import { isTypingTarget } from '../../utils/dom.js';
 import overlayPanel from './overlay-panel.js';
 import { syncManager } from '../sync/index.js';
 import enhancementUI from '../enhancement/enhancement-ui.js';
@@ -74,8 +75,13 @@ const COLORS = {
 /* ---------------------------------------------------------------------- *
  * The pure parts: what counts as a match, and what counts as typing.
  * Both are exported so they can be tested without a DOM, which is where
- * the mistakes in either actually live.
+ * the mistakes in either actually live. What counts as typing now lives in
+ * `utils/dom.js`, because the shared Escape-to-close handler asks the same
+ * question; it is still exported here for the tests and callers that knew it
+ * by this address.
  * ---------------------------------------------------------------------- */
+
+export { isTypingTarget };
 
 /**
  * How well a query matches a string, as a subsequence.
@@ -150,30 +156,6 @@ export function filterCommands(commands, query, limit = MAX_RESULTS) {
         .sort((a, b) => b.score - a.score || a.index - b.index)
         .slice(0, limit)
         .map((entry) => entry.command);
-}
-
-/**
- * Whether a keystroke is being aimed at something that takes text.
- *
- * The game has a chat box and several number inputs, and a hotkey that fires
- * inside them is a hotkey that has to be switched off. Checked on the element
- * rather than on the event, because `contenteditable` is inherited — the target
- * of a keystroke inside an editable div is often a text node's parent several
- * levels down from the element carrying the attribute.
- *
- * @param {EventTarget|null} target - Usually `event.target`
- * @returns {boolean} True when the keystroke belongs to whatever has focus
- */
-export function isTypingTarget(target) {
-    const element = target && target.nodeType === 1 ? target : null;
-    if (!element) return false;
-
-    const tag = (element.tagName || '').toLowerCase();
-    if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
-    if (typeof element.closest === 'function' && element.closest('[contenteditable=""], [contenteditable="true"]')) {
-        return true;
-    }
-    return element.isContentEditable === true;
 }
 
 /**

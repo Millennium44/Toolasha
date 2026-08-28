@@ -18,6 +18,7 @@ import { registerFloatingPanel, unregisterFloatingPanel, bringPanelToFront } fro
 import { makeDraggable, makeResizable } from './floating-panel.js';
 import { restoreGeometry, saveGeometry, saveOpenState, reopenIfLeftOpen } from './panel-geometry.js';
 import { attachMinimize } from './panel-minimize.js';
+import { registerEscapeClose } from './panel-escape.js';
 import { ROW_COLORS } from './overlay-format.js';
 
 const DEFAULT_REFRESH_MS = 3000;
@@ -39,6 +40,7 @@ export function createPanel({ id, title, size, draw, accent = '#8fb4ff', refresh
     let detachDrag = null;
     let detachResize = null;
     let minimizeCtl = null;
+    let escapeReg = null;
 
     /** Draw, or say which panel could not be drawn */
     function render() {
@@ -174,6 +176,8 @@ export function createPanel({ id, title, size, draw, accent = '#8fb4ff', refresh
 
         document.body.appendChild(panel);
         registerFloatingPanel(panel);
+        // Escape closes the panel in front, and a brand-new panel is in front
+        escapeReg = registerEscapeClose(() => api.hide());
         restoreGeometry(panel, id, { width: 280, height: 160 });
 
         render();
@@ -185,6 +189,8 @@ export function createPanel({ id, title, size, draw, accent = '#8fb4ff', refresh
             if (remember) saveOpenState(id, true);
             if (panel && document.body.contains(panel)) {
                 bringPanelToFront(panel);
+                // Escape's idea of "in front" has to follow the eye's
+                escapeReg?.raise();
                 return;
             }
             // Held but no longer in the document — torn down rather than
@@ -207,6 +213,8 @@ export function createPanel({ id, title, size, draw, accent = '#8fb4ff', refresh
             detachResize = null;
             minimizeCtl?.destroy();
             minimizeCtl = null;
+            escapeReg?.release();
+            escapeReg = null;
 
             if (!panel) return;
             unregisterFloatingPanel(panel);
