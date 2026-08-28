@@ -1460,12 +1460,6 @@ class CombatSimulator {
 
         ability.lastUsed = this.simulationTime;
 
-        const haste = source.combatDetails.combatStats.abilityHaste;
-        let _cooldownDuration = ability.cooldownDuration;
-        if (haste > 0) {
-            _cooldownDuration = (_cooldownDuration * 100) / (100 + haste);
-        }
-
         const todoAbilities = [ability];
 
         if (source.combatDetails.combatStats.blaze > 0 && random() < source.combatDetails.combatStats.blaze) {
@@ -1521,11 +1515,22 @@ class CombatSimulator {
         if (source.combatDetails.combatStats.ripple > 0 && random() < source.combatDetails.combatStats.ripple) {
             const manapointsAdded = source.addManapoints(10);
             this.simResult.addManapointsGained(source, 'ripple', manapointsAdded);
+            // Gate and floor both on the haste-scaled cooldown — the same value
+            // Ability.shouldTrigger() checks readiness against — rather than the
+            // raw cooldownDuration. (Provably output-neutral either way: the
+            // floor only ever caps how far lastUsed is pushed back, and once
+            // elapsed + 2s clears the scaled cooldown the ability reads as ready
+            // regardless of which duration capped it; a mismatched raw floor
+            // never flips that boolean. Unified anyway so the two cooldown reads
+            // in this method can't drift out of sync by accident.)
+            const haste = source.combatDetails.combatStats.abilityHaste;
             for (const ab of source.abilities) {
                 if (ab && ab.lastUsed) {
-                    const remainingCooldown = ab.lastUsed + ab.cooldownDuration - this.simulationTime;
+                    const scaledCooldown =
+                        haste > 0 ? (ab.cooldownDuration * 100) / (100 + haste) : ab.cooldownDuration;
+                    const remainingCooldown = ab.lastUsed + scaledCooldown - this.simulationTime;
                     if (remainingCooldown > 0) {
-                        ab.lastUsed = Math.max(ab.lastUsed - ONE_SECOND * 2, this.simulationTime - ab.cooldownDuration);
+                        ab.lastUsed = Math.max(ab.lastUsed - ONE_SECOND * 2, this.simulationTime - scaledCooldown);
                     }
                 }
             }
