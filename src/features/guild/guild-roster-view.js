@@ -40,6 +40,7 @@ import guildLoadoutCapture from './guild-loadout-capture.js';
 import guildMemberSkills from './guild-member-skills.js';
 import { describeLoadoutAge } from './guild-loadouts.js';
 import { openPlayerProfile, VALID_PLAYER_NAME_RE } from '../../utils/profile-command.js';
+import { toCsv, csvFilename, downloadCsv } from '../../utils/csv-export.js';
 
 /** How many stat rows of a snapshot the roster panel shows before it stops */
 export const LOADOUT_PREVIEW_ROWS = 6;
@@ -230,6 +231,46 @@ export function wireProfileClick(line, name) {
             line.title = 'Could not open the profile — open the chat panel and try again.';
         }
     });
+}
+
+/** The contribution table's CSV columns: raw numbers, so a spreadsheet can sort and chart them */
+export const ROSTER_CSV_COLUMNS = [
+    { key: 'name', label: 'Member' },
+    { key: 'samples', label: 'XP samples recorded' },
+    { key: 'delta7d', label: 'XP gained (7d)' },
+    { key: 'share7d', label: 'Share of guild XP (7d %)' },
+    { key: 'delta30d', label: 'XP gained (30d)' },
+    { key: 'share30d', label: 'Share of guild XP (30d %)' },
+    { key: 'dayRate', label: 'XP/h (day)' },
+    { key: 'weekRate', label: 'XP/h (week)' },
+    { key: 'totalXP', label: 'Total guild XP' },
+    { key: 'quiet', label: 'Gone quiet' },
+];
+
+/**
+ * The contribution rows as CSV rows.
+ *
+ * A blank cell where the panel shows a dash: "not measured" and "measured
+ * zero" must stay apart in a spreadsheet too, and `csvCell` already turns a
+ * non-finite number into an empty cell — so nulls are left as nulls rather
+ * than coerced to 0.
+ *
+ * @param {Array<Object>} rows - From {@link buildRoster}
+ * @returns {Array<Object>} Rows for `toCsv`
+ */
+export function rosterCsvRows(rows) {
+    return (rows || []).map((row) => ({
+        name: memberLabel(row),
+        samples: row.samples,
+        delta7d: Number.isFinite(row.delta7d) ? Math.round(row.delta7d) : null,
+        share7d: Number.isFinite(row.share7d) ? Math.round(row.share7d * 10) / 10 : null,
+        delta30d: Number.isFinite(row.delta30d) ? Math.round(row.delta30d) : null,
+        share30d: Number.isFinite(row.share30d) ? Math.round(row.share30d * 10) / 10 : null,
+        dayRate: Number.isFinite(row.dayRate) ? Math.round(row.dayRate) : null,
+        weekRate: Number.isFinite(row.weekRate) ? Math.round(row.weekRate) : null,
+        totalXP: Number.isFinite(row.totalXP) ? Math.round(row.totalXP) : null,
+        quiet: Boolean(row.quiet),
+    }));
 }
 
 /**
@@ -497,6 +538,31 @@ export function drawSeenLoadouts(
     }
 }
 
+/**
+ * The "Export CSV" button for the contribution card.
+ *
+ * The card's own numbers, raw: a guild leader comparing this week against last
+ * month's export wants `0.0032`, not `0.3%`, or the two files cannot be
+ * diffed against each other.
+ *
+ * @param {Array<Object>} rows - From {@link buildRoster}
+ * @returns {HTMLElement} The button
+ */
+function exportRosterCsvButton(rows) {
+    const button = document.createElement('button');
+    button.textContent = 'Export CSV';
+    button.title = 'The contribution table as it stands, with raw numbers a spreadsheet can sort.';
+    button.style.cssText =
+        'align-self:flex-start; margin:2px 0 4px; background:rgba(255,255,255,0.08);' +
+        'border:1px solid rgba(255,255,255,0.18); color:#e8ecf5; border-radius:5px; padding:3px 8px;' +
+        'cursor:pointer; font-size:11px;';
+    button.addEventListener('click', () => {
+        const csv = toCsv(rosterCsvRows(rows), ROSTER_CSV_COLUMNS);
+        downloadCsv(csvFilename('guild-roster-contribution'), csv);
+    });
+    return button;
+}
+
 export const guildRosterPanel = createPanel({
     id: 'guildRoster',
     title: 'Guild Roster',
@@ -559,6 +625,8 @@ export const guildRosterPanel = createPanel({
         const card = panelCard(body, `Contribution (${contributing.length} of ${rows.length} measured)`, ACCENT);
         if (!contributing.length) {
             card.appendChild(panelNote('No member has two samples in the last week yet.'));
+        } else {
+            card.appendChild(exportRosterCsvButton(contributing));
         }
         for (const member of contributing) {
             const line = panelLine(

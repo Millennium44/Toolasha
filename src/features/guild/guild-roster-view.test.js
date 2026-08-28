@@ -13,6 +13,15 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
+const csvExport = vi.hoisted(() => ({ downloads: [] }));
+vi.mock('../../utils/csv-export.js', async (importOriginal) => ({
+    ...(await importOriginal()),
+    downloadCsv: (filename, csv) => {
+        csvExport.downloads.push({ filename, csv });
+        return true;
+    },
+}));
+
 const tracker = vi.hoisted(() => ({
     guildName: 'Milky Way',
     series: {},
@@ -98,6 +107,8 @@ const {
     memberLabel,
     guildRosterPanel,
     registerGuildRosterRow,
+    rosterCsvRows,
+    ROSTER_CSV_COLUMNS,
     WINDOW_7D,
 } = rosterModule;
 const guildRosterFeature = rosterModule.default;
@@ -396,6 +407,29 @@ describe('buildRoster', () => {
     });
 });
 
+describe('rosterCsvRows', () => {
+    test('carries raw numbers, not the panel’s rounded percentages', () => {
+        const [row] = rosterCsvRows([
+            { name: 'Alice', samples: 12, delta7d: 6543.6, share7d: 58.061, delta30d: 9000, share30d: 42.857 },
+        ]);
+        expect(row.delta7d).toBe(6544);
+        expect(row.share7d).toBe(58.1);
+        expect(row.delta30d).toBe(9000);
+        expect(row.share30d).toBe(42.9);
+    });
+
+    test('a member with nothing measured is a blank cell, not a zero', () => {
+        const [row] = rosterCsvRows([{ name: 'Carol', samples: 1, delta7d: null, share7d: 0 }]);
+        expect(row.delta7d).toBeNull();
+        expect(row.share7d).toBe(0);
+    });
+
+    test('an unnamed member gets the same placeholder the panel shows', () => {
+        const [row] = rosterCsvRows([{ name: null, samples: 1 }]);
+        expect(row.name).toBe('Unnamed member');
+    });
+});
+
 describe('a member who has left the guild', () => {
     // Reported live from a 107-member guild: "Gone quiet (2)" listed
     // "#9349 · —/h today vs 348/h this week" — somebody who left, still holding
@@ -517,6 +551,33 @@ describe('the panel and tile', () => {
         // Bob is the one genuinely quiet member, and the count is his alone
         expect(text).toContain('Gone quiet (1)');
         expect(text).toContain('Contribution (2 of 2 measured)');
+    });
+
+    test('the contribution card can export its rows as CSV', () => {
+        csvExport.downloads = [];
+        guildRosterPanel.show({ remember: false });
+
+        const button = [...guildRosterPanel.panel.querySelectorAll('button')].find(
+            (candidate) => candidate.textContent === 'Export CSV'
+        );
+        expect(button).toBeTruthy();
+        button.click();
+
+        expect(csvExport.downloads).toHaveLength(1);
+        const { csv } = csvExport.downloads[0];
+        expect(csv.split('\r\n')[0]).toBe(ROSTER_CSV_COLUMNS.map((column) => column.label).join(','));
+        expect(csv).toContain('Alice');
+        expect(csv).toContain('Bob');
+    });
+
+    test('nothing to export means no button, not a button over an empty table', () => {
+        tracker.series = { a: series([[1, 100]]), b: series([[1, 200]]) };
+        guildRosterPanel.show({ remember: false });
+
+        const button = [...guildRosterPanel.panel.querySelectorAll('button')].find(
+            (candidate) => candidate.textContent === 'Export CSV'
+        );
+        expect(button).toBeUndefined();
     });
 
     test('says so plainly when there is no guild yet', () => {
