@@ -187,6 +187,34 @@ function matchesExpiredRow(listing, candidate) {
 }
 
 /**
+ * Whether a known listing is the one behind a beyond-top-20 order-book row.
+ *
+ * Enhancement level is compared alongside item/price/remaining-quantity/side
+ * for the same reason as `matchesExpiredRow`: two of your own listings for the
+ * same item at different levels can share a price and a remaining quantity,
+ * and without the level check the wrong one's timestamp gets stamped onto the
+ * row (or the right one gets reported "~Unknown" because its match was stolen).
+ * Pure, so the matching rule can be tested without a DOM.
+ * @param {Object} listing - A known listing
+ * @param {Object} candidate - Fields read for the row being matched
+ * @param {string} candidate.itemHrid
+ * @param {number} candidate.enhancementLevel
+ * @param {number} candidate.price
+ * @param {number} candidate.quantity - Remaining (unfilled) quantity
+ * @param {boolean} candidate.isSell
+ * @returns {boolean}
+ */
+function matchesBeyondTopRow(listing, candidate) {
+    return (
+        listing.itemHrid === candidate.itemHrid &&
+        (listing.enhancementLevel || 0) === (candidate.enhancementLevel || 0) &&
+        Math.abs(listing.price - candidate.price) < 0.01 &&
+        listing.orderQuantity - listing.filledQuantity === candidate.quantity &&
+        listing.isSell === candidate.isSell
+    );
+}
+
+/**
  * The personal log with its retention applied: listings older than
  * LISTING_RETENTION_MS before the newest one go, then, if more than
  * LISTING_RETENTION_MAX remain, the oldest beyond that cap go too. A listing
@@ -1474,11 +1502,13 @@ class EstimatedListingAge {
                         if (allOrderBookIds.has(listing.id)) return false; // Skip top 20
                         if (!activeListingIds.has(listing.id)) return false; // Only match active listings
 
-                        const itemMatch = listing.itemHrid === currentItemHrid;
-                        const priceMatch = Math.abs(listing.price - price) < 0.01;
-                        const qtyMatch = listing.orderQuantity - listing.filledQuantity === quantity;
-                        const sideMatch = listing.isSell === isSellTable;
-                        return itemMatch && priceMatch && qtyMatch && sideMatch;
+                        return matchesBeyondTopRow(listing, {
+                            itemHrid: currentItemHrid,
+                            enhancementLevel,
+                            price,
+                            quantity,
+                            isSell: isSellTable,
+                        });
                     });
 
                     // Pick the first match (oldest ID) to preserve DOM order
@@ -1862,4 +1892,5 @@ export {
     ORDER_BOOK_REPAINT_MS,
     mergeListingLogs,
     matchesExpiredRow,
+    matchesBeyondTopRow,
 };

@@ -103,6 +103,7 @@ const {
     LISTING_SAVE_DEBOUNCE_MS,
     ORDER_BOOK_REPAINT_MS,
     matchesExpiredRow,
+    matchesBeyondTopRow,
 } = await import('./estimated-listing-age.js');
 const { _resetAdoptionCache } = await import('../../utils/character-key.js');
 
@@ -1276,5 +1277,29 @@ describe('matchesExpiredRow — disambiguating an expired My Listings row', () =
     test('a resolved listing is never re-matched', () => {
         const filled = { ...base, status: 'filled' };
         expect(matchesExpiredRow(filled, row)).toBe(false);
+    });
+});
+
+describe('matchesBeyondTopRow — disambiguating a your-listing row past the top 20', () => {
+    const base = {
+        itemHrid: '/items/sword',
+        enhancementLevel: 0,
+        price: 100,
+        orderQuantity: 5,
+        filledQuantity: 2,
+        isSell: true,
+    };
+    const row = { itemHrid: '/items/sword', enhancementLevel: 0, price: 100, quantity: 3, isSell: true };
+
+    test('matches on item, level, price, remaining quantity and side', () => {
+        expect(matchesBeyondTopRow(base, row)).toBe(true);
+    });
+
+    test('does not match a listing of the same item at a different enhancement level', () => {
+        // Same item, same price, same 3 remaining — but a +0 and a +10 sell. Before the level
+        // check this stole the wrong listing's timestamp (or its "used" slot) for this row.
+        const plusTen = { ...base, enhancementLevel: 10 };
+        expect(matchesBeyondTopRow(plusTen, row)).toBe(false);
+        expect(matchesBeyondTopRow(base, row)).toBe(true);
     });
 });
