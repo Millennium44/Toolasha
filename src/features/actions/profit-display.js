@@ -1624,9 +1624,8 @@ function buildGatheringPerActionBreakdown(profitData) {
  * @param {Object} profitData - Profit calculation data
  * @returns {HTMLElement} Breakdown section element
  */
-function buildProductionPerActionBreakdown(profitData) {
+export function buildProductionPerActionBreakdown(profitData) {
     const actionsPerHour = profitData.actionsPerHour;
-    const efficiencyMultiplier = profitData.efficiencyMultiplier || 1;
     const outputMissing = profitData.outputPriceMissing || false;
     const outputEstimated = profitData.outputPriceEstimated || false;
     const bonusMissing = profitData.bonusRevenue?.hasMissingPrices || false;
@@ -1710,13 +1709,18 @@ function buildProductionPerActionBreakdown(profitData) {
     const essenceDrops = bonusDrops.filter((drop) => drop.type === 'essence');
     const rareFinds = bonusDrops.filter((drop) => drop.type === 'rare_find');
 
+    // No efficiency multiplier here either — these lines are itemized under a
+    // header (bonusRevenuePerAction, above) that is deliberately the true cost
+    // of one animation cycle, not one completion averaged over the instant
+    // repeats efficiency adds for free. Scaling only the children by
+    // efficiencyMultiplier made them sum to more than the header they sit
+    // under whenever efficiency > 0.
     let essenceSection = null;
     if (essenceDrops.length > 0) {
         const essenceContent = document.createElement('div');
         for (const drop of essenceDrops) {
-            const { dropsPerHour, revenuePerHour } = getBonusDropPerHourTotals(drop, efficiencyMultiplier);
-            const dropsPA = dropsPerHour / actionsPerHour;
-            const revenuePA = revenuePerHour / actionsPerHour;
+            const dropsPA = drop.dropsPerHour / actionsPerHour;
+            const revenuePA = drop.revenuePerHour / actionsPerHour;
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
             const dropRatePct = formatPercentage(drop.dropRate, drop.dropRate < 0.01 ? 3 : 2);
@@ -1725,7 +1729,7 @@ function buildProductionPerActionBreakdown(profitData) {
         }
 
         const essenceRevenuePerAction = essenceDrops.reduce(
-            (sum, drop) => sum + getBonusDropPerHourTotals(drop, efficiencyMultiplier).revenuePerHour / actionsPerHour,
+            (sum, drop) => sum + drop.revenuePerHour / actionsPerHour,
             0
         );
         const essenceRevenueLabel = formatMissingLabel(
@@ -1747,9 +1751,8 @@ function buildProductionPerActionBreakdown(profitData) {
     if (rareFinds.length > 0) {
         const rareFindContent = document.createElement('div');
         for (const drop of rareFinds) {
-            const { dropsPerHour, revenuePerHour } = getBonusDropPerHourTotals(drop, efficiencyMultiplier);
-            const dropsPA = dropsPerHour / actionsPerHour;
-            const revenuePA = revenuePerHour / actionsPerHour;
+            const dropsPA = drop.dropsPerHour / actionsPerHour;
+            const revenuePA = drop.revenuePerHour / actionsPerHour;
             const line = document.createElement('div');
             line.style.marginLeft = '8px';
             const dropRatePct = formatPercentage(drop.dropRate, drop.dropRate < 0.01 ? 3 : 2);
@@ -1757,10 +1760,7 @@ function buildProductionPerActionBreakdown(profitData) {
             rareFindContent.appendChild(line);
         }
 
-        const rareFindRevenuePerAction = rareFinds.reduce(
-            (sum, drop) => sum + getBonusDropPerHourTotals(drop, efficiencyMultiplier).revenuePerHour / actionsPerHour,
-            0
-        );
+        const rareFindRevenuePerAction = rareFinds.reduce((sum, drop) => sum + drop.revenuePerHour / actionsPerHour, 0);
         const rareFindRevenueLabel = formatMissingLabel(
             bonusMissing,
             `${formatPerAction(rareFindRevenuePerAction)}/action`
