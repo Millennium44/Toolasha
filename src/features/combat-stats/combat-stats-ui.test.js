@@ -63,7 +63,7 @@ vi.mock('../market/expected-value-calculator.js', () => ({
     },
 }));
 
-const { default: combatStatsUI, archivedSessionLabel } = await import('./combat-stats-ui.js');
+const { default: combatStatsUI, archivedSessionLabel, combatSessionText } = await import('./combat-stats-ui.js');
 
 /** Coins only, so the real calculator prices the run without a market */
 const player = (name, coins, isCurrentPlayer = false) => ({
@@ -195,5 +195,109 @@ describe('the session picker on the popup', () => {
 
         expect(globalThis.alert).toHaveBeenCalled();
         expect(popup()).toBeNull();
+    });
+});
+
+describe('combatSessionText', () => {
+    const stats = (name, overrides = {}) => ({
+        name,
+        durationFormatted: '1h 0m',
+        encountersPerHour: 10,
+        income: { ask: 1000, bid: 900 },
+        dailyIncome: { ask: 24000, bid: 21600 },
+        consumableCosts: 50,
+        dailyProfit: { ask: 23000, bid: 20600 },
+        totalExp: 500,
+        expPerHour: 500,
+        deathCount: 1,
+        deathsPerHour: 1,
+        ...overrides,
+    });
+
+    test('one block per player, under the header, priced by the chosen key', () => {
+        const text = combatSessionText([stats('A'), stats('B')], {
+            header: 'Combat Statistics — Live',
+            priceKey: 'bid',
+        });
+        expect(text.startsWith('Combat Statistics — Live')).toBe(true);
+        expect(text).toContain('A');
+        expect(text).toContain('B');
+        expect(text).toContain('Income (bid): 900');
+        expect(text).toContain('Daily profit: 20600/d');
+    });
+
+    test('no players says so rather than printing an empty header', () => {
+        expect(combatSessionText([])).toContain('No data.');
+        expect(combatSessionText(null)).toContain('No data.');
+    });
+
+    test('the formatter passed in is what renders every number', () => {
+        const text = combatSessionText([stats('A')], { formatNum: (n) => `<${n}>` });
+        expect(text).toContain('Encounters/hour: <10>');
+        expect(text).toContain('Total EXP: <500>');
+    });
+});
+
+describe('the Copy button on the popup', () => {
+    const copyButton = () => [...popup().querySelectorAll('button')].find((b) => b.textContent.includes('Copy'));
+
+    test('is offered for a live run with data, and copies every player', async () => {
+        await combatStatsUI.showPopup();
+
+        const written = [];
+        vi.spyOn(navigator.clipboard, 'writeText').mockImplementation((value) => {
+            written.push(value);
+            return Promise.resolve();
+        });
+
+        const btn = copyButton();
+        expect(btn).toBeTruthy();
+        btn.click();
+        await flush();
+
+        expect(written[0]).toContain('LiveGuy');
+        expect(written[0]).not.toContain('Archived Session');
+    });
+
+    test('switches to a checkmark, then back, after copying', async () => {
+        vi.useFakeTimers();
+        await combatStatsUI.showPopup();
+        vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+
+        const btn = copyButton();
+        btn.click();
+        await Promise.resolve();
+        expect(btn.textContent).toContain('Copied');
+
+        vi.advanceTimersByTime(1200);
+        expect(btn.textContent).toContain('Copy');
+        expect(btn.textContent).not.toContain('Copied');
+        vi.useRealTimers();
+    });
+
+    test('an archived session copies headed as archived', async () => {
+        await combatStatsUI.showPopup();
+        picker().value = ARCHIVED.key;
+        picker().dispatchEvent(new Event('change'));
+        await flush();
+
+        const written = [];
+        vi.spyOn(navigator.clipboard, 'writeText').mockImplementation((value) => {
+            written.push(value);
+            return Promise.resolve();
+        });
+        copyButton().click();
+        await flush();
+
+        expect(written[0]).toContain('Archived Session');
+        for (const name of ['A', 'B', 'C', 'D', 'E']) expect(written[0]).toContain(name);
+    });
+
+    test('a popup open with nothing measured yet offers no Copy button', async () => {
+        mocks.live = null;
+        await combatStatsUI.showPopup();
+
+        expect(popup()).toBeTruthy();
+        expect(copyButton()).toBeUndefined();
     });
 });

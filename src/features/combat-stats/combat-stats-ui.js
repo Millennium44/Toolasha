@@ -52,6 +52,47 @@ export function archivedSessionLabel(session, { zoneNameOf, formatDuration = sho
     return [when, length, zone, party].filter(Boolean).join(' · ');
 }
 
+/**
+ * The whole popup — every player card, flattened — as plain text for the
+ * clipboard. Close enough to the on-screen figures that pasting it into a
+ * guild chat or a bug report tells the same story, but without the
+ * expandable breakdowns, which don't survive a paste.
+ *
+ * @param {Array<Object>} playerStats - What createPopup is rendering
+ * @param {Object} [options]
+ * @param {string} [options.header] - First line — states which run this is
+ * @param {string} [options.priceKey] - 'ask' | 'bid', so a reader knows which income this is
+ * @param {Function} [options.formatNum] - Number formatter matching the cards on screen
+ * @returns {string}
+ */
+export function combatSessionText(
+    playerStats,
+    { header = 'Combat Statistics', priceKey = 'ask', formatNum = (num) => String(Math.round(num)) } = {}
+) {
+    const lines = [header];
+
+    if (!playerStats || playerStats.length === 0) {
+        lines.push('No data.');
+        return lines.join('\n');
+    }
+
+    for (const stats of playerStats) {
+        lines.push('');
+        lines.push(stats.name);
+        lines.push(`  Duration: ${stats.durationFormatted || '0s'}`);
+        lines.push(`  Encounters/hour: ${formatNum(stats.encountersPerHour)}`);
+        lines.push(`  Income (${priceKey}): ${formatNum(stats.income?.[priceKey])}`);
+        lines.push(`  Daily income: ${formatNum(stats.dailyIncome?.[priceKey])}/d`);
+        lines.push(`  Consumable costs: ${formatNum(stats.consumableCosts)}`);
+        lines.push(`  Daily profit: ${formatNum(stats.dailyProfit?.[priceKey])}/d`);
+        lines.push(`  Total EXP: ${formatNum(stats.totalExp)}`);
+        lines.push(`  EXP/hour: ${formatNum(stats.expPerHour)}`);
+        lines.push(`  Deaths: ${stats.deathCount ?? 0} (${(stats.deathsPerHour ?? 0).toFixed(2)}/h)`);
+    }
+
+    return lines.join('\n');
+}
+
 class CombatStatsUI {
     constructor() {
         this.isInitialized = false;
@@ -604,9 +645,54 @@ class CombatStatsUI {
         `;
         closeButton.onclick = () => this.closePopup();
 
+        // A plain-text copy of this run — live or archived alike — for pasting
+        // into a guild chat or a bug report. Only offered when there is
+        // something on the cards to copy.
+        let copyButton = null;
+        if (playerStats.length > 0) {
+            copyButton = document.createElement('button');
+            copyButton.textContent = '⧉ Copy';
+            copyButton.title = 'Copy this session (all players) to the clipboard as text';
+            copyButton.style.cssText = `
+                background: #4a4a4a;
+                border: 1px solid #5a5a5a;
+                color: ${textColor};
+                font-size: 12px;
+                cursor: pointer;
+                padding: 6px 12px;
+                border-radius: 4px;
+            `;
+            copyButton.onmouseover = () => {
+                copyButton.style.background = '#5a5a5a';
+            };
+            copyButton.onmouseout = () => {
+                copyButton.style.background = '#4a4a4a';
+            };
+            copyButton.onclick = () => {
+                const priceKey = config.getSettingValue('profitCalc_keyPricingMode') || 'ask';
+                const useKMB = isAbbreviationEnabled();
+                const formatNum = (num) =>
+                    useKMB ? coinFormatter(Math.round(num)) : formatWithSeparator(Math.round(num));
+                const header = archived
+                    ? `Combat Statistics — Archived Session (${this.describeArchivedSession(archived)})`
+                    : 'Combat Statistics — Live';
+                const text = combatSessionText(playerStats, { header, priceKey, formatNum });
+
+                if (!navigator.clipboard) return;
+                navigator.clipboard
+                    .writeText(text)
+                    .then(() => {
+                        copyButton.textContent = '✓ Copied';
+                        setTimeout(() => (copyButton.textContent = '⧉ Copy'), 1200);
+                    })
+                    .catch((error) => console.error('[Combat Stats] Copy failed:', error));
+            };
+        }
+
         // Consumable tracking is a live measurement; resetting it from a view
         // of last night's run would read as editing the archive
         if (!archived) buttonContainer.appendChild(resetButton);
+        if (copyButton) buttonContainer.appendChild(copyButton);
         buttonContainer.appendChild(closeButton);
 
         header.appendChild(title);
