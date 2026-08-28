@@ -521,6 +521,44 @@ function getSpriteBaseUrl() {
 // Color presets for tab accents
 const COLOR_PRESETS = ['#e06060', '#e0a030', '#40c060', '#40a0e0', '#a060e0', '#e060c0'];
 
+/**
+ * What the item-count badge on a tab header means, as a hover explanation.
+ *
+ * The count is how many items the tab is *configured* to hold, not how many
+ * tiles are currently drawn — a category collapsed in the game's own
+ * Inventory tab hides tiles here too, and the ⚠ beside the tab's name is what
+ * says that has happened. Left unstated, the two easily get read as the same
+ * number.
+ *
+ * @param {number} count - Configured item count, line breaks excluded
+ * @returns {string}
+ */
+export function tabItemCountTooltip(count) {
+    return `${count} item${count === 1 ? '' : 's'} assigned to this tab`;
+}
+
+/**
+ * What the value badge on a tab header means, as a hover explanation.
+ *
+ * States which price it is summed at — ask, bid, or whatever the "badges on
+ * none" sort mode is set to — and across how many tiles, since that can run
+ * short of the configured item count for the same reason the count badge's
+ * own tooltip explains: a collapsed game category hides tiles without
+ * un-assigning them.
+ *
+ * @param {string} valueKey - Tile dataset key the total was summed from,
+ *   e.g. `askValue`; the tooltip names the price by stripping the suffix
+ * @param {number} tileCount - How many tiles the total was summed across
+ * @returns {string}
+ */
+export function tabValueTooltip(valueKey, tileCount) {
+    const priceWord = valueKey.replace(/Value$/, '');
+    return (
+        `Total ${priceWord} value of the ${tileCount} item${tileCount === 1 ? '' : 's'} shown in this tab, ` +
+        `from Toolasha's inventory badges.`
+    );
+}
+
 export default class CustomTabsUI {
     constructor() {
         this._isActive = false;
@@ -1648,10 +1686,12 @@ export default class CustomTabsUI {
         const rightGroup = document.createElement('span');
         rightGroup.className = 'toolasha-ct-section-right';
 
-        if (tab.items.filter((h) => h !== LINEBREAK_HRID).length > 0) {
+        const configuredItemCount = tab.items.filter((h) => h !== LINEBREAK_HRID).length;
+        if (configuredItemCount > 0) {
             const countBadge = document.createElement('span');
             countBadge.className = 'toolasha-ct-section-count';
-            countBadge.textContent = `(${tab.items.filter((h) => h !== LINEBREAK_HRID).length})`;
+            countBadge.textContent = `(${configuredItemCount})`;
+            countBadge.title = tabItemCountTooltip(configuredItemCount);
             rightGroup.appendChild(countBadge);
         }
 
@@ -1791,6 +1831,7 @@ export default class CustomTabsUI {
                     const valueBadge = document.createElement('span');
                     valueBadge.className = 'toolasha-ct-section-value';
                     valueBadge.textContent = formatKMB(total, 2);
+                    valueBadge.title = tabValueTooltip(valueKey, sectionTiles.length);
                     const rightEl = header.querySelector('.toolasha-ct-section-right');
                     if (rightEl) rightEl.appendChild(valueBadge);
                     else header.appendChild(valueBadge);
