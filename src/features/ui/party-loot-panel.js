@@ -101,6 +101,45 @@ export function buildSessionHistoryRows(sessionList, statsFor = calculatePlayerS
 }
 
 /**
+ * The view on screen right now, as plain text for pasting into chat.
+ *
+ * The same figures the cards show — banked and daily rate per player, then
+ * every drop — read off `party` rather than recomputed, so what lands on the
+ * clipboard always matches what was on screen when the button was pressed.
+ * The CSV export covers the archive across every stored run; this covers the
+ * one run somebody is actually looking at, in a shape meant to be read rather
+ * than parsed.
+ *
+ * @param {Array<Object>} party - From `partyRuns`
+ * @param {string} label - What the picker said was showing, e.g. "Live Session"
+ * @returns {string} Empty when there is nothing to report
+ */
+export function buildSummaryText(party, label) {
+    if (!party?.length) return '';
+
+    const lines = [`Party Loot — ${label}`];
+    for (const stats of party) {
+        const banked = stats.income.bid - (stats.consumableCosts?.bid || 0) - (stats.keyCosts?.bid || 0);
+        lines.push(
+            '',
+            `${stats.name || '?'}: ${formatWithSeparator(Math.round(banked))} coins ` +
+                `(${formatWithSeparator(Math.round(stats.dailyProfit.bid))}/day)`
+        );
+
+        const items = stats.lootList || [];
+        if (!items.length) {
+            lines.push('  Nothing dropped yet.');
+            continue;
+        }
+        for (const item of items) {
+            const value = item.totalValue > 0 ? ` — ${formatWithSeparator(Math.round(item.totalValue))}` : '';
+            lines.push(`  ${formatWithSeparator(item.count)} × ${item.itemName}${value}`);
+        }
+    }
+    return lines.join('\n');
+}
+
+/**
  * Which run the panel is showing.
  *
  * Kept on the module rather than in the panel so it survives the panel being
@@ -289,8 +328,9 @@ function drawPlayer(body, stats) {
  * back with is "what did last night earn", which needs the run to be choosable.
  *
  * @param {HTMLElement} body - Where it goes
+ * @param {Array<Object>} party - From `partyRuns`, for the Copy button
  */
-function drawTopBar(body) {
+function drawTopBar(body, party) {
     const bar = document.createElement('div');
     Object.assign(bar.style, {
         display: 'flex',
@@ -343,6 +383,38 @@ function drawTopBar(body) {
 
     bar.append(picker, meta);
 
+    // Only when there is something on screen to send — a button that copies
+    // nothing would read as the button breaking, and there is no such thing
+    // as an empty party (the panel does not draw the bar without one)
+    if (party.length) {
+        const copyBtn = document.createElement('button');
+        copyBtn.textContent = '⧉';
+        copyBtn.title = 'Copy this view as plain text — banked, daily rate and every drop, per player.';
+        Object.assign(copyBtn.style, {
+            marginLeft: 'auto',
+            background: 'rgba(255, 255, 255, 0.06)',
+            color: ROW_COLORS.dim,
+            border: '1px solid rgba(255, 255, 255, 0.15)',
+            borderRadius: '4px',
+            padding: '2px 6px',
+            fontSize: '11px',
+            cursor: 'pointer',
+        });
+        copyBtn.addEventListener('click', () => {
+            const label = picker.selectedOptions[0]?.textContent || 'Party Loot';
+            const summary = buildSummaryText(party, label);
+            if (!summary || !navigator.clipboard) return;
+            navigator.clipboard
+                .writeText(summary)
+                .then(() => {
+                    copyBtn.textContent = '✓';
+                    setTimeout(() => (copyBtn.textContent = '⧉'), 1200);
+                })
+                .catch((error) => console.error('[PartyLoot] Copy failed:', error));
+        });
+        bar.appendChild(copyBtn);
+    }
+
     // Only when there is a history to write — the live run is not archived, and
     // a button exporting an empty file would read as the button breaking
     if (sessions.length) {
@@ -393,9 +465,8 @@ export const partyLootPanel = createPanel({
     refreshMs: 5000,
     draw: (body) => {
         refreshSessions();
-        drawTopBar(body);
-
         const party = partyRuns();
+        drawTopBar(body, party);
 
         if (!party.length) {
             body.appendChild(panelNote('No run measured yet.'));

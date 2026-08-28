@@ -49,7 +49,8 @@ vi.mock('../combat-stats/combat-session-history.js', () => ({
     describeSession: (session) => `run ${session.key}`,
 }));
 
-const { partyLootPanel, buildSessionHistoryRows, SESSION_HISTORY_COLUMNS } = await import('./party-loot-panel.js');
+const { partyLootPanel, buildSessionHistoryRows, SESSION_HISTORY_COLUMNS, buildSummaryText } =
+    await import('./party-loot-panel.js');
 
 const CHEST = { itemHrid: '/items/enchanted_chest', itemName: 'Enchanted Chest', count: 2, totalValue: 7_400_000 };
 const ODDITY = { itemHrid: '/items/nothing', itemName: 'Unpriced Thing', count: 1, totalValue: 0 };
@@ -225,6 +226,32 @@ describe('the top bar', () => {
         expect(button()).toBeTruthy();
     });
 
+    test('the copy button appears whenever there is a party on screen, archive or not', async () => {
+        const button = () => [...partyLootPanel.panel.querySelectorAll('button')].find((el) => el.textContent === '⧉');
+
+        partyLootPanel.show();
+        await settle();
+        // No archived sessions at all — still a live party, so still a button
+        expect(button()).toBeTruthy();
+    });
+
+    test('copy puts the on-screen view on the clipboard, not the whole archive', async () => {
+        const written = [];
+        vi.spyOn(navigator.clipboard, 'writeText').mockImplementation((value) => {
+            written.push(value);
+            return Promise.resolve();
+        });
+
+        partyLootPanel.show();
+        await settle();
+        const button = [...partyLootPanel.panel.querySelectorAll('button')].find((el) => el.textContent === '⧉');
+        button.click();
+
+        expect(written[0]).toContain('Live Session');
+        expect(written[0]).toContain('Briggsy99');
+        expect(written[0]).toContain('Enchanted Chest');
+    });
+
     test('the history appears on the first open without waiting for a refresh', async () => {
         game.sessions = [archived('a|1', '2026-08-02T22:00:00Z')];
         partyLootPanel.show();
@@ -310,5 +337,34 @@ describe('the session-history CSV rows', () => {
         for (const column of SESSION_HISTORY_COLUMNS) {
             expect(row).toHaveProperty(column.key);
         }
+    });
+});
+
+describe('the plain-text summary', () => {
+    const stats = (overrides) => ({
+        name: 'Briggsy99',
+        income: { bid: 8_000_000 },
+        consumableCosts: { bid: 1000 },
+        keyCosts: { bid: 500 },
+        dailyProfit: { bid: 80_000_000 },
+        lootList: [CHEST],
+        ...overrides,
+    });
+
+    test('an empty party is an empty string, not a header with nothing under it', () => {
+        expect(buildSummaryText([], 'Live Session')).toBe('');
+        expect(buildSummaryText(null, 'Live Session')).toBe('');
+    });
+
+    test('carries the label, the banked figure, the rate and every drop', () => {
+        const out = buildSummaryText([stats()], 'Live Session');
+        expect(out).toContain('Party Loot — Live Session');
+        expect(out).toContain('Briggsy99: 7,998,500 coins (80,000,000/day)');
+        expect(out).toContain('2 × Enchanted Chest — 7,400,000');
+    });
+
+    test('a player with nothing dropped yet says so rather than showing an empty list', () => {
+        const out = buildSummaryText([stats({ lootList: [] })], 'Live Session');
+        expect(out).toContain('Nothing dropped yet.');
     });
 });
