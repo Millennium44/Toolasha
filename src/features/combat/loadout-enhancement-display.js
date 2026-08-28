@@ -111,7 +111,7 @@ function removeOverlays() {
 
 let unregisterHandler = null;
 let itemsUpdatedHandler = null;
-let characterSwitchedHandler = null;
+let characterInitializedHandler = null;
 let refreshTimer = null;
 
 /**
@@ -147,10 +147,25 @@ function initialize() {
     // childList mutations, which a same-loadout inventory change does not
     // necessarily produce, so the badge was left showing the previous
     // character's — or the previous inventory's — highest level.
+    //
+    // `character_initialized` rather than `character_switched` for the switch
+    // half, because a listener registered here can only ever be delivered one
+    // of those two. Both are deferred a tick (data-manager.js `emit`), and
+    // delivery skips any listener that has since unregistered — while an
+    // ordinary switch runs this module's `cleanup()`, which unregisters it, in
+    // the `character_switching` teardown that happens first. So a
+    // `character_switched` subscription made here can never fire: on an
+    // ordinary switch it is gone before delivery (and the re-init's own
+    // `annotateLoadout()` covers that case anyway), and on a *rapid* switch —
+    // two inits inside RAPID_SWITCH_WINDOW_MS, which skips both the teardown
+    // and `character_switched` — it is never emitted at all. The rapid switch
+    // is exactly the case with no re-init to fall back on, and
+    // `character_initialized` is emitted unconditionally on both paths, after
+    // `characterItems` has been replaced.
     itemsUpdatedHandler = () => scheduleRefresh();
-    characterSwitchedHandler = () => scheduleRefresh();
+    characterInitializedHandler = () => scheduleRefresh();
     dataManager.on('items_updated', itemsUpdatedHandler);
-    dataManager.on('character_switched', characterSwitchedHandler);
+    dataManager.on('character_initialized', characterInitializedHandler);
 
     // Run immediately for any already-open loadout
     annotateLoadout();
@@ -173,9 +188,9 @@ function cleanup() {
         dataManager.off('items_updated', itemsUpdatedHandler);
         itemsUpdatedHandler = null;
     }
-    if (characterSwitchedHandler) {
-        dataManager.off('character_switched', characterSwitchedHandler);
-        characterSwitchedHandler = null;
+    if (characterInitializedHandler) {
+        dataManager.off('character_initialized', characterInitializedHandler);
+        characterInitializedHandler = null;
     }
     if (refreshTimer) {
         clearTimeout(refreshTimer);
