@@ -9,6 +9,7 @@
  */
 
 import config from '../../core/config.js';
+import dataManager from '../../core/data-manager.js';
 import inventoryBadgeManager from './inventory-badge-manager.js';
 import inventorySort from './inventory-sort.js';
 import { formatKMB } from '../../utils/formatters.js';
@@ -26,10 +27,14 @@ const CSS = `
 }
 `;
 
+const ITEMS_UPDATED_DEBOUNCE_MS = 300;
+
 class InventoryCategoryTotals {
     constructor() {
         this.isInitialized = false;
         this.pendingUpdate = false;
+        this.itemsUpdatedHandler = null;
+        this.itemsUpdatedDebounceTimer = null;
     }
 
     initialize() {
@@ -49,12 +54,38 @@ class InventoryCategoryTotals {
 
         // Trigger an immediate render pass so totals appear without needing a manual refresh
         inventoryBadgeManager.clearProcessedTracking();
+
+        // Keep totals live when nothing else drives the badge manager's cache.
+        // InventorySort and Inventory Badge Prices both invalidate the badge
+        // manager's `processedItems` tracking on `items_updated`, and every
+        // provider (this one included) benefits from that as a side effect —
+        // but with both of those off, an item container that already has a
+        // total-contributing badge is never revisited, so a stack that grows,
+        // shrinks, or gets enhanced never moves the label it belongs to until
+        // something unrelated (an item click, a settings toggle) happens to
+        // clear the tracking. This module owns its own freshness instead of
+        // borrowing a sibling feature's.
+        this.itemsUpdatedHandler = () => {
+            clearTimeout(this.itemsUpdatedDebounceTimer);
+            this.itemsUpdatedDebounceTimer = setTimeout(() => {
+                inventoryBadgeManager.invalidateCache();
+                this.scheduleUpdate();
+            }, ITEMS_UPDATED_DEBOUNCE_MS);
+        };
+        dataManager.on('items_updated', this.itemsUpdatedHandler);
     }
 
     disable() {
         try {
             if (!this.isInitialized) {
                 return;
+            }
+
+            clearTimeout(this.itemsUpdatedDebounceTimer);
+            this.itemsUpdatedDebounceTimer = null;
+            if (this.itemsUpdatedHandler) {
+                dataManager.off('items_updated', this.itemsUpdatedHandler);
+                this.itemsUpdatedHandler = null;
             }
 
             inventoryBadgeManager.unregisterProvider('inventory-category-totals');
