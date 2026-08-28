@@ -43,13 +43,14 @@ vi.mock('../../utils/opanel-config.js', () => ({ fromOPanelConfig: () => null, t
 vi.mock('../../utils/choice-dialog.js', () => ({ askChoice: async () => null }));
 
 /** What storage hands back for this character, and what the panel wrote to it */
-const saved = vi.hoisted(() => ({ read: null, legacy: null, written: null }));
+const saved = vi.hoisted(() => ({ read: null, legacy: null, written: null, writtenKey: null }));
 vi.mock('../../utils/character-key.js', () => ({
     // Key-aware, because the panel reads two: the current record and, when
     // there is none, the one the pixel-era build left behind
     readScoped: async (key) => (key === 'overlayPanelV2' ? saved.read : saved.legacy),
     writeScoped: async (key, value) => {
         saved.written = value;
+        saved.writtenKey = key;
     },
 }));
 
@@ -116,6 +117,7 @@ function text() {
 beforeEach(() => {
     saved.read = null;
     saved.legacy = null;
+    saved.writtenKey = null;
     saved.written = null;
     game.rows = [];
     document.body.replaceChildren();
@@ -201,6 +203,64 @@ describe('a character who arranged the overlay before the curated set existed', 
         // And the pixels are gone rather than left to be written out again
         expect(overlayPanel.settings.positions).toBeUndefined();
         expect(overlayPanel.settings.sizes).toBeUndefined();
+    });
+
+    test('and the record it came from is left exactly where it was', async () => {
+        // The new layout is written to its own key. A rollback is then a build
+        // swap with no data step, because the old build's record is still
+        // sitting there untouched.
+        game.rows = [row('luck', { text: 'x' })];
+        saved.legacy = {
+            visible: { luck: true },
+            order: ['luck'],
+            positions: { luck: { x: 0, y: 0 } },
+            sizes: { luck: { width: 200, height: 30 } },
+        };
+
+        await overlayPanel.initialize();
+        overlayPanel.show();
+
+        expect(saved.legacy.positions.luck).toEqual({ x: 0, y: 0 });
+        expect(saved.legacy.sizes.luck).toEqual({ width: 200, height: 30 });
+        expect(saved.writtenKey).toBe('overlayPanelV2');
+    });
+
+    test('everything that was never geometry survives the migration', async () => {
+        // Including the four row options that live in this record but are read
+        // from another bundle. A migration that rebuilt the settings from the
+        // fields the new schema knows about would switch all four off without
+        // ever mentioning them.
+        game.rows = [row('luck', { text: 'x' })];
+        saved.legacy = {
+            visible: { luck: true },
+            order: ['luck'],
+            positions: { luck: { x: 0, y: 0 } },
+            sizes: { luck: { width: 200, height: 30 } },
+            luckOnlyNumbers: true,
+            luckOnlyPlayer: true,
+            expectedOnlyNumbers: true,
+            expectedOnlyPlayer: true,
+            textScale: 120,
+            separators: false,
+            emptyTiles: 'hide',
+            locked: false,
+            autoSwitchLayout: true,
+            layoutActivity: { Mine: 'combat' },
+        };
+
+        await overlayPanel.initialize();
+
+        for (const flag of ['luckOnlyNumbers', 'luckOnlyPlayer', 'expectedOnlyNumbers', 'expectedOnlyPlayer']) {
+            expect(overlayPanel.settings[flag]).toBe(true);
+        }
+        expect(overlayPanel.settings.textScale).toBe(120);
+        expect(overlayPanel.settings.separators).toBe(false);
+        expect(overlayPanel.settings.emptyTiles).toBe('hide');
+        expect(overlayPanel.settings.locked).toBe(false);
+        expect(overlayPanel.settings.autoSwitchLayout).toBe(true);
+        expect(overlayPanel.settings.layoutActivity).toEqual({ Mine: 'combat' });
+        // And the pixels are not among the survivors
+        expect(overlayPanel.settings.snapToGrid).toBeUndefined();
     });
 });
 
