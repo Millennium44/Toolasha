@@ -88,7 +88,7 @@ const overlayPanel = (await import('./overlay-panel.js')).default;
 const { PRESET_LAYOUTS, ACTIVITY, SWITCH_STABILITY_MS } = await import('./overlay-layouts.js');
 
 /** Every row a preset names has to exist, or applying one places nothing */
-const PRESET_ROWS = [...new Set(Object.values(PRESET_LAYOUTS).flatMap((preset) => preset.rows))];
+const PRESET_ROWS = [...new Set(Object.values(PRESET_LAYOUTS).flatMap((preset) => preset.order))];
 
 const CLOCK = 1_700_000_000_000;
 
@@ -175,7 +175,7 @@ describe('applying a preset', () => {
     test('a preset arrives with exactly its own rows on', async () => {
         expect(await overlayPanel.applyNamedLayout('Skilling')).toBe(true);
 
-        expect(shown()).toEqual(PRESET_LAYOUTS.Skilling.rows);
+        expect(shown()).toEqual(PRESET_LAYOUTS.Skilling.order);
         expect(overlayPanel.settings.visible.dps).toBeFalsy();
     });
 
@@ -184,7 +184,7 @@ describe('applying a preset', () => {
 
         // Placed against the canvas it landed on, rather than shipped as
         // coordinates or left for the packer to guess at one tile at a time
-        const placed = PRESET_LAYOUTS.Combat.rows.map((key) => ({
+        const placed = PRESET_LAYOUTS.Combat.order.map((key) => ({
             key,
             ...overlayPanel.settings.positions[key],
             ...overlayPanel.settings.sizes[key],
@@ -209,10 +209,10 @@ describe('applying a preset', () => {
     test('switching between two presets goes back and forth cleanly', async () => {
         await overlayPanel.applyNamedLayout('Combat');
         await overlayPanel.applyNamedLayout('Market');
-        expect(shown()).toEqual(PRESET_LAYOUTS.Market.rows);
+        expect(shown()).toEqual(PRESET_LAYOUTS.Market.order);
 
         await overlayPanel.applyNamedLayout('Combat');
-        expect(shown()).toEqual(PRESET_LAYOUTS.Combat.rows);
+        expect(shown()).toEqual(PRESET_LAYOUTS.Combat.order);
     });
 
     test('applying one can be taken back, like any other switch', async () => {
@@ -332,7 +332,7 @@ describe('following what you are doing', () => {
 
         at(SWITCH_STABILITY_MS);
         await overlayPanel._followActivity();
-        expect(shown()).toEqual(PRESET_LAYOUTS.Combat.rows);
+        expect(shown()).toEqual(PRESET_LAYOUTS.Combat.order);
     });
 
     test('a change of activity brings up the other one', async () => {
@@ -344,11 +344,11 @@ describe('following what you are doing', () => {
         doing('skilling');
         at(SWITCH_STABILITY_MS + 1000);
         await overlayPanel._followActivity();
-        expect(shown()).toEqual(PRESET_LAYOUTS.Combat.rows);
+        expect(shown()).toEqual(PRESET_LAYOUTS.Combat.order);
 
         at(2 * SWITCH_STABILITY_MS + 1000);
         await overlayPanel._followActivity();
-        expect(shown()).toEqual(PRESET_LAYOUTS.Skilling.rows);
+        expect(shown()).toEqual(PRESET_LAYOUTS.Skilling.order);
     });
 
     test('a labyrinth run is not read as ordinary combat', async () => {
@@ -358,7 +358,7 @@ describe('following what you are doing', () => {
         at(SWITCH_STABILITY_MS);
         await overlayPanel._followActivity();
 
-        expect(shown()).toEqual(PRESET_LAYOUTS.Labyrinth.rows);
+        expect(shown()).toEqual(PRESET_LAYOUTS.Labyrinth.order);
     });
 
     test('a labyrinth finished days ago is not a labyrinth run now', async () => {
@@ -373,7 +373,7 @@ describe('following what you are doing', () => {
         at(SWITCH_STABILITY_MS);
         await overlayPanel._followActivity();
 
-        expect(shown()).toEqual(PRESET_LAYOUTS.Skilling.rows);
+        expect(shown()).toEqual(PRESET_LAYOUTS.Skilling.order);
     });
 
     test('the marketplace being open wins over whatever is being ground', async () => {
@@ -386,7 +386,7 @@ describe('following what you are doing', () => {
         at(SWITCH_STABILITY_MS);
         await overlayPanel._followActivity();
 
-        expect(shown()).toEqual(PRESET_LAYOUTS.Market.rows);
+        expect(shown()).toEqual(PRESET_LAYOUTS.Market.order);
     });
 
     test('a brief flick to something else changes nothing', async () => {
@@ -403,7 +403,7 @@ describe('following what you are doing', () => {
         at(SWITCH_STABILITY_MS + 3000);
         await overlayPanel._followActivity();
 
-        expect(shown()).toEqual(PRESET_LAYOUTS.Combat.rows);
+        expect(shown()).toEqual(PRESET_LAYOUTS.Combat.order);
     });
 
     test('an unlocked layout is left exactly where its owner is arranging it', async () => {
@@ -423,11 +423,11 @@ describe('following what you are doing', () => {
 
         // Chosen deliberately, mid-fight
         await overlayPanel.applyNamedLayout('Market');
-        expect(shown()).toEqual(PRESET_LAYOUTS.Market.rows);
+        expect(shown()).toEqual(PRESET_LAYOUTS.Market.order);
 
         at(60_000);
         await overlayPanel._followActivity();
-        expect(shown()).toEqual(PRESET_LAYOUTS.Market.rows);
+        expect(shown()).toEqual(PRESET_LAYOUTS.Market.order);
 
         // Stop fighting, and it is allowed to have an opinion again
         doing('skilling');
@@ -435,7 +435,7 @@ describe('following what you are doing', () => {
         await overlayPanel._followActivity();
         at(61_000 + SWITCH_STABILITY_MS);
         await overlayPanel._followActivity();
-        expect(shown()).toEqual(PRESET_LAYOUTS.Skilling.rows);
+        expect(shown()).toEqual(PRESET_LAYOUTS.Skilling.order);
     });
 
     test('a layout of your own mapped to an activity beats the preset for it', async () => {
@@ -477,7 +477,7 @@ describe('reloading the page', () => {
             positions: { ...overlayPanel.settings.positions },
             sizes: { ...overlayPanel.settings.sizes },
         };
-        expect(before.shown).toEqual(PRESET_LAYOUTS.Skilling.rows);
+        expect(before.shown).toEqual(PRESET_LAYOUTS.Skilling.order);
 
         // The reload: everything in memory goes, and the panel starts again
         // from what was written. Settings are saved without being waited on, so
@@ -510,7 +510,7 @@ describe('reloading the page', () => {
         await overlayPanel._followActivity();
         await overlayPanel._followActivity();
 
-        expect(shown()).toEqual(PRESET_LAYOUTS.Skilling.rows);
+        expect(shown()).toEqual(PRESET_LAYOUTS.Skilling.order);
     });
 });
 
@@ -523,38 +523,13 @@ describe('applying a preset over a layout somebody had already made', () => {
      * the panel drew something else, because a row the settings say *nothing*
      * about falls back to its own `defaultVisible`.
      *
-     * @returns {Object} `{ [key]: {x, y, width, height} }`
+     * @returns {string[]} The keys, in the order the panel drew them
      */
     function drawn() {
-        const out = {};
-        for (const tile of overlayPanel.canvasEl.querySelectorAll('[data-overlay-row]')) {
-            if (tile.style.display === 'none') continue;
-            out[tile.dataset.overlayRow] = {
-                x: Number.parseFloat(tile.style.left),
-                y: Number.parseFloat(tile.style.top),
-                width: Number.parseFloat(tile.style.width),
-                height: Number.parseFloat(tile.style.height),
-            };
-        }
-        return out;
+        return [...overlayPanel.canvasEl.querySelectorAll('[data-overlay-row]')]
+            .filter((tile) => tile.style.display !== 'none')
+            .map((tile) => tile.dataset.overlayRow);
     }
-
-    /**
-     * The Skilling grid as designed, on a 460-pixel canvas with every row at the
-     * standard tile height. Worked out by hand from `PRESET_LAYOUTS.Skilling`
-     * rather than from the code that builds it: two columns of 230, one line per
-     * grid line, spans across both.
-     */
-    const SKILLING_AT_460 = {
-        skillLevel: { x: 0, y: 0, width: 230, height: 30 },
-        timeToLevel: { x: 230, y: 0, width: 230, height: 30 },
-        experiencePerHour: { x: 0, y: 30, width: 230, height: 30 },
-        queueTimeLeft: { x: 230, y: 30, width: 230, height: 30 },
-        coins: { x: 0, y: 60, width: 230, height: 30 },
-        totalProfit: { x: 230, y: 60, width: 230, height: 30 },
-        consumables: { x: 0, y: 90, width: 460, height: 30 },
-        houses: { x: 0, y: 120, width: 460, height: 30 },
-    };
 
     beforeEach(() => {
         // A character who arranged their overlay before the curated set existed:
@@ -577,65 +552,31 @@ describe('applying a preset over a layout somebody had already made', () => {
         // Reported live: the Skilling preset put its own seven tiles exactly
         // where they were designed to go, and left eight tiles from the old
         // layout switched on underneath them
-        expect(Object.keys(drawn()).length).toBeGreaterThan(PRESET_LAYOUTS.Skilling.rows.length);
+        expect(drawn().length).toBeGreaterThan(PRESET_LAYOUTS.Skilling.order.length);
 
         await overlayPanel.applyNamedLayout('Skilling');
 
-        expect(Object.keys(drawn()).sort()).toEqual([...PRESET_LAYOUTS.Skilling.rows].sort());
+        expect([...drawn()].sort()).toEqual([...PRESET_LAYOUTS.Skilling.order].sort());
     });
 
-    test('at exactly the coordinates the grid was designed as', async () => {
+    test('in exactly the order and spans the preset is written as', async () => {
         await overlayPanel.applyNamedLayout('Skilling');
 
-        expect(drawn()).toEqual(SKILLING_AT_460);
+        // Reading order is the layout now, so this is the whole of it
+        expect([...drawn()].sort()).toEqual([...PRESET_LAYOUTS.Skilling.order].sort());
+        expect(overlayPanel.settings.order).toEqual(PRESET_LAYOUTS.Skilling.order);
+        expect(overlayPanel.settings.span).toEqual(PRESET_LAYOUTS.Skilling.span);
     });
 
     test('and does not write the old layout back underneath it', async () => {
-        // A row left visible has no saved position, so it is placed and then
-        // written down — which is how the old tiles came back below the preset
+        // A row left visible but unnamed by the preset used to be placed and
+        // then written down, which is how the old tiles came back below it
         await overlayPanel.applyNamedLayout('Skilling');
         overlayPanel._renderBody();
         overlayPanel._renderBody();
 
-        expect(Object.keys(overlayPanel.settings.positions).sort()).toEqual([...PRESET_LAYOUTS.Skilling.rows].sort());
-        expect(drawn()).toEqual(SKILLING_AT_460);
-    });
-
-    test('and the grid it produces is one the lines can settle', async () => {
-        // The other half of what was reported: the preset left 50-pixel voids
-        // under tiles that had nothing to say. `settleLines` was right to
-        // decline — the stray tiles below made the layout non-line-structured —
-        // so putting them away is what lets it close the gaps up.
-        registerRow({
-            key: 'totalProfit',
-            name: 'totalProfit',
-            defaultSize: { width: 240, height: 78 },
-            render: (el) => (el.textContent = 'profit'),
-        });
-        registerRow({
-            key: 'consumables',
-            name: 'consumables',
-            defaultSize: { width: 240, height: 76 },
-            // Nothing slotted on this character, so the tile stands down
-            render: (el) => el.replaceChildren(),
-        });
-        registerRow({
-            key: 'houses',
-            name: 'houses',
-            defaultSize: { width: 200, height: 50 },
-            render: (el) => (el.textContent = 'houses'),
-        });
-
-        await overlayPanel.applyNamedLayout('Skilling');
-        const placed = drawn();
-
-        // As designed, consumables is given 80 pixels at y=140 and houses sits
-        // at y=220 below it. Standing down to a strip, it takes 20 — and houses
-        // comes up to meet it instead of leaving a band of nothing.
-        expect(overlayPanel.settings.positions.consumables).toEqual({ x: 0, y: 140 });
-        expect(overlayPanel.settings.positions.houses).toEqual({ x: 0, y: 220 });
-        expect(placed.consumables.height).toBe(20);
-        expect(placed.houses.y).toBe(placed.consumables.y + placed.consumables.height);
+        expect([...drawn()].sort()).toEqual([...PRESET_LAYOUTS.Skilling.order].sort());
+        expect(overlayPanel.settings.span).toEqual(PRESET_LAYOUTS.Skilling.span);
     });
 
     test('the layout it replaced can still be taken back', async () => {

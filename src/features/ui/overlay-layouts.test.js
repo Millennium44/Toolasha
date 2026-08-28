@@ -8,7 +8,7 @@
  */
 
 import { describe, test, expect, beforeEach, vi } from 'vitest';
-import { gridOrder } from '../../utils/overlay-layout.js';
+import { spanFor, MAX_SPAN } from '../../utils/overlay-flow.js';
 
 const store = vi.hoisted(() => ({ data: new Map(), fail: false, unavailable: false }));
 
@@ -237,55 +237,43 @@ describe('the round trip', () => {
 });
 
 describe('presets', () => {
-    test('all five ship, each with rows and an activity', () => {
+    test('all five ship, each with an order and an activity', () => {
         expect(presetNames()).toEqual(['Combat', 'Skilling', 'Labyrinth', 'Market', 'Default']);
 
         for (const name of presetNames()) {
-            expect(PRESET_LAYOUTS[name].rows.length).toBeGreaterThan(0);
+            expect(PRESET_LAYOUTS[name].order.length).toBeGreaterThan(0);
             expect(Object.values(ACTIVITY)).toContain(PRESET_LAYOUTS[name].activity);
         }
     });
 
-    test('a preset names each of its rows once, in the order its grid reads', () => {
+    test('a preset names each of its rows exactly once', () => {
         for (const name of presetNames()) {
-            const { rows, grid } = PRESET_LAYOUTS[name];
-            expect(new Set(rows).size).toBe(rows.length);
-            expect(rows).toEqual(gridOrder(grid));
+            const { order } = PRESET_LAYOUTS[name];
+            expect(new Set(order).size).toBe(order.length);
         }
     });
 
-    test('every line of every preset is full, so no line leaves a sliver', () => {
-        // The complaint, as a rule: a line with one tile in a two-column grid is
-        // the orphan half-row the screenshot was full of
+    test('every span is a whole number of columns a panel can actually offer', () => {
         for (const name of presetNames()) {
-            const { columns, grid } = PRESET_LAYOUTS[name];
-            for (const line of grid) {
-                const cells = Array.isArray(line) ? line : line.cells;
-                expect(cells).toHaveLength(columns);
-                expect(cells.every((cell) => typeof cell === 'string')).toBe(true);
+            const { order, span } = PRESET_LAYOUTS[name];
+            for (const [key, columns] of Object.entries(span)) {
+                // A span for a row the preset does not carry would never apply
+                expect(order).toContain(key);
+                expect(Number.isInteger(columns)).toBe(true);
+                expect(columns).toBeGreaterThanOrEqual(2);
+                expect(columns).toBeLessThanOrEqual(MAX_SPAN);
             }
         }
     });
 
-    test('a preset arrives placed, aligned and inside the canvas', () => {
-        const rows = PRESET_LAYOUTS.Combat.rows.map((key) => ({ key, defaultSize: { width: 200, height: 30 } }));
-        const { positions, sizes } = presetFile('Combat', { width: 456, rows }).toolasha.settings;
-
-        const tiles = PRESET_LAYOUTS.Combat.rows.map((key) => ({ key, ...positions[key], ...sizes[key] }));
-        for (const tile of tiles) {
-            expect(Number.isFinite(tile.x)).toBe(true);
-            expect(tile.x % 10).toBe(0);
-            expect(tile.x + tile.width).toBeLessThanOrEqual(456);
-        }
-        // Two columns, and every tile starts at one of them
-        expect(new Set(tiles.map((tile) => tile.x)).size).toBe(2);
-
-        for (let i = 0; i < tiles.length; i += 1) {
-            for (let j = i + 1; j < tiles.length; j += 1) {
-                const [a, b] = [tiles[i], tiles[j]];
-                const apart =
-                    a.x >= b.x + b.width || b.x >= a.x + a.width || a.y >= b.y + b.height || b.y >= a.y + a.height;
-                expect(apart).toBe(true);
+    test('a preset reads the same at every width, which is the point', () => {
+        // On one column a span of two clamps to one and the order is unchanged,
+        // so there is no narrow-mode branch anywhere
+        for (const name of presetNames()) {
+            const { order, span } = PRESET_LAYOUTS[name];
+            for (const columns of [1, 2, 3, MAX_SPAN]) {
+                const drawn = order.map((key) => spanFor(span[key], columns));
+                expect(drawn.every((wide) => wide >= 1 && wide <= columns)).toBe(true);
             }
         }
     });
@@ -296,43 +284,44 @@ describe('presets', () => {
     });
 
     test('a preset is a layout file of exactly the shape a saved one has', () => {
-        const built = presetFile('Combat');
+        const built = presetFile('Combat').toolasha.settings;
 
-        expect(built.toolasha.settings.order).toEqual(PRESET_LAYOUTS.Combat.rows);
-        // Placed, but placed *here* rather than shipped as coordinates — see the
-        // canvas-width tests below
-        expect(Object.keys(built.toolasha.settings.positions).length).toBeGreaterThan(0);
-        expect(built.toolasha.settings.locked).toBe(true);
+        expect(built.version).toBe(2);
+        expect(built.order).toEqual(PRESET_LAYOUTS.Combat.order);
+        expect(built.span).toEqual(PRESET_LAYOUTS.Combat.span);
+        expect(built.locked).toBe(true);
+        // Nothing measured, nothing placed: a preset is no longer a function of
+        // how wide the panel it is about to land on happens to be
+        expect(built.positions).toBeUndefined();
+        expect(built.sizes).toBeUndefined();
     });
 
-    test('a preset switches its own rows on, and says nothing about the rest', () => {
-        const visible = presetFile('Market').toolasha.settings.visible;
+    test('a preset switches its own rows on, and every other registered row off', () => {
+        const rows = [...PRESET_LAYOUTS.Market.order, 'dps', 'luck'].map((key) => ({ key }));
+        const visible = presetFile('Market', { rows }).toolasha.settings.visible;
 
-        for (const key of PRESET_LAYOUTS.Market.rows) expect(visible[key]).toBe(true);
+        for (const key of PRESET_LAYOUTS.Market.order) expect(visible[key]).toBe(true);
+        // Said out loud, row by row — an unmentioned row falls back to its own
+        // default, which is on for nearly every row in the script
+        expect(visible.dps).toBe(false);
+        expect(visible.luck).toBe(false);
+    });
+
+    test('with nothing registered it switches nothing off, rather than everything', () => {
+        // Built before the features have loaded, "no rows exist" must not be
+        // read as "every row is off"
+        const visible = presetFile('Market', { rows: [] }).toolasha.settings.visible;
+
+        for (const key of PRESET_LAYOUTS.Market.order) expect(visible[key]).toBe(true);
         expect(visible.dps).toBeUndefined();
     });
 
-    test('the arrangement follows the canvas it is built against', () => {
-        const rows = PRESET_LAYOUTS.Market.rows.map((key) => ({ key, defaultSize: { width: 180, height: 30 } }));
-        const wide = presetFile('Market', { width: 456, rows }).toolasha.settings;
-        const narrow = presetFile('Market', { width: 300, rows }).toolasha.settings;
+    test('a row no feature has registered keeps its place in the order', () => {
+        const built = presetFile('Market', { rows: [{ key: 'netWorth' }] }).toolasha.settings;
 
-        // Wide enough for the design, so the two columns it was designed as
-        expect(new Set(Object.values(wide.positions).map((spot) => spot.x)).size).toBe(2);
-        // Too narrow to squeeze it into two, so one column of whole tiles rather
-        // than two columns of ellipsis
-        expect(new Set(Object.values(narrow.positions).map((spot) => spot.x))).toEqual(new Set([0]));
-        for (const size of Object.values(narrow.sizes)) expect(size.width).toBeLessThanOrEqual(300);
-    });
-
-    test('a row no feature has registered is left out rather than left as a hole', () => {
-        const rows = [{ key: 'netWorth', defaultSize: { width: 180, height: 30 } }];
-        const built = presetFile('Market', { width: 456, rows }).toolasha.settings;
-
-        // Still switched on, so it appears if its feature comes back
+        // Still on and still in the order, so it appears if its feature returns
         expect(built.visible.watchlist).toBe(true);
-        expect(built.positions.watchlist).toBeUndefined();
-        expect(built.positions.netWorth).toEqual({ x: 0, y: 0 });
+        expect(built.order).toEqual(PRESET_LAYOUTS.Market.order);
     });
 
     test('names are recognised, and anything else is not', () => {

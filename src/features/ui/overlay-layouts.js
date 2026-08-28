@@ -46,7 +46,6 @@
 import { createCuratedRecord, mergeMaps } from '../../utils/persisted-record.js';
 import { toOPanelConfig } from '../../utils/opanel-config.js';
 import { registeredRows } from '../../utils/overlay-rows.js';
-import { GRID, DEFAULT_TILE, gridOrder, materializeGrid } from '../../utils/overlay-layout.js';
 
 /** The one key the whole map lives under */
 export const LAYOUTS_KEY = 'overlayLayouts';
@@ -264,90 +263,92 @@ export const ACTIVITY = {
 /**
  * The arrangements that ship with the script.
  *
- * Each preset is a **grid**: lines of cells, one cell per column, read left to
- * right and top to bottom. A key names the tile that goes in that cell, the same
- * key twice running is a tile that spans both columns, and `null` is a
- * deliberate gap. A line may say `{ cells, height }` when it wants more room
- * than its tallest tile asks for — a watch list is thirty pixels of content and
- * worth seventy of tile.
+ * Each preset is an **order and a set of spans**: the tiles it wants, in the
+ * order they read, and how many columns each one takes. That is the whole of a
+ * layout now — the browser derives the pixels from it every frame, at whatever
+ * width the panel happens to be.
  *
- * This replaces a bare list of row keys, and the reason is the bug it was. A
- * list carries no coordinates, so every tile in a preset arrived *unplaced* and
- * was dropped wherever the packer found a hole — on a canvas holding tiles from
- * 130 to 280 wide, that is a first-fit search that puts a narrow tile in the
- * sliver beside a wide one and offsets every column below it. The result was the
- * jagged patchwork the presets were supposed to save you from arranging by hand.
+ * It replaces a grid of cells, which replaced a bare list of keys, and the two
+ * replacements were the same lesson learned twice. The bare list carried no
+ * arrangement, so every tile arrived unplaced and was dropped wherever a packer
+ * found a hole. The grid of cells carried an arrangement but had to be turned
+ * into coordinates against a particular canvas, so it was correct at one width
+ * and had to be rebuilt at every other. An order and a span are correct at every
+ * width by construction: on a one-column panel a span of two clamps to one and
+ * the order is unchanged, which is what makes these presets right on a phone
+ * with no narrow-mode branch anywhere.
  *
- * Coordinates are still not written here, because coordinates measured against
- * one panel width arrive clamped or overlapping on any other. What is written is
- * the *arrangement* — which tile sits beside which, and what shares a line — and
- * `materializeGrid` turns that into pixels against the canvas the player has.
- *
- * Two rules held throughout, both of them about the complaint: every line is
- * either two tiles of one height or one tile spanning the width, so no line
- * leaves a sliver beside a short tile; and tiles that answer the same question
- * share a line, so the grouping survives being read quickly.
+ * The rule the grids held themselves to is kept, because it is a rule about
+ * reading rather than about pixels: tiles that answer the same question sit
+ * together, and a tile that carries a block rather than a figure — revenue,
+ * luck, consumables — takes the full width rather than sharing a line.
  *
  * `activity` is what the preset answers for when auto-switching is on. A player
  * who maps one of their own layouts to the same activity takes precedence — the
  * preset is the fallback, not the rule.
  */
-const PRESET_GRIDS = {
+export const PRESET_LAYOUTS = {
     Combat: {
         activity: ACTIVITY.COMBAT,
-        columns: 2,
         // What is happening, then how it is going, then what it is worth
-        grid: [
-            ['combatStatus', 'battleTimer'],
-            ['dps', 'deathsPerHour'],
-            ['manaPerFight', 'treasure'],
-            ['combatRevenue', 'combatRevenue'],
-            ['luck', 'luck'],
-            ['combatSession', 'combatSession'],
-            ['consumables', 'consumables'],
+        order: [
+            'combatStatus',
+            'battleTimer',
+            'dps',
+            'deathsPerHour',
+            'manaPerFight',
+            'treasure',
+            'combatRevenue',
+            'luck',
+            'combatSession',
+            'consumables',
         ],
+        span: { combatRevenue: 2, luck: 2, combatSession: 2, consumables: 2 },
     },
     Skilling: {
         activity: ACTIVITY.SKILLING,
-        columns: 2,
         // Where the trained skill stands and when it next levels, then the
         // session's numbers, then the two blocks that decide whether the
         // queue is worth running
-        grid: [
-            ['skillLevel', 'timeToLevel'],
-            ['experiencePerHour', 'queueTimeLeft'],
-            ['coins', 'totalProfit'],
-            ['consumables', 'consumables'],
-            ['houses', 'houses'],
+        order: [
+            'skillLevel',
+            'timeToLevel',
+            'experiencePerHour',
+            'queueTimeLeft',
+            'coins',
+            'totalProfit',
+            'consumables',
+            'houses',
         ],
+        span: { consumables: 2, houses: 2 },
     },
     Labyrinth: {
         activity: ACTIVITY.LABYRINTH,
-        columns: 2,
         // The combat half, plus the three tiles a run is actually decided by:
         // what it is dropping, whether the sim agrees with what happened, and
         // whether you are about to run out of food
-        grid: [
-            ['combatStatus', 'dps'],
-            ['deathsPerHour', 'manaPerFight'],
-            ['treasure', 'combatSession'],
-            ['combatRevenue', 'combatRevenue'],
-            ['replayCheck', 'replayCheck'],
-            ['consumables', 'consumables'],
+        order: [
+            'combatStatus',
+            'dps',
+            'deathsPerHour',
+            'manaPerFight',
+            'treasure',
+            'combatSession',
+            'combatRevenue',
+            'replayCheck',
+            'consumables',
         ],
+        span: { combatRevenue: 2, replayCheck: 2, consumables: 2 },
     },
     Market: {
         activity: ACTIVITY.MARKET,
-        columns: 2,
         // The four figures that make up what you are worth, above the two lists
-        // you keep open while trading
-        grid: [
-            ['netWorth', 'coins'],
-            ['inventoryValue', 'marketListings'],
-            ['skillBooks', 'skillBooks'],
-            { cells: ['watchlist', 'watchlist'], height: 70 },
-            { cells: ['equipmentWatch', 'equipmentWatch'], height: 70 },
-        ],
+        // you keep open while trading. The lists used to carry a height hint
+        // here; they now get the room from their own row's `defaultSize.height`,
+        // which is where that knowledge belonged — the panel was guessing on the
+        // row's behalf.
+        order: ['netWorth', 'coins', 'inventoryValue', 'marketListings', 'skillBooks', 'watchlist', 'equipmentWatch'],
+        span: { skillBooks: 2, watchlist: 2, equipmentWatch: 2 },
     },
     /**
      * What the overlay looks like before anybody has arranged it.
@@ -359,38 +360,23 @@ const PRESET_GRIDS = {
      */
     Default: {
         activity: ACTIVITY.NONE,
-        columns: 2,
-        grid: [
-            ['netWorth', 'coins'],
-            ['inventoryValue', 'buildScore'],
-            ['combatLevel', 'combatStatus'],
-            ['experiencePerHour', 'timeToLevel'],
-            ['dps', 'deathsPerHour'],
-            ['luck', 'luck'],
-            ['totalProfit', 'totalProfit'],
+        order: [
+            'netWorth',
+            'coins',
+            'inventoryValue',
+            'buildScore',
+            'combatLevel',
+            'combatStatus',
+            'experiencePerHour',
+            'timeToLevel',
+            'dps',
+            'deathsPerHour',
+            'luck',
+            'totalProfit',
         ],
+        span: { luck: 2, totalProfit: 2 },
     },
 };
-
-/**
- * The presets, each with the row list its own grid implies.
- *
- * Derived rather than written beside the grid: `rows` is what the row picker
- * orders by and what Autogrid packs by, and a preset whose written order
- * disagreed with its own arrangement would rearrange itself the first time
- * either was used.
- */
-export const PRESET_LAYOUTS = Object.fromEntries(
-    Object.entries(PRESET_GRIDS).map(([name, preset]) => [name, { ...preset, rows: gridOrder(preset.grid) }])
-);
-
-/**
- * The canvas a preset is built against when nobody says how wide the panel is.
- *
- * The default panel less its border, padding and scrollbar. Only ever used by
- * callers with no panel to measure — the overlay itself passes its real width.
- */
-export const PRESET_CANVAS_WIDTH = 440;
 
 /**
  * The preset names, in the order they should be offered.
@@ -410,24 +396,21 @@ export function isPreset(name) {
 }
 
 /**
- * The natural size of every registered row, for building a preset against.
+ * Which row keys exist right now.
+ *
+ * Only the keys, because a preset no longer needs to know how big anything is —
+ * a span is a count of columns and a height is whatever the row draws. Null when
+ * nothing has registered yet, which means "assume they all do" rather than "none
+ * of them do": a preset built before the features have loaded must not switch
+ * every row in the script off.
  *
  * @param {Array<Object>|null} rows - A registry snapshot, or null to read the live one
- * @returns {{sizes: Object, available: Set<string>|null}} Sizes by key, and which
- *   keys exist — null when nothing has registered yet, which means "assume they
- *   all do" rather than "none of them do"
+ * @returns {Set<string>|null} The keys, or null when the registry is empty
  */
-function registrySizes(rows) {
+function registryKeys(rows) {
     const registry = rows || registeredRows();
-    if (!registry.length) return { sizes: {}, available: null };
-
-    const sizes = {};
-    const available = new Set();
-    for (const row of registry) {
-        available.add(row.key);
-        sizes[row.key] = row.defaultSize || DEFAULT_TILE;
-    }
-    return { sizes, available };
+    if (!registry.length) return null;
+    return new Set(registry.map((row) => row.key));
 }
 
 /**
@@ -439,10 +422,9 @@ function registrySizes(rows) {
  * preset that behaves differently from everything around it in some way nobody
  * predicted.
  *
- * The arrangement is turned into coordinates *here*, against the canvas it is
- * about to be applied to, rather than shipped as coordinates. That is what makes
- * a preset arrive as the arrangement it was designed as instead of as whatever
- * the packer made of an unplaced pile — see {@link PRESET_LAYOUTS}.
+ * The arrangement travels as an order and a set of spans rather than as
+ * coordinates, so there is nothing to build it against — see
+ * {@link PRESET_LAYOUTS}. It is correct at whatever width it lands on.
  *
  * Everything not in `rows` is switched *off* rather than left alone. A preset
  * that only added tiles would leave whatever was up before sitting among them,
@@ -466,38 +448,29 @@ function registrySizes(rows) {
  * and it is one tick of the row picker to put away.
  *
  * @param {string} name - Preset name
- * @param {Object} [options] - The canvas to build against
- * @param {number} [options.width] - Canvas width; the default panel's when unsaid
+ * @param {Object} [options] - How to build it
  * @param {Array<Object>} [options.rows] - A registry snapshot, for tests
- * @param {boolean} [options.snapToGrid] - Whether to align the arrangement to the grid
  * @returns {Object|null} A file for `fromOPanelConfig`, or null when there is no such preset
  */
-export function presetFile(name, { width = PRESET_CANVAS_WIDTH, rows = null, snapToGrid = true } = {}) {
+export function presetFile(name, { rows = null } = {}) {
     const preset = PRESET_LAYOUTS[normalizeName(name)];
     if (!preset) return null;
 
-    const { sizes, available } = registrySizes(rows);
-    const placed = materializeGrid(preset, {
-        width: width > 0 ? width : PRESET_CANVAS_WIDTH,
-        sizes,
-        available,
-        step: snapToGrid ? GRID : 1,
-    });
+    const available = registryKeys(rows);
 
     // Off first, then the preset's own back on. Written this way round so that
     // adding a row to a preset cannot leave it switched off, and adding a row to
     // the script cannot leave it switched on.
     const visible = {};
     for (const key of available || []) visible[key] = false;
-    for (const key of preset.rows) visible[key] = true;
+    for (const key of preset.order) visible[key] = true;
 
     return toOPanelConfig({
-        order: [...preset.rows],
+        version: 2,
+        order: [...preset.order],
+        span: { ...preset.span },
         visible,
-        positions: placed.positions,
-        sizes: placed.sizes,
         zoom: {},
-        snapToGrid,
         // Applied locked. A preset is somebody else's arrangement arriving
         // under your cursor, and arriving unlocked means the first click that
         // lands on it drags a tile.

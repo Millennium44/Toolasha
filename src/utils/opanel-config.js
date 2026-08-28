@@ -72,7 +72,12 @@ export const ROW_KEY_MAP = {
  * Bumped only when the section's shape changes in a way a reader must know
  * about. It is written and never yet read, which is the point of writing it.
  */
-const TOOLASHA_SECTION_VERSION = 1;
+const TOOLASHA_SECTION_VERSION = 2;
+
+/** The default panel, as OPanel would measure it — only for the synthesised half of an export */
+const OPANEL_COLUMN = 220;
+const OPANEL_COLUMNS = 2;
+const OPANEL_ROW_HEIGHT = 30;
 
 /** Ours back to theirs, for writing a file MCS can read */
 const REVERSE_KEY_MAP = Object.fromEntries(Object.entries(ROW_KEY_MAP).map(([theirs, ours]) => [ours, theirs]));
@@ -186,31 +191,41 @@ function readToolashaSection(json) {
     const settings = {
         order: saved.order.filter((key) => typeof key === 'string'),
         visible: {},
-        positions: {},
-        sizes: {},
         zoom: {},
     };
 
     for (const [key, on] of Object.entries(saved.visible || {})) settings.visible[key] = !!on;
 
-    for (const [key, value] of Object.entries(saved.positions || {})) {
-        if (Number.isFinite(value?.x) && Number.isFinite(value?.y))
-            settings.positions[key] = { x: value.x, y: value.y };
-    }
-
-    for (const [key, value] of Object.entries(saved.sizes || {})) {
-        if (value?.width > 0 && value?.height > 0) settings.sizes[key] = { width: value.width, height: value.height };
-    }
-
     for (const [key, value] of Object.entries(saved.zoom || {})) {
         if (Number.isFinite(value)) settings.zoom[key] = value;
     }
 
-    if (typeof saved.snapToGrid === 'boolean') settings.snapToGrid = saved.snapToGrid;
     if (typeof saved.locked === 'boolean') settings.locked = saved.locked;
     if (typeof saved.separators === 'boolean') settings.separators = saved.separators;
     if (Number.isFinite(saved.textScale)) settings.textScale = saved.textScale;
 
+    // A file this overlay wrote since the flow rework says so, and carries its
+    // layout as spans. One written before it carries pixels, which are handed
+    // back untouched for the caller to migrate — the same road an OPanel file
+    // takes, so an old export of ours costs no separate code path.
+    if (saved.version >= 2) {
+        settings.version = 2;
+        settings.span = {};
+        for (const [key, value] of Object.entries(saved.span || {})) {
+            if (Number.isFinite(value) && value > 0) settings.span[key] = Math.round(value);
+        }
+        return settings;
+    }
+
+    settings.positions = {};
+    settings.sizes = {};
+    for (const [key, value] of Object.entries(saved.positions || {})) {
+        if (Number.isFinite(value?.x) && Number.isFinite(value?.y))
+            settings.positions[key] = { x: value.x, y: value.y };
+    }
+    for (const [key, value] of Object.entries(saved.sizes || {})) {
+        if (value?.width > 0 && value?.height > 0) settings.sizes[key] = { width: value.width, height: value.height };
+    }
     return settings;
 }
 
@@ -252,14 +267,17 @@ export function toOPanelConfig(settings, geometry = null) {
         if (theirs) config[theirs] = !!on;
     }
 
-    for (const [ourKey, value] of Object.entries(settings?.positions || {})) {
+    // Pixels for OPanel's half, worked out from the order and the spans — this
+    // overlay has not held any since the flow rework. See `synthesizePixels`.
+    const drawn = synthesizePixels(settings);
+    for (const [ourKey, value] of Object.entries(drawn.positions)) {
         const theirs = REVERSE_KEY_MAP[ourKey];
-        if (theirs) config.positions[theirs] = { x: value.x, y: value.y };
+        if (theirs) config.positions[theirs] = value;
     }
 
-    for (const [ourKey, value] of Object.entries(settings?.sizes || {})) {
+    for (const [ourKey, value] of Object.entries(drawn.sizes)) {
         const theirs = REVERSE_KEY_MAP[ourKey];
-        if (theirs) config.sizes[theirs] = { width: value.width, height: value.height };
+        if (theirs) config.sizes[theirs] = value;
     }
 
     for (const [ourKey, value] of Object.entries(settings?.zoom || {})) {
@@ -267,7 +285,8 @@ export function toOPanelConfig(settings, geometry = null) {
         if (theirs) zoomLevels[theirs] = value;
     }
 
-    config.snapToGrid = settings?.snapToGrid !== false;
+    // OPanel still has the setting; this overlay no longer has anything to snap
+    config.snapToGrid = true;
 
     return {
         config,
@@ -295,14 +314,56 @@ export function toOPanelConfig(settings, geometry = null) {
  */
 function nativeSection(settings) {
     return {
+        version: 2,
         order: [...(settings?.order || [])],
+        span: { ...(settings?.span || {}) },
         visible: { ...(settings?.visible || {}) },
-        positions: { ...(settings?.positions || {}) },
-        sizes: { ...(settings?.sizes || {}) },
         zoom: { ...(settings?.zoom || {}) },
-        snapToGrid: settings?.snapToGrid !== false,
         locked: settings?.locked !== false,
         separators: settings?.separators !== false,
         textScale: settings?.textScale,
     };
+}
+
+/**
+ * The layout as OPanel would have drawn it, in pixels.
+ *
+ * The one place pixel arithmetic survives, and it survives for somebody else's
+ * benefit: MWI Combat Suite reads `config.positions` and `config.sizes` and
+ * knows nothing about spans, so an export that dropped them would be a one-way
+ * door out of a format this module exists to interoperate with. Twenty pure
+ * lines is a cheap price for that.
+ *
+ * Laid out the way the browser will lay the same order out on a default panel:
+ * two columns of {@link OPANEL_COLUMN}, a tile taking as many as its span asks
+ * for, wrapping when the line is full.
+ *
+ * @param {Object} settings - The overlay's settings, in v2 terms
+ * @returns {{positions: Object, sizes: Object}} Keyed by row key
+ */
+function synthesizePixels(settings) {
+    const positions = {};
+    const sizes = {};
+
+    let x = 0;
+    let y = 0;
+    for (const key of settings?.order || []) {
+        if (settings?.visible && settings.visible[key] === false) continue;
+
+        const span = Math.min(OPANEL_COLUMNS, Math.max(1, Math.round(settings?.span?.[key] ?? 1)));
+        if (x + span > OPANEL_COLUMNS) {
+            x = 0;
+            y += OPANEL_ROW_HEIGHT;
+        }
+
+        positions[key] = { x: x * OPANEL_COLUMN, y };
+        sizes[key] = { width: span * OPANEL_COLUMN, height: OPANEL_ROW_HEIGHT };
+
+        x += span;
+        if (x >= OPANEL_COLUMNS) {
+            x = 0;
+            y += OPANEL_ROW_HEIGHT;
+        }
+    }
+    return { positions, sizes };
 }

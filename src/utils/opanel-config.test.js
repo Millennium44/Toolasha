@@ -92,20 +92,35 @@ describe('fromOPanelConfig', () => {
 
 describe('toOPanelConfig', () => {
     const settings = {
+        version: 2,
         order: ['battleTimer', 'netWorth'],
-        visible: { battleTimer: true, netWorth: false },
-        positions: { netWorth: { x: 10, y: 20 } },
-        sizes: { netWorth: { width: 160, height: 30 } },
+        span: { netWorth: 2 },
+        visible: { battleTimer: true, netWorth: true },
         zoom: { netWorth: 110 },
         locked: false,
-        snapToGrid: false,
     };
 
     test('writes their names back', () => {
         const written = toOPanelConfig(settings);
         expect(written.config.order).toEqual(['battleTimer', 'kollectionNetWorth']);
-        expect(written.config.positions.kollectionNetWorth).toEqual({ x: 10, y: 20 });
         expect(written.zoom_levels.kollectionNetWorth).toBe(110);
+    });
+
+    test('and pixels OPanel can draw, worked out from the order and the spans', () => {
+        // This overlay holds no coordinates any more, but MCS reads nothing
+        // else — so the export synthesises them rather than closing the door
+        const written = toOPanelConfig(settings);
+
+        expect(written.config.positions.battleTimer).toEqual({ x: 0, y: 0 });
+        expect(written.config.sizes.battleTimer).toEqual({ width: 220, height: 30 });
+        // Two columns wide, so it cannot share the line and starts the next one
+        expect(written.config.positions.kollectionNetWorth).toEqual({ x: 0, y: 30 });
+        expect(written.config.sizes.kollectionNetWorth).toEqual({ width: 440, height: 30 });
+    });
+
+    test('a tile switched off is not given pixels at all', () => {
+        const hidden = { ...settings, visible: { battleTimer: true, netWorth: false } };
+        expect(toOPanelConfig(hidden).config.positions.kollectionNetWorth).toBeUndefined();
     });
 
     test('leaves out rows OPanel has no key for', () => {
@@ -118,8 +133,9 @@ describe('toOPanelConfig', () => {
         const round = fromOPanelConfig(toOPanelConfig(settings, { left: 5, top: 6, width: 400, height: 300 }));
         expect(round.settings.order).toEqual(settings.order);
         expect(round.settings.visible).toEqual(settings.visible);
+        expect(round.settings.span).toEqual(settings.span);
+        expect(round.settings.version).toBe(2);
         expect(round.settings.locked).toBe(false);
-        expect(round.settings.snapToGrid).toBe(false);
         expect(round.geometry).toEqual({ left: 5, top: 6, width: 400, height: 300 });
     });
 
@@ -140,41 +156,30 @@ describe('a round trip through our own section', () => {
     const settings = {
         order: ['coins', 'watchlist', 'charmValue', 'manaPerFight', 'dps'],
         visible: { coins: true, watchlist: true, charmValue: false, manaPerFight: true, dps: true },
-        positions: {
-            coins: { x: 0, y: 0 },
-            watchlist: { x: 200, y: 0 },
-            charmValue: { x: 0, y: 30 },
-            manaPerFight: { x: 200, y: 30 },
-            dps: { x: 0, y: 60 },
-        },
-        sizes: {
-            coins: { width: 160, height: 30 },
-            watchlist: { width: 220, height: 40 },
-            charmValue: { width: 230, height: 30 },
-            manaPerFight: { width: 200, height: 30 },
-            dps: { width: 200, height: 46 },
-        },
+        span: { watchlist: 2, dps: 2 },
+        version: 2,
         zoom: { watchlist: 0.9 },
-        snapToGrid: false,
         locked: false,
         separators: false,
         textScale: 0.8,
     };
 
     test('every row survives, not only the twenty OPanel names', () => {
-        // Rows that arrive without a position get laid out wherever the packer
-        // puts them, which is what made an imported layout a jumble
+        // OPanel has a name for a third of our rows; a file written in its
+        // shape alone comes back missing the rest
         const read = fromOPanelConfig(toOPanelConfig(settings, null));
 
         expect(read.settings.order).toEqual(settings.order);
-        expect(Object.keys(read.settings.positions).sort()).toEqual(Object.keys(settings.positions).sort());
-        expect(read.settings.sizes.watchlist).toEqual({ width: 220, height: 40 });
+        expect(read.settings.span).toEqual(settings.span);
+        expect(read.settings.version).toBe(2);
+        // And no pixels, because there are none to carry
+        expect(read.settings.positions).toBeUndefined();
+        expect(read.settings.sizes).toBeUndefined();
     });
 
     test('the switches survive too', () => {
         const read = fromOPanelConfig(toOPanelConfig(settings, null));
 
-        expect(read.settings.snapToGrid).toBe(false);
         expect(read.settings.locked).toBe(false);
         expect(read.settings.separators).toBe(false);
         expect(read.settings.textScale).toBe(0.8);
@@ -191,7 +196,9 @@ describe('a round trip through our own section', () => {
 
         expect(file.config.order).toContain('ewatchCoins');
         expect(file.config.order).toContain('dps');
-        expect(file.config.sizes.ewatchCoins).toEqual({ width: 160, height: 30 });
+        // Synthesised, since we hold no pixels — but a real rectangle either way
+        expect(file.config.sizes.ewatchCoins).toEqual({ width: 220, height: 30 });
+        expect(file.config.positions.ewatchCoins).toEqual({ x: 0, y: 0 });
     });
 
     test('an MCS file with no section of ours is still read', () => {

@@ -473,6 +473,17 @@ class OverlayPanel {
                   { ...defaultSettings(), ...saved, curatedDefaults: saved.curatedDefaults === true }
                 : defaultSettings();
 
+        // The order names every row the registry knows about, once, here.
+        //
+        // It used to be written by `_renderPicker` as a side effect of drawing
+        // itself, which was harmless while the order was advisory and is not
+        // now that the order *is* the layout: opening the gear would have
+        // rewritten the arrangement into registration order. `resolveRows` does
+        // the same job correctly — saved order first, then anything it has never
+        // heard of — and a row whose feature registers after this still gets
+        // appended at draw time, in registration order, deterministically.
+        this.settings.order = resolveRows(registeredRows(), this.settings).map((row) => row.key);
+
         // Reopens itself where you left it — an overlay you have to summon after
         // every refresh is an overlay you stop using
         if (this.settings.open) this.show();
@@ -1341,10 +1352,6 @@ class OverlayPanel {
             this.pickerEl.appendChild(empty);
             return;
         }
-
-        // Reordering acts on the full order, so it has to exist before a row can
-        // be moved — a fresh install has no saved order at all
-        this.settings.order = resolved.map((row) => row.key);
 
         // Chips that wrap, rather than one row per line. Fifteen rows as a
         // vertical list is a panel of scrollbar; as chips it is four lines.

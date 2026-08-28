@@ -68,10 +68,10 @@ const { loadLayouts, layoutNames } = await import('./overlay-layouts.js');
 /** An arrangement worth telling apart from another one. @returns {Object} */
 function dungeonLayout() {
     return {
+        version: 2,
         order: ['dps', 'luck'],
+        span: { luck: 2 },
         visible: { dps: true, luck: true },
-        positions: { dps: { x: 0, y: 0 }, luck: { x: 200, y: 0 } },
-        sizes: { dps: { width: 180, height: 40 }, luck: { width: 180, height: 40 } },
         zoom: { dps: 130 },
         textScale: 110,
     };
@@ -80,10 +80,10 @@ function dungeonLayout() {
 /** A visibly different one. @returns {Object} */
 function marketLayout() {
     return {
+        version: 2,
         order: ['luck', 'dps'],
+        span: { dps: 2 },
         visible: { dps: false, luck: true },
-        positions: { dps: { x: 40, y: 90 }, luck: { x: 40, y: 0 } },
-        sizes: { dps: { width: 120, height: 60 }, luck: { width: 120, height: 60 } },
         zoom: { luck: 80 },
         textScale: 90,
     };
@@ -102,8 +102,8 @@ function wear(layout) {
  * @returns {Object}
  */
 function worn() {
-    const { order, visible, positions, sizes, zoom, textScale } = overlayPanel.settings;
-    return { order, visible, positions, sizes, zoom, textScale };
+    const { order, span, visible, zoom, textScale } = overlayPanel.settings;
+    return { order, span, visible, zoom, textScale };
 }
 
 beforeEach(async () => {
@@ -117,11 +117,9 @@ beforeEach(async () => {
     overlayPanel.settings = {
         visible: {},
         order: [],
-        positions: {},
-        sizes: {},
+        span: {},
         zoom: {},
         locked: true,
-        snapToGrid: true,
         separators: true,
         textScale: 100,
         open: false,
@@ -143,14 +141,13 @@ describe('saving and switching named layouts', () => {
         expect(await overlayPanel.saveNamedLayout('Dungeon')).toBe(true);
 
         wear(marketLayout());
-        expect(worn().positions.dps).toEqual({ x: 40, y: 90 });
+        expect(worn().span.dps).toBe(2);
 
         expect(await overlayPanel.applyNamedLayout('Dungeon')).toBe(true);
 
         const back = worn();
         expect(back.order).toEqual(['dps', 'luck']);
-        expect(back.positions).toEqual(dungeonLayout().positions);
-        expect(back.sizes).toEqual(dungeonLayout().sizes);
+        expect(back.span).toEqual(dungeonLayout().span);
         expect(back.zoom).toEqual(dungeonLayout().zoom);
         expect(back.textScale).toBe(110);
     });
@@ -162,15 +159,15 @@ describe('saving and switching named layouts', () => {
         await overlayPanel.saveNamedLayout('Market');
 
         await overlayPanel.applyNamedLayout('Dungeon');
-        expect(worn().positions.luck).toEqual({ x: 200, y: 0 });
+        expect(worn().order).toEqual(['dps', 'luck']);
         expect(worn().visible.dps).toBe(true);
 
         await overlayPanel.applyNamedLayout('Market');
-        expect(worn().positions.luck).toEqual({ x: 40, y: 0 });
+        expect(worn().order).toEqual(['luck', 'dps']);
         expect(worn().visible.dps).toBe(false);
 
         await overlayPanel.applyNamedLayout('Dungeon');
-        expect(worn().positions.luck).toEqual({ x: 200, y: 0 });
+        expect(worn().order).toEqual(['dps', 'luck']);
     });
 
     test('saving over a name replaces it rather than adding a second', async () => {
@@ -197,7 +194,7 @@ describe('saving and switching named layouts', () => {
         await overlayPanel._promptDeleteLayout(select);
 
         expect(layoutNames(await loadLayouts())).toEqual(['Market']);
-        expect(worn().positions.luck).toEqual({ x: 40, y: 0 });
+        expect(worn().order).toEqual(['luck', 'dps']);
     });
 
     test('cancelling the delete dialog deletes nothing', async () => {
@@ -231,7 +228,7 @@ describe('saving and switching named layouts', () => {
         expect(overlayPanel.undoState.what).toBe('switch to Dungeon');
 
         overlayPanel._undo();
-        expect(worn().positions.dps).toEqual({ x: 40, y: 90 });
+        expect(worn().order).toEqual(['luck', 'dps']);
     });
 
     test('the gear popover offers the saved layouts, then the presets', async () => {
