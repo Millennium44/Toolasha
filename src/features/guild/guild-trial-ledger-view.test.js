@@ -50,7 +50,14 @@ vi.mock('./guild-xp-tracker.js', () => ({
 vi.mock('./guild-loadouts.js', () => ({ loadLoadouts: async () => world.loadouts }));
 vi.mock('./guild-trial-ledger.js', async (importOriginal) => ({
     ...(await importOriginal()),
-    loadLedgerCycles: async () => world.cycles,
+    loadLedgerCycles: async () => {
+        // A queued answer, optionally gated so a test can control which of two
+        // concurrent reads resolves first; falls back to the plain `world.cycles`
+        const next = world.cyclesQueue?.shift();
+        if (!next) return world.cycles;
+        if (next.gate) await next.gate;
+        return next.value;
+    },
 }));
 
 const {
@@ -144,6 +151,29 @@ describe('buildLedgerTable', () => {
 
         const table = buildLedgerTable();
         expect(table.rows.find((row) => row.name === 'Carol')).toMatchObject({ trials: 0, noShow: true });
+    });
+
+    test('a slower, older read landing late does not overwrite a newer selection', async () => {
+        // The first refresh's own read is delayed; a second refresh (the user
+        // picking a different window before the first one answers) reads
+        // faster and lands first. Storage reads do not resolve in call order.
+        let releaseFirst;
+        const firstGate = new Promise((resolve) => {
+            releaseFirst = resolve;
+        });
+        world.cyclesQueue = [
+            { gate: firstGate, value: [cycle(WEEK, 1, { alice: { name: 'Alice', damage: 111 } })] },
+            { value: [cycle(WEEK, 1, { alice: { name: 'Alice', damage: 222 } })] },
+        ];
+
+        const first = refreshLedgerView();
+        const second = refreshLedgerView();
+        await second;
+        releaseFirst();
+        await first;
+
+        const table = buildLedgerTable();
+        expect(table.rows.find((row) => row.name === 'Alice').damage).toBe(222);
     });
 });
 

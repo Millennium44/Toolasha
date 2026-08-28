@@ -84,6 +84,17 @@ const state = {
     loadouts: {},
 };
 
+/**
+ * Bumped at the start of every {@link refreshLedgerView} call, so a call whose
+ * reads land after a newer one's can tell it is stale.
+ *
+ * Two quick window changes both fire-and-forget a refresh, and storage reads
+ * are not FIFO: a "4 cycles" read outstanding when the selector jumps to
+ * "12 cycles" can resolve *after* the twelve-cycle read does, overwriting the
+ * freshly drawn table with the stale, narrower window's data.
+ */
+let refreshGeneration = 0;
+
 /** Reset every remembered thing. Exported for tests, which must not inherit a run. */
 export function resetLedgerView() {
     state.cycles = [];
@@ -95,6 +106,7 @@ export function resetLedgerView() {
     state.rosterSeeded = false;
     state.tier = '';
     state.loadouts = {};
+    refreshGeneration = 0;
 }
 
 /** @returns {string|null} The guild whose ledger is being drawn */
@@ -117,15 +129,22 @@ function rosterNames() {
  * @returns {Promise<void>}
  */
 export async function refreshLedgerView() {
+    const generation = ++refreshGeneration;
     const characterId = dataManager.getCurrentCharacterId?.() ?? null;
     const guild = guildName();
     const chosen = LEDGER_WINDOWS.find((entry) => entry.key === state.window) || LEDGER_WINDOWS[0];
 
     try {
-        state.cycles = await loadLedgerCycles(guild, characterId, { cycles: chosen.cycles });
+        const cycles = await loadLedgerCycles(guild, characterId, { cycles: chosen.cycles });
+        const record = await loadLoadouts(characterId, guild);
+        // A newer refresh already started while these reads were in flight —
+        // storage reads do not resolve in call order, so writing this one's
+        // answer now would draw the window the user has already moved past
+        if (generation !== refreshGeneration) return;
+
+        state.cycles = cycles;
         state.loaded = true;
 
-        const record = await loadLoadouts(characterId, guild);
         const kits = {};
         for (const entry of Object.values(record?.players || {})) {
             const key = String(entry?.name || '')
@@ -137,6 +156,7 @@ export async function refreshLedgerView() {
         state.loadouts = kits;
     } catch (error) {
         console.error('[GuildTrialLedgerView] Refreshing the ledger failed:', error);
+        if (generation !== refreshGeneration) return;
         state.loaded = true;
     }
 
