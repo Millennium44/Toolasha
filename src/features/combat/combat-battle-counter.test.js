@@ -74,6 +74,12 @@ function counterText() {
     return document.getElementById('mwi-battle-counter')?.textContent ?? null;
 }
 
+/** MutationObserver callbacks fire as microtasks — give a pending batch a chance to run. */
+async function flushMutations() {
+    await new Promise((resolve) => queueMicrotask(resolve));
+    await new Promise((resolve) => queueMicrotask(resolve));
+}
+
 describe('combat battle counter', () => {
     beforeEach(() => {
         game.setting = true;
@@ -236,5 +242,44 @@ describe('combat battle counter', () => {
         game.domObserverCallback();
 
         expect(counterText()).toBe('· Battle #7');
+    });
+
+    // Queuing another action mid-combat can make React rewrite the header
+    // row's children in place — no new Header_actionName node is inserted,
+    // so domObserver.onClass (exercised above) never fires. A plain
+    // MutationObserver on the container is what catches this case.
+    test('a re-render that swaps the row children in place — no element replaced — still gets the chip back', async () => {
+        game.actions = [{ actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 }];
+        game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };
+        game.wsHandlers.new_battle({ battleId: 7 });
+        expect(counterText()).toBe('· Battle #7');
+
+        const nameRow = document.querySelector('[class*="Header_actionName"]');
+        // Same element, same class — React just rewrote its children, which
+        // wipes out our appended span along with the old text node.
+        nameRow.textContent = 'Chimerical Den';
+        expect(counterText()).toBeNull();
+
+        await flushMutations();
+
+        expect(counterText()).toBe('· Battle #7');
+    });
+
+    test('an in-place re-render after combat has ended does not resurrect a stale counter', async () => {
+        game.actions = [{ actionHrid: '/actions/combat/some_zone', isDone: false, ordinal: 0 }];
+        game.actionDetails['/actions/combat/some_zone'] = { combatZoneInfo: { isDungeon: false } };
+        game.wsHandlers.new_battle({ battleId: 7 });
+        expect(counterText()).toBe('· Battle #7');
+
+        game.dmHandlers.actions_updated({
+            endCharacterActions: [{ isDone: true, actionHrid: '/actions/combat/some_zone' }],
+        });
+        expect(counterText()).toBeNull();
+
+        const nameRow = document.querySelector('[class*="Header_actionName"]');
+        nameRow.textContent = 'Foraging';
+        await flushMutations();
+
+        expect(counterText()).toBeNull();
     });
 });

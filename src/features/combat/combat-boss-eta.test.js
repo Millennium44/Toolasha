@@ -75,6 +75,12 @@ function etaText() {
     return document.getElementById('mwi-boss-eta')?.textContent ?? null;
 }
 
+/** MutationObserver callbacks fire as microtasks — give a pending batch a chance to run. */
+async function flushMutations() {
+    await new Promise((resolve) => queueMicrotask(resolve));
+    await new Promise((resolve) => queueMicrotask(resolve));
+}
+
 const BOSS_ZONE = '/actions/combat/boss_zone';
 const bossZoneDetail = { combatZoneInfo: { isDungeon: false, fightInfo: { battlesPerBoss: 10, bossSpawns: [{}] } } };
 
@@ -263,5 +269,41 @@ describe('combat boss eta', () => {
         game.domObserverCallback();
 
         expect(etaText()).toBe('· 7 to boss');
+    });
+
+    // Same gap as the battle counter: queuing another action mid-combat can
+    // make React rewrite the header row's children in place, which never
+    // inserts a new Header_actionName node for domObserver.onClass to catch.
+    test('a re-render that swaps the row children in place — no element replaced — still gets the chip back', async () => {
+        game.actions = [{ actionHrid: BOSS_ZONE, isDone: false, ordinal: 0, difficultyTier: 0 }];
+        game.actionDetails[BOSS_ZONE] = bossZoneDetail;
+        game.wsHandlers.new_battle({ battleId: 323 });
+        expect(etaText()).toBe('· 7 to boss');
+
+        const nameRow = document.querySelector('[class*="Header_actionName"]');
+        nameRow.textContent = 'Planet Of The Eyes';
+        expect(etaText()).toBeNull();
+
+        await flushMutations();
+
+        expect(etaText()).toBe('· 7 to boss');
+    });
+
+    test('an in-place re-render after combat has ended does not resurrect a stale chip', async () => {
+        game.actions = [{ actionHrid: BOSS_ZONE, isDone: false, ordinal: 0, difficultyTier: 0 }];
+        game.actionDetails[BOSS_ZONE] = bossZoneDetail;
+        game.wsHandlers.new_battle({ battleId: 323 });
+        expect(etaText()).toBe('· 7 to boss');
+
+        game.dmHandlers.actions_updated({
+            endCharacterActions: [{ isDone: true, actionHrid: BOSS_ZONE }],
+        });
+        expect(etaText()).toBeNull();
+
+        const nameRow = document.querySelector('[class*="Header_actionName"]');
+        nameRow.textContent = 'Foraging';
+        await flushMutations();
+
+        expect(etaText()).toBeNull();
     });
 });
