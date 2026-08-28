@@ -199,6 +199,35 @@ describe('MarketAPI fetch in-flight dedup', () => {
         expect(peak).toBe(1); // ...but sequentially — never a burst
     });
 
+    test('two forced requests behind a plain one still never run in parallel', async () => {
+        // Two UI paths (e.g. a manual refresh button plus a patch-driven
+        // invalidation) can each call fetch(true) while a startup fetch() is
+        // still in flight. Both wait out the plain fetch, and neither should
+        // then fire its own refresh in parallel with the other — that is
+        // exactly the burst marketplace.json's rate limit trips on.
+        const { getJSON } = createMocks(true);
+        getJSON.mockResolvedValue(null);
+
+        const { default: marketAPI } = await import('./marketplace.js');
+
+        let active = 0;
+        let peak = 0;
+        fetch.mockImplementation(async () => {
+            active += 1;
+            peak = Math.max(peak, active);
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            active -= 1;
+            return { ok: true, json: async () => ({ marketData: { items: [] }, timestamp: 123 }) };
+        });
+
+        const plain = marketAPI.fetch();
+        const forcedA = marketAPI.fetch(true);
+        const forcedB = marketAPI.fetch(true);
+        await Promise.all([plain, forcedA, forcedB]);
+
+        expect(peak).toBe(1); // never a burst, no matter how many forced callers stack up
+    });
+
     test('a failed shared fetch clears the slot so the next call retries', async () => {
         const { getJSON } = createMocks(true);
         getJSON.mockResolvedValue(null);

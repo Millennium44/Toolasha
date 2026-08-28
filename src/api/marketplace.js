@@ -70,9 +70,20 @@ class MarketAPI {
      * @returns {Promise<Object|null>} Market data object or null if failed
      */
     async fetch(forceFetch = false) {
-        if (this._inFlightFetch) {
+        // Several forced callers can pile up behind one plain in-flight fetch
+        // (e.g. a manual refresh button and a patch-driven invalidation firing
+        // at once). Each waits the plain fetch out, but only the first should
+        // then start a new request — everyone who resumes afterward has to
+        // re-check whether another forced caller already claimed the slot, or
+        // they would all fire their own refresh in parallel, which is exactly
+        // the burst this dedup exists to prevent.
+        for (;;) {
+            if (!this._inFlightFetch) break;
             if (!forceFetch || this._inFlightForce) return this._inFlightFetch;
-            await this._inFlightFetch.catch(() => {});
+            const waited = this._inFlightFetch;
+            await waited.catch(() => {});
+            if (this._inFlightFetch && this._inFlightFetch !== waited) continue;
+            break;
         }
 
         const run = this._fetchInner(forceFetch);
