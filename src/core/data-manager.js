@@ -16,7 +16,13 @@ import {
     equippedAbilitiesFromBattle,
     abilityKitsDiffer,
 } from './character-abilities.js';
-import { extractGuildShrineData, loadGuildShrineLevels, saveGuildShrineLevels, mapSize } from './guild-shrine-store.js';
+import {
+    extractGuildShrineData,
+    loadGuildShrineLevels,
+    saveGuildShrineLevels,
+    buffMapBelongsTo,
+    mapSize,
+} from './guild-shrine-store.js';
 import { mergeMarketListings } from '../utils/market-listings.js';
 import { SCROLL_BUFF_VALUES } from '../utils/scroll-buff-values.js';
 
@@ -959,6 +965,14 @@ class DataManager {
         const captured = extractGuildShrineData(data);
         if (!captured) return false;
 
+        // A late message from the previous character's socket, arriving after
+        // a switch, names its owner in every buff row — refuse the whole
+        // capture rather than persist one character's levels under another's
+        // key (which is exactly what used to happen)
+        if (!buffMapBelongsTo(captured.characterGuildBuffMap, this.currentCharacterId)) {
+            return false;
+        }
+
         // "Present on the message" is not "different from what we hold".
         // Several message types carry these maps unchanged on every tick, and
         // treating each as a change meant a storage write and a
@@ -1021,6 +1035,16 @@ class DataManager {
 
             const record = await loadGuildShrineLevels(this.currentCharacterId);
             if (!record) return false;
+
+            // A record contaminated before the capture was owner-checked —
+            // another character's buff rows under this character's key — is
+            // ignored, and the next clean capture overwrites it
+            if (!buffMapBelongsTo(record.characterGuildBuffMap, this.currentCharacterId)) {
+                console.warn(
+                    '[DataManager] Persisted shrine levels belong to another character; ignoring the record'
+                );
+                return false;
+            }
 
             let filled = false;
             if (mapSize(this.characterGuildBuffMap) === 0 && mapSize(record.characterGuildBuffMap) > 0) {

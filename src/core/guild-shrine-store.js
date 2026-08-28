@@ -114,6 +114,30 @@ export function extractGuildShrineData(message) {
 }
 
 /**
+ * Whether a captured buff map belongs to `characterId`, by the map's own word.
+ *
+ * Every buff row the game sends carries the `characterID` that bought it. The
+ * capture listens on the raw socket with no character scoping, so during a
+ * switch a late message from the DEPARTING character's socket can arrive after
+ * `currentCharacterId` has moved on — and used to be persisted under the new
+ * character's key, which is how one character's shrine plan showed another's
+ * buff levels. A row that carries no `characterID` casts no vote; only an
+ * explicit mismatch disowns the map.
+ *
+ * @param {Object|null|undefined} buffMap - A `characterGuildBuffMap`
+ * @param {string|number|null} characterId - Whose it is supposed to be
+ * @returns {boolean} False only when a row explicitly names a different owner
+ */
+export function buffMapBelongsTo(buffMap, characterId) {
+    if (!isMapObject(buffMap) || characterId == null) return true;
+    for (const row of Object.values(buffMap)) {
+        const owner = row?.characterID ?? row?.characterId;
+        if (owner != null && String(owner) !== String(characterId)) return false;
+    }
+    return true;
+}
+
+/**
  * Read a character's persisted shrine record.
  * @param {string|number|null} characterId - Character id
  * @returns {Promise<Object|null>} The record, or null when there is none

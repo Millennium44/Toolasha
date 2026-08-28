@@ -19,7 +19,7 @@ vi.mock('./storage.js', () => ({
     },
 }));
 
-const { guildShrineStorageKey, extractGuildShrineData, loadGuildShrineLevels, saveGuildShrineLevels, mapSize } =
+const { guildShrineStorageKey, extractGuildShrineData, loadGuildShrineLevels, saveGuildShrineLevels, buffMapBelongsTo, mapSize } =
     await import('./guild-shrine-store.js');
 
 beforeEach(() => {
@@ -125,5 +125,23 @@ describe('saving and loading', () => {
         expect(mapSize({ a: 1 })).toBe(1);
         expect(mapSize(null)).toBe(0);
         expect(mapSize([1, 2])).toBe(0);
+    });
+});
+
+describe('buffMapBelongsTo', () => {
+    test('a map whose rows name this character is owned', () => {
+        expect(buffMapBelongsTo({ a: { characterID: 32030, level: 3 } }, 32030)).toBe(true);
+        expect(buffMapBelongsTo({ a: { characterID: '32030', level: 3 } }, 32030)).toBe(true);
+    });
+
+    test('a row naming another character disowns the whole map', () => {
+        expect(buffMapBelongsTo({ a: { characterID: 30404, level: 11 } }, 32030)).toBe(false);
+    });
+
+    test('rows with no owner, an empty map, or an unknown character cast no vote', () => {
+        expect(buffMapBelongsTo({ a: { level: 3 } }, 32030)).toBe(true);
+        expect(buffMapBelongsTo({}, 32030)).toBe(true);
+        expect(buffMapBelongsTo(null, 32030)).toBe(true);
+        expect(buffMapBelongsTo({ a: { characterID: 30404 } }, null)).toBe(true);
     });
 });

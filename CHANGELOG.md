@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Shrine buff levels stop leaking between characters
+
+The shrine planner could show another character's buff levels — "lvl 1" while the game said 3/3. The capture listens on the raw socket with no character scoping, so during a switch a late message from the departing character's stream was persisted under the arriving character's key. Every buff row names its owner, so a capture whose rows belong to someone else is now refused outright, and a persisted record contaminated before this fix is ignored on load and overwritten by the next clean capture.
+
+
 ### Missing-mats tabs count what a buy order has already bought
 
 The "Missing" badges on the marketplace hand-off tabs only counted the inventory, and items a buy order has filled sit unclaimed on the listing until collected — so a 112K purchase moved the badge not at all until a trip to My Listings. Bought-but-unclaimed units on your own buy orders now count as held, across the shrine hand-off, production recipes and enhancement lists alike; claiming moves them to the inventory and off the listing in the same breath, so nothing counts twice.
