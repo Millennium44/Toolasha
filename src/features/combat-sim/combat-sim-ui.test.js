@@ -2080,6 +2080,55 @@ describe('the summary at the top of the Results tab', () => {
         expect(shown).toContain('Deaths/day24');
     });
 
+    /**
+     * Regression: Deaths/hr, party DPS and per-player DPS coalesced a missing
+     * player in the comparison run to 0 rather than "no data" — so comparing
+     * against a baseline run fought by a different party drew a real green/red
+     * delta badge that was purely an artifact of the player never having been
+     * in that run. The XP section already got this right (it only builds a
+     * previous value when the player appears in the baseline); these three
+     * should follow the same rule.
+     */
+    test('Deaths/hr and DPS carry no delta for a player absent from the comparison run', () => {
+        // Baseline: a solo run — player2 never fought in it
+        pushHistory('Solo baseline', oneHourFight());
+        ui._comparisonBaseline = 0;
+
+        const partyResult = oneHourFight({
+            deaths: { player1: 0, player2: 0.5 },
+            totalDamageDealt: { player1: 3600 * 500, player2: 3600 * 400 },
+            numberOfPlayers: 2,
+        });
+        ui._playerInfo = [
+            { hrid: 'player1', name: 'Me' },
+            { hrid: 'player2', name: 'Ally' },
+        ];
+        ui._activePlayerTab = 'player2';
+        // Not part of history — _displayResults must draw the passed-in
+        // result rather than substituting whatever pushHistory left selected
+        ui._activeDetailIndex = null;
+
+        const spy = vi.spyOn(ui, '_formatDelta');
+        ui._displayResults(partyResult, 1, { itemDetailMap: {} });
+
+        // Deaths/hr for player2: current value 0.5, higherIsBetter=false
+        const deathsCall = spy.mock.calls.find((args) => args[0] === 0.5 && args[2] === false);
+        expect(deathsCall?.[1]).toBeNull();
+
+        // Party DPS: player2 missing from the baseline means the whole party
+        // total is unknowable for comparison — not "player1's damage alone"
+        const partyDps = (3600 * 500 + 3600 * 400) / 3600;
+        const partyCall = spy.mock.calls.find((args) => args[0] === partyDps);
+        expect(partyCall?.[1]).toBeNull();
+
+        // Player2's own DPS row
+        const playerDps = (3600 * 400) / 3600;
+        const playerCall = spy.mock.calls.find((args) => args[0] === playerDps);
+        expect(playerCall?.[1]).toBeNull();
+
+        spy.mockRestore();
+    });
+
     test('party lint warnings render in amber directly under the summary', () => {
         ui._lastPartyWarnings = ['Player11 has skilling gear equipped: Foraging Shears'];
         const shown = showFight().textContent;

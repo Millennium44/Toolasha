@@ -4431,7 +4431,13 @@ class CombatSimUI {
         const compMetrics = compEntry?.metrics;
         const hasPrev = compResult && compHours;
         const prevEncPerHr = hasPrev ? compResult.encounters / compHours : null;
-        const prevDeathsPerHr = hasPrev ? (compResult.deaths?.[activeTab] || 0) / compHours : null;
+        // Gated on the active player actually appearing in the baseline run
+        // (not just `hasPrev`), the same way the XP section already does below —
+        // a player who wasn't in the comparison run coalesced to 0 deaths
+        // rather than "no data", drawing a real delta badge off a fabricated
+        // baseline whenever the party changed between the two runs.
+        const prevDeathsPerHr =
+            hasPrev && compResult.deaths?.[activeTab] !== undefined ? compResult.deaths[activeTab] / compHours : null;
 
         // Overview: encounters/hr (party-wide) + deaths/hr (per active player)
         const encountersPerHr = simResult.encounters / hours;
@@ -4490,7 +4496,17 @@ class CombatSimUI {
             summaryDps = partyDps;
 
             let prevPartyDps = null;
-            if (hasPrev && compResult.totalDamageDealt && compResult.simulatedTime > 0) {
+            // Every current player has to have actually fought in the
+            // comparison run — otherwise a party that grew between the two
+            // runs would count the new member's damage as 0 rather than
+            // leaving the whole party figure as "no data", quietly deflating
+            // the previous total and inflating the delta.
+            if (
+                hasPrev &&
+                compResult.totalDamageDealt &&
+                compResult.simulatedTime > 0 &&
+                playerInfo.every(({ hrid }) => compResult.totalDamageDealt[hrid] !== undefined)
+            ) {
                 const compSimSeconds = compResult.simulatedTime / 1e9;
                 let prevDamage = 0;
                 for (const { hrid } of playerInfo) {
@@ -4510,8 +4526,8 @@ class CombatSimUI {
                 for (const { hrid, name } of playerInfo) {
                     const playerDps = (simResult.totalDamageDealt[hrid] || 0) / simSeconds;
                     let prevPlayerDps = null;
-                    if (hasPrev && compResult.totalDamageDealt && compResult.simulatedTime > 0) {
-                        prevPlayerDps = (compResult.totalDamageDealt[hrid] || 0) / (compResult.simulatedTime / 1e9);
+                    if (hasPrev && compResult.totalDamageDealt?.[hrid] !== undefined && compResult.simulatedTime > 0) {
+                        prevPlayerDps = compResult.totalDamageDealt[hrid] / (compResult.simulatedTime / 1e9);
                     }
                     html += `<div style="${rowStyle}">`;
                     html += `<span style="color:#888; padding-left:12px;">${name}</span>`;
