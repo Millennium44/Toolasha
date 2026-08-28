@@ -6,7 +6,21 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
-### Sixth audit round: eleven fixes reaching into the engines
+### Overlay tiles stop showing the previous character's numbers
+
+A full sweep of every overlay tile provider (38 of them) found seven that cached a value across a character switch — the overlay panel redraws on its own timer before late features reload, so those tiles briefly (or until a failed reload, indefinitely) showed the outgoing character's figures under the incoming character's name. Fixed: the watchlist, equipment savings, the four party combat-stat tiles, the Combat Level session (now cleared the moment the switch starts), the build score tile (which was never torn down on switch at all), time-to-level, and the notice log. The other thirty-one providers were verified to read live state or to be account-wide by design.
+
+### Missing-mats buy dialog fills its quantity again
+
+Clicking + New Buy Listing from a pinned missing-material tab cancelled the armed quantity a beat before the dialog opened — the "clicked a different tab" guard matched any button in the marketplace's tab row, and the listing-action buttons live in that same row. The guard now matches only real tabs, in all three copies of that logic (missing mats twice, house costs once).
+
+### Sim All Zones says what it's doing after 100%
+
+Once the sweep finishes, per-zone revenue and liquidity caps, the results table, and the snapshot save still take real time — the status line used to freeze on the last "Simulating…" tick through all of it, looking hung. It now reads "Finalizing N zones' results…" and then completes.
+
+### Simming another player accounts for their achievements
+
+An imported or profile-simmed player now gets the Achievements section: their completed tiers are derived from the shared profile (a fully completed tier grants its buff — the exact popup behavior, verified against live data) and pre-checked, captioned as derived and still adjustable. Profiles without achievement data fall back to manual checkboxes. Also, the task-claim toast now defaults to off.
 
 Simulation engines: a labyrinth room at very low level could scale a monster's ability below level 1, computing a negative level bonus — now floored at the level-1 baseline; the drop-luck FFT window now sizes itself to the session's own payouts, so one huge rare drop can't alias the "how lucky was that" math into silent nonsense; a zero-balance risk-of-ruin run no longer prints "no ruin occurred" beside "ruin probability: 100%"; and the tea optimizer now flags recommendations that lean on an unpriced material instead of silently treating it as free. Enhancement: a Blessed Tea jump that passes over a milestone records it, and a stale pending-start flag no longer fragments the next character's session. Displays: inventory category totals update again when Sort and Badge Prices are both off; the equipment level overlay follows in-place item swaps (an attribute-only change the shared observer never saw); loadout enhancement badges refresh on inventory changes and character switches; marketplace owned-count badges reset when the character does; and the briefing overlay tile clears the previous character's market-fill count the moment a switch starts instead of showing it under the new character's name. Startup: a redundant settings read is gone and the startup trace gains sub-marks inside the settings window, so a future slow trace says exactly where the time went.
 
