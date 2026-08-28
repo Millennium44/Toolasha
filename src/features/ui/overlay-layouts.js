@@ -310,12 +310,13 @@ const PRESET_GRIDS = {
     Skilling: {
         activity: ACTIVITY.SKILLING,
         columns: 2,
-        // Progress on the left of the queue, then the two blocks that decide
-        // whether the queue is worth running
+        // Where the trained skill stands and when it next levels, then the
+        // session's numbers, then the two blocks that decide whether the
+        // queue is worth running
         grid: [
-            ['experiencePerHour', 'timeToLevel'],
-            ['queueTimeLeft', 'coins'],
-            ['totalProfit', 'totalProfit'],
+            ['skillLevel', 'timeToLevel'],
+            ['experiencePerHour', 'queueTimeLeft'],
+            ['coins', 'totalProfit'],
             ['consumables', 'consumables'],
             ['houses', 'houses'],
         ],

@@ -471,11 +471,12 @@ describe('applying a preset over a layout somebody had already made', () => {
      * grid line, spans across both.
      */
     const SKILLING_AT_460 = {
-        experiencePerHour: { x: 0, y: 0, width: 230, height: 30 },
+        skillLevel: { x: 0, y: 0, width: 230, height: 30 },
         timeToLevel: { x: 230, y: 0, width: 230, height: 30 },
-        queueTimeLeft: { x: 0, y: 30, width: 230, height: 30 },
-        coins: { x: 230, y: 30, width: 230, height: 30 },
-        totalProfit: { x: 0, y: 60, width: 460, height: 30 },
+        experiencePerHour: { x: 0, y: 30, width: 230, height: 30 },
+        queueTimeLeft: { x: 230, y: 30, width: 230, height: 30 },
+        coins: { x: 0, y: 60, width: 230, height: 30 },
+        totalProfit: { x: 230, y: 60, width: 230, height: 30 },
         consumables: { x: 0, y: 90, width: 460, height: 30 },
         houses: { x: 0, y: 120, width: 460, height: 30 },
     };
