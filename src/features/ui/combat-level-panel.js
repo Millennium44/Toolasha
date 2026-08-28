@@ -1687,10 +1687,30 @@ export const combatLevelPanel = new CombatLevelPanel();
 // spike. Clearing both here is the same "different character, start again"
 // rule `sessionIsStale` already states, applied to the one case its own check
 // cannot see.
-dataManager.on('character_switched', () => {
+function clearSessionState() {
     session = null;
     inCombat = false;
     history.clear();
+}
+
+// Cleared again here, at `character_switching`, rather than only below at
+// `character_switched`. `dataManager` sets `characterSkills` to the *arriving*
+// character's data synchronously, before `character_switched` is emitted —
+// but that event is deliberately deferred (see data-manager.js), so there is a
+// real gap between the new skills becoming readable and this file's own
+// listener running to clear the old session against them. The overlay's 1s
+// redraw is on its own timer and can land in that gap, at which point
+// `combatSkillState()` already reads the arriving character while `session`
+// and `history` still hold the departing one's baseline — the forward-jump
+// case the comment above describes, just arriving a tick earlier than
+// `character_switched` does. Clearing here, while `characterSkills` still
+// belongs to the departing character (this listener is awaited before
+// dataManager clears it), closes that gap without changing anything about the
+// panel rebuild below, which still waits for the arriving character's data.
+dataManager.on('character_switching', clearSessionState);
+
+dataManager.on('character_switched', () => {
+    clearSessionState();
 
     if (!combatLevelPanel.panel) return;
     combatLevelPanel.hide();

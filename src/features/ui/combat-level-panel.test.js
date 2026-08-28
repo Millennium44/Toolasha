@@ -871,4 +871,35 @@ describe('opening, folding and switching', () => {
         expect(after).not.toContain('50.0M');
         expect(after).not.toContain('50M');
     });
+
+    test('the same reset happens at character_switching, before character_switched arrives', async () => {
+        // dataManager sets characterSkills to the arriving character's data
+        // synchronously, but character_switched itself is deferred — so the
+        // overlay's own 1s redraw timer can land in the gap between the two,
+        // reading the arriving character's skills against a session baseline
+        // that is still the departing character's. Only firing
+        // character_switching here (never character_switched) reproduces
+        // exactly that gap: if the reset only happened on character_switched,
+        // this render would still show the spurious gain.
+        const { registeredRows } = await import('../../utils/overlay-rows.js');
+        const sessionRow = registeredRows().find((entry) => entry.key === 'combatSession');
+
+        const readSessionTotal = () => {
+            const container = document.createElement('div');
+            sessionRow.render(container);
+            return container.textContent;
+        };
+
+        fire('new_battle');
+        vi.advanceTimersByTime(30_000);
+        grant('melee', 500);
+        expect(readSessionTotal()).toContain('500 exp');
+
+        game.skills = game.skills.map((skill) => ({ ...skill, experience: skill.experience + 50_000_000 }));
+        dataManager.emit('character_switching', {});
+
+        const duringTheGap = readSessionTotal();
+        expect(duringTheGap).not.toContain('50.0M');
+        expect(duringTheGap).not.toContain('50M');
+    });
 });
