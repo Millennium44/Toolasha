@@ -231,6 +231,14 @@ export function combineSessions(sessions) {
                 held.count += entry.count || 0;
                 combined.loot[entry.itemHrid] = held;
             }
+
+            // Same shape as loot: summed per skill, not overwritten, so a run
+            // that started with the first session's numbers and simply kept
+            // them (`experience` is reset to `{}` above precisely so it
+            // wouldn't) does not read as "no experience this week"
+            for (const [skillHrid, amount] of Object.entries(player.experience || {})) {
+                combined.experience[skillHrid] = (combined.experience[skillHrid] || 0) + (amount || 0);
+            }
         }
     }
 

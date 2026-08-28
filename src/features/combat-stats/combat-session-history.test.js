@@ -69,10 +69,10 @@ const {
     clearSessions,
 } = await import('./combat-session-history.js');
 
-const session = (start, names = ['Millennium44'], loot = {}) => ({
+const session = (start, names = ['Millennium44'], loot = {}, experience = {}) => ({
     combatStartTime: start,
     durationSeconds: 600,
-    players: names.map((name) => ({ name, loot })),
+    players: names.map((name) => ({ name, loot, experience })),
 });
 
 describe('naming a session', () => {
@@ -162,6 +162,20 @@ describe('several runs as one', () => {
 
         expect(combined.durationSeconds).toBe(1200);
         expect(combined.sessionCount).toBe(2);
+    });
+
+    test('experience sums across sessions instead of resetting to the first one seen', () => {
+        // The accumulator starts each player at `experience: {}` (so a stale
+        // first-session reading is never carried forward silently) but the
+        // merge loop only ever folded loot into it, never experience — a
+        // combined view of several sessions read as "no experience this week"
+        // even though every session it was built from had plenty
+        const combined = combineSessions([
+            session('2026-08-03T01:00:00Z', ['Millennium44'], {}, { '/skills/attack': 1000 }),
+            session('2026-08-03T02:00:00Z', ['Millennium44'], {}, { '/skills/attack': 500, '/skills/defense': 200 }),
+        ]);
+
+        expect(combined.players[0].experience).toEqual({ '/skills/attack': 1500, '/skills/defense': 200 });
     });
 
     test('nothing to combine is null rather than an empty run', () => {
