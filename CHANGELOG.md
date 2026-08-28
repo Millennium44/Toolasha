@@ -6,6 +6,14 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Seventh audit round: the deep passes and the review of the reviewers
+
+The audit's heaviest round yet — senior-model agents on the most delicate paths, plus first-ever deep reads of the files every earlier round skipped as too large. Rapid character switches (under a second apart) now run the full per-character lifecycle — settings, resets, and all — while still coalescing the expensive feature teardown to once per burst; before, the second character kept the first one's settings until a later slow switch. A verification pass re-derived every fix shipped in 3.28.0: most held, and the eight that didn't are corrected — most notably the notice log's switch handling, which had armed a write that could save an empty log over the departing character's entries, and the loadout badge listening for an event it could never receive. Deep passes found: the equipment-savings feature leaked a settings listener per character switch and could let a slow load overwrite the new character's goals; the guild exchange advisor misread the You-give field as whole exchanges, over-reporting credits several-fold on 5:1 and 10:1 conversions and double-scaling sell proceeds; the shrine planner's targets survived switches; an unsaved trial-plan draft could cross a guild switch and overwrite the new guild's plan on save; expired-listing matching and beyond-top-20 age matching ignored enhancement level, letting two levels of the same item swap fates; the listing refresh walk restarted from the top when a row lacked an id; the queue monitor stacked timers and listeners on every reconnect and could leak drag handlers; a second Welcome Back modal could tear down the first's block on the wrong character; the gathering luck window gains the same own-payout floor the combat one got; and the milkonomy export now includes the elite achievement tier it had silently dropped.
+
+### Seventh audit round: three conveniences
+
+The diagnostics report names the enabled features instead of only counting them; the command palette can open the Philo Gamba calculator; and the what's-new popup gains a Copy-changelog button.
+
 ### Overlay tiles stop showing the previous character's numbers
 
 A full sweep of every overlay tile provider (38 of them) found seven that cached a value across a character switch — the overlay panel redraws on its own timer before late features reload, so those tiles briefly (or until a failed reload, indefinitely) showed the outgoing character's figures under the incoming character's name. Fixed: the watchlist, equipment savings, the four party combat-stat tiles, the Combat Level session (now cleared the moment the switch starts), the build score tile (which was never torn down on switch at all), time-to-level, and the notice log. The other thirty-one providers were verified to read live state or to be account-wide by design.
