@@ -126,3 +126,42 @@ describe('mention popup click-outside', () => {
         expect(document.getElementById('mwi-mention-popup')).not.toBeNull();
     });
 });
+
+describe('mention popup copy button', () => {
+    test('formatMentionsForCopy renders one "[time] sender: message" line per mention', () => {
+        const text = mentionPopup.formatMentionsForCopy(
+            [
+                { sName: 'Someone', m: 'hi @Me', t: '2026-01-01T00:00:00.000Z' },
+                { sName: 'Another', m: 'yo @Me', t: '2026-01-01T00:01:00.000Z' },
+            ],
+            'General'
+        );
+
+        expect(text).toBe('Mentions — General\n[12:00 PM] Someone: hi @Me\n[12:00 PM] Another: yo @Me');
+    });
+
+    test('formatMentionsForCopy reports an empty channel instead of an empty body', () => {
+        const text = mentionPopup.formatMentionsForCopy([], 'Trade');
+        expect(text).toBe('Mentions — Trade\n(no mentions)');
+    });
+
+    test('clicking the copy button writes the formatted text to the clipboard', async () => {
+        const writeText = vi.fn().mockResolvedValue();
+        Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+
+        mentionPopup.open(
+            '/chat_channel_types/general',
+            [{ sName: 'Someone', m: 'hi @Me', t: '2026-01-01T00:00:00.000Z' }],
+            'General',
+            () => {}
+        );
+
+        const copyBtn = document.querySelector('#mwi-mention-popup-header button[title="Copy mentions to clipboard"]');
+        expect(copyBtn).not.toBeNull();
+        copyBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(writeText).toHaveBeenCalledWith('Mentions — General\n[12:00 PM] Someone: hi @Me');
+    });
+});

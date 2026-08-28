@@ -12,6 +12,8 @@ class MentionPopup {
     constructor() {
         this.container = null;
         this.currentChannel = null;
+        this.currentMentions = null;
+        this.currentDisplayName = null;
         this.onCloseFn = null;
 
         // Dragging state
@@ -35,6 +37,26 @@ class MentionPopup {
     }
 
     /**
+     * Render mentions as plain text for the clipboard, one line per mention:
+     * "[timestamp] sender: message". Pure of any DOM so it can be unit tested directly.
+     * @param {Array<{sName: string, m: string, t: string}>} mentions
+     * @param {string} channelDisplayName
+     * @returns {string}
+     */
+    formatMentionsForCopy(mentions, channelDisplayName) {
+        const header = `Mentions — ${channelDisplayName}`;
+        if (!mentions || mentions.length === 0) {
+            return `${header}\n(no mentions)`;
+        }
+        const lines = mentions.map((mention) => {
+            const ts = this.formatTimestamp(mention.t);
+            const prefix = ts ? `[${ts}] ` : '';
+            return `${prefix}${mention.sName}: ${mention.m}`;
+        });
+        return [header, ...lines].join('\n');
+    }
+
+    /**
      * Open (or replace) the popup for a given channel
      * @param {string} channel - Channel HRID
      * @param {Array<{sName: string, m: string, t: string}>} mentions - Mention list
@@ -44,6 +66,8 @@ class MentionPopup {
     open(channel, mentions, channelDisplayName, onClose) {
         this.currentChannel = channel;
         this.onCloseFn = onClose;
+        this.currentMentions = mentions;
+        this.currentDisplayName = channelDisplayName;
 
         if (this.container) {
             // Already open — replace content for new channel
@@ -114,6 +138,28 @@ class MentionPopup {
         `;
         title.textContent = `Mentions — ${channelDisplayName}`;
 
+        const headerBtns = document.createElement('div');
+        headerBtns.style.cssText = `display: flex; align-items: center; gap: 8px;`;
+
+        const copyBtn = document.createElement('button');
+        copyBtn.textContent = '⧉';
+        copyBtn.title = 'Copy mentions to clipboard';
+        copyBtn.style.cssText = `
+            background: none;
+            border: none;
+            color: #aaa;
+            font-size: 0.95rem;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0 2px;
+        `;
+        copyBtn.addEventListener('mouseenter', () => (copyBtn.style.color = '#fff'));
+        copyBtn.addEventListener('mouseleave', () => (copyBtn.style.color = '#aaa'));
+        copyBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._copyToClipboard(copyBtn);
+        });
+
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '×';
         closeBtn.style.cssText = `
@@ -129,8 +175,11 @@ class MentionPopup {
         closeBtn.addEventListener('mouseleave', () => (closeBtn.style.color = '#aaa'));
         closeBtn.addEventListener('click', () => this.close());
 
+        headerBtns.appendChild(copyBtn);
+        headerBtns.appendChild(closeBtn);
+
         header.appendChild(title);
-        header.appendChild(closeBtn);
+        header.appendChild(headerBtns);
 
         // Body
         const body = document.createElement('div');
@@ -226,6 +275,30 @@ class MentionPopup {
             row.appendChild(msg);
             body.appendChild(row);
         }
+    }
+
+    /**
+     * Copy the currently displayed mentions to the clipboard as plain text, flashing
+     * the button briefly to confirm it landed (or that it was refused).
+     * @param {HTMLButtonElement} button
+     */
+    _copyToClipboard(button) {
+        const text = this.formatMentionsForCopy(this.currentMentions, this.currentDisplayName);
+        const flash = (symbol) => {
+            const original = button.textContent;
+            button.textContent = symbol;
+            setTimeout(() => {
+                if (button.isConnected) button.textContent = original;
+            }, 1200);
+        };
+        if (!navigator.clipboard) {
+            flash('✗');
+            return;
+        }
+        navigator.clipboard
+            .writeText(text)
+            .then(() => flash('✓'))
+            .catch(() => flash('✗'));
     }
 
     /**
@@ -326,6 +399,8 @@ class MentionPopup {
         }
 
         this.currentChannel = null;
+        this.currentMentions = null;
+        this.currentDisplayName = null;
         this.isDragging = false;
     }
 }
