@@ -72,7 +72,9 @@ vi.mock('./gathering-profit.js', () => ({ calculateGatheringProfit: async () => 
 vi.mock('../market/profit-calculator.js', () => ({ default: { calculate: async () => null } }));
 vi.mock('../market/alchemy-profit-calculator.js', () => ({ default: { calculate: async () => null } }));
 
-const actionTimeDisplay = (await import('./action-time-display.js')).default;
+const actionTimeDisplayModule = await import('./action-time-display.js');
+const actionTimeDisplay = actionTimeDisplayModule.default;
+const { partialProgressNote } = actionTimeDisplayModule;
 
 const CHEESE = '/items/cheese';
 const COIN = '/items/coin';
@@ -271,6 +273,23 @@ describe('partial progress in the in-progress unit (upstream 9210b4ab)', () => {
             count: 1,
             totalTime: 0,
         });
+    });
+});
+
+describe('partialProgressNote — the ETA tooltip naming the boundary it subtracted', () => {
+    test('nothing subtracted is nothing shown', () => {
+        expect(partialProgressNote(0)).toBe('');
+    });
+
+    test('a boundary too small to matter is still not shown', () => {
+        expect(partialProgressNote(0.04)).toBe('');
+    });
+
+    test('a real boundary names the exact seconds subtracted', () => {
+        const html = partialProgressNote(8.2);
+
+        expect(html).toContain('ⓘ');
+        expect(html).toContain('8.2s already spent');
     });
 });
 

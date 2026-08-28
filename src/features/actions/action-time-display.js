@@ -72,6 +72,32 @@ function isScriptAnnotation(node) {
     return className.includes('mwi-') || String(node.id || '').startsWith('mwi-');
 }
 
+/** Below this many seconds the boundary is not worth a tooltip about it. */
+const PARTIAL_PROGRESS_NOTE_THRESHOLD_SECONDS = 0.05;
+
+/**
+ * A small "ⓘ" the ETA line carries whenever it has subtracted time already spent on the
+ * action currently in progress, so the boundary `getElapsedSecondsInCurrentUnit` tracks is
+ * named rather than left as an unexplained few seconds of drift between what the queue count
+ * implies and what the clock actually shows.
+ *
+ * Pure and returns markup rather than a DOM node because it slots straight into the
+ * template-literal `innerHTML` builds the ETA line already uses, and disappears with them
+ * whenever that line is cleared or replaced.
+ *
+ * @param {number} elapsedInCurrentUnit - Seconds already spent on the in-progress unit,
+ *   from `dataManager.getElapsedSecondsInCurrentUnit`
+ * @returns {string} HTML, or '' when there is nothing worth explaining
+ */
+export function partialProgressNote(elapsedInCurrentUnit) {
+    if (!(elapsedInCurrentUnit > PARTIAL_PROGRESS_NOTE_THRESHOLD_SECONDS)) return '';
+    const seconds = elapsedInCurrentUnit.toFixed(1);
+    return (
+        ` <span title="Counts only what's left: ${seconds}s already spent on the action in progress is not ` +
+        `charged again" style="cursor:help; opacity:0.6;">ⓘ</span>`
+    );
+}
+
 class ActionTimeDisplay {
     constructor() {
         this.displayElement = null;
@@ -1187,7 +1213,8 @@ class ActionTimeDisplay {
                 const recycleClockTime = formatCompletionTime(recycleCompletion, !recycleIsToday);
                 recycleHtml = `<span style="color:#4dd0a0; margin-left:12px; font-size:11px;">Est. w/ recycle: ${recycleTimeStr} → ${recycleClockTime}</span>`;
             }
-            this.displayElement.innerHTML = `<span style="display: inline-flex; flex-wrap: nowrap; align-items: baseline; gap: 0.25em;"><span>⏱</span>${matsLabel} ${timeStr} → ${clockTime}</span>${recycleHtml}`;
+            const progressNote = partialProgressNote(elapsedInCurrentUnit);
+            this.displayElement.innerHTML = `<span style="display: inline-flex; flex-wrap: nowrap; align-items: baseline; gap: 0.25em;"><span>⏱</span>${matsLabel} ${timeStr} → ${clockTime}${progressNote}</span>${recycleHtml}`;
         } else {
             this.displayElement.innerHTML = '';
         }
