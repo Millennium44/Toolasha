@@ -235,4 +235,41 @@ describe('sessionLuck', () => {
         const { percentile } = sessionLuck({ spawnInfo: soloZone, monsterDrops: {}, normalCount: 5 }, 0);
         expect(Number.isFinite(percentile)).toBe(true);
     });
+
+    test('a single high-value drop does not undersize the window', () => {
+        // One kill, one guaranteed item worth 500 million: well past the 1e8 /
+        // 2e5-per-wave heuristic that used to seed the search alone. Before the
+        // window was widened to account for the session's own maximum possible
+        // income, the search would converge on a window many times too small —
+        // the transform is periodic, so the true payout wrapped back into the
+        // window at essentially a random position, and the reported percentile
+        // and CDF were wrong without any error or warning.
+        const session = {
+            spawnInfo: soloZone,
+            monsterDrops: { '/monsters/m': [{ minCount: 1, maxCount: 1, dropRate: 1, price: 5e8 }] },
+            normalCount: 1,
+        };
+        const { limit, cdf } = sessionLuck(session, 5e8);
+
+        // The window has to actually contain the deterministic payout
+        expect(limit).toBeGreaterThan(5e8);
+        // Below the guaranteed payout there should be essentially no mass, and
+        // above it the CDF should be saturated — a distribution smeared across
+        // an undersized, wrapped-around window fails both of these
+        expect(cdf(4.9e8)).toBeLessThan(0.01);
+        expect(cdf(5.1e8)).toBeGreaterThan(0.99);
+    });
+
+    test('a large observed income does not undersize the window either', () => {
+        // Same idea, but triggered through the `income` argument rather than the
+        // drop table: a session that actually paid more than the wave-count
+        // heuristic anticipated must still get a window that contains that value.
+        const session = {
+            spawnInfo: soloZone,
+            monsterDrops: { '/monsters/m': [{ minCount: 1, maxCount: 1, dropRate: 0.01, price: 5e8 }] },
+            normalCount: 1,
+        };
+        const { limit } = sessionLuck(session, 5e8);
+        expect(limit).toBeGreaterThan(5e8);
+    });
 });

@@ -502,6 +502,34 @@ export function sessionCF({ spawnInfo, monsterDrops, bossDrops = {}, normalCount
 }
 
 /**
+ * An upper bound on what a session could possibly have paid: every wave rolling
+ * a full house of its priciest drops, every boss wave doing the same.
+ *
+ * Only used to seed the window search — `invertToCDF` can shrink a starting
+ * limit but never grow one, so undershooting here does not get corrected later,
+ * it just aliases the transform and reports numbers that happen to look
+ * plausible. A steep overestimate costs a few extra cheap search iterations;
+ * an underestimate costs correctness.
+ *
+ * @param {Object} session - As `sessionCF` takes
+ * @returns {number} The bound, in the same units as `price`
+ */
+function maxPossibleIncome({ spawnInfo, monsterDrops = {}, bossDrops = {}, normalCount = 0, bossCount = 0 }) {
+    const maxDropsValue = (drops) => (drops || []).reduce((sum, d) => sum + d.maxCount * d.price, 0);
+
+    const maxSpawnCount = spawnInfo?.maxSpawnCount || 0;
+    const perWaveMax = (spawnInfo?.spawns || []).reduce((best, spawn) => {
+        const hrid = spawn.combatMonsterHrid || spawn.hrid;
+        return Math.max(best, maxDropsValue(monsterDrops[hrid]));
+    }, 0);
+    const normalMax = perWaveMax * maxSpawnCount * normalCount;
+
+    const bossMax = Object.values(bossDrops).reduce((sum, drops) => sum + maxDropsValue(drops), 0) * bossCount;
+
+    return normalMax + bossMax;
+}
+
+/**
  * How lucky a session's takings were.
  *
  * @param {Object} session - As `sessionCF` takes
@@ -517,8 +545,17 @@ export function sessionLuck(session, income, options = {}) {
     const waves = (session.normalCount || 0) + (session.bossCount || 0);
 
     // Opening guess: generous enough that the search shrinks onto the answer
-    // rather than having to widen, which it cannot do
-    const startingLimit = Math.max(1e8, 2e5 * Math.max(waves, 1));
+    // rather than having to widen, which it cannot do. Three floors: a flat
+    // minimum, a per-wave heuristic, and the session's own theoretical max —
+    // plus the income actually being asked about, since a window that excludes
+    // the very number it is about to be evaluated at is undersized by
+    // definition.
+    const startingLimit = Math.max(
+        1e8,
+        2e5 * Math.max(waves, 1),
+        maxPossibleIncome(session) * 1.5,
+        Math.abs(income) * 1.5
+    );
 
     const { limit, cdf } = invertToCDF(sessionCF(session), startingLimit, options);
     return { percentile: cdf(income), limit, cdf };
