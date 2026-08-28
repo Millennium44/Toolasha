@@ -330,8 +330,16 @@ class MarketUndercutAlerts {
         let state = this.listingStates.get(listing.id);
         if (!state || state.price !== listing.price) {
             // New to us, or repriced — either way the player has acted since
-            // anything was last said, so a fresh undercut is fresh news
-            state = { armed: true, price: listing.price };
+            // anything was last said, so a fresh undercut is fresh news. The
+            // generation counter is folded into the notification's event key
+            // below: the service's own cooldown is keyed on that string, and
+            // without a change to it a reprice made seconds after an undercut
+            // alert — chasing a falling market down — would raise `armed`
+            // back to true only for the service's ten-minute cooldown on the
+            // unchanged listing id to eat the very notification `armed` was
+            // just reset to allow.
+            const generation = (state?.generation || 0) + 1;
+            state = { armed: true, price: listing.price, generation };
             this.listingStates.set(listing.id, state);
         }
 
@@ -354,13 +362,17 @@ class MarketUndercutAlerts {
         state.armed = armed;
         if (!fire) return;
 
-        notificationService.notify(`market-undercut-${listing.id}`, this.buildMessage(listing, bestPrice, priceAgeMs), {
-            title: listing.isSell ? 'Listing undercut' : 'Buy order outbid',
-            // Delivery metadata, not a change of mind about what is worth
-            // saying: it is what lets a digest read "3 undercuts (Cheese, Milk,
-            // Flax)" rather than just counting to three
-            subject: this.itemLabel(listing),
-        });
+        notificationService.notify(
+            `market-undercut-${listing.id}:${state.generation}`,
+            this.buildMessage(listing, bestPrice, priceAgeMs),
+            {
+                title: listing.isSell ? 'Listing undercut' : 'Buy order outbid',
+                // Delivery metadata, not a change of mind about what is worth
+                // saying: it is what lets a digest read "3 undercuts (Cheese, Milk,
+                // Flax)" rather than just counting to three
+                subject: this.itemLabel(listing),
+            }
+        );
     }
 
     /**

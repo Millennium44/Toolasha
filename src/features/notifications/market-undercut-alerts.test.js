@@ -243,6 +243,35 @@ describe('market undercut alerts', () => {
         expect(game.notified[1].message).toContain('your listing 275K');
     });
 
+    test('repricing gives the notification a fresh event key, so the real service cooldown cannot eat it', () => {
+        // notify() is mocked here to always fire, so this cannot see the bug by
+        // itself — the real NotificationService keys its ten-minute cooldown off
+        // this exact string, and would have silently dropped a same-key repeat
+        // fired seconds after the first. What this proves is the mechanism that
+        // keeps that from happening: a reprice must not reuse the previous key.
+        game.listings = [listing()];
+        setPrice('/items/cheese', 0, 274000, 270000);
+        check();
+
+        game.listings = [listing({ price: 275000 })];
+        check();
+
+        expect(game.notified).toHaveLength(2);
+        expect(game.notified[0].key).not.toBe(game.notified[1].key);
+    });
+
+    test('re-reading the same repriced listing keeps the same event key', () => {
+        // Only a reprice should mint a new key — a redraw of the same price must
+        // still collapse onto one key, or the real cooldown would never engage.
+        game.listings = [listing({ price: 275000 })];
+        setPrice('/items/cheese', 0, 274000, 270000);
+        check();
+        check();
+        check();
+
+        expect(game.notified).toHaveLength(1);
+    });
+
     test('a buy order below the best bid is outbid', () => {
         game.listings = [listing({ isSell: false, price: 280000 })];
         setPrice('/items/cheese', 0, 320000, 300000);
@@ -307,7 +336,7 @@ describe('market undercut alerts', () => {
 
         check();
 
-        expect(game.notified.map((entry) => entry.key)).toEqual(['market-undercut-7', 'market-undercut-8']);
+        expect(game.notified.map((entry) => entry.key)).toEqual(['market-undercut-7:1', 'market-undercut-8:1']);
     });
 
     test('a price update alone re-runs the comparison, without a market message', () => {
