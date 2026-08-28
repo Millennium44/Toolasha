@@ -10,7 +10,7 @@
  * so it stays cheap to import and trivial to test.
  */
 
-import { formatActivityStatusTime } from '../../utils/formatters.js';
+import { formatActivityStatusTime, timeReadable } from '../../utils/formatters.js';
 import { MAX_RECORD_AGE_MS } from './character-activity-storage.js';
 
 /**
@@ -141,6 +141,19 @@ export function isRecordExpired(record, now) {
 }
 
 /**
+ * How long ago a record was observed, in the same rounded units the rest of the panel uses for
+ * durations — so "expired" and "outdated" say something a player can act on instead of just
+ * naming the state.
+ * @param {number} observedAt - Epoch ms the record was last written
+ * @param {number} now - Epoch ms
+ * @returns {string}
+ */
+export function formatStaleness(observedAt, now) {
+    const ageSec = Math.max(0, (now - observedAt) / 1000);
+    return timeReadable(ageSec);
+}
+
+/**
  * Resolve the exact two-line display state for one character. Pure — no DOM, no storage.
  * @param {Object|null} record - `loadCharacterActivity()` result, or null if never observed
  * @param {Object} character - What is known about the slot: `{id, name, lastOfflineTime}`
@@ -161,7 +174,7 @@ export function computeSlotDisplayState(record, character, prefs, now = Date.now
         return {
             firstLineText: 'Activity status expired',
             limiterColor: 'neutral',
-            limiterText: 'Open character to refresh',
+            limiterText: `Open character to refresh · last seen ${formatStaleness(record.observedAt, now)} ago`,
         };
     }
 
@@ -170,7 +183,7 @@ export function computeSlotDisplayState(record, character, prefs, now = Date.now
         return {
             firstLineText: 'Activity status outdated',
             limiterColor: 'neutral',
-            limiterText: 'Open character to refresh',
+            limiterText: `Open character to refresh · last seen ${formatStaleness(record.observedAt, now)} ago`,
         };
     }
 

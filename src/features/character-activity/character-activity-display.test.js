@@ -14,6 +14,7 @@ import {
     findSegmentAtTime,
     formatActivityLine,
     isRecordExpired,
+    formatStaleness,
 } from './character-activity-display.js';
 import { MAX_RECORD_AGE_MS } from './character-activity-storage.js';
 
@@ -68,6 +69,7 @@ describe('staleness and expiry', () => {
 
         expect(state.firstLineText).toBe('Activity status expired');
         expect(state.limiterColor).toBe('neutral');
+        expect(state.limiterText).toContain('last seen');
     });
 
     test('a record just inside the maximum age is still shown', () => {
@@ -87,7 +89,7 @@ describe('staleness and expiry', () => {
         );
 
         expect(state.firstLineText).toBe('Activity status outdated');
-        expect(state.limiterText).toBe('Open character to refresh');
+        expect(state.limiterText).toBe('Open character to refresh · last seen 1h 00m 00s ago');
     });
 
     test('a few seconds of clock skew is not treated as a whole missed session', () => {
@@ -104,6 +106,15 @@ describe('staleness and expiry', () => {
     test('isRecordExpired refuses a record with no timestamp at all', () => {
         expect(isRecordExpired({ observedAt: undefined }, NOW)).toBe(true);
         expect(isRecordExpired({ observedAt: NOW }, NOW)).toBe(false);
+    });
+
+    test('formatStaleness never goes negative, even against clock skew that puts the record in the future', () => {
+        expect(formatStaleness(NOW + HOUR, NOW)).toBe('0s');
+    });
+
+    test('formatStaleness reads the same units timeReadable uses elsewhere', () => {
+        expect(formatStaleness(NOW - HOUR, NOW)).toBe('1h 00m 00s');
+        expect(formatStaleness(NOW - MAX_RECORD_AGE_MS - HOUR, NOW)).toContain('day');
     });
 });
 
