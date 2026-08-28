@@ -1635,12 +1635,14 @@ class ConsumablesPanel {
             // only what a run *can* spend: a rushed run, a preserving torch
             // tier, a run that stops short — all of it is in the record and
             // none of it is in the cap. The cap stands until a run has said
-            const used = observedUse(ledger, kind);
+            const basis = config.getSettingValue('consumables_labPerRunBasis', 'measured') || 'measured';
+            const used = basis === 'capacity' ? [] : observedUse(ledger, kind);
             const perRun = used.length ? Math.ceil(used.reduce((sum, n) => sum + n, 0) / used.length) : capacity[kind];
             needs.push({
                 itemHrid: hrid,
                 perRun,
                 kind,
+                basis,
                 observedRuns: used.length,
                 capacity: capacity[kind],
             });
@@ -1700,6 +1702,32 @@ class ConsumablesPanel {
             event.stopPropagation();
             this._cycleLabRuns();
         });
+
+        // Which figure a run is planned at — the measured average, or the cap.
+        // A pill rather than a settings trip, because the difference is the
+        // whole question the block answers
+        const basis = config.getSettingValue('consumables_labPerRunBasis', 'measured') || 'measured';
+        const basisBtn = document.createElement('button');
+        Object.assign(basisBtn.style, {
+            background: 'rgba(255, 255, 255, 0.07)',
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: '3px',
+            color: COLORS.textDim,
+            cursor: 'pointer',
+            fontSize: '11px',
+            padding: '1px 8px',
+        });
+        basisBtn.textContent = basis === 'capacity' ? 'full capacity' : 'measured';
+        basisBtn.title =
+            basis === 'capacity'
+                ? 'Planned at the whole torch/shroud/beacon capacity every run. Click for the measured average instead.'
+                : 'Planned at the average your recorded runs actually spent (runs watched from the door only). ' +
+                  'Click to plan at full capacity every run instead.';
+        basisBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            config.setSetting('consumables_labPerRunBasis', basis === 'capacity' ? 'measured' : 'capacity');
+            this._render();
+        });
         const inventory = dataManager.getInventory?.() || [];
         const runs = this.labRuns;
 
@@ -1711,7 +1739,7 @@ class ConsumablesPanel {
             }))
             .filter((q) => q.count > 0);
         this._registerBuyQueue('Labyrinth', queue);
-        heading.append(name, runsBtn);
+        heading.append(name, runsBtn, basisBtn);
         section.appendChild(heading);
 
         for (const need of needs) {
@@ -1857,14 +1885,17 @@ ${labUnpriced} item(s) could not be priced and are not in this total.`
 
         const perRunCell = this._cell(`${formatLargeNumber(perRun)}/run`);
         perRunCell.style.color = COLORS.textDim;
-        if (need?.observedRuns > 0) {
+        if (need?.basis === 'capacity' && need?.capacity) {
+            perRunCell.title = 'Full capacity every run, as the basis pill asks.';
+        } else if (need?.observedRuns > 0) {
             perRunCell.title =
                 `Average actually spent over your last ${need.observedRuns} recorded run${need.observedRuns === 1 ? '' : 's'} ` +
-                `(capacity ${formatLargeNumber(need.capacity)}).`;
+                `(capacity ${formatLargeNumber(need.capacity)}). Only runs watched from the door count.`;
             perRunCell.style.textDecoration = 'underline dotted';
         } else if (need?.capacity) {
             perRunCell.title =
-                'Full capacity — what a run can spend; once a run has been recorded this becomes what runs actually spend.';
+                'Full capacity — what a run can spend; once a run has been watched from the door this becomes ' +
+                'what runs actually spend.';
         }
 
         const cost = this._cell(ask === null ? '—' : formatLargeNumber(Math.round(ask * perRun)));

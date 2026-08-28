@@ -123,6 +123,21 @@ describe('foldSighting', () => {
     });
     const start = { phase: 'unknown', run: null };
 
+    test('a run joined mid-way keeps its floor-of-a-measurement out of the average', () => {
+        // First seen on floor 3 (a reload): its start is just where we came
+        // in, so the spend it reports would drag a 350-torch run down to 100
+        let s = foldSighting(start, active({ currentFloor: 3, torchCount: 120 }), 1000).state;
+        s = foldSighting(s, active({ currentFloor: 6, torchCount: 40 }), 2000).state;
+        const { ended } = foldSighting(s, { isActive: false }, 3000);
+
+        expect(ended.startTrusted).toBe(false);
+        expect(observedUse([ended], 'torch')).toEqual([]);
+    });
+
+    test('a record from before the trust flag existed does not count either', () => {
+        expect(observedUse([{ start: { torch: 100 }, left: { torch: 40 } }], 'torch')).toEqual([]);
+    });
+
     test('an active run is tracked at its deepest floor and last-seen counts', () => {
         let s = foldSighting(start, active(), 1000).state;
         s = foldSighting(s, active({ currentFloor: 5, torchCount: 80 }), 2000).state;
@@ -132,7 +147,7 @@ describe('foldSighting', () => {
     });
 
     test('the first counts seen are the start, so the ending can say what was spent', () => {
-        let s = foldSighting(start, active({ torchCount: 120, shroudCount: 4 }), 1000).state;
+        let s = foldSighting(start, active({ currentFloor: 1, torchCount: 120, shroudCount: 4 }), 1000).state;
         s = foldSighting(s, active({ currentFloor: 5, torchCount: 61, shroudCount: 1 }), 2000).state;
         const { ended } = foldSighting(s, { isActive: false }, 3000);
         expect(ended.start).toMatchObject({ torch: 120, shroud: 4 });

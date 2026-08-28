@@ -179,6 +179,12 @@ export function rushFloorTable(deepestFloor, torchCap, preserve = 0) {
 export function observedUse(runs, kind) {
     const out = [];
     for (const run of runs || []) {
+        // A run first seen mid-way (a reload, a tab opened late) has its
+        // "start" set to wherever it was seen, so its spend is a floor, not a
+        // measurement — averaging those in is how 350-torch runs read as 106.
+        // Only runs watched from the door count. Records from before the flag
+        // existed cannot say which they were, so they do not count either.
+        if (run?.startTrusted !== true) continue;
         const start = Number(run?.start?.[kind]);
         const left = Number(run?.left?.[kind]);
         if (!Number.isFinite(start) || !Number.isFinite(left)) continue;
@@ -223,11 +229,17 @@ export function foldSighting(state, labyrinth, nowMs) {
             shroud: previous?.start?.shroud ?? left.shroud,
             beacon: previous?.start?.beacon ?? left.beacon,
         };
+        // Only a run first seen at the door measures true spend; one first
+        // seen on floor 2+ was joined mid-way and its start is just "wherever
+        // we came in"
+        const firstFloor = Math.floor(Number(labyrinth?.currentFloor) || 0);
+        const startTrusted = previous ? (previous.startTrusted ?? false) : firstFloor <= 1;
         return {
             state: {
                 phase: 'active',
                 run: {
                     key,
+                    startTrusted,
                     floor: Math.max(previous?.floor ?? 0, Math.floor(Number(labyrinth?.currentFloor) || 0)),
                     left,
                     start,

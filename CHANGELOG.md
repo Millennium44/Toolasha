@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Labyrinth restock: pick your per-run basis, and the measured figure stops lying
+
+A "measured / full capacity" pill on the Labyrinth block chooses whether a run is planned at the average your recorded runs actually spent or at the whole capacity every run (also a setting). And the measured average was badly low — a run first seen mid-way (a reload, a tab opened late) recorded "spent" from wherever it was joined, dragging 350-torch runs down to ~100. Only runs watched from the door count now; older records that cannot say which they were are excluded, so the figure rebuilds honestly over your next few runs.
+
+
 ### The credit exchange gets a Max button and a held count per row
 
 The exchange dialog's "You give" box gains a Max button that fills in everything held, floored to whole exchanges so the game accepts it as-is. The gold-per-credit table also shows how many of each item you hold beside its name, so the cheapest route and the routes you can actually feed read off one screen.

@@ -1311,6 +1311,19 @@ export const settingsGroups = {
                 min: 0,
                 help: 'The spread rule in absolute coins: what the whole stack would earn by waiting in the sell queue instead of insta-selling — (ask − bid) × count, after the 5% tax. Under this amount the Bulk Sell Assistant insta-sells: the premium is not worth a listing slot and the wait. 0 turns this rule off. Default: 0.',
             },
+            consumables_labPerRunBasis: {
+                id: 'consumables_labPerRunBasis',
+                label: 'Consumables: Labyrinth per-run basis',
+                type: 'select',
+                default: 'measured',
+                options: [
+                    { value: 'measured', label: 'Measured from recorded runs' },
+                    { value: 'capacity', label: 'Full capacity every run' },
+                ],
+                help:
+                    'What one labyrinth run is planned to consume: the average your recorded runs actually spent, ' +
+                    'or the whole torch/shroud/beacon capacity every run. Also a click on the basis pill in the panel.',
+            },
             consumables_idleLoadoutPlan: {
                 id: 'consumables_idleLoadoutPlan',
                 label: 'Consumables: plan from the default loadout while idle',
