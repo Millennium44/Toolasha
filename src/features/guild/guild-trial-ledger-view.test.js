@@ -68,6 +68,7 @@ const {
     lastAttendedText,
     lastCycleParticipants,
     ledgerCellText,
+    ledgerTableText,
     refreshLedgerView,
     resetLedgerView,
 } = await import('./guild-trial-ledger-view.js');
@@ -204,6 +205,38 @@ describe('buildLedgerTable filtering', () => {
 
         expect(table.rows.map((row) => row.name)).toEqual(['Alice']);
         expect(table.trialsRun).toBe(2);
+    });
+});
+
+describe('ledgerTableText', () => {
+    test('one line per row plus a totals line, in the sorted order given', async () => {
+        await refreshLedgerView();
+        const table = buildLedgerTable({ sortKey: 'damageShare', sortDirection: 'desc' });
+
+        const text = ledgerTableText(table);
+        const lines = text.split('\n');
+        expect(lines[0]).toBe('Guild trial ledger — 2 trials in window');
+        expect(lines[1]).toContain('Alice — 2 trials (100.0%)');
+        expect(lines[1]).toContain('dmg 90.0%');
+        expect(lines[2]).toContain('Bob — 1 trials (50.0%)');
+        expect(lines[3]).toContain('Total — 3 trials');
+        expect(lines[3]).toContain('dmg 100.0%');
+    });
+
+    test('nothing to show is said plainly, not as an empty report', () => {
+        expect(ledgerTableText({ rows: [], trialsRun: 0 })).toBe('No ledger rows to copy.');
+        expect(ledgerTableText(null)).toBe('No ledger rows to copy.');
+    });
+
+    test('a no-show reads as a no-show rather than a bare zero', async () => {
+        world.members = [{ name: 'Alice' }, { name: 'Bob' }, { name: 'Carol' }];
+        await refreshLedgerView();
+        const table = buildLedgerTable();
+
+        const carolLine = ledgerTableText(table)
+            .split('\n')
+            .find((line) => line.startsWith('Carol'));
+        expect(carolLine).toContain('no-show');
     });
 });
 

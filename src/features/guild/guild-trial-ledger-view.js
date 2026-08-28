@@ -316,6 +316,45 @@ export function ledgerCellText(row, key) {
 }
 
 /**
+ * One row's line for {@link ledgerTableText}: the same figures the table cells
+ * show, in a sentence rather than a grid — plain text has no columns to line
+ * cells up under.
+ * @param {Object} row - A folded row, or the totals row from {@link ledgerTotalsRow}
+ * @returns {string} e.g. `Alice — 4 trials (50.0%), dmg 32.1%, heal 10.0%, tank 5.0%, 1 death`
+ */
+function ledgerRowLine(row) {
+    const attendance = row?.noShow ? 'no-show' : `${row.trials} trials (${ledgerCellText(row, 'attendance')})`;
+    const deaths = Number(row?.deaths) || 0;
+    return (
+        `${row.name} — ${attendance}, dmg ${ledgerCellText(row, 'damageShare')}, ` +
+        `heal ${ledgerCellText(row, 'healingShare')}, tank ${ledgerCellText(row, 'tankShare')}, ` +
+        `${deaths} death${deaths === 1 ? '' : 's'}`
+    );
+}
+
+/**
+ * The table as it currently stands, as plain text, for pasting into chat.
+ *
+ * The same rows the table shows — already filtered, sorted and windowed — plus
+ * the totals line, since a report without the sum is the one thing a reader
+ * would go back and add up themselves.
+ *
+ * @param {Object} table - From {@link buildLedgerTable}
+ * @returns {string} A short report, one row per line
+ */
+export function ledgerTableText(table) {
+    const rows = table?.rows || [];
+    if (!rows.length) return 'No ledger rows to copy.';
+
+    const trialsRun = table?.trialsRun || 0;
+    const header = `Guild trial ledger — ${trialsRun} trial${trialsRun === 1 ? '' : 's'} in window`;
+    const lines = rows.map(ledgerRowLine);
+    const totals = ledgerTotalsRow(rows, trialsRun);
+
+    return [header, ...lines, ...(totals ? [ledgerRowLine(totals)] : [])].join('\n');
+}
+
+/**
  * A small control button in the guild panels' idiom.
  * @param {string} label - Button text
  * @param {string} title - Tooltip
@@ -385,6 +424,21 @@ function drawControls(card, table) {
         controlButton('Export CSV', 'The table as it stands, with raw numbers a spreadsheet can sort.', () => {
             const csv = toCsv(ledgerCsvRows(table.rows, table.trialsRun), LEDGER_CSV_COLUMNS);
             downloadCsv(csvFilename('guild-trial-ledger'), csv);
+        })
+    );
+    bar.appendChild(
+        controlButton('Copy as text', 'The table as it stands, as a report a guild chat can read.', (event) => {
+            const button = event.currentTarget;
+            navigator.clipboard
+                ?.writeText?.(ledgerTableText(table))
+                ?.then(() => {
+                    const original = button.textContent;
+                    button.textContent = 'Copied!';
+                    setTimeout(() => {
+                        button.textContent = original;
+                    }, 1500);
+                })
+                ?.catch(() => {});
         })
     );
     card.appendChild(bar);
