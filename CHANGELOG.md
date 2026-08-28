@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Second audit round: four more fixes and six more conveniences
+
+Fixes: the damage-taken table no longer keeps departed party members (or hands their totals to whoever inherits the slot); the inventory badge cooldown stops being consumed by renders that bailed; a mid-run enhancement pickup infers the correct start level near the protection threshold; and an undercut alert can no longer be swallowed by its own predecessor's cooldown after you reprice — a reprice mints a fresh notification key. Features: mooket watchlist chips say how fresh their price reading is; the Trade Ledger gets an item filter (the CSV export follows it); the Combat Statistics popup copies as text; the attendance ledger tooltips each member's last-attended date; the gold-sources calendar clicks through to that day's breakdown; and the guild roster's contribution table exports to CSV.
+
+
 ### Seven guild fixes from the audit fleet
 
 Trial state stops leaking across boundaries: a new trial no longer inherits the previous trial's game-reported totals and boss sheets; the personally-fought path resets its per-slot HP/MP baselines at wave boundaries like the spectated path always did, ending phantom revives and bogus healing swings when slots re-deal; and a character or guild switch mid-trial now closes the recording out properly — accruing it to the attendance ledger instead of leaving a forever-open session that never counted. The attendance ledger itself serialises its writes so two trials finishing close together can't clobber each other's rows, the ledger view guards against out-of-order redraws, the XP tracker stamps its guild id before awaiting the read so overlapping guild switches can't mismatch histories, and the skilling stats keep a stated zero consistently.
