@@ -948,6 +948,19 @@ class DungeonTracker {
 
         // Wave 0 = first wave = dungeon start
         if (data.wave === 0) {
+            // `new_battle` has no dedupe or replay guard (see websocket.js's
+            // SKIP_DEDUP_TYPES), so a reconnect that catches the run still on
+            // its own first wave resends this same wave 0 rather than a real
+            // dungeon start. Already tracking, with no new dungeon queued by
+            // actions_updated, means this is that resend — treat it like any
+            // other wave update instead of wiping wavesCompleted, waveTimes
+            // and the party-message timestamps and starting the run over.
+            if (this.isTracking && !this.pendingDungeonInfo) {
+                this.currentBattleId = data.battleId;
+                this.startWave(data);
+                return;
+            }
+
             // Clear any stale saved state first (in case previous run didn't clear properly)
             await this.clearInProgressRun();
 

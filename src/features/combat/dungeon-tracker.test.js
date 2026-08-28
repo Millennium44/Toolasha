@@ -303,6 +303,47 @@ describe('starting a run', () => {
         expect(tracker.currentBattleId).toBe(99);
         expect(tracker.waveStartTime.getTime()).toBe(Date.parse('2026-08-04T10:05:00.000Z'));
     });
+
+    test('a resent wave 0 while still on wave 0 only refreshes the battle, not the run', async () => {
+        // `new_battle` has no reconnect dedupe (see websocket.js), so a drop and
+        // reconnect that catches the run still on its own first wave resends
+        // this same wave 0 rather than a real dungeon start. Restarting the run
+        // here used to wipe wavesCompleted, waveTimes and the party-message
+        // timestamps the run had already collected, and moved its recorded
+        // start time to whenever the reconnect happened.
+        beTracking({
+            currentWave: 0,
+            wavesCompleted: 0,
+            battleId: 42,
+            waveTimes: [1000],
+            anchoredAt: '2026-08-04T10:00:05.000Z',
+        });
+        const keptStartTime = tracker.currentRun.startTime;
+
+        await tracker.onNewBattle({ wave: 0, battleId: 99, combatStartTime: '2026-08-04T10:05:00.000Z' });
+        await flush();
+
+        expect(tracker.isTracking).toBe(true);
+        expect(tracker.currentRun.startTime).toBe(keptStartTime);
+        expect(tracker.currentRun.currentWave).toBe(0);
+        expect(tracker.waveTimes).toEqual([1000]);
+        expect(tracker.firstKeyCountTimestamp).toBe(Date.parse('2026-08-04T10:00:05.000Z'));
+        // The battleId still refreshes, same as any other reconnect mid-run
+        expect(tracker.currentBattleId).toBe(99);
+    });
+
+    test('but a genuinely new dungeon queued while wave 0 is still open starts fresh', async () => {
+        // The one case a resent wave 0 must NOT be swallowed: actions_updated
+        // queued a real new dungeon action before this new_battle arrived
+        beTracking({ currentWave: 0, wavesCompleted: 0, battleId: 42 });
+        tracker.onActionsUpdated({ endCharacterActions: [{ actionHrid: LAIR, difficultyTier: 1, isDone: false }] });
+
+        await tracker.onNewBattle({ wave: 0, battleId: 100, combatStartTime: '2026-08-04T11:00:00.000Z' });
+        await flush();
+
+        expect(tracker.currentRun.dungeonHrid).toBe(LAIR);
+        expect(tracker.currentRun.startTime).toBe(Date.parse('2026-08-04T11:00:00.000Z'));
+    });
 });
 
 describe('the in-progress record', () => {
