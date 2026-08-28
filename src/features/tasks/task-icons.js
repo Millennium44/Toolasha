@@ -128,8 +128,14 @@ class TaskIcons {
      * Watch for task cards in the DOM
      */
     watchTaskCards() {
-        // Process existing task cards
-        this.processAllTaskCards();
+        // Process existing task cards. @run-at document-start: cards rendered before the shared
+        // observer attaches to document.body are invisible to the class watchers, so the
+        // catch-up waits for its actual-ready signal (immediate if it is already attached).
+        this.observers.push(
+            domObserver.onReady('TaskIconsCatchUp', () => {
+                this.processAllTaskCards();
+            })
+        );
 
         // Watch for task list appearing
         const unregisterTaskList = domObserver.onClass('TaskIcons-TaskList', 'TasksPanel_taskList', () => {

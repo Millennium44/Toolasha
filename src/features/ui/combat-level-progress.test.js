@@ -12,7 +12,14 @@ const { observerCallbacks, mockOnClass, dataManagerHandlers } = vi.hoisted(() =>
 });
 
 vi.mock('../../core/dom-observer.js', () => ({
-    default: { onClass: mockOnClass },
+    default: {
+        onClass: mockOnClass,
+        // Mirrors the real DOMObserver.onReady in its already-attached steady state
+        onReady: vi.fn((name, callback) => {
+            callback();
+            return () => {};
+        }),
+    },
 }));
 
 vi.mock('../../core/config.js', () => ({

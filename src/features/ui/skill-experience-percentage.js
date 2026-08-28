@@ -55,11 +55,17 @@ class SkillExperiencePercentage {
         this.isActive = true;
         this.registerObservers();
 
-        // Setup observers for any existing progress bars
-        const existingProgressBars = document.querySelectorAll('[class*="NavigationBar_currentExperience"]');
-        existingProgressBars.forEach((progressBar) => {
-            this.setupProgressBarObserver(progressBar);
-        });
+        // Setup observers for any existing progress bars. @run-at document-start: bars rendered
+        // before the shared observer attaches to document.body are invisible to the class
+        // watcher, so the catch-up waits for its actual-ready signal (immediate if attached).
+        this.unregisterHandlers.push(
+            domObserver.onReady('SkillExpPercentageCatchUp', () => {
+                const existingProgressBars = document.querySelectorAll('[class*="NavigationBar_currentExperience"]');
+                existingProgressBars.forEach((progressBar) => {
+                    this.setupProgressBarObserver(progressBar);
+                });
+            })
+        );
 
         this.isInitialized = true;
     }

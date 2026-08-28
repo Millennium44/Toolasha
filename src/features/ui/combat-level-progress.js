@@ -89,7 +89,10 @@ class CombatLevelProgress {
         );
         this.unregisterHandlers.push(unregister);
 
-        this.update();
+        // @run-at document-start: a nav bar rendered before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterHandlers.push(domObserver.onReady('CombatLevelProgressCatchUp', () => this.update()));
     }
 
     /**

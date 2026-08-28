@@ -768,12 +768,18 @@ class TaskProfitDisplay {
         });
         this.unregisterHandlers.push(unregisterTask);
 
-        // Initial scan for task nodes already in the DOM (handles race condition
-        // where tasks render before observer registers)
-        const existingTaskNodes = document.querySelectorAll('[class*="RandomTask_randomTask"]');
-        for (const taskNode of existingTaskNodes) {
-            this._setupTaskNode(taskNode);
-        }
+        // Initial scan for task nodes already in the DOM (handles the race where tasks render
+        // before the observer registers). @run-at document-start: the scan itself waits for the
+        // shared observer's actual-ready signal (immediate if it is already attached), so cards
+        // rendered during the readiness gap are not missed either.
+        this.unregisterHandlers.push(
+            domObserver.onReady('TaskProfitDisplayCatchUp', () => {
+                const existingTaskNodes = document.querySelectorAll('[class*="RandomTask_randomTask"]');
+                for (const taskNode of existingTaskNodes) {
+                    this._setupTaskNode(taskNode);
+                }
+            })
+        );
 
         // Nothing above fires when a reroll chooser closes — the game adds an
         // action row, not a card — so the rows a mid-flow pass declined to

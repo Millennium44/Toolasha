@@ -14,6 +14,7 @@ import domObserver from '../../core/dom-observer.js';
 class EquipmentLevelDisplay {
     constructor() {
         this.unregisterHandler = null;
+        this.unregisterReady = null;
         this.isActive = false;
         this.processedHrefs = new WeakMap(); // Track last href per div
         this.isInitialized = false;
@@ -71,8 +72,12 @@ class EquipmentLevelDisplay {
             { debounce: true, debounceDelay: 150 } // 150ms debounce to reduce update frequency
         );
 
-        // Process any existing items on page
-        this.addItemLevels();
+        // Process any existing items on page. @run-at document-start: items rendered before the
+        // shared observer attaches to document.body are invisible to it, so the catch-up waits
+        // for the observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterReady = domObserver.onReady('EquipmentLevelDisplayCatchUp', () => {
+            this.addItemLevels();
+        });
 
         // The game frequently swaps an equipped/inventory item in place — the same
         // Item_item div stays mounted and only the SVG <use> href changes (e.g.
@@ -123,6 +128,10 @@ class EquipmentLevelDisplay {
         if (this.unregisterHandler) {
             this.unregisterHandler();
             this.unregisterHandler = null;
+        }
+        if (this.unregisterReady) {
+            this.unregisterReady();
+            this.unregisterReady = null;
         }
         if (this.hrefObserver) {
             this.hrefObserver.disconnect();
@@ -286,6 +295,11 @@ class EquipmentLevelDisplay {
             if (this.unregisterHandler) {
                 this.unregisterHandler();
                 this.unregisterHandler = null;
+            }
+
+            if (this.unregisterReady) {
+                this.unregisterReady();
+                this.unregisterReady = null;
             }
 
             if (this.hrefObserver) {

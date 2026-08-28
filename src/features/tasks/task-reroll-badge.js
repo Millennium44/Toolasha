@@ -102,9 +102,14 @@ class TaskRerollBadge {
         // setting on with the Tasks panel open is therefore an initialize()
         // that draws nothing, and the badge stays missing until the panel is
         // navigated away from and back. Same immediate pass task-statistics.js
-        // makes for the same reason.
-        const header = document.querySelector(GAME.TASK_PANEL);
-        if (header) this._onHeaderAppeared(header);
+        // makes for the same reason. @run-at document-start the pass waits for
+        // the shared observer's actual-ready signal (immediate if attached).
+        this.unregisterHandlers.push(
+            domObserver.onReady('TaskRerollBadgeCatchUp', () => {
+                const header = document.querySelector(GAME.TASK_PANEL);
+                if (header) this._onHeaderAppeared(header);
+            })
+        );
     }
 
     _onHeaderAppeared(headerElement) {

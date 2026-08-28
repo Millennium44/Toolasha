@@ -20,7 +20,16 @@ vi.mock('../../core/config.js', () => ({
 }));
 // The observer reports elements that *appear*; a no-op here is exactly the
 // production behaviour for a panel that was already on the page.
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: () => () => {},
+        // Mirrors the real DOMObserver.onReady in its already-attached steady state
+        onReady: (name, callback) => {
+            callback();
+            return () => {};
+        },
+    },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         get characterQuests() {

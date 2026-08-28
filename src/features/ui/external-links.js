@@ -10,6 +10,7 @@ import { COMBAT_SIM_TARGETS } from '../combat/combat-sim-targets.js';
 class ExternalLinks {
     constructor() {
         this.unregisterObserver = null;
+        this.unregisterReady = null;
         this.addedContainers = new WeakSet(); // Track which specific containers have links
         this.isInitialized = false;
     }
@@ -46,12 +47,16 @@ class ExternalLinks {
             }
         );
 
-        // Check for existing container immediately
-        const existingContainer = document.querySelector('[class*="NavigationBar_minorNavigationLinks"]');
-        if (existingContainer && !this.addedContainers.has(existingContainer)) {
-            this.addLinks(existingContainer);
-            this.addedContainers.add(existingContainer);
-        }
+        // Check for an existing container. @run-at document-start: a nav bar rendered before the
+        // shared observer attaches to document.body is invisible to the class watcher, so the
+        // catch-up waits for the observer's actual-ready signal (immediate if already attached).
+        this.unregisterReady = domObserver.onReady('ExternalLinksCatchUp', () => {
+            const existingContainer = document.querySelector('[class*="NavigationBar_minorNavigationLinks"]');
+            if (existingContainer && !this.addedContainers.has(existingContainer)) {
+                this.addLinks(existingContainer);
+                this.addedContainers.add(existingContainer);
+            }
+        });
     }
 
     /**
@@ -137,6 +142,11 @@ class ExternalLinks {
             if (this.unregisterObserver) {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
+            }
+
+            if (this.unregisterReady) {
+                this.unregisterReady();
+                this.unregisterReady = null;
             }
 
             // Remove added links (tagged with our marker class when created)

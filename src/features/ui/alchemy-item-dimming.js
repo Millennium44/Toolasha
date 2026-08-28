@@ -15,6 +15,7 @@ import { findAlchemizeMenu } from '../alchemy/alchemy-item-selector.js';
 class AlchemyItemDimming {
     constructor() {
         this.unregisterObserver = null; // Unregister function from centralized observer
+        this.unregisterReady = null;
         this.isActive = false;
         this.isInitialized = false;
     }
@@ -39,8 +40,12 @@ class AlchemyItemDimming {
             this.processAlchemyItems();
         });
 
-        // Process any existing items on page
-        this.processAlchemyItems();
+        // Process any existing items on page. @run-at document-start: a menu rendered before the
+        // shared observer attaches to document.body is invisible to the class watcher, so the
+        // catch-up waits for the observer's actual-ready signal (immediate if already attached).
+        this.unregisterReady = domObserver.onReady('AlchemyItemDimmingCatchUp', () => {
+            this.processAlchemyItems();
+        });
 
         this.isActive = true;
     }
@@ -123,6 +128,11 @@ class AlchemyItemDimming {
             if (this.unregisterObserver) {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
+            }
+
+            if (this.unregisterReady) {
+                this.unregisterReady();
+                this.unregisterReady = null;
             }
 
             // Remove all dimming effects

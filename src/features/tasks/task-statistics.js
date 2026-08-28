@@ -61,14 +61,16 @@ class TaskStatistics {
 
         this.isInitialized = true;
 
-        // Try to inject button immediately
-        this.injectButton();
-
         // Watch for Tasks panel appearing
         const unregister = domObserver.onClass('TaskStatistics', 'TasksPanel_tabsComponentContainer', () => {
             this.injectButton();
         });
         this.unregisterHandlers.push(unregister);
+
+        // Inject into an already-open panel. @run-at document-start: a panel rendered before the
+        // shared observer attaches to document.body is invisible to the class watcher, so the
+        // catch-up waits for its actual-ready signal (immediate if it is already attached).
+        this.unregisterHandlers.push(domObserver.onReady('TaskStatisticsCatchUp', () => this.injectButton()));
     }
 
     /**

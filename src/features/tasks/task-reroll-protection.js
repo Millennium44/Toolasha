@@ -112,8 +112,10 @@ class TaskRerollProtection {
         // above declined to touch
         this.unregisterHandlers.push(onConfirmFlowSettled(() => this._processAllCards()));
 
-        // Process existing cards
-        this._processAllCards();
+        // Process existing cards. @run-at document-start: cards rendered before the shared
+        // observer attaches to document.body are invisible to the class watchers, so the
+        // catch-up waits for its actual-ready signal (immediate if it is already attached).
+        this.unregisterHandlers.push(domObserver.onReady('TaskRerollProtectionCatchUp', () => this._processAllCards()));
     }
 
     /**

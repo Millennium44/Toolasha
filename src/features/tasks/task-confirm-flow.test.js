@@ -69,6 +69,11 @@ vi.mock('../../core/dom-observer.js', () => ({
             observer.callbacks[name] = cb;
             return () => {};
         },
+        // Mirrors the real DOMObserver.onReady in its already-attached steady state
+        onReady: (name, callback) => {
+            callback();
+            return () => {};
+        },
     },
 }));
 vi.mock('../../utils/character-key.js', () => ({

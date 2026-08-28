@@ -61,6 +61,7 @@ class OverlayTabButton {
         this.launcher = null;
         this.detachLauncher = null;
         this.unregister = null;
+        this.unregisterReady = null;
         this.initialized = false;
         // The panel can also be closed by its own ✕, and the switch has to
         // follow that rather than only what was last clicked here
@@ -81,13 +82,20 @@ class OverlayTabButton {
             this.ensureLauncher();
         });
         document.addEventListener(VISIBILITY_EVENT, this.onVisibility);
-        this.ensureButton();
-        this.ensureLauncher();
+        // @run-at document-start: a tab strip rendered before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterReady = domObserver.onReady('OverlayTabButtonCatchUp', () => {
+            this.ensureButton();
+            this.ensureLauncher();
+        });
     }
 
     cleanup() {
         this.unregister?.();
         this.unregister = null;
+        this.unregisterReady?.();
+        this.unregisterReady = null;
         document.removeEventListener(VISIBILITY_EVENT, this.onVisibility);
         this.button?.remove();
         this.button = null;

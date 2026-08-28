@@ -13,7 +13,16 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 vi.mock('../../core/config.js', () => ({ default: { getSetting: () => true, Z_FLOATING_PANEL: 1100 } }));
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: () => () => {} } }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: () => () => {},
+        // Mirrors the real DOMObserver.onReady in its already-attached steady state
+        onReady: (name, callback) => {
+            callback();
+            return () => {};
+        },
+    },
+}));
 
 /** Whether the script is acting like a phone, decided per test */
 const device = vi.hoisted(() => ({ mobile: false }));

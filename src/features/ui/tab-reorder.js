@@ -54,15 +54,17 @@ class TabReorder {
         // Load saved order
         this.savedOrder = await storage.getJSON(getStorageKey(), 'settings', null);
 
-        // Apply to existing tabs
-        this._applyOrder();
-
         // Re-apply whenever React re-renders the tab container
         const unregister = domObserver.onClass('TabReorder', 'TabsComponent_tabsContainer', () => {
             // Small delay to let Toolasha tab injection happen first
             setTimeout(() => this._applyOrder(), 50);
         });
         this.unregisterHandlers.push(unregister);
+
+        // Apply to existing tabs. @run-at document-start: tabs rendered before the shared
+        // observer attaches to document.body are invisible to the class watcher, so the
+        // catch-up waits for its actual-ready signal (immediate if it is already attached).
+        this.unregisterHandlers.push(domObserver.onReady('TabReorderCatchUp', () => this._applyOrder()));
     }
 
     /**
