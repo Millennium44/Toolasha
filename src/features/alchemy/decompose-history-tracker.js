@@ -8,7 +8,14 @@
  * - End: actions_updated with no decompose action, or different input item/enhancement level
  *
  * Result detection:
- * - Success: endCharacterItems contains items listed in the input item's decomposeItems
+ * - `endCharacterItems` rows carry a stack's NEW absolute total, one row per
+ *   changed stack — not one row per success. A message can cover a batch of
+ *   efficiency procs, so the count delta on each decompose-output stack — not
+ *   the number of rows — is what says how many successes it holds.
+ * - Every decompose success yields every entry in the input's decomposeItems
+ *   together, so each output row's delta is an independent estimate of the
+ *   same success count; the largest of them is used rather than the sum,
+ *   which would multiply-count one batch once per output item.
  * - Failure: no items from decomposeItems appear in endCharacterItems
  * - Incidental drops (essences, artisan's crates) are excluded
  *   because they are not listed in the input item's decomposeItems
@@ -19,6 +26,7 @@ import webSocketHook from '../../core/websocket.js';
 import dataManager from '../../core/data-manager.js';
 import { getItemPrice } from '../../utils/market-data.js';
 import { createAlchemySessionStore, NO_CHARACTER } from './alchemy-session-store.js';
+import { createItemCountLedger } from './alchemy-item-deltas.js';
 
 const DECOMPOSE_ACTION_HRID = '/actions/alchemy/decompose';
 const CATALYST_OF_DECOMPOSITION_HRID = '/items/catalyst_of_decomposition';
@@ -37,6 +45,10 @@ class DecomposeHistoryTracker {
         this.isInitialized = false;
         this.characterId = null;
         this.activeSession = null; // Current in-progress session object
+        // `endCharacterItems` rows carry a stack's NEW total, one row per
+        // changed stack — not one row per success. A count delta is the only
+        // thing in the message that scales with a batch.
+        this.itemCounts = createItemCountLedger();
         this.handlers = {
             actionsUpdated: (data) => this.handleActionsUpdated(data),
             actionCompleted: (data) => this.handleActionCompleted(data),
@@ -175,24 +187,12 @@ class DecomposeHistoryTracker {
             expectedCountMap[entry.itemHrid] = entry.count || 1;
         }
 
-        // Filter to only valid decompose outputs (exclude coins and incidentals)
-        const validOutputItems = (data.endCharacterItems || []).filter(
-            (item) => item.itemHrid !== COIN_ITEM_HRID && validOutputHrids.has(item.itemHrid)
+        // Every row is noted so the ledger has a baseline for next time; only
+        // the drop-table rows say anything about what this action produced.
+        const noted = this.itemCounts.noteEach(data.endCharacterItems || []);
+        const outputRows = noted.filter(
+            ({ row }) => row.itemHrid !== COIN_ITEM_HRID && validOutputHrids.has(row.itemHrid)
         );
-
-        // Decompose outputs: each unique output item entry represents one successful action.
-        // Unlike transmute, there is no self-return — the input is always consumed.
-        // Group by unique output sets to count successes correctly.
-        // For efficiency procs, multiple entries of the same output item may appear.
-        // Count distinct entries of any valid output as one success each.
-        const successCount =
-            validOutputItems.length > 0
-                ? Math.max(
-                      ...Array.from(new Set(validOutputItems.map((i) => i.itemHrid))).map(
-                          (hrid) => validOutputItems.filter((i) => i.itemHrid === hrid).length
-                      )
-                  )
-                : 0;
 
         // Derive actual attempt count from currentCount delta (handles batched efficiency procs)
         const currentCount = action.currentCount || 0;
@@ -200,18 +200,40 @@ class DecomposeHistoryTracker {
         if (this.lastCurrentCount !== null && currentCount > this.lastCurrentCount) {
             attemptCount = currentCount - this.lastCurrentCount;
         } else {
-            attemptCount = Math.max(successCount, 1);
+            attemptCount = Math.max(outputRows.length, 1);
         }
         this.lastCurrentCount = currentCount;
+
+        // Every decompose success yields every entry in decomposeItems
+        // together, so each output row's own delta is an independent estimate
+        // of the same success count — the largest is used rather than the
+        // sum, which would multiply-count one batch once per output item. A
+        // row with no baseline yet (the first message of a session) reads as
+        // "at least one".
+        let successCount = 0;
+        for (const { row, delta } of outputRows) {
+            const expectedCount = expectedCountMap[row.itemHrid] || 1;
+            const perActionYield = bulkMultiplier * expectedCount;
+            let actions;
+            if (delta === null) {
+                actions = 1;
+            } else if (perActionYield > 0) {
+                actions = Math.round(delta / perActionYield);
+            } else {
+                actions = 0;
+            }
+            successCount = Math.max(successCount, actions);
+        }
+        successCount = Math.min(Math.max(successCount, 0), attemptCount);
 
         this.activeSession.totalAttempts += attemptCount;
 
         if (successCount > 0) {
             this.activeSession.totalSuccesses += successCount;
 
-            for (const outputItem of validOutputItems) {
-                const outputItemHrid = outputItem.itemHrid;
-                const expectedCount = expectedCountMap[outputItemHrid] || 1;
+            for (const entry of decomposeItems) {
+                const outputItemHrid = entry.itemHrid;
+                const expectedCount = entry.count || 1;
 
                 if (!this.activeSession.results[outputItemHrid]) {
                     this.activeSession.results[outputItemHrid] = {
@@ -221,13 +243,14 @@ class DecomposeHistoryTracker {
                     };
                 }
 
-                // Each entry represents bulkMultiplier × expectedCount items received
-                this.activeSession.results[outputItemHrid].count += bulkMultiplier * expectedCount;
+                // Each success hands over bulkMultiplier × expectedCount items
+                const received = successCount * bulkMultiplier * expectedCount;
+                this.activeSession.results[outputItemHrid].count += received;
 
                 // Record market price at time of result
                 const price = getItemPrice(outputItemHrid, { context: 'profit', side: 'sell' }) || 0;
                 this.activeSession.results[outputItemHrid].priceEach = price;
-                this.activeSession.results[outputItemHrid].totalValue += price * bulkMultiplier * expectedCount;
+                this.activeSession.results[outputItemHrid].totalValue += price * received;
             }
         }
 
@@ -290,6 +313,7 @@ class DecomposeHistoryTracker {
             results: {},
         };
         this.lastCurrentCount = null;
+        this.itemCounts.reset();
     }
 
     /**

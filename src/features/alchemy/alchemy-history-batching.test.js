@@ -62,6 +62,7 @@ vi.mock('./alchemy-session-store.js', () => ({
 
 const { coinifyHistoryTracker } = await import('./coinify-history-tracker.js');
 const { transmuteHistoryTracker } = await import('./transmute-history-tracker.js');
+const { decomposeHistoryTracker } = await import('./decompose-history-tracker.js');
 const { createItemCountLedger } = await import('./alchemy-item-deltas.js');
 
 /** Coins per success for this item: sellPrice 100 x 5 x bulk 1 = 500 */
@@ -78,14 +79,24 @@ beforeEach(() => {
                 transmuteDropTable: [{ itemHrid: '/items/shard' }, { itemHrid: '/items/gem' }],
             },
         },
+        '/items/ore': {
+            itemLevel: 10,
+            sellPrice: 10,
+            alchemyDetail: {
+                bulkMultiplier: 1,
+                decomposeItems: [{ itemHrid: '/items/dust', count: 1 }],
+            },
+        },
     };
-    game.prices = { '/items/shard': 700 };
+    game.prices = { '/items/shard': 700, '/items/dust': 20 };
     store.reset();
     store.forgotten = 0;
     coinifyHistoryTracker.activeSession = null;
     coinifyHistoryTracker.characterId = 'char-1';
     transmuteHistoryTracker.activeSession = null;
     transmuteHistoryTracker.characterId = 'char-1';
+    decomposeHistoryTracker.activeSession = null;
+    decomposeHistoryTracker.characterId = 'char-1';
 });
 
 /**
@@ -300,6 +311,100 @@ describe('transmute: successes come from the output counts', () => {
 
         expect(transmuteHistoryTracker.activeSession.totalSuccesses).toBe(0);
         expect(transmuteHistoryTracker.activeSession.results['/items/essence']).toBeUndefined();
+    });
+});
+
+describe('decompose: successes come from the output counts, not the row count', () => {
+    /**
+     * A decompose action_completed message.
+     * @param {number} currentCount - The action's running count
+     * @param {Array<Object>} rows - endCharacterItems rows
+     * @returns {Object} The message
+     */
+    function message(currentCount, rows) {
+        return {
+            endCharacterAction: {
+                actionHrid: '/actions/alchemy/decompose',
+                primaryItemHash: 'char-1::/item_locations/inventory::/items/ore::0',
+                currentCount,
+            },
+            endCharacterItems: rows,
+        };
+    }
+
+    test('a single message batching five successes counts them all, not one', async () => {
+        await decomposeHistoryTracker.startSession('/items/ore', 0, 1000);
+
+        // First message only sets the dust stack's baseline
+        await decomposeHistoryTracker.handleActionCompleted(
+            message(1, [{ id: 'dust', itemHrid: '/items/dust', count: 10 }])
+        );
+        expect(decomposeHistoryTracker.activeSession.totalSuccesses).toBe(1);
+
+        // Five more attempts, all producing dust: one row, count up by five
+        await decomposeHistoryTracker.handleActionCompleted(
+            message(6, [{ id: 'dust', itemHrid: '/items/dust', count: 15 }])
+        );
+
+        expect(decomposeHistoryTracker.activeSession.totalAttempts).toBe(6);
+        expect(decomposeHistoryTracker.activeSession.totalSuccesses).toBe(6);
+        expect(decomposeHistoryTracker.activeSession.results['/items/dust'].count).toBe(6);
+        expect(decomposeHistoryTracker.activeSession.results['/items/dust'].totalValue).toBe(6 * 20);
+    });
+
+    test('a partly successful batch is scored by the dust gained, not by the row', async () => {
+        await decomposeHistoryTracker.startSession('/items/ore', 0, 1000);
+        await decomposeHistoryTracker.handleActionCompleted(
+            message(1, [{ id: 'dust', itemHrid: '/items/dust', count: 10 }])
+        );
+
+        // Five more attempts, three of which paid out
+        await decomposeHistoryTracker.handleActionCompleted(
+            message(6, [{ id: 'dust', itemHrid: '/items/dust', count: 13 }])
+        );
+
+        expect(decomposeHistoryTracker.activeSession.totalAttempts).toBe(6);
+        expect(decomposeHistoryTracker.activeSession.totalSuccesses).toBe(4);
+    });
+
+    test('an unmoved output row is a failed batch', async () => {
+        await decomposeHistoryTracker.startSession('/items/ore', 0, 1000);
+        await decomposeHistoryTracker.handleActionCompleted(
+            message(1, [{ id: 'dust', itemHrid: '/items/dust', count: 10 }])
+        );
+
+        await decomposeHistoryTracker.handleActionCompleted(
+            message(4, [{ id: 'dust', itemHrid: '/items/dust', count: 10 }])
+        );
+
+        expect(decomposeHistoryTracker.activeSession.totalAttempts).toBe(4);
+        expect(decomposeHistoryTracker.activeSession.totalSuccesses).toBe(1);
+    });
+
+    test('multiple decompose outputs agree on one success count rather than stacking', async () => {
+        game.items['/items/ore'].alchemyDetail.decomposeItems = [
+            { itemHrid: '/items/dust', count: 1 },
+            { itemHrid: '/items/shard', count: 1 },
+        ];
+        await decomposeHistoryTracker.startSession('/items/ore', 0, 1000);
+        await decomposeHistoryTracker.handleActionCompleted(
+            message(1, [
+                { id: 'dust', itemHrid: '/items/dust', count: 10 },
+                { id: 'shards', itemHrid: '/items/shard', count: 10 },
+            ])
+        );
+
+        // Five more successes, both outputs rise together by five
+        await decomposeHistoryTracker.handleActionCompleted(
+            message(6, [
+                { id: 'dust', itemHrid: '/items/dust', count: 15 },
+                { id: 'shards', itemHrid: '/items/shard', count: 15 },
+            ])
+        );
+
+        // If both rows' deltas were summed instead of taking the max, this
+        // would read as 10 successes instead of 5
+        expect(decomposeHistoryTracker.activeSession.totalSuccesses).toBe(6);
     });
 });
 
