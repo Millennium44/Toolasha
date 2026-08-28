@@ -246,3 +246,74 @@ export function migrate(v1) {
 
     return { version: 2, order, span };
 }
+
+// ─── Arranging ──────────────────────────────────────────────────────────────
+
+/**
+ * Move a key to a slot in the order.
+ *
+ * The whole of what a drag does. A drop is a position in a list, so there is no
+ * invalid one — which deletes the entire class of bug where a tile landed
+ * somewhere no arrangement could express: off the canvas, on top of a neighbour,
+ * in a gap that stopped existing when the panel was resized.
+ *
+ * `index` is where the key should end up *after* it has been taken out, which is
+ * how a list insertion is usually meant and is what {@link dropIndex} returns.
+ *
+ * @param {string[]} order - The current order
+ * @param {string} key - What is being moved
+ * @param {number} index - Where it goes, clamped into the list
+ * @returns {string[]} A new order, or the same array when nothing would change
+ */
+export function moveTo(order, key, index) {
+    const from = order.indexOf(key);
+    if (from < 0) return order;
+
+    const rest = order.filter((entry) => entry !== key);
+    const to = Math.min(Math.max(0, Math.round(index)), rest.length);
+    if (to === from) return order;
+
+    return [...rest.slice(0, to), key, ...rest.slice(to)];
+}
+
+/**
+ * Which slot a pointer is asking for.
+ *
+ * Pure, given the boxes, which is the only reason a drag is testable at all: the
+ * pointer arithmetic is separable from the pointer events. Boxes arrive in
+ * document order and are whatever `getBoundingClientRect` gave.
+ *
+ * The nearest tile by the distance to its centre, and then a side: before it if
+ * the pointer is above or left of that centre, after it otherwise. Reading order
+ * is a single sequence, so "above" has to outrank "left of" — a pointer on the
+ * line below is after everything on the line above it, however far left it sits.
+ *
+ * @param {Array<{key: string, left: number, top: number, right: number, bottom: number}>} boxes -
+ *   The tiles, in document order
+ * @param {{x: number, y: number}} point - Where the pointer is
+ * @returns {number} An insertion index in `[0, boxes.length]`
+ */
+export function dropIndex(boxes, point) {
+    if (!boxes?.length) return 0;
+
+    let nearest = 0;
+    let best = Infinity;
+    for (let index = 0; index < boxes.length; index += 1) {
+        const box = boxes[index];
+        const cx = (box.left + box.right) / 2;
+        const cy = (box.top + box.bottom) / 2;
+        const distance = (point.x - cx) ** 2 + (point.y - cy) ** 2;
+        if (distance < best) {
+            best = distance;
+            nearest = index;
+        }
+    }
+
+    const box = boxes[nearest];
+    const cy = (box.top + box.bottom) / 2;
+    const cx = (box.left + box.right) / 2;
+    // Vertically first: a pointer below a tile's middle is after it whatever its
+    // horizontal position, because the tiles below it come later in the reading
+    const after = point.y > cy || (point.y >= box.top && point.y <= box.bottom && point.x > cx);
+    return after ? nearest + 1 : nearest;
+}

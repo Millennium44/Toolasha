@@ -89,9 +89,15 @@ describe('a tile too small for its own controls', () => {
         expect(findTile()._zoom.style.maxWidth).toContain('100%');
     });
 
-    test('the grip carries its own backdrop, since it is drawn over a button', () => {
-        // A bare triangle on top of a button reads as neither
-        expect(findTile()._grip.style.background).toContain('rgba(8, 10, 20');
+    test('the handle runs the height of the right edge, because width is all it sets', () => {
+        // A corner grip meant "drag me in two directions". There is only one
+        // left: height is content now, and the only thing a tile can be made is
+        // wider, in whole columns.
+        const grip = findTile()._grip;
+
+        expect(grip.style.cursor).toBe('ew-resize');
+        expect(grip.style.height).toBe('100%');
+        expect(grip.style.right).toBe('0px');
     });
 
     test('both are hidden while the layout is locked', () => {

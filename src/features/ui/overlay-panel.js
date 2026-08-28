@@ -112,7 +112,7 @@ import {
 } from './overlay-layouts.js';
 import { hasCoarsePointer } from '../../utils/mobile.js';
 import { clampZoom, DEFAULT_ZOOM } from '../../utils/overlay-layout.js';
-import { columnsFor, spanFor, seedSpan, migrate, GAP } from '../../utils/overlay-flow.js';
+import { columnsFor, spanFor, seedSpan, migrate, moveTo, dropIndex, GAP } from '../../utils/overlay-flow.js';
 
 /**
  * The layout, per character.
@@ -2797,28 +2797,31 @@ class OverlayPanel {
         tile.appendChild(content);
         tile._content = content;
 
+        // The right edge rather than the corner, because there is nothing left
+        // to drag downwards: height is content now, and the only thing a tile
+        // can be made is wider — in whole columns
         const grip = document.createElement('div');
+        grip.title = 'Drag to set how many columns this tile takes';
         Object.assign(grip.style, {
             position: 'absolute',
             right: '0',
-            bottom: '0',
-            width: '12px',
-            height: '12px',
-            cursor: 'nwse-resize',
-            // Above the − and + buttons. They sit bottom left and a tile can be
-            // forty pixels wide, at which point two buttons reach the corner and
-            // cover the one control that would let you make the tile bigger
-            // again — the tile becomes stuck at the size that caused it.
+            top: '0',
+            width: '8px',
+            height: '100%',
+            cursor: 'ew-resize',
+            // Above the − and + buttons, which sit bottom left and on a narrow
+            // tile reach this edge
             zIndex: '3',
-            // Its own backdrop, because on a small tile it is now drawn over a
-            // button and a bare triangle on top of one reads as neither
-            background:
-                'linear-gradient(135deg, transparent 0 50%, rgba(158, 196, 255, 0.75) 50%), rgba(8, 10, 20, 0.85)',
+            background: 'linear-gradient(90deg, transparent, rgba(158, 196, 255, 0.55))',
+            borderTopRightRadius: '3px',
             borderBottomRightRadius: '3px',
             display: 'none',
         });
         tile.appendChild(grip);
         tile._grip = grip;
+
+        this._attachTileDrag(tile, row.key);
+        this._attachTileSpan(tile, grip, row.key);
 
         const zoomControl = this._tileZoomControl(tile, row.key);
         tile.appendChild(zoomControl);
@@ -2848,6 +2851,156 @@ class OverlayPanel {
         this.canvasEl.appendChild(tile);
         this.tiles.set(row.key, tile);
         return tile;
+    }
+
+    /**
+     * Drag a tile to move it through the order.
+     *
+     * The pointer machinery is what it always was; the arithmetic between
+     * pointer-down and pointer-up is the whole change. Instead of snapping a
+     * pixel offset and writing coordinates, the move handler asks `dropIndex`
+     * which slot the pointer is over and splices the order when that is a
+     * different one. The others slide because the grid reflows.
+     *
+     * A drop is a position in a list, so there is no invalid one — no tile can
+     * land off the canvas, on top of a neighbour, or in a gap that stops
+     * existing when the panel is resized.
+     *
+     * @param {HTMLElement} tile - The tile
+     * @param {string} key - Row key
+     */
+    _attachTileDrag(tile, key) {
+        let dragging = false;
+
+        const boxes = () =>
+            [...this.canvasEl.querySelectorAll('[data-overlay-row]')]
+                .filter((element) => element.style.display !== 'none')
+                .map((element) => {
+                    const rect = element.getBoundingClientRect();
+                    return {
+                        key: element.dataset.overlayRow,
+                        left: rect.left,
+                        top: rect.top,
+                        right: rect.right,
+                        bottom: rect.bottom,
+                    };
+                });
+
+        const onPointerMove = (event) => {
+            if (!dragging) return;
+
+            const laid = boxes();
+            const slot = dropIndex(laid, { x: event.clientX, y: event.clientY });
+            // `dropIndex` counts slots in the list as drawn, which still holds
+            // the dragged tile; `moveTo` wants the slot in the list without it
+            const from = laid.findIndex((box) => box.key === key);
+            const next = moveTo(this.settings.order, key, from >= 0 && slot > from ? slot - 1 : slot);
+            if (next === this.settings.order) return;
+
+            this.settings.order = next;
+            // Redrawn rather than reordered by hand: the draw is what knows
+            // which tiles are on screen, and reordering is a DOM move either way
+            this.interacting = false;
+            this._drawBody();
+            this.interacting = true;
+            tile.style.opacity = '0.65';
+            tile.style.zIndex = '2';
+        };
+
+        const onPointerUp = () => {
+            if (!dragging) return;
+            dragging = false;
+            this.interacting = false;
+            tile.style.opacity = '';
+            tile.style.zIndex = '';
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerUp);
+
+            this._save();
+            this._renderBody();
+        };
+
+        tile.addEventListener('pointerdown', (event) => {
+            // Not while locked, and never from the span handle or the text-size
+            // buttons, which are their own gestures
+            if (!this.isEditable || event.button !== 0) return;
+            if (tile._grip?.contains(event.target) || tile._zoom?.contains(event.target)) return;
+
+            dragging = true;
+            this.interacting = true;
+            // Lifted rather than moved: the tile stays in the flow, so the grid
+            // goes on drawing it where it currently belongs while the rest slide
+            tile.style.opacity = '0.65';
+            tile.style.zIndex = '2';
+            event.preventDefault();
+
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+            document.addEventListener('pointercancel', onPointerUp);
+        });
+    }
+
+    /**
+     * Drag a tile's right edge to set how many columns it takes.
+     *
+     * Height is not resizable, because height is content. Width is a whole
+     * number of columns, so this steps rather than slides: the span follows the
+     * pointer to the nearest column boundary and is clamped to the columns there
+     * are, which is what keeps the result meaningful at every other width.
+     *
+     * @param {HTMLElement} tile - The tile
+     * @param {HTMLElement} grip - Its right-edge handle
+     * @param {string} key - Row key
+     */
+    _attachTileSpan(tile, grip, key) {
+        let startX = 0;
+        let startSpan = 1;
+        let sizing = false;
+
+        const columnWidth = () => {
+            const columns = this.columns || 1;
+            const width = this.canvasEl?.clientWidth || DEFAULT_PANEL.width;
+            return Math.max(1, (width - GAP * (columns - 1)) / columns);
+        };
+
+        const onPointerMove = (event) => {
+            if (!sizing) return;
+
+            const steps = Math.round((event.clientX - startX) / columnWidth());
+            const wanted = spanFor(startSpan + steps, this.columns || 1);
+            if (wanted === this.settings.span?.[key]) return;
+
+            this.settings.span = { ...(this.settings.span || {}), [key]: wanted };
+            tile.style.gridColumn = `span ${wanted}`;
+        };
+
+        const onPointerUp = () => {
+            if (!sizing) return;
+            sizing = false;
+            this.interacting = false;
+            document.removeEventListener('pointermove', onPointerMove);
+            document.removeEventListener('pointerup', onPointerUp);
+            document.removeEventListener('pointercancel', onPointerUp);
+
+            this._save();
+            this._renderBody();
+        };
+
+        grip.addEventListener('pointerdown', (event) => {
+            if (!this.isEditable || event.button !== 0) return;
+
+            sizing = true;
+            this.interacting = true;
+            startX = event.clientX;
+            startSpan = spanFor(this.settings.span?.[key] ?? 1, this.columns || 1);
+            event.preventDefault();
+            event.stopPropagation();
+
+            document.addEventListener('pointermove', onPointerMove);
+            document.addEventListener('pointerup', onPointerUp);
+            document.addEventListener('pointercancel', onPointerUp);
+        });
     }
 
     /**

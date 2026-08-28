@@ -6,6 +6,8 @@ import {
     columnUnit,
     sweepLines,
     migrate,
+    moveTo,
+    dropIndex,
     COLUMN_MIN,
     GAP,
     MAX_SPAN,
@@ -324,5 +326,82 @@ describe('migrate', () => {
         // the four *Only* row options alive
         const v2 = migrate(combatOn440());
         expect(Object.keys(v2).sort()).toEqual(['order', 'span', 'version']);
+    });
+});
+
+describe('moveTo', () => {
+    const order = ['a', 'b', 'c', 'd'];
+
+    test('moves a key forward and back', () => {
+        expect(moveTo(order, 'a', 2)).toEqual(['b', 'c', 'a', 'd']);
+        expect(moveTo(order, 'd', 0)).toEqual(['d', 'a', 'b', 'c']);
+    });
+
+    test('a drop that changes nothing hands the same array back', () => {
+        expect(moveTo(order, 'b', 1)).toBe(order);
+    });
+
+    test('an index off either end lands at the end it is off', () => {
+        expect(moveTo(order, 'b', -5)).toEqual(['b', 'a', 'c', 'd']);
+        expect(moveTo(order, 'b', 99)).toEqual(['a', 'c', 'd', 'b']);
+    });
+
+    test('a key that is not in the order does not get added to it', () => {
+        expect(moveTo(order, 'nope', 0)).toBe(order);
+    });
+
+    test('every key survives, exactly once', () => {
+        for (const index of [0, 1, 2, 3, 4]) {
+            const moved = moveTo(order, 'c', index);
+            expect([...moved].sort()).toEqual([...order].sort());
+            expect(new Set(moved).size).toBe(order.length);
+        }
+    });
+});
+
+describe('dropIndex', () => {
+    // Two columns of two, as the grid draws them
+    const boxes = [
+        { key: 'a', left: 0, top: 0, right: 100, bottom: 40 },
+        { key: 'b', left: 100, top: 0, right: 200, bottom: 40 },
+        { key: 'c', left: 0, top: 40, right: 100, bottom: 80 },
+        { key: 'd', left: 100, top: 40, right: 200, bottom: 80 },
+    ];
+
+    test('the left half of a tile means before it, the right half after', () => {
+        expect(dropIndex(boxes, { x: 20, y: 20 })).toBe(0);
+        expect(dropIndex(boxes, { x: 80, y: 20 })).toBe(1);
+        expect(dropIndex(boxes, { x: 120, y: 20 })).toBe(1);
+        expect(dropIndex(boxes, { x: 180, y: 20 })).toBe(2);
+    });
+
+    test('lower outranks further left, so a line below is not a line above', () => {
+        // Reading order is one sequence. Without this, dragging to the start of
+        // the second line would read as dragging to the start of the first,
+        // because the pointer is further left than everything on it.
+        expect(dropIndex(boxes, { x: 0, y: 60 })).toBe(2);
+        // And below the line it is nearest to is after that line's first tile,
+        // not before it
+        expect(dropIndex(boxes, { x: 0, y: 100 })).toBe(3);
+    });
+
+    test('past the last tile is the end of the list', () => {
+        expect(dropIndex(boxes, { x: 190, y: 79 })).toBe(4);
+        expect(dropIndex(boxes, { x: 500, y: 500 })).toBe(4);
+    });
+
+    test('an empty canvas is the only slot there is', () => {
+        expect(dropIndex([], { x: 10, y: 10 })).toBe(0);
+        expect(dropIndex(null, { x: 10, y: 10 })).toBe(0);
+    });
+
+    test('never asks for a slot the list does not have', () => {
+        for (const y of [-50, 0, 20, 60, 200]) {
+            for (const x of [-50, 0, 50, 150, 400]) {
+                const index = dropIndex(boxes, { x, y });
+                expect(index).toBeGreaterThanOrEqual(0);
+                expect(index).toBeLessThanOrEqual(boxes.length);
+            }
+        }
     });
 });

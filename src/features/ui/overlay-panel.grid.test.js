@@ -366,3 +366,107 @@ describe('a row the saved order has never heard of', () => {
         expect(column('broad')).toBe('span 2');
     });
 });
+
+describe('arranging by hand', () => {
+    /**
+     * Put three tiles up, unlocked, with rectangles happy-dom will not measure
+     * for us — the drag arithmetic is pure given the boxes, so the boxes are
+     * what a test has to supply.
+     * @returns {Array<HTMLElement>} The tiles, in order
+     */
+    function threeUnlocked() {
+        registry.rows = [speaking('a'), speaking('b'), speaking('c')];
+        overlayPanel.settings.visible = { a: true, b: true, c: true };
+        overlayPanel.settings.order = ['a', 'b', 'c'];
+        overlayPanel.settings.locked = false;
+        overlayPanel.show();
+
+        const rects = { a: [0, 0], b: [100, 0], c: [0, 40] };
+        for (const [key, [left, top]] of Object.entries(rects)) {
+            overlayPanel.tiles.get(key).getBoundingClientRect = () => ({
+                left,
+                top,
+                right: left + 100,
+                bottom: top + 40,
+                width: 100,
+                height: 40,
+            });
+        }
+        return ['a', 'b', 'c'].map((key) => overlayPanel.tiles.get(key));
+    }
+
+    /**
+     * @param {HTMLElement} tile - What to drag
+     * @param {number} x - Where to drop it
+     * @param {number} y - Where to drop it
+     */
+    function drag(tile, x, y) {
+        tile.dispatchEvent(new window.PointerEvent('pointerdown', { button: 0, bubbles: true }));
+        document.dispatchEvent(new window.PointerEvent('pointermove', { clientX: x, clientY: y, bubbles: true }));
+        document.dispatchEvent(new window.PointerEvent('pointerup', { bubbles: true }));
+    }
+
+    test('dragging a tile past another swaps their places in the order', () => {
+        const [first] = threeUnlocked();
+
+        // Onto the right half of the second tile
+        drag(first, 180, 20);
+
+        expect(overlayPanel.settings.order).toEqual(['b', 'a', 'c']);
+        expect(drawn()).toEqual(['b', 'a', 'c']);
+    });
+
+    test('dragging to the line below moves it there rather than to the start', () => {
+        const [first] = threeUnlocked();
+
+        drag(first, 10, 60);
+
+        expect(overlayPanel.settings.order[overlayPanel.settings.order.indexOf('a')]).toBe('a');
+        expect(overlayPanel.settings.order).not.toEqual(['a', 'b', 'c']);
+    });
+
+    test('a drop keeps every tile, exactly once', () => {
+        const [first] = threeUnlocked();
+
+        drag(first, 500, 500);
+
+        expect([...overlayPanel.settings.order].sort()).toEqual(['a', 'b', 'c']);
+        expect(new Set(overlayPanel.settings.order).size).toBe(3);
+    });
+
+    test('nothing moves while the layout is locked', () => {
+        const [first] = threeUnlocked();
+        overlayPanel.settings.locked = true;
+        overlayPanel._renderBody();
+
+        drag(first, 180, 20);
+
+        expect(overlayPanel.settings.order).toEqual(['a', 'b', 'c']);
+    });
+
+    test('the right-edge handle steps the span in whole columns', () => {
+        const [first] = threeUnlocked();
+        Object.defineProperty(overlayPanel.canvasEl, 'clientWidth', { value: 200, configurable: true });
+        overlayPanel.columns = 2;
+
+        const grip = first._grip;
+        grip.dispatchEvent(new window.PointerEvent('pointerdown', { button: 0, bubbles: true, clientX: 0 }));
+        document.dispatchEvent(new window.PointerEvent('pointermove', { clientX: 100, bubbles: true }));
+        document.dispatchEvent(new window.PointerEvent('pointerup', { bubbles: true }));
+
+        expect(overlayPanel.settings.span.a).toBe(2);
+    });
+
+    test('and never past the columns there are', () => {
+        const [first] = threeUnlocked();
+        Object.defineProperty(overlayPanel.canvasEl, 'clientWidth', { value: 200, configurable: true });
+        overlayPanel.columns = 2;
+
+        const grip = first._grip;
+        grip.dispatchEvent(new window.PointerEvent('pointerdown', { button: 0, bubbles: true, clientX: 0 }));
+        document.dispatchEvent(new window.PointerEvent('pointermove', { clientX: 5000, bubbles: true }));
+        document.dispatchEvent(new window.PointerEvent('pointerup', { bubbles: true }));
+
+        expect(overlayPanel.settings.span.a).toBe(2);
+    });
+});
