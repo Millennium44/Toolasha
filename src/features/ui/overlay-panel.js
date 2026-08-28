@@ -406,6 +406,8 @@ class OverlayPanel {
         this.undoState = null;
         /** Saved layout names as last read; null until storage has been asked */
         this.savedLayouts = null;
+        /** The name of the layout last applied, for the popover to say so */
+        this.appliedLayout = null;
         /** What auto-switching has seen and done — see `decideAutoSwitch` */
         this.switchState = freshSwitchState();
         /**
@@ -1482,6 +1484,22 @@ class OverlayPanel {
         if (!names.length) deleteBtn.style.opacity = '0.5';
         bar.appendChild(deleteBtn);
 
+        // Which layout is actually in force.
+        //
+        // The dropdown deliberately reads "Switch to…" rather than the current
+        // name, because a switch that arrives already reading "Dungeon" implies
+        // a layout is in force that may not be. That leaves nothing at all
+        // saying what *is* in force — and with auto-switching on, the panel can
+        // change layout without anybody pressing anything. Two live-debugging
+        // rounds were spent working out which layout a screenshot was of.
+        if (this.appliedLayout) {
+            const active = document.createElement('div');
+            active.dataset.overlayActiveLayout = 'true';
+            active.textContent = `Showing: ${this.appliedLayout}`;
+            Object.assign(active.style, { color: COLORS.textDim, flexBasis: '100%', marginTop: '2px' });
+            bar.appendChild(active);
+        }
+
         bar.appendChild(this._autoSwitchControls(offered));
 
         return bar;
@@ -1758,6 +1776,7 @@ class OverlayPanel {
             // find auto-switching still unpaused and switch out from under the
             // choice being made
             if (byHand) this.switchState = pauseForManualChoice(this.switchState, currentActivity());
+            this.appliedLayout = key;
 
             await this._applyLayout(read, `switch to ${key}`);
             return true;
@@ -1982,8 +2001,10 @@ class OverlayPanel {
             this._exportLayout()
         );
 
-        const reset = this._textButton('Reset layout', 'Forget every position, size and text scale', () =>
-            this._resetLayout()
+        const reset = this._textButton(
+            'Reset layout',
+            'Put the tiles back to the arrangement the script ships with',
+            () => this._resetLayout()
         );
         reset.style.color = '#ff9d9d';
         reset.style.marginLeft = 'auto';
@@ -2063,8 +2084,7 @@ class OverlayPanel {
     _snapshot(what) {
         this.undoState = {
             what,
-            positions: { ...this.settings.positions },
-            sizes: { ...this.settings.sizes },
+            span: { ...this.settings.span },
             zoom: { ...this.settings.zoom },
             textScale: this.settings.textScale,
             visible: { ...this.settings.visible },
@@ -2077,8 +2097,8 @@ class OverlayPanel {
     _undo() {
         if (!this.undoState) return;
 
-        const { positions, sizes, zoom, textScale, visible, order, curatedDefaults } = this.undoState;
-        this.settings = { ...this.settings, positions, sizes, zoom, textScale, visible, order, curatedDefaults };
+        const { span, zoom, textScale, visible, order, curatedDefaults } = this.undoState;
+        this.settings = { ...this.settings, span, zoom, textScale, visible, order, curatedDefaults };
         this.undoState = null;
         this._save();
         if (this.panel) this.panel.style.fontSize = `${this._baseFontPx()}px`;
@@ -2122,21 +2142,47 @@ class OverlayPanel {
      * pressed to escape. So it forgets and then *arranges*: the same column pack
      * Autogrid uses, which is a grid rather than a pile.
      */
-    _resetLayout() {
+    async _resetLayout() {
+        // Asked first. Import already asks, and this throws away exactly as much
+        // — an arrangement somebody may have spent a while on — with the
+        // difference that Import at least announces itself with a file picker.
+        // Undo covers it, but Undo is one deep and is not where anybody looks
+        // when they meant to press something else.
+        const answer = await askChoice({
+            title: 'Reset overlay layout',
+            message:
+                'Put the tiles back to the arrangement the script ships with. ' +
+                'Which tiles are switched on is not changed.',
+            choices: [
+                { value: 'reset', label: 'Reset layout', tone: 'primary' },
+                { value: null, label: 'Cancel' },
+            ],
+        });
+        if (!answer) return;
+
         this._snapshot('Reset');
-        this.settings.positions = {};
-        this.settings.sizes = {};
+
+        // The Default preset's own order and spans, for the rows this character
+        // actually has on — "forget the arrangement" now has an arrangement to
+        // go back to, rather than a packer to re-run
+        const shipped = PRESET_LAYOUTS.Default;
+        const known = new Set(registeredRows().map((row) => row.key));
+        const first = shipped.order.filter((key) => known.has(key));
+        const rest = (this.settings.order || []).filter((key) => !first.includes(key));
+
+        this.settings.order = [...first, ...rest];
+        this.settings.span = { ...shipped.span };
         this.settings.zoom = {};
         this.settings.textScale = 100;
+
         clearGeometry(GEOMETRY_KEY);
         this.panel.style.width = `${DEFAULT_PANEL.width}px`;
         this.panel.style.height = `${DEFAULT_PANEL.height}px`;
         this.panel.style.fontSize = `${this._baseFontPx()}px`;
         // The design size is a desktop's; on a phone it is wider than the screen
         this._clampToViewport();
-        // After the frame is back to its own size, so the columns are measured
-        // against the canvas the tiles will actually be drawn on
-        this._packVisible();
+        this._applyColumns();
+
         this._save();
         this._renderBody();
         this._renderPicker();
@@ -2253,55 +2299,6 @@ class OverlayPanel {
         this._renderPicker();
         this._renderBody();
         this._placePicker();
-    }
-
-    /**
-     * How wide the canvas has to be for an imported layout to fit.
-     *
-     * Taken from the layout rather than from the panel, because on import the
-     * panel is still whatever size it was before — and laying a 560-wide layout
-     * out against a 470-wide canvas does not scroll, it *clamps*, folding the
-     * right-hand column onto the left one.
-     *
-     * @param {Object} settings - Settings holding the imported positions and sizes
-     * @returns {number} Canvas width
-     */
-    _importWidth(settings) {
-        let needed = 0;
-        for (const [key, position] of Object.entries(settings.positions || {})) {
-            const size = settings.sizes?.[key];
-            if (size?.width > 0) needed = Math.max(needed, (position?.x || 0) + size.width);
-        }
-        return Math.max(this._canvasWidth(), needed);
-    }
-
-    /**
-     * An imported layout's tile sizes, never smaller than the row needs.
-     *
-     * A size in an OPanel file is a measurement of OPanel's own rendering. Ours
-     * is not the same rendering — different labels, different spacing — so a
-     * tile imported verbatim clips the row it is supposed to hold, which is what
-     * turned an imported layout into a wall of half-words.
-     *
-     * The larger of the two, rather than ours outright: a tile someone
-     * deliberately made roomy stays roomy.
-     *
-     * @param {Object} imported - `{ [key]: {width, height} }` from the file
-     * @returns {Object} The same, grown where it was too small
-     */
-    _fitSizes(imported) {
-        const sizes = { ...imported };
-        for (const row of registeredRows()) {
-            const wanted = row.defaultSize;
-            const theirs = sizes[row.key];
-            if (!wanted || !theirs) continue;
-
-            sizes[row.key] = {
-                width: Math.max(theirs.width, wanted.width),
-                height: Math.max(theirs.height, wanted.height),
-            };
-        }
-        return sizes;
     }
 
     /**

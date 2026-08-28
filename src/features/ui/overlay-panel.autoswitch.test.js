@@ -526,8 +526,7 @@ describe('applying a preset over a layout somebody had already made', () => {
         overlayPanel.settings.curatedDefaults = false;
         overlayPanel.settings.visible = { dps: true, luck: true };
         overlayPanel.settings.order = ['dps', 'luck'];
-        overlayPanel.settings.positions = { dps: { x: 17, y: 3 }, luck: { x: 240, y: 41 } };
-        overlayPanel.settings.sizes = { dps: { width: 240, height: 40 } };
+        overlayPanel.settings.span = { dps: 2 };
 
         // Wide enough for the two columns every preset is written for
         Object.defineProperty(overlayPanel.scrollEl, 'offsetWidth', { value: 488, configurable: true });
@@ -570,7 +569,7 @@ describe('applying a preset over a layout somebody had already made', () => {
         await overlayPanel.applyNamedLayout('Skilling');
         overlayPanel._undo();
 
-        expect(overlayPanel.settings.positions.dps).toEqual({ x: 17, y: 3 });
+        expect(overlayPanel.settings.order).toEqual(['dps', 'luck']);
         expect(overlayPanel.settings.visible.dps).toBe(true);
     });
 });

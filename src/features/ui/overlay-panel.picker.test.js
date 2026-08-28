@@ -510,4 +510,35 @@ describe('resetting to the default tiles', () => {
         // The values are what is stored, and none of them may drift
         expect(options.map((option) => option.value)).toEqual(['auto', 'compact', 'hide', 'full']);
     });
+    test('the popover says which layout is in force', () => {
+        // The dropdown deliberately reads "Switch to…" rather than the current
+        // name, which left nothing at all saying what *is* in force — and with
+        // auto-switching on, the panel changes layout without anybody pressing
+        // anything
+        overlayPanel.appliedLayout = null;
+        openGear();
+        expect(overlayPanel.pickerEl.querySelector('[data-overlay-active-layout]')).toBeNull();
+
+        overlayPanel.appliedLayout = 'Skilling';
+        overlayPanel._renderPicker();
+
+        expect(overlayPanel.pickerEl.querySelector('[data-overlay-active-layout]').textContent).toBe(
+            'Showing: Skilling'
+        );
+    });
+
+    test('Reset layout asks before throwing an arrangement away', async () => {
+        // Import already asks, and this throws away as much — with the
+        // difference that Import at least announces itself with a file picker
+        openGear();
+        overlayPanel.settings.span = { dps: 2 };
+
+        dialog.answer = null;
+        await overlayPanel._resetLayout();
+        expect(overlayPanel.settings.span).toEqual({ dps: 2 });
+
+        dialog.answer = 'reset';
+        await overlayPanel._resetLayout();
+        expect(overlayPanel.settings.span).not.toEqual({ dps: 2 });
+    });
 });

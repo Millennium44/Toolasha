@@ -269,26 +269,29 @@ export function tileClassFor(row) {
  * you can do about it, which means the tile has to be able to open the panel you
  * would add to. A watch tile with no `onOpen` is a dead end, and stands down.
  *
- * ## Why `auto` no longer hides a measurement
+ * ## Why `auto` compacts rather than hides
  *
- * It used to, and the reasoning was sound in isolation: a dungeon run that may
- * never happen is not worth a placeholder, so the tile went away until it had
- * something to say.
+ * It used to hide, and then for a while the reason it stopped was that a tile
+ * which went away left a hole: coordinates were saved per tile, so a vanished
+ * one took its rectangle out of the drawing and left the gap where it had been.
  *
- * What that reasoning did not account for is that tiles now sit in a **grid**
- * with saved positions, and a tile that goes away does not take its slot with
- * it. It leaves a hole. On a character crafting quietly, the top line of the
- * Skilling preset came out as an empty left cell with "Melee 151: —" hugging the
- * right column — reported, correctly, as the layout being jumbled. Hiding is a
- * good answer for a list, where the tiles below close up behind it, and a bad
- * one for a grid, where the arrangement is the point.
+ * **That reason is gone.** Tiles sit in a grid in document order now, and
+ * `display: none` on a grid item takes it out of the flow completely — whatever
+ * follows closes up behind it, at every width, for free. There is no hole to
+ * leave. `hide` is a perfectly good option and anybody who wants a panel of only
+ * live figures should take it.
  *
- * So `auto` compacts instead: the tile keeps its slot and its column and shrinks
- * to a dim strip carrying its own name, and the line it is in settles to the
- * height of whatever is actually drawn in it. Nothing moves sideways, nothing
- * leaves a gap, and the wall-of-promises worry the old rule guarded against is
- * met by the strip being twenty pixels of dim name rather than a placeholder
- * sentence. `hide` is still there for anyone who preferred it.
+ * What survives is a different and better reason, and it is the one to keep in
+ * mind if this is ever revisited: the strip is **identity and reachability**. It
+ * says the tile is switched on and waiting rather than broken — which is exactly
+ * the report `waitingLine` and `justEnabled` exist to answer — and for a watch
+ * tile with an `onOpen` it is the click target that fills it. A tile that has
+ * silently gone is indistinguishable from a feature that has silently failed.
+ *
+ * So `compact` stays the default on its own merits rather than on the old
+ * mechanical grounds, and the one case that still hides on its own is a watch
+ * tile with no panel to open: its strip would name a feature and offer nothing
+ * to do about it.
  *
  * @param {Object} row - A row definition
  * @param {string} [setting] - The panel's `emptyTiles` setting
