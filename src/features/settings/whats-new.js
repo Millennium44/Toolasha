@@ -687,7 +687,14 @@ class WhatsNew {
 
     /** @private */
     async _saveState(identity, schemaIds) {
-        await storage.setJSON(this._stateKey(), { ...identity, knownIds: schemaIds, seenAt: Date.now() }, 'settings');
+        // Immediate: this sits on the startup path before features initialise,
+        // and riding the 3-second write debounce held the whole start for it
+        await storage.setJSON(
+            this._stateKey(),
+            { ...identity, knownIds: schemaIds, seenAt: Date.now() },
+            'settings',
+            true
+        );
     }
 
     /** Show the popup, where there is something to show and it is wanted. */

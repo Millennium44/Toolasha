@@ -54,7 +54,11 @@ class CharacterActivityCollector {
         this.beforeUnloadHandler = () => this.recomputeAndPersist(generation, true);
         window.addEventListener('beforeunload', this.beforeUnloadHandler);
 
-        await this.recomputeAndPersist(generation);
+        // Not awaited: the persist rides the storage module's 3-second write
+        // debounce, and awaiting it (twice, with the preferences mirror) held
+        // the whole sequential feature init for six seconds. It catches its
+        // own failures; nothing after this needs the write landed.
+        this.recomputeAndPersist(generation);
     }
 
     /**

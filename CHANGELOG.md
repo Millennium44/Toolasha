@@ -6,6 +6,11 @@ All changes to this fork since diverging from upstream (Celasha/Toolasha at v2.8
 
 ## Unreleased — branch `main`
 
+### Startup stops waiting nine seconds for write timers
+
+A performance trace showed three startup paths awaiting the storage module's three-second write debounce — the character-activity collector twice in a row (six seconds), the session briefing's listing baseline (three), and the what's-new state stamp (three, before features even began). None of them needed the write landed to continue; the first two now fire and forget, the third writes immediately. Roughly nine of the ten blocking startup seconds gone.
+
+
 ### The restock tabs finally watch you buy
 
 The earlier missing-mats fix covered the action-panel tabs but not the shopping-list hand-off (the labyrinth Buy-all and the shrine plan use it) — those tabs were built once with static counts and never looked again. Each line now remembers the holdings it opened against and counts everything acquired since — inventory and bought-but-unclaimed buy-order units alike — so badges fall as purchases land, a filled line turns green, and clicking a half-filled tab arms the buy box with only what is left.

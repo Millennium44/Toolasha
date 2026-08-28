@@ -266,7 +266,9 @@ async function loadListingDelta(characterId) {
         }
 
         listingDelta = { filled };
-        await storage.set(key, { at: Date.now(), listings: listingFingerprint(listings) }, 'settings');
+        // The fresh baseline is for the NEXT session's comparison; awaiting
+        // its debounced write here blocked feature init for three seconds
+        storage.set(key, { at: Date.now(), listings: listingFingerprint(listings) }, 'settings');
     } catch (error) {
         console.error('[SessionBriefing] Could not compare listings against the last session:', error);
     }
