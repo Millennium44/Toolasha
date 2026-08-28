@@ -641,6 +641,25 @@ describe('one list per character', () => {
     });
 });
 
+describe('cleanup on a character switch', () => {
+    test('empties state synchronously, before reload() has had a chance to run', () => {
+        // The overlay panel re-initializes and starts redrawing on its 1s
+        // timer as soon as character_switching fires — well before this
+        // feature's own reload() (bound to character_initialized /
+        // character_switched) finishes its async read of the new
+        // character's list. Without a synchronous reset here, the watchlist
+        // tile would show the outgoing character's entries and totals under
+        // the incoming character's name for that gap.
+        watchItem('/items/cheese', 'Cheese');
+        expect(watchlistEntries().length).toBeGreaterThan(0);
+
+        watchlist.cleanup();
+
+        expect(watchlistEntries()).toEqual([]);
+        expect(watchlistRows()).toEqual([]);
+    });
+});
+
 describe('the stored list survives a read that cannot be made', () => {
     const KEY = 'watchlist_market123';
     const settingsStore = () => storageMock.storeFor('settings');

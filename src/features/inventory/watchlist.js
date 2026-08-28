@@ -1018,6 +1018,17 @@ export default {
         detachMenuObserver = null;
         document.querySelectorAll(`.${MENU_BUTTON_CLASS}`).forEach((button) => button.remove());
         watchlistPanel.hide();
+        // `state` is module-scope and outlives a character switch — the overlay
+        // panel re-initializes and starts redrawing on its 1s timer before
+        // reload() (fired from character_initialized/character_switched) has
+        // finished its async read. Left as-is, the watchlist tile shows the
+        // outgoing character's tracked items and totals under the incoming
+        // character's name until that read lands. Reset here, synchronously,
+        // so the tile reads "Nothing watched" for that gap instead — the same
+        // shape as treasure-tracker's disable().
+        Object.assign(state, emptyState());
+        stateOwner = null;
+        inventoryBadgeManager.invalidateCache?.();
     },
 };
 
