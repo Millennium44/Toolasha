@@ -520,9 +520,10 @@ export function buildTotalsTable(attribution) {
  * @param {Object} [options] - Extras the attribution does not carry
  * @param {Array<Object>} [options.series] - Net worth snapshots, for the calendar section
  * @param {number} [options.now] - Clock, injectable for tests
+ * @param {Function|null} [options.onSelectDay] - Called with a calendar cell's `day` id when clicked
  * @returns {HTMLElement} The body element
  */
-export function buildPanelBody(attribution, { series = null, now = undefined } = {}) {
+export function buildPanelBody(attribution, { series = null, now = undefined, onSelectDay = null } = {}) {
     const body = document.createElement('div');
     body.className = 'mwi-gold-sources-body';
 
@@ -655,7 +656,7 @@ export function buildPanelBody(attribution, { series = null, now = undefined } =
     }
 
     if (Array.isArray(series)) {
-        body.appendChild(buildCalendarSection(series, now === undefined ? {} : { now }));
+        body.appendChild(buildCalendarSection(series, now === undefined ? {} : { now }, onSelectDay));
     }
 
     return body;
@@ -722,9 +723,10 @@ export function calendarSummaryText(summary) {
 /**
  * The grid itself, one column per week and one cell per day.
  * @param {Object} calendar - From `buildNetworthCalendar`
+ * @param {Function|null} [onSelectDay] - Called with a cell's `day` id when it is clicked
  * @returns {HTMLElement} The grid block
  */
-export function buildCalendarGrid(calendar) {
+export function buildCalendarGrid(calendar, onSelectDay = null) {
     const block = document.createElement('div');
     block.className = 'mwi-nw-calendar-grid';
     block.style.cssText = 'display: flex; gap: 3px; margin: 6px 0;';
@@ -774,6 +776,14 @@ export function buildCalendarGrid(calendar) {
                     box.textContent = '·';
                     box.style.cssText += '; font-size: 12px; line-height: 9px; text-align: center; color: #111827';
                 }
+                // The calendar and the day-by-day gold breakdown are two views of
+                // the same history; a cell that already names its own day is the
+                // natural door from one into the other
+                if (typeof onSelectDay === 'function') {
+                    box.style.cursor = 'pointer';
+                    box.title += '\nClick to open the gold breakdown for this day.';
+                    box.addEventListener('click', () => onSelectDay(cell.day));
+                }
             }
             column.appendChild(box);
         }
@@ -788,9 +798,10 @@ export function buildCalendarGrid(calendar) {
  * The calendar section's contents: summary line, grid, and what a cell means.
  * @param {Array<Object>} series - Net worth snapshots `{t, total}`
  * @param {Object} [options] - Passed through to `buildNetworthCalendar`
+ * @param {Function|null} [onSelectDay] - Called with a cell's `day` id when it is clicked
  * @returns {HTMLElement} The block
  */
-export function buildCalendarBody(series, options = {}) {
+export function buildCalendarBody(series, options = {}, onSelectDay = null) {
     const holder = document.createElement('div');
     holder.className = 'mwi-nw-calendar';
 
@@ -802,7 +813,7 @@ export function buildCalendarBody(series, options = {}) {
     summary.textContent = calendarSummaryText(calendar.summary);
     holder.appendChild(summary);
 
-    holder.appendChild(buildCalendarGrid(calendar));
+    holder.appendChild(buildCalendarGrid(calendar, onSelectDay));
 
     const note = document.createElement('div');
     note.className = 'mwi-nw-calendar-note';
@@ -826,9 +837,10 @@ export function buildCalendarBody(series, options = {}) {
  *
  * @param {Array<Object>} series - Net worth snapshots `{t, total}`
  * @param {Object} [options] - Passed through to `buildNetworthCalendar`
+ * @param {Function|null} [onSelectDay] - Called with a cell's `day` id when it is clicked
  * @returns {HTMLElement} The section
  */
-export function buildCalendarSection(series, options = {}) {
+export function buildCalendarSection(series, options = {}, onSelectDay = null) {
     const section = document.createElement('div');
     section.className = 'mwi-nw-calendar-section';
     section.style.cssText = 'margin-top: 10px; border-top: 1px solid rgba(255,255,255,0.12); padding-top: 6px;';
@@ -855,7 +867,7 @@ export function buildCalendarSection(series, options = {}) {
         if (open && !drawn) {
             drawn = true;
             try {
-                body.appendChild(buildCalendarBody(series, options));
+                body.appendChild(buildCalendarBody(series, options, onSelectDay));
             } catch (error) {
                 console.error('[GoldSources] The calendar could not be drawn:', error);
                 body.textContent = 'The calendar could not be drawn.';
@@ -872,6 +884,10 @@ class GoldSourcesPanel {
     constructor() {
         this.modal = null;
         this.activeWindow = 'week';
+        // Set when a calendar cell is clicked: the end of that local day, so the
+        // active window is read relative to the day chosen rather than to now.
+        // Null means "now", which is what every window button resets it to.
+        this.anchorTo = null;
     }
 
     /**
@@ -897,7 +913,7 @@ class GoldSourcesPanel {
      */
     async buildAttribution() {
         const days = WINDOWS.find((entry) => entry.key === this.activeWindow)?.days || 7;
-        const to = Date.now();
+        const to = Number.isFinite(this.anchorTo) ? this.anchorTo : Date.now();
         // localDayId, not toISOString(): the ISO slice is the UTC date, and
         // feeding a UTC id to a LOCAL dayStart put the window's start in the
         // future for any evening west of Greenwich — an empty Day view
@@ -926,9 +942,27 @@ class GoldSourcesPanel {
         const header = document.createElement('div');
         header.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-bottom: 8px;';
         const title = document.createElement('h3');
-        title.textContent = 'Where the gold came from';
+        title.textContent = Number.isFinite(this.anchorTo)
+            ? `Where the gold came from — ${localDayId(this.anchorTo)}`
+            : 'Where the gold came from';
         title.style.cssText = 'margin: 0; flex: 1; font-size: 14px;';
         header.appendChild(title);
+
+        if (Number.isFinite(this.anchorTo)) {
+            const today = document.createElement('button');
+            today.textContent = 'Back to today';
+            today.title =
+                'Drop the day picked from the calendar and go back to what the window buttons mean by default.';
+            today.style.cssText =
+                'background: none; border: 1px solid rgba(255,255,255,0.16); color: #9ca3af; ' +
+                'border-radius: 3px; padding: 3px 8px; cursor: pointer; font-size: 11px;';
+            today.addEventListener('click', async () => {
+                this.anchorTo = null;
+                this.closeModal();
+                await this.openModal();
+            });
+            header.appendChild(today);
+        }
 
         const close = document.createElement('button');
         close.textContent = '✕';
@@ -950,6 +984,9 @@ class GoldSourcesPanel {
                 }; color: ${window.key === this.activeWindow ? '#22c55e' : '#9ca3af'};`;
             button.addEventListener('click', async () => {
                 this.activeWindow = window.key;
+                // A window button is an explicit choice of "the current N days";
+                // it always overrides a day picked from the calendar
+                this.anchorTo = null;
                 this.closeModal();
                 await this.openModal();
             });
@@ -969,7 +1006,15 @@ class GoldSourcesPanel {
             const { attribution, series } = await this.buildAttribution();
             if (!this.modal) return;
             bodyHolder.textContent = '';
-            bodyHolder.appendChild(buildPanelBody(attribution, { series }));
+            const onSelectDay = async (dayId) => {
+                this.activeWindow = 'day';
+                // The end of that local day, so the "Day" window's own
+                // now-minus-(days-1) arithmetic lands on exactly that day
+                this.anchorTo = dayStart(dayId) + DAY_MS - 1;
+                this.closeModal();
+                await this.openModal();
+            };
+            bodyHolder.appendChild(buildPanelBody(attribution, { series, onSelectDay }));
         } catch (error) {
             console.error('[GoldSources] The panel could not be drawn:', error);
             bodyHolder.textContent = 'The attribution could not be drawn.';

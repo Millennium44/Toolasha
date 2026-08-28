@@ -586,6 +586,30 @@ describe('the daily net worth calendar section', () => {
         const { section } = openCalendar([]);
         expect(section.querySelector('.mwi-nw-calendar-summary').textContent).toContain('No day in this window');
     });
+
+    test('without a handler, a cell is not clickable', () => {
+        const { section } = openCalendar([at(8, 20, 20, 100), at(8, 21, 20, 160)]);
+        const cell = section.querySelector('.mwi-nw-calendar-cell[data-day="2026-08-21"]');
+        expect(cell.style.cursor).not.toBe('pointer');
+        expect(cell.title).not.toContain('Click to open');
+    });
+
+    test('clicking a cell calls the handler with that day, when one is given', () => {
+        const onSelectDay = vi.fn();
+        const body = buildPanelBody(attribution(), {
+            series: [at(8, 20, 20, 100), at(8, 21, 20, 160)],
+            now: NOW,
+            onSelectDay,
+        });
+        const section = body.querySelector('.mwi-nw-calendar-section');
+        section.querySelector('.mwi-nw-calendar-toggle').click();
+        const cell = section.querySelector('.mwi-nw-calendar-cell[data-day="2026-08-21"]');
+
+        expect(cell.style.cursor).toBe('pointer');
+        expect(cell.title).toContain('Click to open');
+        cell.click();
+        expect(onSelectDay).toHaveBeenCalledWith('2026-08-21');
+    });
 });
 
 describe('calendarSummaryText', () => {
