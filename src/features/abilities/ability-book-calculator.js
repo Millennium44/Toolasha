@@ -162,21 +162,22 @@ class AbilityBookCalculator {
      * @param {number} currentXp - Current ability XP
      * @param {number} targetLevel - Target ability level
      * @param {number} xpPerBook - XP gained per book
-     * @returns {number} Number of books needed
+     * @returns {number|null} Number of books needed, or null when the target level
+     *   is beyond what the game's experience table describes (past the level 200
+     *   cap) — distinct from needing zero books, which means "already there"
      */
     calculateBooksNeeded(currentLevel, currentXp, targetLevel, xpPerBook) {
         // The same arithmetic the Watchlist-era book panel uses, in one place:
         // two copies of "and one more book if the ability is unlearned" is two
         // places for it to go missing
         const table = dataManager.getInitClientData()?.levelExperienceTable;
-        const books = booksToLevel({
+        return booksToLevel({
             level: currentLevel,
             experience: currentXp,
             targetLevel,
             perBookExperience: xpPerBook,
             table,
         });
-        return books ?? 0;
     }
 
     /**
@@ -193,10 +194,16 @@ class AbilityBookCalculator {
         }
 
         const { level: currentLevel, xp: currentXp } = abilityData;
+        // 200 is the level cap: an ability already there has no "next level" to
+        // buy towards, and the arithmetic below returns null for it (the
+        // experience table has nothing past 200) rather than a books count
+        const atMaxLevel = currentLevel >= 200;
         const targetLevel = currentLevel + 1;
 
         // Calculate initial books needed
-        const booksNeeded = this.calculateBooksNeeded(currentLevel, currentXp, targetLevel, xpPerBook);
+        const booksNeeded = atMaxLevel
+            ? null
+            : this.calculateBooksNeeded(currentLevel, currentXp, targetLevel, xpPerBook);
 
         // Get market prices
         const prices = marketAPI.getPrice(itemHrid, 0);
@@ -217,7 +224,19 @@ class AbilityBookCalculator {
             'tillLevel'
         );
 
-        calculatorDiv.innerHTML = `
+        // At the cap there is nothing to aim an input at — min would be 201
+        // against a max of 200, and a coerced-to-zero books count would read
+        // as "buy nothing" rather than "cannot go further"
+        calculatorDiv.innerHTML = atMaxLevel
+            ? `
+            <div style="font-size: 0.95em;">
+                <strong>Current level:</strong> ${currentLevel} (max)
+            </div>
+            <div id="tillLevelNumber" style="font-size: 0.95em; margin-top: 8px;">
+                Already at the level cap — nothing more to buy.
+            </div>
+        `
+            : `
             <div style="margin-bottom: 8px; font-size: 0.95em;">
                 <strong>Current level:</strong> ${currentLevel}
             </div>
@@ -265,8 +284,10 @@ class AbilityBookCalculator {
             }
         };
 
-        input.addEventListener('change', updateDisplay);
-        input.addEventListener('keyup', updateDisplay);
+        if (input) {
+            input.addEventListener('change', updateDisplay);
+            input.addEventListener('keyup', updateDisplay);
+        }
 
         // Buy on Marketplace button
         const buyButton = document.createElement('button');
