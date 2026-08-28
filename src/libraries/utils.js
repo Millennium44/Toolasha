@@ -46,7 +46,7 @@ import * as customPriceOverrides from '../features/settings/custom-price-overrid
 import * as houseCostCalculator from '../utils/house-cost-calculator.js';
 import * as enhancementCalculator from '../utils/enhancement-calculator.js';
 import * as overlayRows from '../utils/overlay-rows.js';
-import * as overlayLayout from '../utils/overlay-layout.js';
+import * as overlayFlow from '../utils/overlay-flow.js';
 import * as overlayFormat from '../utils/overlay-format.js';
 import * as orderBook from '../utils/order-book.js';
 import * as combatLevel from '../utils/combat-level.js';
@@ -190,7 +190,7 @@ toolashaRoot.Utils = {
     houseCostCalculator,
     enhancementCalculator,
     overlayRows,
-    overlayLayout,
+    overlayFlow,
     overlayFormat,
     orderBook,
     combatLevel,

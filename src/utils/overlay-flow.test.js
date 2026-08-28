@@ -8,6 +8,8 @@ import {
     migrate,
     moveTo,
     dropIndex,
+    clampZoom,
+    DEFAULT_ZOOM,
     COLUMN_MIN,
     GAP,
     MAX_SPAN,
@@ -403,5 +405,18 @@ describe('dropIndex', () => {
                 expect(index).toBeLessThanOrEqual(boxes.length);
             }
         }
+    });
+});
+
+describe('clampZoom', () => {
+    test('holds a zoom inside what stays legible', () => {
+        expect(clampZoom(10)).toBe(50);
+        expect(clampZoom(900)).toBe(200);
+        expect(clampZoom(115)).toBe(115);
+    });
+
+    test('nonsense falls back to the default rather than to zero', () => {
+        expect(clampZoom(undefined)).toBe(DEFAULT_ZOOM);
+        expect(clampZoom(NaN)).toBe(DEFAULT_ZOOM);
     });
 });

@@ -10,14 +10,24 @@
  * row is then the same amount of work as the second, which is the only way a
  * panel of this shape stays maintainable.
  *
- * ## Why a canvas and not a list
+ * ## Why a grid and not a list
  *
- * Rows are placed freely rather than stacked. A stack forces one ordering
- * decision — what goes above what — when the question you actually want to
- * answer is what sits *beside* what: revenue next to profit, luck next to
- * expectation, so a glance reads a comparison instead of a column. Each tile
- * carries its own position, size and text scale, and the panel remembers all of
- * it. The layout arithmetic lives in `utils/overlay-layout.js`.
+ * A stack forces one ordering decision — what goes above what — when the
+ * question you actually want to answer is what sits *beside* what: revenue next
+ * to profit, luck next to expectation, so a glance reads a comparison instead of
+ * a column. So the canvas is a CSS grid, and a tile carries a place in the
+ * reading order, a number of columns, and its own text scale. That is the whole
+ * of what is stored.
+ *
+ * It used to store rectangles. Six rounds of bug reports were all one shape: a
+ * coordinate is a *derived* quantity — it depends on the panel's width, on
+ * whether a scrollbar is showing, on what each row happened to draw this second,
+ * and on which neighbours exist — and storing a derived quantity as the source
+ * of truth means reconciling it forever against conditions nobody knew when it
+ * was written. Every round added a correction pass, and every pass was a new
+ * seam. Now the browser derives the pixels every frame, at the width that
+ * actually exists, and the arithmetic that survives is in
+ * `utils/overlay-flow.js`.
  *
  * ## Adding a row
  *
@@ -43,17 +53,12 @@
  *
  * ## Narrow screens
  *
- * A layout is saved as pixels, and the same account logs in on a desktop and on
- * a phone. Restored straight, a two-column arrangement on a 370-pixel canvas is
- * not two columns — `clampTile` holds every tile inside the canvas, which drags
- * the right-hand column onto the left-hand one and puts text over text.
- *
- * So when the saved arrangement is wider than the room there is, the tiles are
- * *flowed* into as many columns as the width can hold instead — one, below
- * `ONE_COLUMN_WIDTH`. This is display-time only: nothing is written back, the
- * desktop's arrangement is exactly as it was when it is next opened there, and
- * dragging is switched off for as long as the tiles are not where the layout
- * put them. See `_needsFlow` and `_flowTiles`.
+ * Nothing special happens. The same account logs in on a desktop and on a phone,
+ * and the same saved layout is correct on both: the column count is measured
+ * from the panel, and a tile's span is clamped to the columns there are, so two
+ * columns become one and the reading order is unchanged. There is no fallback
+ * arrangement, no second code path, and no state in which dragging has to be
+ * switched off because the tiles are not where the layout says.
  *
  * Register at module scope, not inside `initialize`. The list lives in
  * `utils/overlay-rows.js` rather than here — see that file for why the bundle
@@ -111,8 +116,17 @@ import {
     pauseForManualChoice,
 } from './overlay-layouts.js';
 import { hasCoarsePointer } from '../../utils/mobile.js';
-import { clampZoom, DEFAULT_ZOOM } from '../../utils/overlay-layout.js';
-import { columnsFor, spanFor, seedSpan, migrate, moveTo, dropIndex, GAP } from '../../utils/overlay-flow.js';
+import {
+    columnsFor,
+    spanFor,
+    seedSpan,
+    migrate,
+    moveTo,
+    dropIndex,
+    clampZoom,
+    GAP,
+    DEFAULT_ZOOM,
+} from '../../utils/overlay-flow.js';
 
 /**
  * The layout, per character.
@@ -557,12 +571,13 @@ class OverlayPanel {
         if (!legacy || typeof legacy !== 'object') return null;
 
         // Everything that was never geometry comes across untouched; the pixels
-        // become an order and a set of spans, and are then dropped
-        const { positions, sizes, snapToGrid, ...rest } = legacy;
-        void positions;
-        void sizes;
-        void snapToGrid;
-        return { ...rest, ...migrate(legacy) };
+        // become an order and a set of spans, and the pixels themselves are
+        // dropped so they cannot be written back out on the next export
+        const carried = { ...legacy };
+        delete carried.positions;
+        delete carried.sizes;
+        delete carried.snapToGrid;
+        return { ...carried, ...migrate(legacy) };
     }
 
     _save() {
@@ -1371,14 +1386,14 @@ class OverlayPanel {
 
         // Beside the rows it acts on, not down among the layout buttons: this
         // one is about which tiles are on, which is exactly what the chips above
-        // are for. It only shows tiles/hides them, so it sits apart from Reset
-        // layout, which forgets positions.
+        // are for. It only shows tiles and hides them, so it sits apart from
+        // Reset layout, which is about the arrangement.
         const tileActions = document.createElement('div');
         Object.assign(tileActions.style, { display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' });
         tileActions.appendChild(
             this._textButton(
                 'Reset to default tiles',
-                'Switch the rows back to the curated starting set, in its order. Positions and sizes are left alone.',
+                'Switch the rows back to the curated starting set, in its order. How wide they are is left alone.',
                 () => this._resetTiles()
             )
         );
@@ -2118,8 +2133,8 @@ class OverlayPanel {
      * and turning `curatedDefaults` on opts a pre-curated character in, so a
      * layout arranged before the curated set existed can reach it too.
      *
-     * Positions and sizes are left alone: a reset that also scattered a
-     * carefully placed layout would be two undos wearing one button.
+     * Spans and text sizes are left alone: a reset that also flattened a
+     * carefully arranged layout would be two undos wearing one button.
      */
     _resetTiles() {
         this._snapshot('tile reset');

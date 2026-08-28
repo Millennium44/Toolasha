@@ -45,6 +45,27 @@ export const GAP = 4;
 export const MAX_SPAN = 4;
 
 /**
+ * Percent of the panel's base font size; a tile can be made to read larger or
+ * smaller than its neighbours.
+ *
+ * The last thing left of the old layout module, and the only one that was never
+ * about pixels: a per-tile text size is a preference, not a measurement.
+ */
+export const DEFAULT_ZOOM = 100;
+export const MIN_ZOOM = 50;
+export const MAX_ZOOM = 200;
+
+/**
+ * Hold a zoom level inside what stays legible.
+ * @param {number} zoom - Percent
+ * @returns {number} Percent within range
+ */
+export function clampZoom(zoom) {
+    if (!Number.isFinite(zoom)) return DEFAULT_ZOOM;
+    return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(zoom)));
+}
+
+/**
  * How many columns fit a canvas this wide.
  *
  * **The only measured quantity in the whole system.** It is an integer, so a
