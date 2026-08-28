@@ -99,6 +99,10 @@ class ExternalLinks {
         div.style.color = config.COLOR_ACCENT;
         div.style.cursor = 'pointer';
         div.textContent = label;
+        // The label names the tool, not the site — "Milkonomy" does not say it
+        // leaves milkywayidle.com. The tooltip says where the click actually goes
+        // before it goes there.
+        div.title = `Opens ${this.hostnameOf(url)} in a new tab.`;
 
         div.addEventListener('click', () => {
             window.open(url, '_blank');
@@ -106,6 +110,23 @@ class ExternalLinks {
 
         // Insert at the beginning (after Settings if it exists)
         container.insertAdjacentElement('afterbegin', div);
+    }
+
+    /**
+     * The site a link's tooltip should name.
+     *
+     * Falls back to the raw URL rather than throwing — a malformed link should
+     * still get a tooltip, just a less tidy one, rather than lose the whole link.
+     *
+     * @param {string} url - The link's destination
+     * @returns {string} A hostname, or the url itself if it will not parse
+     */
+    hostnameOf(url) {
+        try {
+            return new URL(url).hostname;
+        } catch {
+            return url;
+        }
     }
 
     /**
