@@ -546,10 +546,14 @@ export function sessionLuck(session, income, options = {}) {
 
     // Opening guess: generous enough that the search shrinks onto the answer
     // rather than having to widen, which it cannot do. Three floors: a flat
-    // minimum, a per-wave heuristic, and the session's own theoretical max —
-    // plus the income actually being asked about, since a window that excludes
-    // the very number it is about to be evaluated at is undersized by
-    // definition.
+    // minimum, a per-wave heuristic, and the session's own theoretical max.
+    //
+    // The fourth, `abs(income)`, is a seed-only safety net and nothing more:
+    // `invertToCDF` shrinks the window back onto the distribution's own support,
+    // so an income above what the drop table can produce ends up outside the
+    // returned window anyway. It costs a search iteration or two and covers the
+    // case where a wide seed happens to matter; it is not a guarantee that the
+    // window contains `income`, and no test can make it one.
     const startingLimit = Math.max(
         1e8,
         2e5 * Math.max(waves, 1),

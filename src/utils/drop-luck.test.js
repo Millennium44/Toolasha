@@ -260,10 +260,17 @@ describe('sessionLuck', () => {
         expect(cdf(5.1e8)).toBeGreaterThan(0.99);
     });
 
-    test('a large observed income does not undersize the window either', () => {
-        // Same idea, but triggered through the `income` argument rather than the
-        // drop table: a session that actually paid more than the wave-count
-        // heuristic anticipated must still get a window that contains that value.
+    test('a rare high-value drop sizes the window even when it is unlikely to have landed', () => {
+        // Same guarantee as above at a one-percent drop rate: the window is
+        // sized from what the session *could* have paid, not from what it
+        // probably did, so an unlikely jackpot is still inside it.
+        //
+        // Deliberately not a test of `sessionLuck`'s `abs(income) * 1.5` seed
+        // floor — `maxPossibleIncome` alone already reaches 5e8 here, and that
+        // floor cannot be tested through this API at all: it only widens the
+        // *starting* limit, and `invertToCDF` shrinks the window back onto the
+        // distribution's own support afterwards. An income above what the drop
+        // table can produce ends up outside the window regardless.
         const session = {
             spawnInfo: soloZone,
             monsterDrops: { '/monsters/m': [{ minCount: 1, maxCount: 1, dropRate: 0.01, price: 5e8 }] },
