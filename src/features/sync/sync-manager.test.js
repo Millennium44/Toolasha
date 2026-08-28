@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const settings = vi.hoisted(() => ({
     values: { sync_enabled: true, sync_token: 'ghp_secret', sync_scope: 'settings', sync_auto: false },
@@ -754,6 +754,37 @@ describe('the busy lock survives a takeover', () => {
 });
 
 describe('the cross-tab lock', () => {
+    // A hand-rolled Web Locks stand-in, stubbed over whatever the runtime has:
+    // CI's Node 20 has no `navigator` global at all, and even where the real
+    // lock manager exists, a deterministic fake keeps the test hermetic. Only
+    // the semantics `_withCrossTabLock` relies on: ifAvailable, and release on
+    // callback settle.
+    const heldLocks = new Set();
+    beforeEach(() => {
+        heldLocks.clear();
+        vi.stubGlobal('navigator', {
+            locks: {
+                async request(name, options, callback) {
+                    if (typeof options === 'function') {
+                        callback = options;
+                        options = {};
+                    }
+                    if (options?.ifAvailable && heldLocks.has(name)) return callback(null);
+                    heldLocks.add(name);
+                    try {
+                        return await callback({ name });
+                    } finally {
+                        heldLocks.delete(name);
+                    }
+                },
+            },
+        });
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
     test('a silent sync skips while another tab syncs; a manual one runs anyway', async () => {
         let release;
         const held = new Promise((resolve) => (release = resolve));
