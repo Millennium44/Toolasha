@@ -23,7 +23,13 @@ import {
     SECTION_ATTR,
     SOURCE_CHIP_CLASS,
 } from './enhancement-params-source.js';
-import { formatLargeNumber, numberFormatter, formatKMB, isAbbreviationEnabled } from '../../utils/formatters.js';
+import {
+    formatLargeNumber,
+    numberFormatter,
+    formatKMB,
+    formatKMB3Digits,
+    isAbbreviationEnabled,
+} from '../../utils/formatters.js';
 import { getItemPrice, getItemPrices } from '../../utils/market-data.js';
 import { parseArtisanBonus, getDrinkConcentration } from '../../utils/tea-parser.js';
 import { parseItemCount } from '../../utils/number-parser.js';
@@ -1301,10 +1307,10 @@ export function buildEnhancementTooltipHTML(enhancementData) {
         const askColor = priceColor(enhancedPrices?.ask, minSellAsk);
         const bidColor = priceColor(enhancedPrices?.bid, minSellBid);
 
-        html += '<div style="margin-top: 4px;">Your rate: ' + formatKMB(hourlyRate) + '/hr</div>';
+        html += '<div style="margin-top: 4px;">Your rate: ' + formatKMB3Digits(hourlyRate) + '/hr</div>';
         html += '<div>Minimum sell: ';
-        html += `<span${askColor ? ` style="color: ${askColor};"` : ''}>${formatKMB(minSellAsk)}</span>(ask)/`;
-        html += `<span${bidColor ? ` style="color: ${bidColor};"` : ''}>${formatKMB(minSellBid)}</span>(bid)`;
+        html += `<span${askColor ? ` style="color: ${askColor};"` : ''}>${formatKMB3Digits(minSellAsk)}</span>(ask)/`;
+        html += `<span${bidColor ? ` style="color: ${bidColor};"` : ''}>${formatKMB3Digits(minSellBid)}</span>(bid)`;
         html += '</div>';
     }
 

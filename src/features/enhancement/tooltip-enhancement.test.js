@@ -370,6 +370,21 @@ describe('buildEnhancementTooltipHTML — minimum sell price', () => {
         expect(minimum).toBeTruthy();
         expect(minimum).not.toBe('0');
     });
+
+    test('distinguishes nearby billion-scale rates instead of rounding them all to the same label', () => {
+        settings.values.itemTooltip_enhancingHourlyRate = '1200000000';
+        const html1200m = html();
+
+        settings.values.itemTooltip_enhancingHourlyRate = '1250000000';
+        const html1250m = html();
+
+        settings.values.itemTooltip_enhancingHourlyRate = '1290000000';
+        const html1290m = html();
+
+        expect(html1200m).toContain('Your rate: 1.20B/hr');
+        expect(html1250m).toContain('Your rate: 1.25B/hr');
+        expect(html1290m).toContain('Your rate: 1.29B/hr');
+    });
 });
 
 describe('buildEnhancementTooltipHTML — stats source indicator', () => {
