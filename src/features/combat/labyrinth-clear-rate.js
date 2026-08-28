@@ -249,19 +249,26 @@ class LabyrinthClearRate {
             this.scheduleAutoTileCalc();
         });
         this.unregisterHandlers.push(unregisterTiles);
-        setTimeout(() => {
-            this.seedFromCharacterData();
-            this.injectTileControls();
-            this.scheduleAutoTileCalc();
-        }, 500);
+        // @run-at document-start: both settle delays start from the shared observer's
+        // actual-ready signal (immediate if it is already attached), not module init, so
+        // labyrinth DOM rendered during the readiness gap is not missed.
+        this.unregisterHandlers.push(
+            domObserver.onReady('LabyrinthClearRateCatchUp', () => {
+                setTimeout(() => {
+                    this.seedFromCharacterData();
+                    this.injectTileControls();
+                    this.scheduleAutoTileCalc();
+                }, 500);
 
-        setTimeout(() => {
-            // The overlay pass fires immediately for skilling/enhancing badges
-            // (which never touch combatCache); combat rooms get a placeholder
-            // and are redrawn once the cache is in.
-            this.injectOverlays();
-            this._seedCombatCache();
-        }, 500);
+                setTimeout(() => {
+                    // The overlay pass fires immediately for skilling/enhancing badges
+                    // (which never touch combatCache); combat rooms get a placeholder
+                    // and are redrawn once the cache is in.
+                    this.injectOverlays();
+                    this._seedCombatCache();
+                }, 500);
+            })
+        );
 
         // Skip-threshold cells wrap so the shared annotation line (clear rate,
         // recommendation, best level) sits below the native value/buttons

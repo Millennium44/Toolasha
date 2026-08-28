@@ -40,7 +40,17 @@ vi.mock('../../core/config.js', () => ({
         Z_FLOATING_PANEL: 10100,
     },
 }));
-vi.mock('../../core/dom-observer.js', () => ({ default: { onClass: vi.fn(), register: vi.fn() } }));
+vi.mock('../../core/dom-observer.js', () => ({
+    default: {
+        onClass: vi.fn(),
+        register: vi.fn(),
+        // Mirrors the real DOMObserver.onReady in its already-attached steady state
+        onReady: vi.fn((name, callback) => {
+            callback();
+            return () => {};
+        }),
+    },
+}));
 vi.mock('../../core/data-manager.js', () => ({
     default: {
         on: vi.fn(),

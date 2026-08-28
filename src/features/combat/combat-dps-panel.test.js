@@ -24,6 +24,8 @@ const opts = vi.hoisted(() => ({
     started: 0,
     stopped: 0,
     handlers: [],
+    readyHandlers: [],
+    domReady: true,
 }));
 
 vi.mock('../../core/config.js', () => ({
@@ -40,6 +42,16 @@ vi.mock('../../core/dom-observer.js', () => ({
             opts.handlers.push(handler);
             return () => {
                 opts.handlers = opts.handlers.filter((entry) => entry !== handler);
+            };
+        },
+        // Mirrors the real DOMObserver.onReady: immediate when already attached (the default),
+        // deferred until the readiness-gap test fires it by hand otherwise.
+        onReady: (name, callback) => {
+            const handler = { name, callback };
+            opts.readyHandlers.push(handler);
+            if (opts.domReady) callback();
+            return () => {
+                opts.readyHandlers = opts.readyHandlers.filter((entry) => entry !== handler);
             };
         },
     },
@@ -116,6 +128,8 @@ beforeEach(() => {
     opts.started = 0;
     opts.stopped = 0;
     opts.handlers = [];
+    opts.readyHandlers = [];
+    opts.domReady = true;
     document.body.replaceChildren();
     feature._resetTab();
 });
@@ -253,6 +267,17 @@ describe('the opener, and the lifecycle', () => {
 
         button().click();
         expect(document.getElementById(`toolasha-${PANEL_ID}-panel`)).not.toBeNull();
+    });
+
+    test('a battle panel mounted before the shared observer is ready gets its button at readiness', () => {
+        opts.domReady = false;
+        battlePanel();
+
+        feature.initialize();
+        expect(button()).toBeNull();
+
+        opts.readyHandlers.forEach((h) => h.callback());
+        expect(button()).not.toBeNull();
     });
 
     test('leaving the Combat tab and coming back re-injects it', () => {

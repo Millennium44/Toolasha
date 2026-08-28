@@ -51,6 +51,12 @@ const {
     _instance: instance,
     default: portraitDps,
 } = await import('./portrait-dps.js');
+const { default: domObserver } = await import('../../core/dom-observer.js');
+
+// The feature's catch-up runs through the real observer's onReady, which only fires
+// once the observer is attached; attach it so initialize() draws immediately, as it
+// does in the game's steady state.
+domObserver.start();
 
 beforeEach(() => {
     opts.position = 'above';

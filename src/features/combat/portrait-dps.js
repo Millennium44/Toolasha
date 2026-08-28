@@ -300,6 +300,7 @@ class PortraitDps {
         this.observer = null;
         this.panel = null;
         this.unregisterClass = null;
+        this.unregisterReady = null;
         this.timers = createTimerRegistry();
         this._lastSignature = null;
         this._lastMeterCount = 0;
@@ -320,7 +321,6 @@ class PortraitDps {
         // goes with the fight, so the shared DOM observer re-acquires it each
         // time the players area is rendered.
         this.unregisterClass = domObserver.onClass('PortraitDps', 'BattlePanel_playersArea', () => this._attach());
-        this._attach();
 
         this.timers.registerInterval(
             setInterval(() => {
@@ -328,7 +328,13 @@ class PortraitDps {
                 this._draw();
             }, REFRESH_MS)
         );
-        this._draw();
+        // @run-at document-start: a battle panel rendered before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterReady = domObserver.onReady('PortraitDpsCatchUp', () => {
+            this._attach();
+            this._draw();
+        });
     }
 
     disable() {
@@ -337,6 +343,8 @@ class PortraitDps {
         this.panel = null;
         this.unregisterClass?.();
         this.unregisterClass = null;
+        this.unregisterReady?.();
+        this.unregisterReady = null;
         this.timers.clearAll();
         if (this._drawScheduled) {
             cancelAnimationFrame(this._drawScheduled);

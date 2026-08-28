@@ -336,6 +336,7 @@ class CombatUnitBadges {
     constructor() {
         this.isInitialized = false;
         this.unregister = null;
+        this.unregisterReady = null;
         this.timers = createTimerRegistry();
         this.drawScheduled = null;
     }
@@ -364,12 +365,17 @@ class CombatUnitBadges {
                 this._draw();
             }, REFRESH_MS)
         );
-        this._draw();
+        // @run-at document-start: a battle panel rendered before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up draw waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterReady = domObserver.onReady('CombatUnitBadgesCatchUp', () => this._draw());
     }
 
     disable() {
         this.unregister?.();
         this.unregister = null;
+        this.unregisterReady?.();
+        this.unregisterReady = null;
         this.timers.clearAll();
         if (this.drawScheduled !== null) {
             clearTimeout(this.drawScheduled);

@@ -46,8 +46,15 @@ class LabyrinthBestLevel {
         );
         this.unregisterHandlers.push(unregisterSkip);
 
-        // Catch cells that were already in the DOM before observers registered
-        this.catchupTimer = setTimeout(() => this.refreshAll(), 500);
+        // Catch cells that were already in the DOM before observers registered.
+        // @run-at document-start: the settle delay starts from the shared observer's
+        // actual-ready signal (immediate if it is already attached), not module init,
+        // so cells rendered during the readiness gap are not missed.
+        this.unregisterHandlers.push(
+            domObserver.onReady('LabyrinthBestLevelCatchUp', () => {
+                this.catchupTimer = setTimeout(() => this.refreshAll(), 500);
+            })
+        );
 
         // Re-inject all badges when tracker records a new best
         this.updateHandler = () => this.refreshAll();

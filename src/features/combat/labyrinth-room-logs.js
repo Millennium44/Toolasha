@@ -243,6 +243,7 @@ class LabyrinthRoomLogs {
         this.resetArmed = false;
         this.tabButton = null;
         this.unregisterTab = null;
+        this.unregisterReady = null;
         this.xpHandlers = [];
         this.xpBaseline = null;
         this.pendingReport = null;
@@ -386,8 +387,13 @@ class LabyrinthRoomLogs {
         this.unregisterTab = domObserver.onClass('LabyrinthRoomLogsTab', 'LabyrinthPanel_tabsComponentContainer', () =>
             this.ensureTabButton()
         );
-        this.ensureTabButton();
-        setTimeout(() => this.ensureTabButton(), 500);
+        // @run-at document-start: a tab bar rendered before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up (and its settle
+        // retry) waits for the observer's actual-ready signal (immediate if already attached).
+        this.unregisterReady = domObserver.onReady('LabyrinthRoomLogsTabCatchUp', () => {
+            this.ensureTabButton();
+            setTimeout(() => this.ensureTabButton(), 500);
+        });
     }
 
     disable() {
@@ -420,6 +426,10 @@ class LabyrinthRoomLogs {
         if (this.unregisterTab) {
             this.unregisterTab();
             this.unregisterTab = null;
+        }
+        if (this.unregisterReady) {
+            this.unregisterReady();
+            this.unregisterReady = null;
         }
         this.resolveFight('feature_disabled');
         this.finalizeActiveSession('feature_disabled');

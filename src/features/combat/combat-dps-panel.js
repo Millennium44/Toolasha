@@ -749,6 +749,7 @@ export function getPanel() {
 }
 
 let unregister = null;
+let unregisterReady = null;
 
 /** The re-inject timer; cleared in cleanup */
 const timers = createTimerRegistry();
@@ -867,14 +868,21 @@ export default {
             debounceDelay: 200,
             debounceMaxWait: 1000,
         });
-        inject();
-        lastDiscoveryAt = Date.now();
+        // @run-at document-start: a battle panel rendered before the shared observer attaches to
+        // document.body is invisible to the class watcher, so the catch-up scan waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        unregisterReady = domObserver.onReady('CombatDpsPanelCatchUp', () => {
+            inject();
+            lastDiscoveryAt = Date.now();
+        });
         timers.registerInterval(setInterval(reinject, REINJECT_MS));
     },
     cleanup: () => {
         try {
             unregister?.();
             unregister = null;
+            unregisterReady?.();
+            unregisterReady = null;
             stopRotationTracker();
             timers.clearAll();
             const button = typeof document === 'undefined' ? null : document.getElementById(BUTTON_ID);

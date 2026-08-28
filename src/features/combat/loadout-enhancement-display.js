@@ -110,6 +110,7 @@ function removeOverlays() {
 }
 
 let unregisterHandler = null;
+let unregisterReady = null;
 let itemsUpdatedHandler = null;
 let characterInitializedHandler = null;
 let refreshTimer = null;
@@ -167,8 +168,11 @@ function initialize() {
     dataManager.on('items_updated', itemsUpdatedHandler);
     dataManager.on('character_initialized', characterInitializedHandler);
 
-    // Run immediately for any already-open loadout
-    annotateLoadout();
+    // Run for any already-open loadout. @run-at document-start: the shared observer may not be
+    // attached yet, so the catch-up waits for its actual-ready signal (immediate if attached).
+    unregisterReady = domObserver.onReady('LoadoutEnhancementDisplayCatchUp', () => {
+        annotateLoadout();
+    });
 
     config.onSettingChange('loadoutEnhancementDisplay', (enabled) => {
         if (enabled) {
@@ -183,6 +187,10 @@ function cleanup() {
     if (unregisterHandler) {
         unregisterHandler();
         unregisterHandler = null;
+    }
+    if (unregisterReady) {
+        unregisterReady();
+        unregisterReady = null;
     }
     if (itemsUpdatedHandler) {
         dataManager.off('items_updated', itemsUpdatedHandler);

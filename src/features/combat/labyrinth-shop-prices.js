@@ -42,8 +42,14 @@ class LabyrinthShopPrices {
         );
         this.unregisterHandlers.push(unregisterGrid);
 
-        // Catch content already in the DOM
-        this.catchupTimer = setTimeout(() => this.refreshAll(), 500);
+        // Catch content already in the DOM. @run-at document-start: the settle delay starts from
+        // the shared observer's actual-ready signal (immediate if it is already attached), not
+        // module init, so content rendered during the readiness gap is not missed.
+        this.unregisterHandlers.push(
+            domObserver.onReady('LabyrinthShopPricesCatchUp', () => {
+                this.catchupTimer = setTimeout(() => this.refreshAll(), 500);
+            })
+        );
 
         this.isInitialized = true;
     }

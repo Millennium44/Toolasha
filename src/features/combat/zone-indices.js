@@ -16,6 +16,7 @@ const REGEX_COMBAT_TASK = /(?:Kill|Defeat)\s*-\s*(.+)$/;
 class ZoneIndices {
     constructor() {
         this.unregisterObserver = null; // Unregister function from centralized observer
+        this.unregisterReady = null;
         this.isActive = false;
         this.monsterZoneCache = null; // Cache monster name -> zone index mapping
         this.taskMapIndexEnabled = false;
@@ -88,13 +89,17 @@ class ZoneIndices {
             { debounce: true, debounceDelay: 100 } // Use centralized debouncing
         );
 
-        // Process existing elements
-        if (this.taskMapIndexEnabled) {
-            this.addTaskIndices();
-        }
-        if (this.mapIndexEnabled) {
-            this.addMapIndices();
-        }
+        // Process existing elements. @run-at document-start: elements rendered before the shared
+        // observer attaches to document.body are invisible to it, so the catch-up waits for the
+        // observer's actual-ready signal (immediate if it is already attached).
+        this.unregisterReady = domObserver.onReady('ZoneIndicesCatchUp', () => {
+            if (this.taskMapIndexEnabled) {
+                this.addTaskIndices();
+            }
+            if (this.mapIndexEnabled) {
+                this.addMapIndices();
+            }
+        });
 
         this.isActive = true;
         this.isInitialized = true;
@@ -304,6 +309,11 @@ class ZoneIndices {
             if (this.unregisterObserver) {
                 this.unregisterObserver();
                 this.unregisterObserver = null;
+            }
+
+            if (this.unregisterReady) {
+                this.unregisterReady();
+                this.unregisterReady = null;
             }
 
             // Remove all added indices

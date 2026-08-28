@@ -18,6 +18,8 @@ const opts = vi.hoisted(() => ({
     run: { players: [] },
     trial: null,
     handlers: [],
+    readyHandlers: [],
+    domReady: true,
     intervals: [],
 }));
 
@@ -36,6 +38,16 @@ vi.mock('../../core/dom-observer.js', () => ({
             opts.handlers.push(handler);
             return () => {
                 opts.handlers = opts.handlers.filter((entry) => entry !== handler);
+            };
+        },
+        // Mirrors the real DOMObserver.onReady: immediate when already attached (the default),
+        // deferred until the readiness-gap test fires it by hand otherwise.
+        onReady: (name, callback) => {
+            const handler = { name, callback };
+            opts.readyHandlers.push(handler);
+            if (opts.domReady) callback();
+            return () => {
+                opts.readyHandlers = opts.readyHandlers.filter((entry) => entry !== handler);
             };
         },
     },
@@ -103,6 +115,8 @@ beforeEach(() => {
     opts.run = { players: [] };
     opts.trial = null;
     opts.handlers = [];
+    opts.readyHandlers = [];
+    opts.domReady = true;
     document.body.replaceChildren();
 });
 
@@ -296,6 +310,18 @@ describe('finding the tiles and joining them to a table', () => {
 });
 
 describe('drawing, and coming back after a rebuild', () => {
+    test('a panel mounted before the shared observer is ready is badged at readiness', () => {
+        opts.domReady = false;
+        const area = panel(card('Alice'));
+        opts.run = { players: [{ name: 'Alice', damage: 750, dps: 75 }] };
+
+        feature.initialize();
+        expect(badgeOf(area.children[0])).toBeNull();
+
+        opts.readyHandlers.forEach((h) => h.callback());
+        expect(badgeOf(area.children[0])).not.toBeNull();
+    });
+
     test('every matched tile gets exactly one badge', () => {
         const area = panel(card('Alice'), mini('Bob'));
         opts.run = {
