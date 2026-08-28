@@ -12,6 +12,7 @@ import { createTimerRegistry } from '../../utils/timer-registry.js';
 import { setReactInputValue } from '../../utils/react-input.js';
 import estimatedListingAge from './estimated-listing-age.js';
 import { formatRelativeTime, formatWithSeparator } from '../../utils/formatters.js';
+import { parseItemCount } from '../../utils/number-parser.js';
 
 /** Native input value setter for triggering React state updates */
 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -265,7 +266,7 @@ class MarketplaceShortcuts {
         // Read quantity from item submenu input before navigating away
         const amountInput = document.querySelector('[class*="Item_amountInputContainer"] input');
         if (amountInput) {
-            const qty = parseInt(amountInput.value, 10);
+            const qty = parseItemCount(amountInput.value, NaN);
             if (qty > 0) {
                 this.pendingQuantity = qty;
             }
@@ -552,7 +553,7 @@ class MarketplaceShortcuts {
                     e.preventDefault();
                     e.stopPropagation();
                     if (this.addMode) {
-                        const current = parseInt(quantityInput.value) || 0;
+                        const current = parseItemCount(quantityInput.value, 0);
                         setReactInputValue(quantityInput, current + value, { focus: true });
                     } else {
                         setReactInputValue(quantityInput, value, { focus: true });
@@ -778,7 +779,7 @@ class MarketplaceShortcuts {
                     e.preventDefault();
                     e.stopPropagation();
                     withInput((input) => {
-                        const current = parseInt(input.value) || 0;
+                        const current = parseItemCount(input.value, 0);
                         setReactInputValue(input, Math.max(1, Math.floor(current / 2)));
                     });
                 });
@@ -793,7 +794,7 @@ class MarketplaceShortcuts {
                     e.preventDefault();
                     e.stopPropagation();
                     withInput((input) => {
-                        const current = parseInt(input.value) || 0;
+                        const current = parseItemCount(input.value, 0);
                         setReactInputValue(input, current * 2);
                     });
                 });
