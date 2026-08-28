@@ -347,6 +347,53 @@ describe('the XP history cannot be wiped by a failed read or a stale copy', () =
         await guildXPTracker.resetMemberData();
         expect(stored(MEMBER_KEY)).toEqual({});
     });
+
+    test('two guild switches racing land the later one, not whichever read resolved last', async () => {
+        // A fast double guild-hop (or two updates arriving close together): the
+        // first switch's read is still in flight when the second switch's own
+        // read starts, and storage can answer either one first.
+        guildXPTracker.ownGuildID = 'g1';
+        guildXPTracker.memberXPHistory = { 101: [{ t: 1, xp: 1 }] };
+        storageMock.store.set('memberXP_g2', { 202: [{ t: 1, xp: 7 }] });
+        storageMock.store.set('memberXP_g3', { 303: [{ t: 1, xp: 9 }] });
+
+        // Gate the first switch's read (g2) so the second switch's (g3) can be
+        // made to resolve first, the way a slower or contended read genuinely
+        // could
+        let releaseG2;
+        const g2Gate = new Promise((resolve) => {
+            releaseG2 = resolve;
+        });
+        storageMock.tryGet.mockImplementation(async (key) => {
+            if (key === 'memberXP_g2') await g2Gate;
+            return storageMock.store.has(key)
+                ? { found: true, value: structuredClone(storageMock.store.get(key)) }
+                : { found: false, value: null };
+        });
+
+        try {
+            const first = guildXPTracker._onMembersUpdated({
+                guildCharacterMap: { 202: { guildID: 'g2', guildExperience: 8 } },
+            });
+            const second = guildXPTracker._onMembersUpdated({
+                guildCharacterMap: { 303: { guildID: 'g3', guildExperience: 9 } },
+            });
+            await second;
+            releaseG2();
+            await first;
+
+            // The second, later switch wins — not the first one's read landing last
+            expect(guildXPTracker.ownGuildID).toBe('g3');
+            expect(Object.keys(guildXPTracker.memberXPHistory)).toEqual(['303']);
+        } finally {
+            storageMock.tryGet.mockImplementation(async (key) => {
+                if (storageMock.unavailable) return null;
+                return storageMock.store.has(key)
+                    ? { found: true, value: structuredClone(storageMock.store.get(key)) }
+                    : { found: false, value: null };
+            });
+        }
+    });
 });
 
 const HOUR = 60 * MIN;

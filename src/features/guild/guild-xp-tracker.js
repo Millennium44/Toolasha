@@ -785,11 +785,21 @@ class GuildXPTracker {
             // guild's record. A read that fails here starts the new record empty
             // rather than carrying the old guild's members into it; nothing is
             // lost because every save merges what is stored under memory first.
-            this.memberXPHistory = await this._loadMap(`memberXP_${newGuildID}`, {});
+            //
+            // `ownGuildID` is stamped *before* the await, exactly as
+            // `_onGuildUpdated` stamps `ownGuildName` before its own load: two
+            // switches racing (a fast double guild-hop, or two updates arriving
+            // close together) can otherwise resolve out of order and leave the
+            // *first* switch's guild in memory last, with `ownGuildID` naming
+            // one guild and `memberXPHistory` holding another's. Stamping first
+            // lets the check below tell a superseded read apart from a fresh one.
+            this.ownGuildID = newGuildID;
+            const loaded = await this._loadMap(`memberXP_${newGuildID}`, {});
+            // Another switch may have landed while this read was in flight
+            if (this.ownGuildID !== newGuildID) return;
+            this.memberXPHistory = loaded;
             this.memberMeta = {};
-        }
-
-        if (newGuildID) {
+        } else if (newGuildID) {
             this.ownGuildID = newGuildID;
         }
 
