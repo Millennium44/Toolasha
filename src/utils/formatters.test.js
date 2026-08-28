@@ -206,6 +206,20 @@ describe('formatKMB3Digits', () => {
         expect(formatKMB3Digits(null)).toBe(null);
         expect(formatKMB3Digits(undefined)).toBe(null);
     });
+
+    test('promotes billions that round up to 1000B into trillions, instead of overflowing to 4 digits', () => {
+        // 999,999,999,999 is 999.999999999B, which rounds to 1000.00 at 2 decimals.
+        // The B branch used to have nowhere to promote to, so it displayed "1000B"
+        // — a 4-digit figure the "3 significant digit" contract promises never to show.
+        expect(formatKMB3Digits(999999999999)).toBe('1.00T');
+    });
+
+    test('formats trillions and quadrillions with the same 3-significant-digit rule as the lower tiers', () => {
+        expect(formatKMB3Digits(1250000000000)).toBe('1.25T');
+        expect(formatKMB3Digits(82300000000000)).toBe('82.3T');
+        expect(formatKMB3Digits(825000000000000)).toBe('825T');
+        expect(formatKMB3Digits(1250000000000000)).toBe('1.25Q');
+    });
 });
 
 describe('coinFormatter', () => {

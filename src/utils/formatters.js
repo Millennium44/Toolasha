@@ -194,6 +194,18 @@ export function formatKMB(num, decimals = 1) {
  * formatKMB3Digits(1250000) // "1.25M"
  * formatKMB3Digits(82300000) // "82.3M"
  */
+/**
+ * Tiers for `formatKMB3Digits`, largest first so the first one `absNum` clears
+ * is the right starting point.
+ */
+const KMB_3DIGIT_TIERS = [
+    { threshold: 1e15, suffix: 'Q' },
+    { threshold: 1e12, suffix: 'T' },
+    { threshold: 1e9, suffix: 'B' },
+    { threshold: 1e6, suffix: 'M' },
+    { threshold: 1e3, suffix: 'K' },
+];
+
 export function formatKMB3Digits(num) {
     if (num === null || num === undefined) {
         return null;
@@ -202,39 +214,31 @@ export function formatKMB3Digits(num) {
     const absNum = Math.abs(num);
     const sign = num < 0 ? '-' : '';
 
-    if (absNum >= 1e9) {
-        const value = absNum / 1e9;
-        // Round to 2 decimals first to check actual display value
-        const rounded = parseFloat(value.toFixed(2));
-        let decimals = 2;
-        if (rounded >= 100) decimals = 0;
-        else if (rounded >= 10) decimals = 1;
-        return sign + value.toFixed(decimals) + 'B';
-    } else if (absNum >= 1e6) {
-        const value = absNum / 1e6;
-        const rounded = parseFloat(value.toFixed(2));
-        if (rounded >= 1000) {
-            // Promote to B (e.g., 999999999 -> 1.00B not 1000M)
-            return sign + (value / 1000).toFixed(2) + 'B';
-        }
-        let decimals = 2;
-        if (rounded >= 100) decimals = 0;
-        else if (rounded >= 10) decimals = 1;
-        return sign + value.toFixed(decimals) + 'M';
-    } else if (absNum >= 1e3) {
-        const value = absNum / 1e3;
-        const rounded = parseFloat(value.toFixed(2));
-        if (rounded >= 1000) {
-            // Promote to M (e.g., 999999 -> 1.00M not 1000K)
-            return sign + (value / 1000).toFixed(2) + 'M';
-        }
-        let decimals = 2;
-        if (rounded >= 100) decimals = 0;
-        else if (rounded >= 10) decimals = 1;
-        return sign + value.toFixed(decimals) + 'K';
-    } else {
+    if (absNum < 1e3) {
         return sign + Math.floor(absNum).toString();
     }
+
+    // The first tier `absNum` clears — always finds one, since absNum >= 1e3 here
+    let tierIndex = KMB_3DIGIT_TIERS.findIndex((tier) => absNum >= tier.threshold);
+    let { threshold, suffix } = KMB_3DIGIT_TIERS[tierIndex];
+    let value = absNum / threshold;
+    let rounded = parseFloat(value.toFixed(2));
+
+    // A value that rounds up to 4 digits belongs a tier higher (999999 -> "1.00M",
+    // not "1000K"). This used to stop at B with no T/Q above it to promote into,
+    // so a trillion-plus gold figure displayed as "1000B" instead of "1.00T".
+    while (rounded >= 1000 && tierIndex > 0) {
+        tierIndex -= 1;
+        ({ threshold, suffix } = KMB_3DIGIT_TIERS[tierIndex]);
+        value = absNum / threshold;
+        rounded = parseFloat(value.toFixed(2));
+    }
+
+    let decimals = 2;
+    if (rounded >= 100) decimals = 0;
+    else if (rounded >= 10) decimals = 1;
+
+    return sign + value.toFixed(decimals) + suffix;
 }
 
 /**
