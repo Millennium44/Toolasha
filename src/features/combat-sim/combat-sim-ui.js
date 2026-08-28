@@ -8059,6 +8059,10 @@ class CombatSimUI {
                     } else {
                         this[stateKey] = { key, asc: true };
                     }
+                    // A sort is a standing preference the same way the shown
+                    // columns are — worth having the table open the same way
+                    // next time rather than snapping back to Score every visit
+                    this._persistUpgradeColumnPrefs();
                     this._renderUpgradeResults(this._upgradeResultsData);
                 });
             });
@@ -8272,6 +8276,9 @@ class CombatSimUI {
                     scored: this._upgradeScoreKeys || DEFAULT_SCORE_KEYS,
                     scoreDepth: this._upgradeScoreDepth || DEFAULT_SCORE_DEPTH,
                     scoreGradient: Boolean(this._upgradeScoreGradient),
+                    sort: this._upgradeSort || null,
+                    levelSort: this._upgradeLevelSort || null,
+                    unpricedSort: this._unpricedSort || null,
                 },
                 'settings'
             );
@@ -8292,6 +8299,14 @@ class CombatSimUI {
             // ladder length nothing in the menu can name
             if (SCORE_DEPTHS.some((d) => d.key === saved.scoreDepth)) this._upgradeScoreDepth = saved.scoreDepth;
             this._upgradeScoreGradient = Boolean(saved.scoreGradient);
+            // A sort key from a build that offered different columns is not
+            // validated here — every sorter already falls back to its default
+            // column for a key it does not recognise, the same way it always
+            // has for a fresh panel with no saved sort at all
+            const isSortShape = (s) => s && typeof s.key === 'string' && typeof s.asc === 'boolean';
+            if (isSortShape(saved.sort)) this._upgradeSort = saved.sort;
+            if (isSortShape(saved.levelSort)) this._upgradeLevelSort = saved.levelSort;
+            if (isSortShape(saved.unpricedSort)) this._unpricedSort = saved.unpricedSort;
         } catch (error) {
             console.error('[CombatSimUI] Failed to load upgrade column preferences:', error);
         }

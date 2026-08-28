@@ -2722,6 +2722,23 @@ describe('the Score column in the table', () => {
         expect(ui._upgradeScoreDepth).toBe('all');
         expect(ui._upgradeScoreGradient).toBe(true);
     });
+
+    test('a sort survives a round trip through storage, so the table opens the same way next time', async () => {
+        ui._renderUpgradeResults(results());
+
+        // Click the Cost header twice: once to sort by it, once to flip the
+        // direction, so the persisted state cannot be mistaken for the default
+        ui.panel.querySelector('[data-sort-key="cost"]').click();
+        ui.panel.querySelector('[data-sort-key="cost"]').click();
+        await Promise.resolve();
+
+        expect(ui._upgradeSort).toEqual({ key: 'cost', asc: false });
+
+        ui._upgradeSort = null;
+        await ui._loadUpgradeColumnPrefs();
+
+        expect(ui._upgradeSort).toEqual({ key: 'cost', asc: false });
+    });
 });
 
 describe('the guild shrine target level', () => {
