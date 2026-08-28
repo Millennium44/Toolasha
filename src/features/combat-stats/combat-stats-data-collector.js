@@ -878,6 +878,16 @@ class CombatStatsDataCollector {
             // than off the wire, and can stop offering it once it stops being
             // true. Live data is never withheld.
             this.latestCombatData = { ...data, restored: true };
+
+            // Without this, a run that finished while the tab was closed (or
+            // between one page load and the next) is never archived: the first
+            // `new_battle` after reload is for whatever the character is doing
+            // now, `this.sessionKey` was still null from the constructor, and
+            // `onNewBattle`'s "a different key means the old one just ended"
+            // check only fires when `this.sessionKey` is already set. The
+            // restored run was silently dropped instead of archived, and its
+            // loot never reached the gold attribution's combat row.
+            this.sessionKey = sessionKey(this.latestCombatData);
         }
         return this.latestCombatData;
     }
