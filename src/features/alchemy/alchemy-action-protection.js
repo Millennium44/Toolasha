@@ -424,7 +424,11 @@ class AlchemyActionProtection {
         const countInput = alchemyComponent.querySelector('[class*="maxActionCountInput"] input');
         const inputValue = countInput ? parseInt(countInput.value, 10) : NaN;
 
-        const maxFromItems = Math.ceil(itemCount / bulkMultiplier);
+        // Floor, not ceil: a bulk action consumes bulkMultiplier items per
+        // attempt, so a stack that isn't an exact multiple has a leftover
+        // remainder that cannot fund one more action. Rounding up overstated
+        // how many actions the item stock could sustain.
+        const maxFromItems = Math.floor(itemCount / bulkMultiplier);
 
         if (!isNaN(inputValue) && inputValue > 0) {
             totalActions = Math.min(inputValue, maxFromItems);
@@ -676,6 +680,8 @@ class AlchemyActionProtection {
 }
 
 const alchemyActionProtection = new AlchemyActionProtection();
+
+export { alchemyActionProtection };
 
 export default {
     name: 'Alchemy Action Protection',
